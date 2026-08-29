@@ -246,6 +246,11 @@ try:
             client = await self._get()
             await client.setex(key, ttl_seconds, value)
 
+        async def delete(self, *keys: str) -> int:
+            """Delete one or more keys."""
+            client = await self._get()
+            return await client.delete(*keys)
+
         async def get_float(self, key: str, default: float = 0.0) -> float:
             raw = await self.get(key)
             if raw is None:

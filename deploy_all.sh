@@ -183,6 +183,14 @@ load_env() {
     _cage_kms_provider=$(_read_env_var CAGE_KMS_PROVIDER)
     [[ -n "$_cage_kms_provider" ]] && export TF_VAR_cage_kms_provider="$_cage_kms_provider"
 
+    # ── Service Account Impersonation for Terraform Google Provider ───────
+    local _impersonate_sa
+    _impersonate_sa=$(gcloud config get-value auth/impersonate_service_account 2>/dev/null || true)
+    if [[ -n "$_impersonate_sa" && "$_impersonate_sa" != "(unset)" ]]; then
+      export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="$_impersonate_sa"
+      info "Terraform SA impersonation active: $_impersonate_sa"
+    fi
+
     _secret_val=$(_read_env_var KMS_GOVERNANCE_KEY)
     [[ -n "$_secret_val" ]] && export TF_VAR_kms_governance_key="$_secret_val"
     unset _secret_val
@@ -323,7 +331,9 @@ deploy_terraform_target() {
         shift
         ;;
       --var-file=*)
-        tf_args+=("-var-file=${1#--var-file=}")
+        local vf="${1#--var-file=}"
+        [[ "$vf" != /* ]] && vf="$REPO_ROOT/$vf"
+        tf_args+=("-var-file=$vf")
         shift
         ;;
       --var)
@@ -359,9 +369,11 @@ deploy_terraform_target() {
     info "Using Kubernetes backend (state stored in cluster)"
     info "Ensure 'terraform-state' namespace exists: kubectl create namespace terraform-state"
   elif [[ "$target" == "gcp-gke" ]]; then
-    # GCS backend configuration commented in providers.tf
-    info "GCS backend configuration in providers.tf (optional)"
-    info "Uncomment backend block to use remote state"
+    local _state_bucket="${TF_BACKEND_BUCKET:-${TF_VAR_project_id:-${GOOGLE_CLOUD_PROJECT:-}}-tfstate}"
+    if [[ -n "$_state_bucket" ]]; then
+      backend_config_args+=("-backend-config=bucket=$_state_bucket")
+      info "Using GCS backend: gs://$_state_bucket/cage/gcp-gke"
+    fi
   fi
 
   # ── Auto-generate terraform.auto.tfvars from .env (gitignored) ───────────

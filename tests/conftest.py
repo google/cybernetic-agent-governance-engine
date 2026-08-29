@@ -38,6 +38,21 @@ Integration tests require live Kubernetes services.  Start them with:
 import logging
 import os
 
+# Set test environment defaults BEFORE any application imports
+os.environ.setdefault("CAGE_ENV", "test")
+os.environ.setdefault(
+    "CAGE_ROUTING_SEAL_SECRET", "dev-only-insecure-placeholder-not-for-production-use"
+)
+os.environ.setdefault(
+    "GOVERNANCE_SALT", "dev-only-insecure-placeholder-not-for-production-use"
+)
+os.environ.setdefault("CAGE_DEPLOYMENT_REGION", "LOCAL")
+os.environ.setdefault("LANGFUSE_POSTURE_DRY_RUN", "true")
+os.environ.setdefault(
+    "CMEK_KEY_RESOURCE_NAME",
+    "projects/test-project/locations/us-central1/keyRings/test-keyring/cryptoKeys/test-key/cryptoKeyVersions/1",
+)
+
 import pytest
 
 # Disable fork safety crashes on macOS (Obj-C runtime abort in xdist workers)
@@ -254,6 +269,93 @@ def reset_kms_signer_for_tests():
 
     # Reset again after test to ensure clean state
     reset_governance_signer()
+
+
+# ── Redis WAIT command mock (fakeredis compatibility) ──────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def mock_redis_wait_command(monkeypatch):
+    """Mock Redis WAIT command which fakeredis doesn't support.
+
+    The Redis WAIT command is called in src/gateway/governance/cbf.py:576 via
+    client.execute_command("WAIT", replicas, timeout) to ensure synchronous
+    replication of CBF writes across replicas. fakeredis doesn't implement this
+    command, causing 'ResponseError: unknown command WAIT' in tests.
+
+    This fixture patches execute_command on fakeredis to intercept WAIT commands
+    and return the requested replica count (indicating successful replication).
+    """
+    try:
+        import fakeredis
+
+        # Store original execute_command
+        original_execute_command = fakeredis.FakeRedis.execute_command
+        original_execute_command_async = None
+        try:
+            from fakeredis import aioredis
+
+            original_execute_command_async = aioredis.FakeRedis.execute_command
+        except (ImportError, AttributeError):
+            pass
+
+        # Wrapper that handles WAIT commands
+        def patched_execute_command(self, command, *args, **kwargs):
+            if isinstance(command, str) and command.upper() == "WAIT":
+                # WAIT numreplicas timeout — return numreplicas to indicate success
+                num_replicas = int(args[0]) if args else 0
+                return num_replicas
+            return original_execute_command(self, command, *args, **kwargs)
+
+        # Async wrapper for FakeRedis from fakeredis.aioredis
+        async def patched_execute_command_async(self, command, *args, **kwargs):
+            if isinstance(command, str) and command.upper() == "WAIT":
+                # WAIT numreplicas timeout — return numreplicas to indicate success
+                num_replicas = int(args[0]) if args else 0
+                return num_replicas
+            result = original_execute_command_async(self, command, *args, **kwargs)
+            # Handle both sync and async return values
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+
+        # Apply patches
+        monkeypatch.setattr(
+            fakeredis.FakeRedis, "execute_command", patched_execute_command
+        )
+        if original_execute_command_async is not None:
+            monkeypatch.setattr(
+                aioredis.FakeRedis, "execute_command", patched_execute_command_async
+            )
+
+    except ImportError:
+        pass  # fakeredis not available
+
+
+@pytest.fixture(autouse=True)
+def reset_cbf_epoch_state():
+    """Reset CBF fence epoch tracking between tests to prevent state bleeding.
+
+    The CBF instance's _last_seen_epoch attribute accumulates during test
+    execution. When tests run sequentially in the same pytest-xdist worker,
+    a test creating a fresh fakeredis (fence_epoch=0) but using a CBF instance
+    from a previous test (with _last_seen_epoch=12) triggers false epoch
+    regression errors.
+
+    This fixture resets the module-level singleton and any test-created instances
+    BEFORE each test to ensure clean isolation.
+    """
+    # Reset module-level singleton state BEFORE each test
+    try:
+        from src.gateway.governance.cbf import safety_filter
+
+        safety_filter._last_seen_epoch = 0
+        safety_filter._last_verified_fence_epoch = None
+        safety_filter._local_debits = 0.0
+    except (ImportError, AttributeError):
+        pass  # Module not loaded or attributes don't exist
+
+    yield  # Run the test
 
 
 # ── CLI option ────────────────────────────────────────────────────────────────

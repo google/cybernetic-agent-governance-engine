@@ -461,6 +461,10 @@ class TestNarrowE2EFlow:
         """Test the complete NARROW flow: request → classification → HTTP response."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
 
+        # Mock Redis client for NARROW receipt storage
+        mock_redis = AsyncMock()
+        mock_redis.setex = AsyncMock(return_value=True)
+
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
 
@@ -496,7 +500,10 @@ class TestNarrowE2EFlow:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                response = await handle_check_request(request_body)
+                with patch(
+                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+                ):
+                    response = await handle_check_request(request_body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -516,6 +523,10 @@ class TestNarrowE2EFlow:
     async def test_narrow_preserves_action_semantics(self, monkeypatch):
         """NARROW must preserve action semantics — only clamp, not transform."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
+
+        # Mock Redis client for NARROW receipt storage
+        mock_redis = AsyncMock()
+        mock_redis.setex = AsyncMock(return_value=True)
 
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
@@ -562,7 +573,10 @@ class TestNarrowE2EFlow:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                response = await handle_check_request(request_body)
+                with patch(
+                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+                ):
+                    response = await handle_check_request(request_body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 

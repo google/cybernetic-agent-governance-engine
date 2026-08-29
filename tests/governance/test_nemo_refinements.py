@@ -31,6 +31,7 @@ from src.governed_financial_advisor.governance.nemo_actions import (
     check_approval_token,
     check_atomic_execution,
     check_data_latency,
+    generate_approval_token,
 )
 
 nemoguardrails = pytest.importorskip("nemoguardrails")
@@ -38,14 +39,56 @@ nemoguardrails = pytest.importorskip("nemoguardrails")
 
 class TestNeMoRefinements(unittest.TestCase):
     def test_approval_token_signature(self):
-        """Test AP2 Signature check."""
+        """Test AP2 Signature check with HMAC validation (post-#92 hardening).
+
+        After commit 62b2e2d, check_approval_token requires thread_id and
+        trade_id for cryptographic HMAC validation and fails closed when those
+        fields are absent. This test verifies:
+          1. Valid HMAC-signed tokens with matching thread/trade IDs pass.
+          2. Tokens without thread_id/trade_id are rejected (fail-closed).
+          3. Known bad signatures are rejected.
+        """
+        thread_id = "test-thread-123"
+        trade_id = "trade-456"
+
+        # Generate a valid HMAC-signed token
+        valid_token = generate_approval_token(thread_id, trade_id)
+
+        # Valid token with correct thread_id and trade_id passes
         self.assertTrue(
-            check_approval_token({"approval_token": "valid_signed_token_123"})
+            check_approval_token(
+                {
+                    "approval_token": valid_token,
+                    "thread_id": thread_id,
+                    "trade_id": trade_id,
+                }
+            )
         )
-        self.assertTrue(
-            check_approval_token({"approval_token": "valid_token"})
-        )  # Legacy compat
-        self.assertFalse(check_approval_token({"approval_token": "bad_sig"}))
+
+        # Token without thread_id/trade_id is rejected (fail-closed)
+        self.assertFalse(check_approval_token({"approval_token": valid_token}))
+
+        # Known bad signature is rejected
+        self.assertFalse(
+            check_approval_token(
+                {
+                    "approval_token": "bad_sig",
+                    "thread_id": thread_id,
+                    "trade_id": trade_id,
+                }
+            )
+        )
+
+        # Valid token with mismatched thread_id is rejected
+        self.assertFalse(
+            check_approval_token(
+                {
+                    "approval_token": valid_token,
+                    "thread_id": "wrong-thread",
+                    "trade_id": trade_id,
+                }
+            )
+        )
 
     def test_data_latency_fresh(self):
         """Test Latency check with fresh data."""

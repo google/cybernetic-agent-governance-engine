@@ -40,7 +40,7 @@ import math
 # ---------------------------------------------------------------------------
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 
@@ -97,6 +97,13 @@ _FENCE_EPOCH_ENABLED: bool = os.environ.get(
 
 # Redis key for fence epoch counter (never TTL'd)
 _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
+
+# ---------------------------------------------------------------------------
+# Local debits tracking (POAM-023 remediation)
+# ---------------------------------------------------------------------------
+# Redis key for tracking debits within a reconciliation cycle to prevent
+# double-spend when using reconciled balance with TTL window.
+_REDIS_KEY_LOCAL_DEBITS = "cbf:local_debits"
 
 # ---------------------------------------------------------------------------
 # Feature flag: WAIT command replication (Phase 4.3)
@@ -251,10 +258,14 @@ class ControlBarrierFunction:
 -- ARGV[2]: min_cash_balance (float string)
 -- ARGV[3]: gamma (float string)
 -- ARGV[4]: governance_signature (string, may be empty)
+-- ARGV[5]: ground_truth_balance (float string) -- POAM-023: KMS-verified balance from Python
 -- Returns: array {status_code, message, new_balance_str, new_epoch}
 --   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation)
-local raw = redis.call('GET', KEYS[1])
-local current = raw and tonumber(raw) or 100000.0
+-- POAM-023: Ground truth balance passed from Python after KMS verification
+local current = tonumber(ARGV[5])
+if not current then
+    return {0, "Ground truth balance unavailable", "0", 0}
+end
 local cost = tonumber(ARGV[1]) or 0.0
 local min_cash = tonumber(ARGV[2])
 local gamma = tonumber(ARGV[3])
@@ -308,6 +319,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         self._last_seen_epoch: int = self._fetch_initial_fence_epoch_sync(
             skip_epoch_seed
         )
+        # POAM-023: Track last verified fence epoch to detect regression on commit path
+        self._last_verified_fence_epoch: int | None = None
 
     def _fetch_initial_fence_epoch_sync(self, skip_epoch_seed: bool) -> int:
         """Fetch the current fence epoch from Redis at construction time.
@@ -780,14 +793,16 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                 # Replay defense disabled or sequence=0 (backward compat)
                                 logger.info(
                                     "CBF: using externally reconciled balance=%.2f "
-                                    "source=%s verified_at=%.0f (KMS signature valid)",
+                                    "source=%s verified_at=%.0f sequence=%d (KMS signature valid)",
                                     verified.balance_usd,
                                     verified.source,
                                     verified.verified_at,
+                                    verified.sequence,
                                 )
                                 return {
                                     "current_cash": verified.balance_usd,
                                     "source": "reconciled",
+                                    "sequence": verified.sequence,
                                 }
                         else:
                             logger.critical(
@@ -974,6 +989,76 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             "source": "self_reported",
             "fence_epoch": current_epoch,
         }
+
+    async def _resolve_ground_truth_balance(self) -> tuple[float, dict[str, Any]]:
+        """
+        Resolve authoritative cash balance from external reconciliation with KMS verification.
+
+        POAM-023 remediation: This method is called by atomic_verify_and_commit() to ensure
+        the atomic commit path uses KMS-verified ground truth balance, closing the bypass gap
+        where LUA_ATOMIC_CBF previously read safety:current_cash directly without verification.
+
+        Returns:
+            (balance_usd, metadata) where metadata contains:
+                - source: "reconciliation" | "self_reported"
+                - sequence: reconciliation sequence number (if reconciliation source)
+                - fence_epoch: current fence epoch
+                - strict_mode: whether CBF_STRICT_MODE is active
+                - reconciliation_age_ms: staleness (if reconciliation source)
+
+        Raises:
+            GovernanceError: If _CBF_STRICT_MODE=true and reconciliation unavailable
+        """
+        state = await self._read_cbf_state_atomic()
+
+        if (
+            state.get("current_cash") is not None
+            and state.get("source") == "reconciled"
+        ):
+            # Reconciliation available and verified (KMS sig, replay seq, TTL checked)
+            # Note: sequence might be in state dict if replay defense is enabled
+            sequence = state.get("sequence", 0)
+            return (
+                float(state["current_cash"]),
+                {
+                    "source": "reconciliation",
+                    "sequence": sequence,
+                    "fence_epoch": state.get("fence_epoch", 0),
+                    "strict_mode": _CBF_STRICT_MODE,
+                    "reconciliation_age_ms": 0,  # Age computed in _read_cbf_state_atomic
+                },
+            )
+        elif _CBF_STRICT_MODE and state.get("source") in (
+            "epoch_regression",
+            "self_reported",
+        ):
+            # Strict mode: fail closed when reconciliation unavailable
+            fallback_reason = (
+                state.get("epoch_reason")
+                if state.get("source") == "epoch_regression"
+                else "reconciliation unavailable"
+            )
+            from src.gateway.governance.symbolic_governor import GovernanceError
+
+            raise GovernanceError(
+                f"CBF strict mode: {fallback_reason}",
+                payload={"audit_code": "CBF_STRICT_RECONCILIATION_UNAVAILABLE"},
+            )
+        else:
+            # Fallback to self-reported (already logged as CRITICAL by _read_cbf_state_atomic)
+            current_cash = state.get("current_cash")
+            balance = float(current_cash) if current_cash is not None else 100000.0
+            fence_epoch = int(state.get("fence_epoch", 0))
+
+            return (
+                balance,
+                {
+                    "source": "self_reported",
+                    "fence_epoch": fence_epoch,
+                    "strict_mode": False,
+                    "reconciliation_age_ms": None,
+                },
+            )
 
     def get_h(self, cash_balance: float) -> float:
         """Safety function h(x).  Safe when h(x) >= 0."""
@@ -1394,6 +1479,71 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             logger.warning("⛔ CBF atomic check rejected trade: %s", exc)
             return (False, reason)
 
+        # POAM-023: Resolve ground truth balance with KMS verification before commit
+        try:
+            (
+                ground_truth_balance,
+                balance_metadata,
+            ) = await self._resolve_ground_truth_balance()
+        except Exception as exc:
+            # GroundTruthUnavailableError or GovernanceError in strict mode
+            reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
+            logger.error("⛔ CBF atomic check rejected: %s", reason)
+            return (False, reason)
+
+        # Handle local debits to prevent double-spend within reconciliation window
+        local_debit_total = 0.0
+        if balance_metadata["source"] == "reconciliation" and redis_client is not None:
+            # Accumulate debits since last reconciliation
+            client = await _get_raw_redis(redis_client)
+            if hasattr(client, "lrange"):
+                local_debits_res = client.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
+                local_debits_raw = (
+                    await local_debits_res
+                    if inspect.isawaitable(local_debits_res)
+                    else local_debits_res
+                )
+                if local_debits_raw:
+                    for debit_entry in local_debits_raw:
+                        if isinstance(debit_entry, (bytes, bytearray)):
+                            debit_entry = debit_entry.decode("utf-8")
+                        try:
+                            debit_data = json.loads(debit_entry)
+                            if debit_data.get(
+                                "reconciliation_sequence"
+                            ) == balance_metadata.get("sequence"):
+                                local_debit_total += debit_data.get("amount", 0.0)
+                        except Exception:
+                            pass
+
+        effective_balance = ground_truth_balance - local_debit_total
+
+        # Fence-epoch validation (R-05) - POAM-023: now enforced on commit path
+        current_fence_epoch = balance_metadata["fence_epoch"]
+        if self._last_verified_fence_epoch is not None:
+            if current_fence_epoch < self._last_verified_fence_epoch:
+                # Fence regression detected
+                logger.critical(
+                    json.dumps(
+                        {
+                            "event": "FENCE_EPOCH_REGRESSION",
+                            "severity": "CRITICAL",
+                            "current_epoch": current_fence_epoch,
+                            "last_verified_epoch": self._last_verified_fence_epoch,
+                            "audit_note": (
+                                "R-05: Fence epoch regression detected on commit path. "
+                                "Rejecting transaction to prevent double-spend. Fail-closed."
+                            ),
+                        }
+                    )
+                )
+                return (
+                    False,
+                    f"Fence epoch regression: {current_fence_epoch} < {self._last_verified_fence_epoch}",
+                )
+
+        self._last_verified_fence_epoch = current_fence_epoch
+
         # R-05: Include fence epoch key for atomic increment in Lua script
         keys = ["safety:current_cash", "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
         argv = [
@@ -1401,6 +1551,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             str(self.min_cash_balance),
             str(self.gamma),
             governance_signature,
+            str(effective_balance),  # ARGV[5]: ground truth balance (POAM-023)
         ]
 
         # CRIT-4 fix: use public get_raw_client() instead of private _get().
@@ -1437,6 +1588,31 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     client, keys, argv, _run_evalsha, _load_and_run
                 )
                 committed, message = self._parse_lua_result(result_list, span)
+
+                # POAM-023: Record local debit after successful commit (reconciliation source only)
+                if (
+                    committed
+                    and balance_metadata["source"] == "reconciliation"
+                    and redis_client is not None
+                ):
+                    if hasattr(client, "rpush"):
+                        debit_entry = json.dumps(
+                            {
+                                "amount": cost,
+                                "reconciliation_sequence": balance_metadata.get(
+                                    "sequence"
+                                ),
+                                "timestamp": time.time(),
+                                "action_signature": governance_signature,
+                            }
+                        )
+                        rpush_res = client.rpush(_REDIS_KEY_LOCAL_DEBITS, debit_entry)
+                        if inspect.isawaitable(rpush_res):
+                            await rpush_res
+                        if hasattr(client, "ltrim"):
+                            ltrim_res = client.ltrim(_REDIS_KEY_LOCAL_DEBITS, -1000, -1)
+                            if inspect.isawaitable(ltrim_res):
+                                await ltrim_res
 
                 # Phase 4.3: WAIT for replication if configured and committed
                 if committed and _WAIT_REPLICAS > 0:
@@ -1477,6 +1653,29 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 client, keys, argv, _run_evalsha, _load_and_run
             )
             committed, message = self._parse_lua_result(result_list, None)
+
+            # POAM-023: Record local debit after successful commit (reconciliation source only)
+            if (
+                committed
+                and balance_metadata["source"] == "reconciliation"
+                and redis_client is not None
+            ):
+                if hasattr(client, "rpush"):
+                    debit_entry = json.dumps(
+                        {
+                            "amount": cost,
+                            "reconciliation_sequence": balance_metadata.get("sequence"),
+                            "timestamp": time.time(),
+                            "action_signature": governance_signature,
+                        }
+                    )
+                    rpush_res = client.rpush(_REDIS_KEY_LOCAL_DEBITS, debit_entry)
+                    if inspect.isawaitable(rpush_res):
+                        await rpush_res
+                    if hasattr(client, "ltrim"):
+                        ltrim_res = client.ltrim(_REDIS_KEY_LOCAL_DEBITS, -1000, -1)
+                        if inspect.isawaitable(ltrim_res):
+                            await ltrim_res
 
             # Phase 4.3: WAIT for replication if configured and committed
             if committed and _WAIT_REPLICAS > 0:
