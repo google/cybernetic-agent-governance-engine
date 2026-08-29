@@ -183,14 +183,6 @@ load_env() {
     _cage_kms_provider=$(_read_env_var CAGE_KMS_PROVIDER)
     [[ -n "$_cage_kms_provider" ]] && export TF_VAR_cage_kms_provider="$_cage_kms_provider"
 
-    # ── Service Account Impersonation for Terraform Google Provider ───────
-    local _impersonate_sa
-    _impersonate_sa=$(gcloud config get-value auth/impersonate_service_account 2>/dev/null || true)
-    if [[ -n "$_impersonate_sa" && "$_impersonate_sa" != "(unset)" ]]; then
-      export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="$_impersonate_sa"
-      info "Terraform SA impersonation active: $_impersonate_sa"
-    fi
-
     _secret_val=$(_read_env_var KMS_GOVERNANCE_KEY)
     [[ -n "$_secret_val" ]] && export TF_VAR_kms_governance_key="$_secret_val"
     unset _secret_val
@@ -269,23 +261,18 @@ deploy_terraform_target() {
   # Load environment variables
   load_env
   
-  # Reject staging — defined in Terraform schema but not yet provisioned (POAM-024, target v2.1.0)
-  if [[ "$env" == "staging" ]]; then
-    error "The 'staging' deployment posture is defined in the Terraform schema but not yet provisioned."
-    echo "  Staging is deferred to v2.1.0 (POAM-024, target 2026-12-31)."
-    echo "  See docs/CHANGE_MANAGEMENT_PROCESS.md §3.5 and docs/POAM_ISO42001.md#POAM-024."
-    echo "  Use '--env dev' or '--env prod'."
-    exit 1
-  fi
-
   # DEP-01: Gate enable_nist_compliance on CAGE_DEPLOYMENT_REGION, not just --env prod.
   # A prod deployment to EU_ECB or APAC_MAS must NOT activate NIST-specific
   # infrastructure hardening (SC-7, AC-3, deletion protection, Redis replication).
   # ISO 42001 baseline hardening is always active in prod regardless of region.
   # R-2: NIST SP 800-53 logic MUST be gated on CAGE_DEPLOYMENT_REGION == "US_FED".
+  #
+  # POAM-024 (closed 2026-08-29): Staging tier provisioned — full security posture
+  # at dev-scale cost. Staging behaves like prod for compliance flag injection but
+  # uses enable_high_availability=false and enable_deletion_protection=false.
   _cage_region="${CAGE_DEPLOYMENT_REGION:-${TF_VAR_cage_deployment_region:-}}"
 
-  # Set environment-specific banners
+  # Set environment-specific banners and compliance flags
   if [[ "$env" == "prod" ]]; then
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
@@ -293,6 +280,22 @@ deploy_terraform_target() {
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
     # DEP-01: Only activate NIST-specific hardening for US_FED deployments.
+    if [[ "$_cage_region" == "US_FED" ]]; then
+      info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
+      tf_args+=("-var=enable_nist_compliance=true")
+    else
+      info "CAGE_DEPLOYMENT_REGION=${_cage_region:-unset} — NIST hardening suppressed (not US_FED)"
+      tf_args+=("-var=enable_nist_compliance=false")
+    fi
+  elif [[ "$env" == "staging" ]]; then
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  🧪  STAGING MODE: Full security posture at dev-scale cost.      ║${RESET}"
+    echo -e "${CYAN}║      Ephemeral validation tier — provision, test, destroy.       ║${RESET}"
+    echo -e "${CYAN}║      POAM-024: CA-2 pre-production validation satisfied.         ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    # Staging mirrors prod compliance logic but at 1-replica scale
     if [[ "$_cage_region" == "US_FED" ]]; then
       info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
       tf_args+=("-var=enable_nist_compliance=true")
@@ -331,9 +334,7 @@ deploy_terraform_target() {
         shift
         ;;
       --var-file=*)
-        local vf="${1#--var-file=}"
-        [[ "$vf" != /* ]] && vf="$REPO_ROOT/$vf"
-        tf_args+=("-var-file=$vf")
+        tf_args+=("-var-file=${1#--var-file=}")
         shift
         ;;
       --var)
@@ -369,11 +370,9 @@ deploy_terraform_target() {
     info "Using Kubernetes backend (state stored in cluster)"
     info "Ensure 'terraform-state' namespace exists: kubectl create namespace terraform-state"
   elif [[ "$target" == "gcp-gke" ]]; then
-    local _state_bucket="${TF_BACKEND_BUCKET:-${TF_VAR_project_id:-${GOOGLE_CLOUD_PROJECT:-}}-tfstate}"
-    if [[ -n "$_state_bucket" ]]; then
-      backend_config_args+=("-backend-config=bucket=$_state_bucket")
-      info "Using GCS backend: gs://$_state_bucket/cage/gcp-gke"
-    fi
+    # GCS backend configuration commented in providers.tf
+    info "GCS backend configuration in providers.tf (optional)"
+    info "Uncomment backend block to use remote state"
   fi
 
   # ── Auto-generate terraform.auto.tfvars from .env (gitignored) ───────────

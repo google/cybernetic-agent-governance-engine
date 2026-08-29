@@ -77,6 +77,9 @@ cage_deployment_region = "APAC_MAS"
 enable_nist_compliance         = false
 enable_eu_ecb_compliance       = false
 enable_apac_mas_compliance     = true  # DEP-20: activates MAS TRM §9.1 encryption + MAS Notice 655 audit logging
+# POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
+enable_high_availability       = false
+enable_deletion_protection     = false
 enable_binary_authorization    = false
 enable_audit_logging           = true  # MAS Notice 655 §10 — mandatory
 enable_cmek                    = false

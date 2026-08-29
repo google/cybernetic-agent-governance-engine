@@ -35,7 +35,16 @@ variable "cluster_name" {
 # ─── Security Posture Toggles ────────────────────────────────────────────────
 
 variable "enable_nist_compliance" {
-  description = "Enable strict NIST RMF security controls (Private cluster, deletion protection, Master Authorized Networks)"
+  description = "Enable strict NIST RMF security controls (Private cluster, Master Authorized Networks)"
+  type        = bool
+  default     = false
+}
+
+# POAM-024: Decoupled from enable_nist_compliance to allow ephemeral staging clusters.
+# Staging needs full security validation (enable_nist_compliance=true) but must be
+# teardown-capable (enable_deletion_protection=false) to cap spend.
+variable "enable_deletion_protection" {
+  description = "Enable deletion protection on the GKE cluster. Set false for ephemeral environments (staging) that need terraform destroy capability. Set true for production to prevent accidental cluster deletion."
   type        = bool
   default     = false
 }

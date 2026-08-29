@@ -83,6 +83,9 @@ cage_deployment_region = "US_FED"
 # enable_nist_compliance MUST be explicitly false here to prevent Redis replication,
 # replica scale-out, and PDB creation that the NIST path triggers automatically.
 enable_nist_compliance         = false  # Dev posture — standalone Redis, 1 replica
+# POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
+enable_high_availability       = false
+enable_deletion_protection     = false
 enable_binary_authorization    = false
 enable_audit_logging           = false  # Enable in prod: SR 26-2 §IV.D / AU-2
 enable_cmek                    = false  # Enable in prod: SC-12 / SC-13
