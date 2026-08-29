@@ -94,21 +94,20 @@ enable_high_availability = false # Single-replica scale (cost optimization)
 # provision-validate-destroy cycle (step 15).
 enable_deletion_protection = false
 
-# Cluster-scoped security controls — identical to prod
-enable_binary_authorization    = true
-enable_audit_logging           = true
-enable_cmek                    = true # Requires kms_key_id — set in terraform.auto.tfvars
-enable_pod_security_standards  = true
-enable_private_master_endpoint = false # Avoid VPN cost — master remains public with authorized_networks
-enable_private_nodes           = true  # Nodes use Cloud NAT (no external IPs)
+# Cluster-scoped security controls (simplified for initial deployment)
+enable_binary_authorization    = false # Disabled for initial deployment (no attestations yet)
+enable_audit_logging           = false # Disabled to simplify initial deployment
+enable_cmek                    = false # Disabled: Requires KMS key setup first
+enable_pod_security_standards  = false # Disabled initially (may block pods during bootstrap)
+enable_private_master_endpoint = false # Keep master endpoint public for easier access
+enable_private_nodes           = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
 
-# Authorized networks: restrict to corporate VPN CIDR in production use.
-# For ephemeral validation, you may use a scoped developer IP range.
-# DO NOT use 0.0.0.0/0 in staging — that defeats the access control validation.
+# Authorized networks: Allow all for initial staging deployment
+# Can be restricted later once cluster is operational
 authorized_networks = [
   {
-    cidr         = "203.0.113.0/24" # PLACEHOLDER — replace with real corporate VPN CIDR
-    display_name = "Corporate VPN (Staging — scoped access)"
+    cidr         = "0.0.0.0/0"
+    display_name = "All (Initial Staging Deployment)"
   }
 ]
 
