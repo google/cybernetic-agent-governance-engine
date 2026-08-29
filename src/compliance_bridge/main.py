@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -42,7 +43,7 @@ from typing import Any, Literal
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 # Langfuse is imported lazily to avoid loading google.protobuf at module
@@ -1140,6 +1141,19 @@ async def list_defer_pending(
 class DeferResolveRequest(BaseModel):
     injection_data: dict | None = None
     note: str | None = None
+    confidence_score: float = Field(
+        ...,  # Required field
+        description="Confidence score after human review or context injection (0.0-1.0)",
+        ge=0.0,
+        le=1.0,
+    )
+
+    @field_validator("confidence_score")
+    @classmethod
+    def reject_nan_confidence(cls, v: float) -> float:
+        if math.isnan(v):
+            raise ValueError("confidence_score cannot be NaN")
+        return v
 
 
 def _get_defer_queue_cls() -> Any:
@@ -1159,6 +1173,33 @@ def _get_defer_queue_cls() -> Any:
             raise ImportError(f"DeferQueue could not be imported: {exc}") from exc
 
 
+def _get_replay_evaluate() -> tuple[Any, Any]:
+    """Helper to dynamically import replay_evaluate and ReplayResult."""
+    try:
+        from src.gateway.governance.defer_queue import (
+            ReplayResult as rr1,
+        )
+        from src.gateway.governance.defer_queue import (
+            replay_evaluate as re1,
+        )
+
+        return re1, rr1
+    except ImportError:
+        try:
+            from gateway.governance.defer_queue import (  # type: ignore[import-not-found]
+                ReplayResult as rr2,
+            )
+            from gateway.governance.defer_queue import (
+                replay_evaluate as re2,
+            )
+
+            return re2, rr2
+        except ImportError as exc:
+            raise ImportError(
+                f"replay_evaluate/ReplayResult could not be imported: {exc}"
+            ) from exc
+
+
 @app.post(
     "/v1/defer/{defer_id}/inject",
     tags=["governance"],
@@ -1172,6 +1213,11 @@ async def defer_inject(
 
     The resolved token's thread will be eligible for re-evaluation by
     the governing agent with the injected data appended to its context.
+
+    Phase-3 confidence recheck: This endpoint now invokes replay_evaluate()
+    to enforce DEFER_CONFIDENCE_THRESHOLD (0.70) before resolution. If the
+    injected context does not raise confidence above threshold, the token
+    remains parked and a 409 Conflict is returned.
     """
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
@@ -1179,6 +1225,7 @@ async def defer_inject(
         import redis.asyncio as aioredis
 
         defer_queue_cls = _get_defer_queue_cls()
+        replay_evaluate, ReplayResult = _get_replay_evaluate()
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/inject] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1186,18 +1233,68 @@ async def defer_inject(
             detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
         )
 
+    # Build enriched context with confidence_score for Phase-3 replay
+    enriched_context = body.injection_data or {}
+    enriched_context["confidence_score"] = body.confidence_score
+
     try:
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue = defer_queue_cls(client)
-        resolved = await queue.resolve(
-            defer_id, "INJECTED", injection_data=body.injection_data
-        )
-        await client.aclose()
-        if resolved is None:
+
+        # Phase-3 confidence recheck before resolution (fixes CAGE-SEC-003)
+        result = await replay_evaluate(queue, defer_id, enriched_context)
+
+        if result == ReplayResult.NOT_FOUND:
+            await client.aclose()
             raise HTTPException(
                 status_code=404,
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
             )
+        elif result == ReplayResult.PARKED:
+            # Injected context did not raise confidence above DEFER_CONFIDENCE_THRESHOLD (0.70)
+            # Publish DEFER_PARKED event (not DEFER_RESOLVED) for accurate audit trail
+            await client.aclose()
+            try:
+                from datetime import datetime
+
+                await event_bus.publish(
+                    {
+                        "type": "DEFER_PARKED",
+                        "traceId": defer_id,
+                        "controlId": "A.8.4",  # ISO 42001 changed-condition handling
+                        "reason": "Confidence still below threshold after injection",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    }
+                )
+            except Exception:
+                pass
+
+            return JSONResponse(
+                status_code=409,  # Conflict - cannot resolve yet
+                content={
+                    "status": "parked",
+                    "defer_id": defer_id,
+                    "reason": "confidence still below threshold after injection",
+                },
+            )
+
+        # result == ReplayResult.ADMITTED - proceed with resolution
+        # Retrieve the resolved token for audit metadata
+        resolved = await queue.get(defer_id)
+        await client.aclose()
+
+        if resolved is None:
+            # Edge case: token was resolved but immediately expired/removed
+            logger.warning(
+                "[defer/inject] Token admitted but not found for metadata: %s", defer_id
+            )
+            # Still return success since replay_evaluate admitted it
+            resolved_timestamp = ""
+            thread_id = defer_id
+        else:
+            resolved_timestamp = resolved.resolved_at_utc or ""
+            thread_id = resolved.thread_id
+
     except HTTPException:
         raise
     except Exception as exc:
@@ -1223,18 +1320,18 @@ async def defer_inject(
             status_code=500, detail={"error": "DEFER_INJECT_FAILED", "message": exc_str}
         )
 
-    # Publish DEFER_RESOLVED SSE event
+    # Publish DEFER_RESOLVED SSE event (only fires when ADMITTED)
     try:
         await event_bus.publish(
             {
                 "type": "DEFER_RESOLVED",
-                "traceId": resolved.defer_id,
-                "controlId": "A.8.4",
+                "traceId": defer_id,
+                "controlId": "A.8.4",  # ISO 42001 changed-condition replay attestation
                 "result": None,
                 "safetyRate": None,
-                "auditId": resolved.thread_id,
+                "auditId": thread_id,
                 "resolution": "INJECTED",
-                "timestamp": resolved.resolved_at_utc or "",
+                "timestamp": resolved_timestamp,
             }
         )
     except Exception:

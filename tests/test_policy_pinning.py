@@ -116,70 +116,94 @@ async def test_symbolic_governor_version_mismatch_raises_governance_error(
 
 def test_middleware_validate_action_version_matching(registry):
     """FastAPI validate-action endpoint should pass when correct version_id is provided."""
-    client = TestClient(governance_app, raise_server_exceptions=False)
-    active_hash = registry.active_hash
+    import src.gateway.server.governance_middleware as mw
 
-    mock_gov_result = {
-        "verdict": "APPROVED",
-        "violations": [],
-        "seal": "mock-seal-hash",
-        "latency_ms": 12.5,
-    }
+    # Disable seal enforcement for this test
+    original_secret = mw._CAGE_SEAL_SECRET
+    original_env = mw._ENVIRONMENT
+    mw._CAGE_SEAL_SECRET = None
+    mw._ENVIRONMENT = "test"
 
-    # Patch SymbolicGovernor validate_action
-    with patch(
-        "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
-        new_callable=AsyncMock,
-    ) as mock_validate:
-        mock_validate.return_value = mock_gov_result
+    try:
+        client = TestClient(governance_app, raise_server_exceptions=False)
+        active_hash = registry.active_hash
 
-        # Request with matching version
-        resp = client.post(
-            "/validate-action",
-            json={
-                "action": "execute_trade",
-                "params": {"amount": 100},
-                "policy_version_id": active_hash,
-            },
-        )
-        assert resp.status_code == 200
-        assert resp.json()["verdict"] == "APPROVED"
-        mock_validate.assert_awaited_once_with(
-            action="execute_trade",
-            params={"amount": 100},
-            policy_version_id=active_hash,
-        )
+        mock_gov_result = {
+            "verdict": "APPROVED",
+            "violations": [],
+            "seal": "mock-seal-hash",
+            "latency_ms": 12.5,
+        }
 
-
-def test_middleware_validate_action_version_mismatch_returns_403(registry):
-    """FastAPI validate-action endpoint should return 403 when a version mismatch occurs."""
-    client = TestClient(governance_app, raise_server_exceptions=False)
-
-    # Patch SymbolicGovernor validate_action to raise GovernanceError
-    with patch(
-        "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
-        new_callable=AsyncMock,
-    ) as mock_validate:
-        mock_validate.side_effect = GovernanceError(
-            "Substrate Policy Drift Detected. Session pinned to version..."
-        )
-
+        # Patch SymbolicGovernor validate_action
         with patch(
-            "src.gateway.server.governance_middleware._emit_refusal_receipt",
+            "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
             new_callable=AsyncMock,
-        ) as mock_emit:
+        ) as mock_validate:
+            mock_validate.return_value = mock_gov_result
+
+            # Request with matching version
             resp = client.post(
                 "/validate-action",
                 json={
                     "action": "execute_trade",
                     "params": {"amount": 100},
-                    "policy_version_id": "stale-policy-hash",
+                    "policy_version_id": active_hash,
                 },
             )
-            assert resp.status_code == 403
-            assert resp.json()["verdict"] == "DENIED"
-            assert "Substrate Policy Drift" in resp.json()["violations"][0]
-            mock_emit.assert_awaited_once()
+            assert resp.status_code == 200
+            assert resp.json()["verdict"] == "APPROVED"
+            mock_validate.assert_awaited_once_with(
+                action="execute_trade",
+                params={"amount": 100},
+                policy_version_id=active_hash,
+            )
+    finally:
+        mw._CAGE_SEAL_SECRET = original_secret
+        mw._ENVIRONMENT = original_env
+
+
+def test_middleware_validate_action_version_mismatch_returns_403(registry):
+    """FastAPI validate-action endpoint should return 403 when a version mismatch occurs."""
+    import src.gateway.server.governance_middleware as mw
+
+    # Disable seal enforcement for this test
+    original_secret = mw._CAGE_SEAL_SECRET
+    original_env = mw._ENVIRONMENT
+    mw._CAGE_SEAL_SECRET = None
+    mw._ENVIRONMENT = "test"
+
+    try:
+        client = TestClient(governance_app, raise_server_exceptions=False)
+
+        # Patch SymbolicGovernor validate_action to raise GovernanceError
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
+            new_callable=AsyncMock,
+        ) as mock_validate:
+            mock_validate.side_effect = GovernanceError(
+                "Substrate Policy Drift Detected. Session pinned to version..."
+            )
+
+            with patch(
+                "src.gateway.server.governance_middleware._emit_refusal_receipt",
+                new_callable=AsyncMock,
+            ) as mock_emit:
+                resp = client.post(
+                    "/validate-action",
+                    json={
+                        "action": "execute_trade",
+                        "params": {"amount": 100},
+                        "policy_version_id": "stale-policy-hash",
+                    },
+                )
+                assert resp.status_code == 403
+                assert resp.json()["verdict"] == "DENIED"
+                assert "Substrate Policy Drift" in resp.json()["violations"][0]
+                mock_emit.assert_awaited_once()
+    finally:
+        mw._CAGE_SEAL_SECRET = original_secret
+        mw._ENVIRONMENT = original_env
 
 
 def test_serialization_float_coercion_consistency():

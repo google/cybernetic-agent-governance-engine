@@ -75,7 +75,9 @@ def _make_cbf_with_fakeredis(
     returns the caller-supplied fakeredis instance — matching the pattern used
     in test_cbf_reconciliation.py.
     """
-    cbf = ControlBarrierFunction()
+    # skip_epoch_seed=True prevents the constructor from trying to fetch the epoch
+    # from Redis before the monkeypatch is applied in the test
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     # Override thresholds to make the test deterministic regardless of env config.
     # min_cash_balance=0 means the only constraint is h_next >= 0, i.e. balance > 0.
     cbf.min_cash_balance = 0.0

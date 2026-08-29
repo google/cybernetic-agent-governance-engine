@@ -373,10 +373,23 @@ class TestValidateActionEndpoint:
 
     @pytest.fixture()
     def client(self, mock_symbolic_governor, mock_kms_signer):
-        """Plain TestClient — /validate-action does not require a routing seal."""
+        """Plain TestClient with seal enforcement disabled for /validate-action tests."""
+        import src.gateway.server.governance_middleware as mw
+
+        original_secret = mw._CAGE_SEAL_SECRET
+        original_env = mw._ENVIRONMENT
+
+        mw._CAGE_SEAL_SECRET = None
+        mw._ENVIRONMENT = "test"  # allow bypass
+
         from src.gateway.server.governance_middleware import governance_app
 
-        return TestClient(governance_app, raise_server_exceptions=False)
+        client = TestClient(governance_app, raise_server_exceptions=False)
+
+        yield client
+
+        mw._CAGE_SEAL_SECRET = original_secret
+        mw._ENVIRONMENT = original_env
 
     def test_validate_action_happy_path_approved(self, client, mock_symbolic_governor):
         """Valid action returns 200 with APPROVED verdict."""
@@ -1072,10 +1085,23 @@ class TestFlowSignalHttp202Receipt:
 
     @pytest.fixture()
     def client_for_flowsignal(self, mock_kms_signer):
-        """TestClient with a mock governor that returns FlowSignal DEFER."""
+        """TestClient with seal enforcement disabled for FlowSignal tests."""
+        import src.gateway.server.governance_middleware as mw
+
+        original_secret = mw._CAGE_SEAL_SECRET
+        original_env = mw._ENVIRONMENT
+
+        mw._CAGE_SEAL_SECRET = None
+        mw._ENVIRONMENT = "test"  # allow bypass
+
         from src.gateway.server.governance_middleware import governance_app
 
-        return TestClient(governance_app, raise_server_exceptions=False)
+        client = TestClient(governance_app, raise_server_exceptions=False)
+
+        yield client
+
+        mw._CAGE_SEAL_SECRET = original_secret
+        mw._ENVIRONMENT = original_env
 
     def test_flowsignal_escalation_returns_http_202(
         self, client_for_flowsignal, mock_kms_signer

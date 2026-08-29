@@ -90,6 +90,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+import uuid
 from typing import Any
 
 from opentelemetry import trace
@@ -409,7 +411,7 @@ def _build_denied_response(
     }
 
 
-def _build_narrow_response(
+async def _build_narrow_response(
     routing_seal: str,
     body: dict[str, Any],
 ) -> dict[str, Any]:
@@ -419,7 +421,19 @@ def _build_narrow_response(
     parameters). The response includes:
       - x-cage-routing-seal header (attests to narrowed params)
       - X-Governance-Narrowed: true header (signals param modification)
-      - JSON body with original_params and narrowed_params
+
+    **Phase 3.2 — Receipt-Based Transport (CAGE-SEC-004)**
+
+    The narrowed parameters are stored in Redis keyed by the routing seal
+    prefix (fetch-and-burn pattern):
+
+      1. Store narrowed params in Redis using seal prefix as key
+      2. MCP server uses seal to look up and burn the receipt before execution
+      3. 5min TTL prevents receipt leakage
+
+    This solves the architectural gap where the Envoy OkHttpResponse proto
+    has no body field, preventing narrowed params from reaching the MCP
+    server.
 
     Args:
         routing_seal: HMAC-SHA256 routing seal for the narrowed parameters.
@@ -428,7 +442,56 @@ def _build_narrow_response(
 
     Returns:
         Dict representation of OkHttpResponse with NARROW-specific headers.
+
+    Raises:
+        RuntimeError: If Redis client is unavailable.
     """
+    from src.gateway.infrastructure.redis_client import redis_client
+
+    if redis_client is None:
+        raise RuntimeError(
+            "Redis client unavailable — cannot store NARROW receipt. "
+            "NARROW verdict requires Redis for receipt-based transport."
+        )
+
+    # Extract narrowed params and seal from body
+    narrowed_params = body.get("narrowed_params", {})
+
+    # Generate receipt key from seal (first 32 hex chars = 128 bits)
+    # This allows MCP server to look up receipt using the seal it receives
+    seal_prefix = routing_seal[:32] if len(routing_seal) >= 32 else routing_seal
+    receipt_key = f"narrow:receipt:{seal_prefix}"
+
+    receipt_payload = {
+        "narrowed_params": narrowed_params,
+        "original_signature": routing_seal,
+        "timestamp": time.time(),
+        "clamp_reason": body.get(
+            "narrowing_reason", "NARROW verdict applied parameter constraints"
+        ),
+        "constraints_applied": body.get("constraints_applied", []),
+    }
+
+    # Store in Redis with 5min TTL (fetch-and-burn)
+    try:
+        await redis_client.setex(
+            receipt_key,
+            300,  # 5 minutes
+            json.dumps(receipt_payload),
+        )
+        logger.info(
+            "📐 NARROW receipt stored: key=%s ttl=300s constraints=%s",
+            receipt_key,
+            receipt_payload.get("constraints_applied", []),
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to store NARROW receipt in Redis: %s — denying request",
+            exc,
+        )
+        raise RuntimeError(f"Failed to store NARROW receipt: {exc}") from exc
+
+    # Return headers with body and Redis receipt for downstream tools
     return {
         "ok_response": {
             "headers": [
@@ -454,7 +517,6 @@ def _build_narrow_response(
                     "append": False,
                 },
             ],
-            # Include response body for NARROW (unlike plain ALLOW)
             "body": json.dumps(body),
         }
     }
@@ -804,16 +866,14 @@ async def handle_check_request(
             )
 
             # HTTP 200 OK — action is allowed but with narrowed parameters
-            # Response includes X-Governance-Narrowed: true header
+            # Response includes X-Governance-Narrowed: true header and
+            # X-CAGE-Narrowing-Receipt header (Phase 3.2)
             #
-            # Phase 1.3 Response body schema:
-            #   - decision: "NARROW"
-            #   - original_params: Original parameters as submitted
-            #   - narrowed_params: Constrained parameters that will be executed
-            #   - narrowing_reason: Human-readable explanation
-            #   - constraints_applied: List of applied constraints
-            #   - execution_allowed: true (action proceeds with narrowed params)
-            return _build_narrow_response(
+            # Phase 3.2 Receipt-Based Transport:
+            #   - Narrowed params are stored in Redis with 5min TTL
+            #   - Receipt ID is returned in X-CAGE-Narrowing-Receipt header
+            #   - MCP server fetches and burns receipt before execution
+            return await _build_narrow_response(
                 seal_narrow,
                 {
                     "decision": GovernanceDecision.NARROW,

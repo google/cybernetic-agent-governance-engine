@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
+import json
 import logging
 import math
 import os
@@ -377,11 +378,68 @@ async def execute_trade_action(
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
 
+    # Phase 3.2 NARROW Receipt Validation (CAGE-SEC-004 fix)
+    # Check for NARROW verdict receipt using seal prefix before seal verification
+    action_params = params  # Default: use original params
+
+    if seal:
+        from src.gateway.infrastructure.redis_client import redis_client
+
+        # Generate receipt key from seal (first 32 hex chars = 128 bits)
+        seal_prefix = seal[:32] if len(seal) >= 32 else seal
+        receipt_key = f"narrow:receipt:{seal_prefix}"
+
+        # Attempt to fetch NARROW receipt (fail-silent if not present)
+        if redis_client is not None:
+            try:
+                receipt_data = await redis_client.get(receipt_key)
+                if receipt_data:
+                    # Delete receipt immediately (one-time use — fetch-and-burn pattern)
+                    await redis_client.delete(receipt_key)
+
+                    receipt_payload = json.loads(receipt_data)
+                    narrowed_params = receipt_payload.get("narrowed_params", {})
+                    receipt_signature = receipt_payload.get("original_signature", "")
+
+                    # Verify original signature matches (prevents receipt forgery)
+                    if receipt_signature != seal:
+                        logger.error(
+                            "🚫 execute_trade: NARROW receipt signature mismatch. "
+                            "Receipt sig=%s, Seal=%s",
+                            receipt_signature[:16],
+                            seal[:16],
+                        )
+                        return "BLOCKED: Narrowing receipt signature mismatch — possible forgery attempt"
+
+                    # Use narrowed params for trade execution
+                    action_params = narrowed_params
+                    logger.info(
+                        "📐 execute_trade: NARROW receipt validated and consumed. "
+                        "Using narrowed params: %s",
+                        {
+                            k: narrowed_params.get(k)
+                            for k in ["symbol", "amount", "confidence"]
+                        },
+                    )
+            except json.JSONDecodeError as exc:
+                logger.error(
+                    "🚫 execute_trade: NARROW receipt payload invalid JSON: %s",
+                    exc,
+                )
+                return "BLOCKED: Narrowing receipt payload corrupted"
+            except Exception as exc:
+                # Only log errors, don't block — receipt may legitimately not exist
+                logger.debug(
+                    "execute_trade: NARROW receipt lookup failed (may be ALLOW verdict): %s",
+                    exc,
+                )
+
     # Gap 2 fix / CAGE-SEC-008: verify and atomically consume the routing seal before executing.
     # verify_and_consume_seal() burns the single-use nonce in Redis, preventing replay attacks.
+    # Phase 3.2: Verify seal against the params that will actually be executed (narrowed or original)
     if seal:
         try:
-            await verify_and_consume_seal(seal, "execute_trade", params)
+            await verify_and_consume_seal(seal, "execute_trade", action_params)
         except SymbolicGovernorViolation as exc:
             logger.error(
                 "🔒 execute_trade_action: routing seal verification FAILED — "
@@ -394,8 +452,9 @@ async def execute_trade_action(
         return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
 
     # Validate TradeOrder before actuation
+    # Phase 3.2: Use action_params (either narrowed or original)
     try:
-        order = TradeOrder(**params)  # type: ignore[arg-type]
+        order = TradeOrder(**action_params)  # type: ignore[arg-type]
     except Exception as exc:
         logger.error("TradeOrder validation failed before actuation: %s", exc)
         return f"ERROR: invalid trade parameters — {exc}"
@@ -405,7 +464,13 @@ async def execute_trade_action(
     except Exception as exc:
         logger.error("Execution Error: %s", exc)
         if hasattr(symbolic_governor.safety_filter, "rollback_state"):
-            await symbolic_governor.safety_filter.rollback_state(amount)  # type: ignore[misc, func-returns-value]
+            raw_amt = action_params.get("amount")
+            rollback_amt = (
+                float(raw_amt)
+                if isinstance(raw_amt, (int, float, str))
+                else float(amount)
+            )
+            await symbolic_governor.safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
         return f"ERROR: {exc}"
 
 
