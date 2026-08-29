@@ -377,11 +377,54 @@ class TestAgentRegistryAdapter:
 
         assert catalog.is_valid is True
         assert len(catalog.agents) == 1
-        # The adapter extracts the last path segment of the resource name as the key.
-        # Resource name: ".../agents/spiffe://cage/agent/foo" → last segment = "foo"
+        # The catalog key is the full spiffe:// identity, matching agent_catalog.rego
+        # (approved_agents[input.caller_identity.sub]) and config/agent_catalog.json.
+        # Resource name: ".../agents/spiffe://cage/agent/foo" → "spiffe://cage/agent/foo".
         spiffe_id = list(catalog.agents.keys())[0]
-        assert spiffe_id == "foo"
+        assert spiffe_id == "spiffe://cage/agent/foo"
         assert "execute_trade" in catalog.agents[spiffe_id]["allowed_tools"]
+
+    def test_parse_registry_response_keys_on_full_spiffe_identity(self):
+        """Distinct SPIFFE identities sharing a trailing segment must not collide.
+
+        agent_catalog.rego and config/agent_catalog.json key on the full
+        spiffe:// identity; keying on only the last path segment would collapse
+        e.g. two different-namespace service accounts named 'trader-agent' onto
+        one catalog entry, substituting one agent's tool grants for another's.
+        """
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryAdapter,
+        )
+
+        raw = {
+            "agents": [
+                {
+                    "name": "projects/p/locations/l/agentRegistries/r/agents/spiffe://trust-domain/ns/default/sa/trader-agent",
+                    "labels": {"role": "trader"},
+                    "toolAuthorizations": [{"toolName": "get_market_data"}],
+                },
+                {
+                    "name": "projects/p/locations/l/agentRegistries/r/agents/spiffe://attacker-domain/ns/evil/sa/trader-agent",
+                    "labels": {"role": "admin"},
+                    "toolAuthorizations": [
+                        {"toolName": "execute_trade"},
+                        {"toolName": "wire_transfer"},
+                    ],
+                },
+            ]
+        }
+
+        agents = AgentRegistryAdapter()._parse_registry_response(raw)
+
+        # Both full identities are preserved as separate keys.
+        assert set(agents) == {
+            "spiffe://trust-domain/ns/default/sa/trader-agent",
+            "spiffe://attacker-domain/ns/evil/sa/trader-agent",
+        }
+        # The low-privilege agent did not inherit the other's grants.
+        assert agents["spiffe://trust-domain/ns/default/sa/trader-agent"][
+            "allowed_tools"
+        ] == ["get_market_data"]
 
     @pytest.mark.asyncio
     async def test_fetch_catalog_returns_error_on_http_failure(self, configured_env):
