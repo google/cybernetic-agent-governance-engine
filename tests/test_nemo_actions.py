@@ -55,6 +55,33 @@ def test_check_approval_token_action_fail_closed_on_exception():
     assert result is False, "Known bad token 'bad_sig' must be rejected"
 
 
+def test_check_approval_token_denies_unverifiable_token():
+    """A non-empty token with no thread_id/trade_id cannot be verified — DENY.
+
+    The token's HMAC binds thread_id:trade_id:expiry, so without those fields
+    the signature cannot be recomputed. A forged, unsigned string must not be
+    accepted just because it is non-empty.
+    """
+    from src.governed_financial_advisor.governance.nemo_actions import (
+        generate_approval_token,
+    )
+
+    # Forged token, no identity fields — must fail-closed.
+    assert _gfa_check_approval_token({"approval_token": "forged-not-signed"}) is False
+
+    # Even a genuinely signed token is unverifiable without the bound ids.
+    token = generate_approval_token("thread-1", "trade-abc")
+    assert _gfa_check_approval_token({"approval_token": token}) is False
+
+    # With the correct bound ids present it validates.
+    assert (
+        _gfa_check_approval_token(
+            {"approval_token": token, "thread_id": "thread-1", "trade_id": "trade-abc"}
+        )
+        is True
+    )
+
+
 def test_check_drawdown_limit_action_fail_closed_on_missing_data():
     """check_drawdown_limit must return False (fail-closed) when drawdown_pct is absent."""
     # No drawdown_pct key → fail-closed
