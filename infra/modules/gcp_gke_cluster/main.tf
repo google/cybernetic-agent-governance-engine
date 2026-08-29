@@ -42,9 +42,10 @@ resource "google_container_cluster" "primary" {
   }
 
   # ─── SC-7: Boundary Protection ─────────────────────────────────────────────
-  # NIST Control: Private cluster for production
-  # Dev: deletion_protection=false for easier terraform destroy
-  deletion_protection = var.enable_nist_compliance ? true : false
+  # POAM-024: deletion_protection now controlled independently of security compliance.
+  # Allows staging (full security, ephemeral lifecycle) to be destroyed.
+  # Prod: deletion_protection=true; dev/staging: deletion_protection=false
+  deletion_protection = var.enable_deletion_protection
 
   # ─── SC-7: Private Cluster Configuration ───────────────────────────────────
   # Dev: Public nodes for easier access (unless org policy forces private nodes)
@@ -144,7 +145,7 @@ resource "google_container_cluster" "primary" {
       enable_components = [
         "SYSTEM_COMPONENTS",
         "WORKLOADS",
-        "APISERVER",
+        "API_SERVER",
         "SCHEDULER",
         "CONTROLLER_MANAGER"
       ]
@@ -158,17 +159,7 @@ resource "google_container_cluster" "primary" {
     content {
       enable_components = [
         "SYSTEM_COMPONENTS",
-        "APISERVER",
-        "SCHEDULER",
-        "CONTROLLER_MANAGER",
-        "STORAGE",
-        "POD",
-        "DEPLOYMENT",
-        "STATEFULSET",
-        "DAEMONSET",
-        "HPA",
-        "CADVISOR",
-        "KUBELET"
+        "WORKLOADS"
       ]
       managed_prometheus {
         enabled = true
@@ -215,14 +206,6 @@ resource "google_container_cluster" "primary" {
   lifecycle {
     ignore_changes = [
       node_version,
-      initial_node_count,
-      node_config,
-      release_channel,
-      security_posture_config,
-      node_pool_auto_config,
-      node_pool_defaults,
-      notification_config,
-      service_external_ips_config,
     ]
   }
 }

@@ -50,18 +50,21 @@ cage_deployment_region = "US_FED"
 enable_nist_compliance         = true
 enable_eu_ecb_compliance       = false
 enable_apac_mas_compliance     = false
-enable_binary_authorization    = false # Phased rollout: enable after attestors & signing keys are established
+# POAM-024: HA decoupled from compliance — set explicitly true for production
+enable_high_availability       = true
+enable_deletion_protection     = true
+enable_binary_authorization    = true
 enable_audit_logging           = true
 enable_cmek                    = false # Enable when KMS key is configured
 enable_private_master_endpoint = false # Enable when VPN is configured
 enable_pod_security_standards  = true
-pod_security_level             = "baseline"
+pod_security_level             = "restricted"
 
-# Prod: Lock down to stable infrastructure CIDRs (internal management / VPN)
+# Prod: Lock down to corporate VPN only (REPLACE with your CIDR)
 authorized_networks = [
   {
-    cidr         = "0.0.0.0/0"
-    display_name = "public-control-plane"
+    cidr         = "10.0.0.0/8"
+    display_name = "Corporate VPN"
   }
 ]
 
@@ -87,8 +90,8 @@ gpu_node_pool_max_count     = 5
 gpu_node_pool_initial_count = 2
 gpu_node_pool_spot          = false # on-demand — production workloads must not be preempted
 
-# ─── Storage (Prod: Standard Persistent Disk RWO) ─────────────────────────────
-storage_class = "standard-rwo"
+# ─── Storage (Prod: Larger, Faster) ───────────────────────────────────────────
+storage_class = "pd-ssd"
 
 model_bucket_name = "" # Defaults to ${project_id}-models
 

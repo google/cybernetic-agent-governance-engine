@@ -68,11 +68,11 @@ module "minio" {
   root_password = var.minio_root_password
 
   # Dev: No resource limits
-  # Prod: Enforce limits
-  resources_limits_memory = var.environment == "prod" ? "4Gi" : ""
-  resources_limits_cpu    = var.environment == "prod" ? "2000m" : ""
+  # POAM-024: Resource limits and security context now controlled by enable_high_availability
+  resources_limits_memory = var.enable_high_availability ? "4Gi" : ""
+  resources_limits_cpu    = var.enable_high_availability ? "2000m" : ""
 
-  # Prod: Enable security context
+  # Security context remains environment-dependent (not HA-related)
   enable_security_context = var.environment == "prod"
 }
 
@@ -85,9 +85,9 @@ module "postgres" {
   storage_size            = var.postgres_storage_size
   storage_class           = var.storage_class
   enable_persistence      = true
-  enable_backup           = var.environment == "prod"
-  resources_limits_memory = var.environment == "prod" ? "4Gi" : ""
-  resources_limits_cpu    = var.environment == "prod" ? "2000m" : ""
+  enable_backup           = var.enable_high_availability
+  resources_limits_memory = var.enable_high_availability ? "4Gi" : ""
+  resources_limits_cpu    = var.enable_high_availability ? "2000m" : ""
 }
 
 # ─── Deploy Redis Cache ────────────────────────────────────────────────────────
@@ -98,11 +98,11 @@ module "redis" {
   namespace               = module.namespace.name
   storage_size            = var.redis_storage_size
   storage_class           = var.storage_class
-  architecture            = var.environment == "prod" ? "replication" : "standalone"
-  replica_count           = var.environment == "prod" ? 3 : 1
-  enable_persistence      = var.environment == "prod"
-  resources_limits_memory = var.environment == "prod" ? "2Gi" : ""
-  resources_limits_cpu    = var.environment == "prod" ? "1000m" : ""
+  architecture            = var.enable_high_availability ? "replication" : "standalone"
+  replica_count           = var.enable_high_availability ? 3 : 1
+  enable_persistence      = var.enable_high_availability
+  resources_limits_memory = var.enable_high_availability ? "2Gi" : ""
+  resources_limits_cpu    = var.enable_high_availability ? "1000m" : ""
 }
 
 # ─── Deploy vLLM Inference Engine ──────────────────────────────────────────────
@@ -117,7 +117,7 @@ module "vllm" {
   model_path      = var.vllm_model_path
   gpu_count       = var.vllm_gpu_count
   replicas        = var.vllm_replicas
-  enable_pdb      = var.environment == "prod"
+  enable_pdb      = var.enable_high_availability
 
   # Node selector and tolerations for GPU nodes
   node_selector = var.vllm_node_selector
@@ -132,8 +132,8 @@ module "langfuse" {
   namespace       = module.namespace.name
   database_url    = module.postgres.connection_string
   nextauth_url    = var.langfuse_nextauth_url
-  web_replicas    = var.environment == "prod" ? 2 : 1
-  worker_replicas = var.environment == "prod" ? 2 : 1
+  web_replicas    = var.enable_high_availability ? 2 : 1
+  worker_replicas = var.enable_high_availability ? 2 : 1
 
   depends_on = [module.postgres]
 }
@@ -148,7 +148,7 @@ module "compliance_bridge" {
   namespace     = module.namespace.name
   image         = var.compliance_bridge_image
   langfuse_host = module.langfuse.web_url
-  replicas      = var.environment == "prod" ? 2 : 1
+  replicas      = var.enable_high_availability ? 2 : 1
 
   depends_on = [module.langfuse]
 }
@@ -159,7 +159,7 @@ module "opa" {
   source = "../../modules/opa_policy"
 
   namespace = module.namespace.name
-  replicas  = var.environment == "prod" ? 2 : 1
+  replicas  = var.enable_high_availability ? 2 : 1
 
   # Optional: Add custom policies
   policy_files = var.opa_policy_files

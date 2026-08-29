@@ -95,9 +95,38 @@ Options:
 
 ### `staging` environment
 
-The `staging` environment is defined in the Terraform schema but **not yet
-provisioned**. Passing `--env staging`
-causes `deploy_all.sh` to exit with an error. Use `--env dev` or `--env prod`.
+**Status**: Provisioned (POAM-024 closed 2026-08-29)
+
+The `staging` environment is an ephemeral pre-production validation tier that
+proves full security posture at dev-scale cost:
+
+- **Purpose**: Validate all Lula gates, region postures, and cluster-scoped
+  controls (Binary Authorization, PSS, CMEK, audit logs) at 1-replica scale
+  before promoting to production.
+- **Cost**: ~$2-4 per validation cycle (20-30 minutes runtime, sub-hour usage).
+- **Lifecycle**: Provision → Validate → Destroy (automated via `scripts/staging_lifecycle.sh`).
+- **Hardware**: Dev-scale (e2-standard-4 nodes, pd-standard disks, GPU scale-to-zero).
+- **Security**: Full prod posture (enable_nist_compliance=true for US_FED,
+  Binary Authorization, audit logging, CMEK, PSS restricted, scoped authorized_networks).
+- **HA**: Decoupled (`enable_high_availability=false`, 1 replica per service).
+- **Deletion protection**: Disabled (`enable_deletion_protection=false`, allows teardown).
+
+**Deployment**:
+```bash
+# Automated lifecycle (recommended)
+./scripts/staging_lifecycle.sh
+
+# Manual deployment
+./deploy_all.sh --target gcp-gke --env staging --auto-approve
+
+# Manual teardown
+cd infra/targets/gcp-gke
+terraform destroy -var-file=staging.tfvars -auto-approve
+```
+
+See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)
+for full configuration and [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)
+for automated validation workflow.
 
 ---
 

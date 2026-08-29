@@ -77,6 +77,9 @@ cage_deployment_region = "EU_ECB"
 enable_nist_compliance         = false
 enable_eu_ecb_compliance       = true  # DEP-20: activates DORA Art. 10 + GDPR Art. 32 controls
 enable_apac_mas_compliance     = false
+# POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
+enable_high_availability       = false
+enable_deletion_protection     = false
 enable_binary_authorization    = false
 enable_audit_logging           = true  # DORA Art. 10 — mandatory for EU
 enable_cmek                    = false

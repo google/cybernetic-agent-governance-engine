@@ -18,6 +18,9 @@ master_ipv4_cidr_block = "172.16.0.0/28"
 
 # ─── Security Posture (Dev: Enabled to satisfy Org Policy) ──────────────────────
 # enable_nist_compliance         = true # Dynamically injected by deploy_all.sh based on --env posture
+# POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
+enable_high_availability       = false
+enable_deletion_protection     = false
 enable_binary_authorization    = false
 enable_audit_logging           = false
 enable_cmek                    = false
