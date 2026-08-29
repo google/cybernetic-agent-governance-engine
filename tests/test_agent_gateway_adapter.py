@@ -683,6 +683,10 @@ class TestNarrowHTTPResponse:
         """NARROW verdict → HTTP 200 OK."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
 
+        # Mock Redis client for NARROW receipt storage
+        mock_redis = AsyncMock()
+        mock_redis.setex = AsyncMock(return_value=True)
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -709,7 +713,8 @@ class TestNarrowHTTPResponse:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+                with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
+                    resp = await handle_check_request(body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -722,6 +727,10 @@ class TestNarrowHTTPResponse:
         """NARROW response includes X-Governance-Narrowed: true header."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
 
+        # Mock Redis client for NARROW receipt storage
+        mock_redis = AsyncMock()
+        mock_redis.setex = AsyncMock(return_value=True)
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -748,7 +757,8 @@ class TestNarrowHTTPResponse:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+                with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
+                    resp = await handle_check_request(body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -808,6 +818,10 @@ class TestNarrowHTTPResponse:
         """NARROW response body includes both original_params and narrowed_params."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
 
+        # Mock Redis client for NARROW receipt storage
+        mock_redis = AsyncMock()
+        mock_redis.setex = AsyncMock(return_value=True)
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -834,7 +848,8 @@ class TestNarrowHTTPResponse:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+                with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
+                    resp = await handle_check_request(body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
