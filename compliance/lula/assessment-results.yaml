@@ -2,13 +2,253 @@ assessment-results:
   import-ap:
     href: ""
   metadata:
-    last-modified: 2026-07-27T09:38:56.362355-04:00
+    last-modified: 2026-08-29T15:18:29.449235-04:00
     oscal-version: 1.1.3
     published: 2026-07-01T09:19:14.704178-04:00
     remarks: Assessment Results generated from Lula
     title: '[System Name] Security Assessment Results (SAR)'
     version: 0.0.1
   results:
+    - description: Assessment results for performing Validations with Lula version v0.16.0
+      findings:
+        - description: |
+            Control Implementation: 22ce9e77-15c9-5ba5-9d91-a0b0191ebb44 / Implemented Requirement: 18e5a104-64e5-58d5-b8c4-dcd91b3878ce
+            Automated lula validation for AC2.
+          related-observations:
+            - observation-uuid: 3b49218a-9fab-4e73-b7e5-ac78f298fcae
+          target:
+            status:
+              reason: fail
+              state: not-satisfied
+            target-id: ac2
+            type: objective-id
+          title: 'Validation Result - Control: ac2'
+          uuid: fbd1445c-a6d7-4d77-b5b2-30b04e8a4b4b
+      observations:
+        - collected: 2026-08-29T15:18:29.377369-04:00
+          description: |
+            [TEST]: 1fcd8ff2-3d20-5d34-a450-0f78901b8039 - lula-validation-error
+          methods:
+            - TEST
+          props:
+            - name: validation
+              ns: https://docs.lula.dev/oscal/ns
+              value: '#'
+          relevant-evidence:
+            - description: |
+                Result: not-satisfied
+              remarks: |
+                Error getting Lula validation #1fcd8ff2-3d20-5d34-a450-0f78901b8039: schema is invalid: [{/properties/domain/$ref/properties/kubernetes-spec/$ref/properties/resources/items/$ref/required https://github.com/defenseunicorns/lula/tree/main/src/pkg/schemas/validation.json#/definitions/resource/required /domain/kubernetes-spec/resources/0 "missing property 'resource-rule'" <nil>} {/properties/domain/$ref/properties/kubernetes-spec/$ref/properties/resources/items/$ref/required https://github.com/defenseunicorns/lula/tree/main/src/pkg/schemas/validation.json#/definitions/resource/required /domain/kubernetes-spec/resources/1 "missing property 'resource-rule'" <nil>}]
+          uuid: 3b49218a-9fab-4e73-b7e5-ac78f298fcae
+      props:
+        - name: threshold
+          ns: https://docs.lula.dev/oscal/ns
+          value: "false"
+        - name: target
+          ns: https://docs.lula.dev/oscal/ns
+          value: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      reviewed-controls:
+        control-selections:
+          - description: Controls Assessed by Lula
+            include-controls:
+              - control-id: ac2
+        description: Controls validated
+        remarks: Validation performed may indicate full or partial satisfaction
+      start: 2026-08-29T15:18:29.377483-04:00
+      title: Lula Validation Result
+      uuid: 352e2738-70e6-4af3-8a67-8280f23729d8
+    - description: Assessment results for performing Validations with Lula version v0.16.0
+      findings:
+        - description: |
+            Control Implementation: a3697688-6e46-5205-910e-22c7b44f6bdd / Implemented Requirement: 6915c619-071a-51ea-a57f-60232a68751d
+            Automated lula validation for AARM VECTORS.
+          related-observations:
+            - observation-uuid: 24e00e4a-93fe-4e20-935c-1bb155a24238
+          target:
+            status:
+              reason: fail
+              state: not-satisfied
+            target-id: aarm-vectors
+            type: objective-id
+          title: 'Validation Result - Control: aarm-vectors'
+          uuid: 683089c7-e2fc-4eb9-8dfc-ae83c47b9349
+      observations:
+        - collected: 2026-08-29T15:18:29.118837-04:00
+          description: |
+            [TEST]: ec32ba67-e5a7-50b4-8ff5-eca8aac8da66 - lula-validation-error
+          methods:
+            - TEST
+          props:
+            - name: validation
+              ns: https://docs.lula.dev/oscal/ns
+              value: '#'
+          relevant-evidence:
+            - description: |
+                Result: not-satisfied
+              remarks: |
+                Error getting Lula validation #ec32ba67-e5a7-50b4-8ff5-eca8aac8da66: schema is invalid: [{/properties/domain/$ref/properties/api-spec/$ref/properties/requests/type https://github.com/defenseunicorns/lula/tree/main/src/pkg/schemas/validation.json#/definitions/api-spec/properties/requests/type /domain/api-spec/requests "got null, want array" <nil>}]
+          uuid: 24e00e4a-93fe-4e20-935c-1bb155a24238
+      props:
+        - name: threshold
+          ns: https://docs.lula.dev/oscal/ns
+          value: "false"
+        - name: target
+          ns: https://docs.lula.dev/oscal/ns
+          value: https://cloudsecurityalliance.org/research/working-groups/artificial-intelligence
+      reviewed-controls:
+        control-selections:
+          - description: Controls Assessed by Lula
+            include-controls:
+              - control-id: aarm-vectors
+        description: Controls validated
+        remarks: Validation performed may indicate full or partial satisfaction
+      start: 2026-08-29T15:18:29.118953-04:00
+      title: Lula Validation Result
+      uuid: 47b8c679-1005-4173-88a1-04de950b6ece
+    - description: Assessment results for performing Validations with Lula version v0.16.0
+      findings:
+        - description: |
+            Control Implementation: 11a88f5e-1f94-5774-94b9-617f7870e62a / Implemented Requirement: 4332a913-0441-5d14-8df5-ba79df3749d5
+            Automated lula validation for A92.
+          related-observations:
+            - observation-uuid: 0dc32855-c2bb-48cc-a975-7b083dc82cb0
+          target:
+            status:
+              reason: fail
+              state: not-satisfied
+            target-id: a92
+            type: objective-id
+          title: 'Validation Result - Control: a92'
+          uuid: add9b875-837d-41c3-854e-f71b10d2b2ff
+      observations:
+        - collected: 2026-08-29T15:18:28.851509-04:00
+          description: |
+            [TEST]: 189e411a-b3fb-5db2-b787-349693054e29 - lula-validation-error
+          methods:
+            - TEST
+          props:
+            - name: validation
+              ns: https://docs.lula.dev/oscal/ns
+              value: '#'
+          relevant-evidence:
+            - description: |
+                Result: not-satisfied
+              remarks: |
+                Error getting Lula validation #189e411a-b3fb-5db2-b787-349693054e29: schema is invalid: [{/properties/domain/$ref/properties/api-spec/$ref/properties/requests/type https://github.com/defenseunicorns/lula/tree/main/src/pkg/schemas/validation.json#/definitions/api-spec/properties/requests/type /domain/api-spec/requests "got null, want array" <nil>}]
+          uuid: 0dc32855-c2bb-48cc-a975-7b083dc82cb0
+      props:
+        - name: threshold
+          ns: https://docs.lula.dev/oscal/ns
+          value: "false"
+        - name: target
+          ns: https://docs.lula.dev/oscal/ns
+          value: https://www.iso.org/standard/81230.html
+      reviewed-controls:
+        control-selections:
+          - description: Controls Assessed by Lula
+            include-controls:
+              - control-id: a92
+        description: Controls validated
+        remarks: Validation performed may indicate full or partial satisfaction
+      start: 2026-08-29T15:18:28.851642-04:00
+      title: Lula Validation Result
+      uuid: 59e53d85-8a15-4c73-aab8-cc967e25ea72
+    - description: Assessment results for performing Validations with Lula version v0.16.0
+      findings:
+        - description: |
+            Control Implementation: 1ece732e-9180-52e4-a04d-bb92f5e01929 / Implemented Requirement: 76dea904-7d5c-53b3-b5d8-2c31702ff8ca
+            Automated lula validation for A53.
+          related-observations:
+            - observation-uuid: 3b722da3-c8c1-4645-8019-b1a25b5452bd
+          target:
+            status:
+              reason: fail
+              state: not-satisfied
+            target-id: a53
+            type: objective-id
+          title: 'Validation Result - Control: a53'
+          uuid: 92ee37c5-1a7b-4043-bda3-0350b3cf45bd
+      observations:
+        - collected: 2026-08-29T15:18:28.5786-04:00
+          description: |
+            [TEST]: eb760977-813f-5999-af3f-dcd76b48c7aa - lula-validation-error
+          methods:
+            - TEST
+          props:
+            - name: validation
+              ns: https://docs.lula.dev/oscal/ns
+              value: '#'
+          relevant-evidence:
+            - description: |
+                Result: not-satisfied
+              remarks: |
+                Error getting Lula validation #eb760977-813f-5999-af3f-dcd76b48c7aa: schema is invalid: [{/properties/domain/$ref/properties/api-spec/$ref/properties/requests/type https://github.com/defenseunicorns/lula/tree/main/src/pkg/schemas/validation.json#/definitions/api-spec/properties/requests/type /domain/api-spec/requests "got null, want array" <nil>}]
+          uuid: 3b722da3-c8c1-4645-8019-b1a25b5452bd
+      props:
+        - name: threshold
+          ns: https://docs.lula.dev/oscal/ns
+          value: "false"
+        - name: target
+          ns: https://docs.lula.dev/oscal/ns
+          value: https://www.iso.org/standard/81230.html
+      reviewed-controls:
+        control-selections:
+          - description: Controls Assessed by Lula
+            include-controls:
+              - control-id: a53
+        description: Controls validated
+        remarks: Validation performed may indicate full or partial satisfaction
+      start: 2026-08-29T15:18:28.578713-04:00
+      title: Lula Validation Result
+      uuid: 876a9be9-c7b8-4f21-9f0d-732b0892f0d2
+    - description: Assessment results for performing Validations with Lula version v0.16.0
+      findings:
+        - description: |
+            Control Implementation: aa0f365e-7e2d-538a-95d1-c994b78ff302 / Implemented Requirement: 6a8eb074-850a-57b0-8198-0b7a929b92b1
+            Automated lula validation for A52.
+          related-observations:
+            - observation-uuid: b59e4f3d-98a7-4f51-b4d3-a1dd2267e07b
+          target:
+            status:
+              reason: fail
+              state: not-satisfied
+            target-id: a52
+            type: objective-id
+          title: 'Validation Result - Control: a52'
+          uuid: e3350d25-d9cd-43b4-8506-85d9bd8542cf
+      observations:
+        - collected: 2026-08-29T15:18:28.3126-04:00
+          description: |
+            [TEST]: 40037dad-ee78-523f-97dc-1f73fabf7d41 - lula-validation-error
+          methods:
+            - TEST
+          props:
+            - name: validation
+              ns: https://docs.lula.dev/oscal/ns
+              value: '#'
+          relevant-evidence:
+            - description: |
+                Result: not-satisfied
+              remarks: |
+                Error getting Lula validation #40037dad-ee78-523f-97dc-1f73fabf7d41: schema is invalid: [{/properties/domain/$ref/properties/api-spec/$ref/properties/requests/type https://github.com/defenseunicorns/lula/tree/main/src/pkg/schemas/validation.json#/definitions/api-spec/properties/requests/type /domain/api-spec/requests "got null, want array" <nil>}]
+          uuid: b59e4f3d-98a7-4f51-b4d3-a1dd2267e07b
+      props:
+        - name: threshold
+          ns: https://docs.lula.dev/oscal/ns
+          value: "false"
+        - name: target
+          ns: https://docs.lula.dev/oscal/ns
+          value: https://www.iso.org/standard/81230.html
+      reviewed-controls:
+        control-selections:
+          - description: Controls Assessed by Lula
+            include-controls:
+              - control-id: a52
+        description: Controls validated
+        remarks: Validation performed may indicate full or partial satisfaction
+      start: 2026-08-29T15:18:28.313738-04:00
+      title: Lula Validation Result
+      uuid: 943a3a90-a376-4516-92ee-6b93ce273301
     - description: Assessment results for performing Validations with Lula version v0.16.0
       findings:
         - description: |
@@ -11385,4 +11625,4 @@ assessment-results:
       start: 2026-07-01T09:19:14.704173-04:00
       title: Lula Validation Result
       uuid: c9864669-1946-45b7-a366-fede562dc54c
-  uuid: 8a5594ff-2d41-46c6-9f4f-3d86bb6c2693
+  uuid: 42da1cff-9549-4135-9487-76a0e7eb2e57
