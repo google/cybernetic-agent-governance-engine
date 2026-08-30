@@ -1,0 +1,240 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+system:
+  name: "CAGE Financial Advisor"
+  version: "1.1.0"
+  description: >
+    AI-powered financial advisor operating in regulated capital markets.
+    The controller is the LangGraph multi-agent pipeline; the controlled
+    process is the financial markets / banking ledger.
+  controller: "Financial AI Agent (LangGraph Supervisor)"
+  controlled_process: "Financial Markets / Banking Ledger"
+  sensors:
+    - "Market Data Feed"
+    - "OPA Policy Engine"
+    - "DoWhy Causal Gatekeeper"
+
+hazards:
+  - id: H-1
+    description: "Unauthorized financial transaction executed."
+    severity: critical
+  - id: H-2
+    description: "Trade executed on stale or invalid market data."
+    severity: high
+  - id: H-4
+    description: "Portfolio enters insolvency due to excessive drawdown."
+    severity: critical
+  - id: H-5
+    description: "Market liquidity impacted by oversized order (slippage)."
+    severity: high
+
+control_actions:
+  - name: execute_trade
+    description: "Execute a buy or sell order on the financial market."
+    params:
+      - name: approval_token
+        type: string
+        required: true
+      - name: amount
+        type: float
+        required: true
+      - name: symbol
+        type: string
+        required: true
+      - name: quantity
+        type: float
+        required: false
+      - name: portfolio_total
+        type: float
+        required: false
+      - name: drawdown
+        type: float
+        required: false
+      - name: latency_ms
+        type: float
+        required: false
+      - name: order_size
+        type: float
+        required: false
+      - name: daily_vol
+        type: float
+        required: false
+      - name: trader_role
+        type: string
+        required: true
+      - name: risk_assessed
+        type: boolean
+        required: false
+      - name: compliance_checked
+        type: boolean
+        required: false
+      - name: confidence
+        type: float
+        required: false
+      - name: currency
+        type: string
+        required: false
+
+unsafe_control_actions:
+  - id: UCA-2
+    action: execute_trade
+    uca_type: wrong_timing
+    hazard_refs: [H-2]
+    description: "Agent executes trade with stale market data (latency > threshold)."
+    # FTRA: execute_trade is an external financial commitment — irreversible once
+    # the order reaches the exchange matching engine.  Any plan that reaches this
+    # action inherits worst-case classification from T₀.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      param: latency_ms
+      operator: greater_than
+      threshold_ref: stpa.max_latency_ms
+    enforcement: [opa, python]
+    opa_rule:
+      decision: DENY
+      message: "UCA-2: Market data latency exceeds maximum allowable threshold."
+
+  - id: UCA-3
+    action: execute_trade
+    uca_type: unsafe_action
+    hazard_refs: [H-3]
+    description: "Agent outputs PII to user interface."
+    # FTRA: execute_trade — same classification as UCA-2 (most restrictive wins).
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      semantic_pattern: "output_contains_pii"
+    enforcement: [nemo]
+    nemo_rail:
+      flow_name: block_pii_output
+      message: "I cannot share personal information in my response."
+
+  - id: UCA-4
+    action: execute_trade
+    uca_type: stopped_too_soon
+    hazard_refs: [H-2]
+    description: "Agent debits account but fails to credit asset (atomic failure)."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      semantic_pattern: "partial_transaction_detected"
+    enforcement: [nemo, langgraph]
+    nemo_rail:
+      flow_name: block_partial_transaction
+      message: "Transaction integrity check failed. Stopping execution."
+    # LangGraph Saga pattern: WAL forward node + idempotent compensating node.
+    # The compiler generates:
+    #   forward_execute_trade_node_uca_4  — writes PENDING, calls API, confirms COMPLETED
+    #   compensate_reverse_trade_node_uca_4 — idempotent rollback via idempotency_key
+    #   saga_router_node                  — centralized LIFO router + ghost-state recovery
+    langgraph_saga:
+      forward_action: execute_trade
+      compensating_action: reverse_trade
+      # SR 26-2 Gap 2: execution_type=mcp_tool causes the compiler to emit a real
+      # async GatewayMCPClient.call_tool() invocation instead of a hollow stub.
+      # The MCP call traverses the full 7-layer governance pipeline before the trade
+      # is executed, satisfying SR 26-2's requirement for atomic transaction guarantees
+      # to be provable in production rather than merely declared in policy documents.
+      execution_type: mcp_tool
+      mcp_tool_name: execute_trade_action
+      parameter_mapping:
+        forward.transaction_id: compensating.target_tx_id
+        forward.amount: compensating.refund_amount
+        forward.account_id: compensating.account_id
+
+  - id: UCA-5
+    action: execute_trade
+    uca_type: unsafe_action
+    hazard_refs: [H-4]
+    description: "Agent executes buy order when daily drawdown exceeds limit."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      param: drawdown
+      operator: greater_than
+      threshold_ref: stpa.uca5_drawdown_threshold_pct
+    enforcement: [opa, python]
+    opa_rule:
+      decision: DENY
+      message: "UCA-5: Drawdown exceeds maximum threshold — trade blocked."
+
+  - id: UCA-6
+    action: execute_trade
+    uca_type: wrong_timing
+    hazard_refs: [H-5]
+    description: "Agent submits market order exceeding allowable fraction of daily volume."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      composite: "order_size > threshold_ref(stpa.uca6_max_order_volume_fraction) * daily_vol"
+    enforcement: [opa, python]
+    opa_rule:
+      decision: DENY
+      message: "UCA-6: Order size exceeds maximum daily volume fraction — slippage risk."
+
+  - id: UCA-8
+    action: execute_trade
+    uca_type: wrong_timing
+    hazard_refs: [H-1, H-2]
+    description: "Agent executes trade before risk assessment is complete."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      param: risk_assessed
+      operator: is_false
+    enforcement: [python]
+
+  - id: UCA-9
+    action: execute_trade
+    uca_type: wrong_timing
+    hazard_refs: [H-1]
+    description: "Agent executes trade with compliance check bypassed."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      param: compliance_checked
+      operator: is_false
+    enforcement: [python]
+
+safety_constraints:
+  - id: FIN-1
+    description: "Cannot sell more than max_sell_portfolio_fraction of portfolio without explicit confirmation."
+    logic: "sell_percentage <= stpa.max_sell_portfolio_fraction"
+    scope: [execute_sell]
+
+  - id: FIN-2
+    uca_ref: UCA-2
+    description: "Agent must not execute trade if latency exceeds max_latency_ms."
+    logic: "latency_ms <= stpa.max_latency_ms"
+    scope: [execute_trade]
+
+rbac_rules:
+  roles:
+    - name: junior
+      allowed_actions: [execute_trade, market_analysis]
+      trade_limits:
+        allow_below: 5000
+        manual_review_below: 10000
+        deny_above: 10000
+      restrictions:
+        - currency_denylist: [BTC]
+
+    - name: senior
+      allowed_actions: [execute_trade, market_analysis, write_db]
+      trade_limits:
+        allow_below: 500000
+        manual_review_below: 1000000
+        deny_above: 1000000
+      restrictions:
+        - currency_denylist: [BTC]

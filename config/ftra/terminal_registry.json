@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "generated_at": "2026-08-17T15:58:48.003875+00:00",
+  "generated_at": "2026-08-30T23:19:54.365140+00:00",
   "system": "CAGE Financial Advisor",
   "system_version": "1.1.0",
   "fail_closed_note": "Any action absent from this registry is treated as IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime.",

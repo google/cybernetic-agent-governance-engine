@@ -63,6 +63,7 @@ logger = logging.getLogger("check_policy_drift")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
+_DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_OPA_OUT = _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego"
 _DEFAULT_HASH_FILE = _REPO_ROOT / "config" / "opa" / ".policy_hash"
 _DEFAULT_AGP_OUT = _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt"
@@ -96,14 +97,17 @@ def check_compiled_artifact_drift(
     opa_file: Path,
     hash_file: Path,
     update_baseline: bool = False,
+    input_dir: Path | None = None,
 ) -> int:
     """Check for drift between the compiled OPA artifact and the stored baseline hash.
 
     Args:
-        input_path: Path to the STPA control structure YAML.
+        input_path: Path to the STPA control structure YAML (used when input_dir is None).
         opa_file: Path to the compiled OPA Rego file.
         hash_file: Path to the stored baseline hash file.
         update_baseline: If True, update the stored hash instead of checking.
+        input_dir: If set, load all *.yaml files from this directory and merge them
+                   deterministically instead of using input_path.
 
     Returns:
         0 if no drift, 1 if drift detected, 2 on fatal error.
@@ -114,9 +118,22 @@ def check_compiled_artifact_drift(
         from src.gateway.governance.stpa_compiler import (
             compile_control_structure,
             load_control_structure,
+            load_control_structures,
         )
 
-        cs = load_control_structure(input_path)
+        if input_dir is not None:
+            yaml_files = sorted(input_dir.rglob("*.yaml"))
+            if not yaml_files:
+                logger.error("No YAML files found under %s", input_dir)
+                return 2
+            logger.info(
+                "Multi-source mode: merging %d files from %s",
+                len(yaml_files),
+                input_dir,
+            )
+            cs = load_control_structures(yaml_files)
+        else:
+            cs = load_control_structure(input_path)
         result = compile_control_structure(cs, ["opa"])
 
         if result.errors:
@@ -261,6 +278,17 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Path to STPA control structure YAML (default: {_DEFAULT_INPUT})",
     )
     parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of STPA YAML source files; all *.yaml files are merged "
+            "deterministically (mutually exclusive with --input). "
+            f"Default directory: {_DEFAULT_INPUT_DIR}"
+        ),
+    )
+    parser.add_argument(
         "--opa-file",
         type=Path,
         default=_DEFAULT_OPA_OUT,
@@ -300,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         opa_file=args.opa_file,
         hash_file=args.hash_file,
         update_baseline=args.update_baseline,
+        input_dir=args.input_dir,
     )
 
     if args.update_baseline:

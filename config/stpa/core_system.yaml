@@ -1,0 +1,136 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+system:
+  name: "CAGE Financial Advisor"
+  version: "1.1.0"
+  description: >
+    AI-powered financial advisor operating in regulated capital markets.
+    The controller is the LangGraph multi-agent pipeline; the controlled
+    process is the financial markets / banking ledger.
+  controller: "Financial AI Agent (LangGraph Supervisor)"
+  controlled_process: "Financial Markets / Banking Ledger"
+  sensors:
+    - "Market Data Feed"
+    - "OPA Policy Engine"
+    - "DoWhy Causal Gatekeeper"
+
+# ---------------------------------------------------------------------------
+# Hazards — top-level loss scenarios (H-N labels from STPA)
+# ---------------------------------------------------------------------------
+hazards:
+  - id: H-3
+    description: "Personally identifiable information disclosed to unauthorized party."
+    severity: high
+  - id: H-6
+    description: "Prompt injection causes agent to bypass governance controls."
+    severity: critical
+  - id: H-7
+    # ISO-002: TokenQuotaProxy fail-CLOSED scenario
+    # Added 2026-06-23 per ISO 42001 §A.8.4 universal control gap (ISO-002).
+    # Redis unavailability causes quota enforcement to fail-OPEN, allowing
+    # uncapped token spending that could exhaust inference budget and enable
+    # denial-of-governance via resource exhaustion.
+    # Compensating action: TOKEN_QUOTA_FAIL_CLOSED=true in TokenQuotaProxy Deployment.
+    description: "TokenQuotaProxy Redis connection failure causes quota enforcement to fail-OPEN, allowing uncapped token spending (resource exhaustion / denial-of-governance)."
+    severity: high
+
+# ---------------------------------------------------------------------------
+# Control Actions — the actuators the controller can invoke
+# ---------------------------------------------------------------------------
+control_actions:
+  - name: write_db
+    description: "Write a record to the production database."
+    params:
+      - name: approval_token
+        type: string
+        required: true
+      - name: table
+        type: string
+        required: true
+      - name: payload
+        type: object
+        required: true
+
+  - name: market_analysis
+    description: "Read-only query for market intelligence."
+    params:
+      - name: symbol
+        type: string
+        required: true
+      - name: timeframe
+        type: string
+        required: false
+
+  - name: prompt_injection_check
+    description: "Evaluate user input for adversarial content."
+    params:
+      - name: content
+        type: string
+        required: true
+      - name: semantic_score
+        type: float
+        required: false
+
+# ---------------------------------------------------------------------------
+# Unsafe Control Actions (UCAs)
+# ---------------------------------------------------------------------------
+unsafe_control_actions:
+  - id: UCA-1
+    action: write_db
+    uca_type: unsafe_action
+    hazard_refs: [H-1]
+    description: "Agent executes write operation without a signed approval token."
+    # FTRA: write_db commits a durable record to the production database.
+    # Once written, the record cannot be silently undone — it requires an explicit
+    # compensating write (audit trail preserved).  Classified IRREVERSIBLE_TERMINAL.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    condition:
+      param: approval_token
+      operator: is_null
+    enforcement: [opa, python]
+    opa_rule:
+      decision: DENY
+      message: "UCA-1: write_db requires a signed approval_token."
+
+  - id: UCA-7
+    action: prompt_injection_check
+    uca_type: unsafe_action
+    hazard_refs: [H-6]
+    description: "Adversarial prompt injection score exceeds detection threshold."
+    # FTRA: prompt_injection_check is a read-only evaluation — it does not commit
+    # any external state.  Classified READ_ONLY so plans that only reach this
+    # action are not unnecessarily escalated to HITL.
+    terminal_classification: READ_ONLY
+    condition:
+      param: semantic_score
+      operator: greater_than
+      threshold: 0.85
+    enforcement: [opa, nemo]
+    opa_rule:
+      decision: GOVERNANCE_VIOLATION
+      message: "UCA-7: Prompt injection detected — governance violation."
+    nemo_rail:
+      flow_name: block_prompt_injection
+      message: "I cannot process this request as it appears to be attempting to override my instructions."
+
+# ---------------------------------------------------------------------------
+# Safety Constraints
+# ---------------------------------------------------------------------------
+safety_constraints:
+  - id: SC-1
+    uca_ref: UCA-1
+    description: "The Agent must never execute a write to production DB without a signed approval token."
+    logic: "has_approval_token == True"
+    scope: [write_db, delete_db]
