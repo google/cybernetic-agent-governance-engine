@@ -22,7 +22,12 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
+
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 
 @dataclass(frozen=True)
@@ -176,6 +181,216 @@ class PauseReceipt:
             object.__setattr__(self, "proof_hash", hashlib.sha256(canon).hexdigest())
 
 
+# ---------------------------------------------------------------------------
+# Violation — structured domain-tier violation record (D8 / F5 fix)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Violation:
+    """Structured violation emitted by a GovernanceTierPlugin.
+
+    Every ``evaluate()`` or ``commit()`` call on a domain tier returns a
+    (possibly empty) list of ``Violation`` objects.  A non-empty list causes
+    the action to be denied; ``needs_human_review`` routes the denial to the
+    DEFER/human-review queue rather than an immediate DENY.
+
+    This replaces ad-hoc violation strings with a structured record that
+    preserves the tier name, machine-readable code, human-readable message,
+    and recoverability context — enabling the ``_rollback_committed()`` method
+    to distinguish transient failures from non-recoverable resource
+    inconsistencies.
+    """
+
+    tier: str  # e.g. "cbf", "fiscal", "consensus", "causal"
+    code: str  # machine-readable, e.g. "CBF_BARRIER_VIOLATED", "ROLLBACK_FAILED"
+    message: str  # human-readable description
+    recoverable: bool = True
+    needs_human_review: bool = False
+
+
+# ---------------------------------------------------------------------------
+# GovernanceTierPlugin — domain-specific governance tier protocol
+# ---------------------------------------------------------------------------
+
+
+class GovernanceTierPlugin(Protocol):
+    """Protocol for a domain-specific governance evaluation tier.
+
+    Domain plugins (e.g. ``cage_finance``) implement this protocol for each
+    governance tier they contribute to the kernel.  Tiers are registered via
+    ``SymbolicGovernor.register_domain_tier()`` at startup and are executed in
+    ``(phase, order, tier_name)`` order during ``_run_checks()``.
+
+    Phase semantics:
+        - **Phase 1** (``phase == 1``): read-only validation.  ``evaluate()``
+          is called; ``commit()`` and ``rollback()`` are never called.
+        - **Phase 2** (``phase == 2``): atomic mutation.  ``commit()`` is
+          called if all Phase 1 tiers passed.  On failure, ``rollback()`` is
+          called in LIFO order on all previously committed Phase 2 tiers.
+
+    The ``order`` property (D5 fix) is the explicit integer ordering value
+    that corresponds to the paper's tier numbering.  It replaces the v1
+    alphabetic ``tier_name`` sort, which silently inverted the Consensus →
+    Causal sequence asserted by ``proof/model.py``.
+    """
+
+    @property
+    def tier_name(self) -> str:
+        """Stable identifier for this tier (e.g. 'cbf', 'fiscal')."""
+        ...
+
+    @property
+    def phase(self) -> int:
+        """1 = read-only validation, 2 = atomic mutation."""
+        ...
+
+    @property
+    def order(self) -> int:
+        """Explicit integer tier order matching the formal model.
+
+        Lower values run first within the same phase.  The ``tier_name`` is
+        used only as a deterministic tie-break when two tiers share the same
+        ``(phase, order)`` pair.
+        """
+        ...
+
+    def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+        """Return True if this tier has governance authority over the action."""
+        ...
+
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        """Phase 1: read-only evaluation.  Return violations (may be empty)."""
+        ...
+
+    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        """Phase 2: atomic state mutation.  Return violations on failure."""
+        ...
+
+    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+        """Phase 2: undo a prior ``commit()`` — called in LIFO order on failure."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# CagePlugin — capability plugin discovered via entry points (D7 fix)
+# ---------------------------------------------------------------------------
+
+CAGE_PLUGIN_API_VERSION = "1.0"
+
+
+@runtime_checkable
+class CagePlugin(Protocol):
+    """A CAGE capability plugin discovered via the ``cage.plugins`` entry point.
+
+    Contract
+    --------
+    * ``name`` must equal the entry-point name (verified at load time).
+    * ``api_version`` must be compatible with ``CAGE_PLUGIN_API_VERSION``;
+      incompatible plugins are rejected fail-closed at startup.
+    * ``register()`` must be idempotent and side-effect-free apart from
+      registering tiers/tools on the objects it is handed.
+    * ``register()`` must never import from ``gateway.*`` internals beyond the
+      public ``contracts`` module.
+    * A plugin that cannot fully register must raise; partial registration is
+      forbidden (a half-registered governance tier is a fail-open hazard).
+    """
+
+    name: str
+    api_version: str
+
+    def register(
+        self,
+        governor: "SymbolicGovernor",
+        tool_server: "FastMCP | None" = None,
+    ) -> None:
+        """Register this plugin's governance tiers and tools with the kernel."""
+        ...
+
+
+def validate_plugin(plugin: object, entry_point_name: str) -> CagePlugin:
+    """Fail-closed structural + version validation of a discovered plugin.
+
+    Raises:
+        TypeError: If the object does not satisfy the ``CagePlugin`` protocol.
+        ValueError: If the plugin's ``name`` does not match the entry-point
+            name, or its ``api_version`` major version is incompatible.
+    """
+    if not isinstance(plugin, CagePlugin):
+        raise TypeError(
+            f"plugin '{entry_point_name}' does not satisfy the CagePlugin protocol"
+        )
+    if plugin.name != entry_point_name:
+        raise ValueError(
+            f"plugin name '{plugin.name}' != entry point '{entry_point_name}'"
+        )
+    major = plugin.api_version.split(".")[0]
+    if major != CAGE_PLUGIN_API_VERSION.split(".")[0]:
+        raise ValueError(
+            f"plugin '{plugin.name}' api_version {plugin.api_version} is "
+            f"incompatible with kernel {CAGE_PLUGIN_API_VERSION}"
+        )
+    return plugin
+
+
+# ---------------------------------------------------------------------------
+# InvariantModel — abstract safety barrier for domain plugins
+# ---------------------------------------------------------------------------
+
+
+class InvariantModel(Protocol):
+    """Abstract safety invariant: h(x) >= 0 must hold.
+
+    Domain plugins declare their safety barriers by implementing this protocol.
+    The kernel evaluates ``barrier_value(state)`` and ensures the value remains
+    non-negative, enforcing the CBF invariance theorem.
+
+    ``state_keys()`` declares which state variables the barrier reads, enabling
+    the kernel to extract the minimal state slice from Redis or the action
+    parameters without exposing the full state space to the domain.
+
+    ``gamma`` is the CBF class-K function gain (0 < gamma <= 1) controlling
+    how aggressively the barrier enforces forward invariance.
+    """
+
+    def state_keys(self) -> list[str]:
+        """Return the Redis/state keys this barrier reads."""
+        ...
+
+    def barrier_value(self, state: dict[str, float]) -> float:
+        """Compute h(x) for the current state.  h(x) >= 0 is safe."""
+        ...
+
+    @property
+    def gamma(self) -> float:
+        """CBF class-K function gain (0 < gamma <= 1)."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# DomainToolProvider — registers domain-specific MCP tools
+# ---------------------------------------------------------------------------
+
+
+class DomainToolProvider(Protocol):
+    """Registers domain-specific MCP tools with the tool server.
+
+    Domain plugins implement this to contribute tools (e.g. ``execute_trade``,
+    ``check_market_status``) to the MCP tool server.  The kernel calls
+    ``register_tools()`` during plugin registration if a tool server is
+    available.
+    """
+
+    def register_tools(self, server: "FastMCP") -> None:
+        """Register this domain's tools with the given MCP server."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# SafetyFilter — CBF / safety constraint protocol
+# ---------------------------------------------------------------------------
+
+
 class SafetyFilter(Protocol):
     """
     Protocol for a Control Barrier Function or similar safety filter.
@@ -218,10 +433,15 @@ class SafetyFilter(Protocol):
         ...
 
     async def rollback_state(
-        self, cost: float, governance_signature: str | None = None
+        self, magnitude: float, governance_signature: str | None = None
     ) -> None:
         """
         Rolls back the safety state (e.g. restores cash) after a failure.
+
+        Args:
+            magnitude: The magnitude of the state change to reverse (formerly
+                ``cost`` — renamed for domain-agnostic semantics in v4.0).
+            governance_signature: Optional KMS governance signature string.
         """
         ...
 
@@ -230,16 +450,42 @@ class ConsensusProvider(Protocol):
     """
     Protocol for a Multi-Agent Consensus Engine.
     Enforces ISO 42001 Human Oversight and Adaptive Compute requirements.
+
+    v4.0 signature: domain-agnostic ``context`` dict replaces the financial-
+    coupled ``(amount, symbol)`` positional parameters.
     """
 
     async def check_consensus(
-        self, action: str, amount: float, symbol: str
+        self,
+        action: str,
+        context: dict[str, Any],
+        magnitude: float | None = None,
     ) -> dict[str, Any]:
         """
         Checks if the action requires consensus and performs it.
         Returns a dict with "status" (APPROVE, REJECT, ESCALATE) and "reason".
         """
         ...
+
+
+class _LegacyConsensusAdapter:
+    """Wraps old-style (action, amount, symbol) calls to the new protocol.
+
+    Temporary shim retained through PR 3; deleted in PR 4 when the legacy
+    dispatch path is removed.
+    """
+
+    def __init__(self, inner: ConsensusProvider) -> None:
+        self.inner = inner
+
+    async def check_consensus(
+        self, action: str, amount: float, symbol: str
+    ) -> dict[str, Any]:
+        return await self.inner.check_consensus(
+            action,
+            context={"amount": amount, "symbol": symbol},
+            magnitude=amount,
+        )
 
 
 class PolicyClient(Protocol):
@@ -329,12 +575,16 @@ class CausalGatekeeper(Protocol):
 # sufficient to make it a fully compatible CausalGatekeeper instance.
 
 
-class FiscalGuard(Protocol):
+class ResourceGuard(Protocol):
     """
-    Protocol for the Redis-backed fiscal pre-reservation system.
+    Protocol for a resource pre-reservation system (e.g. Redis-backed fiscal limits).
+
+    v4.0 rename: ``FiscalGuard`` → ``ResourceGuard`` for domain-agnostic
+    semantics.  Parameters generalized from ``(agent_id, amount_usd)`` to
+    ``(principal_id, magnitude, context)``.
 
     Abstracts the FiscalLimitGuard for testability — any object implementing
-    ``reserve`` and ``release`` is a valid FiscalGuard, regardless of whether
+    ``reserve`` and ``release`` is a valid ResourceGuard, regardless of whether
     it uses a real Redis instance, fakeredis, or an in-memory stub.
 
     Structural subtyping note: FiscalLimitGuard in
@@ -345,15 +595,19 @@ class FiscalGuard(Protocol):
 
     async def reserve(
         self,
-        agent_id: str,
-        amount_usd: float,
+        principal_id: str,
+        magnitude: float,
+        context: dict[str, Any] | None = None,
     ) -> "ReservationToken":
         """
-        Atomically reserve a slice of the daily fiscal limit.
+        Atomically reserve a slice of a resource limit.
 
         Args:
-            agent_id:   Logical name of the requesting agent.
-            amount_usd: USD amount to reserve (must be > 0).
+            principal_id: Logical name of the requesting agent (formerly
+                ``agent_id`` — renamed for domain-agnostic semantics).
+            magnitude:    Amount to reserve (must be > 0).  Formerly
+                ``amount_usd``; interpretation is domain-specific.
+            context:      Optional domain-specific context dict.
 
         Returns:
             ReservationToken — always returns; check ``token.rejected`` to
@@ -371,17 +625,23 @@ class FiscalGuard(Protocol):
             token: The ReservationToken returned by a prior ``reserve()`` call.
 
         Returns:
-            The new running total in USD after the release.
+            The new running total after the release.
         """
         ...
 
 
+# Deprecated alias — retained through PR 3 for backward compatibility.
+# Deleted in PR 4 when the legacy dispatch path is removed.
+FiscalGuard = ResourceGuard
+
 # Structural compatibility note:
 # FiscalLimitGuard (src/gateway/governance/fiscal_limit_guard.py) implements
 # both ``reserve(agent_id, amount_usd) -> ReservationToken`` and
-# ``release(token) -> float`` with identical signatures.  It is therefore
-# structurally compatible with FiscalGuard under PEP 544 structural subtyping
-# with no modification required.
+# ``release(token) -> float`` with compatible signatures.  It is therefore
+# structurally compatible with ResourceGuard under PEP 544 structural subtyping
+# with no modification required.  The parameter rename (agent_id -> principal_id,
+# amount_usd -> magnitude) is source-compatible because Python protocols use
+# structural, not nominal, subtyping.
 
 # Import ReservationToken for use in type annotations above.
 # The import is placed here (after the class body) to avoid a circular import

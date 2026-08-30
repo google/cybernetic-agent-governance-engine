@@ -19,7 +19,7 @@ Tests Tier 5 governance: ConsensusGate requires concurrent critic agreement
 for trades above the threshold_usd limit.
 
 Note: ConsensusGate() uses THRESHOLDS singleton and GatewayClient; both are
-mocked here. The primary method is check_consensus(action, amount, symbol)
+mocked here. The primary method is check_consensus(action, context, magnitude)
 which returns a dict with keys: status, reason, votes.
 """
 
@@ -67,7 +67,9 @@ async def test_consensus_engine_below_threshold_skips_consensus(
 
     engine = ConsensusGate()
 
-    result = await engine.check_consensus("buy", 5000.0, "AAPL")
+    result = await engine.check_consensus(
+        "buy", context={"amount": 5000.0, "symbol": "AAPL"}, magnitude=5000.0
+    )
     assert result["status"] == "SKIPPED"
     assert result["votes"] == []
 
@@ -82,7 +84,9 @@ async def test_consensus_engine_below_threshold_exact_boundary(
     engine = ConsensusGate()
 
     # amount < threshold → SKIPPED
-    result = await engine.check_consensus("sell", 9999.99, "TSLA")
+    result = await engine.check_consensus(
+        "sell", context={"amount": 9999.99, "symbol": "TSLA"}, magnitude=9999.99
+    )
     assert result["status"] == "SKIPPED"
 
 
@@ -98,7 +102,9 @@ async def test_consensus_engine_above_threshold_unanimous_approve(
     with patch.object(
         engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"
     ):
-        result = await engine.check_consensus("buy", 15000.0, "MSFT")
+        result = await engine.check_consensus(
+            "buy", context={"amount": 15000.0, "symbol": "MSFT"}, magnitude=15000.0
+        )
     assert result["status"] == "APPROVE"
     assert "approval" in result["reason"].lower()
 
@@ -126,7 +132,9 @@ async def test_consensus_engine_split_vote_escalates_for_human_review(
         return "APPROVE" if call_count == 1 else "REJECT"
 
     with patch.object(engine, "_get_critic_vote", side_effect=alternating_vote):
-        result = await engine.check_consensus("sell", 20000.0, "GME")
+        result = await engine.check_consensus(
+            "sell", context={"amount": 20000.0, "symbol": "GME"}, magnitude=20000.0
+        )
     assert result["status"] == "ESCALATE", (
         f"Split APPROVE+REJECT vote must ESCALATE for human review, got {result['status']!r}. "
         "Unanimous REJECT is required to outright block a trade."
@@ -146,7 +154,9 @@ async def test_consensus_engine_unanimous_reject_blocks_trade(
         return "REJECT"
 
     with patch.object(engine, "_get_critic_vote", side_effect=unanimous_reject):
-        result = await engine.check_consensus("sell", 20000.0, "GME")
+        result = await engine.check_consensus(
+            "sell", context={"amount": 20000.0, "symbol": "GME"}, magnitude=20000.0
+        )
     assert result["status"] == "REJECT", (
         f"Unanimous REJECT from all critics must block the trade, got {result['status']!r}."
     )
@@ -169,7 +179,9 @@ async def test_consensus_engine_escalate_on_one_escalate_vote(
         return "APPROVE" if call_count == 1 else "ESCALATE"
 
     with patch.object(engine, "_get_critic_vote", side_effect=escalate_vote):
-        result = await engine.check_consensus("buy", 15000.0, "SPY")
+        result = await engine.check_consensus(
+            "buy", context={"amount": 15000.0, "symbol": "SPY"}, magnitude=15000.0
+        )
     assert result["status"] == "ESCALATE"
 
 
@@ -190,7 +202,9 @@ async def test_consensus_engine_critic_error_returns_escalate(
     with patch.object(
         engine, "_get_critic_vote", new_callable=AsyncMock, return_value="ERROR"
     ):
-        result = await engine.check_consensus("buy", 50000.0, "BTC")
+        result = await engine.check_consensus(
+            "buy", context={"amount": 50000.0, "symbol": "BTC"}, magnitude=50000.0
+        )
     # All-ERROR → fail-open APPROVE (LLM critics unavailable; OPA is the primary gate)
     assert result["status"] in ("APPROVE", "ESCALATE", "REJECT")
 
@@ -207,6 +221,8 @@ async def test_consensus_engine_returns_votes_list(
     with patch.object(
         engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"
     ):
-        result = await engine.check_consensus("buy", 25000.0, "NVDA")
+        result = await engine.check_consensus(
+            "buy", context={"amount": 25000.0, "symbol": "NVDA"}, magnitude=25000.0
+        )
     assert isinstance(result["votes"], list)
     assert len(result["votes"]) == 2

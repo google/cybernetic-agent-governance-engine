@@ -223,7 +223,7 @@ class ConsensusGate:
         self._default_client = GatewayClient()
 
     async def _get_critic_vote(
-        self, role: str, action: str, amount: float, symbol: str
+        self, role: str, action: str, context: dict[str, Any], magnitude: float | None
     ) -> str:
         """Consult an LLM critic persona and return a structured decision.
 
@@ -233,8 +233,18 @@ class ConsensusGate:
         If the persona has a dedicated AsyncOpenAI client (from the registry),
         we call it directly.  Otherwise we fall back to the shared
         GatewayClient with mode-based routing.
+
+        Args:
+            role:      Critic persona name (e.g. "Risk Manager").
+            action:    Action being evaluated.
+            context:   Domain-specific context dict (e.g. {"amount": ..., "symbol": ...}).
+            magnitude: Optional magnitude of the action for threshold comparison.
         """
         try:
+            # Extract financial context for backward-compatible prompt rendering.
+            # In PR 3, this prompt template moves to cage_finance/config/critics.yaml.
+            amount = context.get("amount", magnitude or 0.0)
+            symbol = context.get("symbol", "UNKNOWN")
             prompt = (
                 f"You are a {role} for a financial institution.\n"
                 f"Review the following trade proposal:\n"
@@ -328,9 +338,9 @@ class ConsensusGate:
             return "ERROR"
 
     async def check_consensus(
-        self, action: str, amount: float, symbol: str
+        self, action: str, context: dict[str, Any], magnitude: float | None = None
     ) -> dict[str, Any]:
-        """Run a consensus check if the trade exceeds the USD threshold.
+        """Run a consensus check if the action exceeds the magnitude threshold.
 
         Hot-path guarantee (Phase 4.4):
           - Below threshold → immediate SKIPPED return (no LLM calls).
@@ -342,9 +352,19 @@ class ConsensusGate:
         providing genuine algorithmic diversity rather than the illusion
         of consensus from a single model with different prompts.
 
+        Args:
+            action:    Action being evaluated.
+            context:   Domain-specific context dict (e.g. ``{"amount": ..., "symbol": ...}``).
+            magnitude: Optional explicit magnitude for threshold comparison.
+                       Falls back to ``context["amount"]`` if not provided.
+
         Returns:
             dict with keys: status, reason, votes.
         """
+        # Extract amount and symbol from context for backward compatibility.
+        amount = magnitude if magnitude is not None else context.get("amount", 0.0)
+        symbol = context.get("symbol", "UNKNOWN")
+
         if amount < self.threshold:
             return {"status": "SKIPPED", "reason": "Below threshold", "votes": []}
 
@@ -359,8 +379,8 @@ class ConsensusGate:
 
             # Parallel critic calls — each on a distinct model backend (Priority 4)
             vote1, vote2 = await asyncio.gather(
-                self._get_critic_vote("Risk Manager", action, amount, symbol),
-                self._get_critic_vote("Compliance Officer", action, amount, symbol),
+                self._get_critic_vote("Risk Manager", action, context, magnitude),
+                self._get_critic_vote("Compliance Officer", action, context, magnitude),
             )
             votes = [vote1, vote2]
 

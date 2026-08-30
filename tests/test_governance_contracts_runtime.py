@@ -76,8 +76,8 @@ class _ConcreteSafetyFilter:
     def update_state(self, cost: float) -> None:
         self._balance -= cost
 
-    def rollback_state(self, cost: float) -> None:
-        self._balance += cost
+    def rollback_state(self, magnitude: float) -> None:
+        self._balance += magnitude
 
 
 class _ConcreteConsensusProvider:
@@ -87,8 +87,9 @@ class _ConcreteConsensusProvider:
         self._threshold = threshold_usd
 
     async def check_consensus(
-        self, action: str, amount: float, symbol: str
+        self, action: str, context: dict[str, Any], magnitude: float | None = None
     ) -> dict[str, Any]:
+        amount = context.get("amount", magnitude or 0.0)
         if amount > self._threshold:
             return {
                 "status": "ESCALATE",
@@ -246,7 +247,11 @@ class TestConsensusProviderRuntimeBehavior:
     async def test_check_consensus_approve_below_threshold(self) -> None:
         """check_consensus must return APPROVE for amounts below the threshold."""
         cp = _ConcreteConsensusProvider(threshold_usd=10_000.0)
-        result = await cp.check_consensus("execute_trade", 5_000.0, "AAPL")
+        result = await cp.check_consensus(
+            "execute_trade",
+            context={"amount": 5_000.0, "symbol": "AAPL"},
+            magnitude=5_000.0,
+        )
 
         assert isinstance(result, dict), "check_consensus must return a dict"
         assert "status" in result, "Result must contain 'status'"
@@ -258,7 +263,11 @@ class TestConsensusProviderRuntimeBehavior:
     async def test_check_consensus_escalate_above_threshold(self) -> None:
         """check_consensus must return ESCALATE for amounts above threshold."""
         cp = _ConcreteConsensusProvider(threshold_usd=10_000.0)
-        result = await cp.check_consensus("execute_trade", 50_000.0, "TSLA")
+        result = await cp.check_consensus(
+            "execute_trade",
+            context={"amount": 50_000.0, "symbol": "TSLA"},
+            magnitude=50_000.0,
+        )
 
         assert isinstance(result, dict), "check_consensus must return a dict"
         assert result["status"] == "ESCALATE", (
@@ -270,7 +279,11 @@ class TestConsensusProviderRuntimeBehavior:
     async def test_check_consensus_result_has_required_keys(self) -> None:
         """check_consensus result must contain 'status' and 'reason' keys."""
         cp = _ConcreteConsensusProvider()
-        result = await cp.check_consensus("execute_trade", 100.0, "GOOG")
+        result = await cp.check_consensus(
+            "execute_trade",
+            context={"amount": 100.0, "symbol": "GOOG"},
+            magnitude=100.0,
+        )
         assert "status" in result, "Result must have 'status'"
         assert "reason" in result, "Result must have 'reason'"
         assert result["status"] in ("APPROVE", "REJECT", "ESCALATE"), (
