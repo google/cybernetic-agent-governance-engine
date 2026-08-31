@@ -50,12 +50,18 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-_SOURCE = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
+# Multi-source directory — all *.yaml files under config/stpa/ are the authoritative
+# STPA sources after the PR 2 split. The legacy config/stpa_control_structure.yaml is
+# retained as the Gate 1 drift oracle but is no longer the primary freshness reference.
+_SOURCE_DIR = _REPO_ROOT / "config" / "stpa"
+# Fallback single-file path for environments that have not yet migrated.
+_SOURCE_LEGACY = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 
 _GENERATED_ARTIFACTS: list[Path] = [
     _REPO_ROOT / "src" / "gateway" / "governance" / "generated_stpa_validator.py",
     _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego",
     _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co",
+    _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt",  # PR 2: added
 ]
 
 # Regex that matches the "Generated: <ISO-8601>" comment embedded by the compiler.
@@ -114,30 +120,44 @@ def check_freshness(verbose: bool = False) -> list[str]:
     """Return a list of staleness error messages (empty = all fresh)."""
     errors: list[str] = []
 
-    if not _SOURCE.exists():
-        errors.append(f"Source file not found: {_SOURCE}")
+    # Determine source files — prefer the new multi-source directory, fall back
+    # to the legacy single file for environments that haven't migrated yet.
+    if _SOURCE_DIR.exists():
+        source_files = sorted(_SOURCE_DIR.rglob("*.yaml"))
+        source_label = f"directory {_SOURCE_DIR.relative_to(_REPO_ROOT)}"
+    elif _SOURCE_LEGACY.exists():
+        source_files = [_SOURCE_LEGACY]
+        source_label = str(_SOURCE_LEGACY.relative_to(_REPO_ROOT))
+    else:
+        errors.append(
+            f"STPA source not found: neither {_SOURCE_DIR} nor {_SOURCE_LEGACY} exists"
+        )
         return errors
 
-    # Prefer git commit time over filesystem mtime.  In CI, ``git checkout``
-    # resets all file mtimes to the checkout time, making mtime comparisons
-    # meaningless.  The git commit timestamp is stable across checkouts.
-    source_git_time = _git_last_commit_time(_SOURCE)
-    if source_git_time is not None:
-        source_mtime_dt = source_git_time
-        source_time_label = "git commit"
+    if not source_files:
+        errors.append(f"No YAML files found under {_SOURCE_DIR}")
+        return errors
+
+    # Use the latest (most recent) source timestamp across all source files.
+    # This ensures that modifying any single source file is enough to mark
+    # artifacts as stale.
+    source_git_times = [_git_last_commit_time(f) for f in source_files]
+    valid_git_times = [t for t in source_git_times if t is not None]
+    if valid_git_times:
+        source_mtime_dt = max(valid_git_times)
+        source_time_label = "git commit (newest source)"
+        # Raw mtime needed for Check 1 (file-level mtime comparison).
+        source_mtime = max(f.stat().st_mtime for f in source_files)
     else:
         # Fallback for untracked files or environments without git.
-        source_mtime = _SOURCE.stat().st_mtime
+        source_mtime = max(f.stat().st_mtime for f in source_files)
         source_mtime_dt = datetime.datetime.fromtimestamp(
             source_mtime, tz=datetime.timezone.utc
         )
         source_time_label = "mtime (git unavailable)"
 
-    # Keep a raw mtime for the file-level mtime check (Check 1).
-    source_mtime = _SOURCE.stat().st_mtime
-
     if verbose:
-        print(f"Source:  {_SOURCE}")
+        print(f"Source:  {source_label} ({len(source_files)} file(s))")
         print(f"  {source_time_label}: {source_mtime_dt.isoformat()}")
 
     for artifact in _GENERATED_ARTIFACTS:
@@ -168,7 +188,7 @@ def check_freshness(verbose: bool = False) -> list[str]:
         # Skip this check in CI-like environments where git commit time is
         # used for the source reference, because all file mtimes are reset
         # to the checkout time and are therefore unreliable for ordering.
-        if source_git_time is None and artifact_mtime < source_mtime:
+        if not valid_git_times and artifact_mtime < source_mtime:
             msg = (
                 f"STALE (mtime): {artifact.relative_to(_REPO_ROOT)}\n"
                 f"  artifact mtime: {artifact_mtime_dt.isoformat()}\n"

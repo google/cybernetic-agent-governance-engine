@@ -82,6 +82,7 @@ from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
     UCAModel,
     load_control_structure,
+    load_control_structures,
 )
 
 logger = logging.getLogger("oscal_ssp_exporter")
@@ -92,6 +93,7 @@ logger = logging.getLogger("oscal_ssp_exporter")
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
+_DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_SSP = _REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
 _DEFAULT_COMP_DEF = _REPO_ROOT / "compliance" / "oscal" / "component-definition.yaml"
 _DEFAULT_PATCH_OUT = (
@@ -718,6 +720,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Control structure YAML (default: {_DEFAULT_INPUT})",
     )
     exp.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of STPA YAML source files; all *.yaml files are merged "
+            "deterministically (mutually exclusive with --input). "
+            f"Default directory: {_DEFAULT_INPUT_DIR}"
+        ),
+    )
+    exp.add_argument(
         "--ssp",
         type=Path,
         default=_DEFAULT_SSP,
@@ -785,7 +798,22 @@ def cmd_export(args: argparse.Namespace) -> int:
         )
 
     try:
-        cs = load_control_structure(args.input)
+        if args.input_dir is not None:
+            yaml_files = sorted(args.input_dir.rglob("*.yaml"))
+            if not yaml_files:
+                print(
+                    f"❌ No YAML files found under {args.input_dir}",
+                    file=sys.stderr,
+                )
+                return 1
+            logger.info(
+                "Multi-source mode: merging %d files from %s",
+                len(yaml_files),
+                args.input_dir,
+            )
+            cs = load_control_structures(yaml_files)
+        else:
+            cs = load_control_structure(args.input)
     except Exception as exc:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1

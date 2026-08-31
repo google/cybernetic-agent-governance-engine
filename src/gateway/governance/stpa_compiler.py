@@ -69,6 +69,7 @@ logger = logging.getLogger("stpa_compiler")
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
+_DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_OPA_OUT = _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego"
 _DEFAULT_NEMO_OUT = _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co"
 _DEFAULT_PY_OUT = (
@@ -399,6 +400,120 @@ class ControlStructureModel(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate UCA IDs found in unsafe_control_actions.")
         return ucas
+
+    @classmethod
+    def merge(cls, models: list[ControlStructureModel]) -> ControlStructureModel:
+        """Merge multiple ControlStructureModels into one, deterministically.
+
+        Rules:
+        - ``system``: taken from the first model (caller must order
+          meaningfully; typically the core system file comes first).
+        - ``hazards``: union, sorted by ``id``; duplicate IDs are fatal.
+        - ``control_actions``: union deduplicated by action ``name``,
+          sorted by ``name``; duplicate names are fatal.
+        - ``unsafe_control_actions``: union, sorted by ``id``; duplicate IDs
+          are fatal (mirrors the existing _unique_uca_ids validator, but
+          across files instead of within one file).
+        - ``safety_constraints``: union, sorted by ``id``; duplicate IDs are
+          fatal.
+        - ``rbac_rules``: roles merged by ``name`` with last-writer-wins on
+          duplicate role names (a warning is logged); result sorted by name.
+        - ``hazard_refs`` integrity: every UCA hazard_ref across the merged
+          corpus must resolve to a hazard present in the merged hazards list.
+          Unresolved references are fatal.
+
+        Returns the merged ``ControlStructureModel``.
+        """
+        if not models:
+            raise ValueError("merge() requires at least one model")
+
+        # System — first model wins
+        merged_system = models[0].system
+
+        # Hazards — union, duplicate IDs fatal, sort by id
+        hazard_map: dict[str, HazardModel] = {}
+        for m in models:
+            for h in m.hazards:
+                if h.id in hazard_map:
+                    raise ValueError(
+                        f"Duplicate hazard ID '{h.id}' found across STPA source files."
+                    )
+                hazard_map[h.id] = h
+        merged_hazards = sorted(hazard_map.values(), key=lambda h: h.id)
+
+        # Control actions — union deduplicated by name, duplicates fatal
+        action_map: dict[str, dict] = {}
+        for m in models:
+            for ca in m.control_actions:
+                name = ca.get("name", "")
+                if name in action_map:
+                    raise ValueError(
+                        f"Duplicate control action name '{name}' found across STPA source files."
+                    )
+                action_map[name] = ca
+        merged_actions = [action_map[k] for k in sorted(action_map)]
+
+        # UCAs — union, duplicate IDs fatal, sort by id
+        uca_map: dict[str, UCAModel] = {}
+        for m in models:
+            for uca in m.unsafe_control_actions:
+                if uca.id in uca_map:
+                    raise ValueError(
+                        f"Duplicate UCA ID '{uca.id}' found across STPA source files."
+                    )
+                uca_map[uca.id] = uca
+        merged_ucas = sorted(uca_map.values(), key=lambda u: u.id)
+
+        # Safety constraints — union, duplicate IDs fatal, sort by id
+        constraint_map: dict[str, ConstraintModel] = {}
+        for m in models:
+            for c in m.safety_constraints:
+                if c.id in constraint_map:
+                    raise ValueError(
+                        f"Duplicate constraint ID '{c.id}' found across STPA source files."
+                    )
+                constraint_map[c.id] = c
+        merged_constraints = sorted(constraint_map.values(), key=lambda c: c.id)
+
+        # RBAC — merge roles by name (last-writer-wins on duplicates)
+        role_map: dict[str, RbacRoleModel] = {}
+        for m in models:
+            if m.rbac_rules is not None:
+                for role in m.rbac_rules.roles:
+                    if role.name in role_map:
+                        logger.warning(
+                            "RBAC role '%s' defined in multiple STPA files; last-writer wins.",
+                            role.name,
+                        )
+                    role_map[role.name] = role
+        merged_rbac = (
+            RbacRulesModel(roles=sorted(role_map.values(), key=lambda r: r.name))
+            if role_map
+            else None
+        )
+
+        # Cross-file referential integrity: every hazard_ref must resolve
+        merged_hazard_ids = set(hazard_map)
+        for uca in merged_ucas:
+            for ref in uca.hazard_refs:
+                if ref not in merged_hazard_ids:
+                    raise ValueError(
+                        f"UCA '{uca.id}' references hazard '{ref}' which is not defined "
+                        f"in any of the merged STPA source files."
+                    )
+
+        # Construct via model_validate to bypass the field validators
+        # (which re-check unique IDs on the already-deduplicated lists).
+        return cls.model_validate(
+            {
+                "system": merged_system.model_dump(),
+                "hazards": [h.model_dump() for h in merged_hazards],
+                "control_actions": merged_actions,
+                "unsafe_control_actions": [u.model_dump() for u in merged_ucas],
+                "safety_constraints": [c.model_dump() for c in merged_constraints],
+                "rbac_rules": merged_rbac.model_dump() if merged_rbac else None,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1584,6 +1699,33 @@ def load_control_structure(path: Path) -> ControlStructureModel:
     return ControlStructureModel(**raw)
 
 
+def load_control_structures(paths: list[Path]) -> ControlStructureModel:
+    """Load and merge multiple STPA control structure YAML files.
+
+    All paths must exist. The merge is deterministic given the same set of
+    files in sorted order: hazards, UCAs, and constraints are sorted by ID;
+    control actions are sorted by name. The caller should pass ``sorted(paths)``
+    to guarantee filesystem-order independence.
+
+    Args:
+        paths: Ordered list of YAML source paths. Must be non-empty.
+
+    Returns:
+        A single merged ``ControlStructureModel``.
+
+    Raises:
+        FileNotFoundError: If any path does not exist.
+        ValueError: If duplicate IDs are found across files or a UCA's
+                    hazard_ref does not resolve in the merged corpus.
+    """
+    if not paths:
+        raise ValueError("load_control_structures() requires at least one path")
+    models = [load_control_structure(p) for p in paths]
+    if len(models) == 1:
+        return models[0]
+    return ControlStructureModel.merge(models)
+
+
 def compile_control_structure(
     cs: ControlStructureModel,
     targets: list[str],
@@ -1770,6 +1912,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Path to control structure YAML (default: {_DEFAULT_INPUT})",
     )
     compile_p.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of STPA YAML source files (mutually exclusive with --input). "
+            "All *.yaml files under DIR are merged deterministically. "
+            f"Default directory: {_DEFAULT_INPUT_DIR}"
+        ),
+    )
+    compile_p.add_argument(
         "--targets",
         nargs="+",
         choices=[
@@ -1860,13 +2013,29 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="YAML",
         help=f"Path to control structure YAML (default: {_DEFAULT_INPUT})",
     )
+    val_p.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of STPA YAML source files to validate (mutually exclusive with --input)."
+        ),
+    )
 
     return parser
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
     try:
-        cs = load_control_structure(args.input)
+        if args.input_dir is not None:
+            yaml_files = sorted(args.input_dir.rglob("*.yaml"))
+            if not yaml_files:
+                print(f"❌ No YAML files found under {args.input_dir}", file=sys.stderr)
+                return 1
+            cs = load_control_structures(yaml_files)
+        else:
+            cs = load_control_structure(args.input)
         print(
             f"✅ Control structure valid: {len(cs.unsafe_control_actions)} UCAs, "
             f"{len(cs.hazards)} hazards, {len(cs.safety_constraints)} constraints."
@@ -1879,7 +2048,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_compile(args: argparse.Namespace) -> int:
     try:
-        cs = load_control_structure(args.input)
+        if args.input_dir is not None:
+            yaml_files = sorted(args.input_dir.rglob("*.yaml"))
+            if not yaml_files:
+                print(
+                    f"❌ No YAML files found under {args.input_dir}",
+                    file=sys.stderr,
+                )
+                return 1
+            logger.info(
+                "Multi-source mode: loading %d files from %s",
+                len(yaml_files),
+                args.input_dir,
+            )
+            cs = load_control_structures(yaml_files)
+        else:
+            cs = load_control_structure(args.input)
     except Exception as exc:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
