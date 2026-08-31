@@ -843,7 +843,12 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+            governor = SymbolicGovernor(opa_client)
+            from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+            from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+            governor.register_domain_tier(CBFTierPlugin(safety_filter))
+            governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
 
             # Patch _run_checks to return our mock result
             with patch.object(governor, "_run_checks", return_value=mock_result):
@@ -884,7 +889,12 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+            governor = SymbolicGovernor(opa_client)
+            from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+            from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+            governor.register_domain_tier(CBFTierPlugin(safety_filter))
+            governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
 
             with patch.object(governor, "_run_checks", return_value=mock_result):
                 result = await governor.validate_action(
@@ -951,7 +961,12 @@ class TestValidateActionPauseHandler:
                 },
             )
 
-            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+            governor = SymbolicGovernor(opa_client)
+            from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+            from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+            governor.register_domain_tier(CBFTierPlugin(safety_filter))
+            governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
 
             with patch.object(governor, "_run_checks", return_value=mock_result):
                 # Should raise GovernanceError (DENY fallback)
@@ -987,7 +1002,12 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+            governor = SymbolicGovernor(opa_client)
+            from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+            from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+            governor.register_domain_tier(CBFTierPlugin(safety_filter))
+            governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
 
             with patch.object(governor, "_run_checks", return_value=mock_result):
                 result = await governor.validate_action(
@@ -1049,7 +1069,12 @@ class TestValidateActionPauseHandler:
                 },
             )
 
-            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+            governor = SymbolicGovernor(opa_client)
+            from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+            from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+            governor.register_domain_tier(CBFTierPlugin(safety_filter))
+            governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
 
             with patch.object(governor, "_run_checks", return_value=mock_result):
                 with pytest.raises(GovernanceError) as exc_info:

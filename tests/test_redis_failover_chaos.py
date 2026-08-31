@@ -967,7 +967,7 @@ class TestRealCBFIntegration:
         """
         Integration: Real CBF._check_fence_epoch with mocked state.
         """
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         _mock, _ = mock_redis_client
 
@@ -990,13 +990,13 @@ class TestRealCBFIntegration:
         """
         Integration: Real CBF._sync_to_replicas when WAIT is disabled.
         """
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         mock, _ = mock_redis_client
 
         with (
-            patch("src.gateway.governance.cbf.redis_client", mock),
-            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 0),
+            patch("src.cage_finance.safety.cbf.redis_client", mock),
+            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 0),
         ):
             cbf = ControlBarrierFunction()
             result = await cbf._sync_to_replicas()
@@ -1009,7 +1009,7 @@ class TestRealCBFIntegration:
         """
         Integration: Real CBF._sync_to_replicas when WAIT times out.
         """
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         mock, _ = mock_redis_client
 
@@ -1017,9 +1017,9 @@ class TestRealCBFIntegration:
         mock.get_raw_client().execute_command = AsyncMock(return_value=1)
 
         with (
-            patch("src.gateway.governance.cbf.redis_client", mock),
-            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 3),
-            patch("src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 100),
+            patch("src.cage_finance.safety.cbf.redis_client", mock),
+            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 3),
+            patch("src.cage_finance.safety.cbf._WAIT_TIMEOUT_MS", 100),
         ):
             cbf = ControlBarrierFunction()
             result = await cbf._sync_to_replicas()

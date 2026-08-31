@@ -60,12 +60,18 @@ def _make_governor(fiscal_limit_guard=None):
 
     governor = SymbolicGovernor(
         opa_client=opa_client,
-        safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
         stpa_validator=None,
         telemetry_provider=None,
-        fiscal_limit_guard=fiscal_limit_guard,
     )
+    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+    governor.register_domain_tier(CBFTierPlugin(safety_filter))
+    governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
+    if fiscal_limit_guard:
+        from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+
+        governor.register_domain_tier(FiscalTierPlugin(fiscal_limit_guard))
 
     # Mock FTRA boundary check to return a safe result (no HITL required).
     # This allows tests to pass through the FTRA boundary gate without being
@@ -386,7 +392,7 @@ async def test_fiscal_limit_guard_reserve_is_awaited():
     """SymbolicGovernor awaits fiscal_limit_guard.reserve() — AsyncMock is actually awaited, not called synchronously."""
     import time
 
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken
+    from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
 
     # Create a mock FiscalLimitGuard with AsyncMock for reserve()
     mock_guard = MagicMock()
@@ -431,7 +437,7 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
     """SymbolicGovernor calls reserve() with agent_id and amount_usd from params."""
     import time
 
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken
+    from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
 
     mock_guard = MagicMock()
     mock_token = ReservationToken(
@@ -481,7 +487,7 @@ async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
     """SymbolicGovernor awaits fiscal_limit_guard.release() when the fiscal reservation is rejected."""
     import time
 
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken
+    from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
     from src.gateway.governance.symbolic_governor import GovernanceError
 
     mock_guard = MagicMock()

@@ -19,7 +19,8 @@ import asyncio
 import uuid
 from unittest.mock import MagicMock, patch
 
-from src.gateway.core.tools import TradeOrder, execute_trade
+from src.cage_finance.models.trade_order import TradeOrder
+from src.cage_finance.tools.trade_executor import execute_trade
 
 
 @pytest.fixture

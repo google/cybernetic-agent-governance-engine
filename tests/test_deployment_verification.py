@@ -51,11 +51,7 @@ class TestDeploymentConfig(unittest.TestCase):
         # This is a static check of the expectations
         self.assertTrue(os.path.exists("deployment/system_authz.rego"))
         self.assertTrue(os.path.exists("deployment/opa_config.yaml"))
-        self.assertTrue(
-            os.path.exists(
-                "src/governed_financial_advisor/governance/policy/trade_governance.rego"
-            )
-        )
+        self.assertTrue(os.path.exists("src/cage_finance/opa/trade_governance.rego"))
         self.assertTrue(os.path.exists("deployment/service.yaml"))
 
 

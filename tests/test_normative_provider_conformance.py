@@ -104,17 +104,14 @@ async def test_attestation_providers_exist() -> None:
     """Verify that attestation providers are loadable (providers 02, 04, 05)."""
     # Just import and instantiate to prove they exist and satisfy basic structural checks
     from src.integrations.provider_02 import Provider02AttestationProvider
-    from src.integrations.provider_04 import Provider04AttestationProvider
     from src.integrations.provider_05.blueprint_provider import (
         Provider05BlueprintProvider,
     )
 
     p02 = Provider02AttestationProvider()
-    p04 = Provider04AttestationProvider()
     p05 = Provider05BlueprintProvider()
 
     assert hasattr(p02, "certify_decision")
-    assert hasattr(p04, "fetch_attestations")
     assert hasattr(p05, "fetch_attestations")
 
 

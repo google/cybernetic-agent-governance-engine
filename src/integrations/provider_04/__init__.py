@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider 04 integration — attestation provider and envelope mapper."""
+"""Provider 04 integration — envelope mapper."""
 
 from src.integrations.provider_04.envelope_mapper import Provider04EnvelopeMapper
-from src.integrations.provider_04.provider import Provider04AttestationProvider
 
 __all__ = [
-    "Provider04AttestationProvider",
     "Provider04EnvelopeMapper",
 ]

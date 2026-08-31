@@ -150,8 +150,6 @@ def symbolic_governor(
 
     return SymbolicGovernor(
         opa_client=mock_opa_client,
-        safety_filter=mock_safety_filter,
-        consensus_engine=mock_consensus_engine,
         stpa_validator=None,
         telemetry_provider=None,
         fiscal_limit_guard=None,

@@ -86,10 +86,10 @@ def _make_governor(
 
     governor = SymbolicGovernor(
         opa_client=mock_opa,
-        safety_filter=mock_cbf,
-        consensus_engine=mock_consensus,
         stpa_validator=mock_stpa,
     )
+    governor.register_domain_tier(CBFTierPlugin(mock_cbf))
+    governor.register_domain_tier(ConsensusTierPlugin(mock_consensus))
 
     # Mock FTRA boundary check to return a safe result (no HITL required).
     # This allows tests to focus on confidence bypass behavior without being

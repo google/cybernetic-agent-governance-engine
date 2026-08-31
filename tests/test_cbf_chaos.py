@@ -54,7 +54,7 @@ _GAMMA = 0.1
 
 def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     """Return a ControlBarrierFunction wired to a fake async Redis client."""
-    from src.gateway.governance.cbf import ControlBarrierFunction
+    from src.cage_finance.safety.cbf import ControlBarrierFunction
 
     # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
@@ -87,7 +87,7 @@ def test_cbf_redis_unavailable_at_commit_time():
     fake_redis.evalsha = _raise_connection_error  # type: ignore[method-assign]
     fake_redis.script_load = AsyncMock(return_value="deadbeef")  # type: ignore[method-assign]
 
-    with patch("src.gateway.governance.cbf.redis_client", mock_redis_module):
+    with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_module):
         with pytest.raises((redis.ConnectionError, RuntimeError)):
             asyncio.run(
                 cbf.atomic_verify_and_commit(
@@ -116,7 +116,7 @@ def test_cbf_redis_timeout_at_commit_time():
     fake_redis.evalsha = _raise_timeout  # type: ignore[method-assign]
     fake_redis.script_load = AsyncMock(return_value="deadbeef")  # type: ignore[method-assign]
 
-    with patch("src.gateway.governance.cbf.redis_client", mock_redis_module):
+    with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_module):
         with pytest.raises((redis.TimeoutError, RuntimeError)):
             asyncio.run(
                 cbf.atomic_verify_and_commit(
@@ -181,7 +181,7 @@ def test_cbf_watch_error_exhausts_retries():
     # update_state() uses redis_client.pipeline(), not get_raw_client()
     import warnings
 
-    with patch("src.gateway.governance.cbf.redis_client", mock_redis_module):
+    with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_module):
         with pytest.raises((RuntimeError, _WatchError)):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
@@ -246,7 +246,7 @@ def test_cbf_redis_reconnects_after_transient_failure():
 
     # update_state catches only WatchError — ConnectionError propagates.
     # The point is that update_state does NOT loop forever.
-    with patch("src.gateway.governance.cbf.redis_client", mock_redis_module):
+    with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_module):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             with pytest.raises(ConnectionError):
@@ -380,7 +380,7 @@ def test_cbf_atomic_guarantee_under_concurrent_write():
             _commit(cbf2, 10_000.0),
         )
 
-    with patch("src.gateway.governance.cbf.redis_client", mock_redis_module):
+    with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_module):
         asyncio.run(_run_concurrent())
 
     # At least one call must have completed without error

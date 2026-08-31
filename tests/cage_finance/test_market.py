@@ -56,7 +56,7 @@ class TestMarketServiceGetSentiment:
             import os
 
             os.environ.pop("ALPHAVANTAGE_API_KEY", None)
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = None  # force absence
@@ -90,7 +90,7 @@ class TestMarketServiceGetSentiment:
         mock_async_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "test-key"
@@ -115,7 +115,7 @@ class TestMarketServiceGetSentiment:
         mock_async_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -134,7 +134,7 @@ class TestMarketServiceGetSentiment:
         mock_async_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -151,7 +151,7 @@ class TestMarketServiceGetSentiment:
         mock_async_client.get = AsyncMock(side_effect=ConnectionError("network down"))
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -172,7 +172,7 @@ class TestMarketServiceCheckStatus:
 
     def test_no_api_key_returns_error_string(self):
         """Returns error message if ALPHAVANTAGE_API_KEY is not set."""
-        from src.gateway.core.market import MarketService
+        from src.cage_finance.tools.market_service import MarketService
 
         svc = MarketService()
         svc.api_key = None
@@ -196,7 +196,7 @@ class TestMarketServiceCheckStatus:
         mock_sync_client.get = MagicMock(return_value=mock_resp)
 
         with patch("httpx.Client", return_value=mock_sync_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -218,7 +218,7 @@ class TestMarketServiceCheckStatus:
         mock_sync_client.get = MagicMock(return_value=mock_resp)
 
         with patch("httpx.Client", return_value=mock_sync_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -237,7 +237,7 @@ class TestMarketServiceCheckStatus:
         mock_sync_client.get = MagicMock(return_value=mock_resp)
 
         with patch("httpx.Client", return_value=mock_sync_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -253,7 +253,7 @@ class TestMarketServiceCheckStatus:
         mock_sync_client.get = MagicMock(side_effect=ConnectionError("timeout"))
 
         with patch("httpx.Client", return_value=mock_sync_client):
-            from src.gateway.core.market import MarketService
+            from src.cage_finance.tools.market_service import MarketService
 
             svc = MarketService()
             svc.api_key = "key"
@@ -270,6 +270,6 @@ class TestMarketServiceCheckStatus:
 @pytest.mark.local
 def test_market_service_module_singleton():
     """market_service module-level singleton is a MarketService instance."""
-    from src.gateway.core.market import MarketService, market_service
+    from src.cage_finance.tools.market_service import MarketService, market_service
 
     assert isinstance(market_service, MarketService)

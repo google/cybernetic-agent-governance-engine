@@ -33,7 +33,7 @@ pytest.importorskip("fakeredis", reason="fakeredis required for CBF atomicity te
 
 import fakeredis.aioredis  # type: ignore[import]
 
-from src.gateway.governance.cbf import ControlBarrierFunction
+from src.cage_finance.safety.cbf import ControlBarrierFunction
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -71,7 +71,7 @@ def _make_cbf_with_fakeredis(
 ) -> ControlBarrierFunction:
     """Construct a ControlBarrierFunction whose Redis calls are served by fakeredis.
 
-    Patches src.gateway.governance.cbf.redis_client so that get_raw_client()
+    Patches src.cage_finance.safety.cbf.redis_client so that get_raw_client()
     returns the caller-supplied fakeredis instance — matching the pattern used
     in test_cbf_reconciliation.py.
     """
@@ -116,7 +116,7 @@ async def test_sequential_atomic_verify_second_blocked() -> None:
     mock_redis_module.get_raw_client.return_value = fake_redis
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.gateway.governance.cbf.redis_client", mock_redis_module)
+        mp.setattr("src.cage_finance.safety.cbf.redis_client", mock_redis_module)
 
         committed1, reason1 = await cbf.atomic_verify_and_commit(
             action_name="execute_trade",
@@ -170,7 +170,7 @@ async def test_concurrent_atomic_verify_exactly_one_commits() -> None:
     mock_redis_module.get_raw_client.return_value = fake_redis
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.gateway.governance.cbf.redis_client", mock_redis_module)
+        mp.setattr("src.cage_finance.safety.cbf.redis_client", mock_redis_module)
 
         results = await asyncio.gather(
             cbf.atomic_verify_and_commit(
@@ -223,7 +223,7 @@ async def test_non_trade_action_not_debited() -> None:
     mock_redis_module.get_raw_client.return_value = fake_redis
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.gateway.governance.cbf.redis_client", mock_redis_module)
+        mp.setattr("src.cage_finance.safety.cbf.redis_client", mock_redis_module)
 
         committed, reason = await cbf.atomic_verify_and_commit(
             action_name="market_analysis",
@@ -263,7 +263,7 @@ async def test_balance_at_minimum_blocks_any_trade() -> None:
     mock_redis_module.get_raw_client.return_value = fake_redis
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.gateway.governance.cbf.redis_client", mock_redis_module)
+        mp.setattr("src.cage_finance.safety.cbf.redis_client", mock_redis_module)
 
         committed, reason = await cbf.atomic_verify_and_commit(
             action_name="execute_trade",

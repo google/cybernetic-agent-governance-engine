@@ -36,7 +36,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_default_zero(self) -> None:
         """Verify sequence defaults to 0 for backward compatibility."""
-        from src.compliance_bridge.reconciliation_worker import ReconciliationResult
+        from src.cage_finance.reconciliation_worker import ReconciliationResult
 
         result = ReconciliationResult(
             source="test",
@@ -46,7 +46,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_in_redis_payload(self) -> None:
         """Verify sequence is included in serialized Redis payload."""
-        from src.compliance_bridge.reconciliation_worker import ReconciliationResult
+        from src.cage_finance.reconciliation_worker import ReconciliationResult
 
         result = ReconciliationResult(
             source="plaid",
@@ -63,7 +63,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_deserialized_from_payload(self) -> None:
         """Verify sequence is correctly deserialized from Redis payload."""
-        from src.compliance_bridge.reconciliation_worker import ReconciliationResult
+        from src.cage_finance.reconciliation_worker import ReconciliationResult
 
         payload = json.dumps(
             {
@@ -80,7 +80,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_backward_compat_missing_field(self) -> None:
         """Verify sequence defaults to 0 when missing from payload (backward compat)."""
-        from src.compliance_bridge.reconciliation_worker import ReconciliationResult
+        from src.cage_finance.reconciliation_worker import ReconciliationResult
 
         # Old-format payload without sequence field
         payload = json.dumps(
@@ -106,7 +106,7 @@ class TestSequenceInSignedPayload:
 
     def test_sequence_included_in_kms_signature(self) -> None:
         """Verify sequence is part of the payload passed to KMS signer.sign()."""
-        from src.compliance_bridge.reconciliation_worker import (
+        from src.cage_finance.reconciliation_worker import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -130,7 +130,7 @@ class TestSequenceInSignedPayload:
 
         with (
             patch(
-                "src.compliance_bridge.reconciliation_worker.REPLAY_DEFENSE_ENABLED",
+                "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED",
                 True,
             ),
             patch(
@@ -160,7 +160,7 @@ class TestCBFSequenceValidation:
         self,
     ) -> None:
         """R-04: Verify CBF rejects payloads with non-advancing sequence numbers."""
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -184,7 +184,7 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_accepts_advancing_sequence(self) -> None:
         """Verify CBF accepts payloads with advancing sequence numbers."""
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -208,7 +208,7 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_first_sequence_accepted(self) -> None:
         """Verify first sequence (when last_accepted is 0) is accepted."""
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -229,7 +229,7 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_rejects_equal_sequence(self) -> None:
         """Verify CBF rejects payloads with sequence equal to last_accepted."""
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -256,8 +256,8 @@ class TestCBFSequenceValidation:
         - The _validate_sequence method should not even be called
         - This ensures backward compatibility during staged rollout
         """
-        from src.compliance_bridge.reconciliation_worker import ReconciliationResult
-        from src.gateway.governance.cbf import ControlBarrierFunction
+        from src.cage_finance.reconciliation_worker import ReconciliationResult
+        from src.cage_finance.safety.cbf import ControlBarrierFunction
 
         # Create a verified result with sequence=0 (default)
         verified = ReconciliationResult(
@@ -299,7 +299,7 @@ class TestReconciliationSequenceIntegration:
 
     def test_reconcile_stamps_sequence_when_enabled(self) -> None:
         """Verify reconcile() stamps sequence on payload when feature flag is enabled."""
-        from src.compliance_bridge.reconciliation_worker import (
+        from src.cage_finance.reconciliation_worker import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -317,7 +317,7 @@ class TestReconciliationSequenceIntegration:
         )
 
         with patch(
-            "src.compliance_bridge.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
+            "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
         ):
             result = reconciler.reconcile()
 
@@ -326,7 +326,7 @@ class TestReconciliationSequenceIntegration:
 
     def test_reconcile_skips_sequence_when_disabled(self) -> None:
         """Verify reconcile() does not stamp sequence when feature flag is disabled."""
-        from src.compliance_bridge.reconciliation_worker import (
+        from src.cage_finance.reconciliation_worker import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -343,7 +343,7 @@ class TestReconciliationSequenceIntegration:
         )
 
         with patch(
-            "src.compliance_bridge.reconciliation_worker.REPLAY_DEFENSE_ENABLED", False
+            "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED", False
         ):
             result = reconciler.reconcile()
 
@@ -399,7 +399,7 @@ class TestReplayDefenseTelemetry:
         the reconcile() method stamps sequence on the result, which
         is then recorded as an OTel span attribute.
         """
-        from src.compliance_bridge.reconciliation_worker import (
+        from src.cage_finance.reconciliation_worker import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -416,7 +416,7 @@ class TestReplayDefenseTelemetry:
         )
 
         with patch(
-            "src.compliance_bridge.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
+            "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
         ):
             result = reconciler.reconcile()
 
