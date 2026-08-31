@@ -121,8 +121,11 @@ The following principles are mandated by `.roo/rules` and must be enforced at ev
 # BEFORE (violation):
 CONTROL_META = {
     "A.5.2": {"framework": "ISO 42001", "title": "AI policy"},
-    "SC-7":  {"framework": "NIST SP 800-53", "title": "Boundary Protection"},  # US_FED only
-    "Art.12": {"framework": "EU AI Act", "title": "Transparency"},              # EU_ECB only
+    "SC-7": {
+        "framework": "NIST SP 800-53",
+        "title": "Boundary Protection",
+    },  # US_FED only
+    "Art.12": {"framework": "EU AI Act", "title": "Transparency"},  # EU_ECB only
 }
 
 # AFTER (correct):
@@ -133,8 +136,11 @@ _UNIVERSAL_CONTROLS = {
 
 _JURISDICTIONAL_CONTROLS: dict[str, dict] = {
     "US_FED": {
-        "SC-7":  {"framework": "NIST SP 800-53", "title": "Boundary Protection"},
-        "AC-2":  {"framework": "NIST SP 800-53 / FedRAMP", "title": "Account Management"},
+        "SC-7": {"framework": "NIST SP 800-53", "title": "Boundary Protection"},
+        "AC-2": {
+            "framework": "NIST SP 800-53 / FedRAMP",
+            "title": "Account Management",
+        },
     },
     "EU_ECB": {
         "Art.12": {"framework": "EU AI Act", "title": "Transparency"},
@@ -144,6 +150,7 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict] = {
         "MAS-FEAT-1": {"framework": "MAS FEAT", "title": "Fairness"},
     },
 }
+
 
 def get_control_meta(region: str) -> dict:
     """Return controls applicable to the given deployment region."""
@@ -177,6 +184,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
         return  # BUG: silences ALL regions except US_FED
     span.set_attribute("cage.iso_control", control_id)
     span.set_attribute("cage.nist_control", NIST_MAP.get(control_id, ""))
+
 
 # AFTER (correct — ISO 42001 always stamped; NIST only for US_FED):
 def stamp_iso_control(span, control_id: str, region: str) -> None:

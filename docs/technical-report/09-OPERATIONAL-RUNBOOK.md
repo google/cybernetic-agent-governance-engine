@@ -393,10 +393,10 @@ import os
 
 ```python
 # Before:
-assert 'APPROVE' in result['reason']
+assert "APPROVE" in result["reason"]
 
 # After:
-assert 'approval' in result['reason'].lower()
+assert "approval" in result["reason"].lower()
 ```
 
 **Impact:** Test now passes correctly against the real consensus engine output.
@@ -448,7 +448,7 @@ from google.cloud import storage
 
 ```python
 # Before (naive split):
-host, port = REDIS_URL.split(':')
+host, port = REDIS_URL.split(":")
 
 # After (robust parsing):
 from urllib.parse import urlparse

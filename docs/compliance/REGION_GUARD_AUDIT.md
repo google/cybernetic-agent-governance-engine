@@ -117,8 +117,8 @@ These locations correctly read `CAGE_DEPLOYMENT_REGION` and route data to the ap
 def _get_worm_bucket(self) -> str:
     region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
     bucket_map = {
-        "US_FED":   os.environ.get("OSCAL_S3_BUCKET_US_FED", ""),
-        "EU_ECB":   os.environ.get("OSCAL_S3_BUCKET_EU_ECB", ""),
+        "US_FED": os.environ.get("OSCAL_S3_BUCKET_US_FED", ""),
+        "EU_ECB": os.environ.get("OSCAL_S3_BUCKET_EU_ECB", ""),
         "APAC_MAS": os.environ.get("OSCAL_S3_BUCKET_APAC_MAS", ""),
     }
     return bucket_map.get(region, os.environ.get("OSCAL_S3_BUCKET", ""))
@@ -215,6 +215,7 @@ def get_regional_profile(region: str | None = None) -> dict:
 # hitl_escalator.py — actual implementation
 def get_hitl_sla_hours(region: str | None = None) -> float:
     from src.gateway.governance.constants import HITL_SLA_HOURS, HITL_SLA_HOURS_DEFAULT
+
     active_region = (region or _get_region()).strip().upper()
     return HITL_SLA_HOURS.get(active_region, HITL_SLA_HOURS_DEFAULT)
 ```
@@ -421,9 +422,7 @@ _GCS_BUCKET: str = os.environ.get("EVIDENCE_STREAM_GCS_BUCKET", "")
 # No CAGE_DEPLOYMENT_REGION check
 
 # evidence_stream.py lines 110-113
-_REDIS_URL: str = os.environ.get(
-    "REDIS_URL", os.environ.get("REDIS_HOST", "localhost")
-)
+_REDIS_URL: str = os.environ.get("REDIS_URL", os.environ.get("REDIS_HOST", "localhost"))
 _REDIS_DB = 1  # hardcoded, not region-routed
 ```
 
@@ -538,7 +537,9 @@ Add to `src/gateway/infrastructure/redis_client.py`:
 def _get_regional_redis_url() -> str:
     region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
     regional_key = f"REDIS_URL_{region}"  # e.g. REDIS_URL_EU_ECB
-    return os.environ.get(regional_key, os.environ.get("REDIS_URL", "redis://localhost:6379"))
+    return os.environ.get(
+        regional_key, os.environ.get("REDIS_URL", "redis://localhost:6379")
+    )
 ```
 
 Additionally, namespace all Redis keys with the region prefix:
@@ -559,8 +560,8 @@ In `src/compliance_bridge/storage.py`, replace `_get_bucket()`:
 def _get_bucket() -> str:
     region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
     bucket_map = {
-        "US_FED":   os.environ.get("OSCAL_S3_BUCKET_US_FED", ""),
-        "EU_ECB":   os.environ.get("OSCAL_S3_BUCKET_EU_ECB", ""),
+        "US_FED": os.environ.get("OSCAL_S3_BUCKET_US_FED", ""),
+        "EU_ECB": os.environ.get("OSCAL_S3_BUCKET_EU_ECB", ""),
         "APAC_MAS": os.environ.get("OSCAL_S3_BUCKET_APAC_MAS", ""),
     }
     return bucket_map.get(region, os.environ.get("OSCAL_S3_BUCKET", ""))
@@ -849,6 +850,7 @@ The K8s template `gateway.yaml.tpl` also does not inject `CAGE_DEPLOYMENT_REGION
 # cmek_guard.py lines 93-94, 133-134
 def _get_region() -> str:
     return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+
 
 active_region = region if region is not None else _get_region()
 citation = _ENCRYPTION_CITATION.get(active_region, _ENCRYPTION_CITATION_DEFAULT)

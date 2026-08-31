@@ -226,7 +226,7 @@ if current_telemetry is None:
             "is configured and returning data before calling this function.",
             _cage_env,
         )
-        return False   # ← DENY: fail closed
+        return False  # ← DENY: fail closed
     # dev/test only: fall back to mock data with warning
     current_telemetry = generate_mock_telemetry()
 ```

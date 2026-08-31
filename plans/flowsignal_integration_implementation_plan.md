@@ -171,6 +171,7 @@ async def validate_fria(self, payload: dict[str, Any]):
         findings=data.get("findings", []),
     )
 
+
 def _map_flowsignal_decision(self, decision: str, data: dict[str, Any]):
     from src.gateway.governance.normative_provider import ValidationResult
 
@@ -180,30 +181,36 @@ def _map_flowsignal_decision(self, decision: str, data: dict[str, Any]):
     if decision == "REFUSE":
         return ValidationResult(
             admitted=False,
-            findings=[{
-                "code": "FLOWSIGNAL_REFUSE",
-                "severity": "blocked",
-                "message": reason or "FlowSignal refused authority",
-            }],
+            findings=[
+                {
+                    "code": "FLOWSIGNAL_REFUSE",
+                    "severity": "blocked",
+                    "message": reason or "FlowSignal refused authority",
+                }
+            ],
         )
     if decision == "ESCALATE":
         return ValidationResult(
             admitted=False,
-            findings=[{
-                "code": "FLOWSIGNAL_HOLD",
-                "severity": "review",
-                "needs_human_review": True,
-                "escalation_code": data.get("escalation_code", "UNSPECIFIED"),
-                "message": reason or "FlowSignal requires escalation",
-            }],
+            findings=[
+                {
+                    "code": "FLOWSIGNAL_HOLD",
+                    "severity": "review",
+                    "needs_human_review": True,
+                    "escalation_code": data.get("escalation_code", "UNSPECIFIED"),
+                    "message": reason or "FlowSignal requires escalation",
+                }
+            ],
         )
     return ValidationResult(
         admitted=False,
-        findings=[{
-            "code": "PARSE_ERROR",
-            "severity": "blocked",
-            "message": f"Unrecognized FlowSignal decision: {decision!r}",
-        }],
+        findings=[
+            {
+                "code": "PARSE_ERROR",
+                "severity": "blocked",
+                "message": f"Unrecognized FlowSignal decision: {decision!r}",
+            }
+        ],
     )
 ```
 
@@ -312,7 +319,9 @@ class ConsequenceAuthorityStore:
     (process-local atomicity only) with a distributed atomic primitive.
     """
 
-    def __init__(self, redis_client: object, ttl_seconds: int = _DEFAULT_TTL_SECONDS) -> None:
+    def __init__(
+        self, redis_client: object, ttl_seconds: int = _DEFAULT_TTL_SECONDS
+    ) -> None:
         self._redis = redis_client
         self._ttl_seconds = ttl_seconds
 
@@ -321,12 +330,18 @@ class ConsequenceAuthorityStore:
         import redis.asyncio as aioredis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        ttl = int(os.environ.get("FLOWSIGNAL_CONSUMPTION_TTL_SECONDS", str(_DEFAULT_TTL_SECONDS)))
+        ttl = int(
+            os.environ.get(
+                "FLOWSIGNAL_CONSUMPTION_TTL_SECONDS", str(_DEFAULT_TTL_SECONDS)
+            )
+        )
         client = aioredis.from_url(redis_url, decode_responses=True)
         return cls(client, ttl_seconds=ttl)
 
     @staticmethod
-    def binding_hash(thread_id: str, actor_id: str, action_digest: str, state_version: str | None) -> str:
+    def binding_hash(
+        thread_id: str, actor_id: str, action_digest: str, state_version: str | None
+    ) -> str:
         material = f"{thread_id}:{actor_id}:{action_digest}:{state_version or ''}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
@@ -445,7 +460,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 from src.gateway.governance.consequence_authority_store import ConsequenceAuthorityStore
-from src.gateway.governance.consequence_token import ConsequenceToken, ConsequenceTokenError
+from src.gateway.governance.consequence_token import (
+    ConsequenceToken,
+    ConsequenceTokenError,
+)
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("Gateway.Governance.ConsequenceGateway")
@@ -488,7 +506,9 @@ class ConsequenceGateway:
             claims = ConsequenceToken.verify(token, signer=self._signer)
         except ConsequenceTokenError as exc:
             logger.warning("[ConsequenceGateway] token verification failed: %s", exc)
-            return ConsequenceEvaluation(ConsequenceDecision.BLOCK, "TOKEN_INVALID", str(exc))
+            return ConsequenceEvaluation(
+                ConsequenceDecision.BLOCK, "TOKEN_INVALID", str(exc)
+            )
 
         # Steps 3-4: JCS digest re-verification (closes TOCTOU gap)
         recomputed = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
@@ -496,7 +516,9 @@ class ConsequenceGateway:
             logger.warning(
                 "[ConsequenceGateway] ACTION_BINDING_MISMATCH rec=%s", claims.rec
             )
-            return ConsequenceEvaluation(ConsequenceDecision.BLOCK, "ACTION_BINDING_MISMATCH")
+            return ConsequenceEvaluation(
+                ConsequenceDecision.BLOCK, "ACTION_BINDING_MISMATCH"
+            )
 
         # Step 5: atomic single-use consumption
         binding = ConsequenceAuthorityStore.binding_hash(
@@ -506,11 +528,17 @@ class ConsequenceGateway:
             consumed = await self._store.consume_once(claims.rec, binding)
         except Exception as exc:
             logger.error("[ConsequenceGateway] Redis error during consumption: %s", exc)
-            return ConsequenceEvaluation(ConsequenceDecision.BLOCK, "REDIS_ERROR", str(exc))
+            return ConsequenceEvaluation(
+                ConsequenceDecision.BLOCK, "REDIS_ERROR", str(exc)
+            )
 
         if not consumed:
             existing = await self._store.get_binding(claims.rec)
-            reason = "ALREADY_CONSUMED" if existing == binding else "AUTHORITY_RECORD_BINDING_MISMATCH"
+            reason = (
+                "ALREADY_CONSUMED"
+                if existing == binding
+                else "AUTHORITY_RECORD_BINDING_MISMATCH"
+            )
             return ConsequenceEvaluation(ConsequenceDecision.BLOCK, reason)
 
         # Step 6: EXECUTE
@@ -637,10 +665,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ConsequenceTokenClaims:
-    sub: str   # actor_id
-    tid: str   # thread_id
-    rec: str   # authority_record_id (single-use key, == jti)
-    act: str   # RFC 8785 JCS SHA-256 digest of the action payload
+    sub: str  # actor_id
+    tid: str  # thread_id
+    rec: str  # authority_record_id (single-use key, == jti)
+    act: str  # RFC 8785 JCS SHA-256 digest of the action payload
     ver: str | None
     iat: int
     exp: int
@@ -662,24 +690,40 @@ class ConsequenceToken:
 
     @classmethod
     def mint(
-        cls, *, sub: str, tid: str, rec: str, act: str, ver: str | None = None,
-        ttl_seconds: int = 60, signer: KMSGovernanceSigner,
+        cls,
+        *,
+        sub: str,
+        tid: str,
+        rec: str,
+        act: str,
+        ver: str | None = None,
+        ttl_seconds: int = 60,
+        signer: KMSGovernanceSigner,
     ) -> str:
         now = int(time.time())
         header = {"alg": signer.signing_algorithm, "typ": "JWT", "kid": signer.key_id}
         payload = {
-            "sub": sub, "tid": tid, "rec": rec, "act": act, "ver": ver,
-            "iat": now, "exp": now + ttl_seconds, "jti": rec,
+            "sub": sub,
+            "tid": tid,
+            "rec": rec,
+            "act": act,
+            "ver": ver,
+            "iat": now,
+            "exp": now + ttl_seconds,
+            "jti": rec,
         }
         signing_input = (
             _b64url(json.dumps(header, sort_keys=True).encode())
-            + "." + _b64url(json.dumps(payload, sort_keys=True).encode())
+            + "."
+            + _b64url(json.dumps(payload, sort_keys=True).encode())
         )
         signature = signer.sign_raw(signing_input.encode("ascii"))
         return f"{signing_input}.{_b64url(signature)}"
 
     @classmethod
-    def verify(cls, token: str, *, signer: KMSGovernanceSigner) -> ConsequenceTokenClaims:
+    def verify(
+        cls, token: str, *, signer: KMSGovernanceSigner
+    ) -> ConsequenceTokenClaims:
         try:
             header_b64, payload_b64, sig_b64 = token.split(".")
         except ValueError as exc:
@@ -697,9 +741,14 @@ class ConsequenceToken:
             raise ConsequenceTokenError("bad signature")
 
         return ConsequenceTokenClaims(
-            sub=payload["sub"], tid=payload["tid"], rec=payload["rec"],
-            act=payload["act"], ver=payload.get("ver"),
-            iat=payload["iat"], exp=payload["exp"], jti=payload["jti"],
+            sub=payload["sub"],
+            tid=payload["tid"],
+            rec=payload["rec"],
+            act=payload["act"],
+            ver=payload.get("ver"),
+            iat=payload["iat"],
+            exp=payload["exp"],
+            jti=payload["jti"],
         )
 ```
 

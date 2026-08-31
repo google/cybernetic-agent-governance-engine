@@ -51,9 +51,13 @@ RUN uv pip install --no-cache \
 
 # Copy Source Code
 COPY src/gateway /app/src/gateway
+COPY src/cage_finance /app/src/cage_finance
 COPY src/governed_financial_advisor /app/src/governed_financial_advisor
 COPY src/compliance_bridge /app/src/compliance_bridge
 COPY config /app/config
+
+# Install the project itself so entry-point metadata exists in the image.
+RUN uv pip install --no-deps .
 
 # Environment Variables
 ENV PYTHONUNBUFFERED=1

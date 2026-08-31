@@ -82,11 +82,13 @@ import asyncio
 import json
 from src.gateway.governance.ingress.agent_registry_adapter import AgentRegistryAdapter
 
+
 async def push():
     adapter = AgentRegistryAdapter()
     with open("config/registry/generated_tool_authorizations.json") as f:
         manifest = json.load(f)
     await adapter.push_tool_authorizations(manifest)
+
 
 asyncio.run(push())
 ```

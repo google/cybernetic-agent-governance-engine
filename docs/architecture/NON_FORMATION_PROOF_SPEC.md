@@ -658,12 +658,12 @@ The complete receipt (§6.0-6.6) becomes the `payload` of a
 ```python
 envelope = await builder.build(
     action=f"refusal_receipt:{intent.action}",
-    params=receipt.to_dict(),                 # the full 9-part structure
+    params=receipt.to_dict(),  # the full 9-part structure
     governance_result={"decision": "DENY", "receipt_id": receipt.receipt_id},
     record_hash=receipt.proof_hash,
     agent_id=intent.agent_id,
-    tiers_passed=[],                            # none passed — this is a DENY
-    controls_satisfied=[],                      # none — refusal, not approval
+    tiers_passed=[],  # none passed — this is a DENY
+    controls_satisfied=[],  # none — refusal, not approval
     envelope_type=EnvelopeType.GOVERNANCE_DECISION,  # or new REFUSAL_RECEIPT type
 )
 ```

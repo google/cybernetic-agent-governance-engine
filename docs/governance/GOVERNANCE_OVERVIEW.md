@@ -139,8 +139,8 @@ Tiers 2 and 4 run the Control Barrier Function check and the OPA policy evaluati
 
 ```python
 cbf_result, opa_result = await asyncio.gather(
-    _cbf_check_with_span(),   # cbf.py: atomic_verify_and_commit()
-    _opa_check_with_span(),   # OPA via OPAClient
+    _cbf_check_with_span(),  # cbf.py: atomic_verify_and_commit()
+    _opa_check_with_span(),  # OPA via OPAClient
     return_exceptions=True,
 )
 ```

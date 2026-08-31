@@ -705,13 +705,14 @@ class FindingStatus(str, Enum):
     VEIP) emits findings the OSCAL SSP exporter can ingest without a
     translation layer.
     """
-    PASS = "PASS"                  # OSCAL: satisfied
-    FAIL = "FAIL"                  # OSCAL: not-satisfied
+
+    PASS = "PASS"  # OSCAL: satisfied
+    FAIL = "FAIL"  # OSCAL: not-satisfied
     NOT_APPLICABLE = "NOT_APPLICABLE"  # OSCAL: not-applicable
-    ERROR = "ERROR"                # Non-OSCAL extension: provider-side fault
-                                     # (distinct from FAIL — evaluation could
-                                     # not complete, vs. evaluation completed
-                                     # and failed)
+    ERROR = "ERROR"  # Non-OSCAL extension: provider-side fault
+    # (distinct from FAIL — evaluation could
+    # not complete, vs. evaluation completed
+    # and failed)
 ```
 
 `ValidationResult.findings` entries become

@@ -136,6 +136,7 @@ Used by [`metrics.py`](../../src/compliance_bridge/metrics.py) to **read** trace
 # src/compliance_bridge/metrics.py L55-61
 def _make_app_langfuse():
     from langfuse.api import LangfuseAPI
+
     return LangfuseAPI(
         username=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
         password=os.environ.get("LANGFUSE_SECRET_KEY", ""),

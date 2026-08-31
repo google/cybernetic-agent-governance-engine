@@ -37,7 +37,7 @@ deploy_agent_log.txt
 mirror.log
 
 # Project Specific
-opa
+/opa
 !config/opa/
 !compliance/postures/us_fed/opa/
 !compliance/postures/eu_ecb/opa/
@@ -111,7 +111,8 @@ backend_logs*.txt
 qwen_temp/
 temp_model_cache/
 temp_model_mirror/
-models/
+# Model Weights
+/models/
 model_cache/
 *.safetensors
 *.gguf

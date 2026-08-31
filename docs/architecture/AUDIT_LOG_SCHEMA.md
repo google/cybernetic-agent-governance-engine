@@ -44,6 +44,7 @@ Chain integrity can be verified programmatically:
 
 ```python
 from examples.telemetry import PlaygroundTelemetry
+
 tel = PlaygroundTelemetry()
 valid, count = tel.verify_chain()
 # valid=True means no record has been tampered with or inserted out of order

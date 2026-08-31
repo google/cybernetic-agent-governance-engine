@@ -70,15 +70,18 @@ If the agent crashes between Step 1 and Step 3, the `PENDING` entry persists in 
 ### 4.2 Ledger Schema (`AgentState.completed_transactions`)
 
 ```python
-LedgerEntry = TypedDict("LedgerEntry", {
-    "sequence_id":     int,              # LIFO ordering key
-    "timestamp":       str,              # ISO 8601 UTC
-    "uca_ref":         str,              # e.g. "UCA-4"
-    "action":          str,              # e.g. "execute_trade"
-    "idempotency_key": str,              # SHA-256(tx_id + action)[:32]
-    "status":          LedgerEntryStatus,# PENDING | COMPLETED | ROLLED_BACK | PARTIAL_FAILURE
-    "context_data":    dict,             # forward action result (tx_id, amount, account_id)
-})
+LedgerEntry = TypedDict(
+    "LedgerEntry",
+    {
+        "sequence_id": int,  # LIFO ordering key
+        "timestamp": str,  # ISO 8601 UTC
+        "uca_ref": str,  # e.g. "UCA-4"
+        "action": str,  # e.g. "execute_trade"
+        "idempotency_key": str,  # SHA-256(tx_id + action)[:32]
+        "status": LedgerEntryStatus,  # PENDING | COMPLETED | ROLLED_BACK | PARTIAL_FAILURE
+        "context_data": dict,  # forward action result (tx_id, amount, account_id)
+    },
+)
 ```
 
 The ledger uses `Annotated[list[LedgerEntry], add]` — an append-only reducer — ensuring thread-safe writes across concurrent LangGraph nodes.

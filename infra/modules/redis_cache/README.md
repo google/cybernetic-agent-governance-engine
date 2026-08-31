@@ -219,7 +219,7 @@ single primary pod, so writes never land on a replica.
 write_client = redis.Redis(host="redis-master", port=6379, password=...)
 
 # Reads — use the standard service (load-balanced across all nodes)
-read_client  = redis.Redis(host="redis", port=6379, password=...)
+read_client = redis.Redis(host="redis", port=6379, password=...)
 ```
 
 In pod environment variables:

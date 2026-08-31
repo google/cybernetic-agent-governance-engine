@@ -1434,6 +1434,7 @@ X-CAGE-Webhook-Signature: <hex-encoded-hmac-sha256>
 ```python
 import hashlib, hmac
 
+
 def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
     expected = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)

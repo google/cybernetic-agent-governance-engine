@@ -195,9 +195,15 @@ import subprocess
 
 request = json.load(open("verify-request.json", encoding="utf-8"))
 completed = subprocess.run(
-    ["node", "packages/cli/dist/cli.js", "verify",
-     "--trusted-policy", "/absolute/project/integrity/policy.yaml",
-     "--trusted-config", "/etc/agent-integrity/trusted-config.json"],
+    [
+        "node",
+        "packages/cli/dist/cli.js",
+        "verify",
+        "--trusted-policy",
+        "/absolute/project/integrity/policy.yaml",
+        "--trusted-config",
+        "/etc/agent-integrity/trusted-config.json",
+    ],
     input=json.dumps(request),
     text=True,
     capture_output=True,

@@ -49,7 +49,7 @@ from langchain_core.messages import HumanMessage
 #
 # get_current_price(symbol) → float | None
 #
-# src.gateway.core.market currently exposes MarketService (async sentiment,
+# src.cage_finance.tools.market_service currently exposes MarketService (async sentiment,
 # sync status) but no synchronous get_current_price helper.  The try/except
 # below attempts to import it when a future sprint adds it; until then it
 # falls back to a no-op stub that returns None.  The caller in
@@ -57,7 +57,9 @@ from langchain_core.messages import HumanMessage
 # handled fail-closed by the OPA rule in trade_governance.rego.
 # ---------------------------------------------------------------------------
 try:
-    from src.gateway.core.market import get_current_price  # type: ignore[attr-defined]
+    from src.cage_finance.tools.market_service import (
+        get_current_price,  # type: ignore[attr-defined]
+    )
 except (ImportError, AttributeError):
 
     def get_current_price(symbol: str) -> float | None:  # type: ignore[misc]
@@ -261,7 +263,7 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
     if _quantity and _symbol_for_price and _raw_amount == 0:
         # Attempt to resolve current price from the module-level get_current_price.
         # The module-level binding resolves to the real implementation when
-        # src.gateway.core.market exports it, or to a no-op stub (returns None)
+        # src.cage_finance.tools.market_service exports it, or to a no-op stub (returns None)
         # when not yet implemented — making it patchable in unit tests.
         # Broad except: any I/O, import, or runtime failure keeps _raw_amount=0;
         # OPA fail-closed rule will DENY when claimed_authorization_present is True.
