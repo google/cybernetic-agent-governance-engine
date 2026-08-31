@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """
+
 Tests verifying that spoofing confidence=1.0 in the action payload does NOT
 cause a trade to bypass governance when other tiers (CBF or OPA) should deny it.
 
@@ -30,6 +31,9 @@ Key property being tested:
 """
 
 from __future__ import annotations
+
+from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
 import asyncio
 import os

@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 
-from src.governed_financial_advisor.utils.privacy import scrub_pii as global_scrub
+from src.gateway.infrastructure.privacy import scrub_pii as global_scrub
 
 # Force OTel GenAI Instrumentation to capture inputs and outputs (PII is handled by Gateway)
 os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"

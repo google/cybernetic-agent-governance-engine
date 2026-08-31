@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 # Adjust path to find src
 sys.path.append(os.getcwd())
 
-from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient
+from src.gateway.infrastructure.mcp_client import GatewayMCPClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestGateway")

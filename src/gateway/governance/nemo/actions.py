@@ -21,7 +21,7 @@ Hybrid Gateway process. They are for GATEWAY-INTERNAL use only.
 PRODUCTION registration: config.rails.actions (HTTP-delegating, canonical)
 These gateway-internal actions are NOT registered with the top-level NeMo Guardrails instance.
 
-See: src.governed_financial_advisor.governance.nemo_action_registry for registration logic.
+See: src.gateway.governance.nemo.action_registry for registration logic.
 
 Architecture note (re-entrant loop fix):
     These actions NO LONGER import ``symbolic_governor`` from ``singletons`` or call
@@ -283,7 +283,7 @@ async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
 
     logger.warning(f"🔔 InvokeVllmFallbackAction CALLED. content='{final_content}'")
 
-    from src.governed_financial_advisor.utils.telemetry import genai_span
+    from src.gateway.infrastructure.telemetry_client import genai_span
 
     with genai_span(
         "guardrails.vllm_fallback",

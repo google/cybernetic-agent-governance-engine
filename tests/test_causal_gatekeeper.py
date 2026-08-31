@@ -56,7 +56,7 @@ class TestCausalOrderingValidation:
 
     def test_valid_ordering_same_trace_id(self):
         """Governance span before execution span with matching trace_id → True."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.cage_finance.causal.causal_gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 1000.0, "trace_id": "trace-abc"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
@@ -64,7 +64,7 @@ class TestCausalOrderingValidation:
 
     def test_trace_id_mismatch_returns_false(self):
         """Mismatched trace_ids → False (different causal chains)."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.cage_finance.causal.causal_gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 1000.0, "trace_id": "trace-A"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-B"}
@@ -72,7 +72,7 @@ class TestCausalOrderingValidation:
 
     def test_governance_after_execution_returns_false(self):
         """Governance timestamp >= execution timestamp → False."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.cage_finance.causal.causal_gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 3000.0, "trace_id": "trace-abc"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
@@ -80,7 +80,7 @@ class TestCausalOrderingValidation:
 
     def test_equal_timestamps_returns_false(self):
         """Equal timestamps violate strict ordering → False."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.cage_finance.causal.causal_gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 2000.0, "trace_id": "trace-abc"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
@@ -88,7 +88,7 @@ class TestCausalOrderingValidation:
 
     def test_missing_trace_ids_non_strict_mode_uses_timestamp(self):
         """Missing trace_ids in non-strict mode: falls back to timestamp check."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         original = causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE
         try:
@@ -102,7 +102,7 @@ class TestCausalOrderingValidation:
 
     def test_missing_trace_ids_strict_mode_returns_false(self):
         """Missing trace_ids in strict mode → False."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         original = causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE
         try:
@@ -116,7 +116,7 @@ class TestCausalOrderingValidation:
 
     def test_no_timestamps_with_matching_trace_ids_returns_true(self):
         """Matching trace_ids, no timestamps → True (ordering not violated)."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.cage_finance.causal.causal_gatekeeper import validate_causal_ordering
 
         gov = {"trace_id": "trace-xyz"}
         exe = {"trace_id": "trace-xyz"}
@@ -124,7 +124,7 @@ class TestCausalOrderingValidation:
 
     def test_empty_spans_non_strict_returns_true(self):
         """Empty spans with no trace_id in non-strict mode → True (no violation)."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         original = causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE
         try:
@@ -144,7 +144,7 @@ class TestTelemetryFreshness:
 
     def test_fresh_telemetry_returns_true(self):
         """Telemetry with recent timestamps returns True."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.cage_finance.causal.causal_gatekeeper import _check_telemetry_freshness
 
         now = time.time()
         df = pd.DataFrame({"timestamp": [now - 60, now - 30, now - 10]})
@@ -153,13 +153,13 @@ class TestTelemetryFreshness:
 
     def test_stale_telemetry_returns_false(self):
         """Telemetry older than telemetry.max_staleness_seconds → False."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         now = time.time()
         df = pd.DataFrame({"timestamp": [now - 3600, now - 1800]})
         # Patch the accessor to return 10 seconds (much less than 1800s age)
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_telemetry_max_staleness_seconds",
+            "src.cage_finance.causal.causal_gatekeeper.get_telemetry_max_staleness_seconds",
             return_value=10,
         ):
             result = causal_gatekeeper._check_telemetry_freshness(df, self._make_span())
@@ -167,7 +167,7 @@ class TestTelemetryFreshness:
 
     def test_no_timestamp_column_returns_false(self):
         """DataFrame without any timestamp column → False (fail-closed)."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.cage_finance.causal.causal_gatekeeper import _check_telemetry_freshness
 
         df = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         result = _check_telemetry_freshness(df, self._make_span())
@@ -175,7 +175,7 @@ class TestTelemetryFreshness:
 
     def test_alternative_timestamp_column_names(self):
         """Checks 'ts', 'event_time', 'time', 'created_at' column names."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.cage_finance.causal.causal_gatekeeper import _check_telemetry_freshness
 
         now = time.time()
         for col in ("ts", "event_time", "time", "created_at"):
@@ -185,7 +185,7 @@ class TestTelemetryFreshness:
 
     def test_unparseable_timestamp_returns_false(self):
         """Timestamp column with unparseable values → False (fail-closed)."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.cage_finance.causal.causal_gatekeeper import _check_telemetry_freshness
 
         df = pd.DataFrame({"timestamp": ["not-a-date", "also-not"]})
         result = _check_telemetry_freshness(df, self._make_span())
@@ -193,7 +193,7 @@ class TestTelemetryFreshness:
 
     def test_millisecond_timestamps_supported(self):
         """Timestamps >1e12 are treated as milliseconds → fresh."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.cage_finance.causal.causal_gatekeeper import _check_telemetry_freshness
 
         now_ms = time.time() * 1000  # milliseconds
         df = pd.DataFrame({"timestamp": [now_ms - 5000, now_ms - 1000]})
@@ -206,7 +206,7 @@ class TestCausalCacheHelpers:
 
     def test_cache_get_sync_returns_none_when_redis_unavailable(self):
         """_causal_cache_get_sync raises RuntimeError when sync_redis_client is None."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         with patch("src.gateway.infrastructure.redis_client.sync_redis_client", None):
             with pytest.raises(RuntimeError, match="Redis unavailable"):
@@ -220,7 +220,7 @@ class TestCausalCacheHelpers:
         with patch(
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
-            from src.gateway.governance import causal_gatekeeper
+            import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
             result = causal_gatekeeper._causal_cache_get_sync("missing-key")
         assert result is None
@@ -236,7 +236,7 @@ class TestCausalCacheHelpers:
         with patch(
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
-            from src.gateway.governance import causal_gatekeeper
+            import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
             result = causal_gatekeeper._causal_cache_get_sync("hit-key")
         assert result == {"result": True, "reason": "all_checks_passed"}
@@ -249,7 +249,7 @@ class TestCausalCacheHelpers:
         with patch(
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
-            from src.gateway.governance import causal_gatekeeper
+            import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
             with pytest.raises(RuntimeError, match="Redis unavailable"):
                 causal_gatekeeper._causal_cache_get_sync("error-key")
@@ -262,18 +262,18 @@ class TestCausalCacheHelpers:
         with patch(
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
-            from src.gateway.governance import causal_gatekeeper
+            import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
             result = causal_gatekeeper._causal_cache_get_sync("bad-json-key")
         assert result is None
 
     def test_cache_set_sync_noop_when_ttl_zero(self):
         """_causal_cache_set_sync is a no-op when telemetry.cache_ttl_seconds=0."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         mock_redis = MagicMock()
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            "src.cage_finance.causal.causal_gatekeeper.get_causal_cache_ttl_seconds",
             return_value=0,
         ):
             with patch(
@@ -284,11 +284,11 @@ class TestCausalCacheHelpers:
 
     def test_cache_set_sync_writes_when_redis_available(self):
         """_causal_cache_set_sync calls setex when sync_redis_client is available."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         mock_redis = MagicMock()
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            "src.cage_finance.causal.causal_gatekeeper.get_causal_cache_ttl_seconds",
             return_value=60,
         ):
             with patch(
@@ -302,10 +302,10 @@ class TestCausalCacheHelpers:
 
     def test_cache_set_sync_noop_when_redis_unavailable(self):
         """_causal_cache_set_sync is a no-op when sync_redis_client is None."""
-        from src.gateway.governance import causal_gatekeeper
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
 
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            "src.cage_finance.causal.causal_gatekeeper.get_causal_cache_ttl_seconds",
             return_value=60,
         ):
             with patch(
@@ -320,7 +320,7 @@ class TestCausalSafetyCheckNoDoWhy:
 
     def test_zero_amount_returns_true_without_dowhy(self):
         """amount <= 0 returns True immediately — no dowhy needed."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         df = pd.DataFrame(
             {
@@ -334,7 +334,7 @@ class TestCausalSafetyCheckNoDoWhy:
 
     def test_negative_amount_returns_true_without_dowhy(self):
         """Negative amount returns True immediately — no dowhy needed."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         df = pd.DataFrame(
             {
@@ -350,7 +350,7 @@ class TestCausalSafetyCheckNoDoWhy:
         """In production (CAGE_ENV=production), missing telemetry → fail-closed."""
         import os
 
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         original = os.environ.get("CAGE_ENV")
         try:
@@ -365,8 +365,8 @@ class TestCausalSafetyCheckNoDoWhy:
 
     def test_dowhy_unavailable_fails_closed_for_nonzero_amount(self):
         """When dowhy is not installed, nonzero amount → False (fail-closed)."""
-        from src.gateway.governance import causal_gatekeeper
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        import src.cage_finance.causal.causal_gatekeeper as causal_gatekeeper
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         original_available = causal_gatekeeper._DOWHY_AVAILABLE
         try:
@@ -380,7 +380,7 @@ class TestCausalSafetyCheckNoDoWhy:
                 }
             )
             with patch(
-                "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+                "src.cage_finance.causal.causal_gatekeeper._causal_cache_get_sync",
                 return_value=None,
             ):
                 result = causal_safety_check({"amount": 100}, df)
@@ -454,14 +454,14 @@ class TestCausalSafetyCheckUnit:
 
     def test_zero_amount_is_safe(self, stable_telemetry):
         """A trade with amount <= 0 should always be considered safe."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         result = causal_safety_check({"amount": 0}, stable_telemetry)
         assert result is True
 
     def test_negative_amount_is_safe(self, stable_telemetry):
         """A trade with negative amount should always be considered safe."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         result = causal_safety_check({"amount": -100}, stable_telemetry)
         assert result is True
@@ -479,15 +479,15 @@ class TestCausalSafetyCheckUnit:
         """
         from unittest.mock import patch
 
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         with (
             patch(
-                "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+                "src.cage_finance.causal.causal_gatekeeper._causal_cache_get_sync",
                 return_value=None,
             ),
             patch(
-                "src.gateway.governance.causal_gatekeeper._causal_cache_set_sync",
+                "src.cage_finance.causal.causal_gatekeeper._causal_cache_set_sync",
                 return_value=None,
             ),
         ):
@@ -500,7 +500,7 @@ class TestCausalSafetyCheckUnit:
         generate_mock_telemetry() now includes a 'timestamp' column so that
         the telemetry freshness check treats synthetic data as fresh.
         """
-        from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
+        from src.cage_finance.causal.causal_gatekeeper import generate_mock_telemetry
 
         df = generate_mock_telemetry(n_samples=100)
         assert len(df) == 100
@@ -513,7 +513,7 @@ class TestCausalSafetyCheckUnit:
 
     def test_generate_mock_telemetry_deterministic(self):
         """Mock telemetry should be deterministic (seeded)."""
-        from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
+        from src.cage_finance.causal.causal_gatekeeper import generate_mock_telemetry
 
         df1 = generate_mock_telemetry(50)
         df2 = generate_mock_telemetry(50)
@@ -528,13 +528,13 @@ class TestCausalSafetyCheckUnit:
         """
         from unittest.mock import patch
 
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         # Provide a DataFrame missing required columns to trigger an error.
         # No timestamp column → freshness check fails closed → returns False.
         bad_data = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         with patch(
-            "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+            "src.cage_finance.causal.causal_gatekeeper._causal_cache_get_sync",
             return_value=None,  # force cache miss so the check actually runs
         ):
             result = causal_safety_check({"amount": 100}, bad_data)
@@ -571,13 +571,13 @@ class TestCausalGatekeeperIntegration:
             telemetry_provider.get_latest_data.return_value = telemetry_data
 
         gov = SymbolicGovernor(opa_client=opa_client)
+        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
-        from src.cage_finance.causal.causal_gatekeeper import CausalGatekeeper
+
         gov.register_domain_tier(CBFTierPlugin(safety_filter))
         gov.register_domain_tier(ConsensusTierPlugin(consensus_engine))
-        gov.register_domain_tier(CausalTierPlugin(CausalGatekeeper(telemetry_provider)))
+        gov.register_domain_tier(CausalTierPlugin())
         return gov
 
     @pytest.mark.asyncio
@@ -596,13 +596,16 @@ class TestCausalGatekeeperIntegration:
         intent = {"amount": 1, "confidence": 0.99, "symbol": "AAPL"}
 
         with patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check"
+            "src.cage_finance.tiers.causal_tier.causal_safety_check"
         ) as mock_check:
             mock_check.return_value = False
             result = await governor.verify("execute_trade", intent)
 
+        # Print to see exactly what we got
+        print("VIOLATIONS:", result["violations"])
+
         causal_violations = [
-            v for v in result["violations"] if "DoWhy refutation failed" in v
+            v for v in result["violations"] if "World-model is untrustworthy" in getattr(v, "message", getattr(v, "rule_description", str(v)))
         ]
         assert len(causal_violations) > 0
 
@@ -622,6 +625,14 @@ class TestCausalGatekeeperIntegration:
 
 
 class TestNegativeCausalSlopeGuard:
+    @pytest.fixture(autouse=True)
+    def disable_redis(self):
+        from unittest.mock import patch, MagicMock
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        with patch("src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis):
+            yield
+
     """Tests for the β≤0 fail-closed guard (peer review fix).
 
     The causal gatekeeper must reject when the estimated causal effect (β)
@@ -684,7 +695,7 @@ class TestNegativeCausalSlopeGuard:
 
     def test_negative_slope_triggers_causal_lock(self, negative_slope_telemetry):
         """Negative causal slope (β < 0) must trigger fail-closed CAUSAL LOCK."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         # causal_safety_check(params, current_telemetry) — pass args directly
         params = {"amount": 5000, "symbol": "AAPL", "confidence": 0.99}
@@ -700,7 +711,7 @@ class TestNegativeCausalSlopeGuard:
         Before the fix, a negative β combined with a large negative amount could
         produce a negative risk, which the old code might not have caught.
         """
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
 
         # causal_safety_check(params, current_telemetry) — pass args directly
         params = {"amount": 1_000_000, "symbol": "AAPL", "confidence": 0.99}
@@ -718,7 +729,7 @@ class TestBoundedRiskScore:
 
     def test_bounded_risk_with_extreme_positive_amount(self):
         """Risk score must be clamped at 1.0 for extreme positive amounts."""
-        from src.gateway.governance.causal_gatekeeper import (
+        from src.cage_finance.causal.causal_gatekeeper import (
             CAUSAL_LOCK_RISK_BOUNDARY,
             CAUSAL_NORMALIZATION_SCALE,
         )
@@ -740,7 +751,7 @@ class TestBoundedRiskScore:
 
     def test_bounded_risk_with_negative_amount(self):
         """Risk score must be clamped at 0.0 for negative amounts (if possible)."""
-        from src.gateway.governance.causal_gatekeeper import (
+        from src.cage_finance.causal.causal_gatekeeper import (
             CAUSAL_NORMALIZATION_SCALE,
         )
 
@@ -761,7 +772,7 @@ class TestBoundedRiskScore:
 
     def test_normal_amount_produces_valid_risk(self):
         """Normal trade amounts should produce risk in valid [0, 1] range."""
-        from src.gateway.governance.causal_gatekeeper import (
+        from src.cage_finance.causal.causal_gatekeeper import (
             CAUSAL_NORMALIZATION_SCALE,
         )
 

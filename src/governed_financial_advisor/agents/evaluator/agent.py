@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 from opentelemetry import trace
 
-from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
+from src.gateway.infrastructure.mcp_client import get_mcp_client
 
 logger = logging.getLogger("EvaluatorAgent")
 tracer = trace.get_tracer("src.governed_financial_advisor.agents.evaluator")

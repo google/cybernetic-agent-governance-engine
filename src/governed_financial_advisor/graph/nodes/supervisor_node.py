@@ -29,8 +29,8 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from src.gateway.infrastructure.telemetry_client import genai_span
 from src.governed_financial_advisor.graph.state import AgentState
-from src.governed_financial_advisor.utils.telemetry import genai_span
 
 
 class MockChatModel(BaseChatModel):

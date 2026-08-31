@@ -21,10 +21,10 @@ import uuid
 # Ensure src is in pythonpath
 sys.path.append(os.getcwd())
 
+from src.gateway.infrastructure.telemetry_client import configure_telemetry
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 from src.governed_financial_advisor.utils.context import user_context
-from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

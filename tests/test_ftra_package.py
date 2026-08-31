@@ -49,7 +49,7 @@ pytestmark = pytest.mark.unit
 
 def _make_plan(steps: list[tuple[str, str]], plan_id: str = "plan-1"):
     """Build an ExecutionPlan from a list of (step_id, action) tuples."""
-    from src.governed_financial_advisor.agents.execution_analyst.agent import (
+    from src.gateway.governance.ftra.models import (
         ExecutionPlan,
         PlanStep,
     )
@@ -203,7 +203,7 @@ class TestPlanGraphAnalyzer:
 
     def test_empty_plan_is_clear(self, tmp_path):
         from src.gateway.governance.ftra.models import FTRAVerdict
-        from src.governed_financial_advisor.agents.execution_analyst.agent import (
+        from src.gateway.governance.ftra.models import (
             ExecutionPlan,
         )
 
@@ -218,6 +218,7 @@ class TestPlanGraphAnalyzer:
             rationale="Comprehensive test rationale for unit testing purposes",
             risk_factors=[],
             steps=[],
+            total_steps=0,
         )
         result = analyzer.analyze(plan, confidence=0.9)
 
@@ -344,7 +345,7 @@ class TestPlanGraphAnalyzer:
         """Phase 2 forward-compat: if a step declares depends_on, use those
         edges instead of the linear chain, and steps unreachable from step[0]
         must not appear in reachable_terminals."""
-        from src.governed_financial_advisor.agents.execution_analyst.agent import (
+        from src.gateway.governance.ftra.models import (
             ExecutionPlan,
             PlanStep,
         )
@@ -1100,7 +1101,7 @@ class TestBugFtraSchema001:
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
-        from src.governed_financial_advisor.agents.execution_analyst.agent import (
+        from src.gateway.governance.ftra.models import (
             ExecutionPlan,
         )
 
@@ -1114,6 +1115,7 @@ class TestBugFtraSchema001:
             rationale="Comprehensive test rationale for unit testing purposes",
             risk_factors=[],
             steps=[],
+            total_steps=0,
         )
 
         state = {
@@ -1131,7 +1133,7 @@ class TestBugFtraSchema001:
         """Empty plan with low confidence should DEFER for review."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
-        from src.governed_financial_advisor.agents.execution_analyst.agent import (
+        from src.gateway.governance.ftra.models import (
             ExecutionPlan,
         )
 
@@ -1145,6 +1147,7 @@ class TestBugFtraSchema001:
             rationale="Comprehensive test rationale for unit testing purposes",
             risk_factors=[],
             steps=[],
+            total_steps=0,
         )
 
         state = {

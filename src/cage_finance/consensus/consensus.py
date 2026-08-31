@@ -51,7 +51,7 @@ from opentelemetry import trace
 
 from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-from src.governed_financial_advisor.utils.telemetry import genai_span
+from src.gateway.infrastructure.telemetry_client import genai_span
 
 logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")

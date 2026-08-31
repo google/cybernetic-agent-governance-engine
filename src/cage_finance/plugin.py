@@ -17,6 +17,10 @@ import logging
 from mcp.server.fastmcp import FastMCP
 
 from src.cage_finance.consensus.consensus import ConsensusGate
+from src.cage_finance.constants import HITL_CITATIONS as _FC
+from src.cage_finance.constants import HITL_SLA_HOURS as _F_SLA
+from src.cage_finance.constants import INJECTION_CITATION as _F_INJ
+from src.cage_finance.constants import PII_RETENTION_AUTHORITY as _F_PII
 from src.cage_finance.safety.cbf import ControlBarrierFunction
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
@@ -24,8 +28,13 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
-from src.gateway.governance.contracts import CagePlugin
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.constants import (
+    HITL_CITATIONS,
+    HITL_SLA_HOURS,
+    INJECTION_CITATION,
+    PII_RETENTION_AUTHORITY,
+)
+from src.gateway.governance.contracts import CagePlugin, TierRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +46,23 @@ class FinanceCagePlugin(CagePlugin):
     api_version = "1.0"
 
     def register(
-        self, governor: SymbolicGovernor, tool_server: FastMCP | None = None
+        self, registry: TierRegistry, tool_server: FastMCP | None = None
     ) -> None:
         cbf = ControlBarrierFunction()
         fiscal_guard = FiscalLimitGuard.from_env()
         consensus_gate = ConsensusGate()
 
+        # Register domain constants
+        HITL_CITATIONS.update(_FC)
+        HITL_SLA_HOURS.update(_F_SLA)
+        PII_RETENTION_AUTHORITY.update(_F_PII)
+        INJECTION_CITATION.update(_F_INJ)
+
         # Register tiers
-        governor.register_domain_tier(CBFTierPlugin(cbf))
-        governor.register_domain_tier(FiscalTierPlugin(fiscal_guard))
-        governor.register_domain_tier(ConsensusTierPlugin(consensus_gate))
-        governor.register_domain_tier(CausalTierPlugin())
+        registry.register_domain_tier(CBFTierPlugin(cbf))
+        registry.register_domain_tier(FiscalTierPlugin(fiscal_guard))
+        registry.register_domain_tier(ConsensusTierPlugin(consensus_gate))
+        registry.register_domain_tier(CausalTierPlugin())
 
         # Register tools
         if tool_server:

@@ -50,22 +50,19 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
-from src.cage_finance.models.trade_order import TradeOrder
-from src.cage_finance.tools.trade_executor import execute_trade
 from src.gateway.governance.nemo.manager import (
     initialize_rails,
     validate_with_nemo,
 )
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.singletons import opa_client, symbolic_governor
+from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
 from src.gateway.server.governance_middleware import (
     enforce_governance,
     enforce_routing_seal,
 )
 from src.gateway.tracing_setup import setup_tracing
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
@@ -157,7 +154,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.nemo_rails = initialize_rails()
 
     # 5. Start consensus background audit worker (Phase 4.4)
-    from src.gateway.governance.consensus import _background_audit_worker
+    from src.cage_finance.consensus.consensus import _background_audit_worker
 
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
@@ -168,7 +165,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     loaded_plugins = discover_plugins()
     for plugin in loaded_plugins:
         # Pass the tool server for plugin tool registration
-        plugin.register(governor=symbolic_governor, tool_server=mcp)
+        plugin.register(registry=symbolic_governor, tool_server=mcp)
     _assert_required_plugins(loaded_plugins)
 
     # 7. Startup log for AU-12 evidence of active tier sequence (PR 4)
@@ -468,7 +465,7 @@ async def health_check():  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     import uvicorn
 
-    from src.governed_financial_advisor.utils.telemetry import configure_telemetry
+    from src.gateway.infrastructure.telemetry_client import configure_telemetry
 
     configure_telemetry()
     http_port = int(os.getenv("PORT", "8080"))

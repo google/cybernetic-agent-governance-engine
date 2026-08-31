@@ -26,7 +26,7 @@ from src.cage_finance.tools.trade_executor import execute_trade
 @pytest.fixture
 def mock_redis():
     # Mock Redis to avoid needing a real instance
-    with patch("src.gateway.core.tools.redis_client") as mock:
+    with patch("src.cage_finance.tools.trade_executor.redis_client") as mock:
         store = {}
 
         def get(key):

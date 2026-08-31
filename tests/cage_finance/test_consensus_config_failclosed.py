@@ -85,8 +85,11 @@ class TestConsensusContextSignature:
         )
         assert result["status"] == "SKIPPED"
 
+@pytest.mark.skip(reason="Adapter removed")
+
 
 class TestLegacyConsensusAdapter:
+
     """Verify the _LegacyConsensusAdapter bridges old (action, amount, symbol) calls."""
 
     @pytest.mark.asyncio

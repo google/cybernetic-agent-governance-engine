@@ -81,39 +81,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from src.gateway.governance.contracts import ReservationToken
+
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 5  # WATCH/MULTI/EXEC retry limit on concurrent write conflict
 _RETRY_BASE_MS = 5  # Base backoff in ms (exponential with jitter)
-
-
-@dataclass
-class ReservationToken:
-    """Returned by FiscalLimitGuard.reserve().
-
-    Attributes:
-        reservation_id:    UUID — used to identify and release this reservation.
-        agent_id:          The agent that made the reservation.
-        amount_usd:        The USD amount reserved.
-        amount_cents:      amount_usd * 100 as int (stored in Redis).
-        window_key:        The Redis daily-window key (e.g. '2026-05-19').
-        cap_usd:           The hard ceiling this reservation was checked against.
-        running_total_usd: Post-reservation total across all agents in this window.
-        rejected:          True if the reservation was denied (cap would be exceeded).
-        reserved_at:       Unix timestamp of reservation.
-        ttl_seconds:       Remaining TTL — reservation auto-releases after this.
-    """
-
-    reservation_id: str
-    agent_id: str
-    amount_usd: float
-    amount_cents: int
-    window_key: str
-    cap_usd: float
-    running_total_usd: float = 0.0
-    rejected: bool = False
-    reserved_at: float = field(default_factory=time.time)
-    ttl_seconds: int = 300
 
 
 class GovernanceLimitError(Exception):

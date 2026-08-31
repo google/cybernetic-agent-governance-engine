@@ -152,7 +152,6 @@ def symbolic_governor(
         opa_client=mock_opa_client,
         stpa_validator=None,
         telemetry_provider=None,
-        fiscal_limit_guard=None,
     )
 
 

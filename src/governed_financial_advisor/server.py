@@ -45,12 +45,12 @@ except ImportError:
     _LANGCHAIN_INSTRUMENTOR_AVAILABLE = False
 
 from config.settings import Config
+from src.gateway.infrastructure.mcp_client import get_mcp_client
+from src.gateway.infrastructure.telemetry_client import configure_telemetry
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
-from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
 from src.governed_financial_advisor.tools.api import tools_router
 from src.governed_financial_advisor.utils.context import user_context
-from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 
 # Observability
 ENABLE_TRACING = os.environ.get("ENABLE_TRACING", "true").lower() == "true"

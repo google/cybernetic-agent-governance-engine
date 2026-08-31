@@ -50,11 +50,13 @@ RUN uv pip install --no-cache \
     "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 # Copy Source Code
+COPY src/cybernetic_governance_engine /app/src/cybernetic_governance_engine
 COPY src/gateway /app/src/gateway
 COPY src/cage_finance /app/src/cage_finance
 COPY src/governed_financial_advisor /app/src/governed_financial_advisor
 COPY src/compliance_bridge /app/src/compliance_bridge
 COPY config /app/config
+COPY README.md /app/README.md
 
 # Install the project itself so entry-point metadata exists in the image.
 RUN uv pip install --no-deps .

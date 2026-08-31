@@ -891,6 +891,20 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
         print(f"\n⚠️ [pytest bootstrap] Langfuse compliance bootstrapping failed: {e}")
 
 
+@pytest.fixture(scope="session")
+def symbolic_governor_with_finance():
+    """
+    Session-scoped fixture providing a SymbolicGovernor with finance plugins loaded.
+
+    Used by tier registry and plugin tests to verify the actual runtime configuration.
+    Reuses the singleton governor that's already initialized in conftest setup.
+    """
+    from src.gateway.governance.singletons import symbolic_governor
+
+    # The singleton is already initialized with plugins loaded in assert_formal_tier_ordering_matches
+    return symbolic_governor
+
+
 @pytest.fixture(scope="session", autouse=True)
 def assert_formal_tier_ordering_matches():
     """
@@ -903,7 +917,7 @@ def assert_formal_tier_ordering_matches():
     # Ensure plugins are loaded
     loaded_plugins = discover_plugins()
     for plugin in loaded_plugins:
-        plugin.register(governor=symbolic_governor, tool_server=None)
+        plugin.register(registry=symbolic_governor, tool_server=None)
 
     tiers = symbolic_governor.registered_tier_names()
     # The formal model mandates the following order for finance package tiers

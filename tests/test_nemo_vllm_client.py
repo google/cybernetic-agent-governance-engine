@@ -73,7 +73,7 @@ def _minimal_stubs():
         "opentelemetry.trace": mock_trace,
         "opentelemetry.trace.Status": MagicMock(),
         "opentelemetry.trace.StatusCode": MagicMock(),
-        "src.governed_financial_advisor.infrastructure.config_manager": MagicMock(
+        "src.gateway.infrastructure.config_manager": MagicMock(
             config_manager=MagicMock(
                 get=MagicMock(
                     side_effect=lambda k, d=None: {
@@ -172,17 +172,15 @@ class TestVLLMLLMInit:
         import sys
 
         stubs = _minimal_stubs()
-        stubs["src.governed_financial_advisor.infrastructure.config_manager"] = (
-            MagicMock(
-                config_manager=MagicMock(
-                    get=MagicMock(
-                        side_effect=lambda k, d=None: {
-                            "GUARDRAILS_MODEL_NAME": "model",
-                            "MODEL_FAST": "fast",
-                            "VLLM_BASE_URL": "",  # ← missing/empty
-                            "VLLM_API_KEY": "key",
-                        }.get(k, d)
-                    )
+        stubs["src.gateway.infrastructure.config_manager"] = MagicMock(
+            config_manager=MagicMock(
+                get=MagicMock(
+                    side_effect=lambda k, d=None: {
+                        "GUARDRAILS_MODEL_NAME": "model",
+                        "MODEL_FAST": "fast",
+                        "VLLM_BASE_URL": "",  # ← missing/empty
+                        "VLLM_API_KEY": "key",
+                    }.get(k, d)
                 )
             )
         )

@@ -246,7 +246,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
     # ── Start consensus background audit worker (HIGH-06) ──────────────────
-    from src.gateway.governance.consensus import _background_audit_worker
+    from src.cage_finance.consensus.consensus import _background_audit_worker
 
     asyncio.create_task(_background_audit_worker())
     logger.info("✅ Consensus background audit worker started")
@@ -438,7 +438,7 @@ logger.info(
 if __name__ == "__main__":
     import uvicorn
 
-    from src.governed_financial_advisor.utils.telemetry import configure_telemetry
+    from src.gateway.infrastructure.telemetry_client import configure_telemetry
 
     configure_telemetry()
     http_port = int(os.getenv("PORT", "8080"))

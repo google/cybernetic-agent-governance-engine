@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src.cage_finance.tools.tool_provider.py.
+Unit tests for src.gateway.server.mcp_tool_server.py.
 
 Tests the rate-limiting logic (_check_rate_limit) and module-level constants
 without spinning up FastAPI, MCP, NeMo, OPA, or Redis.
@@ -76,7 +76,7 @@ def _mcp_import_stubs():
             enforce_routing_seal=MagicMock(),
         ),
         "src.gateway.tracing_setup": MagicMock(setup_tracing=MagicMock()),
-        "src.governed_financial_advisor.infrastructure.config_manager": MagicMock(
+        "src.gateway.infrastructure.config_manager": MagicMock(
             config_manager=MagicMock(get=MagicMock(return_value="http://vllm:8000/v1"))
         ),
         "src.governed_financial_advisor.tools.market_data_tool": MagicMock(
@@ -93,7 +93,7 @@ def _mcp_import_stubs():
         "src.cage_finance.consensus.consensus": MagicMock(
             _background_audit_worker=AsyncMock()
         ),
-        "src.governed_financial_advisor.utils.telemetry": MagicMock(
+        "src.gateway.infrastructure.telemetry_client": MagicMock(
             configure_telemetry=MagicMock()
         ),
     }
@@ -115,7 +115,7 @@ class TestCheckRateLimit:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             mod._rate_limit_buckets = {}
 
@@ -130,7 +130,7 @@ class TestCheckRateLimit:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             mod._rate_limit_buckets = {}
             # Set low limit for test
@@ -153,7 +153,7 @@ class TestCheckRateLimit:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             mod._rate_limit_buckets = {}
             original_max = mod._RATE_LIMIT_MAX_CALLS
@@ -174,7 +174,7 @@ class TestCheckRateLimit:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             mod._rate_limit_buckets = {}
             original_max = mod._RATE_LIMIT_MAX_CALLS
@@ -199,7 +199,7 @@ class TestCheckRateLimit:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             mod._rate_limit_buckets = {}
             original_max = mod._RATE_LIMIT_MAX_CALLS
@@ -236,7 +236,7 @@ class TestModuleConstants:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             # Test the default (no env override)
             assert mod._RATE_LIMIT_MAX_CALLS == 60
@@ -249,7 +249,7 @@ class TestModuleConstants:
         with patch.dict("sys.modules", _mcp_import_stubs()):
             with patch.dict(os.environ, {"MCP_RATE_LIMIT_MAX_CALLS": "120"}):
                 sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-                import src.cage_finance.tools.tool_provider as mod
+                import src.gateway.server.mcp_tool_server as mod
 
                 assert mod._RATE_LIMIT_MAX_CALLS == 120
 
@@ -259,7 +259,7 @@ class TestModuleConstants:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             assert mod._RATE_LIMIT_WINDOW_SECONDS == 60
 
@@ -274,7 +274,7 @@ class TestMCPToolServerFunctions:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             res = await mod.simulate_governance_check("buy", {"amount": 100})
             assert res["status"] == "APPROVED"
@@ -290,7 +290,7 @@ class TestMCPToolServerFunctions:
         ].opa_client.evaluate_policy = AsyncMock(return_value="ALLOW")
         with patch.dict("sys.modules", stubs):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             res = await mod._evaluate_policy_internal("execute_trade", 500)
             assert "APPROVED" in res
@@ -305,7 +305,7 @@ class TestMCPToolServerFunctions:
         ].opa_client.evaluate_policy = AsyncMock(return_value="MANUAL_REVIEW")
         with patch.dict("sys.modules", stubs):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             res = await mod._evaluate_policy_internal("execute_trade", 500)
             assert "MANUAL_REVIEW" in res
@@ -320,7 +320,7 @@ class TestMCPToolServerFunctions:
         ].opa_client.evaluate_policy = AsyncMock(return_value="DENY")
         with patch.dict("sys.modules", stubs):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             res = await mod._evaluate_policy_internal("execute_trade", 500)
             assert "DENIED" in res
@@ -331,7 +331,7 @@ class TestMCPToolServerFunctions:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             res = await mod.trigger_safety_intervention("Test intervention")
             assert "INTERVENTION_ACK" in res
@@ -342,7 +342,7 @@ class TestMCPToolServerFunctions:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             res = await mod.check_market_status("AAPL")
             assert "AAPL" in res
@@ -353,7 +353,7 @@ class TestMCPToolServerFunctions:
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.cage_finance.tools.tool_provider", None)
-            import src.cage_finance.tools.tool_provider as mod
+            import src.gateway.server.mcp_tool_server as mod
 
             mod.app.state.nemo_rails = MagicMock()
             res = await mod.verify_content_safety("Hello safe world")

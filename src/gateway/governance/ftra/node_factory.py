@@ -285,10 +285,7 @@ def _run_ftra(
     """
     from opentelemetry import trace
 
-    from src.gateway.governance.ftra.models import FTRAVerdict
-    from src.governed_financial_advisor.agents.execution_analyst.agent import (
-        ExecutionPlan,
-    )
+    from src.gateway.governance.ftra.models import ExecutionPlan, FTRAVerdict
 
     tracer = trace.get_tracer("cage.ftra")
 
@@ -621,10 +618,7 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
         - A dict (from JSON-decoded state)
         - A JSON string (with optional markdown fences)
     """
-    from src.gateway.governance.ftra.models import ParseResult
-    from src.governed_financial_advisor.agents.execution_analyst.agent import (
-        ExecutionPlan,
-    )
+    from src.gateway.governance.ftra.models import ExecutionPlan, ParseResult
 
     raw_str = str(raw) if not isinstance(raw, str) else raw
 
@@ -783,9 +777,7 @@ def _parse_plan(raw: Any) -> Any | None:
         - A dict (from JSON-decoded state)
         - A JSON string
     """
-    from src.governed_financial_advisor.agents.execution_analyst.agent import (
-        ExecutionPlan,
-    )
+    from src.gateway.governance.ftra.models import ExecutionPlan
 
     result = _parse_plan_with_result(raw)
 

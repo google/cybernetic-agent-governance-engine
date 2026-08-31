@@ -56,7 +56,7 @@ def _get_server_app():
             "src.governed_financial_advisor.graph.graph.create_graph",
             return_value=MagicMock(),
         ),
-        patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
+        patch("src.gateway.infrastructure.telemetry_client.configure_telemetry"),
         patch(
             "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
         ),
@@ -163,7 +163,7 @@ class TestLangfuseWebhook:
                 "src.governed_financial_advisor.graph.graph.create_graph",
                 return_value=MagicMock(),
             ),
-            patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
+            patch("src.gateway.infrastructure.telemetry_client.configure_telemetry"),
             patch(
                 "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
             ),
@@ -289,7 +289,7 @@ class TestApplyRefinementProposalFlow:
                 "src.governed_financial_advisor.graph.graph.create_graph",
                 return_value=MagicMock(),
             ),
-            patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
+            patch("src.gateway.infrastructure.telemetry_client.configure_telemetry"),
             patch(
                 "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
             ),
@@ -394,7 +394,7 @@ class TestWebhookCooldown:
                 "src.governed_financial_advisor.graph.graph.create_graph",
                 return_value=MagicMock(),
             ),
-            patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
+            patch("src.gateway.infrastructure.telemetry_client.configure_telemetry"),
             patch(
                 "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
             ),
@@ -525,7 +525,7 @@ class TestWebhookMinSamples:
                 "src.governed_financial_advisor.graph.graph.create_graph",
                 return_value=MagicMock(),
             ),
-            patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
+            patch("src.gateway.infrastructure.telemetry_client.configure_telemetry"),
             patch(
                 "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
             ),

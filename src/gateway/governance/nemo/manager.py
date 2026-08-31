@@ -342,7 +342,7 @@ def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
     # string ends up as the model name, causing NotFoundError in litellm.
     # Resolve all model entries here before LLMRails is constructed.
     try:
-        from src.governed_financial_advisor.infrastructure.config_manager import (
+        from src.gateway.infrastructure.config_manager import (
             config_manager,
         )
 
@@ -424,7 +424,7 @@ def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
         )
 
     try:
-        from src.governed_financial_advisor.governance.nemo_action_registry import (
+        from src.gateway.governance.nemo.action_registry import (
             get_all_actions,
         )
 
@@ -517,10 +517,10 @@ async def validate_with_nemo(
             that NeMo actions can read them without calling back into the
             governor's sub-components (breaking the re-entrant loop).
     """
-    from src.governed_financial_advisor.utils.privacy import scrub_pii
+    from src.gateway.infrastructure.privacy import scrub_pii
 
     try:
-        from src.governed_financial_advisor.infrastructure.telemetry.nemo_exporter import (
+        from src.gateway.infrastructure.telemetry.nemo_exporter import (
             NeMoOTelCallback,
         )
 
@@ -781,7 +781,7 @@ def _deduplicate_response(text: str) -> str:
 
 
 try:
-    from src.governed_financial_advisor.utils.privacy import scrub_pii
+    from src.gateway.infrastructure.privacy import scrub_pii
 except ImportError:
 
     def scrub_pii(text: str, emit_jurisdiction_audit: bool = False) -> str:  # type: ignore[misc]  # fallback signature must match imported variant

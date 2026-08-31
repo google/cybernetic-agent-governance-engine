@@ -78,7 +78,7 @@ def _import_module():
     with patch.dict(
         "sys.modules",
         {
-            "src.governed_financial_advisor.infrastructure.mcp_client": MagicMock(
+            "src.gateway.infrastructure.mcp_client": MagicMock(
                 GatewayMCPClient=mock_client_cls
             ),
         },

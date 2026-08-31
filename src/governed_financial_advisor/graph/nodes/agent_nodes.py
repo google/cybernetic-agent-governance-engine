@@ -25,10 +25,10 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.governed_financial_advisor.agents.execution_analyst.agent import (
     create_execution_analyst_agent,
 )
-from src.governed_financial_advisor.utils.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 

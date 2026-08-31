@@ -56,7 +56,7 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
     (e.g. the harness is used outside the financial-advisor codebase).
     """
     try:
-        from src.governed_financial_advisor.utils.langfuse_utils import (
+        from src.gateway.observability.langfuse_utils import (
             score_compliance_event,
         )
 

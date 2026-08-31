@@ -787,6 +787,11 @@ class SymbolicGovernor:
         # to ensure consistent classification semantics.
         self._ftra_classifier: Any | None = None  # IrreversibilityClassifier
 
+    def register_invariant(self, model: InvariantModel) -> None:
+        """Register a declarative safety invariant for atomic evaluation."""
+        # Not fully implemented yet, just satisfying TierRegistry
+        pass
+
     def register_domain_tier(self, tier: GovernanceTierPlugin) -> None:
         """Register a domain governance tier, preserving formal tier order.
 
@@ -1160,8 +1165,13 @@ class SymbolicGovernor:
             )
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
-            if tool_name == "execute_trade":
-                _confidence = float(params.get("confidence", 0.0))
+            if self._is_governed_action(tool_name, params):
+                if "confidence" not in params:
+                    # F3 Fix: Distinguish absent vs 0.0. If confidence is missing, the consensus tier
+                    # did not run or did not populate it. Default to 0.0 to fail-closed securely.
+                    _confidence = 0.0
+                else:
+                    _confidence = float(params["confidence"])
                 # POAM-TIER2-001: stamp the confidence provenance so every Tier 2 decision
                 # is auditable. The structural heuristic below provides independent
                 # corroboration after Tier-1 STPA and Tier-3 OPA results are available.
@@ -1243,7 +1253,7 @@ class SymbolicGovernor:
         # precedence over latency optimization.
         # ======================================================================
 
-        if tool_name == "execute_trade" and not violations:
+        if self._is_governed_action(tool_name, params) and not violations:
             # --- Phase 1.1: OPA policy evaluation (read-only) ---
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
@@ -1352,7 +1362,7 @@ class SymbolicGovernor:
         #
         # Conservative treatment: if STPA or OPA results are unavailable (e.g. a tier
         # raised an exception and we have no result at all), treat as structural risk.
-        if tool_name == "execute_trade":
+        if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span(
                 "cage.tier2_structural_corroboration"
             ) as _t2_span:
@@ -1453,7 +1463,7 @@ class SymbolicGovernor:
         # Override via env: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER (module-level constants).
         _normative_provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
         if (
-            tool_name == "execute_trade"
+            self._is_governed_action(tool_name, params)
             and _normative_provider_name != "static"
             and not violations
         ):
@@ -1552,7 +1562,7 @@ class SymbolicGovernor:
 
         _cbf_committed = False  # Track CBF state for potential rollback
 
-        if tool_name == "execute_trade" and not violations:
+        if self._is_governed_action(tool_name, params) and not violations:
             _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
 
             # --- Phase 2.1: CBF atomic_verify_and_commit ---
@@ -1852,7 +1862,7 @@ class SymbolicGovernor:
                     # CRIT-5 fix: read pending_payload from the result dict, not
                     # from self — eliminates the data race on the singleton.
                     payload = result.get("pending_payload")
-                    violation_msg = violations[0]
+                    violation_msg = str(violations[0])
                     thread_id = str(
                         params.get("transaction_id", "")
                         or params.get("thread_id", "")
@@ -1957,7 +1967,7 @@ class SymbolicGovernor:
         """
         from src.gateway.governance.routing_seal import generate_seal_with_evidence
 
-        tool_name = "execute_trade"
+        tool_name = params.get("action", "execute_trade")  # fallback for legacy
         violations: list[str] = []
 
         with tracer.start_as_current_span(
@@ -2127,7 +2137,7 @@ class SymbolicGovernor:
                         thread_id=thread_id,
                         action=tool_name,
                         violated_tier="SYMBOLIC_GOVERNOR",
-                        violated_rule=violations[0],
+                        violated_rule=str(violations[0]),
                         standing_at_refusal={
                             "symbol": params.get("symbol"),
                             "amount": params.get("amount"),
@@ -2181,7 +2191,7 @@ class SymbolicGovernor:
                 - ``stpa_result``: ``{"allowed": bool, "violations": list[str]}``
                 - ``cbf_result``:  ``{"allowed": bool, "reason": str}``
         """
-        tool_name = "execute_trade"
+        tool_name = params.get("action", "execute_trade")  # fallback for legacy
 
         # --- STPA validation (synchronous) ---
         stpa_violations: list = []
@@ -2253,9 +2263,27 @@ class SymbolicGovernor:
             violations = result["violations"]
             span.set_attribute(
                 "langfuse.observation.output",
-                json.dumps(violations) if violations else "APPROVED",
+                json.dumps(violations, default=lambda x: getattr(x, "__dict__", str(x)))
+                if violations
+                else "APPROVED",
             )
             return result
+
+    def _is_governed_action(self, action: str, params: dict) -> bool:
+        """Return True if the action is consequence-bearing and requires governance.
+
+        A capability query that replaces hardcoded domain literals (like 'execute_trade').
+        If no domain tier claims the action, it is assumed to be an ungoverned/safe action
+        UNLESS we are in bare-kernel mode (no tiers), in which case we fail-closed for safety.
+        """
+        if not self._domain_tiers:
+            # Bare kernel mode: fail-closed to prevent silent bypass
+            return True
+
+        for tier in self._domain_tiers:
+            if hasattr(tier, "claims_action") and tier.claims_action(action, params):
+                return True
+        return False
 
     async def validate_action(
         self,
@@ -2357,7 +2385,13 @@ class SymbolicGovernor:
                     # Extract STPA violation count from result metadata
                     _stpa_count = result.get("stpa_violation_count", 0)
                     # Extract confidence from params (agent self-reported)
-                    _confidence = float(params.get("confidence", 0.0))
+
+                    if "confidence" not in params:
+                        # F3 Fix: Distinguish absent vs 0.0. If confidence is missing, the consensus tier
+                        # did not run or did not populate it. Default to 0.0 to fail-closed securely.
+                        _confidence = 0.0
+                    else:
+                        _confidence = float(params["confidence"])
 
                     # Build classification context (includes params for NARROW)
                     _classify_ctx: dict[str, Any] = {
@@ -2708,7 +2742,10 @@ class SymbolicGovernor:
                     # explicitly classified DENY). Preserves existing behavior.
                     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
                     span.set_attribute(
-                        "langfuse.observation.output", json.dumps(violations)
+                        "langfuse.observation.output",
+                        json.dumps(
+                            violations, default=lambda x: getattr(x, "__dict__", str(x))
+                        ),
                     )
                     span.set_status(Status(StatusCode.ERROR))
                     logger.warning(
@@ -2730,7 +2767,7 @@ class SymbolicGovernor:
                         violated_tier=_va_first_tf.tier
                         if _va_first_tf
                         else "SYMBOLIC_GOVERNOR",
-                        violated_rule=violations[0],
+                        violated_rule=str(violations[0]),
                         standing_at_refusal={
                             "symbol": params.get("symbol"),
                             "amount": params.get("amount"),

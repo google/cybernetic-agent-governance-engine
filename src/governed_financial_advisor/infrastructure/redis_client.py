@@ -22,7 +22,7 @@ from redis.exceptions import ConnectionError, RedisError, TimeoutError
 from src.gateway.infrastructure.redis_client import (
     TransactionAbortedError,  # re-exported
 )
-from src.governed_financial_advisor.utils.telemetry import get_tracer
+from src.gateway.infrastructure.telemetry_client import get_tracer
 
 __all__ = [
     "AsyncRedisClient",

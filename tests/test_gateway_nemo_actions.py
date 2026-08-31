@@ -454,7 +454,7 @@ class TestInvokeVllmFallbackAction:
             # Patch the genai_span import inside the function
             with (
                 patch(
-                    "src.governed_financial_advisor.utils.telemetry.genai_span",
+                    "src.gateway.infrastructure.telemetry_client.genai_span",
                     return_value=mock_span_ctx,
                 )
                 if False
@@ -480,7 +480,7 @@ class TestInvokeVllmFallbackAction:
         with patch.dict(
             "sys.modules",
             {
-                "src.governed_financial_advisor.utils.telemetry": MagicMock(
+                "src.gateway.infrastructure.telemetry_client": MagicMock(
                     genai_span=_mock_genai_span_ctx()
                 ),
             },
@@ -499,7 +499,7 @@ class TestInvokeVllmFallbackAction:
         with patch.dict(
             "sys.modules",
             {
-                "src.governed_financial_advisor.utils.telemetry": MagicMock(
+                "src.gateway.infrastructure.telemetry_client": MagicMock(
                     genai_span=_mock_genai_span_ctx()
                 ),
                 "src.gateway.governance.nemo.vllm_client": MagicMock(
@@ -519,7 +519,7 @@ class TestInvokeVllmFallbackAction:
         with patch.dict(
             "sys.modules",
             {
-                "src.governed_financial_advisor.utils.telemetry": MagicMock(
+                "src.gateway.infrastructure.telemetry_client": MagicMock(
                     genai_span=_mock_genai_span_ctx()
                 ),
             },

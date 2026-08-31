@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock, patch, MagicMock
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +14,6 @@
 # limitations under the License.
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -255,7 +255,7 @@ async def test_symbolic_governor_consensus_fail(mock_ftra_safe):
     with pytest.raises(GovernanceError) as excinfo:
         await governor.govern("execute_trade", params)
 
-    assert "Consensus Rejection" in str(excinfo.value)
+    assert "CONSENSUS_REJECTED" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +811,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         with pytest.raises(GovernanceError) as excinfo:
             await governor.govern("execute_trade", params)
 
-        assert "Consensus Rejection" in str(excinfo.value)
+        assert "CONSENSUS_REJECTED" in str(excinfo.value)
 
         # With the pipeline reorder fix, CBF should NOT be called because
         # consensus runs BEFORE CBF in Phase 1 (read-only), and CBF only
@@ -857,17 +857,15 @@ class TestPipelineReorderZeroBudgetLeakage:
         governor.register_domain_tier(CBFTierPlugin(safety_filter))
         governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
         from src.cage_finance.tiers.causal_tier import CausalTierPlugin
-        from unittest.mock import AsyncMock
-        causal_gatekeeper = AsyncMock()
-        causal_gatekeeper.evaluate.return_value = False
-        governor.register_domain_tier(CausalTierPlugin(causal_gatekeeper))
+        governor.register_domain_tier(CausalTierPlugin())
 
         params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
 
-        with pytest.raises(GovernanceError) as excinfo:
-            await governor.govern("execute_trade", params)
+        with patch("src.cage_finance.tiers.causal_tier.causal_safety_check", return_value=False):
+            with pytest.raises(GovernanceError) as excinfo:
+                await governor.govern("execute_trade", params)
 
-        assert "Causal Safety Violation" in str(excinfo.value)
+        assert "CAUSAL_CHECK_FAILED" in str(excinfo.value)
 
     @pytest.mark.asyncio
     async def test_opa_rejection_runs_before_cbf(self, mock_ftra_safe):
@@ -922,7 +920,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         async def mock_cbf_commit(action_name, payload):
             return (True, "SAFE")
 
-        async def mock_cbf_rollback(cost, governance_signature=None):
+        async def mock_cbf_rollback(*args, **kwargs):
             nonlocal cbf_rollback_called
             cbf_rollback_called = True
 
@@ -934,7 +932,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
         # Create a mock fiscal guard that rejects
-        from src.cage_finance.fiscal_limit_guard import ReservationToken
+        from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
 
         mock_fiscal_guard = AsyncMock()
         mock_fiscal_guard.reserve.return_value = ReservationToken(
@@ -962,7 +960,7 @@ class TestPipelineReorderZeroBudgetLeakage:
 
         # Mock causal to pass
         with patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+            "src.cage_finance.tiers.causal_tier.causal_safety_check",
             return_value=True,
         ):
             with pytest.raises(GovernanceError) as excinfo:

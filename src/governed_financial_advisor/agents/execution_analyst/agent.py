@@ -182,7 +182,7 @@ Example 2 — Clarification plan (risk profile missing):
 
 
 def get_execution_analyst_instruction() -> str:
-    from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
+    from src.gateway.observability.langfuse_utils import get_managed_prompt
 
     return get_managed_prompt(
         "agent/execution_analyst", EXECUTION_ANALYST_FALLBACK_PROMPT

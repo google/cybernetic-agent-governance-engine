@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Import Boundary Enforcement — Gate 2 CI Check
+
+Verifies layer isolation (F1-F4 boundary enforcement):
+- Layer 1 (src/gateway/) must NOT import from Layer 2 (src/cage_finance/)
+- Layer 1 must NOT import from Layer 4 (src/governed_financial_advisor/)
+
+Usage:
+    python scripts/check_import_boundaries.py
+    python scripts/check_import_boundaries.py --verbose
+
+Exit codes:
+    0 - All boundaries respected
+    1 - Boundary violation detected
+"""
+
+import argparse
+import ast
+import sys
+from pathlib import Path
+from typing import List, Set, Tuple
+
+# Layer definitions (in dependency order, lower layers cannot import higher layers)
+LAYER_1_GATEWAY = "src/gateway"
+LAYER_2_CAGE_FINANCE = "src/cage_finance"
+LAYER_4_GFA = "src/governed_financial_advisor"
+
+# Forbidden import patterns (Layer 1 → Layer 2/4)
+FORBIDDEN_PATTERNS = [
+    ("src/gateway", "src.cage_finance"),
+    ("src/gateway", "cage_finance"),
+    ("src/gateway", "src.governed_financial_advisor"),
+    ("src/gateway", "governed_financial_advisor"),
+]
+
+
+class ImportVisitor(ast.NodeVisitor):
+    """AST visitor to extract all import statements."""
+    
+    def __init__(self):
+        self.imports: set[str] = set()
+    
+    def visit_Import(self, node: ast.Import) -> None:
+        """Visit `import x` statements."""
+        for alias in node.names:
+            self.imports.add(alias.name)
+        self.generic_visit(node)
+    
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Visit `from x import y` statements."""
+        if node.module:
+            self.imports.add(node.module)
+        self.generic_visit(node)
+
+
+def extract_imports(filepath: Path) -> set[str]:
+    """Extract all import module names from a Python file."""
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=str(filepath))
+        visitor = ImportVisitor()
+        visitor.visit(tree)
+        return visitor.imports
+    except SyntaxError:
+        # Skip files with syntax errors (might be templates or partial files)
+        return set()
+
+
+def check_file_boundaries(filepath: Path, verbose: bool = False) -> list[tuple[str, str]]:
+    """Check if a file violates import boundaries.
+    
+    Returns:
+        List of (importing_layer, forbidden_module) tuples for violations.
+    """
+    violations = []
+    imports = extract_imports(filepath)
+    
+    # Determine which layer this file belongs to
+    filepath_str = str(filepath)
+    if LAYER_1_GATEWAY in filepath_str:
+        # Gateway files cannot import cage_finance or GFA
+        for imp in imports:
+            if imp.startswith("src.cage_finance") or imp.startswith("cage_finance"):
+                violations.append((filepath_str, imp))
+                if verbose:
+                    print(f"❌ {filepath}: imports {imp} (Layer 1 → Layer 2 violation)")
+            elif imp.startswith("src.governed_financial_advisor") or imp.startswith("governed_financial_advisor"):
+                violations.append((filepath_str, imp))
+                if verbose:
+                    print(f"❌ {filepath}: imports {imp} (Layer 1 → Layer 4 violation)")
+    
+    return violations
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check layer import boundaries")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    args = parser.parse_args()
+    
+    print("🔍 Checking import boundaries (Layer 1 must not import Layer 2/4)...")
+    
+    # Scan all Python files in src/gateway/
+    gateway_root = Path(LAYER_1_GATEWAY)
+    if not gateway_root.exists():
+        print(f"❌ Gateway layer not found: {gateway_root}")
+        return 1
+    
+    all_violations: list[tuple[str, str]] = []
+    scanned_count = 0
+    
+    for py_file in gateway_root.rglob("*.py"):
+        if "__pycache__" in str(py_file):
+            continue
+        scanned_count += 1
+        violations = check_file_boundaries(py_file, verbose=args.verbose)
+        all_violations.extend(violations)
+    
+    # Report results
+    print(f"📊 Scanned {scanned_count} files in {LAYER_1_GATEWAY}/")
+    
+    if all_violations:
+        print(f"\n❌ BOUNDARY VIOLATIONS DETECTED ({len(all_violations)}):\n")
+        for filepath, imported_module in all_violations:
+            print(f"  {filepath}")
+            print(f"    └─ imports {imported_module}\n")
+        
+        print("🚨 Layer 1 (gateway) must NOT import from Layer 2 (cage_finance) or Layer 4 (GFA).")
+        print("   Use plugin entry points or dependency injection instead.")
+        return 1
+    
+    print("✅ All import boundaries respected.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
