@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 from opentelemetry import trace
 
 from config.settings import Config
-from src.governed_financial_advisor.utils.telemetry import (
+from src.gateway.infrastructure.telemetry_client import (
     genai_span,
     record_completion,
     record_usage,

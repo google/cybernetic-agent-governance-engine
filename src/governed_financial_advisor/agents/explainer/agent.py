@@ -49,7 +49,7 @@ After generating the response, call `transfer_to_agent("supervisor")` or end the
 
 
 def get_explainer_instruction() -> str:
-    from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
+    from src.gateway.observability.langfuse_utils import get_managed_prompt
 
     return get_managed_prompt("agent/explainer", EXPLAINER_FALLBACK_PROMPT)
 

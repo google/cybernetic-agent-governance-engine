@@ -37,7 +37,7 @@ false`` pattern.
 
 Usage::
 
-    from src.governed_financial_advisor.agents.execution_analyst.agent import ExecutionPlan
+    from src.gateway.governance.ftra.models import ExecutionPlan
     from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer
 
     analyzer = PlanGraphAnalyzer()
@@ -59,7 +59,7 @@ from src.gateway.governance.ftra.models import (
 from src.gateway.governance.schemas.thresholds import get_fria_zone_defer
 
 if TYPE_CHECKING:
-    from src.governed_financial_advisor.agents.execution_analyst.agent import (
+    from src.gateway.governance.ftra.models import (
         ExecutionPlan,
         PlanStep,
     )

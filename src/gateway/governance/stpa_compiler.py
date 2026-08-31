@@ -1003,12 +1003,13 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
     # Build the third-party import block.  isort requires both third-party
     # imports to be in the same block (no blank line between them).
     thirdparty_import_lines: list[str] = [
-        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
+        "AgentState = Any",
+        "LedgerEntry = dict[str, Any]",
     ]
     mcp_singleton_lines: list[str] = []
     if needs_mcp_imports:
         thirdparty_import_lines.append(
-            "from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient"
+            "from src.gateway.infrastructure.mcp_client import GatewayMCPClient"
         )
         mcp_singleton_lines = [
             "",

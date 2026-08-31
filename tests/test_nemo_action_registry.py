@@ -154,7 +154,7 @@ class TestNemoActionRegistryCompleteness:
     """get_all_actions() must return all required names without falling back."""
 
     def test_all_required_names_present(self):
-        from src.governed_financial_advisor.governance.nemo_action_registry import (
+        from src.gateway.governance.nemo.action_registry import (
             get_all_actions,
         )
 
@@ -169,7 +169,7 @@ class TestNemoActionRegistryCompleteness:
             )
 
     def test_no_duplicate_names(self):
-        from src.governed_financial_advisor.governance.nemo_action_registry import (
+        from src.gateway.governance.nemo.action_registry import (
             get_all_actions,
         )
 
@@ -181,7 +181,7 @@ class TestNemoActionRegistryCompleteness:
         )
 
     def test_all_callables_are_callable(self):
-        from src.governed_financial_advisor.governance.nemo_action_registry import (
+        from src.gateway.governance.nemo.action_registry import (
             get_all_actions,
         )
 
@@ -214,7 +214,7 @@ class TestColangDefinitionsSync:
 
     def test_invoke_vllm_fallback_accessible(self):
         """InvokeVllmFallbackAction must be accessible via nemo_action_registry."""
-        from src.governed_financial_advisor.governance.nemo_action_registry import (
+        from src.gateway.governance.nemo.action_registry import (
             get_all_actions,
         )
 

@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from src.governed_financial_advisor.utils.privacy import scrub_pii
+from src.gateway.infrastructure.privacy import scrub_pii
 
 
 @pytest.mark.local

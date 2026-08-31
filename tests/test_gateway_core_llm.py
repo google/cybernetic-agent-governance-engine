@@ -59,14 +59,14 @@ _PATCHES = {
         MODEL_REASONING="reasoning-model",
         MODEL_FAST="fast-model",
     ),
-    "src.governed_financial_advisor.utils.telemetry.genai_span": MagicMock(
+    "src.gateway.infrastructure.telemetry_client.genai_span": MagicMock(
         return_value=MagicMock(
             __enter__=MagicMock(return_value=MagicMock()),
             __exit__=MagicMock(return_value=False),
         )
     ),
-    "src.governed_financial_advisor.utils.telemetry.record_completion": MagicMock(),
-    "src.governed_financial_advisor.utils.telemetry.record_usage": MagicMock(),
+    "src.gateway.infrastructure.telemetry_client.record_completion": MagicMock(),
+    "src.gateway.infrastructure.telemetry_client.record_usage": MagicMock(),
 }
 
 
@@ -80,14 +80,14 @@ class TestGatewayClientInit:
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()
+                "src.gateway.infrastructure.telemetry_client.genai_span", MagicMock()
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.record_completion",
+                "src.gateway.infrastructure.telemetry_client.record_completion",
                 MagicMock(),
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.record_usage",
+                "src.gateway.infrastructure.telemetry_client.record_usage",
                 MagicMock(),
             ),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -113,14 +113,14 @@ class TestGatewayClientInit:
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()
+                "src.gateway.infrastructure.telemetry_client.genai_span", MagicMock()
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.record_completion",
+                "src.gateway.infrastructure.telemetry_client.record_completion",
                 MagicMock(),
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.record_usage",
+                "src.gateway.infrastructure.telemetry_client.record_usage",
                 MagicMock(),
             ),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -152,14 +152,14 @@ class TestGatewayClientRouting:
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()
+                "src.gateway.infrastructure.telemetry_client.genai_span", MagicMock()
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.record_completion",
+                "src.gateway.infrastructure.telemetry_client.record_completion",
                 MagicMock(),
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.record_usage",
+                "src.gateway.infrastructure.telemetry_client.record_usage",
                 MagicMock(),
             ),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -216,10 +216,10 @@ class TestGatewayClientGenerate:
             patch("openai.AsyncOpenAI", mock_openai),
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span"
+                "src.gateway.infrastructure.telemetry_client.genai_span"
             ) as mock_span_ctx,
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
+            patch("src.gateway.infrastructure.telemetry_client.record_completion"),
+            patch("src.gateway.infrastructure.telemetry_client.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"
@@ -245,10 +245,10 @@ class TestGatewayClientGenerate:
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span"
+                "src.gateway.infrastructure.telemetry_client.genai_span"
             ) as mock_span_ctx,
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
+            patch("src.gateway.infrastructure.telemetry_client.record_completion"),
+            patch("src.gateway.infrastructure.telemetry_client.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"
@@ -282,10 +282,10 @@ class TestGatewayClientGenerate:
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span"
+                "src.gateway.infrastructure.telemetry_client.genai_span"
             ) as mock_span_ctx,
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
+            patch("src.gateway.infrastructure.telemetry_client.record_completion"),
+            patch("src.gateway.infrastructure.telemetry_client.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"
@@ -326,10 +326,10 @@ class TestGatewayClientGenerate:
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span"
+                "src.gateway.infrastructure.telemetry_client.genai_span"
             ) as mock_span_ctx,
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
+            patch("src.gateway.infrastructure.telemetry_client.record_completion"),
+            patch("src.gateway.infrastructure.telemetry_client.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"
@@ -362,10 +362,10 @@ class TestGatewayClientGenerate:
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
             patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span"
+                "src.gateway.infrastructure.telemetry_client.genai_span"
             ) as mock_span_ctx,
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
+            patch("src.gateway.infrastructure.telemetry_client.record_completion"),
+            patch("src.gateway.infrastructure.telemetry_client.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"

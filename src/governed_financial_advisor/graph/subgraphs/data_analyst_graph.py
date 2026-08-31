@@ -24,8 +24,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
-from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
-from src.governed_financial_advisor.utils.telemetry import get_tracer
+from src.gateway.infrastructure.mcp_client import get_mcp_client
+from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 
 
@@ -199,7 +199,7 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
         from langchain_core.messages import HumanMessage
         from langchain_mcp_adapters.tools import load_mcp_tools
 
-        from src.governed_financial_advisor.infrastructure.mcp_client import (
+        from src.gateway.infrastructure.mcp_client import (
             get_mcp_client,
         )
 

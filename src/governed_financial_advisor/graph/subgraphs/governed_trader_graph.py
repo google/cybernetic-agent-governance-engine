@@ -43,13 +43,13 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
+from src.gateway.infrastructure.mcp_client import get_mcp_client
+from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
 )
-from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
-from src.governed_financial_advisor.utils.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ Your role is to **EXECUTE** the plan provided to you. You are a "Dumb Executor" 
 
 
 def get_executor_instruction() -> str:
-    from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
+    from src.gateway.observability.langfuse_utils import get_managed_prompt
 
     return get_managed_prompt("agent/governed_trader", EXECUTOR_FALLBACK_PROMPT)
 

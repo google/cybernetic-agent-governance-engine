@@ -68,9 +68,9 @@ def _opa_trade_policy_available() -> bool:
 _POLICY_PATH = (
     Path(__file__).parent.parent
     / "src"
-    / "governed_financial_advisor"
-    / "governance"
-    / "policy"
+    / "cage_finance"
+    / "opa"
+
     / "trade_governance.rego"
 )
 

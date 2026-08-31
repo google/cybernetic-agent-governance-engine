@@ -66,7 +66,7 @@ Call `route_request(intent='TRADING_STRATEGY')` (which handles execution in this
 
 
 def get_financial_coordinator_instruction() -> str:
-    from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
+    from src.gateway.observability.langfuse_utils import get_managed_prompt
 
     return get_managed_prompt(
         "agent/financial_coordinator", FINANCIAL_COORDINATOR_FALLBACK_PROMPT

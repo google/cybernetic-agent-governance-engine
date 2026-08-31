@@ -105,7 +105,7 @@ class TestIsoControlMapSingleSource:
         import os
 
         from src.compliance_bridge.types import get_iso_control_map
-        from src.governed_financial_advisor.utils.langfuse_utils import (
+        from src.gateway.observability.langfuse_utils import (
             _get_iso_control_map,
         )
 

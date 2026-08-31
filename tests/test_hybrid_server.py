@@ -112,10 +112,10 @@ def _make_hybrid_stubs() -> dict:
         "src.gateway.infrastructure.redis_client": MagicMock(
             redis_client=MagicMock(set=AsyncMock())
         ),
-        "src.governed_financial_advisor.utils.telemetry": MagicMock(
+        "src.gateway.infrastructure.telemetry_client": MagicMock(
             configure_telemetry=MagicMock()
         ),
-        "src.governed_financial_advisor.infrastructure.config_manager": MagicMock(
+        "src.gateway.infrastructure.config_manager": MagicMock(
             config_manager=MagicMock(get=MagicMock(return_value="http://vllm:8000/v1"))
         ),
         # Agent registry (optional import)

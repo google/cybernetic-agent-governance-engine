@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.governed_financial_advisor.infrastructure.config_manager import (
+from src.gateway.infrastructure.config_manager import (
     ConfigManager,  # Import Class
 )
 

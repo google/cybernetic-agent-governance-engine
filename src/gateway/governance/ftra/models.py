@@ -358,3 +358,38 @@ class FtraBoundaryResult:
             violations=violations,
             bypassed_ftra_node=bypassed_ftra_node,
         )
+
+
+class PlanStep(BaseModel):
+    id: str = Field(default="", description="Unique identifier for the step")
+    action: str = Field(
+        description="Action to perform (e.g., execute_trade, check_price)"
+    )
+    description: str = Field(description="Description of what this step does")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Parameters for the action"
+    )
+
+
+class ExecutionPlan(BaseModel):
+    plan_id: str = Field(default="", description="Unique identifier for the plan")
+    strategy_name: str = Field(
+        default="",
+        description="Name of the strategy (e.g., 'Conservative Dividend Growth')",
+    )
+    rationale: str = Field(
+        description="Detailed explanation of why this strategy fits the user profile"
+    )
+    risk_factors: list[str] = Field(
+        default_factory=list, description="List of identified risk factors"
+    )
+    steps: list[PlanStep] = Field(description="Ordered list of execution steps")
+    user_risk_attitude: str | None = Field(
+        default=None, description="Derived or stated risk attitude"
+    )
+    confidence: float = Field(
+        default=0.0, description="Agent's confidence in this plan [0.0, 1.0]"
+    )
+    violations: list[str] = Field(
+        default_factory=list, description="Policy violations detected"
+    )

@@ -25,7 +25,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 try:
-    from src.governed_financial_advisor.infrastructure.config_manager import (
+    from src.gateway.infrastructure.config_manager import (
         config_manager,
     )
 except ImportError:

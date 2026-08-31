@@ -43,8 +43,9 @@ import logging
 from collections.abc import Generator
 from typing import Any
 
-from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry
-from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient
+AgentState = Any
+LedgerEntry = dict[str, Any]
+from src.gateway.infrastructure.mcp_client import GatewayMCPClient
 
 # [CTRL_WAL_002] module-level MCP client singleton for WAL forward nodes.
 # The singleton is re-used across Saga invocations to avoid connection churn.

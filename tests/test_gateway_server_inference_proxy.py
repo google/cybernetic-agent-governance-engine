@@ -55,12 +55,10 @@ def _make_import_patches():
                 return_value=MagicMock(log_quota_exceeded=AsyncMock())
             )
         ),
-        "src.governed_financial_advisor.infrastructure.config_manager": MagicMock(
+        "src.gateway.infrastructure.config_manager": MagicMock(
             config_manager=MagicMock(get=MagicMock(return_value="http://vllm:8000/v1"))
         ),
-        "src.governed_financial_advisor.utils.privacy": MagicMock(
-            scrub_pii=lambda x: x
-        ),
+        "src.gateway.infrastructure.privacy": MagicMock(scrub_pii=lambda x: x),
     }
 
 
@@ -214,8 +212,8 @@ class TestResolveBackendUrl:
         }.get(key, default)
 
         patches = _make_import_patches()
-        patches["src.governed_financial_advisor.infrastructure.config_manager"] = (
-            MagicMock(config_manager=mock_cfg)
+        patches["src.gateway.infrastructure.config_manager"] = MagicMock(
+            config_manager=mock_cfg
         )
 
         with patch.dict("sys.modules", patches):
@@ -238,8 +236,8 @@ class TestResolveBackendUrl:
         }.get(key, default)
 
         patches = _make_import_patches()
-        patches["src.governed_financial_advisor.infrastructure.config_manager"] = (
-            MagicMock(config_manager=mock_cfg)
+        patches["src.gateway.infrastructure.config_manager"] = MagicMock(
+            config_manager=mock_cfg
         )
 
         with patch.dict("sys.modules", patches):
@@ -262,8 +260,8 @@ class TestResolveBackendUrl:
         }.get(key, default)
 
         patches = _make_import_patches()
-        patches["src.governed_financial_advisor.infrastructure.config_manager"] = (
-            MagicMock(config_manager=mock_cfg)
+        patches["src.gateway.infrastructure.config_manager"] = MagicMock(
+            config_manager=mock_cfg
         )
 
         with patch.dict("sys.modules", patches):

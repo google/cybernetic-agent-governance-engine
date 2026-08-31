@@ -93,7 +93,7 @@ _AAIF_STAGE_TO_CAGE_TIER: dict[str, dict[str, Any]] = {
         "tier": 5,
         "name": "Consensus / Multi-Agent",
         "enforcement": ["python"],
-        "module": "src.gateway.governance.consensus",
+        "module": "src.cage_finance.consensus.consensus",
     },
     "causal_validation": {
         "tier": 6,

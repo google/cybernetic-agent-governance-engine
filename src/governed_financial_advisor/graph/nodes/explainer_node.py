@@ -19,12 +19,12 @@ from langchain_core.messages import SystemMessage
 
 from config.settings import Config
 from src.gateway.governance.kms_signer import get_governance_signer
+from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.governed_financial_advisor.agents.explainer.agent import (
     create_explainer_agent,
     get_explainer_instruction,
 )
 from src.governed_financial_advisor.graph.state import AgentState
-from src.governed_financial_advisor.utils.telemetry import get_tracer
 from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 
 logger = logging.getLogger("GovernanceAuditor")

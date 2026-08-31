@@ -63,7 +63,7 @@ def _import_saga_nodes() -> types.ModuleType:
         "src.governed_financial_advisor.graph": MagicMock(),
         "src.governed_financial_advisor.graph.state": MagicMock(),
         "src.governed_financial_advisor.infrastructure": MagicMock(),
-        "src.governed_financial_advisor.infrastructure.mcp_client": MagicMock(),
+        "src.gateway.infrastructure.mcp_client": MagicMock(),
     }
 
     # Provide typed stubs that match what the module needs
@@ -75,9 +75,7 @@ def _import_saga_nodes() -> types.ModuleType:
     stub_modules["src.governed_financial_advisor.graph.state"].LedgerEntry = dict
 
     MagicMock()
-    stub_modules[
-        "src.governed_financial_advisor.infrastructure.mcp_client"
-    ].GatewayMCPClient = MagicMock
+    stub_modules["src.gateway.infrastructure.mcp_client"].GatewayMCPClient = MagicMock
 
     for name, stub in stub_modules.items():
         if name not in sys.modules:

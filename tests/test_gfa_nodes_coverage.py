@@ -176,7 +176,7 @@ class TestExecutionAnalystNodeBehavior:
                 return_value=mock_agent_chain,
             ),
             patch(
-                "src.governed_financial_advisor.utils.telemetry.get_tracer",
+                "src.gateway.infrastructure.telemetry_client.get_tracer",
                 return_value=MagicMock(),
             ),
         ):

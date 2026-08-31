@@ -46,9 +46,11 @@ RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra advisor
 RUN uv pip install --quiet grpcio-tools
 
 # Copy NeMo Guardrails source and config
+COPY src/cybernetic_governance_engine /app/src/cybernetic_governance_engine
 COPY src/gateway /app/src/gateway
 COPY src/cage_finance /app/src/cage_finance
 COPY config /app/config
+COPY README.md /app/README.md
 
 # Generate protobuf Python bindings from nemo.proto inside the venv.
 RUN python -m grpc_tools.protoc \

@@ -15,7 +15,7 @@
 # Build a name→callable dict for count / duplicate assertions
 import pytest
 
-from src.governed_financial_advisor.governance.nemo_action_registry import (
+from src.gateway.governance.nemo.action_registry import (
     get_all_actions,
 )
 from src.governed_financial_advisor.governance.nemo_actions import (

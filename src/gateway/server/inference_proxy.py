@@ -52,8 +52,8 @@ from src.gateway.governance.nemo.manager import verify_and_mask_output, verify_i
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
 from src.gateway.governance.uca_logger import _get_uca_logger
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.governed_financial_advisor.utils.privacy import scrub_pii
+from src.gateway.infrastructure.config_manager import config_manager
+from src.gateway.infrastructure.privacy import scrub_pii
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
