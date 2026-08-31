@@ -248,3 +248,17 @@ coverage.json
 # Local developer/agent instructions (uncommitted overrides)
 .agents.local.md
 .agents.md
+
+# Temporary refactoring/debugging scripts (never commit)
+fix_*.py
+fix_*.sh
+patch_*.py
+view_*.py
+rewrite_governor*.py
+add_properties.py
+find_hanging_import.py
+trace_import.py
+test_graph_import.py
+test_json_error.py
+smart_patch.py
+governor_invocations.txt
