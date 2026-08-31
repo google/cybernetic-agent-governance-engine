@@ -1350,16 +1350,17 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         self._local_debits = 0.0
 
     async def rollback_state(
-        self, cost: float, governance_signature: str | None = None
+        self, magnitude: float, governance_signature: str | None = None
     ) -> None:
-        """Atomically restore *cost* to the Redis cash balance.
+        """Atomically restore *magnitude* to the Redis cash balance.
 
         Mirrors ``_update_state_unsafe`` but adds rather than deducts.  Call this
         when a trade was approved by the CBF but failed downstream (e.g.
         broker API error).
 
         Args:
-            cost:                 Amount to restore to the cash balance.
+            magnitude:            Amount to restore to the cash balance (formerly
+                                  ``cost`` — renamed for domain-agnostic semantics).
             governance_signature: Optional KMS governance signature to persist
                                   in the ``audit:state_ledger`` RPUSH log.
 
@@ -1378,7 +1379,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
                     current = float(raw) if raw is not None else 100000.0
-                    restored = current + cost
+                    restored = current + magnitude
                     pipe.multi()
                     pipe.set(self.redis_key, str(restored))
                     # R-05: Increment fence epoch on every mutating write (including rollback)
@@ -1387,7 +1388,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                         ledger_entry = json.dumps(
                             {
                                 "ts": time.time(),
-                                "cost": cost,
+                                "cost": magnitude,  # audit field name retained for log compat
                                 "new_balance": restored,
                                 "governance_signature": governance_signature,
                                 "rollback": True,

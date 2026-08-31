@@ -114,7 +114,7 @@ def test_concrete_safety_filter_satisfies_protocol():
         def update_state(self, cost: float) -> None:
             pass
 
-        def rollback_state(self, cost: float) -> None:
+        def rollback_state(self, magnitude: float) -> None:
             pass
 
     instance = ConcreteSafetyFilter()
@@ -137,7 +137,7 @@ def test_concrete_safety_filter_unsafe_response():
         def update_state(self, cost: float) -> None:
             pass
 
-        def rollback_state(self, cost: float) -> None:
+        def rollback_state(self, magnitude: float) -> None:
             pass
 
     instance = UnsafeSafetyFilter()
@@ -153,13 +153,18 @@ async def test_concrete_consensus_provider_satisfies_protocol():
         """Minimal concrete implementation of ConsensusProvider for testing."""
 
         async def check_consensus(
-            self, action: str, amount: float, symbol: str
+            self,
+            action: str,
+            context: dict[str, Any],
+            magnitude: float | None = None,
         ) -> dict[str, Any]:
-            return {"status": "APPROVE", "reason": "Below threshold", "votes": []}
+            return {"status": "APPROVE", "reason": "Test", "votes": []}
 
     instance = ConcreteConsensusProvider()
     assert callable(instance.check_consensus)
-    result = await instance.check_consensus("buy", 100.0, "AAPL")
+    result = await instance.check_consensus(
+        "buy", context={"amount": 100.0, "symbol": "AAPL"}, magnitude=100.0
+    )
     assert "status" in result
     assert result["status"] == "APPROVE"
 

@@ -396,7 +396,7 @@ class TestSafetyFilterProtocol:
             def update_state(self, cost: float) -> None:
                 pass
 
-            def rollback_state(self, cost: float) -> None:
+            def rollback_state(self, magnitude: float) -> None:
                 pass
 
         instance = _Concrete()
@@ -467,7 +467,10 @@ class TestConsensusProviderProtocol:
 
         class _Concrete:
             async def check_consensus(
-                self, action: str, amount: float, symbol: str
+                self,
+                action: str,
+                context: dict[str, Any],
+                magnitude: float | None = None,
             ) -> dict[str, Any]:
                 return {"status": "APPROVE", "reason": "within threshold"}
 
@@ -478,13 +481,17 @@ class TestConsensusProviderProtocol:
     @pytest.mark.asyncio
     async def test_check_consensus_returns_dict(self) -> None:
         cp = self._make_concrete()
-        result = await cp.check_consensus("buy", 100.0, "AAPL")
+        result = await cp.check_consensus(
+            "buy", context={"amount": 100.0, "symbol": "AAPL"}, magnitude=100.0
+        )
         assert isinstance(result, dict)
 
     @pytest.mark.asyncio
     async def test_check_consensus_has_status_key(self) -> None:
         cp = self._make_concrete()
-        result = await cp.check_consensus("buy", 100.0, "AAPL")
+        result = await cp.check_consensus(
+            "buy", context={"amount": 100.0, "symbol": "AAPL"}, magnitude=100.0
+        )
         assert "status" in result, (
             "ConsensusProvider.check_consensus must return a 'status' key"
         )
@@ -492,7 +499,9 @@ class TestConsensusProviderProtocol:
     @pytest.mark.asyncio
     async def test_check_consensus_has_reason_key(self) -> None:
         cp = self._make_concrete()
-        result = await cp.check_consensus("buy", 100.0, "AAPL")
+        result = await cp.check_consensus(
+            "buy", context={"amount": 100.0, "symbol": "AAPL"}, magnitude=100.0
+        )
         assert "reason" in result, (
             "ConsensusProvider.check_consensus must return a 'reason' key"
         )
@@ -500,7 +509,9 @@ class TestConsensusProviderProtocol:
     @pytest.mark.asyncio
     async def test_check_consensus_status_is_string(self) -> None:
         cp = self._make_concrete()
-        result = await cp.check_consensus("buy", 100.0, "AAPL")
+        result = await cp.check_consensus(
+            "buy", context={"amount": 100.0, "symbol": "AAPL"}, magnitude=100.0
+        )
         assert isinstance(result["status"], str)
 
     def test_check_consensus_method_present(self) -> None:

@@ -133,7 +133,12 @@ if (
     )
 
 
-from src.gateway.governance.contracts import GovernanceTierFailure, RefusalReceipt
+from src.gateway.governance.contracts import (
+    GovernanceTierFailure,
+    GovernanceTierPlugin,
+    RefusalReceipt,
+    Violation,
+)
 
 
 class GovernanceError(Exception):
@@ -747,6 +752,19 @@ def _compute_narrowed_params(
 # ---------------------------------------------------------------------------
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    """Parse a boolean environment flag; unset falls back to ``default``.
+
+    D4 fix: This replaces the class-constant ``ENABLE_LEGACY_TRADE_DISPATCH``
+    with an env-driven flag so that Gate 3 can actually toggle between
+    the legacy and pluggable dispatch paths.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class SymbolicGovernor:
     def __init__(
         self,
@@ -756,6 +774,7 @@ class SymbolicGovernor:
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
+        enable_legacy_trade_dispatch: bool | None = None,
     ):
         self.opa_client = opa_client
         self.safety_filter = safety_filter
@@ -768,10 +787,78 @@ class SymbolicGovernor:
         # between the CBF balance check and actual trade execution.
         self.fiscal_limit_guard = fiscal_limit_guard
 
+        # D4 fix: env-driven legacy dispatch flag.  Constructor arg wins for tests;
+        # otherwise falls back to ENABLE_LEGACY_TRADE_DISPATCH env var (default True).
+        self.enable_legacy_trade_dispatch: bool = (
+            enable_legacy_trade_dispatch
+            if enable_legacy_trade_dispatch is not None
+            else _env_flag("ENABLE_LEGACY_TRADE_DISPATCH", default=True)
+        )
+
+        # D5 fix: pluggable domain tier registry.  Tiers are registered via
+        # register_domain_tier() at startup and sorted by (phase, order, tier_name)
+        # where `order` is an explicit integer matching the formal model, not
+        # an alphabetic tier_name sort (which would invert Consensus→Causal).
+        self._domain_tiers: list[GovernanceTierPlugin] = []
+
         # FTRA Boundary Check (Phase 3.3): Lazy-initialized IrreversibilityClassifier
         # for boundary-level FTRA validation. Shared instance with in-graph ftra_node
         # to ensure consistent classification semantics.
         self._ftra_classifier: Any | None = None  # IrreversibilityClassifier
+
+    def register_domain_tier(self, tier: GovernanceTierPlugin) -> None:
+        """Register a domain governance tier, preserving formal tier order.
+
+        D5 fix: explicit integer ``order`` is authoritative; ``tier_name`` is
+        used only as a deterministic tie-break.
+
+        Raises:
+            ValueError: If a tier with the same ``tier_name`` is already registered.
+        """
+        if any(t.tier_name == tier.tier_name for t in self._domain_tiers):
+            raise ValueError(f"duplicate tier registration: {tier.tier_name}")
+        self._domain_tiers.append(tier)
+        # D5: explicit integer `order` is authoritative; name is tie-break only.
+        self._domain_tiers.sort(key=lambda t: (t.phase, t.order, t.tier_name))
+
+    def registered_tier_names(self) -> list[str]:
+        """Ordered tier names — consumed by the formal-model parity test."""
+        return [t.tier_name for t in self._domain_tiers]
+
+    async def _rollback_committed(
+        self,
+        committed: list[GovernanceTierPlugin],
+        action: str,
+        params: dict[str, Any],
+    ) -> list[Violation]:
+        """LIFO-roll back committed tiers.  Never raises.  Fails closed on error.
+
+        D6 fix: every rollback is attempted even if an earlier one fails, so a
+        single faulty tier cannot strand reservations held by the others.  Any
+        failure yields a non-recoverable ``ROLLBACK_FAILED`` violation, which
+        forces the action to be denied and routed to the human-review/DEFER
+        path rather than being silently retried.
+        """
+        failures: list[Violation] = []
+        for prev in reversed(committed):
+            try:
+                await prev.rollback(action, params)
+            except Exception as exc:
+                logger.exception("tier %s rollback FAILED", prev.tier_name)
+                failures.append(
+                    Violation(
+                        tier=prev.tier_name,
+                        code="ROLLBACK_FAILED",
+                        message=(
+                            f"rollback of {prev.tier_name} failed: "
+                            f"{type(exc).__name__} — resource state may be "
+                            f"inconsistent; manual reconciliation required"
+                        ),
+                        recoverable=False,
+                        needs_human_review=True,
+                    )
+                )
+        return failures
 
     def _get_ftra_classifier(self) -> Any:
         """Return the IrreversibilityClassifier instance, lazily initialized.
@@ -1350,7 +1437,9 @@ class SymbolicGovernor:
                     amount = params.get("amount", 0.0)
                     symbol = params.get("symbol", "UNKNOWN")
                     consensus = await self.consensus_engine.check_consensus(
-                        tool_name, amount, symbol
+                        tool_name,
+                        context={"amount": amount, "symbol": symbol},
+                        magnitude=amount,
                     )
                     if consensus["status"] == "REJECT":
                         violations.append(f"Consensus Rejection: {consensus['reason']}")
@@ -1688,7 +1777,7 @@ class SymbolicGovernor:
                                     )
                                     try:
                                         await self.safety_filter.rollback_state(
-                                            cost=_amount
+                                            magnitude=_amount
                                         )
                                         logger.info(
                                             "✅ CBF rollback complete after fiscal rejection."
@@ -1726,7 +1815,9 @@ class SymbolicGovernor:
                                 "CBF rollback for budget leakage prevention."
                             )
                             try:
-                                await self.safety_filter.rollback_state(cost=_amount)
+                                await self.safety_filter.rollback_state(
+                                    magnitude=_amount
+                                )
                                 logger.info(
                                     "✅ CBF rollback complete after fiscal error."
                                 )
