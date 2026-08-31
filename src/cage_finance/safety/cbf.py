@@ -707,7 +707,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         try:
             # LOW-6 fix: removed inline `import asyncio as _asyncio` — asyncio is
             # already imported at module level.
-            from src.compliance_bridge.reconciliation_worker import (
+            from src.cage_finance.compliance.reconciliation_worker import (
                 read_verified_balance,
             )
 

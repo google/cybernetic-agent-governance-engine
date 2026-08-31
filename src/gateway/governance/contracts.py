@@ -468,8 +468,6 @@ class ConsensusProvider(Protocol):
         ...
 
 
-
-
 class PolicyClient(Protocol):
     """
     Protocol for an OPA (Open Policy Agent) HTTP client.

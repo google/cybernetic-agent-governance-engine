@@ -94,7 +94,7 @@ def _make_hybrid_stubs() -> dict:
             ),
         ),
         # Consensus
-        "src.gateway.governance.consensus": MagicMock(
+        "src.cage_finance.consensus.consensus": MagicMock(
             _background_audit_worker=AsyncMock()
         ),
         # KMS + Seal

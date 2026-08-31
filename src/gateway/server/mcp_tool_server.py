@@ -50,7 +50,8 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
-from src.gateway.core.tools import TradeOrder, execute_trade
+from src.cage_finance.models.trade_order import TradeOrder
+from src.cage_finance.tools.trade_executor import execute_trade
 from src.gateway.governance.nemo.manager import (
     initialize_rails,
     validate_with_nemo,
@@ -153,7 +154,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # Pass the tool server for plugin tool registration
         plugin.register(governor=symbolic_governor, tool_server=mcp)
     _assert_required_plugins(loaded_plugins)
-    
+
     # 7. Startup log for AU-12 evidence of active tier sequence (PR 4)
     active_tiers = symbolic_governor.registered_tier_names()
     logger.info(f"🛡️ Active governance tiers: {active_tiers}")

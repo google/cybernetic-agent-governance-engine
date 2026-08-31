@@ -53,8 +53,8 @@ class TestC01TradeSide:
     @pytest.mark.asyncio
     async def test_sell_order_sends_sell_to_broker(self):
         """A sell order must reach the broker with side='sell'."""
-        from src.gateway.core.structs import TradeOrder
-        from src.gateway.core.tools import execute_trade
+        from src.cage_finance.models.trade_order import TradeOrder
+        from src.cage_finance.tools.trade_executor import execute_trade
 
         tx_id = str(uuid.uuid4())
         order = TradeOrder(
@@ -77,7 +77,7 @@ class TestC01TradeSide:
             return mock_resp
 
         with (
-            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
             patch("requests.post", side_effect=_fake_post),
             patch.dict(
                 os.environ,
@@ -100,8 +100,8 @@ class TestC01TradeSide:
     @pytest.mark.asyncio
     async def test_buy_order_sends_buy_to_broker(self):
         """A buy order must reach the broker with side='buy'."""
-        from src.gateway.core.structs import TradeOrder
-        from src.gateway.core.tools import execute_trade
+        from src.cage_finance.models.trade_order import TradeOrder
+        from src.cage_finance.tools.trade_executor import execute_trade
 
         tx_id = str(uuid.uuid4())
         order = TradeOrder(
@@ -124,7 +124,7 @@ class TestC01TradeSide:
             return mock_resp
 
         with (
-            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
             patch("requests.post", side_effect=_fake_post),
             patch.dict(
                 os.environ,
@@ -147,8 +147,8 @@ class TestC01TradeSide:
     @pytest.mark.asyncio
     async def test_invalid_side_raises_assertion_error(self):
         """An order with an invalid side must be rejected before any broker call."""
-        from src.gateway.core.structs import TradeOrder
-        from src.gateway.core.tools import execute_trade
+        from src.cage_finance.models.trade_order import TradeOrder
+        from src.cage_finance.tools.trade_executor import execute_trade
 
         tx_id = str(uuid.uuid4())
         order = TradeOrder(
@@ -162,7 +162,7 @@ class TestC01TradeSide:
         )
 
         with (
-            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
             patch("requests.post") as mock_post,
             patch.dict(
                 os.environ,
@@ -189,9 +189,9 @@ class TestC01TradeSide:
         patch.dict(os.environ) cannot change it after the module is loaded.
         We patch the constant directly on the module instead.
         """
-        import src.gateway.core.tools as tools_module
-        from src.gateway.core.structs import TradeOrder
-        from src.gateway.core.tools import execute_trade
+        import src.cage_finance.tools.trade_executor as tools_module
+        from src.cage_finance.models.trade_order import TradeOrder
+        from src.cage_finance.tools.trade_executor import execute_trade
 
         tx_id = str(uuid.uuid4())
         order = TradeOrder(
@@ -205,7 +205,7 @@ class TestC01TradeSide:
         )
 
         with (
-            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
             patch.object(tools_module, "_USE_MOCK_BROKER", True),
         ):
             mock_redis.get.return_value = None
@@ -238,16 +238,18 @@ class TestC02CbfFailClosed:
 
         gov = SymbolicGovernor.__new__(SymbolicGovernor)
         gov.stpa_validator = mock_stpa
-        gov.safety_filter = mock_cbf
         gov.opa_client = mock_opa
-        gov.fiscal_limit_guard = None
+
+        mock_cbf.tier_name = "cbf"
+        mock_cbf.claims_action.return_value = True
+        gov._domain_tiers = [mock_cbf]
         return gov, mock_cbf
 
     @pytest.mark.asyncio
     async def test_cbf_redis_error_returns_denied(self):
         """When CBF raises (Redis down), pre_check must return cbf_allowed=False."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.verify_action.side_effect = ConnectionError("Redis connection refused")
+        mock_cbf.evaluate.side_effect = ConnectionError("Redis connection refused")
 
         result = await gov.pre_check({"symbol": "AAPL", "qty": 100})
 
@@ -264,7 +266,7 @@ class TestC02CbfFailClosed:
         import asyncio
 
         gov, mock_cbf = self._make_governor()
-        mock_cbf.verify_action.side_effect = asyncio.TimeoutError("CBF timed out")
+        mock_cbf.evaluate.side_effect = asyncio.TimeoutError("CBF timed out")
 
         result = await gov.pre_check({"symbol": "MSFT", "qty": 50})
 
@@ -275,7 +277,7 @@ class TestC02CbfFailClosed:
     async def test_cbf_success_returns_allowed_when_safe(self):
         """When CBF returns SAFE, pre_check must return cbf_allowed=True."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.verify_action.return_value = "SAFE"
+        mock_cbf.evaluate.return_value = []
 
         result = await gov.pre_check({"symbol": "GOOG", "qty": 10})
 
@@ -286,7 +288,7 @@ class TestC02CbfFailClosed:
     async def test_cbf_unsafe_result_returns_denied(self):
         """When CBF returns an UNSAFE verdict, pre_check must return cbf_allowed=False."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.verify_action.return_value = "UNSAFE: position limit exceeded"
+        mock_cbf.evaluate.return_value = "UNSAFE: position limit exceeded"
 
         result = await gov.pre_check({"symbol": "TSLA", "qty": 9999})
 
@@ -296,7 +298,7 @@ class TestC02CbfFailClosed:
     async def test_cbf_error_does_not_propagate_exception(self):
         """A Redis error must be caught — pre_check must not raise to the caller."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.verify_action.side_effect = RuntimeError("unexpected Redis failure")
+        mock_cbf.evaluate.side_effect = RuntimeError("unexpected Redis failure")
 
         # Must not raise — the exception is swallowed and converted to a deny.
         result = await gov.pre_check({"symbol": "AMZN", "qty": 1})

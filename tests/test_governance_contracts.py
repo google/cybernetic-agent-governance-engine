@@ -82,7 +82,7 @@ def test_safety_filter_protocol_has_update_state():
     _update_state_unsafe() to mark it as internal and encourage use of the
     atomic_verify_and_commit() method instead.
     """
-    from src.gateway.governance.cbf import ControlBarrierFunction
+    from src.cage_finance.safety.cbf import ControlBarrierFunction
 
     # The protocol doesn't define this internal method, but the implementation does
     assert hasattr(ControlBarrierFunction, "_update_state_unsafe")

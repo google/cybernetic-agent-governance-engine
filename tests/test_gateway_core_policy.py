@@ -356,18 +356,28 @@ class TestOPAClientInit:
                 return OPAClient()
 
     def test_bare_http_url_gets_default_data_path_appended(self) -> None:
-        with patch("src.gateway.core.policy.Config") as mock_cfg:
-            mock_cfg.OPA_URL = "http://localhost:8181"
-            mock_cfg.OPA_AUTH_TOKEN = ""
-            client = OPAClient()
-        assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
+        import os
+
+        with patch.dict(
+            os.environ, {"CAGE_OPA_DEFAULT_PATH": "/v1/data/trade/governance"}
+        ):
+            with patch("src.gateway.core.policy.Config") as mock_cfg:
+                mock_cfg.OPA_URL = "http://localhost:8181"
+                mock_cfg.OPA_AUTH_TOKEN = ""
+                client = OPAClient()
+            assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
 
     def test_http_url_with_slash_gets_default_data_path(self) -> None:
-        with patch("src.gateway.core.policy.Config") as mock_cfg:
-            mock_cfg.OPA_URL = "http://localhost:8181/"
-            mock_cfg.OPA_AUTH_TOKEN = ""
-            client = OPAClient()
-        assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
+        import os
+
+        with patch.dict(
+            os.environ, {"CAGE_OPA_DEFAULT_PATH": "/v1/data/trade/governance"}
+        ):
+            with patch("src.gateway.core.policy.Config") as mock_cfg:
+                mock_cfg.OPA_URL = "http://localhost:8181/"
+                mock_cfg.OPA_AUTH_TOKEN = ""
+                client = OPAClient()
+            assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
 
     def test_http_url_with_custom_path_preserved(self) -> None:
         with patch("src.gateway.core.policy.Config") as mock_cfg:

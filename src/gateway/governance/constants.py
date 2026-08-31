@@ -299,7 +299,14 @@ class ControlRegistry:
             region = _DEFAULT_REGION
 
         config_path = self._COMPLIANCE_DIR / f"{region}_BASELINE.json"
-        overlay_path = self._REPO_ROOT / "src" / "cage_finance" / "config" / "compliance" / f"{region}_OVERLAY.json"
+        overlay_path = (
+            self._REPO_ROOT
+            / "src"
+            / "cage_finance"
+            / "config"
+            / "compliance"
+            / f"{region}_OVERLAY.json"
+        )
 
         if not config_path.exists():
             raise RuntimeError(
@@ -310,7 +317,7 @@ class ControlRegistry:
         try:
             with open(config_path) as fh:
                 raw = json.load(fh)
-            
+
             if overlay_path.exists():
                 with open(overlay_path) as fh:
                     overlay_raw = json.load(fh)
@@ -493,6 +500,7 @@ try:
         PII_RETENTION_AUTHORITY as _F_PII_RETENTION,
         INJECTION_CITATION as _F_INJECTION,
     )
+
     HITL_CITATIONS.update(_F_HITL_CITATIONS)
     HITL_SLA_HOURS.update(_F_HITL_SLA_HOURS)
     PII_RETENTION_AUTHORITY.update(_F_PII_RETENTION)

@@ -97,5 +97,13 @@
     "worm_bucket_env_var": "OSCAL_S3_BUCKET_EU_ECB",
     "data_residency": "europe-west1",
     "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within europe-west1 only (GDPR Art. 44 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6 and GDPR Art. 5(1)(f). WORM bucket routed via OSCAL_S3_BUCKET_EU_ECB environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
+  },
+  "CTRL_FTRA_001": {
+    "internal_id": "CTRL_FTRA_001",
+    "primary_framework": "ISO 42001 A.8.4",
+    "co_frameworks": [],
+    "legacy_citation": "ISO 42001 A.8.4",
+    "scope": "agentic",
+    "description": "FTRA reachability gate"
   }
 }

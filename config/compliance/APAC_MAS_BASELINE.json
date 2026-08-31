@@ -80,5 +80,13 @@
     "worm_bucket_env_var": "OSCAL_S3_BUCKET_APAC_MAS",
     "data_residency": "asia-southeast1",
     "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within asia-southeast1 only (MAS TRM Guidelines \u00a74.2 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6. MAS Notice 655 \u00a710 audit logging satisfied by WORM-persisted UCA records. MAS FEAT Accountability Principle A2 audit trail requirement satisfied by KMS-signed, immutable UCA records. WORM bucket routed via OSCAL_S3_BUCKET_APAC_MAS environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
+  },
+  "CTRL_FTRA_001": {
+    "internal_id": "CTRL_FTRA_001",
+    "primary_framework": "ISO 42001 A.8.4",
+    "co_frameworks": [],
+    "legacy_citation": "ISO 42001 A.8.4",
+    "scope": "agentic",
+    "description": "FTRA reachability gate"
   }
 }

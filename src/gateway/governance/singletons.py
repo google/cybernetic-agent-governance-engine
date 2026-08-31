@@ -16,8 +16,6 @@ import logging
 import os
 
 from src.gateway.core.policy import OPAClient
-from src.gateway.governance.cbf import safety_filter
-from src.gateway.governance.consensus import consensus_engine
 from src.gateway.governance.generated_stpa_validator import (
     GeneratedSTPAValidator as STPAValidator,
 )
@@ -32,8 +30,6 @@ stpa_validator = STPAValidator()
 
 symbolic_governor = SymbolicGovernor(
     opa_client=opa_client,
-    safety_filter=safety_filter,  # type: ignore[arg-type]  # CBF implements SafetyFilter but async methods differ
-    consensus_engine=consensus_engine,
     stpa_validator=stpa_validator,
 )
 

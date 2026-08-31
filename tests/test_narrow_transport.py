@@ -122,7 +122,7 @@ async def test_receipt_stored_in_redis_with_ttl():
 @pytest.mark.asyncio
 async def test_mcp_server_fetches_and_burns_receipt():
     """Test 3: Verify MCP server fetches and deletes receipt (fetch-and-burn)."""
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "c" * 64
     receipt_payload = {
@@ -149,7 +149,7 @@ async def test_mcp_server_fetches_and_burns_receipt():
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
-            "src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce
+            "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             with patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",
@@ -184,7 +184,7 @@ async def test_mcp_server_fetches_and_burns_receipt():
 @pytest.mark.asyncio
 async def test_expired_receipt_rejected():
     """Test 4: Verify expired receipt (None from Redis) blocks execution."""
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "d" * 64
     mock_redis = AsyncMock()
@@ -193,7 +193,7 @@ async def test_expired_receipt_rejected():
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
-            "src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce
+            "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             # When receipt is missing, it should fail silently (no NARROW receipt)
             # and proceed with original params. To test expiry, we need to simulate
@@ -223,7 +223,7 @@ async def test_expired_receipt_rejected():
 @pytest.mark.asyncio
 async def test_forged_receipt_rejected():
     """Test 5: Verify forged receipt (signature mismatch) blocks execution."""
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "e" * 64
     forged_seal = "f" * 64  # Different seal
@@ -251,7 +251,7 @@ async def test_forged_receipt_rejected():
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
-            "src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce
+            "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             result = await execute_trade_action(
                 symbol="AAPL",
@@ -270,7 +270,7 @@ async def test_forged_receipt_rejected():
 @pytest.mark.asyncio
 async def test_narrowed_params_applied_to_trade():
     """Test 6: Verify trade executes with narrowed params, not original."""
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "g" * 64
     receipt_payload = {
@@ -297,7 +297,7 @@ async def test_narrowed_params_applied_to_trade():
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
-            "src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce
+            "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             with patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",
@@ -328,7 +328,7 @@ async def test_seal_computed_over_narrowed_params():
     # The test here confirms the contract is honored end-to-end
 
     from src.gateway.governance.routing_seal import generate_seal_with_evidence
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "h" * 64
     narrowed_params = {
@@ -357,7 +357,7 @@ async def test_seal_computed_over_narrowed_params():
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
-            "src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce
+            "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             with patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",
@@ -386,11 +386,11 @@ async def test_narrow_disabled_uses_original_params():
     # When NARROW is disabled, _classify_violation returns DENY instead
     # No receipt is generated in this case
 
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     mock_enforce = AsyncMock(side_effect=PermissionError("NARROW->DENY fallback"))
 
-    with patch("src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce):
+    with patch("src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce):
         result = await execute_trade_action(
             symbol="AAPL",
             amount=100.0,
@@ -406,7 +406,7 @@ async def test_narrow_disabled_uses_original_params():
 @pytest.mark.asyncio
 async def test_receipt_replay_blocked():
     """Test 9: Verify second fetch of same receipt fails (fetch-and-burn)."""
-    from src.gateway.server.mcp_tool_server import execute_trade_action
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "i" * 64
     receipt_payload = {
@@ -437,7 +437,7 @@ async def test_receipt_replay_blocked():
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
-            "src.gateway.server.mcp_tool_server.enforce_governance", mock_enforce
+            "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             with patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",

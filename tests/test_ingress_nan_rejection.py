@@ -49,21 +49,21 @@ class TestTradeOrderFiniteness:
 
     @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
     def test_amount_nan_inf_rejected(self, bad_value: float) -> None:
-        from src.gateway.core.structs import TradeOrder
+        from src.cage_finance.models.trade_order import TradeOrder
 
         with pytest.raises(ValidationError, match="(?i)finite"):
             TradeOrder(**{**_VALID_TRADE_KWARGS, "amount": bad_value})
 
     @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
     def test_confidence_nan_inf_rejected(self, bad_value: float) -> None:
-        from src.gateway.core.structs import TradeOrder
+        from src.cage_finance.models.trade_order import TradeOrder
 
         with pytest.raises(ValidationError, match="(?i)finite"):
             TradeOrder(**{**_VALID_TRADE_KWARGS, "confidence": bad_value})
 
     def test_valid_finite_values_accepted(self) -> None:
         """Positive control: valid finite values must still be accepted."""
-        from src.gateway.core.structs import TradeOrder
+        from src.cage_finance.models.trade_order import TradeOrder
 
         order = TradeOrder(**_VALID_TRADE_KWARGS)
         assert order.amount == 100.0

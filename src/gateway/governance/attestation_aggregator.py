@@ -55,7 +55,7 @@ class AttestationAggregator:
 
         aggregator = AttestationAggregator()
         aggregator.register(Provider05BlueprintProvider(...))
-        aggregator.register(Provider04AttestationProvider(...))
+        aggregator.register(Provider02AttestationProvider(...))
         await aggregator.boot_fetch()
 
         # Later, at envelope-build time:

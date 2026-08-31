@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src/compliance_bridge/reconciliation_worker.py
+Unit tests for src.cage_finance.reconciliation_worker.py
 
 Covers the ExternalLedgerReconciler polling daemon, ReconciliationResult
 data contract, StubLedgerProvider, and read_verified_balance() reader.
@@ -57,8 +57,8 @@ def _get_module():
     import sys
 
     # Force re-evaluation of module-level guards by evicting any cached import.
-    sys.modules.pop("src.compliance_bridge.reconciliation_worker", None)
-    return importlib.import_module("src.compliance_bridge.reconciliation_worker")
+    sys.modules.pop("src.cage_finance.compliance.reconciliation_worker", None)
+    return importlib.import_module("src.cage_finance.compliance.reconciliation_worker")
 
 
 def _make_fakeredis():

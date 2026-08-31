@@ -15,6 +15,7 @@
 import pytest
 from src.gateway.governance.constants import ControlRegistry
 
+
 @pytest.mark.local
 @pytest.mark.unit
 @pytest.mark.parametrize(
@@ -22,8 +23,11 @@ from src.gateway.governance.constants import ControlRegistry
     [
         ("US_FED", "4e99279978431e623750e1138de66384010c7df9c81cded4d30711f7de44e689"),
         ("EU_ECB", "41e281dd6374f3519e6301ee8272b0a3cd9799708b1cf89fdada8654f6cdcaf4"),
-        ("APAC_MAS", "26009d615ddfd261959d3946158db6543ead896dfd9a80e69edf2d64b03bd681"),
-    ]
+        (
+            "APAC_MAS",
+            "26009d615ddfd261959d3946158db6543ead896dfd9a80e69edf2d64b03bd681",
+        ),
+    ],
 )
 def test_regional_overlay_merge_hash(region: str, expected_hash: str):
     """

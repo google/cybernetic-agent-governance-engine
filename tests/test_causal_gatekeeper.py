@@ -570,13 +570,15 @@ class TestCausalGatekeeperIntegration:
             telemetry_provider = MagicMock()
             telemetry_provider.get_latest_data.return_value = telemetry_data
 
-        return SymbolicGovernor(
-            opa_client=opa_client,
-            safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            stpa_validator=None,
-            telemetry_provider=telemetry_provider,
-        )
+        gov = SymbolicGovernor(opa_client=opa_client)
+        from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+        from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
+        from src.cage_finance.causal.causal_gatekeeper import CausalGatekeeper
+        gov.register_domain_tier(CBFTierPlugin(safety_filter))
+        gov.register_domain_tier(ConsensusTierPlugin(consensus_engine))
+        gov.register_domain_tier(CausalTierPlugin(CausalGatekeeper(telemetry_provider)))
+        return gov
 
     @pytest.mark.asyncio
     async def test_governor_passes_with_stable_model(self, stable_telemetry):

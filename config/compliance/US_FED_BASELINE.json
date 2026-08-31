@@ -84,5 +84,13 @@
     "enforcement_tier": 2,
     "worm_bucket_env_var": "OSCAL_S3_BUCKET_US_FED",
     "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger (ISO 42001 Clause 6.1). Pre-ledger PII sanitization applied per Annex A.6. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule (pending runtime injection of session state)."
+  },
+  "CTRL_FTRA_001": {
+    "internal_id": "CTRL_FTRA_001",
+    "primary_framework": "ISO 42001 A.8.4",
+    "co_frameworks": [],
+    "legacy_citation": "ISO 42001 A.8.4",
+    "scope": "agentic",
+    "description": "FTRA reachability gate"
   }
 }
