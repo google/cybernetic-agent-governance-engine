@@ -240,3 +240,26 @@ Contributors who wish to help close open findings should:
 4. Update the corresponding OSCAL component in `compliance/oscal/` within 2 business days of merge
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) and the compliance validation guide in `compliance/lula/` for details.
+
+### POAM-2026-071: Re-verification of Decoupled Governance Post-Refactoring
+
+**Control:** ISO 42001 A.5.2, A.5.3, A.8.4, NIST SC-4
+**Risk Level:** Medium
+**Status:** Open
+**Date Opened:** 2026-08-30
+**Target Closure:** 2026-09-06
+
+**Description:**
+The CAGE Layered Refactoring (PRs 1-4) restructured governance boundaries, invalidating closure evidence for seven previous POAMs:
+- POAM-2026-023: Evidence cites relocated governance path
+- POAM-2026-056: Evidence cites `fiscal_limit_guard.py` pre-move
+- POAM-2026-057: Tier-sequencing assertion affected by registry
+- POAM-2026-058: Rollback atomicity affected by D6 rewrite
+- POAM-2026-067: STPA-derived control affected by source split
+- POAM-2026-069: OPA policy-path evidence affected
+- POAM-2026-070: Plugin-boundary/isolation evidence newly applicable
+
+**Remediation Plan:**
+1. Re-run Lula validation for all affected controls in the GKE staging environment.
+2. Verify formal proof assertions still align with the loaded plugin sequence.
+3. Attach updated `lula-validation` execution logs proving the newly decoupled pipeline preserves all gating criteria.
