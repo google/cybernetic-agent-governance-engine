@@ -1342,23 +1342,60 @@ async def defer_inject(
     )
 
 
+class DeferEscalateRequest(BaseModel):
+    operator_urn: str = Field(
+        ...,
+        description="Durable operator URN (e.g., urn:cage:operator:treasury-approver-a)",
+    )
+    session_id: str = Field(
+        default_factory=lambda: str(__import__("uuid").uuid4()),
+        description="Session identifier for audit trail",
+    )
+    auth_method: str = Field(
+        default="OIDC",
+        description="Authentication method: OIDC | MTLS | WEBAUTHN",
+    )
+
+
 @app.post(
     "/v1/defer/{defer_id}/escalate",
     tags=["governance"],
-    summary="Escalate a deferred token to MANUAL_REVIEW",
+    summary="Escalate a deferred token with dual-control approval",
 )
 async def defer_escalate(
     defer_id: str,
+    body: DeferEscalateRequest,
 ) -> JSONResponse:
-    """Escalate a DEFER-parked token to full HITL MANUAL_REVIEW.
+    """Escalate a DEFER-parked token with operator approval.
 
-    Use when automated data injection cannot resolve the ambiguity and
-    a human operator must make the final judgment call.
+    BREAKING CHANGE (Phase 2, Stream B): This endpoint now requires operator
+    identity in the request body and implements dual-control quorum checking.
+    
+    A token requires multiple distinct operator approvals (quorum threshold
+    determined by defer_reason) before transitioning to ESCALATED state.
+
+    Args:
+        defer_id: The token's defer_id.
+        body: Request containing operator_urn, session_id, and auth_method.
+
+    Returns:
+        JSON response with status:
+        - "partially_approved" — approval recorded but quorum not yet reached
+        - "escalated" — quorum threshold met, token resolved
+
+    Raises:
+        409 Conflict: Operator has already approved this token.
+        404 Not Found: Token does not exist or already resolved.
+        503 Service Unavailable: Redis connection failed.
     """
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
     try:
         import redis.asyncio as aioredis
+        from src.gateway.governance.defer_queue import (
+            ApprovalRecord,
+            ApprovalStatus,
+        )
 
         defer_queue_cls = _get_defer_queue_cls()
     except (ImportError, RuntimeError) as exc:
@@ -1368,21 +1405,51 @@ async def defer_escalate(
             detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
         )
 
+    # Create approval record
+    # Hash the session_id as the principal (in Phase 5, this will be the real principal)
+    auth_principal_hash = hashlib.sha256(body.session_id.encode()).hexdigest()
+    
+    approval_record = ApprovalRecord(
+        approver_urn=body.operator_urn,
+        approved_at_utc=datetime.utcnow().isoformat() + "Z",
+        auth_method=body.auth_method,
+        auth_principal_hash=auth_principal_hash,
+    )
+
     try:
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue = defer_queue_cls(client)
-        resolved = await queue.resolve(defer_id, "ESCALATED")
+        
+        # Use approve() instead of resolve() for dual-control
+        status, token = await queue.approve(defer_id, approval_record)
         await client.aclose()
-        if resolved is None:
+
+        if status == ApprovalStatus.NOT_FOUND:
             raise HTTPException(
                 status_code=404,
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
             )
+        elif status == ApprovalStatus.ALREADY_APPROVED:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ALREADY_APPROVED",
+                    "message": f"Operator {body.operator_urn} has already approved this token",
+                    "defer_id": defer_id,
+                },
+            )
+
+        # Determine response based on approval status
+        if status == ApprovalStatus.QUORUM_REACHED:
+            response_status = "escalated"
+            event_type = "DEFER_RESOLVED"
+        else:  # PARTIAL_QUORUM
+            response_status = "partially_approved"
+            event_type = "DEFER_PARTIALLY_APPROVED"
+
     except HTTPException:
         raise
     except Exception as exc:
-        # redis.exceptions.ConnectionError inherits from RedisError → Exception,
-        # NOT from Python's built-in ConnectionError.  Detect by message pattern.
         exc_str = str(exc)
         is_conn_err = (
             isinstance(exc, (ConnectionError, OSError))
@@ -1402,25 +1469,33 @@ async def defer_escalate(
             detail={"error": "DEFER_ESCALATE_FAILED", "message": exc_str},
         )
 
-    # Publish DEFER_RESOLVED SSE event
+    # Publish SSE event
     try:
         await event_bus.publish(
             {
-                "type": "DEFER_RESOLVED",
-                "traceId": resolved.defer_id,
+                "type": event_type,
+                "traceId": defer_id,
                 "controlId": "A.8.4",
                 "result": None,
                 "safetyRate": None,
-                "auditId": resolved.thread_id,
-                "resolution": "ESCALATED",
-                "timestamp": resolved.resolved_at_utc or "",
+                "auditId": token.thread_id if token else defer_id,
+                "resolution": "ESCALATED" if status == ApprovalStatus.QUORUM_REACHED else "PARTIAL",
+                "timestamp": token.resolved_at_utc if token and token.resolved_at_utc else datetime.utcnow().isoformat() + "Z",
+                "approvals": len(token.approvals) if token else 0,
+                "required_quorum": token.required_quorum if token else 2,
             }
         )
     except Exception:
         pass
 
     return JSONResponse(
-        content={"status": "escalated", "defer_id": defer_id, "resolution": "ESCALATED"}
+        content={
+            "status": response_status,
+            "defer_id": defer_id,
+            "approvals": len(token.approvals) if token else 0,
+            "required_quorum": token.required_quorum if token else 2,
+            "resolution": "ESCALATED" if status == ApprovalStatus.QUORUM_REACHED else None,
+        }
     )
 
 

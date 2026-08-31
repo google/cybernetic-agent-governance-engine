@@ -50,6 +50,7 @@ operation control that prevents unsafe execution under ambiguous context.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -116,12 +117,64 @@ class DeferReason(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# ApprovalRecord — dual-control approval state (Phase 2, Stream B)
+# ---------------------------------------------------------------------------
+
+
+class ApprovalRecord(BaseModel):
+    """A single operator's approval of a parked decision.
+
+    Required fields land in Phase 2 (Stream B). The five WebAuthn fields are
+    optional at rest and populated in Phase 5 once Q1/Q6 resolve; an ESCALATE
+    clearance refuses locally if they are absent.
+
+    Phase 2 dual-control implementation per
+    local/integrations/archytan/IMPLEMENTATION_PLAN_v2.md §4.4.1.
+    """
+
+    # --- Required from Phase 2 -------------------------------------------
+    approver_urn: str
+    """Durable operator URN — same identifier as the wire."""
+
+    approved_at_utc: str
+    """ISO-8601 UTC timestamp of approval."""
+
+    auth_method: str
+    """Authentication method: "OIDC" | "MTLS" | "WEBAUTHN"."""
+
+    auth_principal_hash: str
+    """SHA-256 of the authenticated principal; never the raw principal."""
+
+    # --- Optional until Phase 5 (WebAuthn) -------------------------------
+    credential_id: str | None = None
+    """base64url-encoded WebAuthn credential ID."""
+
+    client_data_hash: str | None = None
+    """hex SHA-256 of clientDataJSON."""
+
+    authenticator_data: str | None = None
+    """base64url-encoded authenticator data."""
+
+    signature: str | None = None
+    """base64url-encoded WebAuthn signature."""
+
+    challenge_binding: str | None = None
+    """hex SHA-256 over the bound decision fields."""
+
+
+# ---------------------------------------------------------------------------
 # DeferToken — the parked execution context
 # ---------------------------------------------------------------------------
 
 
 class DeferToken(BaseModel):
     """Immutable snapshot of an execution context parked in the DEFER queue.
+
+    Schema v2 additions (Phase 2, Stream B):
+        schema_version      — schema version (1 = legacy, 2 = dual-control).
+        approvals           — list of operator approval records.
+        required_quorum     — number of distinct approvals needed for resolution.
+        correlation_id      — UUID minted at ingress, before the governance decision.
 
     Fields:
         defer_id            — stable UUID v4 assigned at park time.
@@ -153,6 +206,75 @@ class DeferToken(BaseModel):
     resolved_at_utc: str | None = None
     resolution: str | None = None
     aarm_vector: str = "AARM-V7"  # Context Window Overflow
+
+    # --- v2 additions (Phase 2, Stream B) ---------------------------------
+    schema_version: int = 2
+    approvals: list[ApprovalRecord] = Field(default_factory=list)
+    required_quorum: int = Field(default=2, ge=2, le=5)
+    correlation_id: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        """Derive correlation_id from thread_id if absent (v1 token compatibility)."""
+        if self.correlation_id is None:
+            # B-2: uuid5 derivation for legacy tokens parked before schema v2
+            namespace_cage = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+            self.correlation_id = str(uuid.uuid5(namespace_cage, self.thread_id))
+
+
+# ---------------------------------------------------------------------------
+# ApprovalStatus — result of DeferQueue.approve()
+# ---------------------------------------------------------------------------
+
+
+class ApprovalStatus(str, Enum):
+    """Outcome of a DeferQueue.approve() call.
+
+    PARTIAL_QUORUM:    Approval recorded; token remains PARTIALLY_APPROVED.
+    QUORUM_REACHED:    Quorum threshold met; token transitions to RESOLVED.
+    ALREADY_APPROVED:  This operator has already approved this token.
+    NOT_FOUND:         Token does not exist or has already been resolved.
+    """
+
+    PARTIAL_QUORUM = "PARTIAL_QUORUM"
+    QUORUM_REACHED = "QUORUM_REACHED"
+    ALREADY_APPROVED = "ALREADY_APPROVED"
+    NOT_FOUND = "NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Required quorum mapping (Phase 2, §4.5)
+# ---------------------------------------------------------------------------
+
+#: Total mapping from DeferReason to required_quorum threshold.
+#: Implementation as a data table (not branching logic) so partner
+#: objections require only a one-line change.
+_DEFER_REASON_QUORUM: dict[DeferReason, int] = {
+    DeferReason.FTRA_IRREVERSIBLE_TERMINAL: 3,
+    DeferReason.EXTERNAL_VALIDATION: 3,
+    DeferReason.FLOWSIGNAL_ESCALATION: 3,
+    DeferReason.CONFIDENCE_BELOW_THRESHOLD: 2,
+    DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE: 2,
+    DeferReason.INSUFFICIENT_CONTEXT: 2,
+    DeferReason.DATA_STARVATION: 2,
+}
+
+
+def get_required_quorum(defer_reason: DeferReason) -> int:
+    """Return the required quorum threshold for a given DeferReason.
+
+    Per local/integrations/archytan/IMPLEMENTATION_PLAN_v2.md §4.5,
+    this mapping is total over all seven DeferReason enum values.
+
+    Irreversible terminal nodes and external validation escalations
+    require 3 distinct approvers; baseline dual control requires 2.
+
+    Args:
+        defer_reason: The DeferReason enum value.
+
+    Returns:
+        Required quorum threshold (2 or 3).
+    """
+    return _DEFER_REASON_QUORUM[defer_reason]
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +428,131 @@ class DeferQueue:
             token.thread_id,
         )
         return token
+
+    # ------------------------------------------------------------------
+    # approve — append an approval and check quorum (Phase 2, Stream B)
+    # ------------------------------------------------------------------
+
+    async def approve(
+        self,
+        defer_id: str,
+        record: ApprovalRecord,
+    ) -> tuple[ApprovalStatus, DeferToken | None]:
+        """Append an approval; resolve only when the quorum threshold is met.
+
+        Enforces invariants under WATCH/MULTI/EXEC:
+          - Token is in PARKED or PARTIALLY_APPROVED state
+          - record.approver_urn is not already present in token.approvals
+          - Status becomes PARTIALLY_APPROVED while len(approvals) < required_quorum
+          - Status becomes RESOLVED only when distinct approver count >= required_quorum
+
+        Concurrent approval safety (R-13): Uses Redis WATCH/MULTI/EXEC to prevent
+        lost updates when two operators approve simultaneously.
+
+        Args:
+            defer_id: The token's defer_id.
+            record: The ApprovalRecord to append.
+
+        Returns:
+            Tuple of (ApprovalStatus, updated_token_or_None).
+            Status indicates: PARTIAL_QUORUM, QUORUM_REACHED, ALREADY_APPROVED, NOT_FOUND.
+
+        Raises:
+            TransactionAbortedError: Concurrent modification detected; caller should retry.
+        """
+        key = f"{_KEY_PREFIX}{defer_id}"
+
+        # WATCH the key to detect concurrent modifications
+        try:
+            await self._redis.watch(key)
+        except Exception:
+            # If WATCH fails, unwatch and raise
+            await self._redis.unwatch()
+            raise
+
+        try:
+            # Read current token state
+            raw = await self._redis.hget(key, "token")
+            status_raw = await self._redis.hget(key, "status")
+
+            if raw is None:
+                await self._redis.unwatch()
+                logger.warning(
+                    "[defer_queue] approve() called for unknown defer_id=%s", defer_id
+                )
+                return (ApprovalStatus.NOT_FOUND, None)
+
+            token = DeferToken.model_validate_json(raw)
+            current_status = status_raw or "PARKED"
+
+            # Only approve tokens in PARKED or PARTIALLY_APPROVED state
+            if current_status not in ("PARKED", "PARTIALLY_APPROVED"):
+                await self._redis.unwatch()
+                logger.warning(
+                    "[defer_queue] approve() called for already-resolved defer_id=%s status=%s",
+                    defer_id,
+                    current_status,
+                )
+                return (ApprovalStatus.NOT_FOUND, None)
+
+            # Check for duplicate approver
+            existing_urns = {a.approver_urn for a in token.approvals}
+            if record.approver_urn in existing_urns:
+                await self._redis.unwatch()
+                logger.warning(
+                    "[defer_queue] Duplicate approval rejected: defer_id=%s approver=%s",
+                    defer_id,
+                    record.approver_urn,
+                )
+                return (ApprovalStatus.ALREADY_APPROVED, token)
+
+            # Append approval
+            token.approvals.append(record)
+            distinct_approvers = len({a.approver_urn for a in token.approvals})
+
+            # Determine new status
+            if distinct_approvers >= token.required_quorum:
+                new_status = "RESOLVED"
+                token.resolved_at_utc = datetime.now(tz=timezone.utc).isoformat()
+                token.resolution = "ESCALATED"
+                approval_status = ApprovalStatus.QUORUM_REACHED
+            else:
+                new_status = "PARTIALLY_APPROVED"
+                approval_status = ApprovalStatus.PARTIAL_QUORUM
+
+            # Atomic write with MULTI/EXEC
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.hset(
+                    key,
+                    mapping={
+                        "token": token.model_dump_json(),
+                        "status": new_status,
+                    },
+                )
+                if new_status == "RESOLVED":
+                    # Remove from expiry index when resolved
+                    pipe.zrem(_EXPIRY_ZSET, defer_id)
+                await pipe.execute()
+
+            logger.info(
+                "[defer_queue] Approval recorded: defer_id=%s approver=%s "
+                "distinct_approvers=%d/%d status=%s",
+                defer_id,
+                record.approver_urn,
+                distinct_approvers,
+                token.required_quorum,
+                new_status,
+            )
+            return (approval_status, token)
+
+        except TransactionAbortedError:
+            logger.warning(
+                "[defer_queue] approve() transaction aborted for defer_id=%s approver=%s — "
+                "concurrent modification detected",
+                defer_id,
+                record.approver_urn,
+            )
+            raise
 
     # ------------------------------------------------------------------
     # get — fetch a single token by ID
