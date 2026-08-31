@@ -107,6 +107,14 @@ async def _check_rate_limit(client_ip: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _assert_required_plugins(loaded: list[Any]) -> None:
+    # Phase 2.4: Domain package extraction - fail closed if no domain plugin loaded
+    if not any(getattr(p, "name", "") == "finance" for p in loaded):
+        logger.warning(
+            "⚠️ No finance plugin loaded. Tools and domain tiers will be absent."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # 1. Tracing bootstrap (Phase 5.1)
@@ -136,6 +144,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
+
+    # 6. Load domain plugins (D7)
+    from src.gateway.governance.plugin_loader import discover_plugins
+
+    loaded_plugins = discover_plugins()
+    for plugin in loaded_plugins:
+        # Pass the tool server for plugin tool registration
+        plugin.register(governor=symbolic_governor, tool_server=mcp)
+    _assert_required_plugins(loaded_plugins)
 
     yield
 
@@ -320,161 +337,6 @@ async def _evaluate_policy_internal(
 
 
 @mcp.tool()
-async def execute_trade_action(
-    symbol: str,
-    amount: float,
-    currency: str,
-    confidence: float = 0.0,
-    transaction_id: str | None = None,
-    trader_id: str = "agent_001",
-    trader_role: str = "junior",
-    dry_run: bool = False,
-) -> str:
-    """Execute a financial trade under strict governance.
-
-    Gap 2 fix (No-Direct-Bind): ``enforce_governance()`` now returns a routing
-    seal.  This function verifies the seal before executing the trade, ensuring
-    that execution cannot proceed by ignoring the governance response.
-    Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
-
-    Args:
-        symbol: Ticker symbol (e.g. "AAPL").
-        amount: Trade quantity (positive float).
-        currency: ISO 4217 currency code (e.g. "USD").
-        confidence: Model confidence score [0.0, 1.0].  Callers MUST supply a
-            real value — the governance pipeline enforces a minimum threshold
-            (US_FED: 0.95).  Omitting this parameter leaves the default 0.0
-            which will always fail the confidence gate.
-        transaction_id: Optional idempotency key; auto-generated if absent.
-        trader_id: Identifier of the requesting agent or user.
-        trader_role: RBAC role used for fiscal-limit enforcement.
-        dry_run: When True, governance checks run but no broker call is made.
-    """
-    from src.gateway.governance.routing_seal import (
-        SymbolicGovernorViolation,
-        verify_and_consume_seal,
-        verify_seal,
-    )
-
-    logger.info(
-        "Tool Call: execute_trade(%s, %s, confidence=%s)", symbol, amount, confidence
-    )
-    if not transaction_id:
-        transaction_id = str(uuid.uuid4())
-
-    params = {
-        "symbol": symbol,
-        "amount": amount,
-        "currency": currency,
-        "confidence": confidence,
-        "transaction_id": transaction_id,
-        "trader_id": trader_id,
-        "trader_role": trader_role,
-        "dry_run": dry_run,
-    }
-
-    try:
-        seal = await enforce_governance("execute_trade", params)
-    except PermissionError as exc:
-        return f"BLOCKED: {exc}"
-
-    # Phase 3.2 NARROW Receipt Validation (CAGE-SEC-004 fix)
-    # Check for NARROW verdict receipt using seal prefix before seal verification
-    action_params = params  # Default: use original params
-
-    if seal:
-        from src.gateway.infrastructure.redis_client import redis_client
-
-        # Generate receipt key from seal (first 32 hex chars = 128 bits)
-        seal_prefix = seal[:32] if len(seal) >= 32 else seal
-        receipt_key = f"narrow:receipt:{seal_prefix}"
-
-        # Attempt to fetch NARROW receipt (fail-silent if not present)
-        if redis_client is not None:
-            try:
-                receipt_data = await redis_client.get(receipt_key)
-                if receipt_data:
-                    # Delete receipt immediately (one-time use — fetch-and-burn pattern)
-                    await redis_client.delete(receipt_key)
-
-                    receipt_payload = json.loads(receipt_data)
-                    narrowed_params = receipt_payload.get("narrowed_params", {})
-                    receipt_signature = receipt_payload.get("original_signature", "")
-
-                    # Verify original signature matches (prevents receipt forgery)
-                    if receipt_signature != seal:
-                        logger.error(
-                            "🚫 execute_trade: NARROW receipt signature mismatch. "
-                            "Receipt sig=%s, Seal=%s",
-                            receipt_signature[:16],
-                            seal[:16],
-                        )
-                        return "BLOCKED: Narrowing receipt signature mismatch — possible forgery attempt"
-
-                    # Use narrowed params for trade execution
-                    action_params = narrowed_params
-                    logger.info(
-                        "📐 execute_trade: NARROW receipt validated and consumed. "
-                        "Using narrowed params: %s",
-                        {
-                            k: narrowed_params.get(k)
-                            for k in ["symbol", "amount", "confidence"]
-                        },
-                    )
-            except json.JSONDecodeError as exc:
-                logger.error(
-                    "🚫 execute_trade: NARROW receipt payload invalid JSON: %s",
-                    exc,
-                )
-                return "BLOCKED: Narrowing receipt payload corrupted"
-            except Exception as exc:
-                # Only log errors, don't block — receipt may legitimately not exist
-                logger.debug(
-                    "execute_trade: NARROW receipt lookup failed (may be ALLOW verdict): %s",
-                    exc,
-                )
-
-    # Gap 2 fix / CAGE-SEC-008: verify and atomically consume the routing seal before executing.
-    # verify_and_consume_seal() burns the single-use nonce in Redis, preventing replay attacks.
-    # Phase 3.2: Verify seal against the params that will actually be executed (narrowed or original)
-    if seal:
-        try:
-            await verify_and_consume_seal(seal, "execute_trade", action_params)
-        except SymbolicGovernorViolation as exc:
-            logger.error(
-                "🔒 execute_trade_action: routing seal verification FAILED — "
-                "blocking execution (No-Direct-Bind invariant). Reason: %s",
-                exc.reason,
-            )
-            return "BLOCKED: routing seal invalid, expired, or already consumed — governance authority unresolved."
-
-    if dry_run:
-        return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
-
-    # Validate TradeOrder before actuation
-    # Phase 3.2: Use action_params (either narrowed or original)
-    try:
-        order = TradeOrder(**action_params)  # type: ignore[arg-type]
-    except Exception as exc:
-        logger.error("TradeOrder validation failed before actuation: %s", exc)
-        return f"ERROR: invalid trade parameters — {exc}"
-
-    try:
-        return await execute_trade(order)
-    except Exception as exc:
-        logger.error("Execution Error: %s", exc)
-        if hasattr(symbolic_governor.safety_filter, "rollback_state"):
-            raw_amt = action_params.get("amount")
-            rollback_amt = (
-                float(raw_amt)
-                if isinstance(raw_amt, (int, float, str))
-                else float(amount)
-            )
-            await symbolic_governor.safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
-        return f"ERROR: {exc}"
-
-
-@mcp.tool()
 async def trigger_safety_intervention(reason: str = "Unknown") -> str:
     """Trigger an immediate safety intervention to lock the system."""
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
@@ -483,18 +345,6 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
         await gw_redis.set("safety_violation", reason)
     logger.warning("🛑 SAFETY INTERVENTION TRIGGERED: %s", reason)
     return "INTERVENTION_ACK: System Locked."
-
-
-@mcp.tool()
-async def check_market_status(symbol: str) -> str:
-    """Check current status of a market symbol."""
-    return await asyncio.to_thread(get_market_data, symbol)
-
-
-@mcp.tool()
-async def get_market_sentiment(symbol: str) -> str:
-    """Retrieve current market sentiment for a symbol."""
-    return await asyncio.to_thread(get_market_data, symbol)
 
 
 @mcp.tool()
@@ -555,16 +405,18 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     body_bytes = await request.body()
     enforce_routing_seal(request, body_bytes)
 
+    # Reconstruct the tool map by calling the registered tools from the MCP server
     tool_map: dict[str, Any] = {
         "simulate_governance_check": simulate_governance_check,
         "trigger_safety_intervention": trigger_safety_intervention,
-        "check_market_status": check_market_status,
-        "get_market_sentiment": get_market_sentiment,
         "verify_content_safety": verify_content_safety,
         "evaluate_policy": _evaluate_policy_internal,
-        "execute_trade_action": execute_trade_action,
-        "get_market_data": get_market_data,
     }
+
+    # Also grab tools registered to the MCP server directly by plugins
+    for tool in getattr(mcp, "_tools", []):
+        if tool.name not in tool_map:
+            tool_map[tool.name] = tool.func
 
     if request_body.tool_name not in tool_map:
         raise HTTPException(

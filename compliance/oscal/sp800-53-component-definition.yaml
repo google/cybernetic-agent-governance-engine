@@ -101,6 +101,8 @@ component-definition:
                    availability — the routing seal is issued immediately after the
                    governance decision, without waiting for audit record persistence.
                    Spans are exported to Langfuse asynchronously for retention.
+                   Domain tiers (like the financial package) are injected dynamically
+                   via plugin registration, and the active tier list is logged at startup.
 
                 2. EVIDENCE-OF-EXECUTION AUDIT (blocking mode, EVIDENCE_CHAIN_BLOCKING=true):
                    Ensures evidence commit before seal issuance, providing stronger

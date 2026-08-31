@@ -21,7 +21,7 @@ import inspect
 import logging
 import os
 
-from src.gateway.core.structs import TradeOrder
+from src.cage_finance.models.trade_order import TradeOrder
 from src.governed_financial_advisor.infrastructure.config_manager import config_manager
 from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 

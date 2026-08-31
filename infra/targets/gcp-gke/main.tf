@@ -566,7 +566,7 @@ module "opa" {
 
   # Optional: Add custom policies
   policy_files = {
-    "trade_governance.rego" = file("${path.module}/../../../src/governed_financial_advisor/governance/policy/trade_governance.rego")
+    "trade_governance.rego" = file("${path.module}/../../../src/cage_finance/opa/trade_governance.rego")
   }
 
   depends_on = [module.gke]

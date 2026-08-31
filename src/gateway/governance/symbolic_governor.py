@@ -2095,7 +2095,7 @@ class SymbolicGovernor:
                 _opa_revalidate(),
                 return_exceptions=True,
             )
-            cbf_result: str | None | BaseException = _gather_results2[0]
+            cbf_result: str | BaseException | None = _gather_results2[0]
             policy_resp: Any = _gather_results2[1]
             _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
             logger.debug(

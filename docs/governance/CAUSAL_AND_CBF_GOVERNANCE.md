@@ -250,7 +250,7 @@ A confidence of `0.95` yields a confabulation risk score of `0.05` (low risk). A
 The block threshold is **0.95** (sourced from `CONFIDENCE_MIN_SCORE` env var, falling back to `THRESHOLDS.confidence.min_trade_confidence`). A request is blocked when:
 
 ```python
-confidence < CONFIDENCE_THRESHOLD   # i.e. risk_score > 0.05
+confidence < CONFIDENCE_THRESHOLD  # i.e. risk_score > 0.05
 ```
 
 ### Langfuse Score Payload
@@ -283,8 +283,8 @@ Two critic personas are evaluated **concurrently** via `asyncio.gather`, each ro
 
 ```python
 vote1, vote2 = await asyncio.gather(
-    self._get_critic_vote("Risk Manager",        action, amount, symbol),
-    self._get_critic_vote("Compliance Officer",  action, amount, symbol),
+    self._get_critic_vote("Risk Manager", action, amount, symbol),
+    self._get_critic_vote("Compliance Officer", action, amount, symbol),
 )
 ```
 

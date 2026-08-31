@@ -377,7 +377,12 @@ def _load_agent_state_schema() -> dict:
     """
     global _AGENT_STATE_SCHEMA
     if _AGENT_STATE_SCHEMA is None:
-        schema_path = _Path(__file__).parents[5] / "compliance" / "schemas" / "agent_state_schema.json"
+        schema_path = (
+            _Path(__file__).parents[5]
+            / "compliance"
+            / "schemas"
+            / "agent_state_schema.json"
+        )
         with schema_path.open() as f:
             _AGENT_STATE_SCHEMA = _json.load(f)
     return _AGENT_STATE_SCHEMA
@@ -410,6 +415,7 @@ def validate_state(state: StateDict, location: str = "unknown") -> None:
     if _JSONSCHEMA_AVAILABLE is None:
         try:
             import jsonschema as _jsonschema  # noqa: F401
+
             _JSONSCHEMA_AVAILABLE = True
         except ImportError:
             _JSONSCHEMA_AVAILABLE = False
@@ -455,11 +461,14 @@ The following table specifies the exact call sites. "Entry" means the first line
 ```python
 from src.gateway.governance.langgraph_harness.types import validate_state
 
+
 async def nemo_guardrail_node(state: StateDict) -> dict[str, Any]:
     validate_state(state, location="nemo_guardrail_node:entry")
     # ... existing logic ...
     result = {**base, cfg.blocked_state_key: False, cfg.reason_state_key: ""}
-    validate_state(result, location="nemo_guardrail_node:exit")  # only for nodes with exit validation
+    validate_state(
+        result, location="nemo_guardrail_node:exit"
+    )  # only for nodes with exit validation
     return result
 ```
 
@@ -507,12 +516,15 @@ from pathlib import Path
 
 import pytest
 
-SCHEMA_PATH = Path(__file__).parents[1] / "compliance" / "schemas" / "agent_state_schema.json"
+SCHEMA_PATH = (
+    Path(__file__).parents[1] / "compliance" / "schemas" / "agent_state_schema.json"
+)
 
 
 def get_agent_state_annotations() -> set[str]:
     """Return the set of field names declared in AgentState.__annotations__."""
     from src.governed_financial_advisor.graph.state import AgentState
+
     # TypedDict stores annotations in __annotations__ (includes inherited)
     annotations: dict = {}
     for cls in reversed(AgentState.__mro__):
@@ -592,9 +604,7 @@ def test_required_fields_are_non_optional_in_state():
         hint_str = str(hint)
         # Optional[X] is Union[X, None] — both forms indicate nullable
         is_optional = (
-            "Optional" in hint_str
-            or "NoneType" in hint_str
-            or "None" in hint_str
+            "Optional" in hint_str or "NoneType" in hint_str or "None" in hint_str
         )
         assert not is_optional, (
             f"Field '{field}' is listed as required in the JSON Schema but is "

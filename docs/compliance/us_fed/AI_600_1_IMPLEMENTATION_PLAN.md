@@ -289,15 +289,16 @@ no Langfuse scorer that records confabulation events for audit purposes.
    #
    # Licensed under the Apache License, Version 2.0 (the "License");
    # ...
-   
+
    """Confabulation scorer — records low-confidence events to Langfuse."""
-   
+
    import os
    from dataclasses import dataclass
    from typing import Optional
-   
+
    CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_MIN_SCORE", "0.95"))
-   
+
+
    @dataclass
    class ConfabulationEvent:
        trace_id: str
@@ -305,7 +306,8 @@ no Langfuse scorer that records confabulation events for audit purposes.
        model_id: str
        grounding_source: Optional[str]
        blocked: bool
-   
+
+
    def score_confabulation(event: ConfabulationEvent) -> dict:
        """Returns a Langfuse score payload for confabulation risk."""
        return {
@@ -444,29 +446,31 @@ keyword-based attacks but not semantic injection patterns.
    ```python
    # Copyright 2026 Google LLC
    # Licensed under the Apache License, Version 2.0
-   
+
    """Prompt injection detector — AI 600-1 §2.3 control."""
-   
+
    import re
    from dataclasses import dataclass
    from typing import Optional
-   
+
    # Structural injection patterns (not keyword-based)
    _INJECTION_PATTERNS = [
        r"ignore\s+(all\s+)?previous\s+instructions",
        r"you\s+are\s+now\s+(?:a\s+)?(?:different|new|another)\s+(?:AI|assistant|model)",
-       r"system\s*:\s*\[",          # fake system prompt injection
-       r"<\|im_start\|>system",     # ChatML injection
+       r"system\s*:\s*\[",  # fake system prompt injection
+       r"<\|im_start\|>system",  # ChatML injection
        r"###\s*instruction\s*###",  # instruction override
        r"disregard\s+(?:your\s+)?(?:training|guidelines|rules)",
    ]
-   
+
+
    @dataclass
    class InjectionResult:
        detected: bool
        pattern_matched: Optional[str]
        confidence: float
-   
+
+
    def detect_prompt_injection(text: str) -> InjectionResult:
        """Returns InjectionResult for the given input text."""
        for pattern in _INJECTION_PATTERNS:
@@ -585,20 +589,22 @@ threshold is exceeded, the request is blocked but not routed to a human reviewer
    ```python
    # Copyright 2026 Google LLC
    # Licensed under the Apache License, Version 2.0
-   
+
    """Human-in-the-loop escalator — AI 600-1 §2.5 control."""
-   
+
    import os
    from dataclasses import dataclass
    from enum import Enum
    from typing import Optional
-   
+
+
    class EscalationReason(Enum):
        CONSENSUS_THRESHOLD = "consensus_threshold_exceeded"
        CONFIDENCE_LOW = "confidence_below_threshold"
        CAUSAL_BLOCK = "causal_gatekeeper_block"
        MANUAL_REVIEW = "manual_review_requested"
-   
+
+
    @dataclass
    class EscalationRequest:
        trace_id: str
@@ -606,7 +612,8 @@ threshold is exceeded, the request is blocked but not routed to a human reviewer
        amount_usd: Optional[float]
        confidence: Optional[float]
        reviewer_queue: str  # e.g. "compliance-review" or "security-review"
-   
+
+
    def escalate_to_human(request: EscalationRequest) -> dict:
        """Returns an escalation record for the HITL queue."""
        return {
@@ -1268,29 +1275,30 @@ each governance decision to a signed audit record.
    ```python
    # Copyright 2026 Google LLC
    # Licensed under the Apache License, Version 2.0
-   
+
    """Provenance chain — AI 600-1 §2.7 information integrity control."""
-   
+
    import hashlib
    import json
    from dataclasses import dataclass
    from typing import Optional
-   
+
+
    @dataclass
    class ProvenanceRecord:
        trace_id: str
-       node_id: str          # LangGraph node name
-       input_hash: str       # SHA-256 of node input
-       output_hash: str      # SHA-256 of node output
-       decision: str         # ALLOW | BLOCK | ESCALATE
+       node_id: str  # LangGraph node name
+       input_hash: str  # SHA-256 of node input
+       output_hash: str  # SHA-256 of node output
+       decision: str  # ALLOW | BLOCK | ESCALATE
        parent_hash: Optional[str]  # hash of previous record (chain)
-   
+
+
    def compute_hash(data: dict) -> str:
        """Returns SHA-256 hex digest of JSON-serialized data."""
-       return hashlib.sha256(
-           json.dumps(data, sort_keys=True).encode()
-       ).hexdigest()
-   
+       return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
    def build_provenance_record(
        trace_id: str,
        node_id: str,

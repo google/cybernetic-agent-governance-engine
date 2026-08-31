@@ -283,7 +283,7 @@ Graph nodes **must always** call manager functions directly:
 # CORRECT — in-process, no network, fail-closed
 from src.gateway.governance.nemo.manager import validate_with_nemo, verify_input
 
-rails = create_nemo_manager()          # called once at startup, result cached
+rails = create_nemo_manager()  # called once at startup, result cached
 is_safe, response = await validate_with_nemo(user_input, rails)
 result = await verify_input(rails, text)
 masked = await verify_and_mask_output(rails, text)

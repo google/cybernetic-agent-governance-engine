@@ -329,40 +329,45 @@ class OPAClient:
     # policy package (trade.governance → /v1/data/trade/governance).
     # Override by including the full path in OPA_URL, e.g.:
     #   OPA_URL=http://localhost:8181/v1/data/trade/governance
-    _DEFAULT_DATA_PATH: str = "/v1/data/trade/governance"
 
-    def __init__(self):  # type: ignore[no-untyped-def]
+    def __init__(self, default_data_path: str | None = None):  # type: ignore[no-untyped-def]
         self.url = Config.OPA_URL
         self.auth_token = Config.OPA_AUTH_TOKEN
         self.cb = CircuitBreaker()
         self._uds_socket_path: str | None = None
         # HIGH-7 fix: pooled httpx.AsyncClient — created once, reused across requests.
-        # The previous _make_client() created a new client per request, exhausting
-        # file descriptors under load.  The client is lazily initialised on first use
-        # and closed via close() during application shutdown.
         self._http_client: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+
+        fallback_path = default_data_path or os.getenv("CAGE_OPA_DEFAULT_PATH")
 
         parsed = urllib.parse.urlparse(self.url)
         if parsed.scheme == "http+unix":
             self._uds_socket_path = urllib.parse.unquote(parsed.netloc)
-            # UDS: path is the socket path; append default data path for policy eval.
-            uds_path_part = parsed.path or self._DEFAULT_DATA_PATH
-            if not uds_path_part.startswith("/v1/data"):
-                uds_path_part = self._DEFAULT_DATA_PATH
+            uds_path_part = parsed.path
+
+            if not uds_path_part or not uds_path_part.startswith("/v1/data"):
+                if not fallback_path:
+                    raise RuntimeError(
+                        "FAIL-CLOSED: OPA_URL lacks a policy path and CAGE_OPA_DEFAULT_PATH is unset."
+                    )
+                uds_path_part = fallback_path
+
             self.target_url = f"http://localhost{uds_path_part}"
             logger.info(f"🔌 OPAClient configured for UDS: {self._uds_socket_path}")
         else:
-            # HTTP: if OPA_URL has no path (or only "/"), append the default data path
-            # so that evaluate_policy() POSTs to the correct OPA REST endpoint.
             if not parsed.path or parsed.path in ("", "/"):
-                base = f"{parsed.scheme}://{parsed.netloc}"  # type: ignore[str-bytes-safe]  # urlparse scheme/netloc are str when input is str
-                self.target_url = f"{base}{self._DEFAULT_DATA_PATH}"
+                if not fallback_path:
+                    raise RuntimeError(
+                        "FAIL-CLOSED: OPA_URL lacks a policy path and CAGE_OPA_DEFAULT_PATH is unset."
+                    )
+                base = f"{parsed.scheme}://{parsed.netloc}"  # type: ignore[str-bytes-safe]
+                self.target_url = f"{base}{fallback_path}"
                 logger.info(
                     "🌐 OPAClient configured for HTTP: %s "
                     "(appended default data path %s to bare OPA_URL)",
                     self.target_url,
-                    self._DEFAULT_DATA_PATH,
+                    fallback_path,
                 )
             else:
                 self.target_url = self.url  # type: ignore[assignment]

@@ -245,8 +245,15 @@ tel = PlaygroundTelemetry()
 # Wrap a scenario execution in an OTel span + evidence record
 with tel.scenario_span("A", "execute_trade", params) as span:
     # ... run governance tiers ...
-    tel.record_result(span, violations, blocking_tier, elapsed_ms,
-                      action="execute_trade", params=params, scenario_id="A")
+    tel.record_result(
+        span,
+        violations,
+        blocking_tier,
+        elapsed_ms,
+        action="execute_trade",
+        params=params,
+        scenario_id="A",
+    )
 tel.flush()
 
 # HITL approval record (written before graph resume)

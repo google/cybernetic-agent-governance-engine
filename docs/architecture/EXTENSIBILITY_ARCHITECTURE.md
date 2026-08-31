@@ -587,15 +587,13 @@ cage-provider-extXX/
 from typing import Any
 from cage.core.interfaces import NormativeProvider
 
+
 class ExtXXNormativeProvider:
-    async def fetch_baseline(self, region: str) -> NormativeBaseline:
-        ...
-    
-    async def validate_fria(self, envelope: GovernanceEnvelope) -> ValidationResult:
-        ...
-    
-    async def submit_evidence(self, evidence: EvidenceSeal) -> None:
-        ...
+    async def fetch_baseline(self, region: str) -> NormativeBaseline: ...
+
+    async def validate_fria(self, envelope: GovernanceEnvelope) -> ValidationResult: ...
+
+    async def submit_evidence(self, evidence: EvidenceSeal) -> None: ...
 ```
 
 **pyproject.toml:**

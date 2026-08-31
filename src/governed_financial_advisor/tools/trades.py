@@ -14,7 +14,7 @@
 
 import logging
 
-from src.gateway.core.structs import TradeOrder
+from src.cage_finance.models.trade_order import TradeOrder
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 
 logger = logging.getLogger(__name__)

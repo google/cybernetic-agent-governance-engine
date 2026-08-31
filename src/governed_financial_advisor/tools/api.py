@@ -162,8 +162,10 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             # spans as children — producing one unified tree in Langfuse.
             import uuid
 
-            from src.gateway.core.structs import TradeOrder
-            from src.gateway.core.tools import execute_trade as core_execute_trade
+            from src.cage_finance.models.trade_order import TradeOrder
+            from src.cage_finance.tools.trade_executor import (
+                execute_trade as core_execute_trade,
+            )
 
             if "transaction_id" not in params:
                 params["transaction_id"] = str(uuid.uuid4())

@@ -47,6 +47,7 @@ RUN uv pip install --quiet grpcio-tools
 
 # Copy NeMo Guardrails source and config
 COPY src/gateway /app/src/gateway
+COPY src/cage_finance /app/src/cage_finance
 COPY config /app/config
 
 # Generate protobuf Python bindings from nemo.proto inside the venv.
@@ -59,6 +60,9 @@ RUN python -m grpc_tools.protoc \
   # but with PYTHONPATH=/app the module lives at src.gateway.protos.nemo_pb2.
   sed -i 's/^import nemo_pb2 as nemo__pb2$/from src.gateway.protos import nemo_pb2 as nemo__pb2/' \
   /app/src/gateway/protos/nemo_pb2_grpc.py
+
+# Install the project itself so entry-point metadata exists in the image.
+RUN uv pip install --no-deps .
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app

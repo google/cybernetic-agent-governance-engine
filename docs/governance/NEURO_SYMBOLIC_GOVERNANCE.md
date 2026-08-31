@@ -269,8 +269,8 @@ Tiers 2 and 4 are the only tiers that execute two sub-checks in parallel. The im
 
 ```python
 cbf_result, opa_result = await asyncio.gather(
-    cbf_check(),   # src/gateway/governance/cbf.py — atomic_verify_and_commit()
-    opa_check(),   # trade_governance.rego via OPAClient
+    cbf_check(),  # src/gateway/governance/cbf.py — atomic_verify_and_commit()
+    opa_check(),  # trade_governance.rego via OPAClient
 )
 ```
 
