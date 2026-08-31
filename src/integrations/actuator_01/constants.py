@@ -11,14 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-<<<<<<<< HEAD:src/cage_finance/__init__.py
-========
 
-"""Provider 04 integration — envelope mapper."""
+"""
+Constants for the actuator_01 adapter.
 
-from src.integrations.provider_04.envelope_mapper import Provider04EnvelopeMapper
+All vendor-specific identifiers are sourced from environment/config at runtime.
+The constant names are anonymized; the runtime values are wire-load-bearing.
+"""
 
-__all__ = [
-    "Provider04EnvelopeMapper",
-]
->>>>>>>> origin/main:src/integrations/provider_04/__init__.py
+# Hard 4KB ceiling on canonical envelope body (bytes only, headers measured separately)
+ENVELOPE_MAX_BYTES = 4096
+
+# TTL ceiling per partner Micro-TTL
+MAX_TTL_SECONDS = 30
+
+# Nonce format: 32 hex chars (16 bytes)
+NONCE_HEX_LENGTH = 32

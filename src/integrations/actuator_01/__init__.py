@@ -12,10 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider 04 integration — envelope mapper."""
+"""
+actuator_01 — Downstream Execution Actuator Adapter (Phase 2, Stream C)
 
-from src.integrations.provider_04.envelope_mapper import Provider04EnvelopeMapper
+Anonymized slot name for the first external downstream actuator integration.
+Vendor-neutral implementation per execution actuator protocol specification.
+
+This adapter implements the ExecutionActuator protocol for secure execution
+authorization with dual-control quorum signatures.
+"""
 
 __all__ = [
-    "Provider04EnvelopeMapper",
+    "sign_for_quorum",
+    "ActuatorHttpClient",
 ]
+
+from .signatures import sign_for_quorum
+from .client import ActuatorHttpClient
