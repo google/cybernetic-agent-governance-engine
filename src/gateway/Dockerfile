@@ -61,6 +61,9 @@ COPY README.md /app/README.md
 # Install the project itself so entry-point metadata exists in the image.
 RUN uv pip install --no-deps .
 
+# Install the project itself so entry-point metadata exists in the image.
+RUN uv pip install --no-deps .
+
 # Environment Variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
