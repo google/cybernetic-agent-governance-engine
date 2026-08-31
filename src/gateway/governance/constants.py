@@ -299,6 +299,7 @@ class ControlRegistry:
             region = _DEFAULT_REGION
 
         config_path = self._COMPLIANCE_DIR / f"{region}_BASELINE.json"
+        overlay_path = self._REPO_ROOT / "src" / "cage_finance" / "config" / "compliance" / f"{region}_OVERLAY.json"
 
         if not config_path.exists():
             raise RuntimeError(
@@ -309,6 +310,12 @@ class ControlRegistry:
         try:
             with open(config_path) as fh:
                 raw = json.load(fh)
+            
+            if overlay_path.exists():
+                with open(overlay_path) as fh:
+                    overlay_raw = json.load(fh)
+                raw.update(overlay_raw)
+
             # Strip meta-keys that start with "_"
             self._mappings = {
                 k: v
@@ -462,41 +469,36 @@ class ControlRegistry:
 # ---------------------------------------------------------------------------
 
 # HITL SLA citations — jurisdiction-specific escalation authority
-HITL_CITATIONS: dict[str, str] = {
-    "US_FED": "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
-    "EU_ECB": "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
-    "APAC_MAS": "MAS FEAT §3.2 (human oversight of AI decisions — 1 hour)",
-}
+HITL_CITATIONS: dict[str, str] = {}
 HITL_CITATION_DEFAULT: str = "ISO 42001 A.8.4 (AI system operation controls)"
 
 # FINDING-09 — HITL SLA hours, keyed identically to HITL_CITATIONS above.
-# SR 26-2 §3.2 (4-hour SLA) has no legal force outside US_FED; EU_ECB and
-# APAC_MAS deployments must use their respective regional SLAs.
-# See docs/governance/HUMAN_OVERSIGHT_SCOPE.md#sla-requirements-by-region.
-HITL_SLA_HOURS: dict[str, float] = {
-    "US_FED": 4.0,
-    "EU_ECB": 2.0,
-    "APAC_MAS": 1.0,
-}
+HITL_SLA_HOURS: dict[str, float] = {}
 HITL_SLA_HOURS_DEFAULT: float = 4.0  # ISO 42001 §A.8.4 fallback
 
 # PII audit retention authority — jurisdiction-specific data retention law
-PII_RETENTION_AUTHORITY: dict[str, str] = {
-    "US_FED": "FISMA AU-11",
-    "EU_ECB": "GDPR Art. 5(1)(e)",
-    "APAC_MAS": "MAS Notice 655 §4.3",
-}
+PII_RETENTION_AUTHORITY: dict[str, str] = {}
 PII_RETENTION_AUTHORITY_DEFAULT: str = "ISO 42001 A.9.2"
 
 # Prompt injection detection citation — jurisdiction-specific robustness authority
-INJECTION_CITATION: dict[str, str] = {
-    "US_FED": "AI 600-1 §2.3 (prompt injection — US Federal posture)",
-    "EU_ECB": "EU AI Act Art. 9 (risk management system — robustness)",
-    "APAC_MAS": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)",
-}
+INJECTION_CITATION: dict[str, str] = {}
 INJECTION_CITATION_DEFAULT: str = (
     "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
 )
+
+try:
+    from src.cage_finance.constants import (
+        HITL_CITATIONS as _F_HITL_CITATIONS,
+        HITL_SLA_HOURS as _F_HITL_SLA_HOURS,
+        PII_RETENTION_AUTHORITY as _F_PII_RETENTION,
+        INJECTION_CITATION as _F_INJECTION,
+    )
+    HITL_CITATIONS.update(_F_HITL_CITATIONS)
+    HITL_SLA_HOURS.update(_F_HITL_SLA_HOURS)
+    PII_RETENTION_AUTHORITY.update(_F_PII_RETENTION)
+    INJECTION_CITATION.update(_F_INJECTION)
+except ImportError:
+    pass
 
 # PII audit retention authority field default for Pydantic schema
 PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT: str = "ISO 42001 A.9.2"

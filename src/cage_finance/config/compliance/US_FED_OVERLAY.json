@@ -1,0 +1,24 @@
+{
+  "CTRL_MRM_004": {
+    "internal_id": "THR-MRM-004",
+    "primary_framework": "SR 26-2 \u00a7IV \u2013 Model Risk Management",
+    "co_frameworks": [
+      "SR 11-7 (legacy baseline, superseded by SR 26-2 for agentic components)"
+    ],
+    "legacy_citation": "SR 11-7",
+    "scope": "traditional_ml",
+    "description": "Traditional quantitative model validation criteria applicable to non-agentic, deterministic ML components (e.g. CBF predictor, DoWhy causal model coefficients). SR 26-2 explicitly retains MRM scope for these components."
+  },
+  "CTRL_FTRA_001": {
+    "internal_id": "THR-FTRA-001",
+    "primary_framework": "NIST AI RMF GOVERN-1.2 \u2013 Risk Tolerance and Commencement Controls",
+    "co_frameworks": [
+      "NIST SP 800-53 CA-7 \u2013 Continuous Monitoring",
+      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
+      "SR 26-2 \u00a7IV.B \u2013 Pre-Trade Risk Controls"
+    ],
+    "legacy_citation": "SR 26-2 \u00a7IV.B \u2013 Pre-Trade Risk Controls",
+    "scope": "agentic",
+    "description": "Forward-Looking Trajectory Reachability Analyzer (FTRA) \u2014 Tier 0.5 governance gate. Performs commencement-time reachability analysis before any trade execution plan is committed. Verifies that the proposed execution trajectory is reachable from the current system state without violating safety constraints. Unreachable or constraint-violating plans are parked in DeferQueue for HITL review."
+  }
+}
