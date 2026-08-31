@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src.cage_finance.compliance.reconciliation_worker.py
+Unit tests for src.cage_finance.reconciliation_worker.py
 
 Covers the ExternalLedgerReconciler polling daemon, ReconciliationResult
 data contract, StubLedgerProvider, and read_verified_balance() reader.

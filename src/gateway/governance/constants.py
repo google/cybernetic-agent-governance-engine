@@ -493,6 +493,20 @@ INJECTION_CITATION_DEFAULT: str = (
     "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
 )
 
+try:
+    from src.cage_finance.constants import (
+        HITL_CITATIONS as _F_HITL_CITATIONS,
+        HITL_SLA_HOURS as _F_HITL_SLA_HOURS,
+        PII_RETENTION_AUTHORITY as _F_PII_RETENTION,
+        INJECTION_CITATION as _F_INJECTION,
+    )
+
+    HITL_CITATIONS.update(_F_HITL_CITATIONS)
+    HITL_SLA_HOURS.update(_F_HITL_SLA_HOURS)
+    PII_RETENTION_AUTHORITY.update(_F_PII_RETENTION)
+    INJECTION_CITATION.update(_F_INJECTION)
+except ImportError:
+    pass
 
 # PII audit retention authority field default for Pydantic schema
 PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT: str = "ISO 42001 A.9.2"

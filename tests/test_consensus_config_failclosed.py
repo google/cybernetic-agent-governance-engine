@@ -34,7 +34,7 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_with_context_dict(self):
         """check_consensus accepts the new context-based signature."""
-        from src.cage_finance.consensus.consensus import ConsensusGate
+        from src.gateway.governance.consensus import ConsensusGate
 
         gate = ConsensusGate.__new__(ConsensusGate)
         gate.threshold = 1000.0
@@ -53,7 +53,7 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_magnitude_overrides_context_amount(self):
         """When magnitude is provided, it takes precedence for threshold check."""
-        from src.cage_finance.consensus.consensus import ConsensusGate
+        from src.gateway.governance.consensus import ConsensusGate
 
         gate = ConsensusGate.__new__(ConsensusGate)
         gate.threshold = 1000.0
@@ -71,7 +71,7 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_falls_back_to_context_amount(self):
         """When magnitude is None, falls back to context['amount']."""
-        from src.cage_finance.consensus.consensus import ConsensusGate
+        from src.gateway.governance.consensus import ConsensusGate
 
         gate = ConsensusGate.__new__(ConsensusGate)
         gate.threshold = 1000.0
@@ -114,4 +114,18 @@ class TestLegacyConsensusAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_preserves_return_value(self):
-        pass
+        """The adapter returns the inner engine's result unchanged."""
+        from src.gateway.governance.contracts import _LegacyConsensusAdapter
+
+        expected = {
+            "status": "REJECT",
+            "reason": "Too risky",
+            "votes": ["REJECT", "REJECT"],
+        }
+        inner = AsyncMock()
+        inner.check_consensus.return_value = expected
+
+        adapter = _LegacyConsensusAdapter(inner)
+        result = await adapter.check_consensus("sell", 10000.0, "TSLA")
+
+        assert result == expected

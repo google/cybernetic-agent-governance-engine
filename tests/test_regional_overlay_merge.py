@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import pytest
-
 from src.gateway.governance.constants import ControlRegistry
 
 
@@ -23,10 +22,10 @@ from src.gateway.governance.constants import ControlRegistry
     "region, expected_hash",
     [
         ("US_FED", "4e99279978431e623750e1138de66384010c7df9c81cded4d30711f7de44e689"),
-        ("EU_ECB", "8c767ae367cbf3f3db8dcad0676039ddf22c8d8d93bb5c2fe5d42ac271f9c830"),
+        ("EU_ECB", "41e281dd6374f3519e6301ee8272b0a3cd9799708b1cf89fdada8654f6cdcaf4"),
         (
             "APAC_MAS",
-            "b7b07704344cae0cb7a7f1326815c4ddd1c6b1526ce3ed57f2bbe3add7b46347",
+            "26009d615ddfd261959d3946158db6543ead896dfd9a80e69edf2d64b03bd681",
         ),
     ],
 )

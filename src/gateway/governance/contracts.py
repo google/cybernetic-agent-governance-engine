@@ -209,35 +209,6 @@ class Violation:
     needs_human_review: bool = False
 
 
-@dataclass
-class ReservationToken:
-    """Returned by ResourceGuard.reserve().
-
-    Attributes:
-        reservation_id:    UUID — used to identify and release this reservation.
-        agent_id:          The agent that made the reservation.
-        amount_usd:        The USD amount reserved.
-        amount_cents:      amount_usd * 100 as int (stored in Redis).
-        window_key:        The Redis daily-window key (e.g. '2026-05-19').
-        cap_usd:           The hard ceiling this reservation was checked against.
-        running_total_usd: Post-reservation total across all agents in this window.
-        rejected:          True if the reservation was denied (cap would be exceeded).
-        reserved_at:       Unix timestamp of reservation.
-        ttl_seconds:       Remaining TTL — reservation auto-releases after this.
-    """
-
-    reservation_id: str
-    agent_id: str
-    amount_usd: float
-    amount_cents: int
-    window_key: str
-    cap_usd: float
-    running_total_usd: float = 0.0
-    rejected: bool = False
-    reserved_at: float = field(default_factory=time.time)
-    ttl_seconds: int = 0
-
-
 # ---------------------------------------------------------------------------
 # GovernanceTierPlugin — domain-specific governance tier protocol
 # ---------------------------------------------------------------------------
@@ -309,14 +280,6 @@ CAGE_PLUGIN_API_VERSION = "1.0"
 
 
 @runtime_checkable
-class TierRegistry(Protocol):
-    """The only kernel surface a capability plugin may touch at registration."""
-
-    def register_domain_tier(self, tier: "GovernanceTierPlugin") -> None: ...
-    def register_invariant(self, model: "InvariantModel") -> None: ...
-
-
-@runtime_checkable
 class CagePlugin(Protocol):
     """A CAGE capability plugin discovered via the ``cage.plugins`` entry point.
 
@@ -338,7 +301,7 @@ class CagePlugin(Protocol):
 
     def register(
         self,
-        registry: "TierRegistry",
+        governor: "SymbolicGovernor",
         tool_server: "FastMCP | None" = None,
     ) -> None:
         """Register this plugin's governance tiers and tools with the kernel."""
@@ -376,21 +339,32 @@ def validate_plugin(plugin: object, entry_point_name: str) -> CagePlugin:
 
 
 class InvariantModel(Protocol):
-    """Declarative affine barrier: h(x) = state[value_key] - threshold.
+    """Abstract safety invariant: h(x) >= 0 must hold.
 
     Domain plugins declare their safety barriers by implementing this protocol.
-    The kernel evaluates ``h(x)`` and ensures the value remains non-negative,
-    enforcing the CBF invariance theorem inside a Redis Lua script.
+    The kernel evaluates ``barrier_value(state)`` and ensures the value remains
+    non-negative, enforcing the CBF invariance theorem.
+
+    ``state_keys()`` declares which state variables the barrier reads, enabling
+    the kernel to extract the minimal state slice from Redis or the action
+    parameters without exposing the full state space to the domain.
+
+    ``gamma`` is the CBF class-K function gain (0 < gamma <= 1) controlling
+    how aggressively the barrier enforces forward invariance.
     """
 
+    def state_keys(self) -> list[str]:
+        """Return the Redis/state keys this barrier reads."""
+        ...
+
+    def barrier_value(self, state: dict[str, float]) -> float:
+        """Compute h(x) for the current state.  h(x) >= 0 is safe."""
+        ...
+
     @property
-    def invariant_id(self) -> str: ...
-    @property
-    def value_key(self) -> str: ...
-    @property
-    def threshold_key(self) -> str: ...
-    @property
-    def gamma(self) -> float: ...
+    def gamma(self) -> float:
+        """CBF class-K function gain (0 < gamma <= 1)."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +466,26 @@ class ConsensusProvider(Protocol):
         Returns a dict with "status" (APPROVE, REJECT, ESCALATE) and "reason".
         """
         ...
+
+
+class _LegacyConsensusAdapter:
+    """Wraps old-style (action, amount, symbol) calls to the new protocol.
+
+    Temporary shim retained through PR 3; deleted in PR 4 when the legacy
+    dispatch path is removed.
+    """
+
+    def __init__(self, inner: ConsensusProvider) -> None:
+        self.inner = inner
+
+    async def check_consensus(
+        self, action: str, amount: float, symbol: str
+    ) -> dict[str, Any]:
+        return await self.inner.check_consensus(
+            action,
+            context={"amount": amount, "symbol": symbol},
+            magnitude=amount,
+        )
 
 
 class PolicyClient(Protocol):
@@ -638,6 +632,7 @@ class ResourceGuard(Protocol):
 
 # Deprecated alias — retained through PR 3 for backward compatibility.
 # Deleted in PR 4 when the legacy dispatch path is removed.
+FiscalGuard = ResourceGuard
 
 # Structural compatibility note:
 # FiscalLimitGuard (src/gateway/governance/fiscal_limit_guard.py) implements
@@ -647,3 +642,14 @@ class ResourceGuard(Protocol):
 # with no modification required.  The parameter rename (agent_id -> principal_id,
 # amount_usd -> magnitude) is source-compatible because Python protocols use
 # structural, not nominal, subtyping.
+
+# Import ReservationToken for use in type annotations above.
+# The import is placed here (after the class body) to avoid a circular import
+# at module load time while still making the type available for runtime
+# isinstance checks and static analysis.
+try:
+    from src.gateway.governance.fiscal_limit_guard import (
+        ReservationToken,
+    )
+except ImportError:
+    pass  # ReservationToken unavailable in minimal test environments

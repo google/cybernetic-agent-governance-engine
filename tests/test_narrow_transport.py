@@ -327,8 +327,8 @@ async def test_seal_computed_over_narrowed_params():
     # This is verified in symbolic_governor.py line 2444-2445
     # The test here confirms the contract is honored end-to-end
 
-    from src.cage_finance.tools.tool_provider import execute_trade_action
     from src.gateway.governance.routing_seal import generate_seal_with_evidence
+    from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "h" * 64
     narrowed_params = {

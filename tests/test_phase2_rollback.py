@@ -36,13 +36,11 @@ class MockTier:
 
 @pytest.fixture
 def governor():
-    gov = SymbolicGovernor(opa_client=MagicMock())
-    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
-    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-
-    gov.register_domain_tier(CBFTierPlugin(MagicMock()))
-    gov.register_domain_tier(ConsensusTierPlugin(MagicMock()))
-    return gov
+    return SymbolicGovernor(
+        opa_client=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus_engine=MagicMock(),
+    )
 
 
 @pytest.mark.asyncio

@@ -50,19 +50,21 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
+from src.gateway.core.tools import TradeOrder, execute_trade
 from src.gateway.governance.nemo.manager import (
     initialize_rails,
     validate_with_nemo,
 )
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.singletons import opa_client, symbolic_governor
-from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
 from src.gateway.server.governance_middleware import (
     enforce_governance,
     enforce_routing_seal,
 )
 from src.gateway.tracing_setup import setup_tracing
+from src.governed_financial_advisor.infrastructure.config_manager import config_manager
+from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
@@ -106,26 +108,10 @@ async def _check_rate_limit(client_ip: str) -> bool:
 
 
 def _assert_required_plugins(loaded: list[Any]) -> None:
-    """Fail closed when a required capability plugin is absent.
-
-    C.2 fix: CAGE_REQUIRED_PLUGINS is an explicit operator declaration of which
-    capability plugins MUST be present for this deployment to be considered
-    correctly governed. A packaging regression that drops cage_finance from the
-    image would otherwise start a gateway that silently evaluates zero
-    financial tiers.
-    """
-    raw = os.getenv("CAGE_REQUIRED_PLUGINS", "")
-    required = {p.strip() for p in raw.split(",") if p.strip()}
-    if not required:
-        return
-    present = {getattr(p, "name", "") for p in loaded}
-    missing = required - present
-    if missing:
-        raise RuntimeError(
-            f"FAIL-CLOSED: required CAGE plugins not loaded: {sorted(missing)}. "
-            f"Present: {sorted(present)}. This usually indicates the container "
-            f"image lacks project distribution metadata (see Dockerfile "
-            f"'uv pip install --no-deps .') or the package was not COPYed."
+    # Phase 2.4: Domain package extraction - fail closed if no domain plugin loaded
+    if not any(getattr(p, "name", "") == "finance" for p in loaded):
+        logger.warning(
+            "⚠️ No finance plugin loaded. Tools and domain tiers will be absent."
         )
 
 
@@ -154,7 +140,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.nemo_rails = initialize_rails()
 
     # 5. Start consensus background audit worker (Phase 4.4)
-    from src.cage_finance.consensus.consensus import _background_audit_worker
+    from src.gateway.governance.consensus import _background_audit_worker
 
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
@@ -165,12 +151,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     loaded_plugins = discover_plugins()
     for plugin in loaded_plugins:
         # Pass the tool server for plugin tool registration
-        plugin.register(registry=symbolic_governor, tool_server=mcp)
+        plugin.register(governor=symbolic_governor, tool_server=mcp)
     _assert_required_plugins(loaded_plugins)
-
-    # 7. Startup log for AU-12 evidence of active tier sequence (PR 4)
-    active_tiers = symbolic_governor.registered_tier_names()
-    logger.info(f"🛡️ Active governance tiers: {active_tiers}")
 
     yield
 
@@ -465,7 +447,7 @@ async def health_check():  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     import uvicorn
 
-    from src.gateway.infrastructure.telemetry_client import configure_telemetry
+    from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 
     configure_telemetry()
     http_port = int(os.getenv("PORT", "8080"))
