@@ -774,6 +774,7 @@ class SymbolicGovernor:
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
+        enable_legacy_trade_dispatch: bool | None = None,
     ):
         self.opa_client = opa_client
         self.safety_filter = safety_filter
@@ -785,6 +786,14 @@ class SymbolicGovernor:
         # (WATCH/MULTI/EXEC) before the consensus gate, closing the TOCTOU race
         # between the CBF balance check and actual trade execution.
         self.fiscal_limit_guard = fiscal_limit_guard
+
+        # D4 fix: env-driven legacy dispatch flag.  Constructor arg wins for tests;
+        # otherwise falls back to ENABLE_LEGACY_TRADE_DISPATCH env var (default True).
+        self.enable_legacy_trade_dispatch: bool = (
+            enable_legacy_trade_dispatch
+            if enable_legacy_trade_dispatch is not None
+            else _env_flag("ENABLE_LEGACY_TRADE_DISPATCH", default=True)
+        )
 
         # D5 fix: pluggable domain tier registry.  Tiers are registered via
         # register_domain_tier() at startup and sorted by (phase, order, tier_name)
