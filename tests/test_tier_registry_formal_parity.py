@@ -70,27 +70,12 @@ def _make_governor(**overrides):
 
     kwargs = {
         "opa_client": MagicMock(),
+        "safety_filter": MagicMock(),
+        "consensus_engine": MagicMock(),
+        "enable_legacy_trade_dispatch": False,
     }
-
-    # Extract any legacy kwargs that might be passed in overrides
-    sf = overrides.pop("safety_filter", MagicMock())
-    ce = overrides.pop("consensus_engine", MagicMock())
-    flg = overrides.pop("fiscal_limit_guard", None)
-
     kwargs.update(overrides)
-    gov = SymbolicGovernor(**kwargs)
-
-    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
-    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-
-    gov.register_domain_tier(CBFTierPlugin(sf))
-    gov.register_domain_tier(ConsensusTierPlugin(ce))
-    if flg:
-        from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
-
-        gov.register_domain_tier(FiscalTierPlugin(flg))
-
-    return gov
+    return SymbolicGovernor(**kwargs)
 
 
 class TestFormalModelParity:
@@ -112,9 +97,7 @@ class TestFormalModelParity:
 
         expected_tiers = list(formal_model.TIERS)
 
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
-
-        governor = SymbolicGovernor(opa_client=MagicMock())
+        governor = _make_governor()
 
         # Register tiers with order values matching the formal model's
         # sequence position (0-indexed).
@@ -153,9 +136,7 @@ class TestFormalModelParity:
         silently invert this to causal, consensus — breaking the proof's
         invariant.
         """
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
-
-        governor = SymbolicGovernor(opa_client=MagicMock())
+        governor = _make_governor()
 
         # Register in reverse alphabetic order to ensure sort uses `order` not name
         governor.register_domain_tier(_FakeTier("causal", phase=1, order=6))

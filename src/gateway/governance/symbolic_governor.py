@@ -769,12 +769,31 @@ class SymbolicGovernor:
     def __init__(
         self,
         opa_client: OPAClient,
+        safety_filter: SafetyFilter,
+        consensus_engine: ConsensusProvider,
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
+        fiscal_limit_guard: Any | None = None,
+        enable_legacy_trade_dispatch: bool | None = None,
     ):
         self.opa_client = opa_client
+        self.safety_filter = safety_filter
+        self.consensus_engine = consensus_engine
         self.stpa_validator: STPAValidator | None = stpa_validator
         self.telemetry_provider = telemetry_provider
+        # FiscalLimitGuard — optional for backward compatibility with existing tests.
+        # When present, atomically pre-reserves the daily fiscal limit in Redis
+        # (WATCH/MULTI/EXEC) before the consensus gate, closing the TOCTOU race
+        # between the CBF balance check and actual trade execution.
+        self.fiscal_limit_guard = fiscal_limit_guard
+
+        # D4 fix: env-driven legacy dispatch flag.  Constructor arg wins for tests;
+        # otherwise falls back to ENABLE_LEGACY_TRADE_DISPATCH env var (default True).
+        self.enable_legacy_trade_dispatch: bool = (
+            enable_legacy_trade_dispatch
+            if enable_legacy_trade_dispatch is not None
+            else _env_flag("ENABLE_LEGACY_TRADE_DISPATCH", default=True)
+        )
 
         # D5 fix: pluggable domain tier registry.  Tiers are registered via
         # register_domain_tier() at startup and sorted by (phase, order, tier_name)
@@ -805,30 +824,6 @@ class SymbolicGovernor:
     def registered_tier_names(self) -> list[str]:
         """Ordered tier names — consumed by the formal-model parity test."""
         return [t.tier_name for t in self._domain_tiers]
-
-    @property
-    def consensus_engine(self):
-        for tier in self._domain_tiers:
-            if tier.tier_name == "consensus":
-                return getattr(tier, "consensus", None)
-        return None
-
-    @property
-    def safety_filter(self):
-        for tier in self._domain_tiers:
-            if tier.tier_name == "cbf":
-                print(
-                    f"DEBUG: Found cbf tier: {tier}, cbf={getattr(tier, 'cbf', None)}"
-                )
-                return getattr(tier, "cbf", None)
-        return None
-
-    @property
-    def fiscal_limit_guard(self):
-        for tier in self._domain_tiers:
-            if tier.tier_name == "fiscal":
-                return getattr(tier, "guard", None)
-        return None
 
     async def _rollback_committed(
         self,
@@ -1431,16 +1426,70 @@ class SymbolicGovernor:
         # Initialize _fiscal_token for later Phase 2 use
         _fiscal_token = None
 
-        # Phase 1: Domain-specific Read-Only Tiers (e.g. Consensus, Causal)
-        with tracer.start_as_current_span("cage.domain_tiers.phase1") as p1_span:
-            p1_span.set_attribute("langfuse.observation.name", "domain_tiers_phase1")
-            for tier in self._domain_tiers:
-                if tier.phase == 1 and tier.claims_action(tool_name, params):
-                    try:
-                        tier_violations = await tier.evaluate(tool_name, params)
-                        violations.extend(tier_violations)
-                    except Exception as exc:
-                        violations.append(f"{tier.tier_name} Check Failed: {exc}")
+        # Phase 1.2: ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
+        if tool_name == "execute_trade":
+            with tracer.start_as_current_span("cage.consensus_gate") as cons_gate_span:
+                cons_gate_span.set_attribute(
+                    "langfuse.observation.name", "consensus_gate"
+                )
+                cons_gate_span.set_attribute("governance.stage", "consensus")
+                try:
+                    amount = params.get("amount", 0.0)
+                    symbol = params.get("symbol", "UNKNOWN")
+                    consensus = await self.consensus_engine.check_consensus(
+                        tool_name,
+                        context={"amount": amount, "symbol": symbol},
+                        magnitude=amount,
+                    )
+                    if consensus["status"] == "REJECT":
+                        violations.append(f"Consensus Rejection: {consensus['reason']}")
+                    elif consensus["status"] == "ESCALATE":
+                        violations.append(
+                            f"Consensus Escalation: {consensus['reason']}"
+                        )
+                    cons_gate_span.set_attribute(
+                        "governance.consensus.status",
+                        consensus.get("status", "UNKNOWN"),
+                    )
+                except Exception as exc:
+                    violations.append(f"Consensus Check Failed: {exc}")
+
+        # 6. DoWhy Causal Gatekeeper — refutation-based safety lock
+        # Gap 4 fix: ImportError is no longer silently swallowed in production.
+        # The startup assertion above (module-level) already fails fast if dowhy
+        # is absent in production, so reaching this branch with ImportError means
+        # we are in a dev/test environment — log at DEBUG and skip.
+        if tool_name == "execute_trade":
+            try:
+                from src.gateway.governance.causal_gatekeeper import (
+                    causal_safety_check,
+                )
+
+                telemetry_data = None
+                if self.telemetry_provider is not None:
+                    telemetry_data = self.telemetry_provider.get_latest_data()
+
+                trade_context = {"params": params, "telemetry": telemetry_data}
+                result = await asyncio.to_thread(causal_safety_check, trade_context)
+                if not result:
+                    violations.append(
+                        "Causal Safety Violation: DoWhy refutation failed — "
+                        "world-model is untrustworthy or risk exceeds safety boundary."
+                    )
+            except ImportError:
+                # Only reachable in dev/test (production startup assertion prevents this).
+                logger.debug(
+                    "DoWhy not installed — skipping causal gatekeeper (dev/test only). "
+                    "Production startup will fail if dowhy is absent."
+                )
+            except Exception as exc:
+                logger.warning(
+                    "⚠️ Causal gatekeeper check failed (%s) — failing closed.", exc
+                )
+                violations.append(
+                    f"Causal Safety Violation: gatekeeper raised an unexpected error — "
+                    f"failing closed. Detail: {exc}"
+                )
 
         # 6b. Adaptive FRIA Enforcement (External Normative Provider)
         # When CAGE_NORMATIVE_PROVIDER != "static", the enforcement semantic
@@ -2203,16 +2252,11 @@ class SymbolicGovernor:
         cbf_allowed = True
         cbf_reason = "SAFE"
         try:
-            cbf_tier = next(
-                (t for t in self._domain_tiers if t.tier_name == "cbf"), None
+            cbf_raw = await self.safety_filter.verify_action(tool_name, params)  # type: ignore[misc]  # Protocol declares sync str; impl is async
+            cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith(
+                "["
             )
-            if cbf_tier is not None and cbf_tier.claims_action(tool_name, params):
-                violations = await cbf_tier.evaluate(tool_name, params)
-                if violations:
-                    cbf_allowed = False
-                    cbf_reason = violations[0].message
-            else:
-                cbf_reason = "SAFE"
+            cbf_reason = cbf_raw
         except Exception as exc:
             # C-02: fail-closed on Redis/CBF unavailability — DENY is the safe default.
             logger.error(

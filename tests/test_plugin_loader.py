@@ -105,9 +105,7 @@ def test_discover_plugins_any_finance_list(monkeypatch, mock_entry_points):
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_discover_plugins_fails_to_load(monkeypatch):
-    monkeypatch.delenv("CAGE_ACTIVE_PLUGINS", raising=False)
-
+def test_discover_plugins_fails_to_load():
     ep = make_mock_entry_point("bad", raise_exc=ImportError("Failed to load module"))
     with patch("importlib.metadata.entry_points", return_value=[ep]):
         with pytest.raises(ImportError):

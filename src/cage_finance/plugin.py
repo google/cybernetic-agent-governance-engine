@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class FinanceCagePlugin(CagePlugin):
     """The finance domain capability plugin."""
 
-    name = "finance"
+    name = "cage_finance"
     api_version = "1.0"
 
     def register(

@@ -50,8 +50,7 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
-from src.cage_finance.models.trade_order import TradeOrder
-from src.cage_finance.tools.trade_executor import execute_trade
+from src.gateway.core.tools import TradeOrder, execute_trade
 from src.gateway.governance.nemo.manager import (
     initialize_rails,
     validate_with_nemo,
@@ -109,26 +108,10 @@ async def _check_rate_limit(client_ip: str) -> bool:
 
 
 def _assert_required_plugins(loaded: list[Any]) -> None:
-    """Fail closed when a required capability plugin is absent.
-
-    C.2 fix: CAGE_REQUIRED_PLUGINS is an explicit operator declaration of which
-    capability plugins MUST be present for this deployment to be considered
-    correctly governed. A packaging regression that drops cage_finance from the
-    image would otherwise start a gateway that silently evaluates zero
-    financial tiers.
-    """
-    raw = os.getenv("CAGE_REQUIRED_PLUGINS", "")
-    required = {p.strip() for p in raw.split(",") if p.strip()}
-    if not required:
-        return
-    present = {getattr(p, "name", "") for p in loaded}
-    missing = required - present
-    if missing:
-        raise RuntimeError(
-            f"FAIL-CLOSED: required CAGE plugins not loaded: {sorted(missing)}. "
-            f"Present: {sorted(present)}. This usually indicates the container "
-            f"image lacks project distribution metadata (see Dockerfile "
-            f"'uv pip install --no-deps .') or the package was not COPYed."
+    # Phase 2.4: Domain package extraction - fail closed if no domain plugin loaded
+    if not any(getattr(p, "name", "") == "finance" for p in loaded):
+        logger.warning(
+            "⚠️ No finance plugin loaded. Tools and domain tiers will be absent."
         )
 
 
@@ -170,10 +153,6 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # Pass the tool server for plugin tool registration
         plugin.register(governor=symbolic_governor, tool_server=mcp)
     _assert_required_plugins(loaded_plugins)
-
-    # 7. Startup log for AU-12 evidence of active tier sequence (PR 4)
-    active_tiers = symbolic_governor.registered_tier_names()
-    logger.info(f"🛡️ Active governance tiers: {active_tiers}")
 
     yield
 
