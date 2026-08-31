@@ -468,24 +468,6 @@ class ConsensusProvider(Protocol):
         ...
 
 
-class _LegacyConsensusAdapter:
-    """Wraps old-style (action, amount, symbol) calls to the new protocol.
-
-    Temporary shim retained through PR 3; deleted in PR 4 when the legacy
-    dispatch path is removed.
-    """
-
-    def __init__(self, inner: ConsensusProvider) -> None:
-        self.inner = inner
-
-    async def check_consensus(
-        self, action: str, amount: float, symbol: str
-    ) -> dict[str, Any]:
-        return await self.inner.check_consensus(
-            action,
-            context={"amount": amount, "symbol": symbol},
-            magnitude=amount,
-        )
 
 
 class PolicyClient(Protocol):
@@ -632,7 +614,6 @@ class ResourceGuard(Protocol):
 
 # Deprecated alias — retained through PR 3 for backward compatibility.
 # Deleted in PR 4 when the legacy dispatch path is removed.
-FiscalGuard = ResourceGuard
 
 # Structural compatibility note:
 # FiscalLimitGuard (src/gateway/governance/fiscal_limit_guard.py) implements
