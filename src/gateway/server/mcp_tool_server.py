@@ -109,10 +109,26 @@ async def _check_rate_limit(client_ip: str) -> bool:
 
 
 def _assert_required_plugins(loaded: list[Any]) -> None:
-    # Phase 2.4: Domain package extraction - fail closed if no domain plugin loaded
-    if not any(getattr(p, "name", "") == "finance" for p in loaded):
-        logger.warning(
-            "⚠️ No finance plugin loaded. Tools and domain tiers will be absent."
+    """Fail closed when a required capability plugin is absent.
+
+    C.2 fix: CAGE_REQUIRED_PLUGINS is an explicit operator declaration of which
+    capability plugins MUST be present for this deployment to be considered
+    correctly governed. A packaging regression that drops cage_finance from the
+    image would otherwise start a gateway that silently evaluates zero
+    financial tiers.
+    """
+    raw = os.getenv("CAGE_REQUIRED_PLUGINS", "")
+    required = {p.strip() for p in raw.split(",") if p.strip()}
+    if not required:
+        return
+    present = {getattr(p, "name", "") for p in loaded}
+    missing = required - present
+    if missing:
+        raise RuntimeError(
+            f"FAIL-CLOSED: required CAGE plugins not loaded: {sorted(missing)}. "
+            f"Present: {sorted(present)}. This usually indicates the container "
+            f"image lacks project distribution metadata (see Dockerfile "
+            f"'uv pip install --no-deps .') or the package was not COPYed."
         )
 
 
