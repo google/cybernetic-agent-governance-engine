@@ -860,6 +860,123 @@ class SymbolicGovernor:
                 )
         return failures
 
+    async def _run_domain_tiers(
+        self,
+        action: str,
+        params: dict[str, Any],
+        phase: int,
+    ) -> list[Violation]:
+        """Execute registered domain tiers for one phase.
+
+        Tiers are already sorted by (phase, order, tier_name) at registration
+        time, so iteration order matches proof/model.py TIERS.
+
+        Phase 1 calls evaluate(); phase 2 calls commit() and LIFO-rolls-back
+        every previously committed tier on the first failure.
+
+        Never raises.  A tier that throws is converted into a non-recoverable
+        Violation — an exception inside a governance tier is a denial, not a
+        pass-through.
+        """
+        claimed = [
+            t for t in self._domain_tiers
+            if t.phase == phase and t.claims_action(action, params)
+        ]
+        committed: list[GovernanceTierPlugin] = []
+
+        for tier in claimed:
+            with tracer.start_as_current_span(f"cage.tier.{tier.tier_name}") as span:
+                span.set_attribute("governance.tier.name", tier.tier_name)
+                span.set_attribute("governance.tier.phase", phase)
+                span.set_attribute("governance.tier.order", tier.order)
+                _t0 = time.perf_counter()
+                try:
+                    violations = (
+                        await tier.evaluate(action, params) if phase == 1
+                        else await tier.commit(action, params)
+                    )
+                except Exception as exc:
+                    logger.exception("tier %s raised", tier.tier_name)
+                    span.record_exception(exc)
+                    violations = [
+                        Violation(
+                            tier=tier.tier_name,
+                            code="TIER_EXCEPTION",
+                            message=(
+                                f"{tier.tier_name} raised {type(exc).__name__} — "
+                                f"failing closed"
+                            ),
+                            recoverable=False,
+                            needs_human_review=True,
+                        )
+                    ]
+                span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t0) * 1000, 2),
+                )
+                span.set_attribute("governance.tier.violations", len(violations))
+
+            if violations:
+                if phase == 2 and committed:
+                    violations = violations + await self._rollback_committed(
+                        committed, action, params
+                    )
+                return violations
+            if phase == 2:
+                committed.append(tier)
+
+        return []
+
+    def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
+        """Return True if at least one tier claims responsibility for this action."""
+        return any(t.claims_action(action, params) for t in self._domain_tiers)
+
+    def _violations_to_strings(self, violations: list[Violation]) -> list[str]:
+        """Convert a list of Violation dataclasses into the legacy list[str] format.
+
+        Used by the 5 sites that still expect standing_at_refusal to return
+        list[str] — these sites will be removed once all 8 execute_trade literals
+        are replaced.
+        """
+        return [
+            f"[{v.tier}] {v.code}: {v.message}" if v.tier else f"{v.code}: {v.message}"
+            for v in violations
+        ]
+
+    def _violations_to_failures(self, violations: list[Violation]) -> list[dict[str, Any]]:
+        """Convert Violation dataclasses into RefusalReceipt.failures schema."""
+        out: list[dict[str, Any]] = []
+        for v in violations:
+            failure: dict[str, Any] = {"code": v.code, "message": v.message}
+            if v.tier:
+                failure["tier"] = v.tier
+            if v.needs_human_review:
+                failure["needs_human_review"] = True
+            if v.severity:
+                failure["severity"] = v.severity
+            if v.threshold is not None:
+                failure["threshold"] = v.threshold
+            if v.observed is not None:
+                failure["observed"] = v.observed
+            out.append(failure)
+        return out
+
+    def _build_standing(self, violations: list[Violation]) -> dict[str, Any]:
+        """Assemble tier-supplied standing_at_refusal state.
+
+        The last violation wins if multiple tiers supply state under the same key.
+        This matches the existing gateway behavior where later checks overwrite
+        earlier checks.
+
+        Returns:
+            dict with "failures" (list[dict]) plus any tier-specific standing keys.
+        """
+        standing: dict[str, Any] = {"failures": self._violations_to_failures(violations)}
+        for v in violations:
+            if v.standing:
+                standing.update(v.standing)
+        return standing
+
     def _get_ftra_classifier(self) -> Any:
         """Return the IrreversibilityClassifier instance, lazily initialized.
 
@@ -1122,6 +1239,25 @@ class SymbolicGovernor:
                 "governance.stage.latency_ms",
                 round((time.perf_counter() - _t0) * 1000, 2),
             )
+
+        # ── domain tier loop (phase 1) ──
+        # Phase 1: Read-only domain tiers
+        if self._is_governed_action(tool_name, params):
+            with tracer.start_as_current_span("cage.domain_tiers_phase1") as tier1_span:
+                tier1_span.set_attribute("langfuse.observation.name", "domain_tiers_phase1")
+                tier1_span.set_attribute("governance.stage", "domain_tiers")
+                tier1_span.set_attribute("governance.phase", 1)
+                _t_tier1 = time.perf_counter()
+
+                tier_violations = await self._run_domain_tiers(tool_name, params, phase=1)
+                if tier_violations:
+                    violations.extend(self._violations_to_strings(tier_violations))
+
+                tier1_span.set_attribute("governance.tier.violations", len(tier_violations))
+                tier1_span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t_tier1) * 1000, 2),
+                )
 
         # ── POAM-TIER2-001: Tier 2 Confidence Self-Authentication Gap (partially mitigated) ──
         # RISK: The confidence score below is 100% agent-self-reported via params["confidence"].
@@ -1832,6 +1968,25 @@ class SymbolicGovernor:
                         "governance.stage.latency_ms",
                         round((time.perf_counter() - _t_fiscal) * 1000, 2),
                     )
+
+        # ── domain tier loop (phase 2) ──
+        # Phase 2: Mutating domain tiers (only if Phase 1 passed)
+        if tool_name == "execute_trade" and not violations:
+            with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
+                tier2_span.set_attribute("langfuse.observation.name", "domain_tiers_phase2")
+                tier2_span.set_attribute("governance.stage", "domain_tiers")
+                tier2_span.set_attribute("governance.phase", 2)
+                _t_tier2 = time.perf_counter()
+
+                tier_violations = await self._run_domain_tiers(tool_name, params, phase=2)
+                if tier_violations:
+                    violations.extend(self._violations_to_strings(tier_violations))
+
+                tier2_span.set_attribute("governance.tier.violations", len(tier_violations))
+                tier2_span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t_tier2) * 1000, 2),
+                )
 
         # Release fiscal reservation if Phase 2 produced violations AFTER fiscal
         # reservation succeeded. This should be rare since we compensate CBF above,
