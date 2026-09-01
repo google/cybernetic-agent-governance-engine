@@ -1,0 +1,198 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Standing context assembly tests.
+
+Validates that SymbolicGovernor._build_standing() correctly assembles
+standing_at_refusal dictionaries from tier violation lists, preserving
+tier_failures for RefusalReceipt schema v3.
+
+Part of: PR A - Capability-Driven Tier Dispatch (Stage 8)
+Gate: G5 (standing assembly from multi-tier violations)
+"""
+
+import pytest
+from typing import Any
+
+from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.contracts import Violation
+
+
+@pytest.mark.local
+class TestStandingAssembly:
+    """Standing context assembly tests."""
+
+    def test_build_standing_with_single_violation(self) -> None:
+        """Single violation produces standing with tier_failures."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="test_tier",
+                rule="TEST_RULE",
+                severity="blocked",
+                message="Test violation",
+            )
+        ]
+
+        standing = gov._build_standing(violations)
+
+        assert "tier_failures" in standing
+        assert len(standing["tier_failures"]) == 1
+        assert standing["tier_failures"][0]["tier"] == "test_tier"
+        assert standing["tier_failures"][0]["rule_description"] == "TEST_RULE"
+
+    def test_build_standing_with_multiple_violations(self) -> None:
+        """Multiple violations produce multiple tier_failures entries."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="tier_a",
+                rule="RULE_A",
+                severity="blocked",
+                message="Violation A",
+            ),
+            Violation(
+                tier="tier_b",
+                rule="RULE_B",
+                severity="review",
+                message="Violation B",
+            ),
+        ]
+
+        standing = gov._build_standing(violations)
+
+        assert len(standing["tier_failures"]) == 2
+        assert standing["tier_failures"][0]["tier"] == "tier_a"
+        assert standing["tier_failures"][1]["tier"] == "tier_b"
+
+    def test_build_standing_preserves_violation_fields(self) -> None:
+        """Standing preserves all violation fields in tier_failures."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="finance_tier",
+                rule="CBF_BARRIER",
+                severity="blocked",
+                message="Barrier violation",
+                control_id="FIN-001",
+                governing_state={"balance": 1000.0},
+                protected_consequence="fiscal_breach",
+            )
+        ]
+
+        standing = gov._build_standing(violations)
+
+        failure = standing["tier_failures"][0]
+        assert failure["tier"] == "finance_tier"
+        assert failure["rule_description"] == "CBF_BARRIER"
+        assert failure["control_id"] == "FIN-001"
+        assert failure["governing_state"] == {"balance": 1000.0}
+        assert failure["protected_consequence"] == "fiscal_breach"
+
+    def test_build_standing_with_empty_violations_list(self) -> None:
+        """Empty violations list produces empty tier_failures."""
+        gov = SymbolicGovernor()
+        standing = gov._build_standing([])
+
+        assert "tier_failures" in standing
+        assert standing["tier_failures"] == []
+
+    def test_violations_to_strings_conversion(self) -> None:
+        """_violations_to_strings() converts violations to readable strings."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="tier_a",
+                rule="RULE_A",
+                severity="blocked",
+                message="Blocked by tier A",
+            ),
+            Violation(
+                tier="tier_b",
+                rule="RULE_B",
+                severity="review",
+                message="Review required",
+            ),
+        ]
+
+        strings = gov._violations_to_strings(violations)
+
+        assert len(strings) == 2
+        assert "tier_a" in strings[0]
+        assert "RULE_A" in strings[0]
+        assert "tier_b" in strings[1]
+        assert "RULE_B" in strings[1]
+
+    def test_violations_to_failures_dict_conversion(self) -> None:
+        """_violations_to_failures() converts violations to dict format."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="example_tier",
+                rule="EXAMPLE_RULE",
+                severity="blocked",
+                message="Example violation",
+            )
+        ]
+
+        failures = gov._violations_to_failures(violations)
+
+        assert len(failures) == 1
+        assert failures[0]["tier"] == "example_tier"
+        assert failures[0]["rule_description"] == "EXAMPLE_RULE"
+
+
+@pytest.mark.local
+class TestStandingAssemblyEdgeCases:
+    """Edge case validation for standing assembly."""
+
+    def test_violation_with_minimal_fields(self) -> None:
+        """Violation with only required fields assembles correctly."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="min_tier",
+                rule="MIN_RULE",
+                severity="blocked",
+                message="Minimal",
+            )
+        ]
+
+        standing = gov._build_standing(violations)
+        failure = standing["tier_failures"][0]
+
+        assert failure["tier"] == "min_tier"
+        assert failure["rule_description"] == "MIN_RULE"
+        # Optional fields should have default values
+        assert failure.get("control_id") == ""
+        assert failure.get("governing_state") == {}
+        assert failure.get("protected_consequence") == ""
+
+    def test_violation_severity_preserved(self) -> None:
+        """Violation severity is not included in tier_failures dict."""
+        gov = SymbolicGovernor()
+        violations = [
+            Violation(
+                tier="tier",
+                rule="RULE",
+                severity="review",
+                message="Test",
+            )
+        ]
+
+        standing = gov._build_standing(violations)
+        failure = standing["tier_failures"][0]
+
+        # severity is a Violation field but not included in the failure dict
+        assert "severity" not in failure
