@@ -190,6 +190,119 @@ Per [`plans/domain_extraction_implementation_plan.md`](../plans/domain_extractio
 
 ---
 
+## PR C — Domain Extraction Implementation (Module Relocation + CBF Parameterization)
+
+> **Status:** Completed as part of domain extraction refactoring.
+> Part of the four-PR domain extraction refactoring sequence (A → B → C → D).
+> This PR performs the physical code move and configuration externalization.
+
+### Overview
+
+PR C relocates 5 governance modules from the domain plugin layer (`src/cage_finance/`)
+to the kernel layer (`src/gateway/governance/`) and parameterizes the CBF engine to
+accept declarative barrier configurations. This establishes the correct architectural
+layering: core governance infrastructure belongs in Layer 1 (kernel), while
+domain-specific application logic remains in Layer 2 (plugins).
+
+**Three stages completed:**
+1. **Stage 1 (Module Relocation):** Git-history-preserving move of cbf.py, consensus.py,
+   causal/gatekeeper.py, fiscal_guard.py, and reconciliation.py
+2. **Stage 2 (CBF Parameterization):** ControlBarrierFunction accepts optional
+   `invariant: InvariantModel` parameter
+3. **Stage 3 (Compliance):** OSCAL component updates for SC-4, AU-12, IA-5, CM-6, AC-4
+
+### Breaking Changes
+
+#### Module Import Path Changes
+
+| Old Import Path | New Import Path |
+|---|---|
+| `from src.cage_finance.cbf import ControlBarrierFunction` | `from src.gateway.governance.cbf import ControlBarrierFunction` |
+| `from src.cage_finance.consensus import ConsensusEngine` | `from src.gateway.governance.consensus import ConsensusEngine` |
+| `from src.cage_finance.causal.gatekeeper import CausalGatekeeper` | `from src.gateway.governance.causal.gatekeeper import CausalGatekeeper` |
+| `from src.cage_finance.fiscal_guard import FiscalLimitGuard` | `from src.gateway.governance.fiscal_guard import FiscalLimitGuard` |
+| `from src.cage_finance.reconciliation import ExternalLedgerReconciler` | `from src.gateway.governance.reconciliation import ExternalLedgerReconciler` |
+
+**Before:**
+```python
+from src.cage_finance.cbf import ControlBarrierFunction
+from src.cage_finance.consensus import ConsensusEngine
+from src.cage_finance.causal.gatekeeper import CausalGatekeeper
+```
+
+**After:**
+```python
+from src.gateway.governance.cbf import ControlBarrierFunction
+from src.gateway.governance.consensus import ConsensusEngine
+from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+```
+
+#### Configuration Externalization
+
+Domain configuration moved from hardcoded values to YAML files in `src/cage_finance/config/`:
+
+- **Consensus critics:** `critics.yaml` (prompt templates, quorum thresholds, critic weighting)
+- **Causal graph:** `causal_graph.yaml` (DAG structure, treatment/outcome/confounder annotations)
+
+**Consensus Configuration Example:**
+```yaml
+# src/cage_finance/config/critics.yaml
+critics:
+  - name: risk_assessor
+    model: gpt-4
+    prompt_template: "Evaluate trade risk..."
+    weight: 1.0
+quorum:
+  min_approvals: 2
+  consensus_threshold: 0.67
+```
+
+**Causal Graph Example:**
+```yaml
+# src/cage_finance/config/causal_graph.yaml
+nodes:
+  - name: market_volatility
+    type: confounder
+  - name: trade_size
+    type: treatment
+edges:
+  - from: market_volatility
+    to: trade_size
+```
+
+#### CBF Barrier Parameterization
+
+`ControlBarrierFunction` now accepts optional `invariant` parameter:
+
+**Before (hardcoded CashBarrier):**
+```python
+cbf = ControlBarrierFunction(redis_client=redis)
+# Always uses CashBarrier internally
+```
+
+**After (accepts InvariantModel):**
+```python
+# Backward compatible - defaults to CashBarrier
+cbf = ControlBarrierFunction(redis_client=redis)
+
+# Or provide custom barrier
+cbf = ControlBarrierFunction(
+    redis_client=redis,
+    invariant=CustomBarrier(state_key="custom:key")
+)
+```
+
+### Compliance Artifacts Updated
+
+PR C Stage 3 updated OSCAL [`sp800-53-component-definition.yaml`](../compliance/oscal/sp800-53-component-definition.yaml) for:
+- **SC-4:** Layer 1/Layer 2 architectural separation
+- **AU-12:** Domain tier registration audit events
+- **IA-5:** Threshold config tree, no hardcoded secrets
+- **CM-6:** YAML-based configuration (critics, causal graph, barriers)
+- **AC-4:** Barrier state_key namespacing
+
+---
+
 ## API Changes
 
 ### Removed Modules

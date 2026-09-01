@@ -802,6 +802,10 @@ class SymbolicGovernor:
         # stays inside the atomic Redis hop (proof/DistributedCBF.tla).
         self._invariants: list[InvariantModel] = []
 
+        # PR D: pluggable rail provider registry. Rail providers are registered via
+        # register_rail_provider() at startup and contribute NeMo Guardrails actions.
+        self._rail_providers: list[Any] = []  # list[RailProvider]
+
         # FTRA Boundary Check (Phase 3.3): Lazy-initialized IrreversibilityClassifier
         # for boundary-level FTRA validation. Shared instance with in-graph ftra_node
         # to ensure consistent classification semantics.
@@ -884,6 +888,21 @@ class SymbolicGovernor:
             )
 
         self._invariants.append(invariant)
+
+    def register_rail_provider(self, provider: Any) -> None:
+        """Register a RailProvider that contributes NeMo Guardrails actions.
+
+        PR D (rail seam): Plugins supply domain UCA checks via provide_rail_actions();
+        the kernel owns the registry, the invocation path, and the telemetry.
+
+        Args:
+            provider: Any object implementing the RailProvider protocol
+                      (provide_rail_actions() -> list[tuple[str, Callable]]).
+        """
+        self._rail_providers.append(provider)
+        # Forward to the NeMo action registry so get_all_actions() includes plugin rails.
+        from src.gateway.governance.nemo.action_registry import register_rail_provider as _register
+        _register(provider)
 
     async def _rollback_committed(
         self,

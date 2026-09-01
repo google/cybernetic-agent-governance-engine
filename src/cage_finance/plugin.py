@@ -27,6 +27,7 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
+from src.cage_finance.rails.provider import FinanceRailProvider
 from src.gateway.governance.background_tasks import register_background_task
 from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
@@ -68,6 +69,9 @@ class FinanceCagePlugin(CagePlugin):
         governor.register_domain_tier(FiscalTierPlugin(fiscal_guard))
         governor.register_domain_tier(ConsensusTierPlugin(consensus_gate))
         governor.register_domain_tier(CausalTierPlugin())
+
+        # Register rail provider (PR D, T-D2)
+        governor.register_rail_provider(FinanceRailProvider())
 
         # Register tools
         if tool_server:

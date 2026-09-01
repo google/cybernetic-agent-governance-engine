@@ -23,6 +23,36 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking Changes
 
+#### PR C — Domain Extraction Implementation (Module Relocation + CBF Parameterization)
+
+- **Import Path Changes** — Five governance modules relocated from `src/cage_finance/` to `src/gateway/governance/`. All imports must be updated:
+  - `from src.cage_finance.cbf import ControlBarrierFunction` → `from src.gateway.governance.cbf import ControlBarrierFunction`
+  - `from src.cage_finance.consensus import ConsensusEngine` → `from src.gateway.governance.consensus import ConsensusEngine`
+  - `from src.cage_finance.causal.gatekeeper import CausalGatekeeper` → `from src.gateway.governance.causal.gatekeeper import CausalGatekeeper`
+  - `from src.cage_finance.fiscal_guard import FiscalLimitGuard` → `from src.gateway.governance.fiscal_guard import FiscalLimitGuard`
+  - `from src.cage_finance.reconciliation import ExternalLedgerReconciler` → `from src.gateway.governance.reconciliation import ExternalLedgerReconciler`
+
+- **Configuration File Locations** — Consensus critic prompts and causal graph structure externalized to YAML files in `src/cage_finance/config/`:
+  - Consensus quorum configuration: `src/cage_finance/config/critics.yaml`
+  - Causal graph DAG structure: `src/cage_finance/config/causal_graph.yaml`
+  - Domain plugins must provide configuration loaders for externalized settings
+
+- **CBF Barrier Protocol** — `ControlBarrierFunction()` constructor now accepts optional `invariant: InvariantModel` parameter. The default remains `CashBarrier()` for backward compatibility, but domain plugins can now supply custom barriers via the `InvariantModel` protocol (`state_key: str`, `invariant_fn: Callable`, `commit_fn: Callable`).
+
+See [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full migration guide with before/after examples.
+
+### Changed
+
+- **PR C Stage 1 — Governance Module Relocation** — Relocated 5 governance modules from [`src/cage_finance/`](src/cage_finance/) to [`src/gateway/governance/`](src/gateway/governance/) with git history preservation: `cbf.py`, `consensus.py`, `causal/gatekeeper.py`, `fiscal_guard.py`, and `reconciliation.py`. These modules provide core governance infrastructure (Control Barrier Functions, multi-model consensus, causal inference, fiscal limit enforcement, and external ledger reconciliation) and belong in the kernel layer rather than the domain plugin layer. Import paths changed for all relocated modules (`refactor(governance)!`).
+
+- **PR C Stage 2 — Parameterized CBF Engine** — Parameterized [`ControlBarrierFunction`](src/gateway/governance/cbf.py) to accept declarative `InvariantModel` barriers, replacing hardcoded `CashBarrier` implementation. The CBF engine now dispatches to pluggable barrier instances via the `InvariantModel` protocol (`state_key`, `invariant_fn`, `commit_fn`). Backward compatible via default `CashBarrier()` instantiation when no `invariant` parameter is provided (`feat(governance)`).
+
+- **PR C Stage 2 — Externalized Domain Configuration** — Externalized consensus critic prompts to [`src/cage_finance/config/critics.yaml`](src/cage_finance/config/critics.yaml) and causal graph structure to [`src/cage_finance/config/causal_graph.yaml`](src/cage_finance/config/causal_graph.yaml). Domain-specific configuration (quorum thresholds, critic weighting, DAG adjacency lists, treatment/outcome annotations) is now data-driven rather than code-embedded. The consensus engine and causal gatekeeper load configuration at startup with schema validation (`feat(governance)`).
+
+- **PR C Stage 3 — Compliance Artifacts** — Updated OSCAL component definitions in [`compliance/oscal/sp800-53-component-definition.yaml`](compliance/oscal/sp800-53-component-definition.yaml) to document SC-4 (Separation of System and User Functionality), AU-12 (Audit Generation with domain tier registration events), IA-5 (Authenticator Management via threshold configuration tree), CM-6 (Configuration Settings via YAML-based critics/causal/barrier declarations), and AC-4 (Information Flow Enforcement via barrier state_key namespacing). Regenerated System Security Plan via `oscal_ssp_exporter.py` (`docs(compliance)`).
+
+### Breaking Changes
+
 #### PR A — Capability-Driven Tier Dispatch
 
 - **Legacy Inline Dispatch Removed** — The inline consensus gate, causal gatekeeper, FRIA/normative provider, and CBF/fiscal blocks have been deleted from `SymbolicGovernor._run_checks()`. These mechanisms are replaced by the tier dispatch loop (`_run_domain_tiers()`) that executes registered `GovernanceTierPlugin` instances. This is a **hollowing refactor**: the kernel now denies all actions by default until PR C restores functionality as domain plugins (`refactor(governance)!`).

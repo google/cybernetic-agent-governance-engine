@@ -101,8 +101,14 @@ component-definition:
                    availability — the routing seal is issued immediately after the
                    governance decision, without waiting for audit record persistence.
                    Spans are exported to Langfuse asynchronously for retention.
-                   Domain tiers (like the financial package) are injected dynamically
-                   via plugin registration, and the active tier list is logged at startup.
+                   
+                   PR C - Domain Extraction Implementation added domain tier registration
+                   audit events: domain plugins (GovernanceTierPlugin instances) register
+                   at startup via the plugin loader, and the active tier list is logged
+                   with tier_name, phase, order, and capability predicate for each registered
+                   tier. Invariant validation failures from parameterized InvariantModel
+                   barriers are logged with the violated invariant's state_key, threshold,
+                   and failure reason before the action is denied.
 
                 2. EVIDENCE-OF-EXECUTION AUDIT (blocking mode, EVIDENCE_CHAIN_BLOCKING=true):
                    Ensures evidence commit before seal issuance, providing stronger
@@ -165,6 +171,165 @@ component-definition:
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-12"
                   rel: reference
+
+            - uuid: "a4f8c2d9-3e5b-4f1a-9c7d-8b2e3f4a5c6d"
+              control-id: sc-4
+              description: |
+                Separation of system and user functionality is implemented via the Layer 1
+                (kernel) vs Layer 2 (domain plugins) architectural separation introduced in
+                PR C - Domain Extraction Implementation. The governance kernel
+                (src/gateway/governance/) provides core enforcement infrastructure (tier
+                dispatch, seal verification, audit trail generation, STPA validation),
+                while domain-specific logic (consensus critics, causal analysis, CBF
+                invariants, fiscal limits) is isolated in domain plugins (src/cage_finance/).
+                
+                Layer 1 (kernel) enforces configuration-driven domain loading via
+                declarative YAML configuration files:
+                - config/cage_finance/critics.yaml: consensus critic prompt templates and
+                  quorum thresholds
+                - config/cage_finance/causal_graph.yaml: causal graph structure for backdoor
+                  adjustment
+                - InvariantModel barrier declarations: parameterized CBF safety constraints
+                
+                The kernel does not hardcode domain action names, fiscal thresholds, or
+                business logic. Domain plugins register via GovernanceTierPlugin protocol,
+                and the kernel dispatches to them based on capability predicates
+                (claims_action()) rather than string matching on domain-specific action names.
+                This separation ensures that user-facing domain functionality cannot bypass
+                kernel-enforced security controls, and that changes to domain logic do not
+                require modification of core governance infrastructure.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: layer-1-kernel
+                  value: "src/gateway/governance/"
+                - name: layer-2-domains
+                  value: "src/cage_finance/, src/cage_healthcare/"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-4"
+                  rel: reference
+
+            - uuid: "b5e9d3a8-4f2c-5e3b-8d6f-9c1a2b3e4d5f"
+              control-id: ac-4
+              description: |
+                Information flow enforcement is implemented via barrier state_key namespacing
+                and atomic Lua hop execution in the CBF engine (src/gateway/governance/cbf.py).
+                Each domain plugin defines barriers with namespaced state keys to prevent
+                cross-domain key collisions (e.g., "finance:cash_balance" vs
+                "healthcare:dosing_quota"). The LUA_ATOMIC_CBF script enforces TOCTOU-free
+                barrier evaluation by reading state, checking the invariant, and committing
+                the update atomically within a single Redis Lua execution.
+                
+                The parameterized InvariantModel barrier protocol introduced in PR C Stage 2
+                allows domain plugins to declare their own invariants without modifying the
+                kernel CBF engine. Each barrier specifies:
+                - state_key: namespaced Redis key for the protected resource
+                - invariant_fn: callable that returns True if action is safe
+                - commit_fn: callable that updates state after successful check
+                
+                The kernel ensures that no barrier can read or modify state outside its
+                declared namespace, and that multi-barrier checks execute in deterministic
+                order with full audit trail generation. This prevents information flow
+                violations where one domain's governance decision could be influenced by
+                another domain's state, and ensures that barrier evaluation results are
+                cryptographically bound to the routing seal via HMAC-SHA256 verification.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: cbf-atomic-lua
+                  value: "LUA_ATOMIC_CBF script in cbf.py"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4"
+                  rel: reference
+
+            - uuid: "c6f7d8e9-5a4b-3c2d-1e0f-9a8b7c6d5e4f"
+              control-id: ia-5
+              description: |
+                Authenticator management is implemented via declarative threshold resolution
+                from the THRESHOLDS configuration tree (config/thresholds/*_BASELINE.json)
+                introduced in PR C - Domain Extraction Implementation. All governance
+                thresholds (fiscal limits, confidence boundaries, causal lock parameters,
+                FRIA zone thresholds) are resolved from region-aware JSON configuration
+                files rather than hardcoded values or environment variables.
+                
+                The GovernanceThresholds schema (src/gateway/governance/schemas/thresholds.py)
+                validates threshold values at load time and provides typed accessor functions
+                (get_fria_zone_defer(), get_agent_confidence_threshold(), etc.). No secrets
+                or authenticators are embedded in barrier declarations - CBF InvariantModel
+                barriers reference threshold keys by name, and the actual values are resolved
+                at runtime from the regional baseline configuration.
+                
+                Kubernetes Secrets (deployment/k8s/oscal-artifact-secrets.yaml) store
+                sensitive authenticators like CAGE_ROUTING_SEAL_SECRET and KMS key references.
+                The separation ensures that configuration changes (threshold tuning) do not
+                require Secret rotation, and that sensitive authenticators cannot leak via
+                configuration file commits. Key rotation procedures are documented in
+                docs/operations/KEY_ROTATION.md.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: threshold-config-tree
+                  value: "config/thresholds/*_BASELINE.json"
+                - name: no-hardcoded-secrets
+                  value: "true"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-5"
+                  rel: reference
+                - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
+                  rel: lula
+
+            - uuid: "d7e8f9a0-6b5c-4d3e-2f1a-0b9c8d7e6f5a"
+              control-id: cm-6
+              description: |
+                Configuration settings are managed via YAML-based declarative configuration
+                files introduced in PR C - Domain Extraction Implementation:
+                
+                1. Consensus Critic Configuration (config/cage_finance/critics.yaml):
+                   Multi-model consensus prompts, quorum thresholds, and critic weighting
+                   are externalized from code into a versioned YAML file. The consensus
+                   engine loads critic templates at startup and validates the quorum
+                   configuration against the GovernanceThresholds schema. Changes to
+                   consensus behavior require only config file updates, not code changes.
+                
+                2. Causal Graph Configuration (config/cage_finance/causal_graph.yaml):
+                   The causal gatekeeper's backdoor adjustment DAG structure is declared
+                   as a YAML adjacency list with treatment/outcome/confounder annotations.
+                   The graph is validated at load time to ensure acyclicity and proper
+                   instrument variable coverage. This allows domain experts to update
+                   causal models without modifying the gatekeeper implementation.
+                
+                3. Declarative Barrier Registration (InvariantModel protocol):
+                   CBF barriers are declared as InvariantModel instances with state_key,
+                   invariant_fn, and commit_fn rather than hardcoded Lua scripts. The
+                   parameterized barrier protocol ensures that fiscal thresholds, dosing
+                   limits, and other domain-specific constraints are data-driven rather
+                   than code-embedded. The LUA_ATOMIC_CBF script is generic and unchanged
+                   across domain plugins.
+                
+                Configuration files are version-controlled, schema-validated, and tracked
+                via git history. The lula-validation-cm6.yaml manifest asserts that
+                governance threshold ConfigMaps are deployed and that the gateway
+                references the correct regional baseline.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: config-externalization
+                  value: "critics.yaml, causal_graph.yaml, thresholds/*_BASELINE.json"
+                - name: schema-validation
+                  value: "GovernanceThresholds, InvariantModel"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=CM-6"
+                  rel: reference
+                - href: "#1c436570-b67f-4857-bbbf-d1ba683dae25"
+                  rel: lula
 
             - uuid: "2f94e8b5-7d3a-4c61-b9f4-8e5a9d6c3f2a"
               control-id: sc-13

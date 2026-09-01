@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
 
 # Load causal graph configuration from YAML (PR C §7.3 T-C2: domain-owned config)
-_CAUSAL_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "src" / "cage_finance" / "config" / "causal_graph.yaml"
+_CAUSAL_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "cage_finance" / "config" / "causal_graph.yaml"
 _CAUSAL_CONFIG: dict = {}
 
 try:

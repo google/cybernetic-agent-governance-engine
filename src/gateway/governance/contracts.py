@@ -636,6 +636,19 @@ class ResourceGuard(Protocol):
         ...
 
 
+class RailProvider(Protocol):
+    """Contributes NeMo Guardrails actions from a domain plugin.
+
+    Symmetric with DomainToolProvider: the plugin supplies domain UCA
+    checks; the kernel owns the registry, the invocation path, and the
+    telemetry.
+    """
+
+    def provide_rail_actions(self) -> list[tuple[str, Callable[..., Any]]]:
+        """Return (action_name, callable) pairs to register with NeMo."""
+        ...
+
+
 # Deprecated alias — retained through PR 3 for backward compatibility.
 # Deleted in PR 4 when the legacy dispatch path is removed.
 FiscalGuard = ResourceGuard
