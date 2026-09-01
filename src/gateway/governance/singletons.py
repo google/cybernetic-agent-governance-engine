@@ -27,9 +27,17 @@ logger = logging.getLogger("Gateway.Governance.Singletons")
 opa_client = OPAClient()
 stpa_validator = STPAValidator()
 
+# Import domain tier components from cage_finance plugin
+from src.cage_finance.safety.cbf import ControlBarrierFunction
+from src.cage_finance.consensus.consensus import ConsensusGate
+
+safety_filter = ControlBarrierFunction()
+consensus_engine = ConsensusGate()
 
 symbolic_governor = SymbolicGovernor(
     opa_client=opa_client,
+    safety_filter=safety_filter,
+    consensus_engine=consensus_engine,
     stpa_validator=stpa_validator,
 )
 

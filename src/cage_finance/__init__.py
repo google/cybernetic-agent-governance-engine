@@ -11,14 +11,5 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-<<<<<<<< HEAD:src/cage_finance/__init__.py
-========
 
-"""Provider 04 integration — envelope mapper."""
-
-from src.integrations.provider_04.envelope_mapper import Provider04EnvelopeMapper
-
-__all__ = [
-    "Provider04EnvelopeMapper",
-]
->>>>>>>> origin/main:src/integrations/provider_04/__init__.py
+"""CAGE Finance Plugin — Domain governance tiers and tool provider."""

@@ -467,7 +467,7 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
 
     with (
         patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+            "src.cage_finance.causal.causal_gatekeeper.causal_safety_check",
             return_value=True,
         ),
         patch(
