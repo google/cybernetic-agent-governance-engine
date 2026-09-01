@@ -81,12 +81,30 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from src.gateway.governance.contracts import ReservationToken
-
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 5  # WATCH/MULTI/EXEC retry limit on concurrent write conflict
 _RETRY_BASE_MS = 5  # Base backoff in ms (exponential with jitter)
+
+
+@dataclass(frozen=True)
+class ReservationToken:
+    """Atomic fiscal limit reservation receipt.
+    
+    Returned by FiscalLimitGuard.reserve() to attest that a slice of the daily
+    fiscal limit has been atomically reserved in Redis. The token must be
+    passed to confirm() or release() to finalize or cancel the reservation.
+    """
+    reservation_id: str
+    agent_id: str
+    amount_usd: float
+    amount_cents: int
+    window_key: str
+    cap_usd: float
+    running_total_usd: float
+    rejected: bool
+    reserved_at: float
+    ttl_seconds: int
 
 
 class GovernanceLimitError(Exception):
