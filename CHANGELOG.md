@@ -7,11 +7,19 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [4.0.0] - Unreleased
+## [Unreleased]
 
-> **Major Version Release:** Plugin architecture refactor with normative provider
-> protocol consolidation and execution actuator standardization. Removes legacy
-> trade dispatch API and strengthens Compliance Bridge authentication.
+> **Reference Architecture Note:** CAGE is an illustrative reference architecture
+> for AI governance patterns. The changes below include breaking API and protocol
+> changes that would typically require a MAJOR version bump under strict SemVer.
+> However, as a reference implementation for adopters to adapt rather than a
+> production deployment, version increments follow an illustrative pattern rather
+> than mandatory SemVer obligations. Breaking changes are documented in full for
+> adopter clarity.
+
+> **Plugin Architecture Refactor:** Normative provider protocol consolidation and
+> execution actuator standardization. Removes legacy trade dispatch API and
+> strengthens Compliance Bridge authentication.
 
 ### Breaking Changes
 
