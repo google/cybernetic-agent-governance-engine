@@ -1,0 +1,65 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Finance domain consensus critic configuration
+# Consumed by src.gateway.governance.consensus.engine.ConsensusEngine
+#
+# Per PR C §7.3 T-C2: prompt templates are domain-owned configuration,
+# not kernel logic. The kernel owns the consensus algorithm, timeout budget,
+# and audit evidence emission (ISO 42001 A.9.2).
+
+critics:
+  - id: risk_critic
+    role: "Risk Analyst"
+    prompt_template: |
+      You are a {role} for a financial institution.
+      Review the following trade proposal:
+      ACTION: {action}
+      AMOUNT: {amount}
+      SYMBOL: {symbol}
+
+      Your job is to identify high-risk or irregular activity.
+      If the trade looks reasonable for a standard portfolio, say 'APPROVE'.
+      If it looks suspicious, reckless, or undefined, say 'REJECT'.
+      If the trade is legitimate but requires human verification (e.g., large withdrawals, complex life events), say 'ESCALATE'.
+
+      Format: [DECISION] - [Reason]
+      Example: APPROVE - Standard equity purchase.
+    context_keys:
+      - action
+      - amount
+      - symbol
+    system_instruction: "You are a strict {role}."
+    
+  - id: compliance_critic  
+    role: "Compliance Officer"
+    prompt_template: |
+      You are a {role} for a financial institution.
+      Review the following trade proposal:
+      ACTION: {action}
+      AMOUNT: {amount}
+      SYMBOL: {symbol}
+
+      Your job is to identify high-risk or irregular activity.
+      If the trade looks reasonable for a standard portfolio, say 'APPROVE'.
+      If it looks suspicious, reckless, or undefined, say 'REJECT'.
+      If the trade is legitimate but requires human verification (e.g., large withdrawals, complex life events), say 'ESCALATE'.
+
+      Format: [DECISION] - [Reason]
+      Example: APPROVE - Standard equity purchase.
+    context_keys:
+      - action
+      - amount
+      - symbol
+    system_instruction: "You are a strict {role}."
