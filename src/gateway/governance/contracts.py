@@ -62,11 +62,11 @@ class RefusalReceipt:
     Standardizes denial evidence into a cryptographic proof recording the
     exact violated invariant, authority tier, and standing context.
 
-    Schema v2 (5-part proof chain):
-    In addition to the original fields, captures Terry Snyder's complete
-    causal chain: attempted movement, governing standing, the condition
-    that failed, what consequence was protected from forming, and proof
-    of non-formation.
+    Schema evolution:
+    - v1: Original fields (thread_id, action, violated_tier, violated_rule, proof_hash)
+    - v2: Added 5-part proof chain (Terry Snyder seam: attempted_params,
+          standing_snapshot, control_id, protected_consequence, non_formation_proof)
+    - v3: Added tier_failures tuple (multi-tier dispatch architecture)
     """
 
     thread_id: str
@@ -77,7 +77,8 @@ class RefusalReceipt:
     timestamp: float = field(default_factory=time.time)
     proof_hash: str = field(default="")
     # ── 5-part proof chain fields (Terry Snyder, schema v2) ──
-    schema_version: str = field(default="v1")
+    # ── tier_failures (multi-tier dispatch, schema v3) ──
+    schema_version: str = field(default="v3")
     attempted_params: dict[str, Any] = field(default_factory=dict)
     standing_snapshot: dict[str, Any] = field(default_factory=dict)
     control_id: str = field(default="")
