@@ -15,8 +15,10 @@
 """Healthcare domain action names."""
 
 # Healthcare-governed actions (T-D5)
-HEALTHCARE_GOVERNED_ACTIONS = frozenset([
-    "administer_dose",
-    "prescribe_medication",
-    "adjust_dosage",
-])
+HEALTHCARE_GOVERNED_ACTIONS = frozenset(
+    [
+        "administer_dose",
+        "prescribe_medication",
+        "adjust_dosage",
+    ]
+)

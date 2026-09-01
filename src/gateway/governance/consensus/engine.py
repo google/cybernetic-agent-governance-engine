@@ -45,8 +45,10 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
+import yaml
 from opentelemetry import trace
 
 from src.gateway.core.llm import GatewayClient
@@ -55,6 +57,25 @@ from src.gateway.infrastructure.telemetry_client import genai_span
 
 logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")
+
+_CRITICS_CONFIG_PATH = (
+    Path(__file__).parent.parent.parent.parent
+    / "cage_finance"
+    / "config"
+    / "critics.yaml"
+)
+
+try:
+    with open(_CRITICS_CONFIG_PATH) as f:
+        _CRITICS_CONFIG = yaml.safe_load(f) or {}
+    logger.info("Loaded critics configuration from %s", _CRITICS_CONFIG_PATH)
+except Exception as exc:
+    logger.warning(
+        "Failed to load critics.yaml from %s: %s — falling back to hardcoded prompts",
+        _CRITICS_CONFIG_PATH,
+        exc,
+    )
+    _CRITICS_CONFIG = {}
 
 # ---------------------------------------------------------------------------
 # Background audit queue (Phase 4.4)
@@ -244,14 +265,14 @@ class ConsensusGate:
             # Extract financial context for prompt rendering.
             amount = context.get("amount", magnitude or 0.0)
             symbol = context.get("symbol", "UNKNOWN")
-            
+
             # Load prompt template from critics.yaml (PR C §7.3 T-C2)
             critic_config = None
             for critic in _CRITICS_CONFIG.get("critics", []):
                 if critic.get("role") == role:
                     critic_config = critic
                     break
-            
+
             if critic_config:
                 # Use YAML-loaded template
                 prompt_template = critic_config.get("prompt_template", "")
@@ -261,10 +282,15 @@ class ConsensusGate:
                     amount=amount,
                     symbol=symbol,
                 )
-                system_instruction = critic_config.get("system_instruction", "").format(role=role)
+                system_instruction = critic_config.get("system_instruction", "").format(
+                    role=role
+                )
             else:
                 # Fallback to hardcoded prompt if YAML loading failed
-                logger.warning("No critics.yaml config found for role '%s' — using hardcoded prompt", role)
+                logger.warning(
+                    "No critics.yaml config found for role '%s' — using hardcoded prompt",
+                    role,
+                )
                 prompt = (
                     f"You are a {role} for a financial institution.\n"
                     f"Review the following trade proposal:\n"

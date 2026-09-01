@@ -326,7 +326,12 @@ class GovernanceThresholds(BaseModel):
     Schema Version 2.1.0: Adds telemetry threshold section (EV-6) to consolidate
     TELEMETRY_MAX_STALENESS_SECONDS and CAUSAL_CACHE_TTL_SECONDS into
     configuration-driven defaults with optional env var overrides.
+
+    PR D: Configured to allow extra fields so domain plugins can add threshold
+    blocks (e.g., healthcare) without modifying this schema.
     """
+
+    model_config = {"extra": "allow"}
 
     cbf: CbfThresholds
     drawdown: DrawdownThresholds

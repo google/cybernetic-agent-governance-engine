@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,7 +51,9 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
     from src.gateway.governance.ftra.models import FtraBoundaryResult
 
     opa_client, safety_filter, consensus_engine = mock_dependencies
-    gov = SymbolicGovernor(opa_client)
+    gov = SymbolicGovernor(
+        opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+    )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -106,7 +108,9 @@ async def test_symbolic_governor_version_mismatch_raises_governance_error(
 ):
     """SymbolicGovernor validate_action should raise GovernanceError on mismatched policy_version_id."""
     opa_client, safety_filter, consensus_engine = mock_dependencies
-    gov = SymbolicGovernor(opa_client)
+    gov = SymbolicGovernor(
+        opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+    )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 

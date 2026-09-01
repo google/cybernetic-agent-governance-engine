@@ -89,7 +89,9 @@ class TestFenceEpochIncrements:
         """R-05: Fence epoch must increment on update_state() call."""
         import warnings
 
-        with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+        ):
             # update_state is deprecated but still used
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
@@ -119,7 +121,9 @@ class TestFenceEpochIncrements:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: Fence epoch must increment on rollback_state() call."""
-        with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+        ):
             # Mock the pipeline
             pipeline_mock = MagicMock()
             pipeline_mock.watch = AsyncMock()
@@ -144,7 +148,9 @@ class TestFenceEpochIncrements:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: Fence epoch must increment on atomic_verify_and_commit() call."""
-        with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+        ):
             # Mock evalsha to return committed result with epoch
             mock_redis_client.script_load = AsyncMock(return_value="sha123")
             mock_redis_client.evalsha = AsyncMock(
@@ -211,8 +217,13 @@ class TestFenceEpochRegressionDetection:
     ):
         """R-05: When epoch regresses, _read_cbf_state_atomic returns None balance."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._FENCE_EPOCH_ENABLED", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
         ):
             # Set last seen epoch higher
             cbf_instance._last_seen_epoch = 100
@@ -230,7 +241,7 @@ class TestFenceEpochRegressionDetection:
 
             # Mock reconciliation to fail so we hit self-reported path
             with patch(
-                "src.cage_finance.safety.cbf.asyncio.to_thread",
+                "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
                 side_effect=Exception("mock reconciliation failure"),
             ):
                 state = await cbf_instance._read_cbf_state_atomic()
@@ -245,8 +256,13 @@ class TestFenceEpochRegressionDetection:
     ):
         """R-05: verify_action must reject when epoch has regressed."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._FENCE_EPOCH_ENABLED", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
         ):
             cbf_instance._last_seen_epoch = 100
 
@@ -259,7 +275,7 @@ class TestFenceEpochRegressionDetection:
             mock_redis_client.pipeline = MagicMock(return_value=pipeline_mock)
 
             with patch(
-                "src.cage_finance.safety.cbf.asyncio.to_thread",
+                "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
                 side_effect=Exception("mock"),
             ):
                 result = await cbf_instance.verify_action(
@@ -293,7 +309,7 @@ class TestFenceEpochDisabledByDefault:
             # Re-import to get fresh flag evaluation
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -311,7 +327,7 @@ class TestFenceEpochDisabledByDefault:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -328,8 +344,13 @@ class TestFenceEpochDisabledByDefault:
     ):
         """R-05: When disabled, epoch is tracked but not validated."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._FENCE_EPOCH_ENABLED", False),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", False
+            ),
         ):
             cbf_instance._last_seen_epoch = 100
 
@@ -343,7 +364,7 @@ class TestFenceEpochDisabledByDefault:
             mock_redis_client.pipeline = MagicMock(return_value=pipeline_mock)
 
             with patch(
-                "src.cage_finance.safety.cbf.asyncio.to_thread",
+                "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
                 side_effect=Exception("mock"),
             ):
                 state = await cbf_instance._read_cbf_state_atomic()
@@ -370,7 +391,7 @@ class TestFenceEpochTelemetry:
         cbf_instance._last_seen_epoch = 100
 
         with patch(
-            "src.cage_finance.safety.cbf._EPOCH_REGRESSION_COUNTER"
+            "src.gateway.governance.safety.cbf_engine._EPOCH_REGRESSION_COUNTER"
         ) as mock_counter:
             mock_counter.inc = MagicMock()
 
@@ -384,7 +405,7 @@ class TestFenceEpochTelemetry:
         cbf_instance._last_seen_epoch = 50
 
         with patch(
-            "src.cage_finance.safety.cbf._CURRENT_FENCE_EPOCH_GAUGE"
+            "src.gateway.governance.safety.cbf_engine._CURRENT_FENCE_EPOCH_GAUGE"
         ) as mock_gauge:
             mock_gauge.set = MagicMock()
 
@@ -434,8 +455,11 @@ class TestWaitCommandSupport:
     async def test_wait_disabled_by_default(self, cbf_instance, mock_redis_client):
         """Phase 4.3: WAIT is disabled when CAGE_REDIS_WAIT_REPLICAS=0 (default)."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 0),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
         ):
             # _sync_to_replicas should return True immediately (no-op)
             result = await cbf_instance._sync_to_replicas()
@@ -452,9 +476,12 @@ class TestWaitCommandSupport:
     ):
         """Phase 4.3: WAIT command is called when CAGE_REDIS_WAIT_REPLICAS > 0."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 2),
-            patch("src.cage_finance.safety.cbf._WAIT_TIMEOUT_MS", 1000),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 2),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_MS", 1000),
         ):
             # Mock execute_command to return successful replication count
             mock_redis_client.get_raw_client().execute_command = AsyncMock(
@@ -472,10 +499,13 @@ class TestWaitCommandSupport:
     async def test_wait_timeout_logs_warning(self, cbf_instance, mock_redis_client):
         """Phase 4.3: WAIT timeout logs warning and returns False."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 2),
-            patch("src.cage_finance.safety.cbf._WAIT_TIMEOUT_MS", 100),
-            patch("src.cage_finance.safety.cbf.logger") as mock_logger,
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 2),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_MS", 100),
+            patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             # Mock execute_command to return fewer replicas than requested (timeout)
             mock_redis_client.get_raw_client().execute_command = AsyncMock(
@@ -496,9 +526,12 @@ class TestWaitCommandSupport:
     ):
         """Phase 4.3: _sync_to_replicas accepts override parameters."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 1),
-            patch("src.cage_finance.safety.cbf._WAIT_TIMEOUT_MS", 500),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_MS", 500),
         ):
             mock_redis_client.get_raw_client().execute_command = AsyncMock(
                 return_value=3
@@ -520,8 +553,11 @@ class TestWaitCommandSupport:
     ):
         """Phase 4.3: WAIT handles Redis errors gracefully."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 1),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
         ):
             # Mock execute_command to raise an exception
             mock_redis_client.get_raw_client().execute_command = AsyncMock(
@@ -537,7 +573,9 @@ class TestWaitCommandSupport:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: WAIT returns True immediately when num_replicas=0."""
-        with patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+        ):
             # Even with env var set, override to 0 should skip WAIT
             result = await cbf_instance._sync_to_replicas(num_replicas=0)
 
@@ -551,8 +589,11 @@ class TestWaitCommandSupport:
         import warnings
 
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 1),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch.object(
                 cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
             ) as mock_sync,
@@ -584,8 +625,11 @@ class TestWaitCommandSupport:
     ):
         """Phase 4.3: rollback_state calls _sync_to_replicas when configured."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 1),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch.object(
                 cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
             ) as mock_sync,
@@ -615,8 +659,11 @@ class TestWaitCommandSupport:
     ):
         """Phase 4.3: atomic_verify_and_commit calls _sync_to_replicas when configured."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 1),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch.object(
                 cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
             ) as mock_sync,
@@ -652,10 +699,13 @@ class TestWaitTelemetry:
     ):
         """Phase 4.3: WAIT latency is recorded in Prometheus histogram."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 1),
             patch(
-                "src.cage_finance.safety.cbf._WAIT_LATENCY_HISTOGRAM"
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._WAIT_LATENCY_HISTOGRAM"
             ) as mock_histogram,
         ):
             mock_histogram.observe = MagicMock()
@@ -676,9 +726,14 @@ class TestWaitTelemetry:
     ):
         """Phase 4.3: WAIT timeout increments Prometheus counter."""
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock_redis_client),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 2),
-            patch("src.cage_finance.safety.cbf._WAIT_TIMEOUT_COUNTER") as mock_counter,
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_client,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 2),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_COUNTER"
+            ) as mock_counter,
         ):
             mock_counter.inc = MagicMock()
             # Return fewer replicas than requested (timeout scenario)
@@ -712,7 +767,7 @@ class TestWaitEnvironmentVariables:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -731,7 +786,7 @@ class TestWaitEnvironmentVariables:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -748,7 +803,7 @@ class TestWaitEnvironmentVariables:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -767,7 +822,7 @@ class TestWaitEnvironmentVariables:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -795,7 +850,7 @@ class TestSentinelAwarenessStub:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -815,7 +870,7 @@ class TestSentinelAwarenessStub:
 
             import importlib
 
-            import src.cage_finance.safety.cbf as cbf_module
+            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -841,7 +896,10 @@ class TestFenceEpochColdStartSeeding:
         mock_sync_redis = MagicMock()
         mock_sync_redis.get = MagicMock(return_value="42")
 
-        with patch("src.cage_finance.safety.cbf.sync_redis_client", mock_sync_redis):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+            mock_sync_redis,
+        ):
             cbf = ControlBarrierFunction()
 
         # The epoch should be seeded from Redis
@@ -858,7 +916,10 @@ class TestFenceEpochColdStartSeeding:
         mock_raw_client = MagicMock()
         mock_sync_redis._get = MagicMock(return_value=mock_raw_client)
 
-        with patch("src.cage_finance.safety.cbf.sync_redis_client", mock_sync_redis):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+            mock_sync_redis,
+        ):
             cbf = ControlBarrierFunction()
 
         # Epoch should be 0 and written to Redis
@@ -870,7 +931,7 @@ class TestFenceEpochColdStartSeeding:
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         # Even with sync_redis_client=None, should not raise
-        with patch("src.cage_finance.safety.cbf.sync_redis_client", None):
+        with patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", None):
             cbf = ControlBarrierFunction(skip_epoch_seed=True)
 
         assert cbf._last_seen_epoch == 0
@@ -883,8 +944,8 @@ class TestFenceEpochColdStartSeeding:
         )
 
         with (
-            patch("src.cage_finance.safety.cbf.sync_redis_client", None),
-            patch("src.cage_finance.safety.cbf._IS_PRODUCTION", True),
+            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", None),
+            patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction()
@@ -897,9 +958,9 @@ class TestFenceEpochColdStartSeeding:
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         with (
-            patch("src.cage_finance.safety.cbf.sync_redis_client", None),
-            patch("src.cage_finance.safety.cbf._IS_PRODUCTION", False),
-            patch("src.cage_finance.safety.cbf.logger") as mock_logger,
+            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", None),
+            patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", False),
+            patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             cbf = ControlBarrierFunction()
 
@@ -922,8 +983,11 @@ class TestFenceEpochColdStartSeeding:
         )
 
         with (
-            patch("src.cage_finance.safety.cbf.sync_redis_client", mock_sync_redis),
-            patch("src.cage_finance.safety.cbf._IS_PRODUCTION", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction()
@@ -939,9 +1003,12 @@ class TestFenceEpochColdStartSeeding:
         mock_sync_redis.get = MagicMock(return_value="100")
 
         with (
-            patch("src.cage_finance.safety.cbf.sync_redis_client", mock_sync_redis),
             patch(
-                "src.cage_finance.safety.cbf._CURRENT_FENCE_EPOCH_GAUGE"
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._CURRENT_FENCE_EPOCH_GAUGE"
             ) as mock_gauge,
         ):
             mock_gauge.set = MagicMock()
@@ -957,8 +1024,11 @@ class TestFenceEpochColdStartSeeding:
         mock_sync_redis.get = MagicMock(return_value="50")
 
         with (
-            patch("src.cage_finance.safety.cbf.sync_redis_client", mock_sync_redis),
-            patch("src.cage_finance.safety.cbf.logger") as mock_logger,
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             ControlBarrierFunction()
 

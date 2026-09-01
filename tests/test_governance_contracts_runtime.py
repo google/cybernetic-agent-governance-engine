@@ -17,7 +17,8 @@ tests/test_governance_contracts_runtime.py
 ==========================================
 Runtime behavior supplement to tests/test_governance_contracts.py.
 
-Gap 11: test_governance_contracts.py gives false confidence (import and
+Gap 11: test_governance_contracts.py gives false confidence (from datetime import datetime, timezone
+import and
 structural checks only). This file exercises ACTUAL RUNTIME BEHAVIOR by:
 
   - Instantiating concrete classes that implement the Protocols
@@ -38,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -123,11 +125,16 @@ class _ConcreteReservationToken:
     """Minimal ReservationToken for FiscalGuard testing."""
 
     def __init__(
-        self, agent_id: str, amount_usd: float, rejected: bool = False
+        self,
+        agent_id: str,
+        amount_usd: float,
+        rejected: bool = False,
+        reserved_at: Any = None,
     ) -> None:
         self.agent_id = agent_id
         self.amount_usd = amount_usd
         self.rejected = rejected
+        self.reserved_at = reserved_at
 
 
 class _ConcreteFiscalGuard:
@@ -141,9 +148,16 @@ class _ConcreteFiscalGuard:
         self, agent_id: str, amount_usd: float
     ) -> _ConcreteReservationToken:
         if self._running_total + amount_usd > self._limit:
-            return _ConcreteReservationToken(agent_id, amount_usd, rejected=True)
+            return _ConcreteReservationToken(
+                agent_id,
+                amount_usd,
+                rejected=True,
+                reserved_at=datetime.now(timezone.utc),
+            )
         self._running_total += amount_usd
-        return _ConcreteReservationToken(agent_id, amount_usd, rejected=False)
+        return _ConcreteReservationToken(
+            agent_id, amount_usd, rejected=False, reserved_at=datetime.now(timezone.utc)
+        )
 
     async def release(self, token: _ConcreteReservationToken) -> float:
         if not token.rejected:

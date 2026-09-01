@@ -15,8 +15,8 @@
 import uuid
 from typing import Any
 
-from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 
 
 class FiscalTierPlugin(GovernanceTierPlugin):
@@ -47,7 +47,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         amount = float(params.get("amount", 0.0))
-        agent_id = params.get("trader_id", "anonymous")
+        agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
         transaction_id = params.get("transaction_id", str(uuid.uuid4()))
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)

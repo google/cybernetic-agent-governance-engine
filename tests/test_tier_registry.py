@@ -53,7 +53,9 @@ class MockTier:
 @pytest.fixture
 def governor():
     return SymbolicGovernor(
-        opa_client=MagicMock(), safety_filter=MagicMock(), consensus_engine=MagicMock()
+        opa_client=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus_engine=MagicMock(),
     )
 
 

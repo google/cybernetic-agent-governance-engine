@@ -66,6 +66,4 @@ class DoseBarrierTier(GovernanceTierPlugin):
 
     async def rollback(self, action: str, params: dict[str, Any]) -> None:
         # LIFO rollback: restore serum concentration state
-        await self.cbf.rollback_state(
-            magnitude=float(params.get("dose_mg", 0.0))
-        )
+        await self.cbf.rollback_state(magnitude=float(params.get("dose_mg", 0.0)))

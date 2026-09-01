@@ -287,7 +287,7 @@ class TestPostHitlRevalidateNode:
         )
 
         with patch(
-            "src.gateway.governance.singletons.symbolic_governor.govern",
+            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
             new_callable=AsyncMock,
             side_effect=GovernanceError("CBF Violation: h(next) < 0"),
         ):

@@ -94,5 +94,13 @@
     "improvised explosive device",
     "CBRN attack"
   ],
-  "tier1_keywords_cbrn_enabled": true
+  "tier1_keywords_cbrn_enabled": true,
+  "healthcare": {
+    "min_therapeutic_concentration": 5.0,
+    "_comment_min": "Minimum therapeutic drug concentration (mg/L) for serum barrier.",
+    "max_safe_concentration": 20.0,
+    "_comment_max": "Maximum safe drug concentration (mg/L) — exceeding this is toxic.",
+    "gamma": 0.4,
+    "_comment_gamma": "CBF decay factor for healthcare serum barrier — more conservative than finance (0.5)."
+  }
 }

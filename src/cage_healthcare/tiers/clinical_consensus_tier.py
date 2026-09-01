@@ -29,7 +29,9 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
     and delegates to the engine.
     """
 
-    def __init__(self, consensus_engine: Any) -> None:  # consensus_engine: ConsensusEngine
+    def __init__(
+        self, consensus_engine: Any
+    ) -> None:  # consensus_engine: ConsensusEngine
         self.consensus_engine = consensus_engine
 
     @property

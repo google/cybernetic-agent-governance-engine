@@ -44,6 +44,7 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
 
     try:
         from src.gateway.governance.nemo.actions import InvokeVllmFallbackAction
+
         actions.append(("InvokeVllmFallbackAction", InvokeVllmFallbackAction))
     except ImportError:
         pass
@@ -54,30 +55,30 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
     # and atomic execution are governance primitives.
     try:
         from config.rails.actions import (
+            check_approval_token_action,
+            check_atomic_execution_action,
             custom_self_check_input,
             custom_self_check_output,
             mask_pii_action,
             retrieve_knowledge,
-            check_approval_token_action,
-            check_atomic_execution_action,
         )
 
-        actions.extend([
-            ("CustomSelfCheckInputAction", custom_self_check_input),
-            ("CustomSelfCheckOutputAction", custom_self_check_output),
-            ("MaskPIIAction", mask_pii_action),
-            ("mask_sensitive_data", mask_pii_action),
-            ("detect_sensitive_data", mask_pii_action),
-            ("RetrieveKnowledgeAction", retrieve_knowledge),
-            ("CheckApprovalTokenAction", check_approval_token_action),
-            ("CheckAtomicExecutionAction", check_atomic_execution_action),
-        ])
+        actions.extend(
+            [
+                ("CustomSelfCheckInputAction", custom_self_check_input),
+                ("CustomSelfCheckOutputAction", custom_self_check_output),
+                ("MaskPIIAction", mask_pii_action),
+                ("mask_sensitive_data", mask_pii_action),
+                ("detect_sensitive_data", mask_pii_action),
+                ("RetrieveKnowledgeAction", retrieve_knowledge),
+                ("CheckApprovalTokenAction", check_approval_token_action),
+                ("CheckAtomicExecutionAction", check_atomic_execution_action),
+            ]
+        )
     except ImportError as exc:
         # PR D (T-D3): a missing generic rail module is a configuration error,
         # not a silent degradation. Guardrails that fail to load must fail loudly.
-        raise RuntimeError(
-            f"NeMo generic rails could not be imported: {exc}"
-        ) from exc
+        raise RuntimeError(f"NeMo generic rails could not be imported: {exc}") from exc
 
     # PR D (T-D3): append rails from all registered RailProvider instances.
     # Domain-specific UCA checks (drawdown limits, slippage risk, data latency

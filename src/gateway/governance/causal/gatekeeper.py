@@ -40,6 +40,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import networkx as nx
 import numpy as np
@@ -68,11 +69,16 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
 
 # Load causal graph configuration from YAML (PR C §7.3 T-C2: domain-owned config)
-_CAUSAL_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "cage_finance" / "config" / "causal_graph.yaml"
+_CAUSAL_CONFIG_PATH = (
+    Path(__file__).parent.parent.parent.parent
+    / "cage_finance"
+    / "config"
+    / "causal_graph.yaml"
+)
 _CAUSAL_CONFIG: dict = {}
 
 try:
-    with open(_CAUSAL_CONFIG_PATH, "r") as f:
+    with open(_CAUSAL_CONFIG_PATH) as f:
         _CAUSAL_CONFIG = yaml.safe_load(f)
     logger.info("Loaded causal graph configuration from %s", _CAUSAL_CONFIG_PATH)
 except Exception as exc:
@@ -884,3 +890,23 @@ def causal_safety_check(
         logger.error("Causal validation failed due to error: %s", e)
         # Fail safe - if we can't prove it's safe causally, we don't allow it.
         return False
+
+
+class CausalGatekeeper:
+    """Wrapper class conforming to the CausalGatekeeper protocol."""
+
+    def __init__(self, telemetry_provider: Any = None):
+        self.telemetry_provider = telemetry_provider
+
+    def causal_safety_check(self, params: dict, current_telemetry: Any = None) -> bool:
+        if current_telemetry is None and self.telemetry_provider is not None:
+            current_telemetry = self.telemetry_provider.get_latest_data()
+        return causal_safety_check(params, current_telemetry)
+
+    def evaluate(self, params: dict) -> bool:
+        telemetry = (
+            self.telemetry_provider.get_latest_data()
+            if self.telemetry_provider is not None
+            else None
+        )
+        return causal_safety_check(params, telemetry)

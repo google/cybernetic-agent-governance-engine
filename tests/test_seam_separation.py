@@ -36,10 +36,10 @@ class TestSeamSeparation:
         The two families must not overlap.
         """
         integrations_dir = Path(__file__).parent.parent / "src" / "integrations"
-        
+
         if not integrations_dir.exists():
             pytest.skip("No integrations directory")
-        
+
         domain_protocols = {
             "GovernanceTierPlugin",
             "RailProvider",
@@ -47,23 +47,26 @@ class TestSeamSeparation:
             "InvariantModel",
             "CagePlugin",
         }
-        
+
         violations = []
-        
+
         for py_file in integrations_dir.rglob("*.py"):
             if py_file.name.startswith("test_"):
                 continue
-            
+
             try:
                 with open(py_file) as f:
                     tree = ast.parse(f.read(), filename=str(py_file))
-                
+
                 # Check for class definitions
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ClassDef):
                         # Check if any base class names match domain protocols
                         for base in node.bases:
-                            if isinstance(base, ast.Name) and base.id in domain_protocols:
+                            if (
+                                isinstance(base, ast.Name)
+                                and base.id in domain_protocols
+                            ):
                                 violations.append(
                                     f"{py_file.relative_to(integrations_dir.parent)}: "
                                     f"class {node.name} implements {base.id}"
@@ -71,10 +74,10 @@ class TestSeamSeparation:
             except SyntaxError:
                 # Skip files that don't parse
                 pass
-        
+
         assert not violations, (
-            f"G4 violation: integration modules implement domain protocols:\n" +
-            "\n".join(violations)
+            "G4 violation: integration modules implement domain protocols:\n"
+            + "\n".join(violations)
         )
 
     def test_no_integration_module_declares_cage_plugin_entrypoint(self):
@@ -83,16 +86,16 @@ class TestSeamSeparation:
         This is enforced by the import boundary checker at the package level.
         """
         from pathlib import Path
-        
+
         # Check that integrations don't declare plugin entry points
         integrations_dir = Path(__file__).parent.parent / "src" / "integrations"
-        
+
         if not integrations_dir.exists():
             pytest.skip("No integrations directory")
-        
+
         # Look for any setup.py or plugin.py that might declare entry points
         plugin_files = list(integrations_dir.rglob("plugin.py"))
-        
+
         # Integration adapters should NOT have plugin.py files
         # (that pattern is for domain plugins only)
         assert not plugin_files, (
@@ -106,26 +109,31 @@ class TestSeamSeparation:
         but not vendor adapter implementation details.
         """
         cage_dirs = list(Path(__file__).parent.parent.glob("src/cage_*"))
-        
+
         if not cage_dirs:
             pytest.skip("No cage_* domain plugins found")
-        
+
         violations = []
-        
+
         for cage_dir in cage_dirs:
             for py_file in cage_dir.rglob("*.py"):
                 try:
                     with open(py_file) as f:
                         content = f.read()
-                    
+
                     # Check for imports from src.integrations
-                    if "from src.integrations" in content or "import src.integrations" in content:
+                    if (
+                        "from src.integrations" in content
+                        or "import src.integrations" in content
+                    ):
                         tree = ast.parse(content, filename=str(py_file))
-                        
+
                         for node in ast.walk(tree):
                             if isinstance(node, (ast.Import, ast.ImportFrom)):
                                 if isinstance(node, ast.ImportFrom):
-                                    if node.module and node.module.startswith("src.integrations"):
+                                    if node.module and node.module.startswith(
+                                        "src.integrations"
+                                    ):
                                         violations.append(
                                             f"{py_file.relative_to(cage_dir.parent)}: "
                                             f"imports {node.module}"
@@ -139,26 +147,30 @@ class TestSeamSeparation:
                                             )
                 except (SyntaxError, FileNotFoundError):
                     pass
-        
+
         assert not violations, (
-            f"G4 violation: domain plugins import integration internals:\n" +
-            "\n".join(violations)
+            "G4 violation: domain plugins import integration internals:\n"
+            + "\n".join(violations)
         )
 
 
 @pytest.mark.local
 class TestSeamSeparationLocal:
     """Local-only seam separation tests."""
-    
+
     def test_domain_plugins_use_kernel_protocols_only(self):
         """Domain plugins import from src/gateway/governance/contracts.py, not integrations."""
         # This is a documentation test — verify the pattern is followed
         from src.cage_finance.plugin import FinanceCagePlugin
         from src.cage_healthcare.plugin import HealthcareCagePlugin
-        
+
         # Both plugins should import from gateway, not integrations
         finance_module = FinanceCagePlugin.__module__
         healthcare_module = HealthcareCagePlugin.__module__
-        
-        assert finance_module.startswith("cage_finance") or finance_module.startswith("src.cage_finance")
-        assert healthcare_module.startswith("cage_healthcare") or healthcare_module.startswith("src.cage_healthcare")
+
+        assert finance_module.startswith("cage_finance") or finance_module.startswith(
+            "src.cage_finance"
+        )
+        assert healthcare_module.startswith(
+            "cage_healthcare"
+        ) or healthcare_module.startswith("src.cage_healthcare")

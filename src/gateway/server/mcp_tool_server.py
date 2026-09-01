@@ -50,7 +50,6 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
-from src.gateway.core.tools import TradeOrder, execute_trade
 from src.gateway.governance.nemo.manager import (
     initialize_rails,
     validate_with_nemo,
@@ -63,8 +62,6 @@ from src.gateway.server.governance_middleware import (
     enforce_routing_seal,
 )
 from src.gateway.tracing_setup import setup_tracing
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
@@ -125,12 +122,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     # 3. Env guards
     logger.info("🚀 CAGE MCP Tool Server Starting...")
-    vllm_base = config_manager.get("VLLM_BASE_URL")
+    vllm_base = os.getenv("VLLM_BASE_URL")
     if not vllm_base:
         raise RuntimeError(
             "VLLM_BASE_URL must be set — no localhost fallback in production."
         )
-    vllm_api_key = config_manager.get("VLLM_API_KEY")
+    vllm_api_key = os.getenv("VLLM_API_KEY")
     if not vllm_api_key:
         raise RuntimeError(
             "VLLM_API_KEY must be set — no 'EMPTY' fallback in production."
@@ -140,7 +137,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.nemo_rails = initialize_rails()
 
     # 5. Start consensus background audit worker (Phase 4.4)
-    from src.gateway.governance.consensus import _background_audit_worker
+    from src.gateway.governance.consensus.engine import _background_audit_worker
 
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
@@ -160,13 +157,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # That is fail-closed but may indicate a plugin loading failure.
     # Crash loudly rather than silently denying all traffic.
     from src.gateway.governance.singletons import _has_null_components
-    
-    if os.getenv("CAGE_ACTIVE_PLUGINS") != "" and _has_null_components():
+
+    if os.getenv("CAGE_ACTIVE_PLUGINS", "") != "" and _has_null_components():
         raise RuntimeError(
             "startup ordering error: plugins were expected but no domain "
             "components were installed — refusing to serve traffic"
         )
-    
+
     logger.info("✅ Domain components verified (startup readiness check passed)")
 
     yield
@@ -462,9 +459,9 @@ async def health_check():  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     import uvicorn
 
-    from src.governed_financial_advisor.utils.telemetry import configure_telemetry
+    from src.gateway.tracing_setup import setup_tracing
 
-    configure_telemetry()
+    setup_tracing()
     http_port = int(os.getenv("PORT", "8080"))
     logging.basicConfig(level=logging.INFO)
     uvicorn.run(app, host="0.0.0.0", port=http_port)

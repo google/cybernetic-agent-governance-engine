@@ -94,7 +94,7 @@ def _make_hybrid_stubs() -> dict:
             ),
         ),
         # Consensus
-        "src.cage_finance.consensus.consensus": MagicMock(
+        "src.gateway.governance.consensus.engine": MagicMock(
             _background_audit_worker=AsyncMock()
         ),
         # KMS + Seal
@@ -495,6 +495,7 @@ async def test_lifespan_succeeds_in_dev_mode(monkeypatch):
     monkeypatch.setenv("CAGE_SEAL_ENFORCEMENT", "log")  # only blocked in prod
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "stub")  # only blocked in prod
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")  # skip normative daemon
+    monkeypatch.delenv("CAGE_ACTIVE_PLUGINS", raising=False)
 
     stubs = _make_hybrid_stubs()
 

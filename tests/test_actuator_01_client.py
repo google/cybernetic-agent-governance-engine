@@ -34,26 +34,24 @@ def mock_client(monkeypatch, tmp_path):
     """Create a test client with mocked SSL context."""
     import ssl
     from unittest.mock import MagicMock
-    
+
     # Create placeholder cert files (content doesn't matter, we mock SSL)
     cert_file = tmp_path / "test-cert.pem"
     key_file = tmp_path / "test-key.pem"
     ca_file = tmp_path / "test-ca.pem"
-    
+
     cert_file.write_text("mock cert")
     key_file.write_text("mock key")
     ca_file.write_text("mock ca")
-    
+
     # Mock SSL context creation (respx already mocks HTTP, we just need valid context object)
     mock_context = MagicMock(spec=ssl.SSLContext)
-    original_create_context = ssl.create_default_context
-    
+
     def mock_create_context(*args, **kwargs):
-        # Call original but return mock
         return mock_context
-    
+
     monkeypatch.setattr(ssl, "create_default_context", mock_create_context)
-    
+
     return ActuatorHttpClient(
         base_url="https://actuator.example.com",
         cert_path=str(cert_file),
@@ -67,7 +65,9 @@ class TestActuatorHttpClient:
     """Test the mTLS HTTP client."""
 
     @pytest.mark.asyncio
-    async def test_submit_envelope_sends_content_bytes(self, mock_client, respx_mock: MockRouter):
+    async def test_submit_envelope_sends_content_bytes(
+        self, mock_client, respx_mock: MockRouter
+    ):
         """Client uses content= (not json=) to preserve exact bytes."""
         canonical_bytes = b'{"action":"execute_trade"}'
         operator_urns = ["urn:cage:operator:a", "urn:cage:operator:b"]
@@ -79,7 +79,11 @@ class TestActuatorHttpClient:
         route = respx_mock.post("https://actuator.example.com/submit").mock(
             return_value=httpx.Response(
                 status_code=200,
-                json={"receipt_id": "receipt-001", "executed_at": issued_at, "status": "EXECUTED"},
+                json={
+                    "receipt_id": "receipt-001",
+                    "executed_at": issued_at,
+                    "status": "EXECUTED",
+                },
             )
         )
 
@@ -89,13 +93,15 @@ class TestActuatorHttpClient:
             )
 
         assert response.status_code == 200
-        
+
         # Verify request was made with exact bytes
         request = route.calls.last.request
         assert request.content == canonical_bytes
 
     @pytest.mark.asyncio
-    async def test_submit_envelope_headers_positionally_aligned(self, mock_client, respx_mock: MockRouter):
+    async def test_submit_envelope_headers_positionally_aligned(
+        self, mock_client, respx_mock: MockRouter
+    ):
         """URNs and signatures are positionally aligned in headers."""
         canonical_bytes = b'{"test":"data"}'
         operator_urns = ["urn:cage:operator:alice", "urn:cage:operator:bob"]
@@ -116,7 +122,10 @@ class TestActuatorHttpClient:
         headers = dict(request.headers)
 
         # Verify positional alignment
-        assert headers["x-operator-urns"] == "urn:cage:operator:alice,urn:cage:operator:bob"
+        assert (
+            headers["x-operator-urns"]
+            == "urn:cage:operator:alice,urn:cage:operator:bob"
+        )
         assert headers["x-quorum-signatures"] == f"sig1{'0' * 124},sig2{'0' * 124}"
 
     @pytest.mark.asyncio
@@ -150,7 +159,9 @@ class TestActuatorHttpClient:
                 )
 
     @pytest.mark.asyncio
-    async def test_health_check_returns_true_on_200(self, mock_client, respx_mock: MockRouter):
+    async def test_health_check_returns_true_on_200(
+        self, mock_client, respx_mock: MockRouter
+    ):
         """Health check returns True when endpoint responds 200."""
         respx_mock.get("https://actuator.example.com/health").mock(
             return_value=httpx.Response(200, json={"status": "ok"})
@@ -162,7 +173,9 @@ class TestActuatorHttpClient:
         assert healthy is True
 
     @pytest.mark.asyncio
-    async def test_health_check_returns_false_on_error(self, mock_client, respx_mock: MockRouter):
+    async def test_health_check_returns_false_on_error(
+        self, mock_client, respx_mock: MockRouter
+    ):
         """Health check returns False when endpoint is unreachable."""
         respx_mock.get("https://actuator.example.com/health").mock(
             side_effect=httpx.ConnectError("Connection refused")

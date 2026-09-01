@@ -30,6 +30,7 @@ Entry point:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -38,6 +39,7 @@ import re
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
@@ -1370,7 +1372,7 @@ async def defer_escalate(
 
     BREAKING CHANGE (Phase 2, Stream B): This endpoint now requires operator
     identity in the request body and implements dual-control quorum checking.
-    
+
     A token requires multiple distinct operator approvals (quorum threshold
     determined by defer_reason) before transitioning to ESCALATED state.
 
@@ -1392,6 +1394,7 @@ async def defer_escalate(
 
     try:
         import redis.asyncio as aioredis
+
         from src.gateway.governance.defer_queue import (
             ApprovalRecord,
             ApprovalStatus,
@@ -1408,10 +1411,10 @@ async def defer_escalate(
     # Create approval record
     # Hash the session_id as the principal (in Phase 5, this will be the real principal)
     auth_principal_hash = hashlib.sha256(body.session_id.encode()).hexdigest()
-    
+
     approval_record = ApprovalRecord(
         approver_urn=body.operator_urn,
-        approved_at_utc=datetime.utcnow().isoformat() + "Z",
+        approved_at_utc=datetime.now(timezone.utc).isoformat(),
         auth_method=body.auth_method,
         auth_principal_hash=auth_principal_hash,
     )
@@ -1419,7 +1422,7 @@ async def defer_escalate(
     try:
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue = defer_queue_cls(client)
-        
+
         # Use approve() instead of resolve() for dual-control
         status, token = await queue.approve(defer_id, approval_record)
         await client.aclose()
@@ -1479,8 +1482,12 @@ async def defer_escalate(
                 "result": None,
                 "safetyRate": None,
                 "auditId": token.thread_id if token else defer_id,
-                "resolution": "ESCALATED" if status == ApprovalStatus.QUORUM_REACHED else "PARTIAL",
-                "timestamp": token.resolved_at_utc if token and token.resolved_at_utc else datetime.utcnow().isoformat() + "Z",
+                "resolution": "ESCALATED"
+                if status == ApprovalStatus.QUORUM_REACHED
+                else "PARTIAL",
+                "timestamp": token.resolved_at_utc
+                if token and token.resolved_at_utc
+                else datetime.now(timezone.utc).isoformat(),
                 "approvals": len(token.approvals) if token else 0,
                 "required_quorum": token.required_quorum if token else 2,
             }
@@ -1494,7 +1501,9 @@ async def defer_escalate(
             "defer_id": defer_id,
             "approvals": len(token.approvals) if token else 0,
             "required_quorum": token.required_quorum if token else 2,
-            "resolution": "ESCALATED" if status == ApprovalStatus.QUORUM_REACHED else None,
+            "resolution": "ESCALATED"
+            if status == ApprovalStatus.QUORUM_REACHED
+            else None,
         }
     )
 

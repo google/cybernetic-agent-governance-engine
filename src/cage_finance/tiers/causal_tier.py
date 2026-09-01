@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from typing import Any
 
 from src.gateway.governance.causal.gatekeeper import causal_safety_check
@@ -20,6 +21,9 @@ from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
 class CausalTierPlugin(GovernanceTierPlugin):
     """Causal guard tier (phase 1, order 6)."""
+
+    def __init__(self, gatekeeper: Any = None):
+        self.gatekeeper = gatekeeper
 
     @property
     def tier_name(self) -> str:
@@ -37,9 +41,20 @@ class CausalTierPlugin(GovernanceTierPlugin):
         return action == "execute_trade"
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        # causal_safety_check is synchronous but performs model evaluation.
-        # Using it directly here.
-        is_safe = causal_safety_check(params)
+        if self.gatekeeper is not None:
+            if hasattr(self.gatekeeper, "evaluate"):
+                is_safe = self.gatekeeper.evaluate(params)
+            elif hasattr(self.gatekeeper, "causal_safety_check"):
+                is_safe = self.gatekeeper.causal_safety_check(params)
+            elif callable(self.gatekeeper):
+                is_safe = self.gatekeeper(params)
+            else:
+                is_safe = causal_safety_check(params)
+            if inspect.isawaitable(is_safe):
+                is_safe = await is_safe
+        else:
+            is_safe = causal_safety_check(params)
+
         if not is_safe:
             return [
                 Violation(

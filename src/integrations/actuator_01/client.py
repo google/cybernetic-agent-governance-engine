@@ -64,7 +64,7 @@ class ActuatorHttpClient:
             purpose=ssl.Purpose.SERVER_AUTH, cafile=ca_path
         )
         ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-        
+
         # Enforce TLS 1.3 only (no downgrade to TLS 1.2)
         ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
         ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3

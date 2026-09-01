@@ -90,7 +90,7 @@ def _mcp_import_stubs():
         "src.gateway.infrastructure.redis_client": MagicMock(
             redis_client=MagicMock(set=AsyncMock())
         ),
-        "src.cage_finance.consensus.consensus": MagicMock(
+        "src.gateway.governance.consensus.engine": MagicMock(
             _background_audit_worker=AsyncMock()
         ),
         "src.governed_financial_advisor.utils.telemetry": MagicMock(
@@ -342,8 +342,10 @@ class TestMCPToolServerFunctions:
 
         # check_market_status was moved to cage_finance plugin as a tool registration
         # This test now validates the market data stub directly
-        from src.governed_financial_advisor.tools.market_data_tool import get_market_data
-        
+        from src.governed_financial_advisor.tools.market_data_tool import (
+            get_market_data,
+        )
+
         res = get_market_data("AAPL")
         assert "AAPL" in res
 

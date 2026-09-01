@@ -84,7 +84,9 @@ async def test_atomic_verify_rejects_invalid_amount_without_mutating_balance() -
     mock_redis_module.get_raw_client.return_value = fake_redis
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.cage_finance.safety.cbf.redis_client", mock_redis_module)
+        mp.setattr(
+            "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module
+        )
 
         for amount in _INVALID_AMOUNTS:
             committed, reason = await cbf.atomic_verify_and_commit(

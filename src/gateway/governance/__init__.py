@@ -70,7 +70,10 @@ def __getattr__(name: str) -> object:  # noqa: N807
     if name in ("causal_gatekeeper", "causal_safety_check", "generate_mock_telemetry"):
         try:
             # See note above re: avoiding `from . import causal_gatekeeper`.
-            causal_gatekeeper = importlib.import_module(f"{__name__}.causal_gatekeeper")
+            causal_gatekeeper = importlib.import_module(f"{__name__}.causal.gatekeeper")
+            import sys
+
+            sys.modules[f"{__name__}.causal_gatekeeper"] = causal_gatekeeper
             causal_safety_check = causal_gatekeeper.causal_safety_check
             generate_mock_telemetry = causal_gatekeeper.generate_mock_telemetry
             globals()["causal_gatekeeper"] = causal_gatekeeper

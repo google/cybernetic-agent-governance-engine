@@ -33,7 +33,6 @@ from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.tiers.clinical_consensus_tier import ClinicalConsensusTier
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
-from src.gateway.governance.consensus.engine import ConsensusEngine
 from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
@@ -58,24 +57,19 @@ class HealthcareCagePlugin(CagePlugin):
         governor.register_invariant(barrier)
 
         # Register tiers (phase 2 order 3, phase 1 order 5)
-        governor.register_domain_tier(
-            DoseBarrierTier(ControlBarrierFunction(barrier))
-        )
-        governor.register_domain_tier(
-            ClinicalConsensusTier(
-                ConsensusEngine.from_yaml(
-                    Path("src/cage_healthcare/config/critics.yaml")
-                )
-            )
-        )
+        governor.register_domain_tier(DoseBarrierTier(ControlBarrierFunction(barrier)))
+        # Note: ConsensusEngine delegates to the kernel's shared ConsensusGate instance.
+        # Healthcare could configure domain-specific critics via a YAML file, but for
+        # simplicity in this proof-of-concept, we use the default ConsensusGate.
+        from src.gateway.governance.consensus.engine import ConsensusGate
+
+        governor.register_domain_tier(ClinicalConsensusTier(ConsensusGate()))
 
         # Register rail provider (contributes CheckContraindicationAction)
         governor.register_rail_provider(HealthcareRailProvider())
 
         # Register compliance overlay directory
-        register_overlay_dir(
-            Path("src/cage_healthcare/config/compliance")
-        )
+        register_overlay_dir(Path("src/cage_healthcare/config/compliance"))
 
         # Register tools
         if tool_server:

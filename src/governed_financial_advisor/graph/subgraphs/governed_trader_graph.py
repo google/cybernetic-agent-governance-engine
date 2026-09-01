@@ -599,9 +599,10 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         # deterministic w.r.t. the static approved plan and do not need re-evaluation.
         # Direct singleton path — identical architectural invariant to safety_node.py.
         # Cannot be bypassed or intercepted by any LLM agent.
-        span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
         try:
-            await symbolic_governor.revalidate_post_hitl(fresh_params, trace_id=None)
+            await symbolic_governor.revalidate_post_hitl(
+                "execute_trade", fresh_params, trace_id=None
+            )
 
             logger.info(
                 "[RevalidateNode] ✅ Post-HITL re-validation APPROVED — %s within safe bounds.",

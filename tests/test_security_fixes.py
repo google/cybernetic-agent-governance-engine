@@ -242,6 +242,8 @@ class TestC02CbfFailClosed:
 
         mock_cbf.tier_name = "cbf"
         mock_cbf.claims_action.return_value = True
+        mock_cbf.verify_action = mock_cbf.evaluate
+        gov.safety_filter = mock_cbf
         gov._domain_tiers = [mock_cbf]
         return gov, mock_cbf
 
@@ -251,7 +253,7 @@ class TestC02CbfFailClosed:
         gov, mock_cbf = self._make_governor()
         mock_cbf.evaluate.side_effect = ConnectionError("Redis connection refused")
 
-        result = await gov.pre_check({"symbol": "AAPL", "qty": 100})
+        result = await gov.pre_check("execute_trade", {"symbol": "AAPL", "qty": 100})
 
         assert result["cbf_result"]["allowed"] is False, (
             "CBF fail-closed: allowed must be False when Redis is unavailable"
@@ -268,7 +270,7 @@ class TestC02CbfFailClosed:
         gov, mock_cbf = self._make_governor()
         mock_cbf.evaluate.side_effect = asyncio.TimeoutError("CBF timed out")
 
-        result = await gov.pre_check({"symbol": "MSFT", "qty": 50})
+        result = await gov.pre_check("execute_trade", {"symbol": "MSFT", "qty": 50})
 
         assert result["cbf_result"]["allowed"] is False
         assert "CBF unavailable" in result["cbf_result"]["reason"]
@@ -277,9 +279,9 @@ class TestC02CbfFailClosed:
     async def test_cbf_success_returns_allowed_when_safe(self):
         """When CBF returns SAFE, pre_check must return cbf_allowed=True."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.evaluate.return_value = []
+        mock_cbf.evaluate.return_value = "SAFE"
 
-        result = await gov.pre_check({"symbol": "GOOG", "qty": 10})
+        result = await gov.pre_check("execute_trade", {"symbol": "GOOG", "qty": 10})
 
         assert result["cbf_result"]["allowed"] is True
         assert result["cbf_result"]["reason"] == "SAFE"
@@ -290,7 +292,7 @@ class TestC02CbfFailClosed:
         gov, mock_cbf = self._make_governor()
         mock_cbf.evaluate.return_value = "UNSAFE: position limit exceeded"
 
-        result = await gov.pre_check({"symbol": "TSLA", "qty": 9999})
+        result = await gov.pre_check("execute_trade", {"symbol": "TSLA", "qty": 9999})
 
         assert result["cbf_result"]["allowed"] is False
 
@@ -301,7 +303,7 @@ class TestC02CbfFailClosed:
         mock_cbf.evaluate.side_effect = RuntimeError("unexpected Redis failure")
 
         # Must not raise — the exception is swallowed and converted to a deny.
-        result = await gov.pre_check({"symbol": "AMZN", "qty": 1})
+        result = await gov.pre_check("execute_trade", {"symbol": "AMZN", "qty": 1})
 
         assert isinstance(result, dict)
         assert "cbf_result" in result

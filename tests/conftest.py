@@ -891,6 +891,7 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
     except Exception as e:
         print(f"\n⚠️ [pytest bootstrap] Langfuse compliance bootstrapping failed: {e}")
 
+
 @pytest.fixture(scope="session", autouse=True)
 def assert_formal_tier_ordering_matches():
     """
@@ -899,15 +900,17 @@ def assert_formal_tier_ordering_matches():
     """
     from src.gateway.governance.plugin_loader import discover_plugins
     from src.gateway.governance.singletons import symbolic_governor
-    
+
     # Ensure plugins are loaded
     loaded_plugins = discover_plugins()
     for plugin in loaded_plugins:
         plugin.register(governor=symbolic_governor, tool_server=None)
-        
+
     tiers = symbolic_governor.registered_tier_names()
     # The formal model mandates the following order for finance package tiers
     expected = ["consensus_tier", "causal_tier", "cbf_tier", "fiscal_tier"]
     if all(t in tiers for t in expected):
         actual = [t for t in tiers if t in expected]
-        assert actual == expected, f"Tier order mismatch! Expected {expected}, got {actual}"
+        assert actual == expected, (
+            f"Tier order mismatch! Expected {expected}, got {actual}"
+        )

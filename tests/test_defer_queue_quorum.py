@@ -30,7 +30,9 @@ import uuid
 
 import pytest
 
-pytest.importorskip("fakeredis", reason="fakeredis required for defer queue quorum tests")
+pytest.importorskip(
+    "fakeredis", reason="fakeredis required for defer queue quorum tests"
+)
 import fakeredis.aioredis
 
 from src.gateway.governance.defer_queue import (
@@ -69,11 +71,13 @@ def sample_token():
     )
 
 
-def create_approval_record(operator_urn: str, session_id: str | None = None) -> ApprovalRecord:
+def create_approval_record(
+    operator_urn: str, session_id: str | None = None
+) -> ApprovalRecord:
     """Create a test approval record."""
     if session_id is None:
         session_id = str(uuid.uuid4())
-    
+
     return ApprovalRecord(
         approver_urn=operator_urn,
         approved_at_utc="2026-08-31T22:00:00Z",
@@ -254,11 +258,12 @@ class TestBackwardCompatibility:
 @pytest.mark.asyncio
 async def test_concurrent_approvals_no_lost_update():
     """Two simultaneous approvals: both are recorded, or one retries on TransactionAbortedError.
-    
+
     This test verifies R-13 from the risk register: concurrent approval safety.
     """
-    import fakeredis.aioredis
     import asyncio
+
+    import fakeredis.aioredis
 
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     queue = DeferQueue(client)
@@ -288,7 +293,7 @@ async def test_concurrent_approvals_no_lost_update():
     # Final token should have 2 approvals
     final_token = await queue.get(defer_id)
     assert final_token is not None
-    
+
     # May be 1 or 2 depending on transaction timing, but both URNs should eventually be recorded
     # In practice, WATCH/MULTI/EXEC ensures no lost updates
     assert len(final_token.approvals) >= 1

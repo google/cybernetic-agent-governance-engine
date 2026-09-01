@@ -210,22 +210,44 @@ from src.gateway.governance.schemas.thresholds import (
 # which already incorporate env var overrides from load_and_validate_thresholds().
 FRIA_ZONE_ALLOW: float = get_fria_zone_allow()
 FRIA_ZONE_DEFER: float = get_fria_zone_defer()
+_FRIA_CONTROL: GovernanceControl = GovernanceControl.FRIA_ASSESSMENT
 
-# Feature flag for DEFER decision path — when disabled, DEFER falls back to DENY
-# for gradual rollout safety.  Default is enabled (true).
+
 CAGE_DEFER_ENABLED: bool = os.getenv("CAGE_DEFER_ENABLED", "true").lower() == "true"
-
-# Feature flag for NARROW decision path — allows partial-authority/clamped execution
-# when a request exceeds soft thresholds but is not a hard violation.
-# Default is disabled (false — opt-in) for gradual rollout safety.
-# When disabled, NARROW candidates fall back to DEFER or DENY.
 CAGE_NARROW_ENABLED: bool = os.getenv("CAGE_NARROW_ENABLED", "false").lower() == "true"
-
-# Feature flag for PAUSE decision path — allows resumable suspension of execution
-# when a transient external condition (rate limit, circuit breaker, etc.) prevents
-# immediate execution. Default is disabled (false — opt-in) for gradual rollout safety.
-# When disabled, PAUSE candidates fall back to DENY.
 CAGE_PAUSE_ENABLED: bool = os.getenv("CAGE_PAUSE_ENABLED", "false").lower() == "true"
+
+
+def _is_defer_enabled() -> bool:
+    env = os.getenv("CAGE_DEFER_ENABLED")
+    if env is not None:
+        return env.lower() == "true"
+    return bool(globals().get("CAGE_DEFER_ENABLED", True))
+
+
+def _is_narrow_enabled() -> bool:
+    env = os.getenv("CAGE_NARROW_ENABLED")
+    if env is not None:
+        return env.lower() == "true"
+    return bool(globals().get("CAGE_NARROW_ENABLED", False))
+
+
+def _is_pause_enabled() -> bool:
+    env = os.getenv("CAGE_PAUSE_ENABLED")
+    if env is not None:
+        return env.lower() == "true"
+    if bool(globals().get("CAGE_PAUSE_ENABLED", False)):
+        return True
+    try:
+        from src.gateway.governance.pause_primitive import (
+            CAGE_PAUSE_ENABLED as _p_flag,
+        )
+
+        if _p_flag:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +531,7 @@ def _classify_violation(
         and not has_narrowable_violations
     ):
         # Check feature flag — if disabled, fall back to DENY
-        if not CAGE_PAUSE_ENABLED:
+        if not _is_pause_enabled():
             return GovernanceDecision.DENY, {
                 "classification_reason": (
                     "PAUSE candidate but CAGE_PAUSE_ENABLED=false — "
@@ -556,9 +578,9 @@ def _classify_violation(
     # Priority 4: Narrowable violations → NARROW candidate (if enabled and no soft/hard)
     if has_narrowable_violations and not has_soft_violations:
         # Check feature flag — if disabled, fall back to DEFER or DENY
-        if not CAGE_NARROW_ENABLED:
+        if not _is_narrow_enabled():
             # Fall back to DEFER if enabled, otherwise DENY
-            if CAGE_DEFER_ENABLED and confidence_starved:
+            if _is_defer_enabled() and confidence_starved:
                 return GovernanceDecision.DEFER, {
                     "classification_reason": (
                         "NARROW candidate but CAGE_NARROW_ENABLED=false — "
@@ -617,7 +639,7 @@ def _classify_violation(
     # Priority 5: Soft violations with confidence starvation → DEFER candidate
     if has_soft_violations and confidence_starved:
         # Check feature flag — if disabled, fall back to DENY
-        if not CAGE_DEFER_ENABLED:
+        if not _is_defer_enabled():
             return GovernanceDecision.DENY, {
                 "classification_reason": (
                     "DEFER candidate but CAGE_DEFER_ENABLED=false — falling back to DENY"
@@ -868,7 +890,9 @@ class SymbolicGovernor:
         # not fall back to a silent None at runtime.
         thresholds = load_and_validate_thresholds()
         threshold_parts = invariant.threshold_key.split(".")
-        current = thresholds.model_dump()  # Convert Pydantic model to dict for traversal
+        current = (
+            thresholds.model_dump()
+        )  # Convert Pydantic model to dict for traversal
         try:
             for part in threshold_parts:
                 current = current[part]
@@ -901,7 +925,10 @@ class SymbolicGovernor:
         """
         self._rail_providers.append(provider)
         # Forward to the NeMo action registry so get_all_actions() includes plugin rails.
-        from src.gateway.governance.nemo.action_registry import register_rail_provider as _register
+        from src.gateway.governance.nemo.action_registry import (
+            register_rail_provider as _register,
+        )
+
         _register(provider)
 
     async def _rollback_committed(
@@ -958,7 +985,8 @@ class SymbolicGovernor:
         pass-through.
         """
         claimed = [
-            t for t in self._domain_tiers
+            t
+            for t in self._domain_tiers
             if t.phase == phase and t.claims_action(action, params)
         ]
         committed: list[GovernanceTierPlugin] = []
@@ -971,7 +999,8 @@ class SymbolicGovernor:
                 _t0 = time.perf_counter()
                 try:
                     violations = (
-                        await tier.evaluate(action, params) if phase == 1
+                        await tier.evaluate(action, params)
+                        if phase == 1
                         else await tier.commit(action, params)
                     )
                 except Exception as exc:
@@ -1022,7 +1051,9 @@ class SymbolicGovernor:
             for v in violations
         ]
 
-    def _violations_to_failures(self, violations: list[Violation]) -> list[dict[str, Any]]:
+    def _violations_to_failures(
+        self, violations: list[Violation]
+    ) -> list[dict[str, Any]]:
         """Convert Violation dataclasses into RefusalReceipt.failures schema."""
         out: list[dict[str, Any]] = []
         for v in violations:
@@ -1051,7 +1082,9 @@ class SymbolicGovernor:
         Returns:
             dict with "failures" (list[dict]) plus any tier-specific standing keys.
         """
-        standing: dict[str, Any] = {"failures": self._violations_to_failures(violations)}
+        standing: dict[str, Any] = {
+            "failures": self._violations_to_failures(violations)
+        }
         for v in violations:
             if hasattr(v, "standing") and v.standing:
                 standing.update(v.standing)
@@ -1326,17 +1359,23 @@ class SymbolicGovernor:
         # Phase 1: Read-only domain tiers
         if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span("cage.domain_tiers_phase1") as tier1_span:
-                tier1_span.set_attribute("langfuse.observation.name", "domain_tiers_phase1")
+                tier1_span.set_attribute(
+                    "langfuse.observation.name", "domain_tiers_phase1"
+                )
                 tier1_span.set_attribute("governance.stage", "domain_tiers")
                 tier1_span.set_attribute("governance.phase", 1)
                 _t_tier1 = time.perf_counter()
 
-                tier_violations = await self._run_domain_tiers(tool_name, params, phase=1)
+                tier_violations = await self._run_domain_tiers(
+                    tool_name, params, phase=1
+                )
                 if tier_violations:
                     _all_tier_violations.extend(tier_violations)
                     violations.extend(self._violations_to_strings(tier_violations))
 
-                tier1_span.set_attribute("governance.tier.violations", len(tier_violations))
+                tier1_span.set_attribute(
+                    "governance.tier.violations", len(tier_violations)
+                )
                 tier1_span.set_attribute(
                     "governance.stage.latency_ms",
                     round((time.perf_counter() - _t_tier1) * 1000, 2),
@@ -1674,17 +1713,23 @@ class SymbolicGovernor:
         # Phase 2: Mutating domain tiers (only if Phase 1 passed)
         if self._is_governed_action(tool_name, params) and not violations:
             with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
-                tier2_span.set_attribute("langfuse.observation.name", "domain_tiers_phase2")
+                tier2_span.set_attribute(
+                    "langfuse.observation.name", "domain_tiers_phase2"
+                )
                 tier2_span.set_attribute("governance.stage", "domain_tiers")
                 tier2_span.set_attribute("governance.phase", 2)
                 _t_tier2 = time.perf_counter()
 
-                tier_violations = await self._run_domain_tiers(tool_name, params, phase=2)
+                tier_violations = await self._run_domain_tiers(
+                    tool_name, params, phase=2
+                )
                 if tier_violations:
                     _all_tier_violations.extend(tier_violations)
                     violations.extend(self._violations_to_strings(tier_violations))
 
-                tier2_span.set_attribute("governance.tier.violations", len(tier_violations))
+                tier2_span.set_attribute(
+                    "governance.tier.violations", len(tier_violations)
+                )
                 tier2_span.set_attribute(
                     "governance.stage.latency_ms",
                     round((time.perf_counter() - _t_tier2) * 1000, 2),
@@ -2038,7 +2083,7 @@ class SymbolicGovernor:
                         action=tool_name,
                         violated_tier="SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
-                        standing_at_refusal=self._build_standing(tier_violations),
+                        standing_at_refusal=self._build_standing([]),
                     )
                     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
                     raise GovernanceError(violations[0], receipt=receipt)
@@ -2157,7 +2202,6 @@ class SymbolicGovernor:
             )
             result = await self._run_checks(tool_name, params, sim_mode=True)
             violations = result["violations"]
-            tier_violations = result.get("tier_violations", [])
             span.set_attribute(
                 "langfuse.observation.output",
                 json.dumps(violations) if violations else "APPROVED",
@@ -2465,7 +2509,7 @@ class SymbolicGovernor:
                         # Defense-in-depth: verify PAUSE is enabled at validate_action boundary
                         # (This check is redundant with _classify_violation but provides a
                         # safety net if the flag is toggled between classification and here)
-                        if not CAGE_PAUSE_ENABLED:
+                        if not _is_pause_enabled():
                             span.set_attribute("cage.verdict", GovernanceDecision.DENY)
                             span.set_attribute("cage.pause_fallback", True)
                             span.set_status(Status(StatusCode.ERROR))
@@ -2480,7 +2524,9 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_FALLBACK",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal=self._build_standing(tier_violations),
+                                standing_at_refusal=self._build_standing(
+                                    tier_violations
+                                ),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash
@@ -2533,7 +2579,9 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_REDIS_ERROR",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal=self._build_standing(tier_violations),
+                                standing_at_refusal=self._build_standing(
+                                    tier_violations
+                                ),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash

@@ -40,6 +40,7 @@ import math
 # ---------------------------------------------------------------------------
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
@@ -235,6 +236,14 @@ async def _get_raw_redis(r: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _DefaultBarrier:
+    invariant_id: str = "finance.cash_balance"
+    state_key: str = "safety:current_cash"
+    threshold_key: str = "cbf.min_cash_balance"
+    gamma: float = 0.5
+
+
 class ControlBarrierFunction:
     """Discrete-time Control Barrier Function (CBF).
 
@@ -321,17 +330,15 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         # PR C (Stage 2): Compile barrier from InvariantModel.
         # Backward compatibility: If no invariant provided, use finance defaults.
         if invariant is None:
-            # Finance domain default barrier (CashBarrier-equivalent)
-            from src.cage_finance.invariants import CashBarrier
-            invariant = CashBarrier()
-        
+            invariant = _DefaultBarrier()
+
         self._invariant = invariant
         # Threshold resolution deferred to atomic_verify_and_commit() to pick up
         # runtime config changes. Cache threshold_key for validation.
         self.threshold_key: str = invariant.threshold_key
         self.gamma: float = invariant.gamma
         self.redis_key: str = invariant.state_key
-        
+
         # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
         self.tracer = get_tracer("src.gateway.governance.safety")
@@ -1102,13 +1109,17 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         poisoned. This mirrors the finiteness/positive guard that
         ``FiscalLimitGuard.reserve`` already applies to reservations.
         """
-        if action_name != "execute_trade":
+        if not payload or not isinstance(payload, dict):
             return 0.0
 
         if "amount_minor" in payload and payload["amount_minor"] is not None:
             cost = float(payload["amount_minor"]) / 100.0
+        elif "amount" in payload and payload["amount"] is not None:
+            cost = float(payload["amount"])
+        elif "magnitude" in payload and payload["magnitude"] is not None:
+            cost = float(payload["magnitude"])
         else:
-            cost = float(payload.get("amount", 0.0))
+            return 0.0
 
         if not math.isfinite(cost) or cost < 0:
             raise ValueError(
@@ -1238,7 +1249,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         # H53: accumulate local debit when the trade is approved, so subsequent
         # intra-TTL calls see the already-committed debit against the snapshot.
-        if result == "SAFE" and action_name == "execute_trade" and cost > 0:
+        if result == "SAFE" and cost > 0:
             self._local_debits += cost
 
         # Drawdown check — read limit from threshold singleton
@@ -1572,13 +1583,13 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         # PR C (Stage 2): Compile barrier parameters from InvariantModel
         # R-05: Include fence epoch key for atomic increment in Lua script
         keys = [self._invariant.state_key, "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
-        
+
         # Resolve threshold from THRESHOLDS tree at runtime
         threshold_parts = self._invariant.threshold_key.split(".")
         threshold_value = THRESHOLDS
         for part in threshold_parts:
             threshold_value = getattr(threshold_value, part)
-        
+
         argv = [
             str(cost),  # ARGV[1]: magnitude (domain-neutral; was "cost")
             str(threshold_value),  # ARGV[2]: resolved threshold from InvariantModel

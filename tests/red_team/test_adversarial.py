@@ -62,6 +62,8 @@ def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine
     )  # Use real validator with default ontology
     governor = SymbolicGovernor(
         opa_client=mock_opa_client,
+        safety_filter=mock_safety_filter,
+        consensus_engine=mock_consensus_engine,
         stpa_validator=stpa_validator,
     )
 

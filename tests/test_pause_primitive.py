@@ -843,7 +843,9 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            governor = SymbolicGovernor(opa_client)
+            governor = SymbolicGovernor(
+                opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+            )
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -889,7 +891,9 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            governor = SymbolicGovernor(opa_client)
+            governor = SymbolicGovernor(
+                opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+            )
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -961,7 +965,9 @@ class TestValidateActionPauseHandler:
                 },
             )
 
-            governor = SymbolicGovernor(opa_client)
+            governor = SymbolicGovernor(
+                opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+            )
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -1002,7 +1008,9 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            governor = SymbolicGovernor(opa_client)
+            governor = SymbolicGovernor(
+                opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+            )
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -1069,7 +1077,9 @@ class TestValidateActionPauseHandler:
                 },
             )
 
-            governor = SymbolicGovernor(opa_client)
+            governor = SymbolicGovernor(
+                opa_client, safety_filter=MagicMock(), consensus_engine=MagicMock()
+            )
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 

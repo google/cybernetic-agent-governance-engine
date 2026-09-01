@@ -24,10 +24,10 @@ parameterize the kernel's ControlBarrierFunction engine.
 
 class CashBarrier:
     """Finance domain barrier: h(x) = cash_balance - min_cash_balance.
-    
+
     Declarative specification for the affine barrier that prevents
     the agent from depleting its cash reserves below the regulatory floor.
-    
+
     The barrier algebra (h(x) = x - threshold) is evaluated atomically
     inside Redis via the Lua script in gateway/governance/safety/cbf_engine.py.
     This class only declares the parameters.

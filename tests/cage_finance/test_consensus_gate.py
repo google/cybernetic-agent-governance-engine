@@ -32,7 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 @pytest.fixture
 def mock_thresholds():
     """Mock the THRESHOLDS singleton used by ConsensusGate.__init__."""
-    with patch("src.cage_finance.consensus.consensus.THRESHOLDS") as mock_t:
+    with patch("src.gateway.governance.consensus.engine.THRESHOLDS") as mock_t:
         mock_t.consensus.threshold_usd = 10000.0
         yield mock_t
 
@@ -40,7 +40,7 @@ def mock_thresholds():
 @pytest.fixture
 def mock_gateway_client():
     """Mock GatewayClient used internally by ConsensusGate."""
-    with patch("src.cage_finance.consensus.consensus.GatewayClient") as mock_cls:
+    with patch("src.gateway.governance.consensus.engine.GatewayClient") as mock_cls:
         mock_instance = MagicMock()
         mock_cls.return_value = mock_instance
         yield mock_instance
@@ -49,7 +49,7 @@ def mock_gateway_client():
 @pytest.fixture
 def mock_genai_span():
     """Mock the genai_span context manager to avoid telemetry in tests."""
-    with patch("src.cage_finance.consensus.consensus.genai_span") as mock_span_ctx:
+    with patch("src.gateway.governance.consensus.engine.genai_span") as mock_span_ctx:
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=mock_span)
         mock_span.__exit__ = MagicMock(return_value=False)

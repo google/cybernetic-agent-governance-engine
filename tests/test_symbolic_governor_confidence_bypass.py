@@ -32,14 +32,14 @@ Key property being tested:
 
 from __future__ import annotations
 
-from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
-from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-
 import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
 # Ensure CAGE_ENV=test so module-level production startup guards in
 # symbolic_governor.py (CBF_FAIL_OPEN=false, dowhy import) do not fire.
@@ -90,6 +90,8 @@ def _make_governor(
 
     governor = SymbolicGovernor(
         opa_client=mock_opa,
+        safety_filter=mock_cbf,
+        consensus_engine=mock_consensus,
         stpa_validator=mock_stpa,
     )
     governor.register_domain_tier(CBFTierPlugin(mock_cbf))

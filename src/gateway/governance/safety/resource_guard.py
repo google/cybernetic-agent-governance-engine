@@ -90,11 +90,12 @@ _RETRY_BASE_MS = 5  # Base backoff in ms (exponential with jitter)
 @dataclass(frozen=True)
 class ReservationToken:
     """Atomic fiscal limit reservation receipt.
-    
+
     Returned by FiscalLimitGuard.reserve() to attest that a slice of the daily
     fiscal limit has been atomically reserved in Redis. The token must be
     passed to confirm() or release() to finalize or cancel the reservation.
     """
+
     reservation_id: str
     agent_id: str
     amount_usd: float
@@ -498,6 +499,7 @@ class FiscalLimitGuard:
             cap_usd=self._daily_cap_usd,
             running_total_usd=running_total_usd,
             rejected=rejected,
+            reserved_at=time.time(),
             ttl_seconds=self._reservation_ttl,
         )
 

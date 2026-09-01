@@ -15,20 +15,25 @@
 """Healthcare-specific NeMo Guardrails UCA checks."""
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from opentelemetry import trace as _otel_trace
 
 try:
     from nemoguardrails.actions import action as _nemo_action
 
-    def action(name: str):  # type: ignore[misc]
+    def action(name: str) -> Any:
         """Thin wrapper that delegates to nemoguardrails.actions.action."""
         return _nemo_action(name=name)
 except ImportError:
-    def action(name: str):  # type: ignore[misc]
+
+    def action(name: str) -> Any:
         """No-op decorator used when nemoguardrails is not installed."""
-        def decorator(fn):
+
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             return fn
+
         return decorator
 
 
@@ -37,7 +42,9 @@ _tracer = _otel_trace.get_tracer("cage_healthcare.rails.actions")
 
 
 @action(name="CheckContraindicationAction")
-async def check_contraindication_action(context: dict | None = None, **kwargs) -> bool:
+async def check_contraindication_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — contraindication enforcement owned by OPA/clinical tier.
 
     Clinical policy (medication contraindications, allergies, drug interactions)
@@ -49,7 +56,9 @@ async def check_contraindication_action(context: dict | None = None, **kwargs) -
             "langfuse.trace.metadata.guardrail.action", "CheckContraindicationAction"
         )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
-        span.set_attribute("nemo.action.outcome", "PASS_THROUGH_CONSENSUS_AUTHORITATIVE")
+        span.set_attribute(
+            "nemo.action.outcome", "PASS_THROUGH_CONSENSUS_AUTHORITATIVE"
+        )
         logger.debug(
             "CheckContraindicationAction: pass-through (clinical_consensus_tier is authoritative)"
         )

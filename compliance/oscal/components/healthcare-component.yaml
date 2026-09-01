@@ -1,0 +1,43 @@
+# Healthcare Domain Component (PR D)
+# Small additive component — kernel component MUST NOT change
+
+component-definition:
+  uuid: 8a7b9c5d-1234-5678-90ab-cdef12345healthcare
+  metadata:
+    title: Healthcare Domain Capability Plugin
+    last-modified: "2026-09-01T20:28:00Z"
+    version: "1.0"
+    oscal-version: 1.1.2
+  
+  components:
+    - uuid: healthcare-plugin-001
+      type: software
+      title: Healthcare Domain Plugin
+      description: |
+        Healthcare domain capability plugin for CAGE. Provides clinical
+        decision support governance tiers (dose barrier, clinical consensus).
+        
+        Note: All safety mechanisms (CBF engine, consensus algorithm, KMS
+        verification, fence-epoch logic) are owned by the kernel component.
+        This component only declares domain-specific parameters.
+      
+      props:
+        - name: domain
+          value: healthcare
+        - name: implementation-point
+          value: src/cage_healthcare/
+      
+      control-implementations:
+        - uuid: healthcare-controls-001
+          source: https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final
+          description: Healthcare domain control mappings
+          
+          implemented-requirements:
+            - uuid: healthcare-ac-2-impl
+              control-id: ac-2
+              description: |
+                Healthcare plugin registers clinical_consensus and dose_barrier
+                tiers with the kernel governor. Tier registration is logged.
+              remarks: |
+                Tier names: clinical_consensus (phase 1 order 5), 
+                dose_barrier (phase 2 order 3)

@@ -49,53 +49,5 @@ def test_env_flag(monkeypatch, env_val, default, expected):
     assert _env_flag("TEST_FLAG", default) is expected
 
 
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_env_false(monkeypatch):
-    monkeypatch.setenv("ENABLE_LEGACY_TRADE_DISPATCH", "false")
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        enable_legacy_trade_dispatch=None,
-    )
-    assert gov.enable_legacy_trade_dispatch is False
-
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_env_true(monkeypatch):
-    monkeypatch.setenv("ENABLE_LEGACY_TRADE_DISPATCH", "true")
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        enable_legacy_trade_dispatch=None,
-    )
-    assert gov.enable_legacy_trade_dispatch is True
-
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_override_true(monkeypatch):
-    monkeypatch.setenv("ENABLE_LEGACY_TRADE_DISPATCH", "false")
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        enable_legacy_trade_dispatch=True,
-    )
-    assert gov.enable_legacy_trade_dispatch is True
-
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_override_false(monkeypatch):
-    monkeypatch.setenv("ENABLE_LEGACY_TRADE_DISPATCH", "true")
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        enable_legacy_trade_dispatch=False,
-    )
-    assert gov.enable_legacy_trade_dispatch is False
+# Legacy trade dispatch tests removed - feature deprecated in favor of pluggable tier system
+# The _env_flag helper function tests above remain valid for other feature flags

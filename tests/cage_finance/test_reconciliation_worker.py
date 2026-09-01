@@ -57,8 +57,8 @@ def _get_module():
     import sys
 
     # Force re-evaluation of module-level guards by evicting any cached import.
-    sys.modules.pop("src.cage_finance.compliance.reconciliation_worker", None)
-    return importlib.import_module("src.cage_finance.compliance.reconciliation_worker")
+    sys.modules.pop("src.gateway.governance.reconciliation.daemon", None)
+    return importlib.import_module("src.gateway.governance.reconciliation.daemon")
 
 
 def _make_fakeredis():

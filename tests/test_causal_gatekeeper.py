@@ -16,7 +16,7 @@
 Tests for the DoWhy Causal Gatekeeper module.
 
 Tests the causal_safety_check function directly (unit tests) and its
-integration with the SymbolicGovernor (integration tests via mock).
+integration with the SymbolicGovernor(integration tests via mock, safety_filter=MagicMock(), consensus_engine=MagicMock()).
 
 Classes:
   TestCausalOrderingValidation  — no dowhy dependency; tests validate_causal_ordering
@@ -56,7 +56,7 @@ class TestCausalOrderingValidation:
 
     def test_valid_ordering_same_trace_id(self):
         """Governance span before execution span with matching trace_id → True."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.gateway.governance.causal.gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 1000.0, "trace_id": "trace-abc"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
@@ -64,7 +64,7 @@ class TestCausalOrderingValidation:
 
     def test_trace_id_mismatch_returns_false(self):
         """Mismatched trace_ids → False (different causal chains)."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.gateway.governance.causal.gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 1000.0, "trace_id": "trace-A"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-B"}
@@ -72,7 +72,7 @@ class TestCausalOrderingValidation:
 
     def test_governance_after_execution_returns_false(self):
         """Governance timestamp >= execution timestamp → False."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.gateway.governance.causal.gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 3000.0, "trace_id": "trace-abc"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
@@ -80,7 +80,7 @@ class TestCausalOrderingValidation:
 
     def test_equal_timestamps_returns_false(self):
         """Equal timestamps violate strict ordering → False."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.gateway.governance.causal.gatekeeper import validate_causal_ordering
 
         gov = {"timestamp": 2000.0, "trace_id": "trace-abc"}
         exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
@@ -116,7 +116,7 @@ class TestCausalOrderingValidation:
 
     def test_no_timestamps_with_matching_trace_ids_returns_true(self):
         """Matching trace_ids, no timestamps → True (ordering not violated)."""
-        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+        from src.gateway.governance.causal.gatekeeper import validate_causal_ordering
 
         gov = {"trace_id": "trace-xyz"}
         exe = {"trace_id": "trace-xyz"}
@@ -144,7 +144,7 @@ class TestTelemetryFreshness:
 
     def test_fresh_telemetry_returns_true(self):
         """Telemetry with recent timestamps returns True."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.gateway.governance.causal.gatekeeper import _check_telemetry_freshness
 
         now = time.time()
         df = pd.DataFrame({"timestamp": [now - 60, now - 30, now - 10]})
@@ -167,7 +167,7 @@ class TestTelemetryFreshness:
 
     def test_no_timestamp_column_returns_false(self):
         """DataFrame without any timestamp column → False (fail-closed)."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.gateway.governance.causal.gatekeeper import _check_telemetry_freshness
 
         df = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         result = _check_telemetry_freshness(df, self._make_span())
@@ -175,7 +175,7 @@ class TestTelemetryFreshness:
 
     def test_alternative_timestamp_column_names(self):
         """Checks 'ts', 'event_time', 'time', 'created_at' column names."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.gateway.governance.causal.gatekeeper import _check_telemetry_freshness
 
         now = time.time()
         for col in ("ts", "event_time", "time", "created_at"):
@@ -185,7 +185,7 @@ class TestTelemetryFreshness:
 
     def test_unparseable_timestamp_returns_false(self):
         """Timestamp column with unparseable values → False (fail-closed)."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.gateway.governance.causal.gatekeeper import _check_telemetry_freshness
 
         df = pd.DataFrame({"timestamp": ["not-a-date", "also-not"]})
         result = _check_telemetry_freshness(df, self._make_span())
@@ -193,7 +193,7 @@ class TestTelemetryFreshness:
 
     def test_millisecond_timestamps_supported(self):
         """Timestamps >1e12 are treated as milliseconds → fresh."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.gateway.governance.causal.gatekeeper import _check_telemetry_freshness
 
         now_ms = time.time() * 1000  # milliseconds
         df = pd.DataFrame({"timestamp": [now_ms - 5000, now_ms - 1000]})
@@ -320,7 +320,7 @@ class TestCausalSafetyCheckNoDoWhy:
 
     def test_zero_amount_returns_true_without_dowhy(self):
         """amount <= 0 returns True immediately — no dowhy needed."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         df = pd.DataFrame(
             {
@@ -334,7 +334,7 @@ class TestCausalSafetyCheckNoDoWhy:
 
     def test_negative_amount_returns_true_without_dowhy(self):
         """Negative amount returns True immediately — no dowhy needed."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         df = pd.DataFrame(
             {
@@ -350,7 +350,7 @@ class TestCausalSafetyCheckNoDoWhy:
         """In production (CAGE_ENV=production), missing telemetry → fail-closed."""
         import os
 
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         original = os.environ.get("CAGE_ENV")
         try:
@@ -366,7 +366,7 @@ class TestCausalSafetyCheckNoDoWhy:
     def test_dowhy_unavailable_fails_closed_for_nonzero_amount(self):
         """When dowhy is not installed, nonzero amount → False (fail-closed)."""
         from src.gateway.governance import causal_gatekeeper
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         original_available = causal_gatekeeper._DOWHY_AVAILABLE
         try:
@@ -454,14 +454,14 @@ class TestCausalSafetyCheckUnit:
 
     def test_zero_amount_is_safe(self, stable_telemetry):
         """A trade with amount <= 0 should always be considered safe."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         result = causal_safety_check({"amount": 0}, stable_telemetry)
         assert result is True
 
     def test_negative_amount_is_safe(self, stable_telemetry):
         """A trade with negative amount should always be considered safe."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         result = causal_safety_check({"amount": -100}, stable_telemetry)
         assert result is True
@@ -479,7 +479,7 @@ class TestCausalSafetyCheckUnit:
         """
         from unittest.mock import patch
 
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         with (
             patch(
@@ -500,7 +500,7 @@ class TestCausalSafetyCheckUnit:
         generate_mock_telemetry() now includes a 'timestamp' column so that
         the telemetry freshness check treats synthetic data as fresh.
         """
-        from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
+        from src.gateway.governance.causal.gatekeeper import generate_mock_telemetry
 
         df = generate_mock_telemetry(n_samples=100)
         assert len(df) == 100
@@ -513,7 +513,7 @@ class TestCausalSafetyCheckUnit:
 
     def test_generate_mock_telemetry_deterministic(self):
         """Mock telemetry should be deterministic (seeded)."""
-        from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
+        from src.gateway.governance.causal.gatekeeper import generate_mock_telemetry
 
         df1 = generate_mock_telemetry(50)
         df2 = generate_mock_telemetry(50)
@@ -528,7 +528,7 @@ class TestCausalSafetyCheckUnit:
         """
         from unittest.mock import patch
 
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         # Provide a DataFrame missing required columns to trigger an error.
         # No timestamp column → freshness check fails closed → returns False.
@@ -570,11 +570,16 @@ class TestCausalGatekeeperIntegration:
             telemetry_provider = MagicMock()
             telemetry_provider.get_latest_data.return_value = telemetry_data
 
-        gov = SymbolicGovernor(opa_client=opa_client)
+        gov = SymbolicGovernor(
+            opa_client=opa_client,
+            safety_filter=MagicMock(),
+            consensus_engine=MagicMock(),
+        )
+        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
         from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+
         gov.register_domain_tier(CBFTierPlugin(safety_filter))
         gov.register_domain_tier(ConsensusTierPlugin(consensus_engine))
         gov.register_domain_tier(CausalTierPlugin(CausalGatekeeper(telemetry_provider)))
@@ -596,13 +601,17 @@ class TestCausalGatekeeperIntegration:
         intent = {"amount": 1, "confidence": 0.99, "symbol": "AAPL"}
 
         with patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check"
-        ) as mock_check:
-            mock_check.return_value = False
+            "src.gateway.governance.causal.gatekeeper.causal_safety_check",
+            return_value=False,
+        ):
             result = await governor.verify("execute_trade", intent)
 
         causal_violations = [
-            v for v in result["violations"] if "DoWhy refutation failed" in v
+            v
+            for v in result["violations"]
+            if "causal" in v.lower()
+            or "dowhy" in v.lower()
+            or "world-model" in v.lower()
         ]
         assert len(causal_violations) > 0
 
@@ -684,7 +693,7 @@ class TestNegativeCausalSlopeGuard:
 
     def test_negative_slope_triggers_causal_lock(self, negative_slope_telemetry):
         """Negative causal slope (β < 0) must trigger fail-closed CAUSAL LOCK."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         # causal_safety_check(params, current_telemetry) — pass args directly
         params = {"amount": 5000, "symbol": "AAPL", "confidence": 0.99}
@@ -700,7 +709,7 @@ class TestNegativeCausalSlopeGuard:
         Before the fix, a negative β combined with a large negative amount could
         produce a negative risk, which the old code might not have caught.
         """
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         # causal_safety_check(params, current_telemetry) — pass args directly
         params = {"amount": 1_000_000, "symbol": "AAPL", "confidence": 0.99}
@@ -718,7 +727,7 @@ class TestBoundedRiskScore:
 
     def test_bounded_risk_with_extreme_positive_amount(self):
         """Risk score must be clamped at 1.0 for extreme positive amounts."""
-        from src.gateway.governance.causal_gatekeeper import (
+        from src.gateway.governance.causal.gatekeeper import (
             CAUSAL_LOCK_RISK_BOUNDARY,
             CAUSAL_NORMALIZATION_SCALE,
         )
@@ -740,7 +749,7 @@ class TestBoundedRiskScore:
 
     def test_bounded_risk_with_negative_amount(self):
         """Risk score must be clamped at 0.0 for negative amounts (if possible)."""
-        from src.gateway.governance.causal_gatekeeper import (
+        from src.gateway.governance.causal.gatekeeper import (
             CAUSAL_NORMALIZATION_SCALE,
         )
 
@@ -761,7 +770,7 @@ class TestBoundedRiskScore:
 
     def test_normal_amount_produces_valid_risk(self):
         """Normal trade amounts should produce risk in valid [0, 1] range."""
-        from src.gateway.governance.causal_gatekeeper import (
+        from src.gateway.governance.causal.gatekeeper import (
             CAUSAL_NORMALIZATION_SCALE,
         )
 

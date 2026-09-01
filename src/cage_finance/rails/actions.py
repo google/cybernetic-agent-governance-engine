@@ -20,23 +20,25 @@ belong in the finance plugin, not the kernel.
 """
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from opentelemetry import trace as _otel_trace
 
 try:
     from nemoguardrails.actions import action as _nemo_action
 
-    def action(name: str):  # type: ignore[misc]
+    def action(name: str) -> Any:
         """Thin wrapper that delegates to nemoguardrails.actions.action."""
         return _nemo_action(name=name)
 except ImportError:
     # nemoguardrails not installed (e.g. in unit-test environments).
     # Provide a no-op decorator so the module can still be imported and
     # all action functions remain callable.
-    def action(name: str):  # type: ignore[misc]
+    def action(name: str) -> Any:
         """No-op decorator used when nemoguardrails is not installed."""
 
-        def decorator(fn):
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             return fn
 
         return decorator
@@ -48,7 +50,9 @@ _tracer = _otel_trace.get_tracer("cage_finance.rails.actions")
 
 
 @action(name="CheckDataLatencyAction")
-async def check_data_latency_action(context: dict | None = None, **kwargs) -> bool:
+async def check_data_latency_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — market data latency enforcement owned by OPA safety_check_node.
 
     Financial policy (FIN-2) is enforced by the safety_check_node → OPA path.
@@ -69,7 +73,9 @@ async def check_data_latency_action(context: dict | None = None, **kwargs) -> bo
 
 
 @action(name="CheckDrawdownLimitAction")
-async def check_drawdown_limit_action(context: dict | None = None, **kwargs) -> bool:
+async def check_drawdown_limit_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — drawdown limit enforcement owned by OPA safety_check_node.
 
     Financial policy (UCA-5) is enforced by the safety_check_node → OPA path.
@@ -90,7 +96,9 @@ async def check_drawdown_limit_action(context: dict | None = None, **kwargs) -> 
 
 
 @action(name="CheckSlippageRiskAction")
-async def check_slippage_risk_action(context: dict | None = None, **kwargs) -> bool:
+async def check_slippage_risk_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — slippage risk enforcement owned by OPA safety_check_node.
 
     Financial policy (UCA-6) is enforced by the safety_check_node → OPA path.

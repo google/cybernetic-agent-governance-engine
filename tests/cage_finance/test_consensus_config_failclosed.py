@@ -84,34 +84,3 @@ class TestConsensusContextSignature:
             context={"amount": 100.0, "symbol": "AAPL"},
         )
         assert result["status"] == "SKIPPED"
-
-
-class TestLegacyConsensusAdapter:
-    """Verify the _LegacyConsensusAdapter bridges old (action, amount, symbol) calls."""
-
-    @pytest.mark.asyncio
-    async def test_adapter_translates_positional_to_context(self):
-        """The adapter wraps (action, amount, symbol) into the new signature."""
-        from src.gateway.governance.contracts import _LegacyConsensusAdapter
-
-        inner = AsyncMock()
-        inner.check_consensus.return_value = {
-            "status": "APPROVE",
-            "reason": "test",
-            "votes": [],
-        }
-
-        adapter = _LegacyConsensusAdapter(inner)
-        result = await adapter.check_consensus("buy", 5000.0, "AAPL")
-
-        # Verify the adapter called inner with the new signature
-        inner.check_consensus.assert_called_once_with(
-            "buy",
-            context={"amount": 5000.0, "symbol": "AAPL"},
-            magnitude=5000.0,
-        )
-        assert result["status"] == "APPROVE"
-
-    @pytest.mark.asyncio
-    async def test_adapter_preserves_return_value(self):
-        pass
