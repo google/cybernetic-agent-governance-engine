@@ -235,11 +235,11 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
             return self._fallback.get_latest_data(n_samples)
 
         try:
-            # Fetch recent execute_trade traces from Langfuse.
+            # Fetch recent traces from Langfuse (domain-agnostic).
             # The Langfuse SDK `fetch_traces` returns a paginated response;
             # we limit to n_samples to bound latency.
+            # Note: Without a name filter, this fetches all recent traces.
             response = self._client.fetch_traces(  # type: ignore[attr-defined]
-                name="execute_trade",
                 limit=n_samples,
             )
             traces = response.data if hasattr(response, "data") else []

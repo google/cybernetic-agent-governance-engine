@@ -105,13 +105,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     logger.info("🔥 Pre-warming OPA policy evaluation...")
     synthetic_params = {
-        "action": "execute_trade",
-        "symbol": "AAPL",
+        "action": "system_warmup_test",
+        "resource": "test_resource",
         "amount": 100.0,
-        "currency": "USD",
-        "trader_role": "junior",
         "user_id": "system_warmup",
-        "risk_profile": "moderate",
         "dry_run": True,
     }
     try:

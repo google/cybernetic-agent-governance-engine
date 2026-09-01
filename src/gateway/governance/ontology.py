@@ -174,15 +174,8 @@ class TradingKnowledgeGraph:
             )
         )
 
-        # New: Map executing trades to constraints (for the SymbolicGovernor)
-        self.add_constraint(
-            Constraint(
-                id="FIN-2",
-                description="Agent must not execute trade if latency > 200ms",
-                logic="latency_ms <= 200",
-                scope=["execute_trade"],
-            )
-        )
+        # Domain-specific constraints (FIN-*) moved to domain plugins in PR C.
+        # The kernel ontology remains domain-agnostic per the Three-Layer Split Rule.
 
     # QUAL-06: Authoritative ISO 42001 mapping from OSCAL component-definition.yaml
     #

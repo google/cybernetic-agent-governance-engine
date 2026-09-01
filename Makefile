@@ -104,20 +104,20 @@ verify-deploy: ## Verify GKE deployment matches latest build and all Secrets are
 
 ## Fast local test run (no coverage, parallel) — the default developer shortcut
 test-fast:
-	uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --no-cov -q
+	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q
 
 ## Run only tests that failed in the last run (fastest feedback loop)
 test-last-failed:
-	uv run pytest tests/ -m "local or unit" --lf --dist=loadfile -n auto -q
+	uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q
 
 ## Full local run with coverage (mirrors CI)
 test-coverage:
-	uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75
+	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75
 
 ## Randomized test order (weekly, for dependency detection)
 ## Reproduce a failure: uv run pytest --randomly-seed=last
 test-random:
-	uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile -p randomly --randomly-seed=0 -q
+	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p randomly --randomly-seed=0 -q
 
 ## Default: fast run
 test: test-fast

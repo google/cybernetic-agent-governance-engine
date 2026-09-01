@@ -58,7 +58,8 @@ os.environ.setdefault(
 
 import pytest
 
-# Disable fork safety crashes on macOS (Obj-C runtime abort in xdist workers)
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
+os.environ.setdefault("LANGSMITH_TRACING", "false")
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("EVIDENCE_STREAM_ENABLED", "true")

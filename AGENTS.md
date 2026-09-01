@@ -148,23 +148,32 @@ and `pyproject.toml`). All test and verification invocations must be prefixed wi
 Never invoke `pytest`, `python`, or `python -m pytest` directly without the `uv run`
 prefix — doing so bypasses the project's locked, reproducible virtual environment.
 
-When running tests in parallel with `pytest-xdist` (`-n auto`), always launch
-the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
+When running tests in parallel with `pytest-xdist` (`-n auto`), launch the test suite
+with `--dist loadscope` (or `--dist=loadfile`) to preserve module/class fixture and event loop
+reuse and prevent cross-worker fixture churn.
+
+**Test Performance & Fast Local Iteration Rules:**
+1. **Parallel Worker Distribution**: Use `-n auto --dist loadscope` to group module/class tests on the same worker process.
+2. **Disable Coverage Locally**: Do not run `--cov` during fast development cycles — `pytest-cov` / `sys.settrace` adds 30% to 100% overhead. Pass `--no-cov` (or use `make test-fast`) and reserve `--cov` for pre-merge validation (`make test-coverage`) or CI.
+3. **Disable Heavy Telemetry Plugins**: Disable LangSmith/tracing plugins during local test runs with `-p no:langsmith` and `LANGCHAIN_TRACING_V2=false`.
+4. **Asyncio Loop Scoping**: `pytest-asyncio` is configured with `asyncio_default_fixture_loop_scope = module` and `asyncio_default_test_loop_scope = module` in `pytest.ini` to avoid per-test event loop teardown overhead.
+5. **Slow Test Profiling**: Use `--durations=20 --durations-min=1.0` to diagnose slow tests and setup/teardown bottlenecks.
 
 Correct:
 ```bash
 uv run pytest
-uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith --tb=short
 uv run pytest tests/test_tls_enforcement.py -v
 uv run pytest --cov=src --cov-report=term-missing
 uv run python proof/model.py
+make test-fast
 ```
 
 Incorrect (do not suggest):
 ```bash
 pytest
 python -m pytest
-pytest -n auto  # Missing --dist=loadfile and uv run prefix
+pytest -n auto  # Missing --dist loadscope and uv run prefix
 python proof/model.py
 ```
 
@@ -357,9 +366,20 @@ If you use a tool that requires a legacy configuration filename (e.g. `CLAUDE.md
 The canonical way to run the full local and unit test suite across multiple workers:
 
 ```bash
-uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith --tb=short
+# Or via Makefile shortcut:
+make test-fast
 ```
-Always launch the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
+Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to ensure proper test file and fixture isolation across workers.
+
+### Fast Local Development & Profiling Reference
+
+| Goal / Workflow | Canonical Command |
+|---|---|
+| **Fast dev run (parallel, no coverage)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q` (or `make test-fast`) |
+| **Run only last failed tests** | `uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q` (or `make test-last-failed`) |
+| **Profile slowest tests & fixtures** | `uv run pytest --durations=20 --durations-min=1.0` |
+| **Full suite with coverage (mirrors CI)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75` (or `make test-coverage`) |
 
 ### Targeted Test Commands Reference
 
