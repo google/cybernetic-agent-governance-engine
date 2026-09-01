@@ -24,18 +24,28 @@ Gate: G5 (standing assembly from multi-tier violations)
 
 import pytest
 from typing import Any
+from unittest.mock import MagicMock
 
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 from src.gateway.governance.contracts import Violation
+
+
+@pytest.fixture
+def mock_governor() -> SymbolicGovernor:
+    """Create a SymbolicGovernor with mock dependencies."""
+    opa_client = MagicMock()
+    safety_filter = MagicMock()
+    consensus_engine = MagicMock()
+    return SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
 
 @pytest.mark.local
 class TestStandingAssembly:
     """Standing context assembly tests."""
 
-    def test_build_standing_with_single_violation(self) -> None:
+    def test_build_standing_with_single_violation(self, mock_governor: SymbolicGovernor) -> None:
         """Single violation produces standing with tier_failures."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="test_tier",
@@ -52,9 +62,9 @@ class TestStandingAssembly:
         assert standing["tier_failures"][0]["tier"] == "test_tier"
         assert standing["tier_failures"][0]["rule_description"] == "TEST_RULE"
 
-    def test_build_standing_with_multiple_violations(self) -> None:
+    def test_build_standing_with_multiple_violations(self, mock_governor: SymbolicGovernor) -> None:
         """Multiple violations produce multiple tier_failures entries."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="tier_a",
@@ -76,9 +86,9 @@ class TestStandingAssembly:
         assert standing["tier_failures"][0]["tier"] == "tier_a"
         assert standing["tier_failures"][1]["tier"] == "tier_b"
 
-    def test_build_standing_preserves_violation_fields(self) -> None:
+    def test_build_standing_preserves_violation_fields(self, mock_governor: SymbolicGovernor) -> None:
         """Standing preserves all violation fields in tier_failures."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="finance_tier",
@@ -100,17 +110,17 @@ class TestStandingAssembly:
         assert failure["governing_state"] == {"balance": 1000.0}
         assert failure["protected_consequence"] == "fiscal_breach"
 
-    def test_build_standing_with_empty_violations_list(self) -> None:
+    def test_build_standing_with_empty_violations_list(self, mock_governor: SymbolicGovernor) -> None:
         """Empty violations list produces empty tier_failures."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         standing = gov._build_standing([])
 
         assert "tier_failures" in standing
         assert standing["tier_failures"] == []
 
-    def test_violations_to_strings_conversion(self) -> None:
+    def test_violations_to_strings_conversion(self, mock_governor: SymbolicGovernor) -> None:
         """_violations_to_strings() converts violations to readable strings."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="tier_a",
@@ -134,9 +144,9 @@ class TestStandingAssembly:
         assert "tier_b" in strings[1]
         assert "RULE_B" in strings[1]
 
-    def test_violations_to_failures_dict_conversion(self) -> None:
+    def test_violations_to_failures_dict_conversion(self, mock_governor: SymbolicGovernor) -> None:
         """_violations_to_failures() converts violations to dict format."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="example_tier",
@@ -157,9 +167,9 @@ class TestStandingAssembly:
 class TestStandingAssemblyEdgeCases:
     """Edge case validation for standing assembly."""
 
-    def test_violation_with_minimal_fields(self) -> None:
+    def test_violation_with_minimal_fields(self, mock_governor: SymbolicGovernor) -> None:
         """Violation with only required fields assembles correctly."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="min_tier",
@@ -179,9 +189,9 @@ class TestStandingAssemblyEdgeCases:
         assert failure.get("governing_state") == {}
         assert failure.get("protected_consequence") == ""
 
-    def test_violation_severity_preserved(self) -> None:
+    def test_violation_severity_preserved(self, mock_governor: SymbolicGovernor) -> None:
         """Violation severity is not included in tier_failures dict."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         violations = [
             Violation(
                 tier="tier",

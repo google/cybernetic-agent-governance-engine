@@ -23,32 +23,42 @@ Gate: G2 (capability predicate coverage)
 
 import pytest
 from typing import Any
+from unittest.mock import MagicMock
 
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
+
+
+@pytest.fixture
+def mock_governor() -> SymbolicGovernor:
+    """Create a SymbolicGovernor with mock dependencies."""
+    opa_client = MagicMock()
+    safety_filter = MagicMock()
+    consensus_engine = MagicMock()
+    return SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
 
 @pytest.mark.local
 class TestCapabilityDispatchCoverage:
     """Capability predicate dispatch tests."""
 
-    def test_is_governed_action_accepts_any_action(self) -> None:
+    def test_is_governed_action_accepts_any_action(self, mock_governor: SymbolicGovernor) -> None:
         """_is_governed_action() accepts any action name (no hardcoded literals)."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
 
         # The kernel is domain-agnostic and should not hardcode action names
         assert gov._is_governed_action("execute_trade", {}) is True
         assert gov._is_governed_action("prescribe_medication", {}) is True
         assert gov._is_governed_action("arbitrary_action", {}) is True
 
-    def test_is_governed_action_returns_bool(self) -> None:
+    def test_is_governed_action_returns_bool(self, mock_governor: SymbolicGovernor) -> None:
         """_is_governed_action() returns a boolean."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         result = gov._is_governed_action("test_action", {})
         assert isinstance(result, bool)
 
-    def test_is_governed_action_with_params(self) -> None:
+    def test_is_governed_action_with_params(self, mock_governor: SymbolicGovernor) -> None:
         """_is_governed_action() accepts params for future predicate expansion."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         
         # Currently accepts any action, but params could be used for
         # future capability-based filtering
@@ -60,9 +70,9 @@ class TestCapabilityDispatchCoverage:
 class TestDomainAgnosticismEnforcement:
     """Domain-agnosticism enforcement tests."""
 
-    def test_no_hardcoded_execute_trade_in_kernel(self) -> None:
+    def test_no_hardcoded_execute_trade_in_kernel(self, mock_governor: SymbolicGovernor) -> None:
         """Kernel does not hardcode 'execute_trade' action name."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         
         # The old implementation had literals like:
         # if tool_name == "execute_trade": ...
@@ -73,9 +83,9 @@ class TestDomainAgnosticismEnforcement:
         assert gov._is_governed_action("execute_trade", {}) is True
         assert gov._is_governed_action("other_action", {}) is True
 
-    def test_kernel_accepts_domain_plugin_actions(self) -> None:
+    def test_kernel_accepts_domain_plugin_actions(self, mock_governor: SymbolicGovernor) -> None:
         """Kernel accepts actions from any domain (finance, healthcare, etc)."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         
         # Finance domain
         assert gov._is_governed_action("execute_trade", {}) is True
@@ -90,16 +100,16 @@ class TestDomainAgnosticismEnforcement:
 class TestCapabilityPredicateContract:
     """Capability predicate contract tests."""
 
-    def test_capability_predicate_signature(self) -> None:
+    def test_capability_predicate_signature(self, mock_governor: SymbolicGovernor) -> None:
         """Capability predicates accept (action: str, params: dict) -> bool."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         
         # Signature: (action: str, params: dict[str, Any]) -> bool
         result = gov._is_governed_action("test_action", {"param": "value"})
         assert isinstance(result, bool)
 
-    def test_empty_params_accepted(self) -> None:
+    def test_empty_params_accepted(self, mock_governor: SymbolicGovernor) -> None:
         """Capability predicates accept empty params dict."""
-        gov = SymbolicGovernor()
+        gov = mock_governor
         result = gov._is_governed_action("test_action", {})
         assert isinstance(result, bool)
