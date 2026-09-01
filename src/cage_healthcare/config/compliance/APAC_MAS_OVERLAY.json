@@ -1,0 +1,15 @@
+{
+  "healthcare": {
+    "description": "Healthcare domain compliance overlay for APAC MAS regulations",
+    "controls": {
+      "PDPA_HEALTH": {
+        "citation": "Singapore PDPA (health data)",
+        "implementation": "src/cage_healthcare/tiers/clinical_consensus_tier.py"
+      },
+      "HSA_DOSING": {
+        "citation": "HSA therapeutic product guidelines",
+        "implementation": "src/cage_healthcare/tiers/dose_barrier_tier.py"
+      }
+    }
+  }
+}

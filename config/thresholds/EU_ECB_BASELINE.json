@@ -100,5 +100,11 @@
     "sla_hours": 2.0,
     "pii_retention_authority": "GDPR Art. 5(1)(e)",
     "injection_citation": "EU AI Act Art. 9 (risk management system — robustness)"
+  },
+  "healthcare": {
+    "_comment": "Healthcare domain thresholds (PR D)",
+    "min_therapeutic_concentration": 5.0,
+    "max_safe_concentration": 20.0,
+    "gamma": 0.4
   }
 }

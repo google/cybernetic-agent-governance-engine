@@ -1,0 +1,54 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Healthcare domain STPA hazards (PR D)
+# Illustrative dosing hazards for the healthcare plugin
+
+domain: healthcare
+version: "1.0"
+
+hazards:
+  - id: H-HEALTH-1
+    description: "Toxic dose administered (overdose)"
+    severity: critical
+    consequence: "Patient harm from excessive medication"
+
+  - id: H-HEALTH-2
+    description: "Subtherapeutic dose administered (underdose)"
+    severity: high
+    consequence: "Ineffective treatment, disease progression"
+
+  - id: H-HEALTH-3
+    description: "Contraindicated medication administered"
+    severity: critical
+    consequence: "Adverse drug reaction, patient harm"
+
+unsafe_control_actions:
+  - id: UCA-HEALTH-1
+    hazard_link: H-HEALTH-1
+    description: "Administer dose when serum concentration exceeds safe threshold"
+    detection_pattern: "action='administer_dose' AND dose_mg > max_safe_concentration"
+    control_action: "Block dosing when barrier violated"
+
+  - id: UCA-HEALTH-2
+    hazard_link: H-HEALTH-2
+    description: "Administer dose when serum concentration below therapeutic minimum"
+    detection_pattern: "action='administer_dose' AND dose_mg < min_therapeutic_concentration"
+    control_action: "Alert clinician, recommend adjustment"
+
+  - id: UCA-HEALTH-3
+    hazard_link: H-HEALTH-3
+    description: "Administer contraindicated medication"
+    detection_pattern: "action='administer_dose' AND contraindication_detected=true"
+    control_action: "Block and escalate to clinical review"

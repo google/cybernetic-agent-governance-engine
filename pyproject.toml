@@ -278,3 +278,4 @@ en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/dow
 
 [project.entry-points."cage.plugins"]
 finance = "cage_finance.plugin:FinanceCagePlugin"
+healthcare = "cage_healthcare.plugin:HealthcareCagePlugin"

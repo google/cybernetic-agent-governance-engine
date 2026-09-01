@@ -1,0 +1,15 @@
+{
+  "healthcare": {
+    "description": "Healthcare domain compliance overlay for US Federal regulations",
+    "controls": {
+      "HIPAA_PRIVACY": {
+        "citation": "45 CFR 164.502",
+        "implementation": "src/cage_healthcare/tiers/clinical_consensus_tier.py"
+      },
+      "SAFE_DOSING": {
+        "citation": "FDA 21 CFR 314.80",
+        "implementation": "src/cage_healthcare/tiers/dose_barrier_tier.py"
+      }
+    }
+  }
+}

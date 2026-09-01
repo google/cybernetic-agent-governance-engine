@@ -63,5 +63,11 @@
     "sla_hours": 4.0,
     "pii_retention_authority": "FISMA AU-11",
     "injection_citation": "AI 600-1 §2.3 (prompt injection — US Federal posture)"
+  },
+  "healthcare": {
+    "_comment": "Healthcare domain thresholds (PR D)",
+    "min_therapeutic_concentration": 5.0,
+    "max_safe_concentration": 20.0,
+    "gamma": 0.4
   }
 }

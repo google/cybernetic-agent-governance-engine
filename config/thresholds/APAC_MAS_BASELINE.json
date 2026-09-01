@@ -98,5 +98,11 @@
     "sla_hours": 1.0,
     "pii_retention_authority": "MAS Notice 655 §4.3",
     "injection_citation": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)"
+  },
+  "healthcare": {
+    "_comment": "Healthcare domain thresholds (PR D)",
+    "min_therapeutic_concentration": 5.0,
+    "max_safe_concentration": 20.0,
+    "gamma": 0.4
   }
 }
