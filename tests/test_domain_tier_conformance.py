@@ -16,7 +16,7 @@
 
 Validates that GovernanceTierPlugin implementations conform to the canonical
 protocol contract: tier_name, phase, order properties, claims_action() predicate,
-and check_action() async validator.
+and evaluate() async validator.
 
 Part of: PR A - Capability-Driven Tier Dispatch (Stage 8)
 Gate: G4 (tier interface contract compliance)
@@ -57,11 +57,21 @@ class MinimalTier:
         """Accept any action containing 'test' in the name."""
         return "test" in action.lower()
 
-    async def check_action(
+    async def evaluate(
         self, action: str, params: dict[str, Any]
     ) -> list[Violation]:
-        """Always pass."""
+        """Phase 1: Always pass."""
         return []
+
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> list[Violation]:
+        """Phase 2: Always pass."""
+        return []
+
+    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+        """Phase 2: No-op rollback."""
+        pass
 
 
 class UnclaimedTier(MinimalTier):
@@ -74,14 +84,14 @@ class UnclaimedTier(MinimalTier):
 class FailingTier(MinimalTier):
     """Tier that always emits a violation."""
 
-    async def check_action(
+    async def evaluate(
         self, action: str, params: dict[str, Any]
     ) -> list[Violation]:
         return [
             Violation(
                 tier=self.tier_name,
-                rule="ALWAYS_FAIL",
-                severity="blocked",
+                code="ALWAYS_FAIL",
+                # severity removed - not in base Violation,
                 message="Test violation",
             )
         ]
@@ -105,10 +115,10 @@ class TestGovernanceTierPluginProtocol:
         assert tier.claims_action("unrelated_action", {}) is False
 
     @pytest.mark.asyncio
-    async def test_minimal_tier_check_action_returns_violations(self) -> None:
-        """check_action() returns a list of Violation instances."""
+    async def test_minimal_tier_evaluate_returns_violations(self) -> None:
+        """evaluate() returns a list of Violation instances."""
         tier = MinimalTier()
-        violations = await tier.check_action("test_action", {})
+        violations = await tier.evaluate("test_action", {})
         assert isinstance(violations, list)
         assert all(isinstance(v, Violation) for v in violations)
 
@@ -122,11 +132,10 @@ class TestGovernanceTierPluginProtocol:
     async def test_failing_tier_emits_violation(self) -> None:
         """Tier can emit violations with structured findings."""
         tier = FailingTier(tier_name="strict_tier")
-        violations = await tier.check_action("test_action", {})
+        violations = await tier.evaluate("test_action", {})
         assert len(violations) == 1
         assert violations[0].tier == "strict_tier"
-        assert violations[0].rule == "ALWAYS_FAIL"
-        assert violations[0].severity == "blocked"
+        assert violations[0].code == "ALWAYS_FAIL"
 
 
 @pytest.mark.local
@@ -151,8 +160,8 @@ class TestTierProtocolEdgeCases:
         assert tier2.phase == 2
 
     @pytest.mark.asyncio
-    async def test_tier_check_action_can_return_empty_list(self) -> None:
-        """check_action() returning [] indicates no violations."""
+    async def test_tier_evaluate_can_return_empty_list(self) -> None:
+        """evaluate() returning [] indicates no violations."""
         tier = MinimalTier()
-        violations = await tier.check_action("test_action", {})
+        violations = await tier.evaluate("test_action", {})
         assert violations == []

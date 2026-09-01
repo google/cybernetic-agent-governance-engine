@@ -49,18 +49,18 @@ class TestStandingAssembly:
         violations = [
             Violation(
                 tier="test_tier",
-                rule="TEST_RULE",
-                severity="blocked",
+                code="TEST_RULE",
+                # severity removed - not in base Violation,
                 message="Test violation",
             )
         ]
 
         standing = gov._build_standing(violations)
 
-        assert "tier_failures" in standing
-        assert len(standing["tier_failures"]) == 1
-        assert standing["tier_failures"][0]["tier"] == "test_tier"
-        assert standing["tier_failures"][0]["rule_description"] == "TEST_RULE"
+        assert "failures" in standing
+        assert len(standing["failures"]) == 1
+        assert standing["failures"][0]["tier"] == "test_tier"
+        assert standing["failures"][0]["rule_description"] == "TEST_RULE"
 
     def test_build_standing_with_multiple_violations(self, mock_governor: SymbolicGovernor) -> None:
         """Multiple violations produce multiple tier_failures entries."""
@@ -68,23 +68,23 @@ class TestStandingAssembly:
         violations = [
             Violation(
                 tier="tier_a",
-                rule="RULE_A",
-                severity="blocked",
+                code="RULE_A",
+                # severity removed - not in base Violation,
                 message="Violation A",
             ),
             Violation(
                 tier="tier_b",
-                rule="RULE_B",
-                severity="review",
+                code="RULE_B",
+                # severity removed - not in base Violation,
                 message="Violation B",
             ),
         ]
 
         standing = gov._build_standing(violations)
 
-        assert len(standing["tier_failures"]) == 2
-        assert standing["tier_failures"][0]["tier"] == "tier_a"
-        assert standing["tier_failures"][1]["tier"] == "tier_b"
+        assert len(standing["failures"]) == 2
+        assert standing["failures"][0]["tier"] == "tier_a"
+        assert standing["failures"][1]["tier"] == "tier_b"
 
     def test_build_standing_preserves_violation_fields(self, mock_governor: SymbolicGovernor) -> None:
         """Standing preserves all violation fields in tier_failures."""
@@ -92,18 +92,18 @@ class TestStandingAssembly:
         violations = [
             Violation(
                 tier="finance_tier",
-                rule="CBF_BARRIER",
-                severity="blocked",
+                code="CBF_BARRIER",
+                # severity removed - not in base Violation,
                 message="Barrier violation",
-                control_id="FIN-001",
-                governing_state={"balance": 1000.0},
-                protected_consequence="fiscal_breach",
+                # control_id removed - not in base Violation,
+                # governing_state removed,
+                # protected_consequence removed,
             )
         ]
 
         standing = gov._build_standing(violations)
 
-        failure = standing["tier_failures"][0]
+        failure = standing["failures"][0]
         assert failure["tier"] == "finance_tier"
         assert failure["rule_description"] == "CBF_BARRIER"
         assert failure["control_id"] == "FIN-001"
@@ -115,8 +115,8 @@ class TestStandingAssembly:
         gov = mock_governor
         standing = gov._build_standing([])
 
-        assert "tier_failures" in standing
-        assert standing["tier_failures"] == []
+        assert "failures" in standing
+        assert standing["failures"] == []
 
     def test_violations_to_strings_conversion(self, mock_governor: SymbolicGovernor) -> None:
         """_violations_to_strings() converts violations to readable strings."""
@@ -124,14 +124,14 @@ class TestStandingAssembly:
         violations = [
             Violation(
                 tier="tier_a",
-                rule="RULE_A",
-                severity="blocked",
+                code="RULE_A",
+                # severity removed - not in base Violation,
                 message="Blocked by tier A",
             ),
             Violation(
                 tier="tier_b",
-                rule="RULE_B",
-                severity="review",
+                code="RULE_B",
+                # severity removed - not in base Violation,
                 message="Review required",
             ),
         ]
@@ -150,8 +150,8 @@ class TestStandingAssembly:
         violations = [
             Violation(
                 tier="example_tier",
-                rule="EXAMPLE_RULE",
-                severity="blocked",
+                code="EXAMPLE_RULE",
+                # severity removed - not in base Violation,
                 message="Example violation",
             )
         ]
@@ -173,14 +173,14 @@ class TestStandingAssemblyEdgeCases:
         violations = [
             Violation(
                 tier="min_tier",
-                rule="MIN_RULE",
-                severity="blocked",
+                code="MIN_RULE",
+                # severity removed - not in base Violation,
                 message="Minimal",
             )
         ]
 
         standing = gov._build_standing(violations)
-        failure = standing["tier_failures"][0]
+        failure = standing["failures"][0]
 
         assert failure["tier"] == "min_tier"
         assert failure["rule_description"] == "MIN_RULE"
@@ -195,14 +195,14 @@ class TestStandingAssemblyEdgeCases:
         violations = [
             Violation(
                 tier="tier",
-                rule="RULE",
-                severity="review",
+                code="RULE",
+                # severity removed - not in base Violation,
                 message="Test",
             )
         ]
 
         standing = gov._build_standing(violations)
-        failure = standing["tier_failures"][0]
+        failure = standing["failures"][0]
 
         # severity is a Violation field but not included in the failure dict
         assert "severity" not in failure

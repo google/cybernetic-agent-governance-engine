@@ -73,7 +73,7 @@ class OrderTrackingTier:
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         return self._claims_all
 
-    async def check_action(
+    async def evaluate(
         self, action: str, params: dict[str, Any]
     ) -> list[Violation]:
         OrderTrackingTier.execution_log.append((self._tier_name, action))
@@ -82,7 +82,7 @@ class OrderTrackingTier:
                 Violation(
                     tier=self._tier_name,
                     rule=self._violation_rule,
-                    severity="blocked",
+                    # severity removed - not in base Violation,
                     message=f"Violation from {self._tier_name}",
                 )
             ]
@@ -155,10 +155,10 @@ class TestTierDispatchOrdering:
         gov = mock_governor
         
         gov.register_domain_tier(
-            OrderTrackingTier("tier1", phase=1, order=100, violation_rule="RULE_A")
+            OrderTrackingTier("tier1", phase=1, order=100, violation_code="RULE_A")
         )
         gov.register_domain_tier(
-            OrderTrackingTier("tier2", phase=1, order=200, violation_rule="RULE_B")
+            OrderTrackingTier("tier2", phase=1, order=200, violation_code="RULE_B")
         )
 
         violations = await gov._run_domain_tiers("test_action", {}, phase=1)

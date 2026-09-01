@@ -945,11 +945,12 @@ class SymbolicGovernor:
                 failure["tier"] = v.tier
             if v.needs_human_review:
                 failure["needs_human_review"] = True
-            if v.severity:
+            # Optional fields (may not exist on all Violation instances)
+            if hasattr(v, "severity") and v.severity:
                 failure["severity"] = v.severity
-            if v.threshold is not None:
+            if hasattr(v, "threshold") and v.threshold is not None:
                 failure["threshold"] = v.threshold
-            if v.observed is not None:
+            if hasattr(v, "observed") and v.observed is not None:
                 failure["observed"] = v.observed
             out.append(failure)
         return out
@@ -966,7 +967,7 @@ class SymbolicGovernor:
         """
         standing: dict[str, Any] = {"failures": self._violations_to_failures(violations)}
         for v in violations:
-            if v.standing:
+            if hasattr(v, "standing") and v.standing:
                 standing.update(v.standing)
         return standing
 
