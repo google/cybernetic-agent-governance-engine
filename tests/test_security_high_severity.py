@@ -253,7 +253,7 @@ class TestH11FiscalLimitPositiveValues:
         pytest.importorskip("fakeredis", reason="fakeredis required")
         import fakeredis.aioredis
 
-        from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+        from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         return FiscalLimitGuard(
@@ -288,7 +288,7 @@ class TestH11FiscalLimitPositiveValues:
     @pytest.mark.asyncio
     async def test_positive_amount_accepted(self, guard):
         """A valid positive amount must proceed to the fiscal limit check."""
-        from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
+        from src.gateway.governance.safety.resource_guard import ReservationToken
 
         token = await guard.reserve("agent-ok", 1000.0)
         assert isinstance(token, ReservationToken)

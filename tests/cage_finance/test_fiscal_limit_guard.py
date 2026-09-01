@@ -38,7 +38,7 @@ pytest.importorskip(
 
 import fakeredis.aioredis  # type: ignore[import]
 
-from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 

@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
+from src.gateway.governance.causal.gatekeeper import causal_safety_check
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
 

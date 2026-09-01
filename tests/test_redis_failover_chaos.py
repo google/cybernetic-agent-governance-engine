@@ -967,7 +967,7 @@ class TestRealCBFIntegration:
         """
         Integration: Real CBF._check_fence_epoch with mocked state.
         """
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         _mock, _ = mock_redis_client
 
@@ -990,7 +990,7 @@ class TestRealCBFIntegration:
         """
         Integration: Real CBF._sync_to_replicas when WAIT is disabled.
         """
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         mock, _ = mock_redis_client
 
@@ -1009,7 +1009,7 @@ class TestRealCBFIntegration:
         """
         Integration: Real CBF._sync_to_replicas when WAIT times out.
         """
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         mock, _ = mock_redis_client
 

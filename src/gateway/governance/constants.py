@@ -19,6 +19,11 @@ Governance Control Constants & Registry
 Defines stable Internal Control IDs (CTRL_*) and the thread-safe singleton
 ``ControlRegistry`` that translates them to external regulatory citations.
 
+Plugin Overlay Registry (PR B, T-B4)
+-------------------------------------
+Plugins can register compliance overlay directories via ``register_overlay_dir()``.
+Overlays are applied in registration order after the baseline is loaded.
+
 Design rationale
 ----------------
 Hardcoding framework strings (e.g. "SR 26-2 §IV.B", "ISO 42001 §A.5.2") in
@@ -76,6 +81,31 @@ from typing import Any
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("Gateway.Governance.Constants")
+
+
+# ---------------------------------------------------------------------------
+# Plugin overlay registry (PR B, T-B4)
+# ---------------------------------------------------------------------------
+
+_OVERLAY_DIRS: list[Path] = []
+
+
+def register_overlay_dir(path: Path) -> None:
+    """Register a plugin's compliance-overlay directory.
+
+    Called from CagePlugin.register(). Directories are applied in
+    registration order, which is deterministic because plugin discovery
+    iterates entry points in a stable order. A later plugin overriding an
+    earlier plugin's control mapping is logged at WARNING.
+    
+    Args:
+        path: Path to the plugin's compliance overlay directory
+              (e.g. src/cage_finance/config/compliance/)
+    """
+    resolved = path.resolve()
+    if resolved not in _OVERLAY_DIRS:
+        _OVERLAY_DIRS.append(resolved)
+        logger.info(f"✅ Registered compliance overlay dir: {resolved}")
 
 
 # ---------------------------------------------------------------------------
@@ -299,14 +329,6 @@ class ControlRegistry:
             region = _DEFAULT_REGION
 
         config_path = self._COMPLIANCE_DIR / f"{region}_BASELINE.json"
-        overlay_path = (
-            self._REPO_ROOT
-            / "src"
-            / "cage_finance"
-            / "config"
-            / "compliance"
-            / f"{region}_OVERLAY.json"
-        )
 
         if not config_path.exists():
             raise RuntimeError(
@@ -318,10 +340,22 @@ class ControlRegistry:
             with open(config_path) as fh:
                 raw = json.load(fh)
 
-            if overlay_path.exists():
-                with open(overlay_path) as fh:
-                    overlay_raw = json.load(fh)
-                raw.update(overlay_raw)
+            # Apply plugin-supplied overlays in registration order (PR B, T-B4)
+            for overlay_dir in _OVERLAY_DIRS:
+                overlay_path = overlay_dir / f"{region}_OVERLAY.json"
+                if overlay_path.exists():
+                    with open(overlay_path) as fh:
+                        overlay_raw = json.load(fh)
+                    # Warn on control collision (later plugin overriding earlier)
+                    for key in overlay_raw:
+                        if key in raw and not key.startswith("_"):
+                            logger.warning(
+                                "Control mapping collision: %s from %s overrides "
+                                "earlier mapping",
+                                key,
+                                overlay_path,
+                            )
+                    raw.update(overlay_raw)
 
             # Strip meta-keys that start with "_"
             self._mappings = {
@@ -476,6 +510,8 @@ class ControlRegistry:
 # ---------------------------------------------------------------------------
 
 # HITL SLA citations — jurisdiction-specific escalation authority
+# PR B T-B5: These are now loaded from regional baseline JSONs (_hitl section)
+# instead of being imported from cage_finance.constants.
 HITL_CITATIONS: dict[str, str] = {}
 HITL_CITATION_DEFAULT: str = "ISO 42001 A.8.4 (AI system operation controls)"
 
@@ -493,20 +529,51 @@ INJECTION_CITATION_DEFAULT: str = (
     "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
 )
 
-try:
-    from src.cage_finance.constants import (
-        HITL_CITATIONS as _F_HITL_CITATIONS,
-        HITL_SLA_HOURS as _F_HITL_SLA_HOURS,
-        PII_RETENTION_AUTHORITY as _F_PII_RETENTION,
-        INJECTION_CITATION as _F_INJECTION,
-    )
 
-    HITL_CITATIONS.update(_F_HITL_CITATIONS)
-    HITL_SLA_HOURS.update(_F_HITL_SLA_HOURS)
-    PII_RETENTION_AUTHORITY.update(_F_PII_RETENTION)
-    INJECTION_CITATION.update(_F_INJECTION)
-except ImportError:
-    pass
+def _load_hitl_constants_from_baselines() -> None:
+    """Load HITL regulatory constants from regional baseline JSONs.
+    
+    Called at module import time to populate HITL_CITATIONS, HITL_SLA_HOURS,
+    PII_RETENTION_AUTHORITY, and INJECTION_CITATION from the _hitl section
+    of each regional baseline JSON file.
+    
+    These are regulatory constants (not domain-specific), so they belong in
+    the regional baselines rather than in cage_finance (PR B, T-B5).
+    """
+    global HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION
+    
+    repo_root = Path(__file__).parent.parent.parent
+    thresholds_dir = repo_root / "config" / "thresholds"
+    
+    for region in SUPPORTED_REGIONS:
+        baseline_path = thresholds_dir / f"{region}_BASELINE.json"
+        if not baseline_path.exists():
+            continue
+            
+        try:
+            with open(baseline_path) as fh:
+                baseline = json.load(fh)
+            
+            hitl = baseline.get("_hitl", {})
+            if hitl:
+                if "citation" in hitl:
+                    HITL_CITATIONS[region] = hitl["citation"]
+                if "sla_hours" in hitl:
+                    HITL_SLA_HOURS[region] = float(hitl["sla_hours"])
+                if "pii_retention_authority" in hitl:
+                    PII_RETENTION_AUTHORITY[region] = hitl["pii_retention_authority"]
+                if "injection_citation" in hitl:
+                    INJECTION_CITATION[region] = hitl["injection_citation"]
+        except Exception as e:
+            logger.warning(
+                "Failed to load HITL constants from %s: %s",
+                baseline_path,
+                e,
+            )
+
+
+# Load HITL constants at module import time
+_load_hitl_constants_from_baselines()
 
 # PII audit retention authority field default for Pydantic schema
 PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT: str = "ISO 42001 A.9.2"

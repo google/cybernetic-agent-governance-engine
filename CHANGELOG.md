@@ -33,6 +33,18 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Method Signature Changes** — `SymbolicGovernor.revalidate_post_hitl()` and `pre_check()` no longer accept `tool_name` with a default value. The `action` parameter is now required. Callers must explicitly provide the action name (`refactor(governance)!`).
 
+#### PR B — Sever Kernel → Plugin Imports
+
+- **Layer Isolation Enforced** — All Layer 1 (src/gateway/) → Layer 2 (src/cage_*) import dependencies removed. The kernel now uses plugin-supplied components via `install_domain_components()` rather than directly importing domain modules. CI gate G3 (`scripts/check_import_boundaries.py`) now blocks on violations (`refactor(governance)!`).
+
+- **Fail-Closed Null Components** — Kernel singletons (`safety_filter`, `consensus_engine`) default to `NullSafetyFilter` and `NullConsensusProvider` in bare-kernel mode (CAGE_ACTIVE_PLUGINS=""). These null objects explicitly deny all requests rather than silently failing or allowing. Plugins must call `install_domain_components()` to install real implementations (`refactor(governance)!`).
+
+- **Startup Readiness Assertions** — Server lifespans (`mcp_tool_server.py`, `hybrid_server.py`) now assert that domain components were installed if plugins are expected. Missing components cause startup to fail loudly with RuntimeError rather than silently defaulting to null objects (`feat(governance)!`).
+
+- **Background Task Registry** — Plugin-supplied long-running coroutines (e.g. consensus audit worker) must register via `register_background_task()` rather than being directly imported into `hybrid_server.py`. The kernel calls `background_tasks.start_all()` to launch registered tasks (`refactor(governance)!`).
+
+- **HITL Constants Relocated** — Human-in-the-loop escalation parameters (HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION) moved from `cage_finance/constants.py` to the `_hitl` section of regional baseline JSONs (`config/thresholds/*_BASELINE.json`). These are regulatory constants, not domain-specific, and belong in region posture config (TODO(PR-C-OSCAL): update OSCAL component definitions to reference new baseline locations) (`refactor(governance)!`).
+
 #### Plugin Architecture & Provider Protocol (PR #108–#114)
 
 - **Legacy Trade Dispatch API Removed (PR #111)** — The deprecated trade dispatch API in `src/governed_financial_advisor/` has been removed as part of the GFA-kernel decoupling initiative. All trade execution now flows through the canonical execution actuator protocol. Legacy clients must migrate to the `/v1/execute` endpoint with proper governance envelope wrapping (`refactor(governance)!`).

@@ -63,7 +63,7 @@ def mock_redis_client():
 @pytest.fixture
 def cbf_instance():
     """Create a CBF instance with mocked dependencies."""
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
@@ -835,7 +835,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_seeds_epoch_from_redis_on_init(self):
         """B3a: CBF must seed _last_seen_epoch from Redis at construction."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         # Mock the sync_redis_client to return an epoch value
         mock_sync_redis = MagicMock()
@@ -850,7 +850,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_first_ever_startup_initializes_epoch_to_zero(self):
         """B3a: First-ever startup (no epoch key) initializes epoch to 0 and writes it."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         # Mock sync_redis_client to return None (no epoch key exists)
         mock_sync_redis = MagicMock()
@@ -867,7 +867,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_skip_epoch_seed_flag_bypasses_redis(self):
         """B3a: skip_epoch_seed=True bypasses Redis and sets epoch to 0."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         # Even with sync_redis_client=None, should not raise
         with patch("src.cage_finance.safety.cbf.sync_redis_client", None):
@@ -877,7 +877,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_raises_on_redis_unavailable_in_production(self):
         """B3a: CBF raises CBFInitializationError if Redis unavailable in production."""
-        from src.cage_finance.safety.cbf import (
+        from src.gateway.governance.safety.cbf_engine import (
             CBFInitializationError,
             ControlBarrierFunction,
         )
@@ -894,7 +894,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_warns_on_redis_unavailable_in_dev_mode(self):
         """B3a: CBF warns but proceeds with epoch=0 if Redis unavailable in dev mode."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         with (
             patch("src.cage_finance.safety.cbf.sync_redis_client", None),
@@ -911,7 +911,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_raises_on_redis_error_in_production(self):
         """B3a: CBF raises CBFInitializationError on Redis error in production."""
-        from src.cage_finance.safety.cbf import (
+        from src.gateway.governance.safety.cbf_engine import (
             CBFInitializationError,
             ControlBarrierFunction,
         )
@@ -933,7 +933,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_updates_prometheus_gauge_on_successful_seed(self):
         """B3a: Successful epoch seed updates the Prometheus gauge."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         mock_sync_redis = MagicMock()
         mock_sync_redis.get = MagicMock(return_value="100")
@@ -951,7 +951,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_logs_successful_seed(self):
         """B3a: Successful epoch seed logs the seeded value."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         mock_sync_redis = MagicMock()
         mock_sync_redis.get = MagicMock(return_value="50")
@@ -969,7 +969,7 @@ class TestFenceEpochColdStartSeeding:
 
     def test_cbf_initialization_error_message_contains_security_context(self):
         """B3a: CBFInitializationError message explains the security rationale."""
-        from src.cage_finance.safety.cbf import CBFInitializationError
+        from src.gateway.governance.safety.cbf_engine import CBFInitializationError
 
         exc = CBFInitializationError("test message")
 

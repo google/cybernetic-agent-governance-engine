@@ -54,7 +54,7 @@ _GAMMA = 0.1
 
 def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     """Return a ControlBarrierFunction wired to a fake async Redis client."""
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
     cbf = ControlBarrierFunction(skip_epoch_seed=True)

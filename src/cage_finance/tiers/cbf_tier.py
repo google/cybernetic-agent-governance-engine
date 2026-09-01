@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from src.cage_finance.safety.cbf import ControlBarrierFunction
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
 

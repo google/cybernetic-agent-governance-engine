@@ -33,7 +33,7 @@ pytest.importorskip("fakeredis", reason="fakeredis required for CBF atomicity te
 
 import fakeredis.aioredis  # type: ignore[import]
 
-from src.cage_finance.safety.cbf import ControlBarrierFunction
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 # ---------------------------------------------------------------------------
 # Constants

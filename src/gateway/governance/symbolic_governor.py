@@ -136,6 +136,7 @@ if (
 from src.gateway.governance.contracts import (
     GovernanceTierFailure,
     GovernanceTierPlugin,
+    InvariantModel,
     RefusalReceipt,
     Violation,
 )
@@ -202,6 +203,7 @@ from src.gateway.governance.schemas.thresholds import (
     get_agent_confidence_threshold,
     get_fria_zone_allow,
     get_fria_zone_defer,
+    load_and_validate_thresholds,
 )
 
 # These module-level constants delegate to the config-based accessor functions,
@@ -794,6 +796,12 @@ class SymbolicGovernor:
         # an alphabetic tier_name sort (which would invert Consensus→Causal).
         self._domain_tiers: list[GovernanceTierPlugin] = []
 
+        # PR C: pluggable invariant registry.  Barriers are registered via
+        # register_invariant() at startup and compiled into Lua KEYS/ARGV
+        # at CBF invocation time, ensuring all barrier evaluation logic
+        # stays inside the atomic Redis hop (proof/DistributedCBF.tla).
+        self._invariants: list[InvariantModel] = []
+
         # FTRA Boundary Check (Phase 3.3): Lazy-initialized IrreversibilityClassifier
         # for boundary-level FTRA validation. Shared instance with in-graph ftra_node
         # to ensure consistent classification semantics.
@@ -817,6 +825,65 @@ class SymbolicGovernor:
     def registered_tier_names(self) -> list[str]:
         """Ordered tier names — consumed by the formal-model parity test."""
         return [t.tier_name for t in self._domain_tiers]
+
+    def register_invariant(self, invariant: InvariantModel) -> None:
+        """Register a domain safety barrier.
+
+        PR C (Stage 2): Fail-closed validation at registration time — a malformed
+        barrier must never reach the Lua compiler, as that would silently degrade
+        safety coverage without a runtime signal.
+
+        The declarative InvariantModel protocol (invariant_id, state_key,
+        threshold_key, gamma) compiles into KEYS/ARGV passed to the atomic Redis
+        Lua hop (proof/DistributedCBF.tla), ensuring all barrier evaluation logic
+        stays inside the verified atomic operation.
+
+        Raises:
+            ValueError: If any validation fails:
+                - invariant_id is not unique
+                - state_key is not namespaced (missing ':')
+                - threshold_key does not resolve in active THRESHOLDS tree
+                - gamma is not in (0, 1]
+        """
+        # V1: Uniqueness — each domain must own its invariant_id namespace.
+        if any(inv.invariant_id == invariant.invariant_id for inv in self._invariants):
+            raise ValueError(
+                f"duplicate invariant registration: {invariant.invariant_id}"
+            )
+
+        # V2: State key must be namespaced (e.g., "safety:current_cash") to prevent
+        # cross-domain key collisions in the shared Redis state store.
+        if ":" not in invariant.state_key:
+            raise ValueError(
+                f"invariant {invariant.invariant_id}: state_key must be namespaced "
+                f"(contains ':'): got '{invariant.state_key}'"
+            )
+
+        # V3: Threshold key must resolve in the active THRESHOLDS tree.
+        # This ensures the barrier's threshold is actually configured and will
+        # not fall back to a silent None at runtime.
+        thresholds = load_and_validate_thresholds()
+        threshold_parts = invariant.threshold_key.split(".")
+        current = thresholds.model_dump()  # Convert Pydantic model to dict for traversal
+        try:
+            for part in threshold_parts:
+                current = current[part]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                f"invariant {invariant.invariant_id}: threshold_key "
+                f"'{invariant.threshold_key}' does not resolve in THRESHOLDS tree"
+            ) from exc
+
+        # V4: Gamma must be in the open-closed interval (0, 1].
+        # gamma=0 is a degenerate barrier that never constrains;
+        # gamma>1 would make the CBF Lyapunov derivative condition impossible to satisfy.
+        if not (0 < invariant.gamma <= 1):
+            raise ValueError(
+                f"invariant {invariant.invariant_id}: gamma must be in (0, 1], "
+                f"got {invariant.gamma}"
+            )
+
+        self._invariants.append(invariant)
 
     async def _rollback_committed(
         self,
@@ -1583,237 +1650,6 @@ class SymbolicGovernor:
         # LATENCY TRADE-OFF: CBF now runs AFTER all read-only checks (not in
         # parallel with OPA). This adds ~CBF_ms latency but ensures correctness.
         # ======================================================================
-
-        # ── domain tier loop (phase 2) ──
-        # Phase 2: Mutating domain tiers (only if Phase 1 passed)
-        if self._is_governed_action(tool_name, params) and not violations:
-            with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
-                cbf_span.set_attribute("langfuse.observation.name", "cbf_barrier_check")
-                cbf_span.set_attribute("governance.stage", "cbf")
-                cbf_span.set_attribute("governance.phase", "mutation")
-                cbf_span.set_attribute("governance.cbf.atomic", True)
-                _t_cbf = time.perf_counter()
-                try:
-                    (
-                        committed,
-                        reason,
-                    ) = await self.safety_filter.atomic_verify_and_commit(
-                        action_name=tool_name,
-                        payload=params,
-                    )
-                    _cbf_committed = committed
-                    cbf_result = "SAFE" if committed else reason
-                    cbf_span.set_attribute("governance.cbf.result", cbf_result[:80])
-                    cbf_span.set_attribute("governance.cbf.committed", committed)
-                    cbf_span.set_attribute(
-                        "governance.stage.latency_ms",
-                        round((time.perf_counter() - _t_cbf) * 1000, 2),
-                    )
-
-                    if not committed and cbf_result.startswith("UNSAFE"):
-                        violations.append(f"Safety Violation (RBC/CBF): {cbf_result}")
-                        amount_val = params.get("amount", 0.0)
-                        tier_failures.append(
-                            GovernanceTierFailure(
-                                tier="CBF",
-                                control_id="CAGE-CBF-001",
-                                rule_description=cbf_result,
-                                governing_state={
-                                    "cost": amount_val,
-                                    "cbf_result": cbf_result,
-                                    "amount": amount_val,
-                                    "symbol": params.get("symbol"),
-                                },
-                                protected_consequence=f"Balance violation: trade cost {amount_val} "
-                                f"would breach CBF safety envelope",
-                            )
-                        )
-
-                except Exception as cbf_exc:
-                    cbf_span.record_exception(cbf_exc)
-                    cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
-                    if _cbf_fail_open:
-                        logger.warning(
-                            "⚠️ CBF check unavailable (%s) — CBF_FAIL_OPEN=true, "
-                            "skipping CBF gate. ⚠️ AUDIT: Self-reported cash balance "
-                            "cannot be verified; this gap must be closed before "
-                            "production governance examination.",
-                            cbf_exc,
-                        )
-                        logger.critical(
-                            json.dumps(
-                                {
-                                    "event": "CBF_FAIL_OPEN_ACTIVATED",
-                                    "severity": "CRITICAL",
-                                    "tool": tool_name,
-                                    "cbf_error": str(cbf_exc),
-                                    "audit_note": (
-                                        "CBF gate bypassed via CBF_FAIL_OPEN=true. "
-                                        "Cash balance cannot be independently verified for this trade."
-                                    ),
-                                }
-                            )
-                        )
-                    else:
-                        logger.error(
-                            "⛔ CBF check unavailable (%s) — fail-closed: blocking "
-                            "action because cash barrier cannot be independently "
-                            "verified.",
-                            cbf_exc,
-                        )
-                        violations.append(
-                            "CBF Fail-Closed: Redis unavailable — cannot verify "
-                            "cash barrier. Self-reported balance has no independent "
-                            "provenance. Set CBF_FAIL_OPEN=true to override "
-                            "(audit gap)."
-                        )
-
-            # --- Phase 2.2: Fiscal Limit reserve (only if CBF passed) ---
-            if not violations and self.fiscal_limit_guard is not None:
-                with tracer.start_as_current_span(
-                    "cage.fiscal_limit_reserve"
-                ) as fiscal_span:
-                    fiscal_span.set_attribute(
-                        "langfuse.observation.name", "fiscal_limit_reserve"
-                    )
-                    fiscal_span.set_attribute("governance.stage", "fiscal_limit")
-                    fiscal_span.set_attribute("governance.phase", "mutation")
-                    _t_fiscal = time.perf_counter()
-                    try:
-                        _amount_minor = params.get("amount_minor")
-                        if _amount_minor is not None:
-                            _amount_minor = int(_amount_minor)
-                            _amount = _amount_minor / 100.0
-                        else:
-                            _amount = float(params.get("amount", 0.0))
-
-                        _agent_id = str(
-                            params.get(
-                                "agent_id", params.get("user_id", "unknown-agent")
-                            )
-                        )
-
-                        _fiscal_token = None
-                        if _amount_minor is not None and _amount_minor > 0:
-                            _fiscal_token = await self.fiscal_limit_guard.reserve(
-                                agent_id=_agent_id,
-                                amount_minor=_amount_minor,
-                            )
-                        elif _amount > 0:
-                            _fiscal_token = await self.fiscal_limit_guard.reserve(
-                                agent_id=_agent_id,
-                                amount_usd=_amount,
-                            )
-
-                        if _fiscal_token is not None:
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.reservation_id",
-                                _fiscal_token.reservation_id,
-                            )
-                            if _amount_minor is not None:
-                                fiscal_span.set_attribute(
-                                    "governance.fiscal.amount_minor", _amount_minor
-                                )
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.amount_usd", _amount
-                            )
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.running_total_usd",
-                                _fiscal_token.running_total_usd,
-                            )
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.cap_usd", _fiscal_token.cap_usd
-                            )
-                            if _fiscal_token.rejected:
-                                fiscal_span.set_attribute(
-                                    "governance.fiscal.result", "REJECTED"
-                                )
-                                violations.append(
-                                    f"Fiscal Limit Pre-Reservation REJECTED: "
-                                    f"amount=${_amount:,.2f} would exceed daily cap "
-                                    f"${_fiscal_token.cap_usd:,.2f} "
-                                    f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
-                                    f"reservation_id={_fiscal_token.reservation_id}"
-                                )
-                                tier_failures.append(
-                                    GovernanceTierFailure(
-                                        tier="FISCAL",
-                                        control_id="CAGE-FISCAL-001",
-                                        rule_description=f"amount ${_amount:,.2f} exceeds daily cap ${_fiscal_token.cap_usd:,.2f}",
-                                        governing_state={
-                                            "amount_usd": _amount,
-                                            "running_total_usd": _fiscal_token.running_total_usd,
-                                            "cap_usd": _fiscal_token.cap_usd,
-                                            "reservation_id": _fiscal_token.reservation_id,
-                                            "agent_id": _agent_id,
-                                        },
-                                        protected_consequence=f"Fiscal overrun: ${_amount:,.2f} trade "
-                                        f"would push running total beyond ${_fiscal_token.cap_usd:,.2f} daily cap",
-                                    )
-                                )
-                                # Fiscal rejected AFTER CBF committed — must compensate CBF
-                                if _cbf_committed:
-                                    logger.warning(
-                                        "⚠️ Fiscal rejected after CBF commit — initiating "
-                                        "CBF rollback for budget leakage prevention."
-                                    )
-                                    try:
-                                        await self.safety_filter.rollback_state(
-                                            magnitude=_amount
-                                        )
-                                        logger.info(
-                                            "✅ CBF rollback complete after fiscal rejection."
-                                        )
-                                        _cbf_committed = False
-                                    except Exception as cbf_rollback_exc:
-                                        logger.error(
-                                            "⛔ CBF rollback failed after fiscal rejection: %s. "
-                                            "BUDGET LEAKAGE POSSIBLE — requires manual reconciliation.",
-                                            cbf_rollback_exc,
-                                        )
-                                _fiscal_token = None
-                            else:
-                                fiscal_span.set_attribute(
-                                    "governance.fiscal.result", "RESERVED"
-                                )
-                        else:
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.result", "SKIPPED_ZERO_AMOUNT"
-                            )
-                    except Exception as _fiscal_exc:
-                        fiscal_span.record_exception(_fiscal_exc)
-                        fiscal_span.set_attribute("governance.fiscal.result", "ERROR")
-                        logger.error(
-                            "⛔ FiscalLimitGuard.reserve() failed (%s) — failing closed.",
-                            _fiscal_exc,
-                        )
-                        violations.append(
-                            f"Fiscal Limit Pre-Reservation Error: {_fiscal_exc}"
-                        )
-                        # Fiscal error AFTER CBF committed — must compensate CBF
-                        if _cbf_committed:
-                            logger.warning(
-                                "⚠️ Fiscal error after CBF commit — initiating "
-                                "CBF rollback for budget leakage prevention."
-                            )
-                            try:
-                                await self.safety_filter.rollback_state(
-                                    magnitude=_amount
-                                )
-                                logger.info(
-                                    "✅ CBF rollback complete after fiscal error."
-                                )
-                                _cbf_committed = False
-                            except Exception as cbf_rollback_exc:
-                                logger.error(
-                                    "⛔ CBF rollback failed after fiscal error: %s. "
-                                    "BUDGET LEAKAGE POSSIBLE — requires manual reconciliation.",
-                                    cbf_rollback_exc,
-                                )
-                    fiscal_span.set_attribute(
-                        "governance.stage.latency_ms",
-                        round((time.perf_counter() - _t_fiscal) * 1000, 2),
-                    )
 
         # ── domain tier loop (phase 2) ──
         # Phase 2: Mutating domain tiers (only if Phase 1 passed)

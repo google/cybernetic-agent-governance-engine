@@ -15,7 +15,7 @@
 import uuid
 from typing import Any
 
-from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
 

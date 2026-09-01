@@ -13,20 +13,24 @@
 # limitations under the License.
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-from src.cage_finance.consensus.consensus import ConsensusGate
-from src.cage_finance.safety.cbf import ControlBarrierFunction
-from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.gateway.governance.consensus.engine import ConsensusGate, _background_audit_worker
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
+from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
+from src.gateway.governance.background_tasks import register_background_task
+from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.singletons import install_domain_components
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
@@ -44,6 +48,20 @@ class FinanceCagePlugin(CagePlugin):
         cbf = ControlBarrierFunction()
         fiscal_guard = FiscalLimitGuard.from_env()
         consensus_gate = ConsensusGate()
+
+        # Register compliance overlay directory (PR B, T-B4)
+        overlay_dir = Path(__file__).parent / "config" / "compliance"
+        register_overlay_dir(overlay_dir)
+
+        # Install domain components into the kernel singletons (PR B, T-B2)
+        install_domain_components(
+            safety_filter_impl=cbf,
+            consensus_engine_impl=consensus_gate,
+            resource_guard=fiscal_guard,
+        )
+
+        # Register background task (PR B, T-B6)
+        register_background_task("consensus_audit_worker", _background_audit_worker)
 
         # Register tiers
         governor.register_domain_tier(CBFTierPlugin(cbf))

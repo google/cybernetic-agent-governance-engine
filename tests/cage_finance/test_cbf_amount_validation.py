@@ -34,7 +34,7 @@ pytest.importorskip("fakeredis", reason="fakeredis required for CBF state tests"
 
 import fakeredis.aioredis  # type: ignore[import]
 
-from src.cage_finance.safety.cbf import ControlBarrierFunction
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 _INVALID_AMOUNTS = [-1_000_000.0, float("nan"), float("inf"), float("-inf")]
 

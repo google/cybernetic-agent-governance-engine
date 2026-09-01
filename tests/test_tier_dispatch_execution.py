@@ -74,6 +74,9 @@ class OrderTrackingTier:
         return self._claims_all
 
     async def evaluate(
+        self, action: str, params: dict[str, Any]
+    ) -> list[Violation]:
+        return []
 
     async def commit(
         self, action: str, params: dict[str, Any]
@@ -91,19 +94,6 @@ class OrderTrackingTier:
 
     async def rollback(self, action: str, params: dict[str, Any]) -> None:
         pass
-        self, action: str, params: dict[str, Any]
-    ) -> list[Violation]:
-        OrderTrackingTier.execution_log.append((self._tier_name, action))
-        if self._violation_rule:
-            return [
-                Violation(
-                    tier=self._tier_name,
-                    rule=self._violation_rule,
-                    # severity removed - not in base Violation,
-                    message=f"Violation from {self._tier_name}",
-                )
-            ]
-        return []
 
 
 @pytest.mark.local
