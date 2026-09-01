@@ -16,9 +16,10 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from mcp.server.fastmcp import FastMCP
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
 
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.trade_executor import execute_trade
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class FinancialToolProvider(DomainToolProvider):
-    def register_tools(self, server: FastMCP) -> None:
+    def register_tools(self, server: "FastMCP") -> None:
+        from mcp.server.fastmcp import FastMCP
 
         @server.tool()
         async def execute_trade_action(

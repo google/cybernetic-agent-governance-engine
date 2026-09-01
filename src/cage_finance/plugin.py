@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import logging
+from typing import TYPE_CHECKING
 
-from mcp.server.fastmcp import FastMCP
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
 
 from src.cage_finance.consensus.consensus import ConsensusGate
 from src.cage_finance.safety.cbf import ControlBarrierFunction
@@ -33,11 +35,11 @@ logger = logging.getLogger(__name__)
 class FinanceCagePlugin(CagePlugin):
     """The finance domain capability plugin."""
 
-    name = "cage_finance"
+    name = "finance"
     api_version = "1.0"
 
     def register(
-        self, governor: SymbolicGovernor, tool_server: FastMCP | None = None
+        self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None
     ) -> None:
         cbf = ControlBarrierFunction()
         fiscal_guard = FiscalLimitGuard.from_env()
