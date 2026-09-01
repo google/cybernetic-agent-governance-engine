@@ -60,7 +60,7 @@ class TestStandingAssembly:
         assert "failures" in standing
         assert len(standing["failures"]) == 1
         assert standing["failures"][0]["tier"] == "test_tier"
-        assert standing["failures"][0]["rule_description"] == "TEST_RULE"
+        assert standing["failures"][0]["code"] == "TEST_RULE"
 
     def test_build_standing_with_multiple_violations(self, mock_governor: SymbolicGovernor) -> None:
         """Multiple violations produce multiple tier_failures entries."""
@@ -105,7 +105,7 @@ class TestStandingAssembly:
 
         failure = standing["failures"][0]
         assert failure["tier"] == "finance_tier"
-        assert failure["rule_description"] == "CBF_BARRIER"
+        assert failure["code"] == "CBF_BARRIER"
         assert failure["control_id"] == "FIN-001"
         assert failure["governing_state"] == {"balance": 1000.0}
         assert failure["protected_consequence"] == "fiscal_breach"
@@ -160,7 +160,7 @@ class TestStandingAssembly:
 
         assert len(failures) == 1
         assert failures[0]["tier"] == "example_tier"
-        assert failures[0]["rule_description"] == "EXAMPLE_RULE"
+        assert failures[0]["code"] == "EXAMPLE_RULE"
 
 
 @pytest.mark.local
@@ -183,7 +183,7 @@ class TestStandingAssemblyEdgeCases:
         failure = standing["failures"][0]
 
         assert failure["tier"] == "min_tier"
-        assert failure["rule_description"] == "MIN_RULE"
+        assert failure["code"] == "MIN_RULE"
         # Optional fields should have default values
         assert failure.get("control_id") == ""
         assert failure.get("governing_state") == {}
