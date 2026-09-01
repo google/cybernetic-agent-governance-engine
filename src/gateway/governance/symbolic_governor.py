@@ -1179,6 +1179,8 @@ class SymbolicGovernor:
         _conf_payload: dict[str, Any] | None = None
         # FTRA boundary check metadata (Phase 3.3)
         _ftra_boundary_result: Any | None = None
+        # Track all tier violations (Violation dataclass instances) for standing_at_refusal
+        _all_tier_violations: list[Violation] = []
 
         # -1. FTRA Boundary Check (Pre-Pipeline Boundary Gate)
         # Runs BEFORE all other checks. Risk R-03 mitigation: Catches direct HTTP
@@ -1251,6 +1253,7 @@ class SymbolicGovernor:
 
                 tier_violations = await self._run_domain_tiers(tool_name, params, phase=1)
                 if tier_violations:
+                    _all_tier_violations.extend(tier_violations)
                     violations.extend(self._violations_to_strings(tier_violations))
 
                 tier1_span.set_attribute("governance.tier.violations", len(tier_violations))
@@ -1291,7 +1294,7 @@ class SymbolicGovernor:
             )
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
-            if tool_name == "execute_trade":
+            if self._is_governed_action(tool_name, params):
                 _confidence = float(params.get("confidence", 0.0))
                 # POAM-TIER2-001: stamp the confidence provenance so every Tier 2 decision
                 # is auditable. The structural heuristic below provides independent
@@ -1374,7 +1377,7 @@ class SymbolicGovernor:
         # precedence over latency optimization.
         # ======================================================================
 
-        if tool_name == "execute_trade" and not violations:
+        if self._is_governed_action(tool_name, params) and not violations:
             # --- Phase 1.1: OPA policy evaluation (read-only) ---
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
@@ -1483,7 +1486,7 @@ class SymbolicGovernor:
         #
         # Conservative treatment: if STPA or OPA results are unavailable (e.g. a tier
         # raised an exception and we have no result at all), treat as structural risk.
-        if tool_name == "execute_trade":
+        if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span(
                 "cage.tier2_structural_corroboration"
             ) as _t2_span:
@@ -1563,7 +1566,7 @@ class SymbolicGovernor:
         _fiscal_token = None
 
         # Phase 1.2: ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
-        if tool_name == "execute_trade":
+        if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span("cage.consensus_gate") as cons_gate_span:
                 cons_gate_span.set_attribute(
                     "langfuse.observation.name", "consensus_gate"
@@ -1595,7 +1598,7 @@ class SymbolicGovernor:
         # The startup assertion above (module-level) already fails fast if dowhy
         # is absent in production, so reaching this branch with ImportError means
         # we are in a dev/test environment — log at DEBUG and skip.
-        if tool_name == "execute_trade":
+        if self._is_governed_action(tool_name, params):
             try:
                 from src.gateway.governance.causal_gatekeeper import (
                     causal_safety_check,
@@ -1638,7 +1641,7 @@ class SymbolicGovernor:
         # Override via env: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER (module-level constants).
         _normative_provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
         if (
-            tool_name == "execute_trade"
+            self._is_governed_action(tool_name, params)
             and _normative_provider_name != "static"
             and not violations
         ):
@@ -1737,7 +1740,7 @@ class SymbolicGovernor:
 
         _cbf_committed = False  # Track CBF state for potential rollback
 
-        if tool_name == "execute_trade" and not violations:
+        if self._is_governed_action(tool_name, params) and not violations:
             _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
 
             # --- Phase 2.1: CBF atomic_verify_and_commit ---
@@ -1971,7 +1974,7 @@ class SymbolicGovernor:
 
         # ── domain tier loop (phase 2) ──
         # Phase 2: Mutating domain tiers (only if Phase 1 passed)
-        if tool_name == "execute_trade" and not violations:
+        if self._is_governed_action(tool_name, params) and not violations:
             with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
                 tier2_span.set_attribute("langfuse.observation.name", "domain_tiers_phase2")
                 tier2_span.set_attribute("governance.stage", "domain_tiers")
@@ -1980,6 +1983,7 @@ class SymbolicGovernor:
 
                 tier_violations = await self._run_domain_tiers(tool_name, params, phase=2)
                 if tier_violations:
+                    _all_tier_violations.extend(tier_violations)
                     violations.extend(self._violations_to_strings(tier_violations))
 
                 tier2_span.set_attribute("governance.tier.violations", len(tier_violations))
@@ -2017,6 +2021,8 @@ class SymbolicGovernor:
             "stpa_violation_count": _stpa_violation_count,
             # Phase 3.3: FTRA boundary check result (None if disabled)
             "ftra_boundary_result": _ftra_boundary_result,
+            # Tier-supplied violations for standing_at_refusal assembly
+            "tier_violations": _all_tier_violations,
         }
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
@@ -2064,6 +2070,7 @@ class SymbolicGovernor:
                     )
                     _tier_failures = result.get("tier_failures", [])
                     _first_tf = _tier_failures[0] if _tier_failures else None
+                    _tier_violations_list = result.get("tier_violations", [])
                     receipt = RefusalReceipt(
                         thread_id=thread_id,
                         action=tool_name,
@@ -2071,12 +2078,7 @@ class SymbolicGovernor:
                         if _first_tf
                         else "SYMBOLIC_GOVERNOR",
                         violated_rule=violation_msg,
-                        standing_at_refusal={
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "currency": params.get("currency"),
-                            "confidence": params.get("confidence"),
-                        },
+                        standing_at_refusal=self._build_standing(_tier_violations_list),
                         # ── 5-part proof chain (Terry Snyder) ──
                         schema_version="v2",
                         attempted_params={
@@ -2332,11 +2334,7 @@ class SymbolicGovernor:
                         action=tool_name,
                         violated_tier="SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
-                        standing_at_refusal={
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "confidence": params.get("confidence"),
-                        },
+                        standing_at_refusal=self._build_standing(tier_violations),
                     )
                     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
                     raise GovernanceError(violations[0], receipt=receipt)
@@ -2450,6 +2448,7 @@ class SymbolicGovernor:
             )
             result = await self._run_checks(tool_name, params, sim_mode=True)
             violations = result["violations"]
+            tier_violations = result.get("tier_violations", [])
             span.set_attribute(
                 "langfuse.observation.output",
                 json.dumps(violations) if violations else "APPROVED",
@@ -2538,6 +2537,7 @@ class SymbolicGovernor:
                 # approval that was never actually granted.
                 result = await self._run_checks(action, params, sim_mode=False)
                 violations = result["violations"]
+                tier_violations = result.get("tier_violations", [])
 
                 latency_ms = round((time.time() - t0) * 1000, 2)
                 span.set_attribute("cage.governance_latency_ms", latency_ms)
@@ -2771,12 +2771,7 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_FALLBACK",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal={
-                                    "symbol": params.get("symbol"),
-                                    "amount": params.get("amount"),
-                                    "confidence": params.get("confidence"),
-                                    "pause_reason": pause_reason,
-                                },
+                                standing_at_refusal=self._build_standing(tier_violations),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash
@@ -2829,13 +2824,7 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_REDIS_ERROR",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal={
-                                    "symbol": params.get("symbol"),
-                                    "amount": params.get("amount"),
-                                    "confidence": params.get("confidence"),
-                                    "pause_reason": pause_reason,
-                                    "redis_error": str(pause_exc),
-                                },
+                                standing_at_refusal=self._build_standing(tier_violations),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash
@@ -2930,11 +2919,7 @@ class SymbolicGovernor:
                         if _va_first_tf
                         else "SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
-                        standing_at_refusal={
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "confidence": params.get("confidence"),
-                        },
+                        standing_at_refusal=self._build_standing(tier_violations),
                         # ── 5-part proof chain (Terry Snyder) ──
                         schema_version="v2",
                         attempted_params={
