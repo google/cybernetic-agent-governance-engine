@@ -1970,11 +1970,17 @@ class SymbolicGovernor:
 
     async def revalidate_post_hitl(
         self,
+        action: str,
         params: dict[str, Any],
         *,
         trace_id: str | None = None,
     ) -> str:
         """Re-run only the tiers that can drift during HITL review.
+
+        Args:
+            action: The action name. Required — a defaulted action name is a
+                fail-open hazard (a healthcare call would be governed as a
+                trade). Callers must pass the real action.
 
         After a human approves a plan, market prices and account balances may
         have changed. Only Tier 3a (CBF cash solvency) and Tier 3b (OPA policy)
@@ -2005,7 +2011,7 @@ class SymbolicGovernor:
         """
         from src.gateway.governance.routing_seal import generate_seal_with_evidence
 
-        tool_name = "execute_trade"
+        tool_name = action
         violations: list[str] = []
 
         with tracer.start_as_current_span(
@@ -2204,8 +2210,13 @@ class SymbolicGovernor:
                 span.set_attribute("langfuse.observation.output", str(exc))
                 raise
 
-    async def pre_check(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def pre_check(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """Run lightweight pre-checks for NeMo Layer-0 context injection.
+
+        Args:
+            action: The action name. Required — a defaulted action name is a
+                fail-open hazard (a healthcare call would be governed as a
+                trade). Callers must pass the real action.
 
         Executes STPA validation and CBF barrier check once, returning
         pre-computed results that NeMo actions can read from context instead
@@ -2225,7 +2236,7 @@ class SymbolicGovernor:
                 - ``stpa_result``: ``{"allowed": bool, "violations": list[str]}``
                 - ``cbf_result``:  ``{"allowed": bool, "reason": str}``
         """
-        tool_name = "execute_trade"
+        tool_name = action
 
         # --- STPA validation (synchronous) ---
         stpa_violations: list = []
