@@ -1558,159 +1558,11 @@ class SymbolicGovernor:
         # Initialize _fiscal_token for later Phase 2 use
         _fiscal_token = None
 
-        # Phase 1.2: ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
-        if self._is_governed_action(tool_name, params):
-            with tracer.start_as_current_span("cage.consensus_gate") as cons_gate_span:
-                cons_gate_span.set_attribute(
-                    "langfuse.observation.name", "consensus_gate"
-                )
-                cons_gate_span.set_attribute("governance.stage", "consensus")
-                try:
-                    amount = params.get("amount", 0.0)
-                    symbol = params.get("symbol", "UNKNOWN")
-                    consensus = await self.consensus_engine.check_consensus(
-                        tool_name,
-                        context={"amount": amount, "symbol": symbol},
-                        magnitude=amount,
-                    )
-                    if consensus["status"] == "REJECT":
-                        violations.append(f"Consensus Rejection: {consensus['reason']}")
-                    elif consensus["status"] == "ESCALATE":
-                        violations.append(
-                            f"Consensus Escalation: {consensus['reason']}"
-                        )
-                    cons_gate_span.set_attribute(
-                        "governance.consensus.status",
-                        consensus.get("status", "UNKNOWN"),
-                    )
-                except Exception as exc:
-                    violations.append(f"Consensus Check Failed: {exc}")
-
-        # 6. DoWhy Causal Gatekeeper — refutation-based safety lock
-        # Gap 4 fix: ImportError is no longer silently swallowed in production.
-        # The startup assertion above (module-level) already fails fast if dowhy
-        # is absent in production, so reaching this branch with ImportError means
-        # we are in a dev/test environment — log at DEBUG and skip.
-        if self._is_governed_action(tool_name, params):
-            try:
-                from src.gateway.governance.causal_gatekeeper import (
-                    causal_safety_check,
-                )
-
-                telemetry_data = None
-                if self.telemetry_provider is not None:
-                    telemetry_data = self.telemetry_provider.get_latest_data()
-
-                trade_context = {"params": params, "telemetry": telemetry_data}
-                result = await asyncio.to_thread(causal_safety_check, trade_context)
-                if not result:
-                    violations.append(
-                        "Causal Safety Violation: DoWhy refutation failed — "
-                        "world-model is untrustworthy or risk exceeds safety boundary."
-                    )
-            except ImportError:
-                # Only reachable in dev/test (production startup assertion prevents this).
-                logger.debug(
-                    "DoWhy not installed — skipping causal gatekeeper (dev/test only). "
-                    "Production startup will fail if dowhy is absent."
-                )
-            except Exception as exc:
-                logger.warning(
-                    "⚠️ Causal gatekeeper check failed (%s) — failing closed.", exc
-                )
-                violations.append(
-                    f"Causal Safety Violation: gatekeeper raised an unexpected error — "
-                    f"failing closed. Detail: {exc}"
-                )
-
-        # 6b. Adaptive FRIA Enforcement (External Normative Provider)
-        # When CAGE_NORMATIVE_PROVIDER != "static", the enforcement semantic
-        # is dynamically determined by the consensus confidence score:
-        #   Score ≥ FRIA_ZONE_ALLOW (default 0.95) → async attestation (fire-and-forget)
-        #   FRIA_ZONE_DEFER ≤ Score < FRIA_ZONE_ALLOW → synchronous blocking gate
-        #   Score < FRIA_ZONE_DEFER (default 0.70) → hard abort, no external call
-        # Positioned AFTER all local tiers — if local governance already
-        # DENY'd, the external provider is never contacted.
-        # Override via env: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER (module-level constants).
-        _normative_provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
-        if (
-            self._is_governed_action(tool_name, params)
-            and _normative_provider_name != "static"
-            and not violations
-        ):
-            try:
-                from src.gateway.governance.normative_provider import (
-                    ExecutionStatus,
-                    enforce_fria_boundary,
-                    get_normative_provider,
-                )
-
-                provider = get_normative_provider(_normative_provider_name)
-                confidence = params.get("confidence", 0.0)
-                thread_id = params.get("thread_id", "")
-
-                fria_result = await enforce_fria_boundary(
-                    provider=provider,
-                    action_context=params,
-                    consensus_score=confidence,
-                    defer_queue=None,  # DeferQueue injected when available
-                    thread_id=thread_id,
-                )
-
-                # Stamp enforcement path on OTel span
-                current_span = trace.get_current_span()
-                current_span.set_attribute(
-                    "governance.fria.enforcement_path", fria_result.path
-                )
-                current_span.set_attribute(
-                    "governance.fria.consensus_score", fria_result.consensus_score
-                )
-
-                if fria_result.status == ExecutionStatus.DENY:
-                    violations.append(
-                        f"FRIA External Validation: {fria_result.path} — "
-                        f"consensus_score={fria_result.consensus_score:.3f}"
-                    )
-
-            except Exception as exc:
-                logger.warning(
-                    "⚠️ FRIA adaptive enforcement failed (%s) — continuing "
-                    "with local governance only.",
-                    exc,
-                )
-
-        # 6b (continued). FRIA Attestation (EU_ECB only — EU AI Act Art. 29a)
-        # For EU deployments, every governed action must carry a span attribute
-        # attesting that a Fundamental Rights Impact Assessment (FRIA) was
-        # conducted pre-market per Art. 29a. This is not a blocking runtime gate
-        # (FRIA is a pre-market document obligation, not a per-request check),
-        # but the live telemetry MUST record the control is active so that
-        # DORA Art. 10 monitoring logs satisfy the Art. 12 logging obligation.
-        # Stamped here (at the end of the FRIA tier) as a cross-cutting
-        # observability concern — not a separate governance tier.
-        fria_meta = ControlRegistry().get_mapping_safe(
-            GovernanceControl.FRIA_ASSESSMENT
-        )
-        if fria_meta is not None:
-            # Attach to the current OTel span so DORA Art. 10 audit logs include it
-            current_span = trace.get_current_span()
-            current_span.set_attribute(
-                "governance.fria.control_id",
-                fria_meta["internal_id"],
-            )
-            current_span.set_attribute(
-                "governance.fria.framework",
-                fria_meta["primary_framework"],
-            )
-            current_span.set_attribute(
-                "governance.fria.scope",
-                fria_meta["scope"],
-            )
-            logger.debug(
-                "[%s] FRIA attestation active — %s",
-                GovernanceControl.FRIA_ASSESSMENT.value,
-                fria_meta["primary_framework"],
-            )
+        # ══════════════════════════════════════════════════════════════════════
+        # Legacy inline dispatch blocks deleted (T-A5).
+        # Consensus, Causal, FRIA/Normative, CBF, and Fiscal gates are now
+        # invoked via domain tier dispatch in PR C.
+        # ══════════════════════════════════════════════════════════════════════
 
         # ======================================================================
         # PHASE 2: ATOMIC STATE MUTATIONS (only if Phase 1 has 0 violations)
@@ -1731,13 +1583,10 @@ class SymbolicGovernor:
         # parallel with OPA). This adds ~CBF_ms latency but ensures correctness.
         # ======================================================================
 
-        _cbf_committed = False  # Track CBF state for potential rollback
-
+        # ── domain tier loop (phase 2) ──
+        # Phase 2: Mutating domain tiers (only if Phase 1 passed)
         if self._is_governed_action(tool_name, params) and not violations:
-            _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
-
-            # --- Phase 2.1: CBF atomic_verify_and_commit ---
-            with tracer.start_as_current_span("cage.cbf_atomic_commit") as cbf_span:
+            with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
                 cbf_span.set_attribute("langfuse.observation.name", "cbf_barrier_check")
                 cbf_span.set_attribute("governance.stage", "cbf")
                 cbf_span.set_attribute("governance.phase", "mutation")
