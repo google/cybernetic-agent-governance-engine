@@ -22,8 +22,8 @@ import logging
 import os
 
 from src.cage_finance.models.trade_order import TradeOrder
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.governed_financial_advisor.infrastructure.redis_client import redis_client
+from src.gateway.infrastructure.config_manager import config_manager
+from src.gateway.infrastructure.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
