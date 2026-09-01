@@ -17,11 +17,21 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > than mandatory SemVer obligations. Breaking changes are documented in full for
 > adopter clarity.
 
-> **Plugin Architecture Refactor:** Normative provider protocol consolidation and
-> execution actuator standardization. Removes legacy trade dispatch API and
-> strengthens Compliance Bridge authentication.
+> **Domain Pipeline Extraction:** Multi-PR refactoring to separate kernel (Layer 1)
+> from domain-specific plugins (Layer 2), establishing capability-driven tier
+> dispatch architecture. Removes legacy inline governance mechanisms.
 
 ### Breaking Changes
+
+#### PR A — Capability-Driven Tier Dispatch
+
+- **Legacy Inline Dispatch Removed** — The inline consensus gate, causal gatekeeper, FRIA/normative provider, and CBF/fiscal blocks have been deleted from `SymbolicGovernor._run_checks()`. These mechanisms are replaced by the tier dispatch loop (`_run_domain_tiers()`) that executes registered `GovernanceTierPlugin` instances. This is a **hollowing refactor**: the kernel now denies all actions by default until PR C restores functionality as domain plugins (`refactor(governance)!`).
+
+- **RefusalReceipt Schema v3** — `RefusalReceipt.schema_version` default changed from "v1" to "v3". Schema v3 includes the `tier_failures` tuple field for multi-tier governance. The proof_hash computation now includes tier_failures when schema_version != "v1". Existing receipt consumers must handle both v1/v2 legacy receipts and v3 receipts (`feat(governance)!`).
+
+- **Domain Literals Removed** — Hardcoded domain action references (`"execute_trade"`, `"reverse_trade"`) removed from kernel code (hybrid_server.py, telemetry_provider.py, ontology.py). Domain-specific warmup, telemetry filtering, and constraints moved to domain plugins per the Three-Layer Split Rule. Gate G6 enforces this in CI (`refactor(governance)!`).
+
+- **Method Signature Changes** — `SymbolicGovernor.revalidate_post_hitl()` and `pre_check()` no longer accept `tool_name` with a default value. The `action` parameter is now required. Callers must explicitly provide the action name (`refactor(governance)!`).
 
 #### Plugin Architecture & Provider Protocol (PR #108–#114)
 

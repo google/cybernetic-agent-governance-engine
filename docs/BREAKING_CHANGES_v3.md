@@ -48,6 +48,148 @@ behavior change in `v3.0.0`.
 
 ---
 
+## PR A — Domain Pipeline Extraction (Capability-Driven Tier Dispatch)
+
+> **Status:** In progress on branch `refactor/domain-pipeline-extract`.
+> Part of the four-PR domain extraction refactoring sequence (A → B → C → D).
+> This is a **hollowing refactor** — the kernel intentionally loses functionality
+> until PR C restores it as domain plugins.
+
+### Overview
+
+PR A establishes the capability-driven tier dispatch architecture, replacing
+hardcoded inline governance blocks with a plugin-based tier loop. The kernel
+becomes domain-agnostic: it no longer knows about trades, consensus, CBF, or
+fiscal limits. Those mechanisms are deleted and will be restored in PR C as
+`GovernanceTierPlugin` implementations registered at runtime.
+
+**Three-Layer Split Rule:** Layer 1 (kernel) provides tier dispatch infrastructure,
+Layer 2 (domain plugins like `src/cage_finance/`) provides domain-specific tiers,
+Layer 3 (rails like Langfuse) provides external integrations.
+
+### Breaking Changes
+
+#### Legacy Inline Dispatch Removed
+
+**Breaking Change:** the consensus gate, causal gatekeeper, FRIA/normative
+provider, and CBF/fiscal blocks have been deleted from
+[`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)
+`_run_checks()` method.
+
+| Deleted block | Lines removed | Replacement |
+|---|---|---|
+| Consensus gate | ~45 lines | Deleted; replaced by tier dispatch loop (restores in PR C as plugin) |
+| Causal gatekeeper | ~30 lines | Deleted; replaced by tier dispatch loop (restores in PR C as plugin) |
+| FRIA/normative provider | ~50 lines | Deleted; replaced by tier dispatch loop (restores in PR C as plugin) |
+| CBF/fiscal limit guard | ~160 lines | Deleted; replaced by tier dispatch loop (restores in PR C as plugin) |
+
+**Who is affected:** any deployment relying on trade execution governance. Until
+PR C lands, the kernel **denies all actions by default** because no tier plugins
+are registered. This is the intended "hollowing" design — the kernel is
+functionally incomplete until domain plugins are promoted.
+
+**Migration:** none until PR C. This is a **reference architecture refactoring**,
+not a production-continuity migration. Adopters should wait for the full PR
+sequence to land before upgrading.
+
+#### RefusalReceipt Schema v3
+
+**Breaking Change:** [`RefusalReceipt.schema_version`](../src/gateway/governance/contracts.py:80)
+default changed from `"v1"` to `"v3"`.
+
+| Schema version | Additions |
+|---|---|
+| v1 | Original fields (thread_id, action, violated_tier, violated_rule, proof_hash) |
+| v2 | 5-part Terry Snyder proof chain (attempted_params, standing_snapshot, control_id, protected_consequence, non_formation_proof) |
+| v3 | `tier_failures` tuple (list of `GovernanceTierFailure` for multi-tier dispatch) |
+
+**Who is affected:** consumers parsing `RefusalReceipt` instances or verifying
+`proof_hash` values.
+
+**Migration:** `proof_hash` computation now includes `tier_failures` when
+`schema_version != "v1"`. Existing receipt consumers must handle both v1/v2
+legacy receipts and v3 receipts. The hash algorithm is unchanged (JCS
+canonicalization per POAM-2026-060), only the payload content changed.
+
+#### Domain Literals Removed from Kernel
+
+**Breaking Change:** hardcoded domain action references (`"execute_trade"`,
+`"reverse_trade"`) removed from kernel Layer 1 code per the Three-Layer Split Rule.
+
+| File | Change |
+|---|---|
+| [`src/gateway/server/hybrid_server.py`](../src/gateway/server/hybrid_server.py:108) | OPA warmup changed from `"execute_trade"` to `"system_warmup_test"` |
+| [`src/gateway/governance/telemetry_provider.py`](../src/gateway/governance/telemetry_provider.py:242) | Langfuse trace fetch changed from filtering by `name="execute_trade"` to fetching all traces |
+| [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py:183) | FIN-2 constraint (`execute_trade` latency) deleted (moves to domain plugin in PR C) |
+
+**Who is affected:** any code expecting domain-specific warmup actions, telemetry
+filtering, or ontology constraints in the kernel.
+
+**Migration:** domain-specific warmup, telemetry, and constraints move to domain
+plugins in PR C. Until then, warmup uses a generic test action, telemetry
+fetches all traces, and FIN-2 is not enforced.
+
+**CI enforcement:** Gate G6 ([`scripts/check_domain_literals.py`](../scripts/check_domain_literals.py))
+now scans `src/gateway/` for forbidden domain literals and fails CI on violations.
+
+#### Method Signature Changes
+
+**Breaking Change:** [`SymbolicGovernor.revalidate_post_hitl()`](../src/gateway/governance/symbolic_governor.py:1971)
+and [`pre_check()`](../src/gateway/governance/symbolic_governor.py:2213) no longer
+accept `tool_name` with a default value.
+
+| Method | Old signature | New signature |
+|---|---|---|
+| `revalidate_post_hitl()` | `async def revalidate_post_hitl(self, action: str, params: dict[str, Any], tool_name: str = "execute_trade") -> dict[str, Any]` | `async def revalidate_post_hitl(self, action: str, params: dict[str, Any]) -> dict[str, Any]` |
+| `pre_check()` | `async def pre_check(self, action: str = "execute_trade", params: dict[str, Any]) -> dict[str, Any]` | `async def pre_check(self, action: str, params: dict[str, Any]) -> dict[str, Any]` |
+
+**Who is affected:** callers relying on the `tool_name` default value.
+
+**Migration:** explicitly pass the `action` parameter. No default is provided —
+the kernel is domain-agnostic and cannot assume a default action name.
+
+#### Deleted Adapters and Protocols
+
+**Breaking Change:** [`_LegacyConsensusAdapter`](../src/gateway/governance/contracts.py)
+class deleted from `src/gateway/governance/contracts.py`.
+
+**Who is affected:** any code instantiating or importing `_LegacyConsensusAdapter`.
+
+**Migration:** the consensus mechanism is deleted in PR A and restored as a tier
+plugin in PR C. No interim adapter is provided.
+
+### New Infrastructure
+
+- **Tier Dispatch Loop** — [`SymbolicGovernor._run_domain_tiers()`](../src/gateway/governance/symbolic_governor.py:856)
+  executes registered `GovernanceTierPlugin` instances for a given phase (1 or 2).
+- **Helper Methods** — `_is_governed_action()`, `_violations_to_strings()`,
+  `_violations_to_failures()`, `_build_standing()` provide tier dispatch utilities.
+- **GovernanceTierPlugin Protocol** — [`contracts.py:217`](../src/gateway/governance/contracts.py:217)
+  defines the tier interface (`tier_name`, `phase`, `order`, `claims_action()`,
+  `check_action()`).
+- **Domain Literal Gate** — [`scripts/check_domain_literals.py`](../scripts/check_domain_literals.py)
+  AST-based CI gate enforcing kernel domain-agnosticism.
+
+### Acceptance Criteria
+
+Per [`plans/domain_extraction_implementation_plan.md`](../plans/domain_extraction_implementation_plan.md:661):
+
+- [x] G1: Tier dispatch loop executes and honors phase/order
+- [x] G2: Capability predicate (`claims_action()`) replaces hardcoded literals
+- [x] G6: No domain action names in `src/gateway/` executable code (CI gate passes)
+- [ ] G4, G5: Test coverage (28 tests across 6 test files) — pending Stage 8
+
+### Compliance Impact
+
+- **OSCAL component update required** within 2 business days of PR A merge (per
+  [`AGENTS.md`](../AGENTS.md) Compliance Artifact Obligations).
+- **Lula validation updates** — any validation files referencing deleted inline
+  blocks must be updated to reflect the tier dispatch architecture.
+- **Region-gated CI** — must be run for all three postures (`US_FED`, `EU_ECB`,
+  `APAC_MAS`) before considering PR A complete.
+
+---
+
 ## API Changes
 
 ### Removed Modules
