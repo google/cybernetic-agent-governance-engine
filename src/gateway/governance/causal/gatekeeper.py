@@ -39,10 +39,12 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import networkx as nx
 import numpy as np
 import pandas as pd
+import yaml
 from opentelemetry import trace
 
 # networkx ≥3.x renamed d_separated → d_separation.is_d_separator.
@@ -64,6 +66,22 @@ from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
+
+# Load causal graph configuration from YAML (PR C §7.3 T-C2: domain-owned config)
+_CAUSAL_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "src" / "cage_finance" / "config" / "causal_graph.yaml"
+_CAUSAL_CONFIG: dict = {}
+
+try:
+    with open(_CAUSAL_CONFIG_PATH, "r") as f:
+        _CAUSAL_CONFIG = yaml.safe_load(f)
+    logger.info("Loaded causal graph configuration from %s", _CAUSAL_CONFIG_PATH)
+except Exception as exc:
+    logger.warning(
+        "Failed to load causal_graph.yaml from %s: %s — falling back to hardcoded graph",
+        _CAUSAL_CONFIG_PATH,
+        exc,
+    )
+    _CAUSAL_CONFIG = {}
 
 # ---------------------------------------------------------------------------
 # Configurable thresholds — EV-6 Migration
@@ -575,13 +593,23 @@ def causal_safety_check(
     market_regime = str(params.get("market_regime", "unknown"))
     cache_key = f"causal_cache:{action_type}:{market_regime}"
 
-    causal_graph = """
-    digraph {
-        market_volatility -> trade_amount;
-        market_volatility -> risk_score;
-        trade_amount -> risk_score;
-    }
-    """
+    # Load causal graph from YAML config (PR C §7.3 T-C2: domain-specific structure)
+    if _CAUSAL_CONFIG and "graph" in _CAUSAL_CONFIG:
+        causal_graph = _CAUSAL_CONFIG["graph"]
+        treatment = _CAUSAL_CONFIG.get("treatment", "trade_amount")
+        outcome = _CAUSAL_CONFIG.get("outcome", "risk_score")
+    else:
+        # Fallback to hardcoded graph if YAML loading failed
+        logger.warning("No causal_graph.yaml config found — using hardcoded graph")
+        causal_graph = """
+        digraph {
+            market_volatility -> trade_amount;
+            market_volatility -> risk_score;
+            trade_amount -> risk_score;
+        }
+        """
+        treatment = "trade_amount"
+        outcome = "risk_score"
 
     try:
         registry = ControlRegistry()
@@ -685,8 +713,8 @@ def causal_safety_check(
 
             model = _CausalModel(
                 data=current_telemetry,
-                treatment="trade_amount",
-                outcome="risk_score",
+                treatment=treatment,
+                outcome=outcome,
                 graph=causal_graph,
             )
             identified_estimand = model.identify_effect(

@@ -1,0 +1,41 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Finance domain causal graph configuration  
+# Consumed by src.gateway.governance.causal.gatekeeper.causal_safety_check()
+#
+# Per PR C §7.3 T-C2: the causal graph structure (treatment, outcome, confounders)
+# is domain-specific. The kernel owns the DoWhy refutation logic and the
+# placebo p-value evaluation.
+
+treatment: trade_amount
+outcome: risk_score
+
+common_causes:
+  - market_volatility
+
+# DoWhy digraph specification
+# This represents the structural causal model for finance domain actions
+graph: |
+  digraph {
+      market_volatility -> trade_amount;
+      market_volatility -> risk_score;
+      trade_amount -> risk_score;
+  }
+
+# Refutation parameters (domain-tuned)
+refutation:
+  method: placebo_treatment_refuter
+  num_simulations: 50
+  p_value_threshold: 0.05
