@@ -251,12 +251,15 @@ class ControlBarrierFunction:
     _MAX_RETRIES: int = 5
 
     LUA_ATOMIC_CBF: str = """
--- KEYS[1]: safety:current_cash
+-- PR C (Stage 2): Parameterized affine barrier script.
+-- Driven by InvariantModel: h(x) = state[state_key] - thresholds[threshold_key]
+--
+-- KEYS[1]: <InvariantModel.state_key> — barrier state variable (e.g., "safety:current_cash")
 -- KEYS[2]: audit:state_ledger
 -- KEYS[3]: safety:fence_epoch (R-05)
--- ARGV[1]: cost (float string)
--- ARGV[2]: min_cash_balance (float string)
--- ARGV[3]: gamma (float string)
+-- ARGV[1]: magnitude (float string) — deduction amount (domain-neutral; was "cost")
+-- ARGV[2]: threshold (float string) — <InvariantModel.threshold_key> resolved floor
+-- ARGV[3]: gamma (float string) — <InvariantModel.gamma>
 -- ARGV[4]: governance_signature (string, may be empty)
 -- ARGV[5]: ground_truth_balance (float string) -- POAM-023: KMS-verified balance from Python
 -- Returns: array {status_code, message, new_balance_str, new_epoch}
@@ -293,10 +296,19 @@ end
 return {1, "COMMITTED", tostring(next_cash), new_epoch}
 """
 
-    def __init__(self, skip_epoch_seed: bool = False):  # type: ignore[no-untyped-def]
+    def __init__(self, invariant: Any = None, skip_epoch_seed: bool = False):  # type: ignore[no-untyped-def]
         """Initialize the ControlBarrierFunction.
 
+        PR C (Stage 2): One engine instance enforces exactly one affine barrier.
+        Multi-barrier domains construct multiple engines and register multiple
+        CBF tiers. A single engine multiplexing barriers would require a multi-key
+        Lua script, which is a distinct proof obligation (cross-key atomicity) not
+        covered by DistributedCBF.tla.
+
         Args:
+            invariant: InvariantModel instance defining the barrier (state_key,
+                      threshold_key, gamma). If None, uses backward-compatible
+                      finance-domain defaults (CashBarrier).
             skip_epoch_seed: If True, skip Redis epoch seeding at init time.
                              Used only for testing; production instances must
                              seed from Redis.
@@ -306,10 +318,22 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     is False. This prevents the instance from
                                     accepting requests with an unseeded epoch.
         """
-        # Thresholds from singleton — no inline literals.
+        # PR C (Stage 2): Compile barrier from InvariantModel.
+        # Backward compatibility: If no invariant provided, use finance defaults.
+        if invariant is None:
+            # Finance domain default barrier (CashBarrier-equivalent)
+            from src.cage_finance.invariants import CashBarrier
+            invariant = CashBarrier()
+        
+        self._invariant = invariant
+        # Threshold resolution deferred to atomic_verify_and_commit() to pick up
+        # runtime config changes. Cache threshold_key for validation.
+        self.threshold_key: str = invariant.threshold_key
+        self.gamma: float = invariant.gamma
+        self.redis_key: str = invariant.state_key
+        
+        # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
-        self.gamma: float = THRESHOLDS.cbf.gamma
-        self.redis_key: str = "safety:current_cash"
         self.tracer = get_tracer("src.gateway.governance.safety")
         self._lua_sha: str | None = None
         # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
@@ -707,7 +731,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         try:
             # LOW-6 fix: removed inline `import asyncio as _asyncio` — asyncio is
             # already imported at module level.
-            from src.cage_finance.compliance.reconciliation_worker import (
+            from src.gateway.governance.reconciliation.daemon import (
                 read_verified_balance,
             )
 
@@ -1545,12 +1569,20 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         self._last_verified_fence_epoch = current_fence_epoch
 
+        # PR C (Stage 2): Compile barrier parameters from InvariantModel
         # R-05: Include fence epoch key for atomic increment in Lua script
-        keys = ["safety:current_cash", "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
+        keys = [self._invariant.state_key, "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
+        
+        # Resolve threshold from THRESHOLDS tree at runtime
+        threshold_parts = self._invariant.threshold_key.split(".")
+        threshold_value = THRESHOLDS
+        for part in threshold_parts:
+            threshold_value = getattr(threshold_value, part)
+        
         argv = [
-            str(cost),
-            str(self.min_cash_balance),
-            str(self.gamma),
+            str(cost),  # ARGV[1]: magnitude (domain-neutral; was "cost")
+            str(threshold_value),  # ARGV[2]: resolved threshold from InvariantModel
+            str(self._invariant.gamma),  # ARGV[3]: gamma from InvariantModel
             governance_signature,
             str(effective_balance),  # ARGV[5]: ground truth balance (POAM-023)
         ]
