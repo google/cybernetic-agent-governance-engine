@@ -7,6 +7,96 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0] - Unreleased
+
+> **Major Version Release:** Plugin architecture refactor with normative provider
+> protocol consolidation and execution actuator standardization. Removes legacy
+> trade dispatch API and strengthens Compliance Bridge authentication.
+
+### Breaking Changes
+
+#### Plugin Architecture & Provider Protocol (PR #108–#114)
+
+- **Legacy Trade Dispatch API Removed (PR #111)** — The deprecated trade dispatch API in `src/governed_financial_advisor/` has been removed as part of the GFA-kernel decoupling initiative. All trade execution now flows through the canonical execution actuator protocol. Legacy clients must migrate to the `/v1/execute` endpoint with proper governance envelope wrapping (`refactor(governance)!`).
+
+- **Compliance Bridge Escalation Authentication (PR #114)** — The [`POST /v1/defer/{defer_id}/escalate`](src/compliance_bridge/server.py) endpoint now requires an authenticated request body with a valid routing seal or governance envelope. Previously, this endpoint accepted unauthenticated escalation requests, creating a potential authorization bypass. Clients must now include proper authentication credentials in the request body (`feat(compliance)!`).
+
+### Added
+
+- **Normative Provider Protocol** — Unified vendor adapter protocol (`NormativeProvider`, `AttestationProvider`, `EnvelopeMapper`) with universal conformance test suite. All external partner integrations now implement standardized seams with fail-closed semantics, tri-state verdict mapping, and hermetic testing (PR #108–#114) (`feat(governance)`).
+
+- **Universal Protocol Conformance Suite** — Parameterized test suite in [`tests/test_normative_provider_conformance.py`](tests/test_normative_provider_conformance.py) validating all vendor adapters against canonical interface contracts across all deployment regions (`test(governance)`).
+
+- **Plugin Isolation Boundary Check** — New [`scripts/check_import_boundaries.py`](scripts/check_import_boundaries.py) script enforcing vendor package isolation: adapter code under `src/integrations/provider_*/` must never import from core CAGE kernel (`src/gateway/`). Violations fail CI (`ci(governance)`).
+
+### Changed
+
+- **Vendor Package Isolation** — All external vendor adapters moved to isolated packages under [`src/integrations/provider_{name}/`](src/integrations/) with strict import boundary enforcement. Core CAGE kernel dependencies flow through protocol seams only (`refactor(governance)`).
+
+- **OSCAL Component Updates** — Updated OSCAL component definitions and system security plan to reflect plugin architecture refactor (PR #115) (`chore(compliance)`).
+
+### Migration Guide
+
+#### Legacy Trade Dispatch API Removal
+
+**Before (removed in v4.0.0):**
+```python
+# Legacy direct trade dispatch (removed)
+response = requests.post(
+    "http://gfa:8080/legacy/trade/dispatch",
+    json={"symbol": "AAPL", "quantity": 100}
+)
+```
+
+**After (required in v4.0.0):**
+```python
+# Use canonical execution actuator protocol
+from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+
+envelope = GovernanceEnvelopeBuilder.build(
+    action="execute_trade",
+    payload={"symbol": "AAPL", "quantity": 100},
+    seal=routing_seal
+)
+response = requests.post(
+    "http://gateway:8080/v1/execute",
+    json=envelope.to_dict()
+)
+```
+
+#### Compliance Bridge Escalation Authentication
+
+**Before (removed in v4.0.0):**
+```python
+# Unauthenticated escalation (security vulnerability)
+response = requests.post(
+    f"http://compliance-bridge:3002/v1/defer/{defer_id}/escalate",
+    json={"reason": "business justification"}
+)
+```
+
+**After (required in v4.0.0):**
+```python
+# Authenticated escalation with routing seal
+from src.gateway.governance.routing_seal import generate_seal
+
+seal = generate_seal(
+    action="escalate_defer",
+    record_hash=defer_record_hash,
+    secret=ROUTING_SEAL_SECRET
+)
+response = requests.post(
+    f"http://compliance-bridge:3002/v1/defer/{defer_id}/escalate",
+    json={
+        "reason": "business justification",
+        "routing_seal": seal,
+        "requester_identity": "user@example.com"
+    }
+)
+```
+
+---
+
 ## [3.0.0] - 2026-08-28
 
 > **Major Version Release:** Architectural cleanup, formal safety consolidations,
