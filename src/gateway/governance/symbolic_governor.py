@@ -774,9 +774,9 @@ class SymbolicGovernor:
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
-        enable_legacy_trade_dispatch: bool | None = None,
     ):
         self.opa_client = opa_client
+        # retained for direct-invocation callers; not part of the governance hot path
         self.safety_filter = safety_filter
         self.consensus_engine = consensus_engine
         self.stpa_validator: STPAValidator | None = stpa_validator
@@ -785,15 +785,8 @@ class SymbolicGovernor:
         # When present, atomically pre-reserves the daily fiscal limit in Redis
         # (WATCH/MULTI/EXEC) before the consensus gate, closing the TOCTOU race
         # between the CBF balance check and actual trade execution.
+        # retained for direct-invocation callers; not part of the governance hot path
         self.fiscal_limit_guard = fiscal_limit_guard
-
-        # D4 fix: env-driven legacy dispatch flag.  Constructor arg wins for tests;
-        # otherwise falls back to ENABLE_LEGACY_TRADE_DISPATCH env var (default True).
-        self.enable_legacy_trade_dispatch: bool = (
-            enable_legacy_trade_dispatch
-            if enable_legacy_trade_dispatch is not None
-            else _env_flag("ENABLE_LEGACY_TRADE_DISPATCH", default=True)
-        )
 
         # D5 fix: pluggable domain tier registry.  Tiers are registered via
         # register_domain_tier() at startup and sorted by (phase, order, tier_name)
