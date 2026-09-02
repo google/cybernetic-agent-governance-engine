@@ -126,6 +126,12 @@ spec:
                   optional: true
             - name: OPA_URL
               value: "http://opa.governance-stack.svc.cluster.local:8181/v1/data/trade/governance"
+            # S5: Minimum FTRA registry serial — deployment-time replay defense.
+            # If the baked registry's serial < this value, the pod refuses to start.
+            # Increment this on every production deploy to prevent rollback attacks.
+            # Current: 1 (initial signed registry from 2026-09-02)
+            - name: FTRA_REGISTRY_MIN_SERIAL
+              value: "1"
           livenessProbe:
             httpGet:
               path: /health

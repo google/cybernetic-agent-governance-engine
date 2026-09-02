@@ -15,8 +15,41 @@
 substitutions:
   _GCP_PROJECT_ID: ""  # Pass via --substitutions=_GCP_PROJECT_ID=<project> or set in Cloud Build trigger
   _SHORT_SHA: "latest"
+  _KMS_GOVERNANCE_KEY: ""  # KMS key resource name for FTRA registry signing
 
 steps:
+  # S3: Sign the FTRA terminal registry with KMS before baking into the image
+  - name: "python:3.12-slim"
+    id: sign-registry
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install --quiet uv && \
+        uv run python -m src.gateway.governance.stpa_compiler compile \
+          --targets ftra --sign --registry-validity-days 90
+    env:
+      - "CAGE_ENV=production"
+      - "KMS_GOVERNANCE_KEY=${_KMS_GOVERNANCE_KEY}"
+
+  # S4: Verify the signature immediately - a bad signature kills the build
+  - name: "python:3.12-slim"
+    id: verify-registry-signature
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install --quiet uv && \
+        uv run python -c "
+        from pathlib import Path
+        from src.gateway.governance.ftra.registry_verifier import verify_registry
+        from src.gateway.governance.kms_signer import get_governance_signer
+        r = verify_registry(Path('config/ftra/terminal_registry.json'),
+                            signer=get_governance_signer())
+        assert r.valid, f'registry signature invalid: {r.reason}'
+        print(f'✅ registry verified: serial={r.serial} expires={r.expires_at}')
+        "
+
   - name: "gcr.io/cloud-builders/docker"
     id: build-gateway
     args:

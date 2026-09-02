@@ -56,6 +56,22 @@ from src.gateway.governance.ftra.models import TerminalClassification
 logger = logging.getLogger("Gateway.Governance.FTRA.Classifier")
 
 # ---------------------------------------------------------------------------
+# S6: Prometheus metrics (graceful degradation if dependency absent)
+# ---------------------------------------------------------------------------
+
+try:
+    from prometheus_client import Gauge
+
+    _REGISTRY_EXPIRES_AT_GAUGE = Gauge(
+        "cage_ftra_registry_expires_at_seconds",
+        "FTRA terminal registry expiry timestamp (Unix epoch seconds). "
+        "Alert when (value - time()) < 14 days.",
+    )
+except ImportError:
+    logger.debug("prometheus_client not available — FTRA expiry gauge disabled")
+    _REGISTRY_EXPIRES_AT_GAUGE = None  # type: ignore[assignment]
+
+# ---------------------------------------------------------------------------
 # Registry path
 # ---------------------------------------------------------------------------
 
@@ -152,6 +168,11 @@ def _load_registry(path: Path) -> dict[str, str]:
         path,
         result.serial,
     )
+
+    # S6: Emit expiry gauge on every successful verification (not just at startup).
+    # A gauge written once at boot goes stale on FTRA_REGISTRY_RELOAD or SIGUSR1.
+    if _REGISTRY_EXPIRES_AT_GAUGE is not None and result.expires_at is not None:
+        _REGISTRY_EXPIRES_AT_GAUGE.set(result.expires_at)
 
     return terminals
 
