@@ -506,7 +506,7 @@ def _run_ftra(
 
     # BLOCKED
     logger.warning(
-        "FTRA: plan '%s' BLOCKED (confidence=%.3f < %.2f, irreversible terminals=%s).",
+        "FTRA: plan '%s' BLOCKED (confidence=%.3f < %.2f, reachable_terminals=%s).",
         plan.plan_id,
         confidence,
         0.70,
