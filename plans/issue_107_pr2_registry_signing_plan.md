@@ -421,3 +421,99 @@ Per [`AGENTS.md`](../AGENTS.md), controls touched here require artifact updates:
   already supports multiple active keys; wiring multi-key verification into
   `RegistryVerifier` is a separate change
 - **Signing the repo-committed registry** — §6
+
+---
+
+## 12. Verification addendum — mutation results and D1–D4 status
+
+Verification performed on `feat/ftra-registry-signing` at commit `2e2b3e1`.
+
+### M-A — serial monotonicity: **sound**
+
+Inverting `serial_value < effective_floor` at
+[`registry_verifier.py:309`](../src/gateway/governance/ftra/registry_verifier.py:309)
+caused `test_vec_008a_serial_rollback` to fail; reverting returned it to green.
+
+```
+tests/test_ftra_registry_signing.py:327: in test_vec_008a_serial_rollback
+    assert result.valid is True
+E   AssertionError: assert False is True
+E    +  where False = VerificationResult(valid=False, reason='SERIAL_REGRESSED',
+        serial=42, ...).valid
+ERROR registry_verifier.py:310 FTRA registry serial rollback detected:
+      serial=42, floor=0 (FTRA_REGISTRY_MIN_SERIAL=0, in-memory high-water=0)
+============================== 1 failed in 28.12s ==============================
+```
+
+The serial control inside `verify_registry()` is genuinely tested.
+
+### M-B — version-downgrade guard: **cannot be mutated; the guard does not exist**
+
+The mutation could not be applied because neither the guard nor its test is
+present. Verified on branch:
+
+| Claim | Actual state |
+|---|---|
+| Guard at `classifier.py:122` rejecting `version != "2.0"` under enforcement | **Absent.** Line 122 is an `except Exception` for signer loading |
+| Test `test_d4_integration_version_downgrade_enforcement_on_fails_closed` | **Absent.** No match anywhere in `tests/` |
+
+This is the M1 failure mode repeating: a mutation reported without first
+confirming it can change behaviour. Recorded as *not verified*, not as a pass.
+
+### D1–D4 — all four remain **unfixed** on this branch
+
+Each defect from §12 of the review was re-checked against the code:
+
+| Defect | Claimed | Verified state |
+|---|---|---|
+| **D1** version downgrade bypasses verification | fixed | **Open.** [`classifier.py:108`](../src/gateway/governance/ftra/classifier.py:108) still gates on `if version == "2.0":`; the `else` at :156 loads v1.0 unverified regardless of posture |
+| **D2** wrong import name | fixed | **Open.** [`classifier.py:113`](../src/gateway/governance/ftra/classifier.py:113) imports `get_signer`; the real symbol is [`get_governance_signer`](../src/gateway/governance/kms_signer.py:1066) |
+| **D3** high-water advanced before signature check | fixed | **Open.** Serial commit at [`registry_verifier.py:326`](../src/gateway/governance/ftra/registry_verifier.py:326) still precedes signature verification at :380 |
+| **D4** no integration coverage | fixed | **Open.** All tests call `verify_registry()` directly; none call `_load_registry()` or `classify()` |
+
+Lesser items also unaddressed: `VerificationResult` has no `enforced` field,
+`EXPIRY_MALFORMED` is not defined, and the unused `jcs_canonicalize_plan` import
+remains at [`registry_verifier.py:377`](../src/gateway/governance/ftra/registry_verifier.py:377).
+
+### Consequence — the control is inert as shipped
+
+D1 and D2 compose into total non-function:
+
+- The committed registry is `"version": "1.0"`
+  ([`config/ftra/terminal_registry.json:2`](../config/ftra/terminal_registry.json:2)),
+  so every load takes the unverified `else` branch.
+- Any registry marked `"2.0"` raises `ImportError` on the D2 import before
+  verification is reached.
+
+There is no input for which signature verification both runs and succeeds.
+**VEC-005 and VEC-008 are not closed by this branch**, and the PR must not
+claim otherwise. `RegistryVerifier` is correct in isolation and untested in
+integration — precisely the gap D4 named.
+
+### Count reconciliation
+
+Measured with `--collect-only -q` on `-m "local or unit"`:
+
+| Branch | Collected (local/unit) | Collected (total) |
+|---|---|---|
+| `feat/aisvs-c9-taxonomy` | 3402 | 3572 |
+| `feat/ftra-registry-signing` | 3416 | 3586 |
+
+Delta is **+14**, matching the 14 `def test_` functions in
+[`test_ftra_registry_signing.py`](../tests/test_ftra_registry_signing.py).
+
+This **contradicts the 17** recorded in
+[`enforcement_pipeline_review.md`](enforcement_pipeline_review.md) §9, whose
+`3574 + 32 = 3606` arithmetic depends on that 17. The Stage 1 collection
+identity is therefore not established, and the "16-test pass-state gap" derived
+from it inherits the same doubt. Neither figure should be cited until re-measured.
+
+### Required before PR #2 can be honestly opened
+
+1. Fix D2 (one-line import rename) — unblocks every v2.0 path.
+2. Fix D1 — decide enforcement from posture; `version != "2.0"` under
+   enforcement is `ENVELOPE_INVALID`, never a bypass.
+3. Fix D3 — advance the high-water mark only after the signature verifies.
+4. Add the D4 integration tests against `_load_registry()` and `classify()`,
+   including the version-downgrade case, then run M-B against a guard that exists.
+5. Re-measure both suites and restate the counts.
