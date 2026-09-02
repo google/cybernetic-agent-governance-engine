@@ -594,48 +594,113 @@ Unconditional enforcement is a clean rule, but it removes the escape hatch that
 three things currently rely on. Each must land in the same PR or the branch is
 red on arrival.
 
-**R2a — sign the committed registry.** The shipped file is `"version": "1.0"`
+**R2a — signing strategy: hermetic CI keypair (owner decision, option 2).**
+
+The shipped file is `"version": "1.0"`
 ([`terminal_registry.json:2`](../config/ftra/terminal_registry.json:2)) with no
-`.sig`. Under R2 the application cannot start usefully — every action routes to
-HITL. §6 deferred signing to the deploy pipeline precisely to avoid this; with
-the flag gone, that deferral is no longer available. The registry must be
-regenerated as v2.0 (`serial`, `issued_at`, `expires_at`) and signed, and the
-`.sig` committed.
+`.sig`, and it **will not be signed in the repository**. Committing a signature
+was rejected: it expires (a scheduled CI breakage), and it forces a KMS
+dependency onto local dev runs. §6's reasoning stands; only its posture-gate
+conclusion is withdrawn.
 
-This resurfaces the two objections §6 raised against committing a signature,
-which the owner should confirm are accepted:
+Instead, tests generate a **throwaway keypair at setup** and sign fixture
+registries with it. The suite's job is to prove the *enforcement mechanism*
+behaves — valid signature admits, absent or invalid signature fails closed — not
+to attest the committed artefact to a live KMS. This keeps CI deterministic and
+lets the product code drop all conditional logic.
 
-- a committed signature **expires**, so CI breaks on the `expires_at` date
-  unless validity is long or renewal is scheduled;
-- regenerating the registry then requires a signing key, so `stpa_compiler`
-  runs in dev/CI can no longer refresh it freely.
+Design:
 
-A long `--registry-validity-days` mitigates the first without reintroducing a
-toggle. The second is a genuine cost of the decision.
+1. **Keypair fixture** in a shared conftest — EC P-256 generated in-process,
+   session-scoped so the cost is paid once.
+2. **Signer injection** — patch `get_governance_signer` so the classifier's load
+   path resolves a signer carrying the hermetic public PEM. This is the only
+   seam that matters: `verify()` needs `_public_key_pem` and nothing else.
+3. **Fixture signing helper** — registries written by tests are signed with the
+   hermetic private key before a classifier is constructed.
+
+#### Residual risk this accepts — must reach the OSCAL component
+
+The hermetic keypair proves the mechanism, **not** the provenance of the shipped
+registry. Two consequences follow, and neither may be left implicit:
+
+- **Production has no signed registry and no pipeline to produce one.** With R2
+  landed, a production deployment loading the committed v1.0 file fails closed —
+  every action `IRREVERSIBLE_TERMINAL`, all traffic to HITL. Correct fail-closed
+  behaviour, and a total outage. The deploy-pipeline signing step (§6) remains
+  **unbuilt** and is now the gating dependency for any real deployment.
+- **A green suite does not mean VEC-005 is closed in production.** It means the
+  control rejects an unsigned registry. Closing VEC-005 in production
+  additionally requires a signed registry to exist there.
+
+The SI-7 / AU-10 component must therefore describe the control as *implemented
+and tested*, with production key management recorded as a dependency — not as
+*operating*. Overstating this would be the same overreach the four-way scoring
+partition exists to prevent.
 
 **R2b — `get_governance_signer()` must resolve a public key in CI.** Verification
 needs only `_public_key_pem` (§2), not KMS credentials, but it now runs on
-*every* load including every CI job. If the `from_env()` no-KMS fallback yields a
-signer without a public key, R2 turns into a hard failure everywhere. The
-verifier's `PUBKEY_UNAVAILABLE` path must be confirmed reachable and the public
-PEM available to CI — it is not secret and needs no `secretKeyRef`.
+*every* load including every CI job.
 
-**R2c — 19 existing call sites construct `IrreversibilityClassifier` against
-unsigned registries** and will fail closed under R2. Confirmed:
+**Measured — this does not hold today.** With `CAGE_ENV=test` and no
+`KMS_GOVERNANCE_KEY`, [`from_env()`](../src/gateway/governance/kms_signer.py:593)
+returns the no-KMS fallback with `public_key_pem=b""`, and
+[`verify()`](../src/gateway/governance/kms_signer.py:883) then **raises**:
 
-| Site | Registry written |
+```
+signer type      : KMSGovernanceSigner
+is_kms_active    : False
+public_key_pem   : b''
+verify() RAISED  : RuntimeError [KMSSigner] verify() called but no public key is loaded.
+```
+
+No `.pem` is committed anywhere in the repo, and neither `KMS_GOVERNANCE_PUBLIC_PEM`
+nor `KMS_GOVERNANCE_KEY` is set in [`ci.yml`](../.github/workflows/ci.yml).
+Note this raises rather than returning `PUBKEY_UNAVAILABLE` — the verifier's
+own failure code for this case is unreachable via the classifier path, because
+the signer throws before `verify_registry()` can evaluate it.
+
+**R2a is blocked by the same gap.** [`--sign`](../src/gateway/governance/stpa_compiler.py:1599)
+requires `is_kms_active`, which requires live KMS credentials. Without them the
+committed registry cannot be signed at all, so R2a is not merely "work to do" —
+it cannot be performed in dev or CI as the code currently stands.
+
+**R2c — the blast radius is 26 failures, not 19 call sites.** Measured by
+applying R2 experimentally (posture forced ON, version branch removed) and
+running the four FTRA suites:
+
+```
+26 failed, 75 passed, 2 skipped
+```
+
+The earlier "19 call sites" figure was an **undercount**. It came from grepping
+`IrreversibilityClassifier(` and missed tests that construct a classifier
+*indirectly* via `create_ftra_node`, so `TestCreateFtraNode` and `TestTelemetry`
+in [`test_ftra_package.py`](../tests/test_ftra_package.py) break too. Counting
+constructor call sites was the wrong proxy for "tests that load a registry".
+
+Failures span:
+
+| File | Affected |
 |---|---|
-| [`test_ftra_package.py:191`](../tests/test_ftra_package.py:191) `_analyzer` helper, **9 callers** | `{"terminals": ...}` — no version, no signature |
-| [`test_ftra_package.py:172`](../tests/test_ftra_package.py:172) | `{"terminals": ...}` |
-| [`test_aisvs_c9_conformance.py:184`](../tests/test_aisvs_c9_conformance.py:184), [:214](../tests/test_aisvs_c9_conformance.py:214) | explicit `"version": "1.0"`, **6 consumers** |
-| [`test_ftra_boundary_check.py:345`](../tests/test_ftra_boundary_check.py:345), [:358](../tests/test_ftra_boundary_check.py:358), [:368](../tests/test_ftra_boundary_check.py:368) | default committed registry |
+| [`test_ftra_package.py`](../tests/test_ftra_package.py) | `_analyzer` helper (9 callers), `TestCreateFtraNode`, `TestTelemetry` |
+| [`test_ftra_boundary_check.py`](../tests/test_ftra_boundary_check.py) | `TestClassifierStandaloneInstantiation` (3) |
+| [`test_aisvs_c9_conformance.py`](../tests/test_aisvs_c9_conformance.py) | v1.0 fixtures (6 consumers) |
 
-The fix is to route them through a signing helper — the `create_signed_registry`
-factory from R4a, applied to these fixtures. Note what this changes about
-`test_ftra_package.py`: those tests currently assert *classification* behaviour
-and would begin asserting *signing* behaviour as a precondition. That is the
-correct trade for a single-posture design, but it is a real coupling: a signing
-regression will now redden tests that have nothing to do with signing.
+**The ordering result that matters:** with D1 still present, forcing enforcement
+ON alone breaks only **one** test — `test_vec_005c`, which tests the posture gate
+and R4 deletes anyway. All 26 failures appear only once the version branch is
+also removed.
+
+D1 is therefore currently *shielding* the suite from the absent signing
+infrastructure: because v1.0 skips verification, nothing ever exercises the
+signer. Removing D1 and provisioning signing are **one piece of work**, not two.
+This is the same coupling that let D1 and D2 survive a green suite.
+
+The fix remains routing fixtures through `create_signed_registry` (R4a). Note
+the coupling it introduces: `test_ftra_package.py` tests currently assert
+*classification* behaviour and would begin asserting *signing* as a
+precondition, so a signing regression will redden tests unrelated to signing.
 
 §8's regression requirement — that PR #1's `tmp_path` v1.0 fixtures keep passing
 under default posture — is **withdrawn**, since there is no longer a default
