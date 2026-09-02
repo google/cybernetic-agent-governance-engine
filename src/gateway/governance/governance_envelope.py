@@ -501,17 +501,128 @@ class GovernanceEnvelopeBuilder:
             logger.error("❌ Failed to sign envelope: %s", e)
             return envelope
 
+    @staticmethod
+    def _is_temporally_valid(envelope: GovernanceEnvelope) -> bool:
+        """Return True if the envelope is within its validity window.
+
+        Fail-closed on every ambiguity: an absent or unparseable ``expires_at``
+        is treated as invalid, never as "no expiry". An envelope whose lifetime
+        cannot be established is not an envelope with an unlimited lifetime.
+
+        Args:
+            envelope: The envelope whose temporal validity is in question.
+
+        Returns:
+            True only if ``expires_at`` parses to a timezone-aware instant in
+            the future.
+        """
+        raw_expiry = envelope.expires_at
+
+        if not raw_expiry:
+            logger.warning(
+                "❌ Envelope %s has no expires_at — rejecting (an envelope with "
+                "no established lifetime is not an envelope with an unlimited one)",
+                envelope.envelope_id or "<no id>",
+            )
+            return False
+
+        try:
+            # Accept the trailing "Z" that build_unsigned() emits.
+            expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+        except (ValueError, AttributeError) as exc:
+            logger.warning(
+                "❌ Envelope %s has unparseable expires_at (%r): %s — rejecting",
+                envelope.envelope_id or "<no id>",
+                raw_expiry,
+                exc,
+            )
+            return False
+
+        # A naive timestamp is ambiguous about the instant it denotes. Reject
+        # rather than assume UTC — the same rule the FTRA registry verifier
+        # applies to EXPIRY_NAIVE.
+        if expires_at.tzinfo is None:
+            logger.warning(
+                "❌ Envelope %s has timezone-naive expires_at (%r) — rejecting",
+                envelope.envelope_id or "<no id>",
+                raw_expiry,
+            )
+            return False
+
+        now = datetime.now(timezone.utc)
+        if expires_at <= now:
+            logger.warning(
+                "❌ Envelope %s expired at %s (now %s) — rejecting replay",
+                envelope.envelope_id or "<no id>",
+                expires_at.isoformat(),
+                now.isoformat(),
+            )
+            return False
+
+        return True
+
+    @staticmethod
+    def _algorithm_matches_key(claimed: str, public_key: object) -> bool:
+        """Return True if the claimed algorithm agrees with the key type.
+
+        Finding C. The claim lives in attacker-controlled input, so it is never
+        used to *select* a verification path — that is decided by the resolved
+        key. It is compared only to detect disagreement, which is the pattern
+        ConsequenceToken.verify() already applies to the JWS ``alg`` header.
+
+        A mismatch means the envelope asserts one thing and the key does
+        another; there is no benign reading of that, so it fails closed.
+
+        Args:
+            claimed: The ``algorithm`` value carried by the envelope.
+            public_key: The public key actually resolved for verification.
+
+        Returns:
+            True if the claim is consistent with the key, or absent.
+        """
+        from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+
+        if not claimed:
+            # Absent claim: nothing to contradict. The key still decides.
+            return True
+
+        claim = claimed.upper()
+        if isinstance(public_key, ec.EllipticCurvePublicKey):
+            permitted = {"ES256", "ES384", "ES512"}
+        elif isinstance(public_key, ed25519.Ed25519PublicKey):
+            permitted = {"EDDSA"}
+        elif isinstance(public_key, rsa.RSAPublicKey):
+            permitted = {
+                "RS256",
+                "RS384",
+                "RS512",
+                "PS256",
+                "PS384",
+                "PS512",
+            }
+        else:
+            # Unknown key type — cannot establish agreement, so fail closed.
+            return False
+
+        return claim in permitted
+
     def verify(
         self,
         envelope: GovernanceEnvelope | dict[str, Any],
     ) -> bool:
-        """Verify an envelope's signature.
+        """Verify an envelope's signature and temporal validity.
+
+        Checks, in order:
+            1. A signature block is present.
+            2. ``expires_at`` is present, parseable, and in the future.
+            3. The signature verifies against the resolved public key.
+            4. The claimed algorithm agrees with the key actually used.
 
         Args:
             envelope: The envelope to verify (GovernanceEnvelope or dict).
 
         Returns:
-            True if signature is valid, False otherwise.
+            True if the envelope is valid and unexpired, False otherwise.
         """
         if isinstance(envelope, dict):
             # Convert dict to envelope
@@ -519,6 +630,24 @@ class GovernanceEnvelopeBuilder:
 
         if envelope.signature is None:
             logger.warning("⚠️ Envelope has no signature")
+            return False
+
+        # -------------------------------------------------------------------
+        # Finding A: enforce expiry BEFORE any cryptographic work.
+        #
+        # An envelope is a bearer credential asserting that a specific action
+        # passed specific tiers. Its signature is valid indefinitely by
+        # construction, so without this check a captured envelope replays
+        # forever and the TTL exists only in the data model.
+        #
+        # Ordering matters twice over: cheap checks precede expensive ones, and
+        # an expired envelope should be reported as expired rather than
+        # consuming a key resolution and a signature verification first. This
+        # mirrors ConsequenceToken.verify(), which checks `exp` before the
+        # signature, and the FTRA registry verifier, which evaluates expiry
+        # outside its digest cache for the same reason.
+        # -------------------------------------------------------------------
+        if not self._is_temporally_valid(envelope):
             return False
 
         try:
@@ -547,6 +676,28 @@ class GovernanceEnvelopeBuilder:
 
             # Load the public key
             public_key = serialization.load_pem_public_key(pem)
+
+            # ---------------------------------------------------------------
+            # Finding C: the claimed algorithm must agree with the key in use.
+            #
+            # The verification path below is selected by the resolved key type,
+            # never by this claim — untrusted input does not choose its own
+            # validation. The claim is read solely to detect disagreement: an
+            # envelope asserting RS256 while carrying an EC signature has no
+            # benign interpretation, so it fails closed rather than being
+            # quietly verified by whichever path the key happens to imply.
+            # ---------------------------------------------------------------
+            if not self._algorithm_matches_key(
+                envelope.signature.algorithm, public_key
+            ):
+                logger.warning(
+                    "❌ Envelope %s claims algorithm %r, which disagrees with the "
+                    "resolved key type %s — rejecting (possible algorithm confusion)",
+                    envelope.envelope_id or "<no id>",
+                    envelope.signature.algorithm,
+                    type(public_key).__name__,
+                )
+                return False
 
             # Decode signature
             sig_b64 = envelope.signature.value
@@ -601,7 +752,42 @@ class GovernanceEnvelopeBuilder:
             return False
 
     def _envelope_from_dict(self, data: dict[str, Any]) -> GovernanceEnvelope:
-        """Reconstruct a GovernanceEnvelope from a dictionary."""
+        """Reconstruct a GovernanceEnvelope from an untrusted dictionary.
+
+        Finding B. Defaults are correct for a *builder*; for a *parser of
+        untrusted input* they convert "the field is missing" into "the field
+        says what we expected", which is the substitution the D1 defect made.
+
+        Security-relevant fields are therefore **required**. Absence is a
+        rejection, not a cue to supply a plausible value:
+
+        * ``envelope_version`` — must not be relabelled as the current version.
+        * ``expires_at`` — must not become "no expiry"; ``verify()`` depends on
+          this being real.
+        * ``issued_at`` — needed to reason about the validity window at all.
+        * ``governance_context.deployment_region`` — the sharpest case. An
+          envelope issued under one regulatory region, parsed under another,
+          would otherwise be silently relabelled as local before any region
+          guard sees it.
+
+        Genuinely optional fields keep their defaults. ``to_dict()``
+        deliberately omits ``external_attestations`` when empty, and
+        ``record_hash`` / ``agent_id`` are nullable by design, so a blanket
+        "reject every missing key" rule would break the round-trip that the
+        tamper-detection tests rely on. The strictness is targeted, not global.
+
+        Raises:
+            ValueError: If a security-relevant field is absent.
+        """
+        required_top_level = ("envelope_version", "expires_at", "issued_at")
+        missing = [key for key in required_top_level if key not in data]
+        if missing:
+            raise ValueError(
+                f"Envelope is missing required field(s): {', '.join(missing)}. "
+                "Absent security fields are rejected rather than defaulted — a "
+                "missing value must not be read as the expected one."
+            )
+
         issuer_data = data.get("issuer", {})
         issuer = IssuerMetadata(
             service=issuer_data.get("service", _SERVICE_NAME),
@@ -618,10 +804,16 @@ class GovernanceEnvelopeBuilder:
         )
 
         context_data = data.get("governance_context", {})
+        if "deployment_region" not in context_data:
+            raise ValueError(
+                "Envelope governance_context is missing 'deployment_region'. "
+                "Defaulting it to the local region would relabel an envelope "
+                "issued elsewhere as local before any region guard evaluates it."
+            )
         context = GovernanceContext(
             policy_version=context_data.get("policy_version", ""),
             tiers_passed=context_data.get("tiers_passed", []),
-            deployment_region=context_data.get("deployment_region", _DEPLOYMENT_REGION),
+            deployment_region=context_data["deployment_region"],
             controls_satisfied=context_data.get("controls_satisfied", []),
         )
 
@@ -652,11 +844,11 @@ class GovernanceEnvelopeBuilder:
             )
 
         return GovernanceEnvelope(
-            envelope_version=data.get("envelope_version", _ENVELOPE_VERSION),
+            envelope_version=data["envelope_version"],
             envelope_type=data.get("envelope_type", _ENVELOPE_TYPE),
             envelope_id=data.get("envelope_id", ""),
-            issued_at=data.get("issued_at", ""),
-            expires_at=data.get("expires_at", ""),
+            issued_at=data["issued_at"],
+            expires_at=data["expires_at"],
             issuer=issuer,
             subject=subject,
             governance_context=context,
