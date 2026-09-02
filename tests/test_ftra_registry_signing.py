@@ -565,3 +565,56 @@ def test_guard_envelope_invalid_version(tmp_path, clean_verifier_state, monkeypa
     result = verify_registry(registry_path, signer=None)
     assert result.valid is False
     assert result.reason == ENVELOPE_INVALID
+
+
+@pytest.mark.local
+def test_s6_expiry_gauge_emits_epoch_timestamp(
+    tmp_path, hermetic_signer, clean_verifier_state
+):
+    """S6: cage_ftra_registry_expires_at_seconds must emit epoch float, not datetime.
+    
+    This test exists because the as-shipped S6 code passed `result.expires_at` (a
+    datetime object) directly to `Gauge.set()`, which requires a float. That raised
+    TypeError in production but was masked locally by the ImportError fallback
+    setting the gauge to None.
+    
+    The test MUST fail before the `.timestamp()` fix is applied, or it proves nothing.
+    """
+    pytest.importorskip("prometheus_client")
+    from src.gateway.governance.ftra.classifier import _REGISTRY_EXPIRES_AT_GAUGE
+    
+    # Gauge must not be None — a missing metric is a failure, not a skip
+    assert _REGISTRY_EXPIRES_AT_GAUGE is not None, (
+        "S6 gauge is None despite prometheus_client being available. "
+        "This test cannot validate the fix."
+    )
+    
+    # Create a signed registry with known expiry
+    registry_path, registry_dict = create_signed_registry(
+        tmp_path, hermetic_signer, serial=1, validity_days=90
+    )
+    expected_expires_dt = datetime.fromisoformat(registry_dict["expires_at"])
+    
+    # Clear the gauge before testing (in case other tests set it)
+    _REGISTRY_EXPIRES_AT_GAUGE.set(0)
+    
+    # Load the registry via the classifier (which triggers S6)
+    from src.gateway.governance.ftra.classifier import _load_registry
+    _ = _load_registry(registry_path)
+    
+    # The gauge sample must equal expires_at.timestamp(), not the datetime object
+    from prometheus_client import REGISTRY
+    samples = list(_REGISTRY_EXPIRES_AT_GAUGE.collect())[0].samples
+    assert len(samples) == 1, f"Expected 1 gauge sample, got {len(samples)}"
+    
+    actual_value = samples[0].value
+    expected_value = expected_expires_dt.timestamp()
+    
+    assert isinstance(actual_value, (int, float)), (
+        f"Gauge value must be numeric (epoch seconds), got {type(actual_value)}"
+    )
+    assert abs(actual_value - expected_value) < 1.0, (
+        f"Gauge value {actual_value} does not match expected {expected_value} "
+        f"(expires_at={expected_expires_dt.isoformat()}). "
+        f"Difference: {abs(actual_value - expected_value)} seconds"
+    )

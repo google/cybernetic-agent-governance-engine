@@ -95,6 +95,13 @@ gateway = [
     # optional performance dependency — the fallback is functionally correct but
     # slower under high-throughput inference traffic.
     "pyahocorasick>=2.0.0",
+    # prometheus-client: S6 expiry gauge + CBF fence-epoch metrics. Previously
+    # absent from pyproject.toml — the graceful ImportError fallback made the
+    # gauges silently no-op locally. S6 defect (c0f7123) passed a datetime to
+    # Gauge.set(), which raised TypeError in production but was masked by the
+    # None fallback in tests. Adding the dependency so metrics are live in local
+    # test runs.
+    "prometheus-client>=0.21.0",
     # NOTE: 'outlines' was removed — CVE-2025-69872 (diskcache pickle RCE).
     # The guided_json FSM decoder runs server-side inside vLLM, not client-side.
     # CAGE never imports the outlines package; vLLM bundles its own copy.

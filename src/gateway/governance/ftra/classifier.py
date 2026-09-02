@@ -172,7 +172,7 @@ def _load_registry(path: Path) -> dict[str, str]:
     # S6: Emit expiry gauge on every successful verification (not just at startup).
     # A gauge written once at boot goes stale on FTRA_REGISTRY_RELOAD or SIGUSR1.
     if _REGISTRY_EXPIRES_AT_GAUGE is not None and result.expires_at is not None:
-        _REGISTRY_EXPIRES_AT_GAUGE.set(result.expires_at)
+        _REGISTRY_EXPIRES_AT_GAUGE.set(result.expires_at.timestamp())
 
     return terminals
 

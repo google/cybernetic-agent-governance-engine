@@ -282,6 +282,66 @@ required in the same PR**, per [`AGENTS.md`](../AGENTS.md).
 
 ### S6 — expiry is now an operational commitment
 
+> ## ⚠️ SECOND DEFECT IN AS-SHIPPED CODE (c0f7123) — S6 gauge is type-wrong
+>
+> **Found by reading, 2026-09-02, immediately after the S4 defect.** Same
+> session, same root cause: I asserted runtime behaviour from a file I had only
+> written, not executed.
+>
+> **The bug.** [`registry_verifier.py:98`](../src/gateway/governance/ftra/registry_verifier.py:98)
+> declares `expires_at: datetime | None`, populated by
+> `datetime.fromisoformat()` at
+> [:264](../src/gateway/governance/ftra/registry_verifier.py:264). It is a
+> **`datetime` object, not epoch seconds.** My S6 line passes it directly to
+> `Gauge.set()`, which requires a float. That raises `TypeError`.
+>
+> The correct call is `.set(result.expires_at.timestamp())`.
+>
+> **Why the suite did not catch it — and this is the serious part.**
+> `prometheus-client` does not appear anywhere in
+> [`pyproject.toml`](../pyproject.toml). Every metrics block in this repository
+> is wrapped in `try: from prometheus_client import ... except ImportError:
+> _GAUGE = None`, and the tests skip on `pytest.importorskip`. So in the local
+> environment `_REGISTRY_EXPIRES_AT_GAUGE is None`, the `if ... is not None`
+> guard short-circuits, and **my broken line never executes.**
+>
+> I reported "3343 passed, 0 failed" as evidence that S6 was sound. It was not
+> evidence of anything about S6. The guard I copied from the existing idiom —
+> correctly, for availability — also made the feature untestable in the only
+> environment where I ran tests. The green suite measured the guard, not the
+> gauge.
+>
+> **The failure mode this creates is worse than a crash at boot.** The
+> dependency *is* present in the production image (the gateway serves
+> `/metrics`), so the `except ImportError` branch is not taken there. The
+> `TypeError` therefore fires **only in production**, on the registry load path,
+> inside `_load_registry` — the function whose entire contract is to either
+> return a verified registry or raise. An unhandled `TypeError` there means the
+> FTRA classifier fails to load *after* the signature has already verified
+> successfully. A telemetry line would have taken down the control it was
+> supposed to observe.
+>
+> **This is the third instance of the same error in one session** (Finding D
+> twice, S4, now S6). The pattern is stable and worth naming: I treat "I wrote
+> it carefully" as equivalent to "I ran it". Reading is how I found all three,
+> but only after shipping. The generalisable fix is not more care — it is
+> refusing to write "verified" in a commit message for any line whose execution
+> I have not observed.
+>
+> **Required fix, and it must be visible:**
+> 1. `.set(result.expires_at.timestamp())` — convert to epoch float.
+> 2. Add `prometheus-client` to `pyproject.toml` so the gauge is exercised
+>    locally rather than silently skipped.
+> 3. A test that **fails without step 1** — asserting the sample value equals
+>    `expires_at.timestamp()`. Without it, this recurs invisibly.
+>
+> Step 3 is the one that matters. Steps 1 and 2 fix today's bug; step 3 is the
+> only part that makes the next one fail loudly. Note also that V6 in the
+> matrix, as written, would **not** have caught this in the local environment —
+> it says "scrape `/metrics`", which silently no-ops when the gauge is `None`.
+> V6 must additionally assert the gauge object exists, so that "metric absent"
+> is a failure rather than a skip.
+
 > **Implementation note — follow the existing metrics idiom.** The repository
 > already exposes governance gauges via `prometheus_client` with a graceful
 > ImportError fallback: `_CURRENT_FENCE_EPOCH_GAUGE` is defined at
@@ -371,7 +431,7 @@ while proving none. V0 is the falsifiability precondition for the whole matrix.
 | V3 | Pod verifies without KMS | deploy with KMS egress blocked | pod healthy, registry loads | classify returns a non-terminal verdict for a known read-only action |
 | V4 | Missing PEM fails closed | unset `KMS_GOVERNANCE_PUBLIC_PEM` on the pod | every action `IRREVERSIBLE_TERMINAL` | signer error in logs; **not** a silent empty registry |
 | V5 | Rollback floor holds | serial N deployed, restart with N-1 | load refused | `SERIAL_REGRESSED` |
-| V6 | Expiry gauge is live | scrape `/metrics` after load, then force reload | gauge present and **changes** on reload | value equals the registry's `expires_at`, not a boot-time constant |
+| V6 | Expiry gauge is live | assert gauge object is **not None**, scrape `/metrics` after load, then force reload | gauge present and **changes** on reload | value equals `expires_at.timestamp()`, not a boot-time constant; a missing metric is a **failure, not a skip** |
 
 ### Why V1 and V2 are both needed
 
