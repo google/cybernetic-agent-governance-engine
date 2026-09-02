@@ -280,7 +280,187 @@ succeeds — the documented gap becomes a live one.
 Because it changes the Deployment manifest, a **Lula validation update is
 required in the same PR**, per [`AGENTS.md`](../AGENTS.md).
 
+### M1–M4 — metrics registration hardening (prerequisite for S6's dependency)
+
+The 19 failures decompose into **two defect classes with different severities**.
+Only one is a real control defect; conflating them would be a mistake.
+
+| ID | Location | Class | Severity |
+|---|---|---|---|
+| **M1** | [`symbolic_governor.py:1202`](../src/gateway/governance/symbolic_governor.py:1202) | Per-call `Counter()` in the request path | **Real control defect** |
+| **M2** | [`cbf_engine.py:144`](../src/gateway/governance/safety/cbf_engine.py:144) | Module-scope metrics + `importlib.reload()` | Test-only |
+| **M3** | [`evidence_stream.py:127`](../src/compliance_bridge/evidence_stream.py:127) | Module-scope metrics + `importlib.reload()` | Test-only |
+| **M4** | [`test_ftra_boundary_check.py`](../tests/test_ftra_boundary_check.py:323) | Asserts on M1's behaviour | Follows from M1 |
+
+There is **no existing get-or-create helper** anywhere in `src/`, and
+[`conftest.py`](../tests/conftest.py) performs **no registry reset**. So this
+idiom must be introduced, not merely followed.
+
+#### M1 — the only genuine defect
+
+M2/M3 are module-scope registrations, which is the *correct* pattern; they break
+only because tests call `importlib.reload()`. M1 is different in kind: it
+constructs a `Counter` **inside the function, on every call**. That is wrong
+independent of any test.
+
+The fix is to hoist it to module scope alongside the existing metrics, matching
+[`cbf_engine.py:141-179`](../src/gateway/governance/safety/cbf_engine.py:141),
+and to reference the module-level object from both the success path and the
+error path.
+
+**Explicitly rejected alternative:** widening the handler to
+`except (ImportError, ValueError)`. That silences the traceback while still
+constructing a `Counter` per request — it would leave the metric permanently
+broken and merely stop it from taking the control down with it. Treating the
+symptom would be worse than the disease here, because the failure would become
+silent.
+
+#### M2/M3 — test isolation, fixed in the tests
+
+The production pattern is already right. The defect is that `importlib.reload()`
+re-executes a module-scope registration against a process-global `REGISTRY`.
+
+Two candidate fixes:
+
+1. **Registry-reset fixture in `conftest.py`** — unregister the module's
+   collectors before each reload. Centralised, but mutates global state and can
+   mask genuine duplicate registration.
+2. **Idempotent registration guard in source** — a small `_get_or_create`
+   wrapper that returns the existing collector when the name is already present.
+
+**Recommendation: (2), scoped narrowly.** Option 1 puts test-harness knowledge
+into a shared fixture and would hide exactly the class of bug M1 turned out to
+be. Option 2 keeps the invariant where the metric is defined. The guard must not
+be applied to M1 as a substitute for hoisting — M1's problem is the per-call
+construction, and an idempotent wrapper would paper over it.
+
+#### Verification requirement — the part that actually matters
+
+The M1 test must invoke `_ftra_boundary_check` **twice in the same process** and
+assert the second call returns a real classification rather than the fail-closed
+`error` result.
+
+This is the crux: **the existing single-call test passes against the broken
+code.** A test that exercises the path once cannot observe a defect whose whole
+character is "second call fails". That is precisely why this survived — and it
+is the same shape as the M1-on-the-sibling-branch mistake noted in the original
+task brief, where a mutation could not fail by construction.
+
+As with S6: the test is written first, confirmed failing, and only then is the
+fix applied.
+
+#### Ordering constraint
+
+`prometheus-client` in the `gateway` extra is what activates M1. Therefore:
+
+- **Do not** land the dependency alone.
+- M1 + M2/M3 + the dependency land **together**, or the dependency is reverted
+  and S6's gauge stays dormant.
+
+The S6 gauge fix and its test are correct and unaffected either way.
+
 ### S6 — expiry is now an operational commitment
+
+> ## 🔴 THIRD-ORDER FINDING — the S6 fix exposed 19 failures, and one is a real production bug
+>
+> **The `prometheus-client` dependency I added in `c5ed0fc` broke 19 tests.**
+> Full suite after the change: **19 failed, 3327 passed, 90 skipped**. Every
+> failure is `prometheus_client.registry.DuplicateTimeseries`.
+>
+> I had claimed in the S6 write-up that "the dependency *is* present in the
+> deployed image". **That was wrong, and I should not have asserted it.**
+> `prometheus-client` appears in [`uv.lock`](../uv.lock:4399) exactly three
+> times — the gateway extra, the requires-dist marker, and the package stanza —
+> **all three written by my own `uv sync`.** No other package depends on it. The
+> image built by [`Dockerfile:49`](../Dockerfile:49) with `--extra gateway`
+> therefore had **no** `prometheus_client` before my change and **does** have it
+> after.
+>
+> *(Scope note: CAGE is a reference architecture. "Deployed" here means a dev or
+> staging GKE instance an adopter stands up, not a live production service. The
+> defect is real and would affect any such instance, but nothing is running in
+> production today — I overstated this on first writing.)*
+>
+> So the metrics code in this repository has, until now, *never executed
+> anywhere* — not in tests, not in any deployed instance. My change is what
+> switches it on. That also explains how a defect this obvious survived: nothing
+> ever ran it.
+>
+> ### The two failure classes are not equally serious
+>
+> **Class 1 — test-isolation artifacts (16 of 19).** Module-level metrics in
+> [`cbf_engine.py:144`](../src/gateway/governance/safety/cbf_engine.py:144) are
+> registered into the process-global `REGISTRY` at import. Tests that call
+> `importlib.reload()` re-execute that block and collide. Real, but confined to
+> the test harness.
+>
+> **Class 2 — a genuine production defect in
+> [`symbolic_governor.py:1202`](../src/gateway/governance/symbolic_governor.py:1202).**
+> This one is not a test artifact:
+>
+> ```python
+> try:
+>     from prometheus_client import Counter
+>     _ftra_boundary_counter = Counter("cage_ftra_boundary_checks_total", ...)
+>     ...
+> except ImportError:
+>     pass
+> ```
+>
+> The `Counter` is constructed **inside `_ftra_boundary_check`, on every call** —
+> not once at module scope. The second invocation in a process raises
+> `DuplicateTimeseries`, which is a `ValueError`, **not** an `ImportError`. The
+> handler catches only `ImportError`, so the exception escapes into the enclosing
+> `except Exception` at
+> [:1219](../src/gateway/governance/symbolic_governor.py:1219) — which fails
+> closed and returns `IRREVERSIBLE_TERMINAL`.
+>
+> The captured log in the failing run shows precisely this:
+>
+> ```
+> ERROR SymbolicGovernor: ⛔ FTRA Boundary Check failed (Duplicated timeseries in
+> CollectorRegistry: {...}) — failing closed to IRREVERSIBLE_TERMINAL for action
+> 'execute_trade'.
+> ```
+>
+> **Consequence.** With `prometheus_client` installed, the *first* FTRA boundary
+> check in a process succeeds; **every subsequent one fails closed.** The error
+> path at [:1238](../src/gateway/governance/symbolic_governor.py:1238) then
+> re-runs the same faulty `Counter(...)` construction, so it raises a second time
+> inside the error handler.
+>
+> The direction of failure is correct — it fails **safe**, not open. Every action
+> is escalated to HITL, so nothing dangerous is admitted, and the fail-closed
+> design does its job. But the boundary check stops functioning as a classifier
+> after the first call and reports `error` for everything thereafter. For an
+> adopter running this on a dev or staging cluster, that is a broken control
+> surfacing as blanket HITL escalation.
+>
+> Note the irony worth recording: adding *telemetry for* a governance control is
+> what would have disabled it.
+>
+> ### What this changes about the ordering
+>
+> The S6 gauge fix is correct and its test is sound. But **`prometheus-client`
+> must not be added to the `gateway` extra until
+> [`symbolic_governor.py:1202`](../src/gateway/governance/symbolic_governor.py:1202)
+> is fixed**, because adding it is precisely what activates the defect in
+> production. The dependency addition and the governor fix are now coupled and
+> must land together, or the dependency must be deferred.
+>
+> Correct fix for the governor: hoist the `Counter` to module scope beside the
+> other metrics, or use a get-or-create helper, and catch `ValueError` in
+> addition to `ImportError`. Catching the broader exception alone is insufficient
+> — it would silence the symptom while still constructing a new `Counter` per
+> request.
+>
+> **This is the fourth time in this session** that a claim of mine failed on
+> contact with execution (Finding D, S4, S6, and now "the dependency is already
+> in production"). The first three were caught by reading. This one was caught
+> only by running the suite — reading had actively misled me. The lesson is
+> sharper than the earlier one: for anything environmental — what is installed,
+> what is imported, what actually runs — **reading the source is not evidence at
+> all.** Only execution is.
 
 > ## ⚠️ SECOND DEFECT IN AS-SHIPPED CODE (c0f7123) — S6 gauge is type-wrong
 >
