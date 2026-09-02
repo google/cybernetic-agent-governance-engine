@@ -21,6 +21,21 @@ This document defines the human oversight scope for the Cybernetic AI Governance
 
 ## Escalation Triggers
 
+> **⚠️ Read first — the FTRA ceiling.** For `execute_trade`, the FTRA boundary
+> gate escalates **every** trade at Priority 0, before any amount or confidence
+> value is evaluated
+> ([`symbolic_governor.py:471`](../../src/gateway/governance/symbolic_governor.py:471)).
+>
+> The amount- and confidence-conditional triggers below are therefore
+> **unreachable for trade execution** — they describe configured behaviour, not
+> current behaviour. They remain live for other governed actions. See
+> [`TIER_APPLICABILITY.md §3.4`](TIER_APPLICABILITY.md) and
+> [`AGENTIC_SCOPE_STATEMENT.md §1.2`](AGENTIC_SCOPE_STATEMENT.md).
+>
+> Bounded autonomy below a configured ceiling is planned
+> ([`plans/bounded_trade_autonomy_plan.md`](../../plans/bounded_trade_autonomy_plan.md));
+> this note must be removed when it ships.
+
 CAGE automatically escalates governance decisions to human review when any of the following conditions are met:
 
 | Trigger | Code Location | Threshold / Condition |
@@ -67,8 +82,10 @@ Escalation records written to the DeferQueue have the following schema (matches
 
 FTRA-parked tokens use `DeferReason.FTRA_IRREVERSIBLE_TERMINAL` from
 [`defer_queue.py`](../../src/gateway/governance/defer_queue.py) — these are a
-distinct category from HITL escalation records and are not overridable by
-reviewers.
+distinct category from HITL escalation records and require a **3-approver
+quorum** rather than the default 2
+([`_DEFER_REASON_QUORUM`](../../src/gateway/governance/defer_queue.py:252)).
+They are resolvable, but at a higher bar.
 
 ---
 
@@ -219,7 +236,22 @@ Human oversight is **out of scope** for:
 - Tier 1 keyword blocks (Aho-Corasick) — these are bright-line safety controls that are not overridable
 - CBRN content blocks — these are immutable Cat-M controls (no override permitted without AO pre-approval)
 - SC-8 TLS validation failures — infrastructure-level controls not subject to HITL
-- `DeferReason.FTRA_IRREVERSIBLE_TERMINAL` parked tokens — FTRA terminal-state tokens cannot be released by a HITL reviewer
+
+### Elevated-quorum categories (in scope, higher bar)
+
+- `DeferReason.FTRA_IRREVERSIBLE_TERMINAL` parked tokens — resolvable, but
+  require **3 distinct approvers** rather than the default 2. See
+  [`_DEFER_REASON_QUORUM`](../../src/gateway/governance/defer_queue.py:252) and
+  [`DeferQueue.approve()`](../../src/gateway/governance/defer_queue.py:440),
+  which applies no FTRA-specific exclusion.
+
+> **Corrected 2026-09-02.** This entry previously read *"FTRA terminal-state
+> tokens cannot be released by a HITL reviewer"*, which contradicted the code.
+> Composed with the FTRA boundary gate — which escalates **every**
+> `execute_trade` — that claim would have implied escalated trades were
+> permanently unresolvable. See
+> [`plans/enforcement_pipeline_review.md`](../../plans/enforcement_pipeline_review.md)
+> finding F7.
 
 ---
 

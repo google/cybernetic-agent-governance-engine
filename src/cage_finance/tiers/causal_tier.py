@@ -15,6 +15,7 @@
 import inspect
 from typing import Any
 
+from src.cage_finance.tiers import _TRADE_ACTIONS
 from src.gateway.governance.causal.gatekeeper import causal_safety_check
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
@@ -38,7 +39,7 @@ class CausalTierPlugin(GovernanceTierPlugin):
         return 6
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action == "execute_trade"
+        return action in _TRADE_ACTIONS
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.gatekeeper is not None:

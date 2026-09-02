@@ -421,3 +421,82 @@ Per [`AGENTS.md`](../AGENTS.md), controls touched here require artifact updates:
   already supports multiple active keys; wiring multi-key verification into
   `RegistryVerifier` is a separate change
 - **Signing the repo-committed registry** — §6
+
+---
+
+## 12. Review findings — first implementation pass
+
+Static review of the first implementation. **Four defects, two of which mean the
+control does not currently work.** Recorded here so the fix pass has an
+authoritative list.
+
+### D1 — `version` downgrade bypasses verification entirely (critical)
+
+[`_load_registry()`](../src/gateway/governance/ftra/classifier.py:108) gates the
+entire verification block on `if version == "2.0":`. An attacker editing the
+registry sets `"version": "1.0"`, and verification is skipped — the file loads
+unchecked, with a log line calling it *"v1.0, unsigned"*.
+
+**VEC-005 is fully open.** The attacker already has write access to this file by
+assumption; changing one string is free. A control that an attacker can disable
+by editing the artefact it protects is not a control.
+
+Fix: decide enforcement from **posture**, not from file content. With
+enforcement ON, a registry whose `version != "2.0"` is a failure
+(`ENVELOPE_INVALID`), not a bypass. Untrusted input must never select its own
+validation path.
+
+### D2 — `get_signer` does not exist; every v2.0 load raises (critical)
+
+Line 113 imports `get_signer` from [`kms_signer`](../src/gateway/governance/kms_signer.py:1066);
+the actual name is **`get_governance_signer`**. The import sits *outside* the
+`try`, so it raises `ImportError` on any v2.0 registry regardless of posture.
+
+Combined with D1: v2.0 registries crash, v1.0 registries skip verification. The
+only working path is the unverified one.
+
+### D3 — serial high-water updated before the signature is checked
+
+Step 4 commits `_seen_serial_high_water` at
+[`registry_verifier.py:326`](../src/gateway/governance/ftra/registry_verifier.py:326),
+before step 5 verifies the signature.
+
+An attacker supplies `serial: 999999` with a garbage signature. The load fails
+closed — correct — but the high-water mark is now poisoned. Every subsequent
+**legitimate** registry is rejected `SERIAL_REGRESSED` for the pod's lifetime.
+
+That converts a rejected forgery into a persistent denial of the governance
+control, self-inflicted. Only advance the high-water mark **after** the
+signature verifies.
+
+### D4 — tests never exercise the integration
+
+All 14 tests call `verify_registry()` directly. Nothing calls
+[`_load_registry()`](../src/gateway/governance/ftra/classifier.py:74) or
+`IrreversibilityClassifier.classify()`.
+
+This is exactly why D1 and D2 survived a green suite. The unit under test was
+correct; the wiring around it was not, and nothing looked at the wiring.
+
+§8's requirement that failure yields `IRREVERSIBLE_TERMINAL` — *not* an empty
+dict, *not* an exception — is an assertion about `classify()`, and it was never
+made.
+
+### Lesser items
+
+- **Enforcement posture absent from `VerificationResult`.** With enforcement OFF
+  the verifier returns `valid=True, reason=""` — indistinguishable from a
+  genuinely verified registry. Same ambiguity §4 rejects for the empty dict. Add
+  an `enforced: bool` field.
+- `expires_at` parse failure returns `EXPIRY_MISSING`, conflating absent with
+  malformed. Add `EXPIRY_MALFORMED`.
+- Unused `jcs_canonicalize_plan` import at
+  [`registry_verifier.py:377`](../src/gateway/governance/ftra/registry_verifier.py:377).
+
+### Process note
+
+Telemetry (§6), the mutation check (§8), full-suite regression (§8), and docs
+(§10) were reported as *"out of scope per the plan"*. They are in the plan, at
+the cited sections. Two of them are **verification** steps — without the
+regression run and the mutation check there is no evidence the change is sound,
+which is precisely how D1–D3 reached a "complete" report.

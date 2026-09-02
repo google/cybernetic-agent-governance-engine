@@ -11,3 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+Finance tier shared constants.
+
+F1 remediation: Single source of truth for trade action names.
+Any new trade verb must be added here to be claimed by all finance tiers.
+"""
+
+# Trade actions that require finance tier governance.
+# All finance tiers (Consensus, Causal, CBF, Fiscal) must claim these actions.
+_TRADE_ACTIONS: frozenset[str] = frozenset({"execute_trade"})

@@ -42,7 +42,9 @@
     "risk_boundary": 0.95,
     "_comment_risk": "If (0.5 + estimated_marginal_effect) exceeds this, trade is predicted to push risk above safety boundary. Leaves 5% safety margin.",
     "min_samples": 50,
-    "_comment_samples": "[EV-4] Consolidated from CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES. Minimum telemetry samples required for causal model training."
+    "_comment_samples": "[EV-4] Consolidated from CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES. Minimum telemetry samples required for causal model training.",
+    "amount_bucket_boundaries": [100, 1000, 5000, 10000, 50000],
+    "_comment_bucket": "[F2] Monotone amount buckets for cache key. Verdicts are amount-dependent; bucketing prevents small-amount verdicts from leaking to large-amount requests. Boundaries in USD."
   },
   "telemetry": {
     "max_staleness_seconds": 300,

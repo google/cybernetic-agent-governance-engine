@@ -100,6 +100,7 @@ except Exception as exc:
 # with environment variable overrides supported. See schemas/thresholds.py.
 # ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import (
+    get_causal_amount_bucket_boundaries,
     get_causal_cache_ttl_seconds,
     get_causal_min_samples,
     get_causal_p_value_threshold,
@@ -175,6 +176,28 @@ _NO_LEGAL_FORCE_MARKER = "no legal force"
 
 # Candidate column names for the telemetry timestamp field (checked in order).
 _TIMESTAMP_CANDIDATES = ("timestamp", "ts", "event_time", "time", "created_at")
+
+
+def _bucket_amount(amount: float, boundaries: list[float]) -> str:
+    """Map amount to a monotone bucket index for cache key.
+
+    F2 remediation: prevents small-amount verdicts from leaking to large-amount
+    requests. A larger amount never maps to a lower bucket (monotonicity).
+
+    Args:
+        amount: USD amount to bucket.
+        boundaries: Strictly-increasing list of bucket boundaries.
+
+    Returns:
+        Bucket identifier string (e.g., "bucket_0", "bucket_2", "bucket_5").
+        bucket_0: amount < boundaries[0]
+        bucket_i: boundaries[i-1] <= amount < boundaries[i]
+        bucket_N: amount >= boundaries[-1]
+    """
+    for i, boundary in enumerate(boundaries):
+        if amount < boundary:
+            return f"bucket_{i}"
+    return f"bucket_{len(boundaries)}"
 
 
 def generate_mock_telemetry(n_samples: int = 1000) -> pd.DataFrame:
@@ -593,11 +616,14 @@ def causal_safety_check(
         return False
 
     # ------------------------------------------------------------------
-    # Cache key — keyed on (action_type, market_regime) from params
+    # Cache key — keyed on (action_type, market_regime, amount_bucket)
+    # F2 fix: add amount bucket to prevent small verdicts from leaking to large requests
     # ------------------------------------------------------------------
     action_type = str(params.get("action_type", params.get("action", "unknown")))
     market_regime = str(params.get("market_regime", "unknown"))
-    cache_key = f"causal_cache:{action_type}:{market_regime}"
+    boundaries = get_causal_amount_bucket_boundaries()
+    amount_bucket = _bucket_amount(amount, boundaries)
+    cache_key = f"causal_cache:{action_type}:{market_regime}:{amount_bucket}"
 
     # Load causal graph from YAML config (PR C §7.3 T-C2: domain-specific structure)
     if _CAUSAL_CONFIG and "graph" in _CAUSAL_CONFIG:

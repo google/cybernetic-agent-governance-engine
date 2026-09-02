@@ -1,170 +1,161 @@
-# FTRA Compensating Controls
+# FTRA Terminal Registry Signature Verification — Compensating Controls
 
-> **Reference Architecture Note:** Per `AGENTS.md`, CAGE is a reference architecture demonstrating governance patterns for AI systems. The compensating controls below provide an **illustrative operational model** for defense-in-depth.
-
-> **Status**: PERMANENT — The FTRA boundary check is now **mandatory** and
-> unconditional (no feature flag). This document is retained for: (1) historical
-> record of the interim compensating-control period, and (2) ongoing
-> documentation for the NetworkPolicy defense-in-depth layer (R-02 mitigation).
-
-## Document Purpose
-
-As of 2026-08-16, the `CAGE_FTRA_BOUNDARY_ENABLED` feature flag has been
-**removed** from the codebase. The FTRA boundary check now runs unconditionally
-in [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py)
-(lines 970–999) for every governance request — there is no way to disable it.
-
-This document now serves two purposes:
-
-1. **Historical Record**: Documents the interim compensating-control period
-   (when the boundary check was behind a feature flag and NetworkPolicy was
-   the primary mitigation for R-03).
-
-2. **NetworkPolicy Defense-in-Depth**: The NetworkPolicy controls described
-   below remain in place as a defense-in-depth layer against R-02 (Trust
-   Boundary Mutation). They are no longer strictly required for R-03 mitigation
-   but provide additional protection.
+> **Reference architecture note:** This document describes the signature verification
+> control implemented for the FTRA terminal registry (`config/ftra/terminal_registry.json`).
+> The posture gate and serial-durability limitations documented below are illustrative
+> patterns for adopters to consider when adapting this control to their own environments.
 
 ## Overview
 
-The Forward-Looking Trajectory Reachability Analyzer (FTRA) is a **Pre-Pipeline
-Boundary Gate** that performs commencement-time reachability analysis on
-execution plans. Unlike Tiers 0–6b (which operate per tool call within
-`_run_checks()`), FTRA operates on the **whole execution graph** before
-per-tool-call checks begin — it is a **gateway precondition**, not a peer of the
-numbered tiers. FTRA identifies plans that can reach IRREVERSIBLE_TERMINAL
-actions (e.g., `execute_trade`, `delete_account`) and routes them for
-Human-In-The-Loop (HITL) review.
+The FTRA Terminal Registry Signature Verification control (closes **VEC-005** registry
+re-declaration bypass and **VEC-008** signed-registry rollback) verifies cryptographic
+signatures and enforces monotonic serial numbers on the terminal registry file.
 
-The FTRA boundary check runs unconditionally at the HTTP/controller boundary
-(`validate_action`, `ext_authz`) to catch any direct HTTP access that would
-bypass the in-graph `ftra_node`. This fully mitigates Risk R-03 at the
-controller level.
+**Implementation:**
+- [`src/gateway/governance/ftra/registry_verifier.py`](../../src/gateway/governance/ftra/registry_verifier.py) — signature and serial verification
+- [`src/gateway/governance/ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) — load-path integration with fail-closed enforcement
 
-## Risk Context
+**Closed vulnerabilities:**
+- **VEC-005:** Registry re-declaration bypass (attacker writes tampered registry → irreversible actions misclassified as reversible)
+- **VEC-008:** Signed-registry rollback (attacker replaces current registry with older but validly signed version)
 
-### R-02: Trust Boundary Mutation
+---
 
-**Description**: The in-graph `ftra_node` fires within GFA's LangGraph, but
-the classification happens BEFORE execution. A compromised host agent could
-mutate the plan post-classification but pre-execution.
+## Control Objectives
 
-**Impact**: An action classified as READ_ONLY at FTRA analysis time could be
-replaced with an IRREVERSIBLE_TERMINAL action before execution, bypassing
-the HITL escalation path.
+1. **Integrity binding:** Any tampering with the terminal registry (changing action classifications) must cause signature verification failure and fail-closed behavior (all actions classified as `IRREVERSIBLE_TERMINAL`).
 
-**Mitigation Status**: Partially mitigated by NetworkPolicy (defense-in-depth).
-Full mitigation requires execution-time re-validation (future enhancement).
+2. **Rollback prevention:** An attacker who replaces a current registry with an older but validly signed version must be detected via monotonic serial enforcement.
 
-### R-03: Trust Boundary Bypass
+3. **Fail-closed contract:** Verification failure with enforcement ON must never yield an empty registry, partial load, or uncaught exception — it must result in every action being classified as `IRREVERSIBLE_TERMINAL`.
 
-**Description**: `ftra_node` only fires if the host agent wires it into its
-own LangGraph. Direct HTTP access to `/validate-action` or ext_authz bypasses
-it entirely.
+---
 
-**Impact**: An adversary with direct HTTP access to the gateway could submit
-actions that skip FTRA classification entirely, allowing IRREVERSIBLE_TERMINAL
-actions to execute without HITL review.
+## Enforcement Posture
 
-**Mitigation Status**: ✅ **FULLY MITIGATED** (2026-08-16). The FTRA boundary
-check now runs unconditionally in `SymbolicGovernor._run_checks()` for every
-request. Direct HTTP access to `/validate-action` or ext_authz is now subject
-to the same FTRA classification as in-graph requests. See POAM-2026-030-B.
+Signature enforcement is controlled by the `FTRA_REGISTRY_REQUIRE_SIGNATURE` environment variable:
 
-## Controls
+| Environment Variable | Behavior |
+|---|---|
+| `FTRA_REGISTRY_REQUIRE_SIGNATURE=true` | **Enforcement ON** — signature and serial verification required; failures block registry load |
+| `FTRA_REGISTRY_REQUIRE_SIGNATURE=false` | **Enforcement OFF** — verification skipped; v1.0 unsigned registries allowed (dev/test/ci) |
+| *(unset)* | Derived from `CAGE_ENV`: ON in production, OFF in dev/test/ci |
 
-### 1. NetworkPolicy (Defense-in-Depth)
+**Precedent:** Mirrors the `CAGE_ENV`-derived enforcement pattern in [`cbf_engine.py:426`](../../src/gateway/governance/cbf.py:426) for Redis epoch fail-closed behavior.
 
-**File**: [`deployment/k8s/ftra-network-policy.yaml`](../../deployment/k8s/ftra-network-policy.yaml)
+---
 
-**Purpose**: Restricts ingress to the `cage-gateway` pod to only allow traffic
-from governance-validated sources. This provides defense-in-depth against R-02
-(post-classification plan mutation).
+## Known Limitations
 
-**Policies**:
+### 1. Posture gate is not a defense against environment control
 
-| Policy Name | Description |
-|-------------|-------------|
-| `ftra-egress-lockdown` | Only allows ingress from pods with `governance-validated: "true"` label |
-| `ftra-allow-gfa-ingress` | Allows GFA pod (which has in-graph ftra_node) to reach gateway |
-| `ftra-allow-ingress-controller` | Allows ingress controller for external API access (subject to boundary check) |
+**The limitation, stated plainly:**
 
-**Application**:
+A posture gate controlled by an environment variable is **not** a defense against an attacker who controls the pod's environment.
 
-```bash
-# Apply the FTRA NetworkPolicy
-kubectl apply -f deployment/k8s/ftra-network-policy.yaml
+Anyone who can set `FTRA_REGISTRY_REQUIRE_SIGNATURE=false` or `CAGE_ENV=dev` on the gateway pod has already defeated the control. The attacker can then load an unsigned, tampered v1.0 registry with no verification.
 
-# Verify the policies are active
-kubectl get networkpolicies -n governance-stack -l cage.io/component=ftra-interim-control
-```
+**What this control does defend against:**
 
-**Verification**:
+An attacker who can write the registry file (`config/ftra/terminal_registry.json`) — via tampered ConfigMap, compromised artifact in the image build, or malicious PR to a downstream fork — but **cannot** alter the pod's environment variables.
 
-```bash
-# Test that unauthorized pods cannot reach the gateway
-kubectl run test-pod --rm -it --image=curlimages/curl -- \
-  curl -s -o /dev/null -w "%{http_code}" http://cage-gateway:8080/health
+**Mitigations:**
 
-# Expected: Connection refused or timeout (network policy blocks)
+- **Kubernetes RBAC:** Restrict `ConfigMap` write access to the `governance-stack` namespace. The ConfigMap containing the registry should be immutable or tightly controlled via GitOps (e.g., ArgoCD with signed commits).
+- **Immutable container images:** Sign and verify container images with Binary Authorization. A compromised build that embeds a tampered registry can be detected at deploy time.
+- **Pod Security Standards:** The gateway Deployment should specify `securityContext` settings that prevent environment variable injection by untrusted workloads.
+- **Runtime attestation:** The compliance bridge can verify the `FTRA_REGISTRY_REQUIRE_SIGNATURE` value at startup and log/alert if enforcement is unexpectedly disabled in production.
 
-# Test that GFA can still reach the gateway
-kubectl exec -it deploy/governed-financial-advisor -n governance-stack -- \
-  curl -s -o /dev/null -w "%{http_code}" http://cage-gateway:8080/health
+**Why this trade-off exists:**
 
-# Expected: 200 (GFA is allowed)
-```
+An unconditional enforcement model would require every dev and CI environment to hold KMS signing credentials, breaking the `stpa_compiler` workflow and PR #1's `tmp_path` test fixtures. A dedicated signing keypair for dev (materialized in the codebase) would eliminate the posture gate but require key rotation and a larger architectural change (see Alternatives Considered in [`plans/issue_107_pr2_registry_signing_plan.md §2`](../../plans/issue_107_pr2_registry_signing_plan.md)).
 
-### 2. FTRA Boundary Check (Mandatory)
+---
 
-**Status**: ✅ **MANDATORY** — No feature flag; runs unconditionally.
+### 2. In-memory serial high-water mark defeated by rollback + pod restart
 
-**Purpose**: Performs FTRA classification at the HTTP/controller boundary
-(validate_action, ext_authz) rather than relying solely on the in-graph
-ftra_node. This catches direct HTTP bypasses of the in-graph node.
+**The limitation, stated plainly:**
 
-**How It Works**:
+The monotonic serial check uses two defenses:
 
-1. `SymbolicGovernor._ftra_boundary_check()` runs BEFORE all other governance
-   checks in `_run_checks()` (lines 970–999).
-2. Uses the same `IrreversibilityClassifier` and `terminal_registry.json` as
-   the in-graph `ftra_node`.
-3. If an action is classified as `IRREVERSIBLE_TERMINAL`, the boundary check
-   adds a violation that routes to HITL.
-4. The check is hardcoded — there is no environment variable to disable it.
+1. **`FTRA_REGISTRY_MIN_SERIAL`** — deployment-pinned floor, survives pod restart (set in Deployment manifest)
+2. **In-process high-water mark** — `_seen_serial_high_water` module-level variable, tracks the highest serial seen during the pod's lifetime
 
-**Telemetry**:
+An attacker who rolls back the registry **and** restarts the gateway pod defeats the in-memory high-water mark, leaving only the deployment-pinned floor. If `FTRA_REGISTRY_MIN_SERIAL` is unset or stale, the rollback succeeds.
 
-When the boundary check fires, the following OTel attributes are emitted:
+**Example attack scenario:**
 
-| Attribute | Description |
-|-----------|-------------|
-| `cage.ftra.boundary_check_triggered` | `true` when boundary check runs |
-| `cage.ftra.classification` | The classification result |
-| `cage.ftra.requires_hitl` | `true` if HITL escalation is required |
-| `cage.ftra.bypassed_ftra_node` | `true` if this check caught a bypass |
+- Legitimate registry at serial `142` is loaded at pod startup.
+- Attacker replaces the registry with a validly signed version at serial `100` (rollback).
+- Attacker triggers a pod restart (e.g., via resource exhaustion, ConfigMap update forcing a rollout, or exploiting a separate vulnerability).
+- New pod starts with in-memory high-water = `0`. If `FTRA_REGISTRY_MIN_SERIAL` is unset, serial `100` is accepted.
 
-**Prometheus Metrics**:
+**Mitigations:**
 
-```
-cage_ftra_boundary_checks_total{result="hitl_required"}
-cage_ftra_boundary_checks_total{result="passed"}
-cage_ftra_boundary_checks_total{result="error"}
-```
+1. **Deployment-pinned serial floor:** Set `FTRA_REGISTRY_MIN_SERIAL` in the gateway Deployment manifest to the serial of the most recently deployed registry. Update this value with every registry rotation.
 
-## Compliance Mappings
+   ```yaml
+   # deployment/k8s/gateway-deployment.yaml
+   env:
+     - name: FTRA_REGISTRY_MIN_SERIAL
+       value: "142"  # Update with each registry rotation
+   ```
 
-| Control | Framework | Description |
-|---------|-----------|-------------|
-| SC-7 | NIST SP 800-53 | Boundary Protection |
-| AC-4 | NIST SP 800-53 | Information Flow Enforcement |
-| A.2.5 | ISO 42001 | AI System Boundary Controls |
-| CTRL_FTRA_001 | CAGE Internal | Forward-Looking Trajectory Reachability Analyzer |
+2. **Redis-backed durable serial:** The in-memory high-water mark could be replaced with a Redis-backed counter (similar to the CBF reconciliation epoch). This would survive pod restarts and provide cluster-wide rollback prevention. **Trade-off:** puts Redis on the FTRA load path (latency impact). Deferred as future work (see [`plans/issue_107_pr2_registry_signing_plan.md §5`](../../plans/issue_107_pr2_registry_signing_plan.md)).
 
-## Related Documentation
+3. **Immutable ConfigMaps:** Use Kubernetes immutable ConfigMaps for the registry. Any registry update requires creating a new ConfigMap with a new name, and the Deployment must reference the new name. This prevents in-place rollback attacks without detection.
 
-- [`config/ftra/terminal_registry.json`](../../config/ftra/terminal_registry.json) — Terminal action classifications
-- [`src/gateway/governance/ftra/`](../../src/gateway/governance/ftra/) — FTRA implementation
-- [`plans/CAGE_RISK_MATRIX.md`](../../plans/CAGE_RISK_MATRIX.md) — Risk R-02 and R-03 details
-- [`compliance/lula/lula-validation-ftra.yaml`](../../compliance/lula/lula-validation-ftra.yaml) — Lula validation
-- [`docs/POAM.md`](../POAM.md) — POAM-2026-030-B closure record
+4. **Audit logging and alerting:** The compliance bridge should log every registry load with `serial`, `enforcement`, `verified`, and `failure_reason`. A sudden serial regression (even if it passes the floor check) is a detection signal for investigation.
+
+**Why this trade-off exists:**
+
+Making serial enforcement fully durable requires external state (Redis or equivalent). This introduces a new dependency on the FTRA hot path and increases latency. The deployment-pinned floor is a simpler mitigation that covers most rollback scenarios, reserving the Redis-backed solution for environments with higher rollback threat models.
+
+---
+
+## Verification and Observability
+
+### Telemetry (OpenTelemetry span attributes)
+
+Every FTRA analysis span (`cage.ftra_analysis`) includes registry verification attributes (added in [`node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)):
+
+| Attribute | Meaning |
+|---|---|
+| `cage.ftra.registry.verified` | `true` if signature check passed, `false` otherwise |
+| `cage.ftra.registry.enforcement` | `"enforced"` / `"advisory"` / `"none"` (v1.0 registries) |
+| `cage.ftra.registry.serial` | Registry serial number (present for v2.0 registries) |
+| `cage.ftra.registry.failure_reason` | Failure code if verification failed (e.g., `SIG_INVALID`, `EXPIRED`, `SERIAL_REGRESSED`) |
+
+### Logging
+
+- **Successful verification:** `INFO` log with serial, enforcement posture, and action count.
+- **Verification failure (enforcement ON):** `ERROR` log with failure reason; registry load raises `RuntimeError`.
+- **Verification failure (enforcement OFF):** `WARNING` log; registry loads unverified.
+- **Version downgrade blocked (D1 fix):** `ERROR` log if enforcement ON and `version != "2.0"`.
+
+### Failure Codes
+
+Distinct failure codes (surfaced as `cage.ftra.registry.failure_reason`) enable precise diagnostics:
+
+| Code | Trigger |
+|---|---|
+| `SIG_MISSING` | `.sig` file absent |
+| `SIG_MALFORMED` | `.sig` unparseable or missing required keys |
+| `SIG_INVALID` | Signature verification returned `false` |
+| `EXPIRED` | `expires_at` in the past |
+| `EXPIRY_MISSING` | `expires_at` field absent |
+| `EXPIRY_NAIVE` | `expires_at` lacks timezone (never coerced to UTC) |
+| `EXPIRY_MALFORMED` | `expires_at` not a valid ISO 8601 timestamp |
+| `SERIAL_REGRESSED` | `serial` below high-water mark or `FTRA_REGISTRY_MIN_SERIAL` floor |
+| `SERIAL_MISSING` | `serial` absent or not an integer |
+| `ENVELOPE_INVALID` | Shape check failed (version, terminals dict, `signed_at` trap) |
+| `PUBKEY_UNAVAILABLE` | No public key loaded and enforcement is ON |
+
+---
+
+## References
+
+- **Remediation plan:** [`plans/issue_107_pr2_registry_signing_plan.md`](../../plans/issue_107_pr2_registry_signing_plan.md)
+- **Defect fixes (D1–D4):** Plan section 12
+- **NIST SP 800-53 controls:** SI-7 (Software, Firmware, and Information Integrity), AU-10 (Non-repudiation)
+- **OSCAL component:** Pending update (within 2 business days of merge per [`AGENTS.md`](../../AGENTS.md))

@@ -69,6 +69,7 @@ _DEFAULT_REGISTRY_PATH = _REPO_ROOT / "config" / "ftra" / "terminal_registry.jso
 _registry_lock = threading.RLock()
 _registry_cache: dict[str, str] | None = None
 _registry_path_used: Path | None = None
+_last_verification_result: Any | None = None  # VerificationResult or None for v1.0/unverified
 
 
 def _load_registry(path: Path) -> dict[str, str]:
@@ -76,7 +77,11 @@ def _load_registry(path: Path) -> dict[str, str]:
 
     For v2.0 registries, verifies detached signature and enforces monotonic serial
     numbers (VEC-005, VEC-008). For v1.0 registries, loads without verification
-    (backward compatibility for dev/test fixtures).
+    only when enforcement is OFF (backward compatibility for dev/test fixtures).
+
+    **CRITICAL (D1 fix):** Enforcement is decided by posture, not by file content.
+    With enforcement ON, a registry whose version != "2.0" fails ENVELOPE_INVALID.
+    Untrusted input must never select its own validation path.
 
     Returns the ``terminals`` dict mapping action name → classification string.
 
@@ -92,6 +97,12 @@ def _load_registry(path: Path) -> dict[str, str]:
             "Run: python -m src.gateway.governance.stpa_compiler compile --targets ftra"
         )
     
+    # Import verification modules early to check enforcement posture
+    from src.gateway.governance.ftra.registry_verifier import (
+        _get_enforcement_posture,
+        verify_registry,
+    )
+    
     with open(path) as fh:
         raw: dict[str, Any] = json.load(fh)
     
@@ -104,21 +115,29 @@ def _load_registry(path: Path) -> dict[str, str]:
             "or it is not a dict."
         )
     
+    # Get enforcement posture FIRST — enforcement is decided by env, not by file content (D1 fix)
+    enforcement_on = _get_enforcement_posture()
+    
+    # With enforcement ON, only v2.0 registries are accepted
+    if enforcement_on and version != "2.0":
+        logger.error(
+            "❌ FTRA registry version-downgrade attack blocked: version=%s (enforcement requires v2.0)",
+            version,
+        )
+        raise RuntimeError(
+            f"FTRA registry signature enforcement ON but registry version is '{version}' "
+            "(expected '2.0'). Version-downgrade bypass attempt rejected. "
+            "All actions will be treated as IRREVERSIBLE_TERMINAL."
+        )
+    
     # v2.0 registries require signature verification
     if version == "2.0":
-        from src.gateway.governance.ftra.registry_verifier import (
-            _get_enforcement_posture,
-            verify_registry,
-        )
-        from src.gateway.governance.kms_signer import get_signer
-        
-        enforcement_on = _get_enforcement_posture()
-        
-        # Load signer (for public key only — no KMS credentials needed for verify)
+        # D2 fix: import get_governance_signer (not get_signer) inside try block
         signer = None
         if enforcement_on:
             try:
-                signer = get_signer()
+                from src.gateway.governance.kms_signer import get_governance_signer
+                signer = get_governance_signer()
             except Exception as exc:
                 logger.error(
                     "FTRA registry verification: failed to load signer: %s", exc
@@ -128,6 +147,10 @@ def _load_registry(path: Path) -> dict[str, str]:
                 ) from exc
         
         result = verify_registry(path, signer=signer)
+        
+        # Cache VerificationResult for telemetry (plan §6)
+        global _last_verification_result
+        _last_verification_result = result
         
         if not result.valid:
             if enforcement_on:
@@ -151,12 +174,13 @@ def _load_registry(path: Path) -> dict[str, str]:
             len(terminals),
             path,
             result.serial,
-            "enforced" if enforcement_on else "advisory",
+            "enforced" if enforcement_on and result.valid else "advisory",
         )
     else:
-        # v1.0 registry — no verification (backward compatibility)
+        # v1.0 registry — allowed only when enforcement is OFF (backward compatibility)
+        _last_verification_result = None  # v1.0 has no verification result
         logger.info(
-            "✅ FTRA terminal registry loaded (v1.0, unsigned): %d actions from %s",
+            "✅ FTRA terminal registry loaded (v1.0, unsigned): %d actions from %s (enforcement OFF)",
             len(terminals),
             path,
         )
@@ -185,6 +209,18 @@ def _get_registry(path: Path | None = None) -> dict[str, str]:
             _registry_path_used = effective_path
 
     return _registry_cache
+
+
+def get_last_verification_result() -> Any | None:
+    """Return the last VerificationResult from registry load (for telemetry).
+    
+    Returns:
+        VerificationResult if a v2.0 registry was loaded, None for v1.0 or pre-load.
+    
+    Note: This function is used by node_factory.py to add registry verification
+    span attributes (serial, failure_reason, enforcement posture) per plan §6.
+    """
+    return _last_verification_result
 
 
 def _bust_cache(signum: int, frame: Any) -> None:  # noqa: ARG001

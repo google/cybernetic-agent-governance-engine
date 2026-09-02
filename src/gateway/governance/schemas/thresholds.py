@@ -250,6 +250,28 @@ class CausalThresholds(BaseModel):
             "Consolidated from CAUSAL_MIN_SAMPLES / CAUSAL_MIN_LIVE_SAMPLES"
         ),
     )
+    amount_bucket_boundaries: list[float] = Field(
+        default_factory=lambda: [100.0, 1000.0, 5000.0, 10000.0, 50000.0],
+        description=(
+            "[F2] Monotone amount bucket boundaries (USD) for cache key. "
+            "Verdicts are amount-dependent; bucketing prevents small-amount "
+            "verdicts from leaking to large-amount requests."
+        ),
+    )
+
+    @field_validator("amount_bucket_boundaries")
+    @classmethod
+    def boundaries_strictly_increasing(cls, v: list[float]) -> list[float]:
+        """Ensure bucket boundaries are strictly increasing (monotone)."""
+        if not v:
+            raise ValueError("amount_bucket_boundaries must not be empty")
+        for i in range(1, len(v)):
+            if v[i] <= v[i - 1]:
+                raise ValueError(
+                    f"amount_bucket_boundaries must be strictly increasing: "
+                    f"boundary[{i}]={v[i]} <= boundary[{i-1}]={v[i-1]}"
+                )
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +672,18 @@ def get_causal_cache_ttl_seconds() -> int:
         TTL for Redis-backed causal result cache. Set to 0 to disable caching.
     """
     return THRESHOLDS.telemetry.cache_ttl_seconds
+
+
+def get_causal_amount_bucket_boundaries() -> list[float]:
+    """Get causal amount bucket boundaries (config default).
+
+    F2 remediation: Returns strictly-increasing bucket boundaries in USD.
+    Larger amounts never map to lower buckets (monotonicity guarantee).
+
+    Returns:
+        List of bucket boundaries (e.g., [100, 1000, 5000, 10000, 50000]).
+    """
+    return THRESHOLDS.causal.amount_bucket_boundaries
 
 
 # ---------------------------------------------------------------------------

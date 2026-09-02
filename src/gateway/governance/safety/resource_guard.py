@@ -675,10 +675,17 @@ class FiscalLimitGuard:
         return new_total_usd
 
     async def confirm(self, token: ReservationToken) -> None:
-        """Confirm that a reservation became a real spend (trade executed).
+        """Confirm that governance approved the reservation (called at commit time).
 
-        Deletes the short-TTL per-reservation sentinel key so the aggregate
-        counter persists for the full window without auto-expiry interference.
+        F3 remediation: this is called at governance-approval time (tier commit phase),
+        not post-execution. It deletes the short-TTL per-reservation sentinel key so
+        the aggregate counter persists for the full window.
+
+        The tier lifecycle has no post-execution hook, so this represents "governance
+        approved and committed the reservation" rather than "trade executed successfully".
+        If the system crashes between governance approval and actual execution, the
+        reservation remains counted against the daily cap (intended behavior — fiscal
+        limits are conservative).
         """
         if token.rejected:
             return

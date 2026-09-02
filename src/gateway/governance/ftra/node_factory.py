@@ -340,6 +340,23 @@ def _run_ftra(
         )
         span.set_attribute("cage.ftra.confidence_at_analysis", confidence)
 
+        # Add registry verification telemetry (plan §6)
+        from src.gateway.governance.ftra.classifier import get_last_verification_result
+        verification_result = get_last_verification_result()
+        if verification_result is not None:
+            # v2.0 registry — add verification attributes
+            span.set_attribute("cage.ftra.registry.verified", verification_result.valid)
+            span.set_attribute("cage.ftra.registry.enforcement",
+                              "enforced" if verification_result.enforced else "advisory")
+            if verification_result.serial is not None:
+                span.set_attribute("cage.ftra.registry.serial", verification_result.serial)
+            if verification_result.reason:  # Present on failure
+                span.set_attribute("cage.ftra.registry.failure_reason", verification_result.reason)
+        else:
+            # v1.0 registry or pre-load — no verification
+            span.set_attribute("cage.ftra.registry.verified", False)
+            span.set_attribute("cage.ftra.registry.enforcement", "none")
+
         # Add extra span attributes from config
         if extra_span_attrs:
             for key, value in extra_span_attrs.items():

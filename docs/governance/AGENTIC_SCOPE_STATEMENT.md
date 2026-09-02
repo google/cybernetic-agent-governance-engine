@@ -17,10 +17,45 @@ perform the following actions on behalf of authenticated users:
 | Generate advisory text | ✅ Authorized | Subject to NeMo guardrails and OPA policy |
 | Query portfolio state | ✅ Authorized | Read-only via `get_portfolio` tool |
 | Retrieve earnings reports | ✅ Authorized | Read-only via `get_market_data` tool |
-| Execute trades | ⛔ **NOT authorized** | No direct trade execution; advisory only |
+| Execute trades | ⚠️ **Human approval required** | FTRA classifies `execute_trade` as `IRREVERSIBLE_TERMINAL`, routing every trade to `REQUIRE_APPROVAL`. No autonomous execution — see §1.2 |
 | Transfer funds | ⛔ **NOT authorized** | Outside authorized action space |
 | Modify account settings | ⛔ **NOT authorized** | Outside authorized action space |
 | Access external APIs | ⛔ **NOT authorized** | Except pre-approved market data endpoints |
+
+### 1.2 Trade execution — current posture
+
+**Corrected 2026-09-02.** This table previously recorded trade execution as
+*"NOT authorized — advisory only"*. That was inaccurate in both directions and
+conflicted with two other governance documents:
+
+- The execution path **exists and is wired**:
+  [`generated_saga_nodes.py:123`](../../src/gateway/governance/generated_saga_nodes.py:123)
+  issues a real MCP `call_tool("execute_trade_action")` with WAL PENDING →
+  COMPLETED ledger writes and an idempotent compensating node.
+- [`CAGE_ONE_PAGER.md`](../project/CAGE_ONE_PAGER.md:28) and
+  [`HUMAN_OVERSIGHT_SCOPE.md`](HUMAN_OVERSIGHT_SCOPE.md:28) both describe a
+  **graduated** model — escalate above $10 000, implying autonomy below.
+
+**What is actually true today:** trade execution is authorized *with mandatory
+human approval*. Every `execute_trade` is escalated by the FTRA boundary gate at
+Priority 0 before any amount is evaluated
+([`symbolic_governor.py:471`](../../src/gateway/governance/symbolic_governor.py:471)).
+
+**Consequence — a documented gap.** The graduated thresholds configured
+elsewhere are **unreachable for this action**:
+
+| Control | Configured | Reachable |
+|---|---|---|
+| Consensus escalation | `> $10,000` | ❌ every trade escalates first |
+| Junior RBAC allowance | `amount <= 5000` | ❌ |
+| FRIA three-zone model | `0.95 / 0.70` | ❌ for trades |
+
+`rbac_allow_junior_trade` in
+[`generated_stpa_policy.rego`](../../config/opa/generated_stpa_policy.rego:97)
+therefore reads as an autonomy grant but does not function as one. Bounded
+autonomy is planned — see
+[`plans/bounded_trade_autonomy_plan.md`](../../plans/bounded_trade_autonomy_plan.md)
+— and this section must be revised when it ships.
 
 ### 1.1 Scope Limitation Enforcement
 

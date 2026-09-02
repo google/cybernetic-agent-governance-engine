@@ -51,6 +51,7 @@ import pytest
 from src.gateway.governance.ftra.registry_verifier import (
     ENVELOPE_INVALID,
     EXPIRED,
+    EXPIRY_MALFORMED,
     EXPIRY_MISSING,
     EXPIRY_NAIVE,
     SERIAL_MISSING,
@@ -627,3 +628,167 @@ def test_guard_envelope_invalid_version(tmp_path, clean_verifier_state, monkeypa
     result = verify_registry(registry_path, signer=None)
     assert result.valid is False
     assert result.reason == ENVELOPE_INVALID
+
+
+# ---------------------------------------------------------------------------
+# D4 INTEGRATION TESTS — classify() wiring (critical defect fix)
+# ---------------------------------------------------------------------------
+# All prior tests call verify_registry() directly. D1 and D2 survived a green
+# suite because nothing exercised _load_registry() or classify(). These tests
+# verify the full integration path from classify() down through verification.
+
+
+@pytest.mark.local
+def test_d4_integration_tampered_v20_enforcement_on_yields_irreversible_terminal(
+    tmp_path, clean_verifier_state, hermetic_signer, monkeypatch
+):
+    """D4 integration test: tampered v2.0 registry + enforcement ON → classify() returns IRREVERSIBLE_TERMINAL.
+    
+    This is the critical assertion from plan §4: failure must NOT yield an empty dict,
+    must NOT raise an uncaught exception. It must return IRREVERSIBLE_TERMINAL for every
+    action, proving the fail-closed contract works end-to-end.
+    """
+    from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
+
+    monkeypatch.setenv("FTRA_REGISTRY_REQUIRE_SIGNATURE", "true")
+    monkeypatch.setenv("FTRA_REGISTRY_RELOAD", "false")
+
+    # Create a valid v2.0 registry with execute_trade as IRREVERSIBLE_TERMINAL
+    original_registry = {
+        "version": "2.0",
+        "serial": 100,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=90)).isoformat(),
+        "system": "CAGE Financial Advisor",
+        "system_version": "1.1.0",
+        "fail_closed_note": "Test",
+        "terminals": {"execute_trade": "IRREVERSIBLE_TERMINAL", "check_balance": "READ_ONLY"},
+    }
+
+    registry_path = tmp_path / "terminal_registry.json"
+
+    # Sign the original
+    original_sig = hermetic_signer.sign(original_registry)
+    sig_envelope = {
+        "alg": "ES256",
+        "key_id": hermetic_signer.key_id,
+        "canonicalization": "RFC8785-JCS",
+        "signature": original_sig,
+    }
+    sig_path = Path(str(registry_path) + ".sig")
+    sig_path.write_text(json.dumps(sig_envelope, indent=2))
+
+    # Now tamper: re-declare execute_trade as REVERSIBLE (VEC-005 attack)
+    tampered_registry = original_registry.copy()
+    tampered_registry["terminals"] = {"execute_trade": "REVERSIBLE", "check_balance": "READ_ONLY"}
+    registry_path.write_text(json.dumps(tampered_registry, indent=2))
+
+    # Instantiate classifier pointing at tampered registry
+    classifier = IrreversibilityClassifier(registry_path=registry_path)
+
+    # D4 critical assertion: classify() must return IRREVERSIBLE_TERMINAL, not empty dict, not exception
+    result = classifier.classify("execute_trade")
+    assert result == "IRREVERSIBLE_TERMINAL", (
+        f"D4 REGRESSION: tampered registry with enforcement ON must fail closed "
+        f"and return IRREVERSIBLE_TERMINAL, got {result}"
+    )
+
+    # Also verify check_balance fails closed (not in tampered list)
+    result_balance = classifier.classify("check_balance")
+    assert result_balance == "IRREVERSIBLE_TERMINAL", (
+        "All actions must be IRREVERSIBLE_TERMINAL when verification fails"
+    )
+
+
+@pytest.mark.local
+def test_d4_integration_version_downgrade_enforcement_on_fails_closed(
+    tmp_path, clean_verifier_state, monkeypatch
+):
+    """D4 integration test: version downgrade to v1.0 + enforcement ON → fails closed (D1 regression test).
+    
+    This is the regression test for the critical D1 defect. An attacker sets version="1.0"
+    to bypass verification. With D1 fixed, enforcement checks posture first — a v1.0 registry
+    with enforcement ON must fail, and classify() must return IRREVERSIBLE_TERMINAL.
+    """
+    from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
+
+    monkeypatch.setenv("FTRA_REGISTRY_REQUIRE_SIGNATURE", "true")
+    monkeypatch.setenv("FTRA_REGISTRY_RELOAD", "false")
+
+    # Attacker's downgrade attempt: v1.0 registry with tampered terminals (no signature required in v1.0)
+    downgraded_registry = {
+        "version": "1.0",  # D1 attack vector
+        "terminals": {"execute_trade": "REVERSIBLE", "check_balance": "READ_ONLY"},  # Tampered
+    }
+
+    registry_path = tmp_path / "terminal_registry.json"
+    registry_path.write_text(json.dumps(downgraded_registry, indent=2))
+
+    # D1 fix: with enforcement ON, _load_registry() must reject version != "2.0" before even checking signature
+    classifier = IrreversibilityClassifier(registry_path=registry_path)
+
+    # D4 + D1 critical assertion: classify() must fail closed, not load the tampered v1.0 registry
+    result = classifier.classify("execute_trade")
+    assert result == "IRREVERSIBLE_TERMINAL", (
+        f"D1 REGRESSION: version-downgrade attack with enforcement ON must fail closed "
+        f"and return IRREVERSIBLE_TERMINAL, got {result}"
+    )
+
+
+@pytest.mark.local
+def test_d4_integration_reload_path_reverifies_after_file_swap(
+    tmp_path, clean_verifier_state, hermetic_signer, monkeypatch
+):
+    """D4 integration test: verified at startup, file swapped on disk, FTRA_REGISTRY_RELOAD=true → second classify() fails closed.
+    
+    Plan §6: verification must run on every reload, not just once at import. Otherwise
+    FTRA_REGISTRY_RELOAD re-opens VEC-005: pass verification at startup, then swap the file.
+    """
+    from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
+
+    monkeypatch.setenv("FTRA_REGISTRY_REQUIRE_SIGNATURE", "true")
+    monkeypatch.setenv("FTRA_REGISTRY_RELOAD", "true")  # Enable reload path
+
+    # Step 1: Create valid v2.0 registry and sign it
+    valid_registry = {
+        "version": "2.0",
+        "serial": 200,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=90)).isoformat(),
+        "system": "CAGE Financial Advisor",
+        "system_version": "1.1.0",
+        "fail_closed_note": "Test",
+        "terminals": {"execute_trade": "IRREVERSIBLE_TERMINAL"},
+    }
+
+    registry_path = tmp_path / "terminal_registry.json"
+    registry_path.write_text(json.dumps(valid_registry, indent=2))
+
+    valid_sig = hermetic_signer.sign(valid_registry)
+    sig_envelope = {
+        "alg": "ES256",
+        "key_id": hermetic_signer.key_id,
+        "canonicalization": "RFC8785-JCS",
+        "signature": valid_sig,
+    }
+    sig_path = Path(str(registry_path) + ".sig")
+    sig_path.write_text(json.dumps(sig_envelope, indent=2))
+
+    # Step 2: Load classifier — verification succeeds
+    classifier = IrreversibilityClassifier(registry_path=registry_path)
+    result_first = classifier.classify("execute_trade")
+    assert result_first == "IRREVERSIBLE_TERMINAL", "First load should succeed"
+
+    # Step 3: Swap the file on disk (tamper terminals, keep old signature)
+    tampered_registry = valid_registry.copy()
+    tampered_registry["terminals"] = {"execute_trade": "REVERSIBLE"}  # VEC-005 attack
+    registry_path.write_text(json.dumps(tampered_registry, indent=2))
+    # Signature file unchanged — still covers the original
+
+    # Step 4: Second classify() call — with FTRA_REGISTRY_RELOAD=true, _get_registry() reloads
+    # and re-verifies. The tampered file must fail signature check and fail closed.
+    result_second = classifier.classify("execute_trade")
+    assert result_second == "IRREVERSIBLE_TERMINAL", (
+        f"D4 RELOAD PATH REGRESSION: file swapped on disk, reload path must re-verify "
+        f"and fail closed, got {result_second}"
+    )

@@ -70,6 +70,7 @@ SIG_INVALID = "SIG_INVALID"
 EXPIRED = "EXPIRED"
 EXPIRY_MISSING = "EXPIRY_MISSING"
 EXPIRY_NAIVE = "EXPIRY_NAIVE"
+EXPIRY_MALFORMED = "EXPIRY_MALFORMED"  # D6: distinct from EXPIRY_MISSING
 SERIAL_REGRESSED = "SERIAL_REGRESSED"
 SERIAL_MISSING = "SERIAL_MISSING"
 ENVELOPE_INVALID = "ENVELOPE_INVALID"
@@ -90,12 +91,15 @@ class VerificationResult:
         reason: Machine-readable failure code (surfaced as OTel span attribute).
         serial: Registry serial number if present, None otherwise.
         expires_at: Registry expiration timestamp if present, None otherwise.
+        enforced: True if enforcement was ON, False if advisory mode (lesser fix #5).
+                  Distinguishes genuine verification from advisory-mode bypass.
     """
 
     valid: bool
     reason: str
     serial: int | None
     expires_at: datetime | None
+    enforced: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +181,7 @@ def verify_registry(
             "FTRA registry verification: failed to load %s: %s", registry_path, exc
         )
         return VerificationResult(
-            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None
+            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None, enforced=enforcement_on
         )
 
     # ---------------------------------------------------------------------------
@@ -191,13 +195,13 @@ def verify_registry(
             version,
         )
         return VerificationResult(
-            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None
+            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None, enforced=enforcement_on
         )
 
     if not isinstance(terminals, dict):
         logger.error("FTRA registry 'terminals' is not a dict")
         return VerificationResult(
-            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None
+            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None, enforced=enforcement_on
         )
 
     # Guard: no "signed_at" field (plan section 3 trap)
@@ -208,7 +212,7 @@ def verify_registry(
             "Use 'issued_at' and 'expires_at' instead."
         )
         return VerificationResult(
-            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None
+            valid=False, reason=ENVELOPE_INVALID, serial=None, expires_at=None, enforced=enforcement_on
         )
 
     # ---------------------------------------------------------------------------
@@ -220,7 +224,7 @@ def verify_registry(
             "FTRA registry signature file missing: %s (enforcement ON)", sig_path
         )
         return VerificationResult(
-            valid=False, reason=SIG_MISSING, serial=None, expires_at=None
+            valid=False, reason=SIG_MISSING, serial=None, expires_at=None, enforced=enforcement_on
         )
 
     sig_dict: dict[str, Any] = {}
@@ -236,7 +240,7 @@ def verify_registry(
                 "FTRA registry signature file malformed (%s): %s", sig_path, exc
             )
             return VerificationResult(
-                valid=False, reason=SIG_MALFORMED, serial=None, expires_at=None
+                valid=False, reason=SIG_MALFORMED, serial=None, expires_at=None, enforced=enforcement_on
             )
 
     # ---------------------------------------------------------------------------
@@ -253,8 +257,10 @@ def verify_registry(
             reason=EXPIRY_MISSING,
             serial=serial_value,
             expires_at=None,
+            enforced=enforcement_on,
         )
 
+    # D6 fix: parse failure returns EXPIRY_MALFORMED, not EXPIRY_MISSING (conflation)
     try:
         expires_at_dt = datetime.fromisoformat(expires_at_str)
     except Exception as exc:
@@ -263,9 +269,10 @@ def verify_registry(
         )
         return VerificationResult(
             valid=False,
-            reason=EXPIRY_MISSING,
+            reason=EXPIRY_MALFORMED,
             serial=serial_value,
             expires_at=None,
+            enforced=enforcement_on,
         )
 
     # Reject naive datetimes (never coerce to UTC)
@@ -274,7 +281,7 @@ def verify_registry(
             "FTRA registry 'expires_at' is timezone-naive: %s", expires_at_str
         )
         return VerificationResult(
-            valid=False, reason=EXPIRY_NAIVE, serial=serial_value, expires_at=None
+            valid=False, reason=EXPIRY_NAIVE, serial=serial_value, expires_at=None, enforced=enforcement_on
         )
 
     # Check expiry (re-evaluated on every load, outside digest cache)
@@ -286,11 +293,11 @@ def verify_registry(
             now_utc.isoformat(),
         )
         return VerificationResult(
-            valid=False, reason=EXPIRED, serial=serial_value, expires_at=expires_at_dt
+            valid=False, reason=EXPIRED, serial=serial_value, expires_at=expires_at_dt, enforced=enforcement_on
         )
 
     # ---------------------------------------------------------------------------
-    # Step 4: Serial monotonicity
+    # Step 4: Serial monotonicity (D3 fix: check floor but defer advancement until after signature)
     # ---------------------------------------------------------------------------
     if serial_value is None or not isinstance(serial_value, int):
         logger.error("FTRA registry 'serial' field missing or not an integer")
@@ -299,35 +306,33 @@ def verify_registry(
             reason=SERIAL_MISSING,
             serial=None,
             expires_at=expires_at_dt,
+            enforced=enforcement_on,
         )
 
     global _seen_serial_high_water
     serial_floor = _get_serial_floor()
     effective_floor = max(serial_floor, _seen_serial_high_water)
 
-    with _verification_lock:
-        if serial_value < effective_floor:
-            logger.error(
-                "FTRA registry serial rollback detected: serial=%d, floor=%d "
-                "(FTRA_REGISTRY_MIN_SERIAL=%d, in-memory high-water=%d)",
-                serial_value,
-                effective_floor,
-                serial_floor,
-                _seen_serial_high_water,
-            )
-            return VerificationResult(
-                valid=False,
-                reason=SERIAL_REGRESSED,
-                serial=serial_value,
-                expires_at=expires_at_dt,
-            )
-
-        # Update high-water mark
-        if serial_value > _seen_serial_high_water:
-            _seen_serial_high_water = serial_value
-            logger.info(
-                "FTRA registry serial high-water mark updated: %d", serial_value
-            )
+    # D3 fix: check serial against floor but DO NOT advance high-water yet
+    # Advancing before signature verification would allow a forged registry with
+    # serial=999999 to poison the high-water mark, causing all subsequent legitimate
+    # registries to be rejected SERIAL_REGRESSED for the pod's lifetime.
+    if serial_value < effective_floor:
+        logger.error(
+            "FTRA registry serial rollback detected: serial=%d, floor=%d "
+            "(FTRA_REGISTRY_MIN_SERIAL=%d, in-memory high-water=%d)",
+            serial_value,
+            effective_floor,
+            serial_floor,
+            _seen_serial_high_water,
+        )
+        return VerificationResult(
+            valid=False,
+            reason=SERIAL_REGRESSED,
+            serial=serial_value,
+            expires_at=expires_at_dt,
+            enforced=enforcement_on,
+        )
 
     # ---------------------------------------------------------------------------
     # Step 5: Signature verification (KMS-touching work last, cached by digest)
@@ -337,7 +342,7 @@ def verify_registry(
             "FTRA registry signature enforcement OFF (posture gate) — skipping verification"
         )
         return VerificationResult(
-            valid=True, reason="", serial=serial_value, expires_at=expires_at_dt
+            valid=True, reason="", serial=serial_value, expires_at=expires_at_dt, enforced=False
         )
 
     if signer is None:
@@ -350,6 +355,7 @@ def verify_registry(
             reason=PUBKEY_UNAVAILABLE,
             serial=serial_value,
             expires_at=expires_at_dt,
+            enforced=enforcement_on,
         )
 
     # Digest cache: skip crypto if content unchanged
@@ -362,20 +368,25 @@ def verify_registry(
                 logger.debug(
                     "FTRA registry signature cached (digest=%s...)", digest[:16]
                 )
+                # D3: advance high-water on cached-valid path too
+                if serial_value > _seen_serial_high_water:
+                    _seen_serial_high_water = serial_value
+                    logger.info(
+                        "FTRA registry serial high-water mark updated: %d (cached path)", serial_value
+                    )
                 return VerificationResult(
                     valid=True,
                     reason="",
                     serial=serial_value,
                     expires_at=expires_at_dt,
+                    enforced=True,
                 )
             else:
                 # Signature was invalid last time — re-verify anyway (transient KMS errors)
                 pass
 
-    # Perform signature verification
+    # Perform signature verification (D6: jcs_canonicalize_plan import removed — unused)
     try:
-        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-
         # KMSGovernanceSigner.verify() expects a dict and canonicalizes internally
         sig_valid = signer.verify(registry_dict, signature_hex)
 
@@ -394,7 +405,17 @@ def verify_registry(
                 reason=SIG_INVALID,
                 serial=serial_value,
                 expires_at=expires_at_dt,
+                enforced=True,
             )
+
+        # D3 fix: advance high-water mark ONLY after successful signature verification
+        # This prevents a forged registry with serial=999999 from poisoning the high-water
+        with _verification_lock:
+            if serial_value > _seen_serial_high_water:
+                _seen_serial_high_water = serial_value
+                logger.info(
+                    "FTRA registry serial high-water mark updated: %d", serial_value
+                )
 
         logger.info(
             "✅ FTRA registry signature verified: serial=%d, key_id=%s",
@@ -402,7 +423,7 @@ def verify_registry(
             getattr(signer, "key_id", "unknown"),
         )
         return VerificationResult(
-            valid=True, reason="", serial=serial_value, expires_at=expires_at_dt
+            valid=True, reason="", serial=serial_value, expires_at=expires_at_dt, enforced=True
         )
 
     except Exception as exc:
@@ -414,4 +435,5 @@ def verify_registry(
             reason=SIG_INVALID,
             serial=serial_value,
             expires_at=expires_at_dt,
+            enforced=True,
         )

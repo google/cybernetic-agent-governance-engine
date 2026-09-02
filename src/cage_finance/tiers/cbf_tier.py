@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from src.cage_finance.tiers import _TRADE_ACTIONS
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
@@ -37,7 +38,7 @@ class CBFTierPlugin(GovernanceTierPlugin):
         return 3
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action == "execute_trade"
+        return action in _TRADE_ACTIONS
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         return []
