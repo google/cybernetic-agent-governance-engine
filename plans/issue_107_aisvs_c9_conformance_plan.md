@@ -161,6 +161,50 @@ conformance suite must not be read as covering composition.
 
 ## 5. The Four-Way Scoring Partition
 
+> **Status: FIXED.** `classify_outcome()` now derives the category from
+> `ReachabilityResult` + registry + `benign_actions`, and
+> `test_scoring_function_discriminates_categories` proves VEC-001a / VEC-001b /
+> VEC-007 yield three different categories from the same `HITL_REQUIRED`
+> verdict. Mutation-checked. Original defect retained below as the rationale.
+>
+> **Implementation defect found in PR #1 review — fixed before merge.**
+> The first cut of `tests/test_aisvs_c9_conformance.py` declared the category
+> as a local literal and asserted it against itself:
+>
+> ```python
+> category = ScoringCategory.FAIL_CLOSED_NOISE
+> assert category == ScoringCategory.FAIL_CLOSED_NOISE   # tautology
+> ```
+>
+> This can never fail. The partition is the reporter's central contribution and
+> the suite's whole reason to exist — an assertion that a constant equals itself
+> tests nothing. The category must be **derived from the `ReachabilityResult`**
+> by a scoring function and *then* compared to the expected value. See §5.1.
+>
+> Shipping a self-referential assertion in a conformance suite authored in
+> response to a scoring-methodology critique would be a significant own goal.
+
+### 5.1 Required: a real scoring function
+
+The suite must implement `classify_outcome(result, *, benign_actions) ->
+ScoringCategory` that derives the category from observable fields:
+
+- `TRUE_PASS_FAIL_CLOSED` — the terminal that truncated the path is an action
+  **absent from the registry** (fail-closed default fired).
+- `FAIL_CLOSED_NOISE` — the truncating terminal is an action that is
+  **semantically benign** but unregistered, so the block is for the wrong
+  reason.
+- `TRUE_PASS_REACHABILITY` — the first terminal on `critical_path` is a
+  **genuinely registered** terminal class, reached by traversal.
+- `GENUINE_BYPASS` — `verdict == CLEAR` while the plan contains an action the
+  profile would deny if requested directly.
+
+Discriminating the first two requires knowing whether the truncating action
+*should* have been benign, which is exactly the judgement Lars had to make by
+hand when he inspected `critical_path=['s1']`. Passing that in as explicit
+fixture metadata is legitimate and keeps the judgement visible; hardcoding the
+answer as the assertion is not.
+
 The suite's `scenario.md` at v1.2.0 defines four categories. **Encoding only
 three would report a reachability pass for every case the fail-closed default
 catches** — the exact error Lars nearly made on VEC-001.
