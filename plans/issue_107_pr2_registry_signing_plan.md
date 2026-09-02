@@ -913,15 +913,20 @@ posture gate being quietly reintroduced.
 
 ### Counts
 
-| Metric | Parent `feat/aisvs-c9-taxonomy` | This branch |
+| Metric | Parent `feat/aisvs-c9-taxonomy` | This branch (HEAD) |
 |---|---|---|
-| local/unit collected | 3402 | 3425 |
-| total collected | 3572 | 3595 |
-| passed | — | **3333** |
+| local/unit collected | 3402 | **3437** |
+| total collected | 3572 | **3607** |
+| passed | — | **3349** |
 | failed | — | **0** |
-| skipped | — | 92 |
+| skipped | — | **88** |
 
-**+23** = 14 signing tests + 9 new integration tests.
+**Breakdown:**
+- Baseline at c0f7123 (R1-R6 complete, before S4-S6 fixes): 3435 collected, 3299 passed, 46 failed, 90 skipped
+- After S4-S6 fixes (c5ed0fc): 3435 collected, 3327 passed, 19 failed, 90 skipped
+- After M1-M4 fixes (HEAD): 3437 collected, 3349 passed, 0 failed, 88 skipped
+
+**Delta from parent:** +35 collected = 14 signing tests (R4) + 9 integration tests (R4) + 1 S6 gauge test + 1 M1 regression test + 10 signing pipeline tests (S3-S6).
 
 `test_pause_handler_fallback_to_deny_when_disabled` failed in one intermediate
 run and not in the final one; it passes in isolation and with these changes
