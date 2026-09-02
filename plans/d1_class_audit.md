@@ -148,32 +148,71 @@ parsed-but-unused.
 
 ## Finding D — reconciliation snapshot signature defaults to empty (variant 2)
 
-> **TRACED 2026-09-02 — reclassified. The empty-string bypass does not exist,
-> because no bypass is possible: nothing verifies the signature at all.**
+> ## ✅ CLEARED — and my first correction was also wrong
 >
-> `reconciliation:signature` is written to Redis by the daemon
-> ([`daemon.py:1150`](../src/gateway/governance/reconciliation/daemon.py:1150))
-> and **read by nothing**. A repository-wide search for
-> `_REDIS_KEY_SIGNATURE`, `reconciliation:signature` and `kms_signature`
-> returns writers only — no reader, no `verify()` call on that value.
-> `cbf.py` contains no signature handling whatsoever, despite
-> [`daemon.py:532`](../src/gateway/governance/reconciliation/daemon.py:532)
-> documenting a "CBF read-path overhead: KMS verify ≈ 0.1-0.5 ms".
+> **Verdict: not a defect. The CBF read path verifies the signature properly.**
 >
-> So the `.get("signature", "")` default is harmless *as written* — the value
-> is inert. But the underlying control is weaker than the audit assumed: the
-> reconciled balance the CBF acts on is **not signature-checked on read**. That
-> is variant 3, not variant 2 — an unenforced field, the same shape as Finding
-> A, and it makes the daemon's KMS signing decorative.
+> I have now been wrong about this finding **twice**, in opposite directions,
+> and both errors came from the same bad habit: grepping one file and treating
+> silence as proof.
 >
-> **Not fixed in this pass.** Adding read-path verification changes CBF
-> behaviour and needs its own design; the balance is a fail-closed input, so
-> the impact of getting it wrong is a trading halt. Recorded here and carried
-> as a separate item rather than bolted onto an envelope-hardening change.
-> Correcting my earlier framing: I called this "needs confirmation" and it
-> needed tracing, which is now done.
+> **Error 1 (original audit).** I flagged `.get("signature", "")` as a possible
+> empty-string bypass without tracing any consumer.
+>
+> **Error 2 (first correction).** I searched
+> [`cbf.py`](../src/gateway/governance/cbf.py) for signature handling, found
+> none, and concluded "nothing verifies it — the daemon's signing is
+> decorative". **`cbf.py` is the wrong file.** The consumer is
+> [`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), which I
+> did not search. My "correction" asserted a *more severe* defect than the
+> original and was less well-founded than the thing it replaced.
+>
+> ### What the code actually does
+>
+> [`_read_cbf_state_atomic()`](../src/gateway/governance/safety/cbf_engine.py:716)
+> is a careful implementation, not a gap:
+>
+> | Step | Behaviour |
+> |---|---|
+> | Signature present | `signer.verify(payload_dict, verified.signature)` over source, balance, verified_at **and** sequence ([:770](../src/gateway/governance/safety/cbf_engine.py:770)) |
+> | Signature invalid | `CBF_RECONCILED_BALANCE_SIGNATURE_INVALID` CRITICAL; balance refused |
+> | Verification raises | Fail-closed via `GroundTruthUnavailableError` when `CAGE_CBF_STRICT_MODE=true` (**default on**) — explicitly to stop an attacker exhausting KMS quota to force the unverified path |
+> | Signature absent, production | `CBF_RECONCILED_BALANCE_UNSIGNED_IN_PRODUCTION` CRITICAL; balance refused |
+> | Signature absent, dev/test | accepted, tagged `reconciled_unsigned` |
+> | Replay | monotonic sequence check inside the signed payload (§2.10 R-04) |
+>
+> So the `""` default is not a bypass: an empty signature takes the "unsigned"
+> branch, which is refused in production. The daemon's KMS signing is load-
+> bearing, and `_REDIS_KEY_SIGNATURE` being written-but-unread is explained —
+> the signature travels inside the balance JSON, and the standalone key is
+> redundant, not evidence of a missing check.
+>
+> ### What remains worth noting, stated at its real size
+>
+> - **`_REDIS_KEY_SIGNATURE` is genuinely dead.** Written at
+>   [`daemon.py:1150`](../src/gateway/governance/reconciliation/daemon.py:1150),
+>   read nowhere. Cosmetic; delete it or document it. Not a security issue.
+> - **`_validate_sequence` fails *open*** on error
+>   ([`cbf_engine.py:707`](../src/gateway/governance/safety/cbf_engine.py:707)),
+>   explicitly commented as "conservative". Everything around it fails closed.
+>   Defensible — a Redis blip on the replay counter shouldn't halt trading —
+>   but it is the one asymmetry in an otherwise fail-closed path, and it is a
+>   *separate* question from Finding D. Worth a deliberate decision, not a fix
+>   smuggled in under this heading.
+>
+> ### Method note
+>
+> Two wrong answers on one finding, the second louder than the first. The
+> lesson is the one this audit keeps re-teaching: **absence of evidence in one
+> file is not evidence of absence.** Before asserting "nothing does X", search
+> for the *symbol* across `src/`, not for a keyword in the file whose name
+> looks right. `read_verified_balance` would have found the consumer in one
+> query.
+>
+> Recorded as **cleared**, with the dead key and the fail-open sequence check
+> carried as separate, smaller items.
 
-**Original assessment (superseded):**
+**Original assessment (superseded — retained for audit trail):**
 
 [`daemon.py:205`](../src/gateway/governance/reconciliation/daemon.py:205)
 deserialises a balance snapshot from Redis with

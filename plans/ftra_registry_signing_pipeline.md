@@ -241,6 +241,30 @@ required in the same PR**, per [`AGENTS.md`](../AGENTS.md).
 
 ### S6 — expiry is now an operational commitment
 
+> **Implementation note — follow the existing metrics idiom.** The repository
+> already exposes governance gauges via `prometheus_client` with a graceful
+> ImportError fallback: `_CURRENT_FENCE_EPOCH_GAUGE` is defined at
+> [`cbf_engine.py:154`](../src/gateway/governance/safety/cbf_engine.py:154),
+> set to `None` at :176 when the dependency is absent, and guarded at every
+> call site with `if _GAUGE is not None`. FTRA metrics in
+> [`node_factory.py:106`](../src/gateway/governance/ftra/node_factory.py:106)
+> use the same pattern.
+>
+> S6 adds `cage_ftra_registry_expires_at_seconds` (Unix epoch seconds)
+> alongside the existing FTRA gauges — **not** a second metrics stack.
+>
+> Emit it on **every successful verification**, not only at startup. A gauge
+> written once at boot goes stale the moment the registry is reloaded via
+> `FTRA_REGISTRY_RELOAD` or the `SIGUSR1` cache bust, and a stale expiry gauge
+> is worse than none: it reports the health of a registry no longer in use.
+>
+> Alert expression for the runbook:
+> `cage_ftra_registry_expires_at_seconds - time() < 14 * 86400`
+>
+> Export absolute expiry rather than remaining-seconds. The absolute value
+> stays correct across scrape gaps and pod restarts; the subtraction belongs in
+> the alert rule, where the clock is the evaluator's own.
+
 `--registry-validity-days 90` means **the deployed registry stops verifying 90
 days after the build**, and the pod fails closed. Nothing currently watches for
 this.
