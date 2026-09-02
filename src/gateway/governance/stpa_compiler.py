@@ -1481,8 +1481,13 @@ def generate_agp(cs: ControlStructureModel) -> str:
 # ---------------------------------------------------------------------------
 
 
-def generate_terminal_registry(cs: ControlStructureModel) -> str:
-    """Generate the FTRA terminal classification registry as JSON.
+def generate_terminal_registry(
+    cs: ControlStructureModel,
+    serial: int | None = None,
+    validity_days: int = 90,
+    sign: bool = False,
+) -> str:
+    """Generate the FTRA terminal classification registry as JSON (v2.0).
 
     Emits a JSON object mapping each unique action name found in
     ``unsafe_control_actions`` to its ``terminal_classification`` value.
@@ -1502,11 +1507,17 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
 
     Args:
         cs: Validated ``ControlStructureModel`` instance.
+        serial: Registry serial number for anti-rollback (VEC-008). If None,
+                defaults to int(time.time()). Monotonic by construction.
+        validity_days: Registry lifetime in days. Default: 90.
+        sign: If True, generate a detached signature (.sig file) using
+              KMSGovernanceSigner. Requires live KMS. Default: False.
 
     Returns:
         JSON string suitable for writing to ``config/ftra/terminal_registry.json``.
     """
     import datetime as _dt
+    import time as _time
 
     from src.gateway.governance.ftra.models import (
         CLASSIFICATION_SEVERITY,
@@ -1544,9 +1555,16 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     for conflict in conflicts:
         logger.warning("generate_terminal_registry: %s", conflict)
 
+    # Generate v2.0 envelope with temporal and anti-rollback fields
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    expires_at = now_utc + _dt.timedelta(days=validity_days)
+    registry_serial = serial if serial is not None else int(_time.time())
+
     registry = {
-        "version": "1.0",
-        "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "version": "2.0",
+        "serial": registry_serial,
+        "issued_at": now_utc.isoformat(),
+        "expires_at": expires_at.isoformat(),
         "system": cs.system.name,
         "system_version": cs.system.version,
         "fail_closed_note": (
@@ -1556,9 +1574,58 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
         "terminals": action_map,
     }
 
+    # Guard: assert no "signed_at" field (plan section 3 trap)
+    # KMSGovernanceSigner.verify() hardcodes a 300-second staleness rejection
+    # for any payload with a "signed_at" key, which would make the registry
+    # unloadable five minutes after generation.
+    assert "signed_at" not in registry, (
+        "BUG: generate_terminal_registry() must never emit a 'signed_at' field. "
+        "Use 'issued_at' and 'expires_at' instead."
+    )
+
     import json as _json
 
-    return _json.dumps(registry, indent=2)
+    registry_json = _json.dumps(registry, indent=2)
+
+    # Optional signing (opt-in via --sign flag, requires live KMS)
+    if sign:
+        logger.info(
+            "Signing terminal registry (serial=%d) with KMSGovernanceSigner...",
+            registry_serial,
+        )
+        from src.gateway.governance.kms_signer import get_signer
+
+        signer = get_signer()
+        if not signer.is_kms_active:
+            raise RuntimeError(
+                "Cannot sign terminal registry: KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and CAGE_ENV=prod. "
+                "Run without --sign to emit an unsigned v2.0 registry."
+            )
+
+        # Sign the registry dict (KMSGovernanceSigner canonicalizes internally)
+        signature_hex = signer.sign(registry)
+        key_id = signer.key_id
+
+        sig_envelope = {
+            "alg": signer.jose_alg,
+            "key_id": key_id,
+            "canonicalization": "RFC8785-JCS",
+            "signature": signature_hex,
+        }
+
+        logger.info(
+            "✅ Terminal registry signed: serial=%d, key_id=%s, alg=%s",
+            registry_serial,
+            key_id,
+            signer.jose_alg,
+        )
+
+        # Caller must write the .sig file alongside the registry JSON
+        # (not done here to keep this function side-effect-free)
+        return registry_json, _json.dumps(sig_envelope, indent=2)
+
+    return registry_json
 
 
 # ---------------------------------------------------------------------------
@@ -1695,6 +1762,7 @@ class CompileResult:
     langgraph_content: str = ""
     agp_content: str = ""
     ftra_content: str = ""
+    ftra_sig_content: str = ""
     registry_content: str = ""
     errors: list[str] = field(default_factory=list)
 
@@ -1738,6 +1806,9 @@ def load_control_structures(paths: list[Path]) -> ControlStructureModel:
 def compile_control_structure(
     cs: ControlStructureModel,
     targets: list[str],
+    registry_serial: int | None = None,
+    registry_validity_days: int = 90,
+    sign: bool = False,
 ) -> CompileResult:
     """Compile the control structure into governance artifacts."""
     result = CompileResult()
@@ -1779,7 +1850,17 @@ def compile_control_structure(
 
     if "ftra" in effective_targets:
         try:
-            result.ftra_content = generate_terminal_registry(cs)
+            registry_output = generate_terminal_registry(
+                cs,
+                serial=registry_serial,
+                validity_days=registry_validity_days,
+                sign=sign,
+            )
+            # Signing returns a tuple (registry_json, sig_json), unsigned returns just registry_json
+            if sign:
+                result.ftra_content, result.ftra_sig_content = registry_output
+            else:
+                result.ftra_content = registry_output
         except Exception as exc:
             result.errors.append(f"FTRA terminal registry generation failed: {exc}")
 
@@ -1876,6 +1957,11 @@ def write_artifacts(
         effective_ftra_out.parent.mkdir(parents=True, exist_ok=True)
         effective_ftra_out.write_text(result.ftra_content)
         logger.info("✅ FTRA terminal registry written → %s", effective_ftra_out)
+        # Write detached signature if present (--sign was used)
+        if result.ftra_sig_content:
+            sig_out = Path(str(effective_ftra_out) + ".sig")
+            sig_out.write_text(result.ftra_sig_content)
+            logger.info("✅ FTRA registry signature written → %s", sig_out)
 
     if result.registry_content:
         effective_registry_out = registry_out or _DEFAULT_REGISTRY_OUT
@@ -2006,6 +2092,32 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     compile_p.add_argument(
+        "--registry-serial",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "FTRA registry serial number for anti-rollback (VEC-008). "
+            "Defaults to int(time.time()) — monotonic by construction."
+        ),
+    )
+    compile_p.add_argument(
+        "--registry-validity-days",
+        type=int,
+        default=90,
+        metavar="DAYS",
+        help="FTRA registry lifetime in days (default: 90).",
+    )
+    compile_p.add_argument(
+        "--sign",
+        action="store_true",
+        help=(
+            "Sign the FTRA terminal registry with KMSGovernanceSigner "
+            "(requires live KMS and CAGE_ENV=prod). Emits detached .sig file. "
+            "Without this flag, generates unsigned v2.0 registry for dev/CI."
+        ),
+    )
+    compile_p.add_argument(
         "--dry-run",
         action="store_true",
         help="Print generated content to stdout without writing files.",
@@ -2077,7 +2189,13 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
 
-    result = compile_control_structure(cs, args.targets)
+    result = compile_control_structure(
+        cs,
+        args.targets,
+        registry_serial=getattr(args, "registry_serial", None),
+        registry_validity_days=getattr(args, "registry_validity_days", 90),
+        sign=getattr(args, "sign", False),
+    )
 
     if result.errors:
         for err in result.errors:
