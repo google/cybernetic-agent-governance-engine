@@ -49,6 +49,9 @@ steps:
         assert r.valid, f'registry signature invalid: {r.reason}'
         print(f'✅ registry verified: serial={r.serial} expires={r.expires_at}')
         "
+    env:
+      - "CAGE_ENV=production"
+      - "KMS_GOVERNANCE_KEY=${_KMS_GOVERNANCE_KEY}"
 
   - name: "gcr.io/cloud-builders/docker"
     id: build-gateway

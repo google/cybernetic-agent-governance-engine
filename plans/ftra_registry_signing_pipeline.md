@@ -198,6 +198,47 @@ which requires both `KMS_GOVERNANCE_KEY` and reachable credentials. Add
 
 ### S4 — fail the build if the signature does not verify
 
+> ## ⚠️ DEFECT IN AS-SHIPPED S4 (c0f7123) — gate cannot pass by construction
+>
+> **Found by reading, 2026-09-02, before any build was run.** The S4 step as
+> committed omits the `env:` block that S3 has. Consequences, traced through
+> [`kms_signer.py`](../src/gateway/governance/kms_signer.py):
+>
+> | Line | Behaviour with no `env:` |
+> |---|---|
+> | [:587](../src/gateway/governance/kms_signer.py:587) | `CAGE_ENV` unset → `env` falls back to `"production"` |
+> | [:589](../src/gateway/governance/kms_signer.py:589) | `is_non_production` is therefore **False** |
+> | [:583](../src/gateway/governance/kms_signer.py:583) | `key_version = _KMS_KEY_VERSION`, read at **import time** from an unset var → `""` |
+> | [:606](../src/gateway/governance/kms_signer.py:606) | falsy `key_version` + not non-production → **`RuntimeError`** |
+>
+> `get_governance_signer()` raises before `verify_registry()` is ever called.
+> The step fails **unconditionally** — on a good signature and a bad one alike.
+>
+> This is the M1 lesson inverted. M1 was a mutation that *could not fail*; this
+> is a gate that *cannot pass*. Both are the same underlying error: a control
+> whose outcome is fixed by construction and therefore carries no information.
+> A gate that always fails looks maximally safe and tells you nothing, and the
+> likely response to a build that always red-lights is to delete the step.
+>
+> I claimed in the c0f7123 commit message that S4 "runs the same
+> `verify_registry()` the pod will run". That was untrue as written — it runs
+> the same *import*, and dies there. I asserted the behaviour of a YAML file I
+> had never executed.
+>
+> **Fix:** give S4 the same `env:` block as S3 (`CAGE_ENV=production`,
+> `KMS_GOVERNANCE_KEY=${_KMS_GOVERNANCE_KEY}`). With the key set, `from_env()`
+> builds a GCP provider and fetches the public key from KMS
+> ([:673](../src/gateway/governance/kms_signer.py:673)), so no
+> `KMS_GOVERNANCE_PUBLIC_PEM` is needed at build time — that variable is an S2
+> concern for the **pod**, which must verify without calling KMS.
+>
+> **Falsifiability requirement — this is what makes the fixed gate real.** The
+> matrix below must include a case that *forces the signature to be wrong* and
+> observe the build fail **for the right reason** (`registry signature invalid`,
+> not `RuntimeError: KMS_GOVERNANCE_KEY is not set`). Distinguishing those two
+> failure texts is the whole point; without that case, a green run proves only
+> that the step exited zero, and a red run proves only that something broke.
+
 The step that matters. Signing that silently produces an unverifiable signature
 is worse than not signing, because it converts a build-time error into a
 runtime outage discovered in production.
@@ -306,16 +347,54 @@ into a build failure.
 The mutation discipline from the predecessor applies. A pipeline that has never
 been observed failing has not been shown to do anything.
 
-| Check | Method | Must happen |
-|---|---|---|
-| Signing actually runs | remove `--sign`; S4 must fail the build | build red |
-| S4 gate is load-bearing | corrupt one byte of `.sig` after signing; S4 must fail | build red |
-| Pod verifies without KMS | deploy with KMS network egress blocked | pod healthy, registry loads |
-| Missing PEM fails closed | unset `KMS_GOVERNANCE_PUBLIC_PEM` | every action `IRREVERSIBLE_TERMINAL`, reason `PUBKEY_UNAVAILABLE` or signer error |
-| Rollback floor holds | deploy serial N, restart pod with registry N-1 | load refused `SERIAL_REGRESSED` |
+**Record the failure *reason*, never just the exit code.** The as-shipped S4
+defect above is exactly why: that step fails the build reliably, for a reason
+that has nothing to do with the signature. Red is not evidence. Red *for the
+stated reason* is evidence.
 
-The fourth row is worth running deliberately: it is the one that distinguishes
-"the control works" from "the control is absent and everything happens to pass".
+### V0 — the gate can pass (run this first)
+
+Before any negative case, prove the fixed S4 succeeds on a **known-good**
+registry and prints `registry verified: serial=… expires=…`.
+
+Until V0 passes, every red result below is uninterpretable: a step that cannot
+pass will "fail correctly" in all of them and appear to prove five controls
+while proving none. V0 is the falsifiability precondition for the whole matrix.
+
+### The matrix
+
+| # | Check | Method | Must happen | Distinguishing evidence |
+|---|---|---|---|---|
+| V0 | Gate can pass | build unmodified, key present | **build green** | `registry verified: serial=N` |
+| V1 | Signing actually runs | drop `--sign` from S3 | build red at S4 | reason mentions absent/invalid signature — **not** `KMS_GOVERNANCE_KEY is not set` |
+| V2 | S4 is load-bearing | flip one byte of the `.sig` after S3 | build red at S4 | `registry signature invalid` |
+| V3 | Pod verifies without KMS | deploy with KMS egress blocked | pod healthy, registry loads | classify returns a non-terminal verdict for a known read-only action |
+| V4 | Missing PEM fails closed | unset `KMS_GOVERNANCE_PUBLIC_PEM` on the pod | every action `IRREVERSIBLE_TERMINAL` | signer error in logs; **not** a silent empty registry |
+| V5 | Rollback floor holds | serial N deployed, restart with N-1 | load refused | `SERIAL_REGRESSED` |
+| V6 | Expiry gauge is live | scrape `/metrics` after load, then force reload | gauge present and **changes** on reload | value equals the registry's `expires_at`, not a boot-time constant |
+
+### Why V1 and V2 are both needed
+
+They fail at different layers and are easy to conflate. V1 removes the
+signature (absent-input path); V2 corrupts it (invalid-signature path). A gate
+that only rejects *absent* signatures would pass V1 and fail V2, and that gap
+is precisely the D1 shape — a control that appears present while accepting
+attacker-supplied input on the branch that matters.
+
+### Why V3 and V4 are the pair that matters
+
+V3 alone can pass because verification is *absent* rather than working offline.
+V4 is its control: with the PEM removed, the same deployment must fail closed.
+Together they distinguish "verifies from the baked PEM" from "does not verify
+at all". Neither result means much on its own — this is the same reasoning that
+made the single-element frozenset mutation (M1) worthless.
+
+### V6 exists because of a real hazard in S6
+
+A gauge set once at import looks identical to a correct one on the first
+scrape. Forcing `FTRA_REGISTRY_RELOAD` and observing the value *change* is what
+separates a live gauge from a stale constant that will silently misreport
+expiry for the life of the pod.
 
 ---
 
