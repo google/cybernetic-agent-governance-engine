@@ -45,9 +45,24 @@ class TerminalClassification(str, Enum):
     """Action modifies state that can be undone via a compensating action
     (e.g. a database write with a known rollback path)."""
 
+    EXTERNALLY_REVERSIBLE = "EXTERNALLY_REVERSIBLE"
+    """Action is reversible but requires an external settlement window,
+    counterparty approval, or human-in-the-loop intervention."""
+
     READ_ONLY = "READ_ONLY"
     """Action reads external state without modifying it (e.g. market_analysis,
     check_balance, prompt_injection_check)."""
+
+
+# Shared exhaustive severity mapping for FTRA classification ordering.
+# Used by PlanGraphAnalyzer and STPA compiler to ensure consistent restrictiveness
+# ordering across the codebase. A guard test asserts this covers every enum member.
+CLASSIFICATION_SEVERITY: dict[TerminalClassification, int] = {
+    TerminalClassification.READ_ONLY: 0,
+    TerminalClassification.REVERSIBLE: 1,
+    TerminalClassification.EXTERNALLY_REVERSIBLE: 2,
+    TerminalClassification.IRREVERSIBLE_TERMINAL: 3,
+}
 
 
 class FTRAVerdict(str, Enum):
@@ -93,15 +108,21 @@ class ReachabilityResult(BaseModel):
 
     reachable_terminals: list[str] = Field(
         default_factory=list,
-        description="Step IDs of all reachable IRREVERSIBLE_TERMINAL nodes.",
+        description=(
+            "Step IDs of all reachable terminal nodes (IRREVERSIBLE_TERMINAL or "
+            "EXTERNALLY_REVERSIBLE). Terminal actions remain on the critical path "
+            "regardless of how their resolution is brokered (internal rollback vs "
+            "external settlement window)."
+        ),
     )
 
     critical_path: list[str] = Field(
         default_factory=list,
         description=(
             "Ordered list of step IDs on the shortest path from step[0] to "
-            "the first reachable IRREVERSIBLE_TERMINAL node. "
-            "Empty when worst_case_classification != IRREVERSIBLE_TERMINAL."
+            "the first reachable terminal node (IRREVERSIBLE_TERMINAL or "
+            "EXTERNALLY_REVERSIBLE). Empty when worst_case_classification is "
+            "READ_ONLY or REVERSIBLE."
         ),
     )
 
@@ -276,13 +297,14 @@ class FtraBoundaryResult:
     irreversibility_score: float
     """Numeric score [0.0, 1.0] representing irreversibility:
        - 1.0: IRREVERSIBLE_TERMINAL (highest risk)
+       - 0.8: EXTERNALLY_REVERSIBLE (requires external action/time window)
        - 0.5: REVERSIBLE (can be undone)
        - 0.0: READ_ONLY (no state change)
     """
 
     classification: str
     """String representation of TerminalClassification (IRREVERSIBLE_TERMINAL,
-    REVERSIBLE, READ_ONLY)."""
+    EXTERNALLY_REVERSIBLE, REVERSIBLE, READ_ONLY)."""
 
     terminal_match: str | None
     """The action name that matched in terminal_registry.json, or None if the
@@ -328,12 +350,16 @@ class FtraBoundaryResult:
         # Map classification to irreversibility score
         score_map = {
             TerminalClassification.IRREVERSIBLE_TERMINAL: 1.0,
+            TerminalClassification.EXTERNALLY_REVERSIBLE: 0.8,
             TerminalClassification.REVERSIBLE: 0.5,
             TerminalClassification.READ_ONLY: 0.0,
         }
         score = score_map.get(classification, 1.0)  # Fail-closed: unknown = 1.0
 
-        requires_hitl = classification == TerminalClassification.IRREVERSIBLE_TERMINAL
+        requires_hitl = classification in (
+            TerminalClassification.IRREVERSIBLE_TERMINAL,
+            TerminalClassification.EXTERNALLY_REVERSIBLE,
+        )
         violations: list[str] = []
 
         if requires_hitl:

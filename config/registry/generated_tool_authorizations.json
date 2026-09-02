@@ -1,0 +1,63 @@
+{
+  "_generated_by": "CAGE stpa_compiler",
+  "_source": "config/stpa_control_structure.yaml",
+  "_generated_at": "2026-09-02T00:04:51.226074+00:00",
+  "_schema_version": "1.0.0",
+  "tool_authorizations": [
+    {
+      "tool_name": "execute_trade",
+      "allowed_roles": [
+        "junior",
+        "senior"
+      ],
+      "denied_roles": [],
+      "uca_refs": [
+        "UCA-2",
+        "UCA-3",
+        "UCA-4",
+        "UCA-5",
+        "UCA-6",
+        "UCA-8",
+        "UCA-9"
+      ],
+      "hazard_refs": [
+        "H-1",
+        "H-2",
+        "H-3",
+        "H-4",
+        "H-5"
+      ],
+      "requires_approval_above_usd": 10000.0
+    },
+    {
+      "tool_name": "prompt_injection_check",
+      "allowed_roles": [],
+      "denied_roles": [
+        "junior",
+        "senior"
+      ],
+      "uca_refs": [
+        "UCA-7"
+      ],
+      "hazard_refs": [
+        "H-6"
+      ]
+    },
+    {
+      "tool_name": "write_db",
+      "allowed_roles": [
+        "senior"
+      ],
+      "denied_roles": [
+        "junior"
+      ],
+      "uca_refs": [
+        "UCA-1"
+      ],
+      "hazard_refs": [
+        "H-1"
+      ],
+      "requires_approval_above_usd": 1000000.0
+    }
+  ]
+}

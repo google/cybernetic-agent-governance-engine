@@ -140,7 +140,9 @@ def _reject_source_breaking(value: str, field: str) -> str:
 # FTRA terminal classification — used by the Forward-Looking Trajectory Reachability Analyzer.
 # Fail-closed: any action not present in the compiled registry is treated as
 # IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime.
-TerminalClassification = Literal["IRREVERSIBLE_TERMINAL", "REVERSIBLE", "READ_ONLY"]
+TerminalClassification = Literal[
+    "IRREVERSIBLE_TERMINAL", "EXTERNALLY_REVERSIBLE", "REVERSIBLE", "READ_ONLY"
+]
 
 
 class HazardModel(BaseModel):
@@ -1495,8 +1497,8 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     Actions with multiple UCAs:
       If the same action appears in multiple UCAs with *different*
       ``terminal_classification`` values, the most restrictive classification
-      wins (IRREVERSIBLE_TERMINAL > REVERSIBLE > READ_ONLY).  A warning is
-      logged for each conflict.
+      wins (IRREVERSIBLE_TERMINAL > EXTERNALLY_REVERSIBLE > REVERSIBLE >
+      READ_ONLY).  A warning is logged for each conflict.
 
     Args:
         cs: Validated ``ControlStructureModel`` instance.
@@ -1506,10 +1508,16 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     """
     import datetime as _dt
 
+    from src.gateway.governance.ftra.models import (
+        CLASSIFICATION_SEVERITY,
+    )
+    from src.gateway.governance.ftra.models import (
+        TerminalClassification as TC,
+    )
+
+    # Derive string-keyed severity map from the canonical enum-keyed map
     _SEVERITY_ORDER = {
-        "IRREVERSIBLE_TERMINAL": 2,
-        "REVERSIBLE": 1,
-        "READ_ONLY": 0,
+        tc.value: severity for tc, severity in CLASSIFICATION_SEVERITY.items()
     }
 
     # Collect per-action classifications — most restrictive wins on conflict.

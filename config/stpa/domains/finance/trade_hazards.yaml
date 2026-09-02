@@ -207,6 +207,38 @@ unsafe_control_actions:
       operator: is_false
     enforcement: [python]
 
+  - id: UCA-10
+    action: check_balance
+    uca_type: wrong_timing
+    hazard_refs: [H-2]
+    description: "Agent reads account balance with stale connection data."
+    # FTRA: check_balance is a benign read — no external state modification.
+    # Registered here to enable classification without polluting the model with
+    # a contrived unsafe scenario. Enforcement is advisory only.
+    terminal_classification: READ_ONLY
+    condition:
+      semantic_pattern: "stale_balance_data_detected"
+    enforcement: [nemo]
+    nemo_rail:
+      flow_name: log_stale_balance_warning
+      message: "Balance data may be stale. Please refresh."
+
+  - id: UCA-11
+    action: release_wire
+    uca_type: unsafe_action
+    hazard_refs: [H-1]
+    description: "Agent initiates wire transfer that is reversible only within settlement window."
+    # FTRA: release_wire is EXTERNALLY_REVERSIBLE — can be reversed via counterparty
+    # or clearinghouse action within a settlement window, but requires external
+    # coordination. Triggers HITL_REQUIRED unconditionally (not subject to confidence gate).
+    terminal_classification: EXTERNALLY_REVERSIBLE
+    condition:
+      semantic_pattern: "wire_release_without_dual_approval"
+    enforcement: [nemo]
+    nemo_rail:
+      flow_name: require_dual_approval_wire
+      message: "Wire transfer requires dual approval before release."
+
 safety_constraints:
   - id: FIN-1
     description: "Cannot sell more than max_sell_portfolio_fraction of portfolio without explicit confirmation."

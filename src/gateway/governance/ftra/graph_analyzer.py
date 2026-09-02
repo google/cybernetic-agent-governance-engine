@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
 from src.gateway.governance.ftra.models import (
+    CLASSIFICATION_SEVERITY,
     FTRAVerdict,
     ReachabilityResult,
     TerminalClassification,
@@ -199,20 +200,21 @@ class PlanGraphAnalyzer:
         reachable_terminals: list[str] = []
         worst_case = TerminalClassification.READ_ONLY
 
-        _severity: dict[TerminalClassification, int] = {
-            TerminalClassification.READ_ONLY: 0,
-            TerminalClassification.REVERSIBLE: 1,
-            TerminalClassification.IRREVERSIBLE_TERMINAL: 2,
-        }
-
         for step_id in reachable_ids:
             action: str = G.nodes[step_id].get("action", step_id)
             classification = self._classifier.classify(action)
 
-            if _severity[classification] > _severity[worst_case]:
+            if (
+                CLASSIFICATION_SEVERITY[classification]
+                > CLASSIFICATION_SEVERITY[worst_case]
+            ):
                 worst_case = classification
 
-            if classification == TerminalClassification.IRREVERSIBLE_TERMINAL:
+            # Collect both IRREVERSIBLE_TERMINAL and EXTERNALLY_REVERSIBLE as terminals
+            if classification in (
+                TerminalClassification.IRREVERSIBLE_TERMINAL,
+                TerminalClassification.EXTERNALLY_REVERSIBLE,
+            ):
                 reachable_terminals.append(step_id)
 
         # ----------------------------------------------------------------
@@ -246,7 +248,14 @@ class PlanGraphAnalyzer:
                 verdict = FTRAVerdict.HITL_REQUIRED
             else:
                 verdict = FTRAVerdict.BLOCKED
+        elif worst_case == TerminalClassification.EXTERNALLY_REVERSIBLE:
+            # EXTERNALLY_REVERSIBLE always routes to HITL_REQUIRED, not subject to
+            # the confidence hard-gate. A settlement window means human review is
+            # meaningful even at low confidence, whereas an irreversible commit at
+            # low confidence warrants outright blocking.
+            verdict = FTRAVerdict.HITL_REQUIRED
         else:
+            # REVERSIBLE or READ_ONLY → CLEAR
             verdict = FTRAVerdict.CLEAR
 
         logger.info(
