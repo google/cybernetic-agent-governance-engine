@@ -196,9 +196,21 @@ def registry_pre_fix(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
             "prompt_injection_check": "READ_ONLY",
         },
     }
-    registry_path = tmp_path / "terminal_registry_pre_fix.json"
-    registry_path.write_text(json.dumps(registry, indent=2))
-    return registry_path, registry
+    # Signed v2.0: registry verification is unconditional (plan §13, R2), so an
+    # unsigned fixture fails closed and every action would classify
+    # IRREVERSIBLE_TERMINAL — masking the pre/post-fix distinction under test.
+    from tests.ftra_signing_harness import (
+        build_hermetic_signer,
+        write_signed_registry,
+    )
+
+    registry_path, signed = write_signed_registry(
+        tmp_path / "pre_fix",
+        build_hermetic_signer(),
+        terminals=registry["terminals"],
+        filename="terminal_registry_pre_fix.json",
+    )
+    return registry_path, signed
 
 
 @pytest.fixture
@@ -228,9 +240,19 @@ def registry_post_fix(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
             "release_wire": "EXTERNALLY_REVERSIBLE",
         },
     }
-    registry_path = tmp_path / "terminal_registry_post_fix.json"
-    registry_path.write_text(json.dumps(registry, indent=2))
-    return registry_path, registry
+    # Signed v2.0 — see registry_pre_fix for why.
+    from tests.ftra_signing_harness import (
+        build_hermetic_signer,
+        write_signed_registry,
+    )
+
+    registry_path, signed = write_signed_registry(
+        tmp_path / "post_fix",
+        build_hermetic_signer(),
+        terminals=registry["terminals"],
+        filename="terminal_registry_post_fix.json",
+    )
+    return registry_path, signed
 
 
 # ------------------------------------------------------------------

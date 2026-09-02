@@ -161,16 +161,20 @@ class TestIrreversibilityClassifier:
         assert "write_db" in known
         assert "prompt_injection_check" in known
 
-    def test_custom_registry_path_overrides_default(self, tmp_path):
-        import json
-        from pathlib import Path
-
+    def test_custom_registry_path_overrides_default(
+        self, tmp_path, hermetic_signer
+    ):
         from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
         from src.gateway.governance.ftra.models import TerminalClassification
+        from tests.ftra_signing_harness import write_signed_registry
 
-        custom_path = Path(tmp_path) / "custom_registry.json"
-        custom_path.write_text(
-            json.dumps({"terminals": {"custom_action": "REVERSIBLE"}})
+        # Signed: registry verification is unconditional (plan §13, R2), so an
+        # unsigned fixture would fail closed before the path override is exercised.
+        custom_path, _ = write_signed_registry(
+            tmp_path / "custom",
+            hermetic_signer,
+            terminals={"custom_action": "REVERSIBLE"},
+            filename="custom_registry.json",
         )
 
         classifier = IrreversibilityClassifier(registry_path=custom_path)
@@ -188,26 +192,30 @@ class TestIrreversibilityClassifier:
 
 
 class TestPlanGraphAnalyzer:
-    def _analyzer(self, tmp_path, terminals: dict[str, str]):
-        """Build a PlanGraphAnalyzer backed by a scratch terminal registry."""
-        import json
-        from pathlib import Path
+    def _analyzer(self, tmp_path, terminals: dict[str, str], hermetic_signer):
+        """Build a PlanGraphAnalyzer backed by a signed scratch registry.
 
+        The registry must be signed: verification is unconditional (plan §13,
+        R2), so an unsigned fixture fails closed and every action would classify
+        IRREVERSIBLE_TERMINAL regardless of what `terminals` declares.
+        """
         from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
         from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer
+        from tests.ftra_signing_harness import write_signed_registry
 
-        registry_path = Path(tmp_path) / "registry.json"
-        registry_path.write_text(json.dumps({"terminals": terminals}))
+        registry_path, _ = write_signed_registry(
+            tmp_path / "analyzer", hermetic_signer, terminals=terminals
+        )
         classifier = IrreversibilityClassifier(registry_path=registry_path)
         return PlanGraphAnalyzer(classifier=classifier)
 
-    def test_empty_plan_is_clear(self, tmp_path):
+    def test_empty_plan_is_clear(self, tmp_path, hermetic_signer):
         from src.gateway.governance.ftra.models import (
             ExecutionPlan,
             FTRAVerdict,
         )
 
-        analyzer = self._analyzer(tmp_path, {})
+        analyzer = self._analyzer(tmp_path, {}, hermetic_signer)
         # Use model_construct to bypass validators (steps_must_be_non_empty enforces
         # non-empty steps in the Pydantic model; for this test we need to exercise
         # the graph analyzer's behavior on a zero-step plan without going through
@@ -226,15 +234,13 @@ class TestPlanGraphAnalyzer:
         assert result.total_steps == 0
         assert result.reachable_terminals == []
 
-    def test_all_read_only_plan_is_clear(self, tmp_path):
+    def test_all_read_only_plan_is_clear(self, tmp_path, hermetic_signer):
         from src.gateway.governance.ftra.models import (
             FTRAVerdict,
             TerminalClassification,
         )
 
-        analyzer = self._analyzer(
-            tmp_path, {"check_price": "READ_ONLY", "check_balance": "READ_ONLY"}
-        )
+        analyzer = self._analyzer(tmp_path, {"check_price": "READ_ONLY", "check_balance": "READ_ONLY"}, hermetic_signer)
         plan = _make_plan([("s1", "check_price"), ("s2", "check_balance")])
         result = analyzer.analyze(plan, confidence=0.5)
 
@@ -243,12 +249,13 @@ class TestPlanGraphAnalyzer:
         assert result.reachable_terminals == []
         assert result.reachable_step_count == 2
 
-    def test_irreversible_terminal_reachable_high_confidence_is_hitl(self, tmp_path):
+    def test_irreversible_terminal_reachable_high_confidence_is_hitl(self, tmp_path, hermetic_signer):
         from src.gateway.governance.ftra.models import FTRAVerdict
 
         analyzer = self._analyzer(
             tmp_path,
             {"check_price": "READ_ONLY", "execute_trade": "IRREVERSIBLE_TERMINAL"},
+            hermetic_signer,
         )
         plan = _make_plan([("s1", "check_price"), ("s2", "execute_trade")])
         result = analyzer.analyze(plan, confidence=0.85)
@@ -257,31 +264,32 @@ class TestPlanGraphAnalyzer:
         assert "s2" in result.reachable_terminals
         assert result.critical_path == ["s1", "s2"]
 
-    def test_irreversible_terminal_reachable_low_confidence_is_blocked(self, tmp_path):
+    def test_irreversible_terminal_reachable_low_confidence_is_blocked(self, tmp_path, hermetic_signer):
         from src.gateway.governance.ftra.models import FTRAVerdict
 
         analyzer = self._analyzer(
             tmp_path,
             {"check_price": "READ_ONLY", "execute_trade": "IRREVERSIBLE_TERMINAL"},
+            hermetic_signer,
         )
         plan = _make_plan([("s1", "check_price"), ("s2", "execute_trade")])
         result = analyzer.analyze(plan, confidence=0.5)
 
         assert result.verdict == FTRAVerdict.BLOCKED
 
-    def test_confidence_exactly_at_threshold_is_hitl_not_blocked(self, tmp_path):
+    def test_confidence_exactly_at_threshold_is_hitl_not_blocked(self, tmp_path, hermetic_signer):
         """FRIA_ZONE_DEFER boundary is inclusive: confidence == threshold -> HITL_REQUIRED."""
         from src.gateway.governance.ftra.models import FTRAVerdict
         from src.gateway.governance.schemas.thresholds import get_fria_zone_defer
 
         fria_zone_defer = get_fria_zone_defer()
-        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
+        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}, hermetic_signer)
         plan = _make_plan([("s1", "execute_trade")])
         result = analyzer.analyze(plan, confidence=fria_zone_defer)
 
         assert result.verdict == FTRAVerdict.HITL_REQUIRED
 
-    def test_graph_analyzer_uses_config_based_fria_zone_defer(self, tmp_path):
+    def test_graph_analyzer_uses_config_based_fria_zone_defer(self, tmp_path, hermetic_signer):
         """EV-1 regression: graph_analyzer must use get_fria_zone_defer() from config.
 
         This test verifies that PlanGraphAnalyzer uses the centralized config
@@ -291,7 +299,7 @@ class TestPlanGraphAnalyzer:
         """
         from src.gateway.governance.ftra.models import FTRAVerdict
 
-        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
+        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}, hermetic_signer)
         plan = _make_plan([("s1", "execute_trade")])
 
         # Test case 1: Mock threshold at 0.50 — confidence 0.55 should be HITL_REQUIRED
@@ -324,7 +332,7 @@ class TestPlanGraphAnalyzer:
                 "With threshold=0.75 and confidence=0.75, expected HITL_REQUIRED (boundary inclusive)"
             )
 
-    def test_unregistered_action_in_plan_fails_closed(self, tmp_path):
+    def test_unregistered_action_in_plan_fails_closed(self, tmp_path, hermetic_signer):
         """A plan step whose action is absent from the registry must be treated
         as IRREVERSIBLE_TERMINAL (fail-closed), forcing HITL/BLOCKED routing."""
         from src.gateway.governance.ftra.models import (
@@ -332,7 +340,7 @@ class TestPlanGraphAnalyzer:
             TerminalClassification,
         )
 
-        analyzer = self._analyzer(tmp_path, {})  # empty registry
+        analyzer = self._analyzer(tmp_path, {}, hermetic_signer)  # empty registry
         plan = _make_plan([("s1", "totally_unknown_action")])
         result = analyzer.analyze(plan, confidence=0.9)
 
@@ -341,7 +349,7 @@ class TestPlanGraphAnalyzer:
         )
         assert result.verdict == FTRAVerdict.HITL_REQUIRED
 
-    def test_depends_on_edges_override_linear_chain(self, tmp_path):
+    def test_depends_on_edges_override_linear_chain(self, tmp_path, hermetic_signer):
         """Phase 2 forward-compat: if a step declares depends_on, use those
         edges instead of the linear chain, and steps unreachable from step[0]
         must not appear in reachable_terminals."""
@@ -360,6 +368,7 @@ class TestPlanGraphAnalyzer:
                 "execute_trade": "IRREVERSIBLE_TERMINAL",
                 "unrelated_read": "READ_ONLY",
             },
+            hermetic_signer,
         )
         # s1 -> s2 (explicit dep); s3 has no dependency on s1/s2 and is not
         # reachable from s1 (the analysis source is always steps[0]).
@@ -434,8 +443,8 @@ class TestPlanGraphAnalyzer:
 
         assert result.verdict == FTRAVerdict.BLOCKED
 
-    def test_explain_returns_step_details(self, tmp_path):
-        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
+    def test_explain_returns_step_details(self, tmp_path, hermetic_signer):
+        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}, hermetic_signer)
         plan = _make_plan([("s1", "execute_trade")])
         explanation = analyzer.explain(plan, confidence=0.9)
 
@@ -477,11 +486,25 @@ class TestRouteAfterFtra:
 
 class TestCreateFtraNode:
     def _registry_path(self, tmp_path, terminals: dict[str, str]):
-        import json
+        """Write a *signed* v2.0 registry and return its path.
+
+        Registry verification is unconditional (plan section 13, R2), so an
+        unsigned fixture fails closed and every action classifies
+        IRREVERSIBLE_TERMINAL regardless of what `terminals` declares.
+        """
         from pathlib import Path
 
-        path = Path(tmp_path) / "registry.json"
-        path.write_text(json.dumps({"terminals": terminals}))
+        from tests.ftra_signing_harness import (
+            build_hermetic_signer,
+            write_signed_registry,
+        )
+
+        path, _ = write_signed_registry(
+            Path(tmp_path) / "signed_registry",
+            build_hermetic_signer(),
+            terminals=terminals,
+            filename="registry.json",
+        )
         return path
 
     def _plan_dict(self, steps: list[tuple[str, str]], plan_id: str = "plan-1"):
@@ -1022,11 +1045,25 @@ class TestBugFtraSchema001:
     """Regression tests for BUG-FTRA-SCHEMA-001: Incomplete LLM plan → not BLOCKED."""
 
     def _registry_path(self, tmp_path, terminals: dict[str, str]):
-        import json
+        """Write a *signed* v2.0 registry and return its path.
+
+        Registry verification is unconditional (plan section 13, R2), so an
+        unsigned fixture fails closed and every action classifies
+        IRREVERSIBLE_TERMINAL regardless of what `terminals` declares.
+        """
         from pathlib import Path
 
-        path = Path(tmp_path) / "registry.json"
-        path.write_text(json.dumps({"terminals": terminals}))
+        from tests.ftra_signing_harness import (
+            build_hermetic_signer,
+            write_signed_registry,
+        )
+
+        path, _ = write_signed_registry(
+            Path(tmp_path) / "signed_registry",
+            build_hermetic_signer(),
+            terminals=terminals,
+            filename="registry.json",
+        )
         return path
 
     def _plan_dict(self, steps: list[tuple[str, str]], plan_id: str = "plan-1"):
@@ -1165,11 +1202,25 @@ class TestBugFtraJson001:
     """Regression tests for BUG-FTRA-JSON-001: Tokenizer artifacts break JSON parse."""
 
     def _registry_path(self, tmp_path, terminals: dict[str, str]):
-        import json
+        """Write a *signed* v2.0 registry and return its path.
+
+        Registry verification is unconditional (plan section 13, R2), so an
+        unsigned fixture fails closed and every action classifies
+        IRREVERSIBLE_TERMINAL regardless of what `terminals` declares.
+        """
         from pathlib import Path
 
-        path = Path(tmp_path) / "registry.json"
-        path.write_text(json.dumps({"terminals": terminals}))
+        from tests.ftra_signing_harness import (
+            build_hermetic_signer,
+            write_signed_registry,
+        )
+
+        path, _ = write_signed_registry(
+            Path(tmp_path) / "signed_registry",
+            build_hermetic_signer(),
+            terminals=terminals,
+            filename="registry.json",
+        )
         return path
 
     def _plan_json_with_fences(self):
@@ -1287,11 +1338,25 @@ class TestTelemetry:
     """Tests for OTel and Prometheus telemetry."""
 
     def _registry_path(self, tmp_path, terminals: dict[str, str]):
-        import json
+        """Write a *signed* v2.0 registry and return its path.
+
+        Registry verification is unconditional (plan section 13, R2), so an
+        unsigned fixture fails closed and every action classifies
+        IRREVERSIBLE_TERMINAL regardless of what `terminals` declares.
+        """
         from pathlib import Path
 
-        path = Path(tmp_path) / "registry.json"
-        path.write_text(json.dumps({"terminals": terminals}))
+        from tests.ftra_signing_harness import (
+            build_hermetic_signer,
+            write_signed_registry,
+        )
+
+        path, _ = write_signed_registry(
+            Path(tmp_path) / "signed_registry",
+            build_hermetic_signer(),
+            terminals=terminals,
+            filename="registry.json",
+        )
         return path
 
     def _plan_dict(self, steps: list[tuple[str, str]], plan_id: str = "plan-1"):
@@ -1441,11 +1506,25 @@ class TestFtraIntegration:
     """
 
     def _registry_path(self, tmp_path, terminals: dict[str, str]):
-        import json
+        """Write a *signed* v2.0 registry and return its path.
+
+        Registry verification is unconditional (plan section 13, R2), so an
+        unsigned fixture fails closed and every action classifies
+        IRREVERSIBLE_TERMINAL regardless of what `terminals` declares.
+        """
         from pathlib import Path
 
-        path = Path(tmp_path) / "registry.json"
-        path.write_text(json.dumps({"terminals": terminals}))
+        from tests.ftra_signing_harness import (
+            build_hermetic_signer,
+            write_signed_registry,
+        )
+
+        path, _ = write_signed_registry(
+            Path(tmp_path) / "signed_registry",
+            build_hermetic_signer(),
+            terminals=terminals,
+            filename="registry.json",
+        )
         return path
 
     def _plan_dict(self, steps: list[tuple[str, str]], plan_id: str = "plan-1"):

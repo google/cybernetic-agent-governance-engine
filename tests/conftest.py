@@ -914,3 +914,162 @@ def assert_formal_tier_ordering_matches():
         assert actual == expected, (
             f"Tier order mismatch! Expected {expected}, got {actual}"
         )
+
+
+# ---------------------------------------------------------------------------
+# FTRA hermetic registry signing (plan section 13, R2/H1-H3)
+# ---------------------------------------------------------------------------
+#
+# IrreversibilityClassifier verifies the registry signature on every load, with
+# no posture gate and no version bypass. Tests therefore need validly signed
+# registries and a signer that can verify them.
+#
+# The repo ships no signed registry and no key material, by design: a committed
+# signature would expire and break CI on a future date, and signing at commit
+# time would force a KMS dependency onto local dev runs. Tests instead generate
+# a throwaway EC P-256 keypair in-process.
+#
+# See tests/ftra_signing_harness.py for the scope of what this proves — the
+# enforcement mechanism, not the provenance of any deployed registry.
+
+
+@pytest.fixture(scope="session")
+def hermetic_signer():
+    """A KMSGovernanceSigner backed by an in-process EC P-256 keypair.
+
+    Exercises the real verify() path; only the key source is substituted.
+    """
+    from tests.ftra_signing_harness import build_hermetic_signer
+
+    return build_hermetic_signer()
+
+
+@pytest.fixture
+def signed_registry(hermetic_signer):
+    """Factory writing a signed v2.0 registry to a directory.
+
+    Usage::
+
+        path = signed_registry(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
+    """
+    from tests.ftra_signing_harness import write_signed_registry
+
+    def _factory(
+        directory,
+        terminals=None,
+        serial: int = 42,
+        validity_days: int = 90,
+        filename: str = "terminal_registry.json",
+    ):
+        path, _ = write_signed_registry(
+            directory,
+            hermetic_signer,
+            terminals=terminals,
+            serial=serial,
+            validity_days=validity_days,
+            filename=filename,
+        )
+        return path
+
+    return _factory
+
+
+@pytest.fixture(scope="session")
+def hermetic_default_registry(tmp_path_factory, hermetic_signer):
+    """A signed v2.0 copy of the committed terminal registry.
+
+    The repository ships ``config/ftra/terminal_registry.json`` unsigned (see
+    ``tests/ftra_signing_harness``). Under unconditional enforcement nothing can
+    load it, so tests that rely on the *default* registry path — rather than
+    writing their own fixture — need a signed equivalent.
+
+    This re-signs the shipped registry's own ``terminals`` verbatim, so tests
+    keep asserting against the real classification data. Only its provenance is
+    substituted, which is exactly what a deployment's signing step would supply.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from tests.ftra_signing_harness import write_signed_registry
+
+    committed = _Path("config/ftra/terminal_registry.json")
+    terminals = _json.loads(committed.read_text())["terminals"]
+
+    target_dir = tmp_path_factory.mktemp("ftra_default_registry")
+    path, _ = write_signed_registry(target_dir, hermetic_signer, terminals=terminals)
+    return path
+
+
+@pytest.fixture(autouse=True)
+def _ftra_hermetic_signer_patch(request, monkeypatch):
+    """Make FTRA registry verification satisfiable in tests.
+
+    Two substitutions, both autouse because registry loads happen deep inside
+    call chains (for example ``create_ftra_node``), not only where a test
+    constructs a classifier directly:
+
+    1. ``get_governance_signer`` returns the hermetic signer. Otherwise the
+       no-KMS fallback yields an empty ``public_key_pem`` and ``verify()``
+       raises instead of returning a verdict.
+    2. ``_DEFAULT_REGISTRY_PATH`` points at a signed copy of the committed
+       registry, since the shipped file is deliberately unsigned.
+
+    Neither weakens the control under test: verification still runs in full, and
+    a tampered or unsigned registry still fails closed. What is substituted is
+    the *key source* and the *provenance of the default file* — never the
+    verification logic.
+
+    Opt out with ``@pytest.mark.no_hermetic_signer`` when a test needs real
+    signer resolution, for example to assert the PUBKEY_UNAVAILABLE path.
+    """
+    if request.node.get_closest_marker("no_hermetic_signer"):
+        yield
+        return
+
+    from tests.ftra_signing_harness import build_hermetic_signer
+
+    signer = build_hermetic_signer()
+    monkeypatch.setattr(
+        "src.gateway.governance.kms_signer.get_governance_signer",
+        lambda: signer,
+    )
+
+    # Redirect the default registry path to a signed copy, and clear the
+    # module-level cache so the redirect takes effect for this test.
+    signed_default = request.getfixturevalue("hermetic_default_registry")
+    from src.gateway.governance.ftra import classifier as _classifier
+
+    monkeypatch.setattr(_classifier, "_DEFAULT_REGISTRY_PATH", signed_default)
+    with _classifier._registry_lock:
+        _classifier._registry_cache = None
+        _classifier._registry_path_used = None
+
+    yield
+
+    with _classifier._registry_lock:
+        _classifier._registry_cache = None
+        _classifier._registry_path_used = None
+
+
+@pytest.fixture
+def clean_ftra_registry_state():
+    """Reset FTRA classifier and verifier module state.
+
+    The classifier caches the registry at module level and the verifier holds a
+    digest cache plus the anti-rollback high-water mark. Without a reset the
+    first test's registry — or its serial — leaks into every later test.
+    """
+    from src.gateway.governance.ftra import classifier as _classifier
+    from src.gateway.governance.ftra import registry_verifier as _verifier
+
+    def _reset():
+        with _classifier._registry_lock:
+            _classifier._registry_cache = None
+            _classifier._registry_path_used = None
+        _verifier._last_verified_digest = None
+        _verifier._last_signature_valid = None
+        _verifier._seen_serial_high_water = 0
+
+    _reset()
+    yield
+    _reset()

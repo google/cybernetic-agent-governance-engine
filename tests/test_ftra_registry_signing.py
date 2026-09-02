@@ -66,83 +66,11 @@ from src.gateway.governance.kms_signer import KMSGovernanceSigner
 # ---------------------------------------------------------------------------
 
 
-def _generate_ec_p256_keypair():
-    """Generate an EC P-256 keypair for hermetic testing.
-
-    Returns:
-        Tuple of (private_key, public_key_pem_bytes)
-    """
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-
-    private_key = ec.generate_private_key(ec.SECP256R1())
-    public_key = private_key.public_key()
-    public_pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return private_key, public_pem
-
-
-def _sign_with_private_key(private_key, message: bytes) -> bytes:
-    """Sign a message with an EC P-256 private key."""
-    import hashlib
-
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
-
-    digest = hashlib.sha256(message).digest()
-    hash_alg = hashes.SHA256()
-    return private_key.sign(digest, ec.ECDSA(asym_utils.Prehashed(hash_alg)))
-
-
-@pytest.fixture
-def hermetic_signer():
-    """Construct a KMSGovernanceSigner with an in-process EC P-256 keypair.
-
-    Returns a signer that uses a stub provider whose sign_digest() calls the
-    local private key, and whose public_key_pem is the matching public key.
-    This exercises the real verify() code path without mocking.
-    """
-    from src.gateway.governance.kms_signer import BaseKMSProvider
-
-    private_key, public_pem = _generate_ec_p256_keypair()
-
-    class StubProvider(BaseKMSProvider):
-        @property
-        def digest_algorithm(self) -> str:
-            return "sha256"
-
-        @property
-        def provider_name(self) -> str:
-            return "hermetic_test"
-
-        def sign_digest(self, digest: bytes) -> bytes:
-            # Sign using the in-process private key
-            import hashlib
-
-            from cryptography.hazmat.primitives import hashes
-            from cryptography.hazmat.primitives.asymmetric import ec
-            from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
-
-            hash_alg = hashes.SHA256()
-            return private_key.sign(digest, ec.ECDSA(asym_utils.Prehashed(hash_alg)))
-
-        def get_public_key_pem(self) -> bytes:
-            return public_pem
-
-        def sign_raw(self, message: bytes) -> bytes:
-            return _sign_with_private_key(private_key, message)
-
-    provider = StubProvider()
-    signer = KMSGovernanceSigner(
-        kms_client=Mock(),  # Stub, never called
-        key_version_name="projects/test/locations/global/keyRings/test/cryptoKeys/test/cryptoKeyVersions/1",
-        public_key_pem=public_pem,
-        provider=provider,
-    )
-    return signer
+# The `hermetic_signer` fixture lives in tests/conftest.py, backed by
+# tests/ftra_signing_harness.py. It was previously duplicated here; the shared
+# version is session-scoped so that the autouse signer patch (which must apply
+# to every test, including those that load a registry indirectly) can depend on
+# it without a ScopeMismatch.
 
 
 @pytest.fixture
@@ -281,30 +209,40 @@ def test_vec_005b_tampered_registry_wrong_sig(
 
 
 @pytest.mark.local
-def test_vec_005c_tampered_registry_enforcement_off(
+def test_vec_005c_no_env_var_can_disable_enforcement(
     tmp_path, hermetic_signer, clean_verifier_state, monkeypatch
 ):
-    """VEC-005c: Same tampered registry, enforcement OFF → loads (bypass succeeds).
+    """VEC-005c: no environment variable can turn verification off.
 
-    This test is deliberate and must not be "fixed". It proves the posture gate
-    is load-bearing rather than decorative and encodes the residual risk in CI.
+    Replaces the original VEC-005c, which asserted that
+    ``FTRA_REGISTRY_REQUIRE_SIGNATURE=false`` let a tampered registry load. That
+    posture gate has been removed (plan §13, R2): enforcement is unconditional,
+    so the bypass it documented no longer exists.
+
+    The vector is kept, inverted. It now pins the property that replaced the
+    gate — setting the old flag, or claiming a dev environment, must not weaken
+    verification. Deleting the test outright would leave nothing guarding
+    against the gate being quietly reintroduced.
     """
     monkeypatch.setenv("FTRA_REGISTRY_REQUIRE_SIGNATURE", "false")
+    monkeypatch.setenv("CAGE_ENV", "development")
 
-    # Create original valid registry
     registry_path, original = create_signed_registry(tmp_path, hermetic_signer)
 
     # Tamper: re-declare execute_trade as REVERSIBLE
     tampered = original.copy()
     tampered["terminals"] = {
         "check_balance": "READ_ONLY",
-        "execute_trade": "REVERSIBLE",  # Tampered
+        "execute_trade": "REVERSIBLE",
     }
     registry_path.write_text(json.dumps(tampered, indent=2))
 
-    # Signature is invalid, but enforcement is OFF
     result = verify_registry(registry_path, signer=hermetic_signer)
-    assert result.valid is True  # Bypass succeeds when enforcement OFF
+    assert result.valid is False, (
+        "Tampered registry must fail verification regardless of "
+        "FTRA_REGISTRY_REQUIRE_SIGNATURE or CAGE_ENV"
+    )
+    assert result.reason == SIG_INVALID
 
 
 # ---------------------------------------------------------------------------

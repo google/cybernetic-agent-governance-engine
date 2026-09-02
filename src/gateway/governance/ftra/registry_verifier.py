@@ -103,26 +103,6 @@ class VerificationResult:
 # ---------------------------------------------------------------------------
 
 
-def _get_enforcement_posture() -> bool:
-    """Return True if signature enforcement is ON, False otherwise.
-
-    Reads FTRA_REGISTRY_REQUIRE_SIGNATURE first. If unset, derives from
-    CAGE_ENV: ON in production, OFF in dev/test/ci.
-
-    Precedent: cbf_engine.py:426 for Redis epoch enforcement.
-    """
-    explicit = os.getenv("FTRA_REGISTRY_REQUIRE_SIGNATURE", "").lower()
-    if explicit in ("true", "1", "yes"):
-        return True
-    if explicit in ("false", "0", "no"):
-        return False
-
-    # Derive from CAGE_ENV
-    env = (os.getenv("CAGE_ENV") or os.getenv("ENVIRONMENT", "production")).lower()
-    is_production = env not in ("development", "test", "dev", "ci")
-    return is_production
-
-
 def _get_serial_floor() -> int:
     """Return the deployment-pinned serial floor (FTRA_REGISTRY_MIN_SERIAL).
 
@@ -167,6 +147,11 @@ def verify_registry(
 ) -> VerificationResult:
     """Verify a terminal registry envelope and detached signature.
 
+    Verification is **unconditional** (plan §13, R2): there is no posture gate
+    and no environment in which these checks are skipped. A registry either
+    presents a valid v2.0 envelope with a valid ES256 signature, or it does not
+    load.
+
     Ordered checks (cheap structural checks before KMS-touching work):
         1. Envelope shape (version, terminals dict, no "signed_at" trap)
         2. .sig file present and parseable
@@ -177,7 +162,7 @@ def verify_registry(
     Args:
         registry_path: Path to the terminal_registry.json file.
         signer: KMSGovernanceSigner instance with public_key_pem loaded.
-                If None and enforcement is ON, returns PUBKEY_UNAVAILABLE.
+                If None, returns PUBKEY_UNAVAILABLE — never a silent pass.
 
     Returns:
         VerificationResult with valid=True on success, or valid=False with a
@@ -186,8 +171,6 @@ def verify_registry(
     Raises:
         Never raises. All failures return VerificationResult(valid=False, reason=...).
     """
-    enforcement_on = _get_enforcement_posture()
-
     # ---------------------------------------------------------------------------
     # Step 0: Load registry bytes and JSON
     # ---------------------------------------------------------------------------
@@ -237,7 +220,7 @@ def verify_registry(
     # Step 2: .sig file present and parseable
     # ---------------------------------------------------------------------------
     sig_path = Path(str(registry_path) + ".sig")
-    if enforcement_on and not sig_path.exists():
+    if not sig_path.exists():
         logger.error(
             "FTRA registry signature file missing: %s (enforcement ON)", sig_path
         )
@@ -353,20 +336,9 @@ def verify_registry(
     # ---------------------------------------------------------------------------
     # Step 5: Signature verification (KMS-touching work last, cached by digest)
     # ---------------------------------------------------------------------------
-    if not enforcement_on:
-        logger.info(
-            "FTRA registry signature enforcement OFF (posture gate) — skipping verification"
-        )
-        # R3/D3: no signature was checked on this path, so the serial is
-        # unverified. Deliberately do NOT advance the high-water mark — doing so
-        # would let an unverified serial poison the mark via the dev path.
-        return VerificationResult(
-            valid=True, reason="", serial=serial_value, expires_at=expires_at_dt
-        )
-
     if signer is None:
         logger.error(
-            "FTRA registry signature enforcement ON but no signer provided "
+            "FTRA registry verification requires a signer, but none was provided "
             "(public key unavailable)"
         )
         return VerificationResult(

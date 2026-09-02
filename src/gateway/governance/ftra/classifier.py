@@ -72,101 +72,87 @@ _registry_path_used: Path | None = None
 
 
 def _load_registry(path: Path) -> dict[str, str]:
-    """Load and parse the terminal registry JSON with signature verification.
+    """Load, verify and parse the terminal registry JSON.
 
-    For v2.0 registries, verifies detached signature and enforces monotonic serial
-    numbers (VEC-005, VEC-008). For v1.0 registries, loads without verification
-    (backward compatibility for dev/test fixtures).
+    Signature verification is **unconditional** (plan §13, R2). Every registry —
+    whatever ``version`` it declares — is routed through
+    :func:`~src.gateway.governance.ftra.registry_verifier.verify_registry`, which
+    checks envelope shape, expiry, serial monotonicity and the detached ES256
+    signature. A registry that is not a validly signed v2.0 envelope does not
+    load; the caller's fail-closed default then classifies every action
+    ``IRREVERSIBLE_TERMINAL``.
+
+    D1: the previous implementation gated the whole verification block on
+    ``if version == "2.0":``, so an attacker who could write the registry simply
+    set ``"version": "1.0"`` and disabled the control they were subject to.
+    Untrusted input must never select its own validation path, so the version
+    check now lives *inside* the verifier, on the trusted side of the boundary,
+    where a mismatch is an ``ENVELOPE_INVALID`` failure rather than a bypass.
 
     Returns the ``terminals`` dict mapping action name → classification string.
 
     Raises:
         FileNotFoundError: If the registry file does not exist.
-        ValueError: If the JSON is malformed, missing the ``terminals`` key,
-                     or signature verification fails with enforcement ON.
-        RuntimeError: If signature verification fails with enforcement ON.
+        ValueError: If the JSON is malformed or missing the ``terminals`` key.
+        RuntimeError: If the signer is unavailable, or verification fails for
+            any reason. Never returns a partial or empty registry — an empty
+            dict would be indistinguishable from a clean load of a registry with
+            no terminals, producing the right verdict with the wrong provenance.
     """
     if not path.exists():
         raise FileNotFoundError(
             f"FTRA terminal registry not found: {path}. "
             "Run: python -m src.gateway.governance.stpa_compiler compile --targets ftra"
         )
-    
+
     with open(path) as fh:
         raw: dict[str, Any] = json.load(fh)
-    
-    version = raw.get("version", "1.0")
+
     terminals = raw.get("terminals")
-    
+
     if not isinstance(terminals, dict):
         raise ValueError(
             f"FTRA terminal registry at {path} is missing the 'terminals' key "
             "or it is not a dict."
         )
-    
-    # v2.0 registries require signature verification
-    if version == "2.0":
-        from src.gateway.governance.ftra.registry_verifier import (
-            _get_enforcement_posture,
-            verify_registry,
+
+    from src.gateway.governance.ftra.registry_verifier import verify_registry
+
+    # Load the signer for its public key. verify() needs only the PEM — no KMS
+    # credentials — so this stays cheap and survives a KMS outage.
+    # R1/D2: the symbol is get_governance_signer, not get_signer. The import sits
+    # inside the try so a future rename degrades to a fail-closed RuntimeError
+    # rather than an uncaught ImportError on the load path.
+    try:
+        from src.gateway.governance.kms_signer import get_governance_signer
+
+        signer = get_governance_signer()
+    except Exception as exc:
+        logger.error("FTRA registry verification: failed to load signer: %s", exc)
+        raise RuntimeError(
+            f"FTRA registry signer unavailable: {exc}. Registry not loaded — "
+            "all actions will be treated as IRREVERSIBLE_TERMINAL."
+        ) from exc
+
+    result = verify_registry(path, signer=signer)
+
+    if not result.valid:
+        logger.error(
+            "❌ FTRA registry verification FAILED: %s (path=%s)", result.reason, path
+        )
+        raise RuntimeError(
+            f"FTRA registry verification failed: {result.reason}. "
+            "Registry not loaded — all actions will be treated as IRREVERSIBLE_TERMINAL. "
+            "Check signature, expiry, and serial monotonicity."
         )
 
-        enforcement_on = _get_enforcement_posture()
+    logger.info(
+        "✅ FTRA terminal registry verified and loaded: %d actions from %s, serial=%s",
+        len(terminals),
+        path,
+        result.serial,
+    )
 
-        # Load signer (for public key only — no KMS credentials needed for verify).
-        # R1/D2: the symbol is get_governance_signer, not get_signer. The import
-        # sits inside the try so a future rename degrades to a fail-closed
-        # RuntimeError rather than an uncaught ImportError on the load path.
-        signer = None
-        if enforcement_on:
-            try:
-                from src.gateway.governance.kms_signer import (
-                    get_governance_signer,
-                )
-
-                signer = get_governance_signer()
-            except Exception as exc:
-                logger.error(
-                    "FTRA registry verification: failed to load signer: %s", exc
-                )
-                raise RuntimeError(
-                    f"FTRA registry signature enforcement ON but signer unavailable: {exc}"
-                ) from exc
-        
-        result = verify_registry(path, signer=signer)
-        
-        if not result.valid:
-            if enforcement_on:
-                logger.error(
-                    "❌ FTRA registry verification FAILED: %s (enforcement ON)",
-                    result.reason,
-                )
-                raise RuntimeError(
-                    f"FTRA registry verification failed: {result.reason}. "
-                    "Registry not loaded — all actions will be treated as IRREVERSIBLE_TERMINAL. "
-                    "Check signature, expiry, and serial monotonicity."
-                )
-            else:
-                logger.warning(
-                    "⚠️  FTRA registry verification failed: %s (enforcement OFF — proceeding)",
-                    result.reason,
-                )
-        
-        logger.info(
-            "✅ FTRA terminal registry loaded (v2.0): %d actions from %s, serial=%s, enforcement=%s",
-            len(terminals),
-            path,
-            result.serial,
-            "enforced" if enforcement_on else "advisory",
-        )
-    else:
-        # v1.0 registry — no verification (backward compatibility)
-        logger.info(
-            "✅ FTRA terminal registry loaded (v1.0, unsigned): %d actions from %s",
-            len(terminals),
-            path,
-        )
-    
     return terminals
 
 
