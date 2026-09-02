@@ -141,35 +141,56 @@ _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_
 try:
     from prometheus_client import Counter, Gauge, Histogram
 
-    _REPLAY_REJECTED_COUNTER = Counter(
-        "cage_reconciliation_replay_rejected_total",
-        "Number of reconciliation payloads rejected due to non-advancing sequence (R-04 replay defense)",
-        ["source"],
-    )
-    # R-05 fence epoch telemetry
-    _EPOCH_REGRESSION_COUNTER = Counter(
-        "cage_cbf_epoch_regression_detected_total",
-        "Number of CBF reads rejected due to fence epoch regression (R-05 double-spend defense)",
-    )
-    _CURRENT_FENCE_EPOCH_GAUGE = Gauge(
-        "cage_cbf_current_fence_epoch",
-        "Current value of the CBF fence epoch counter",
-    )
-    # Phase 4.3: WAIT command telemetry
-    _WAIT_LATENCY_HISTOGRAM = Histogram(
-        "cage_cbf_wait_latency_seconds",
-        "Latency of Redis WAIT command for replication synchronization (Phase 4.3)",
-        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
-    )
-    _WAIT_TIMEOUT_COUNTER = Counter(
-        "cage_cbf_wait_timeout_total",
-        "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
-    )
-    # P0 hardening: Strict replication rollback counter
-    _STRICT_REPLICATION_ROLLBACK_COUNTER = Counter(
-        "cage_cbf_strict_replication_rollback_total",
-        "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
-    )
+    try:
+        _REPLAY_REJECTED_COUNTER = Counter(
+            "cage_reconciliation_replay_rejected_total",
+            "Number of reconciliation payloads rejected due to non-advancing sequence (R-04 replay defense)",
+            ["source"],
+        )
+    except ValueError:
+        # Already registered (importlib.reload in tests) — skip re-registration
+        _REPLAY_REJECTED_COUNTER = None  # type: ignore[assignment]
+    
+    try:
+        _EPOCH_REGRESSION_COUNTER = Counter(
+            "cage_cbf_epoch_regression_detected_total",
+            "Number of CBF reads rejected due to fence epoch regression (R-05 double-spend defense)",
+        )
+    except ValueError:
+        _EPOCH_REGRESSION_COUNTER = None  # type: ignore[assignment]
+    
+    try:
+        _CURRENT_FENCE_EPOCH_GAUGE = Gauge(
+            "cage_cbf_current_fence_epoch",
+            "Current value of the CBF fence epoch counter",
+        )
+    except ValueError:
+        _CURRENT_FENCE_EPOCH_GAUGE = None  # type: ignore[assignment]
+    
+    try:
+        _WAIT_LATENCY_HISTOGRAM = Histogram(
+            "cage_cbf_wait_latency_seconds",
+            "Latency of Redis WAIT command for replication synchronization (Phase 4.3)",
+            buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+        )
+    except ValueError:
+        _WAIT_LATENCY_HISTOGRAM = None  # type: ignore[assignment]
+    
+    try:
+        _WAIT_TIMEOUT_COUNTER = Counter(
+            "cage_cbf_wait_timeout_total",
+            "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
+        )
+    except ValueError:
+        _WAIT_TIMEOUT_COUNTER = None  # type: ignore[assignment]
+    
+    try:
+        _STRICT_REPLICATION_ROLLBACK_COUNTER = Counter(
+            "cage_cbf_strict_replication_rollback_total",
+            "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
+        )
+    except ValueError:
+        _STRICT_REPLICATION_ROLLBACK_COUNTER = None  # type: ignore[assignment]
 except ImportError:
     _REPLAY_REJECTED_COUNTER = None  # type: ignore[assignment]
     _EPOCH_REGRESSION_COUNTER = None  # type: ignore[assignment]

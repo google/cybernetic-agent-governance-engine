@@ -333,6 +333,51 @@ class TestPrometheusMetrics:
         assert result.requires_hitl is True
         # Counter increment happens without exception — test passes
 
+    @pytest.mark.asyncio
+    async def test_multiple_boundary_checks_do_not_duplicate_register(
+        self,
+        symbolic_governor: SymbolicGovernor,
+    ) -> None:
+        """M1 regression test: second call must return a real classification, not fail-closed error.
+        
+        Before M1 fix, the Counter is constructed inside _ftra_boundary_check on every call.
+        The second call raises DuplicateTimeseries, which escapes into the outer except
+        Exception handler and returns a fail-closed IRREVERSIBLE_TERMINAL with a generic
+        error message.
+        
+        This test calls _ftra_boundary_check twice and asserts the second result is a
+        proper classification, not the blanket error path.
+        """
+        pytest.importorskip("prometheus_client")
+
+        # First call — should succeed
+        result1 = await symbolic_governor._ftra_boundary_check(
+            tool_name="execute_trade",
+            tool_input={},
+            detect_bypass=True,
+        )
+        assert result1.requires_hitl is True
+        assert result1.classification == TerminalClassification.IRREVERSIBLE_TERMINAL.value
+        # Must not be the error path — check for absence of generic "Error classifying" message
+        assert not any(
+            "Error classifying action" in v for v in result1.violations
+        ), "First call should not hit the error path"
+
+        # Second call — before M1 fix, this raises DuplicateTimeseries and returns error result
+        result2 = await symbolic_governor._ftra_boundary_check(
+            tool_name="prompt_injection_check",  # Different action; any valid action works
+            tool_input={},
+            detect_bypass=True,
+        )
+        # Critical assertion: must not be the fail-closed error path
+        assert not any(
+            "Error classifying action" in v for v in result2.violations
+        ), (
+            "Second call should return a real classification, not the fail-closed error. "
+            "If this fails, the Counter is being constructed per-call instead of at module scope."
+        )
+        # The classification itself doesn't matter — we're verifying the control didn't crash
+
 
 class TestClassifierStandaloneInstantiation:
     """Test that IrreversibilityClassifier can be instantiated standalone."""

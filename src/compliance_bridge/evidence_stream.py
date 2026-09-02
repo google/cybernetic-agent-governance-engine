@@ -124,27 +124,42 @@ _PROM_AVAILABLE = False
 try:
     from prometheus_client import Counter, Gauge, Histogram
 
-    EVIDENCE_COMMIT_TOTAL = Counter(
-        "cage_evidence_commit_total",
-        "Total evidence commit attempts",
-        ["status"],
-    )
-    EVIDENCE_COMMIT_DURATION = Histogram(
-        "cage_evidence_commit_duration_seconds",
-        "Evidence commit latency in seconds",
-        buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
-    )
-    # B4 Enhancement: Configuration warning metrics
-    EVIDENCE_BLOCKING_DISABLED = Gauge(
-        "cage_evidence_blocking_disabled",
-        "Set to 1 when evidence blocking is disabled (seals issued without evidence guarantee)",
-        ["env"],
-    )
-    EVIDENCE_STREAM_DISABLED = Gauge(
-        "cage_evidence_stream_disabled",
-        "Set to 1 when evidence stream is disabled (no durable evidence chain)",
-        ["env"],
-    )
+    try:
+        EVIDENCE_COMMIT_TOTAL = Counter(
+            "cage_evidence_commit_total",
+            "Total evidence commit attempts",
+            ["status"],
+        )
+    except ValueError:
+        EVIDENCE_COMMIT_TOTAL = None  # type: ignore[assignment]
+    
+    try:
+        EVIDENCE_COMMIT_DURATION = Histogram(
+            "cage_evidence_commit_duration_seconds",
+            "Evidence commit latency in seconds",
+            buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+        )
+    except ValueError:
+        EVIDENCE_COMMIT_DURATION = None  # type: ignore[assignment]
+    
+    try:
+        EVIDENCE_BLOCKING_DISABLED = Gauge(
+            "cage_evidence_blocking_disabled",
+            "Set to 1 when evidence blocking is disabled (seals issued without evidence guarantee)",
+            ["env"],
+        )
+    except ValueError:
+        EVIDENCE_BLOCKING_DISABLED = None  # type: ignore[assignment]
+    
+    try:
+        EVIDENCE_STREAM_DISABLED = Gauge(
+            "cage_evidence_stream_disabled",
+            "Set to 1 when evidence stream is disabled (no durable evidence chain)",
+            ["env"],
+        )
+    except ValueError:
+        EVIDENCE_STREAM_DISABLED = None  # type: ignore[assignment]
+    
     _PROM_AVAILABLE = True
 except ImportError:
     pass
@@ -444,7 +459,7 @@ def validate_evidence_stream_preconditions() -> None:
         )
 
         # Emit Prometheus metric for monitoring/alerting
-        if _PROM_AVAILABLE:
+        if _PROM_AVAILABLE and EVIDENCE_BLOCKING_DISABLED is not None:
             EVIDENCE_BLOCKING_DISABLED.labels(env=cage_env).set(1)
 
         # Fail startup unless explicitly overridden
@@ -480,7 +495,7 @@ def validate_evidence_stream_preconditions() -> None:
         )
 
         # Emit Prometheus metric for monitoring
-        if _PROM_AVAILABLE:
+        if _PROM_AVAILABLE and EVIDENCE_STREAM_DISABLED is not None:
             EVIDENCE_STREAM_DISABLED.labels(env=cage_env).set(1)
 
     # Log final configuration state
