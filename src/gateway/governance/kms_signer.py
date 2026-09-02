@@ -126,6 +126,103 @@ _GCP_KMS_ED25519_ALGORITHMS = frozenset(
 )
 
 
+class LocalDevelopmentKMSProvider(BaseKMSProvider):
+    """Local development KMS provider using ephemeral ECDSA P-256 keypair.
+    
+    This provider enables hermetic local development and testing without requiring
+    live GCP KMS access. It generates an ephemeral ECDSA P-256 keypair matching
+    the EC_SIGN_P256_SHA256 algorithm used in production GCP KMS keys.
+    
+    The keypair is generated once at initialization and cached for the lifetime
+    of the provider instance. Signatures are fully interoperable with GCP KMS
+    EC_SIGN_P256_SHA256 signatures and can be verified using the same verification
+    logic.
+    
+    Security properties:
+    - Private key exists only in process memory, never persisted
+    - Keypair is regenerated on each process restart
+    - Suitable for development/test environments only (CAGE_ENV=development|test)
+    - Production deployments MUST use real GCP KMS (enforced by assert_kms_active_in_production)
+    """
+
+    def __init__(self) -> None:
+        """Generate ephemeral ECDSA P-256 keypair for local signing."""
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+
+        # Generate ephemeral ECDSA P-256 private key
+        self._private_key = ec.generate_private_key(ec.SECP256R1())
+        self._public_key = self._private_key.public_key()
+        
+        # Cache public key PEM (needed for verification)
+        self._public_key_pem = self._public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        
+        logger.info(
+            "[LocalDevelopmentKMSProvider] Ephemeral ECDSA P-256 keypair generated. "
+            "This is a local development fallback — production MUST use real GCP KMS."
+        )
+
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign a pre-hashed SHA-256 digest using the ephemeral ECDSA key.
+        
+        Args:
+            digest: SHA-256 digest bytes (32 bytes).
+        
+        Returns:
+            DER-encoded ECDSA signature bytes.
+        """
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
+        from cryptography.hazmat.primitives import hashes
+
+        # ECDSA signing with prehashed digest
+        # The digest is already SHA-256 hashed, so we use Prehashed
+        signature = self._private_key.sign(
+            digest,
+            ec.ECDSA(asym_utils.Prehashed(hashes.SHA256()))
+        )
+        return signature
+
+    def sign_raw(self, message: bytes) -> bytes:
+        """Sign raw message bytes using ECDSA with SHA-256.
+        
+        Args:
+            message: Raw message bytes to sign.
+        
+        Returns:
+            DER-encoded ECDSA signature bytes.
+        """
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import hashes
+
+        signature = self._private_key.sign(
+            message,
+            ec.ECDSA(hashes.SHA256())
+        )
+        return signature
+
+    def get_public_key_pem(self) -> bytes:
+        """Return the cached public key PEM.
+        
+        Returns:
+            PEM-encoded public key bytes.
+        """
+        return self._public_key_pem
+
+    @property
+    def provider_name(self) -> str:
+        """Provider identifier for telemetry."""
+        return "local-development"
+
+    @property
+    def digest_algorithm(self) -> str:
+        """Hash algorithm used by this provider (SHA-256 for ECDSA P-256)."""
+        return "sha256"
+
+
 class GCPKMSProvider(BaseKMSProvider):
     """Google Cloud KMS HSM provider."""
 
@@ -539,6 +636,10 @@ class KMSGovernanceSigner:
                     f"[KMSSigner] Failed to determine JOSE algorithm: {exc}"
                 ) from exc
 
+        # LocalDevelopmentKMSProvider: ECDSA P-256
+        if isinstance(self._provider, LocalDevelopmentKMSProvider):
+            return "ES256"
+        
         # AWS/Azure: infer from digest_algorithm (best-effort)
         if self._provider.digest_algorithm == "raw":
             return "EdDSA"
@@ -591,17 +692,18 @@ class KMSGovernanceSigner:
         if provider_name == "gcp":
             if not key_version:
                 if is_non_production:
-                    # Return a fallback signer for test/dev without KMS
+                    # Return a local development signer for test/dev without KMS
                     logger.info(
                         "[KMSSigner] KMS_GOVERNANCE_KEY not set in %s environment. "
-                        "Using HMAC fallback mode.",
+                        "Using LocalDevelopmentKMSProvider with ephemeral ECDSA keypair.",
                         env,
                     )
+                    local_provider = LocalDevelopmentKMSProvider()
                     return cls(
                         kms_client=None,
-                        key_version_name="",
-                        public_key_pem=b"",
-                        provider=None,
+                        key_version_name="local-development-ephemeral",
+                        public_key_pem=local_provider.get_public_key_pem(),
+                        provider=local_provider,
                     )
                 raise RuntimeError(
                     "[KMSSigner] KMS_GOVERNANCE_KEY is not set. "

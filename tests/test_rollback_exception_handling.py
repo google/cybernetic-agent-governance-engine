@@ -23,7 +23,7 @@ Verifies the fix described in implementation_plan.md § 1.2.3:
 Coverage: src/gateway/governance/symbolic_governor.py:833-866
 """
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
