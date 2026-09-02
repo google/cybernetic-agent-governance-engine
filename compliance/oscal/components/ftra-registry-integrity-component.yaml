@@ -1,0 +1,212 @@
+# FTRA Terminal Registry Integrity Component
+#
+# Covers SI-7 (Software, Firmware, and Information Integrity) and AU-10
+# (Non-Repudiation) for the FTRA terminal registry, per AGENTS.md compliance
+# obligations for changes touching registry integrity.
+#
+# SCOPE NOTE — read before citing this component as evidence.
+# The controls below are IMPLEMENTED AND TESTED. They are not yet OPERATING in
+# any deployed environment: no signed registry is published and no deploy-time
+# signing pipeline exists (see the ftra-key-management-dependency prop). The
+# implementation-status remarks state this explicitly. Do not upgrade these to
+# "operational" without a signed registry in the target environment.
+
+component-definition:
+  uuid: 3f2c9d81-6b47-4a52-9e13-ftraregistry001
+  metadata:
+    title: FTRA Terminal Registry Integrity (VEC-005, VEC-008)
+    last-modified: "2026-09-02T16:20:00Z"
+    version: "1.0"
+    oscal-version: 1.1.2
+    remarks: |
+      Added with the FTRA registry signature verification change
+      (feat/ftra-registry-signing). Closes the VEC-005 registry re-declaration
+      bypass and the VEC-008 signed-registry rollback vector at the code level.
+
+  components:
+    - uuid: ftra-registry-verifier-001
+      type: software
+      title: FTRA Registry Verifier
+      description: |
+        Verifies the integrity and authenticity of
+        config/ftra/terminal_registry.json before the IrreversibilityClassifier
+        will act on its contents.
+
+        The registry declares which agent actions are irreversible. An attacker
+        able to write that file could previously re-declare execute_trade as
+        REVERSIBLE, causing every irreversible trade to be admitted at
+        commencement time with no human in the loop. The fail-closed default
+        never fired, because the action WAS registered — just registered as a
+        lie. This is a file-integrity bypass, not a logic bypass.
+
+        Verification is unconditional. There is no posture gate, no environment
+        variable, and no registry-declared version that disables it.
+
+      props:
+        - name: implementation-point
+          value: src/gateway/governance/ftra/registry_verifier.py
+        - name: implementation-point
+          value: src/gateway/governance/ftra/classifier.py
+        - name: signature-algorithm
+          value: ES256 (ECDSA P-256, SHA-256)
+        - name: canonicalization
+          value: RFC8785-JCS
+        - name: ftra-key-management-dependency
+          value: |
+            No signed registry is published and no deploy-time signing step
+            exists. A deployment loading the repository's unsigned registry
+            fails closed — correct behaviour, and a full availability outage.
+            Publishing a signed registry is a prerequisite for operating these
+            controls, and is out of scope for this change.
+
+      control-implementations:
+        - uuid: ftra-registry-controls-001
+          source: https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final
+          description: |
+            NIST SP 800-53 Rev 5 control mappings for FTRA terminal registry
+            integrity.
+
+          implemented-requirements:
+            # -----------------------------------------------------------------
+            # SI-7 — Software, Firmware, and Information Integrity
+            # -----------------------------------------------------------------
+            - uuid: ftra-si-7-impl
+              control-id: si-7
+              description: |
+                The terminal registry is protected by a detached ES256 signature
+                over its RFC8785-JCS canonical form. verify_registry() runs on
+                every load — cold start, FTRA_REGISTRY_RELOAD, and the SIGUSR1
+                cache bust all funnel through _load_registry() — and performs,
+                in order:
+
+                  1. Envelope shape: version == "2.0", terminals is a dict, and
+                     no "signed_at" field (which would trigger the signer's
+                     300-second staleness rejection).
+                  2. Detached .sig present and parseable.
+                  3. expires_at present, timezone-aware, and in the future. A
+                     naive datetime is a failure, never coerced to UTC.
+                  4. Serial monotonicity (see AU-10 / anti-rollback below).
+                  5. Signature verification against the KMS public key.
+
+                Any failure raises, and IrreversibilityClassifier.classify()
+                returns IRREVERSIBLE_TERMINAL for every action. The verifier
+                never returns an empty registry: an empty dict is
+                indistinguishable from a clean load of a registry with no
+                terminals, which would yield the right verdict with the wrong
+                provenance.
+
+                Enforcement is decided by posture, never by file content. A
+                registry whose version is not "2.0" is an ENVELOPE_INVALID
+                failure. This is the D1 remediation: untrusted input must not
+                select its own validation path.
+
+              props:
+                - name: control-origin
+                  value: system-specific
+                - name: implementation-status
+                  value: implemented
+                - name: verification-method
+                  value: test-and-mutation
+
+              remarks: |
+                EVIDENCE (mutation testing — a test never observed failing has
+                not been shown to test anything):
+
+                  M-B — reintroduce the D1 version bypass
+                        (if version != "2.0": return terminals unverified):
+                        3 integration tests FAIL, including
+                        test_d1_version_downgrade_fails_closed.
+
+                  M-D — revert the signer import to the non-existent get_signer:
+                        all 9 integration tests FAIL. Note these tests still
+                        observe IRREVERSIBLE_TERMINAL under this mutation —
+                        classify() fails closed on any exception — so only the
+                        asserted failure REASON distinguishes a correct
+                        rejection from a broken build.
+
+                  M-A — invert the serial comparison: VEC-008a FAILS.
+
+                All mutations reverted; suites green afterwards.
+
+                STATUS QUALIFIER: implemented and tested, NOT operating. The
+                test suite signs its fixtures with a throwaway in-process EC
+                P-256 keypair, which proves the enforcement mechanism, not the
+                provenance of any deployed registry. Closing VEC-005 in a
+                deployed environment additionally requires a signed registry to
+                exist there. See the ftra-key-management-dependency prop.
+
+                RESIDUAL RISK: this control defeats an attacker who can write
+                the registry file but cannot supply a valid signature. It does
+                not defeat an attacker holding the signing key.
+
+            # -----------------------------------------------------------------
+            # AU-10 — Non-Repudiation
+            # -----------------------------------------------------------------
+            - uuid: ftra-au-10-impl
+              control-id: au-10
+              description: |
+                Each registry carries an issuer-bound signature envelope
+                recording alg, key_id (a KMS resource path, not a secret),
+                canonicalization method, and the signature itself. A registry
+                cannot be attributed to the governance authority unless it
+                verifies against that authority's public key, so the origin of
+                the terminal classifications in force is attributable.
+
+                Anti-rollback (VEC-008): the envelope carries a monotonic
+                serial, checked against
+                max(FTRA_REGISTRY_MIN_SERIAL, in-memory high-water). An older
+                but validly signed registry passes signature and expiry checks
+                and is caught only by this serial check.
+
+                The high-water mark is advanced only AFTER the signature
+                verifies (D3 remediation). Advancing it earlier let an attacker
+                submit a forged registry with serial 999999: the forgery was
+                rejected, but the mark was poisoned, and every subsequent
+                legitimate registry was refused SERIAL_REGRESSED for the
+                lifetime of the process — converting a blocked attack into a
+                self-inflicted denial of the governance control.
+
+                Verification outcomes are logged with a distinct machine-
+                readable reason code (SIG_MISSING, SIG_INVALID, EXPIRED,
+                SERIAL_REGRESSED, ENVELOPE_INVALID, PUBKEY_UNAVAILABLE, and
+                others), so an operator can distinguish clock skew from
+                tampering. Signature values and key material are never logged;
+                the key_id and serial are.
+
+              props:
+                - name: control-origin
+                  value: system-specific
+                - name: implementation-status
+                  value: implemented
+                - name: verification-method
+                  value: test-and-mutation
+
+              remarks: |
+                EVIDENCE (mutation testing):
+
+                  M-C — commit the serial high-water mark before the signature
+                        is verified:
+                        test_d3_rejected_forgery_does_not_poison_high_water
+                        FAILS — a legitimate serial-42 registry is refused
+                        SERIAL_REGRESSED after a forged serial-999999 registry
+                        was rejected.
+
+                  M-A — invert the serial monotonicity comparison:
+                        test_vec_008a_serial_rollback FAILS.
+
+                DOCUMENTED LIMITATION — anti-rollback is not durable. The
+                high-water mark is process-local. An attacker who rolls the
+                registry back AND restarts the pod defeats it, leaving only
+                FTRA_REGISTRY_MIN_SERIAL. If that variable is unset, the
+                rollback succeeds.
+
+                COMPENSATING CONTROL: pin FTRA_REGISTRY_MIN_SERIAL in the
+                Deployment manifest. It is held in configuration rather than
+                memory and therefore survives restart. Making the mark durable
+                would require Redis on the FTRA load path and is deliberately
+                deferred; an undocumented gap in an anti-rollback control is
+                worse than a documented one.
+
+                STATUS QUALIFIER: as for SI-7 — implemented and tested, not
+                operating. Non-repudiation of a deployed registry depends on
+                production key management that does not yet exist.

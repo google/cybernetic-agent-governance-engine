@@ -853,3 +853,105 @@ key. The first is a real residual risk to record; SI-7 should cite
 
 A Lula validation update is required in the same PR if the Deployment manifest
 gains `FTRA_REGISTRY_MIN_SERIAL`.
+
+---
+
+## 14. As-built — R1–R6 executed
+
+Executed on `feat/ftra-registry-signing`. Deviations from §13 are called out;
+where the plan's estimate was wrong, the measured value replaces it.
+
+### What landed
+
+| Item | Result |
+|---|---|
+| **R1** D2 import | Fixed. **Three** sites, not one — the same wrong name was also at [`stpa_compiler.py:1596`](../src/gateway/governance/stpa_compiler.py:1596) in `--sign`, on a path no test executes |
+| **R2** D1 version bypass | Version branch **and** posture gate deleted; `verify_registry()` runs on every load |
+| **R3** D3 high-water | Commit moved behind signature verification via `_commit_serial_high_water()` |
+| **R4** D4 integration gap | [`test_ftra_registry_integration.py`](../tests/test_ftra_registry_integration.py) — 9 tests through `classify()` |
+| **R5** mutations | M-B, M-C, M-D all confirmed failing, then reverted |
+| **OSCAL** | [`ftra-registry-integrity-component.yaml`](../compliance/oscal/components/ftra-registry-integrity-component.yaml) — SI-7, AU-10 |
+
+### Mutation results
+
+| Mutation | Change | Outcome |
+|---|---|---|
+| **M-B** | reinstate `if version != "2.0": return terminals` | **3 FAIL** — `test_d1_version_downgrade_fails_closed`, `test_d1_downgrade_not_rescued_by_env`, `test_failure_yields_no_empty_registry` |
+| **M-C** | commit high-water before signature check | **1 FAIL** — `test_d3_rejected_forgery_does_not_poison_high_water`, refused `SERIAL_REGRESSED` |
+| **M-D** | revert import to `get_signer` | **9 FAIL** — every integration test |
+
+**M-D is the result worth reading.** Under it the D1 tests still return
+`IRREVERSIBLE_TERMINAL` — the "correct" verdict — because `classify()` fails
+closed on any exception including the `ImportError`. They fail *only* on the
+asserted reason. A verdict-only assertion would have passed against a build in
+which signature verification never executes, which is exactly how D1 and D2
+survived review the first time. R4b's discipline is load-bearing, not stylistic.
+
+### Deviations from §13
+
+**§13 R2a is void.** The committed registry is **not** signed and stays v1.0.
+Per the owner decision (option 2), tests sign their own fixtures with a
+throwaway keypair; committing a signature was rejected because it expires and
+would force KMS onto local dev.
+
+**§13 R2c undercounted.** The plan said 19 call sites; the measured blast radius
+was **26 failures**, because tests that construct a classifier indirectly via
+`create_ftra_node` were missed by grepping for `IrreversibilityClassifier(`.
+Counting constructor calls was the wrong proxy for "tests that load a registry".
+
+Resolved by two mechanisms rather than editing 26 sites:
+
+- an autouse conftest fixture redirecting `_DEFAULT_REGISTRY_PATH` to a signed
+  copy of the committed registry (re-signing its real `terminals` verbatim);
+- signing the fixture registries written by `_analyzer`, `_registry_path` and
+  the two AISVS fixtures.
+
+**VEC-005c inverted, not deleted.** §13 said delete it. It now asserts that
+neither `FTRA_REGISTRY_REQUIRE_SIGNATURE` nor `CAGE_ENV` can weaken
+verification. Deleting outright would have left nothing guarding against the
+posture gate being quietly reintroduced.
+
+### Counts
+
+| Metric | Parent `feat/aisvs-c9-taxonomy` | This branch |
+|---|---|---|
+| local/unit collected | 3402 | 3425 |
+| total collected | 3572 | 3595 |
+| passed | — | **3333** |
+| failed | — | **0** |
+| skipped | — | 92 |
+
+**+23** = 14 signing tests + 9 new integration tests.
+
+`test_pause_handler_fallback_to_deny_when_disabled` failed in one intermediate
+run and not in the final one; it passes in isolation and with these changes
+stashed. Consistent with the transient in
+[`enforcement_pipeline_review.md`](enforcement_pipeline_review.md) §9 — flaky,
+not caused here.
+
+### R6 — the `+17` correction belongs to PR #125
+
+`enforcement_pipeline_review.md` lives on `feat/pipeline-coherence`, not this
+branch, so the correction cannot be made here. The measurement it needs:
+
+> `test_ftra_registry_signing.py` contributes **14**, not 17. The
+> `3574 + 32 = 3606` identity therefore does not hold (`3574 + 29 = 3603`), and
+> the 16-test pass-state gap derived from it has **no established magnitude**.
+> The 3574/3309 and 3606/3325 figures were inherited and never re-measured.
+
+Carried on PR #125 as an amendment; the FTRA input is now measured, and this
+branch adds 9 further tests that any future recount must include.
+
+### Still open after this PR
+
+- **No signed registry exists for any deployment, and no signing pipeline
+  builds one.** A deployment loading the committed v1.0 file fails closed:
+  every action `IRREVERSIBLE_TERMINAL`, all traffic to HITL. Correct
+  fail-closed behaviour, and a full outage. This is the gating dependency for
+  deploying the change, and it is recorded in the OSCAL component rather than
+  left implicit.
+- **A green suite does not mean VEC-005 is closed in production.** It means the
+  control rejects an unsigned or tampered registry. Production closure
+  additionally requires a signed registry to exist there.
+- Durable anti-rollback (§5) remains deferred; `FTRA_REGISTRY_MIN_SERIAL` is
+  the compensating control.
