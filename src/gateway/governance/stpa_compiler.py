@@ -1593,9 +1593,9 @@ def generate_terminal_registry(
             "Signing terminal registry (serial=%d) with KMSGovernanceSigner...",
             registry_serial,
         )
-        from src.gateway.governance.kms_signer import get_signer
+        from src.gateway.governance.kms_signer import get_governance_signer
 
-        signer = get_signer()
+        signer = get_governance_signer()
         if not signer.is_kms_active:
             raise RuntimeError(
                 "Cannot sign terminal registry: KMS is not active. "

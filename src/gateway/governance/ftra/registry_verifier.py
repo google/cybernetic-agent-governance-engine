@@ -139,6 +139,28 @@ def _get_serial_floor() -> int:
         return 0
 
 
+def _commit_serial_high_water(serial_value: int) -> None:
+    """Advance the in-memory anti-rollback high-water mark.
+
+    R3/D3: call this **only** after the registry's signature has been proven
+    valid. Committing an unverified serial lets an attacker poison the mark with
+    a forged high value — the forgery itself is rejected, but every subsequent
+    legitimate registry is then refused ``SERIAL_REGRESSED`` for the lifetime of
+    the process, turning a blocked attack into a self-inflicted denial of the
+    governance control.
+
+    Args:
+        serial_value: Serial number from a fully verified registry.
+    """
+    global _seen_serial_high_water
+    with _verification_lock:
+        if serial_value > _seen_serial_high_water:
+            _seen_serial_high_water = serial_value
+            logger.info(
+                "FTRA registry serial high-water mark updated: %d", serial_value
+            )
+
+
 def verify_registry(
     registry_path: Path,
     signer: Any | None = None,
@@ -303,9 +325,15 @@ def verify_registry(
 
     global _seen_serial_high_water
     serial_floor = _get_serial_floor()
-    effective_floor = max(serial_floor, _seen_serial_high_water)
 
+    # R3/D3: reject a regression here, but do NOT commit the high-water mark yet.
+    # Committing before the signature is checked lets an attacker poison the mark
+    # with a forged `serial: 999999`; the forgery is rejected, but every later
+    # legitimate registry is then refused SERIAL_REGRESSED for the pod's lifetime,
+    # converting a blocked forgery into a self-inflicted denial of the control.
+    # The commit happens after step 5 succeeds.
     with _verification_lock:
+        effective_floor = max(serial_floor, _seen_serial_high_water)
         if serial_value < effective_floor:
             logger.error(
                 "FTRA registry serial rollback detected: serial=%d, floor=%d "
@@ -322,13 +350,6 @@ def verify_registry(
                 expires_at=expires_at_dt,
             )
 
-        # Update high-water mark
-        if serial_value > _seen_serial_high_water:
-            _seen_serial_high_water = serial_value
-            logger.info(
-                "FTRA registry serial high-water mark updated: %d", serial_value
-            )
-
     # ---------------------------------------------------------------------------
     # Step 5: Signature verification (KMS-touching work last, cached by digest)
     # ---------------------------------------------------------------------------
@@ -336,6 +357,9 @@ def verify_registry(
         logger.info(
             "FTRA registry signature enforcement OFF (posture gate) — skipping verification"
         )
+        # R3/D3: no signature was checked on this path, so the serial is
+        # unverified. Deliberately do NOT advance the high-water mark — doing so
+        # would let an unverified serial poison the mark via the dev path.
         return VerificationResult(
             valid=True, reason="", serial=serial_value, expires_at=expires_at_dt
         )
@@ -362,6 +386,9 @@ def verify_registry(
                 logger.debug(
                     "FTRA registry signature cached (digest=%s...)", digest[:16]
                 )
+                # Signature previously verified for these exact bytes — safe to
+                # commit the high-water mark (R3).
+                _commit_serial_high_water(serial_value)
                 return VerificationResult(
                     valid=True,
                     reason="",
@@ -374,8 +401,6 @@ def verify_registry(
 
     # Perform signature verification
     try:
-        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-
         # KMSGovernanceSigner.verify() expects a dict and canonicalizes internally
         sig_valid = signer.verify(registry_dict, signature_hex)
 
@@ -401,6 +426,9 @@ def verify_registry(
             serial_value,
             getattr(signer, "key_id", "unknown"),
         )
+        # R3/D3: the signature is now proven valid — only here is it safe to
+        # advance the anti-rollback high-water mark.
+        _commit_serial_high_water(serial_value)
         return VerificationResult(
             valid=True, reason="", serial=serial_value, expires_at=expires_at_dt
         )

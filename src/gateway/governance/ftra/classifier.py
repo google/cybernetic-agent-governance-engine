@@ -110,15 +110,21 @@ def _load_registry(path: Path) -> dict[str, str]:
             _get_enforcement_posture,
             verify_registry,
         )
-        from src.gateway.governance.kms_signer import get_signer
-        
+
         enforcement_on = _get_enforcement_posture()
-        
-        # Load signer (for public key only — no KMS credentials needed for verify)
+
+        # Load signer (for public key only — no KMS credentials needed for verify).
+        # R1/D2: the symbol is get_governance_signer, not get_signer. The import
+        # sits inside the try so a future rename degrades to a fail-closed
+        # RuntimeError rather than an uncaught ImportError on the load path.
         signer = None
         if enforcement_on:
             try:
-                signer = get_signer()
+                from src.gateway.governance.kms_signer import (
+                    get_governance_signer,
+                )
+
+                signer = get_governance_signer()
             except Exception as exc:
                 logger.error(
                     "FTRA registry verification: failed to load signer: %s", exc

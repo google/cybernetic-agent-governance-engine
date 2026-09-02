@@ -517,3 +517,274 @@ from it inherits the same doubt. Neither figure should be cited until re-measure
 4. Add the D4 integration tests against `_load_registry()` and `classify()`,
    including the version-downgrade case, then run M-B against a guard that exists.
 5. Re-measure both suites and restate the counts.
+
+---
+
+## 13. Remediation specification — D1–D4 (unconditional enforcement)
+
+**Decision (owner, superseding §2):** no posture gate, no feature flag, no
+staged rollout. Signature verification runs on every load. A v1.0 or unsigned
+registry fails closed to `IRREVERSIBLE_TERMINAL` immediately. CAGE is a
+reference implementation with no legacy production dependency, so the migration
+window the flag existed to protect does not apply.
+
+This **supersedes §2** (`FTRA_REGISTRY_REQUIRE_SIGNATURE`) and **§6's** decision
+to leave the committed registry unsigned. Both are withdrawn. `VerificationResult`
+needs no `enforced` field — there is only one posture, so the ambiguity that
+field was to resolve cannot arise.
+
+Ordered by dependency. R1 first: while D2 stands, no v2.0 path executes, so
+nothing downstream can be observed working.
+
+### R1 — D2: correct the import name
+
+[`classifier.py:113`](../src/gateway/governance/ftra/classifier.py:113):
+
+```python
+from src.gateway.governance.kms_signer import get_signer          # wrong
+from src.gateway.governance.kms_signer import get_governance_signer   # correct
+```
+
+Update the call at :121 to match. Move both inside the `try` so a future rename
+degrades to a fail-closed `RuntimeError` rather than an uncaught `ImportError`.
+
+**Why a rename survived review:** the symbol is referenced only on a path no test
+executes. R4 is what stops the next one.
+
+### R2 — D1: verify unconditionally
+
+Replace the `if version == "2.0":` / `else` split at
+[`classifier.py:107–162`](../src/gateway/governance/ftra/classifier.py:107).
+`verify_registry()` already rejects `version != "2.0"` with `ENVELOPE_INVALID`
+([`registry_verifier.py:188`](../src/gateway/governance/ftra/registry_verifier.py:188)),
+so the fix is to stop branching around it and to drop the posture check entirely:
+
+```python
+try:
+    from src.gateway.governance.kms_signer import get_governance_signer
+    signer = get_governance_signer()
+except Exception as exc:
+    logger.error("FTRA registry verification: signer unavailable: %s", exc)
+    raise RuntimeError(f"FTRA signer unavailable: {exc}") from exc
+
+result = verify_registry(path, signer=signer)
+
+if not result.valid:
+    logger.error("❌ FTRA registry verification FAILED: %s", result.reason)
+    raise RuntimeError(
+        f"FTRA registry verification failed: {result.reason}. "
+        "Registry not loaded — all actions treated as IRREVERSIBLE_TERMINAL."
+    )
+```
+
+One path, no branch. The version check lives on one side of the trust boundary
+only; untrusted input cannot select its own validation path.
+
+**Behaviour after R2 — single column, which is the point:**
+
+| Registry | Result |
+|---|---|
+| v1.0, signed or not | **raises** → every action `IRREVERSIBLE_TERMINAL` |
+| v2.0, absent or bad signature | **raises** |
+| v2.0, valid signature, in date, serial ≥ floor | loads |
+
+#### Companion changes R2 forces
+
+Unconditional enforcement is a clean rule, but it removes the escape hatch that
+three things currently rely on. Each must land in the same PR or the branch is
+red on arrival.
+
+**R2a — sign the committed registry.** The shipped file is `"version": "1.0"`
+([`terminal_registry.json:2`](../config/ftra/terminal_registry.json:2)) with no
+`.sig`. Under R2 the application cannot start usefully — every action routes to
+HITL. §6 deferred signing to the deploy pipeline precisely to avoid this; with
+the flag gone, that deferral is no longer available. The registry must be
+regenerated as v2.0 (`serial`, `issued_at`, `expires_at`) and signed, and the
+`.sig` committed.
+
+This resurfaces the two objections §6 raised against committing a signature,
+which the owner should confirm are accepted:
+
+- a committed signature **expires**, so CI breaks on the `expires_at` date
+  unless validity is long or renewal is scheduled;
+- regenerating the registry then requires a signing key, so `stpa_compiler`
+  runs in dev/CI can no longer refresh it freely.
+
+A long `--registry-validity-days` mitigates the first without reintroducing a
+toggle. The second is a genuine cost of the decision.
+
+**R2b — `get_governance_signer()` must resolve a public key in CI.** Verification
+needs only `_public_key_pem` (§2), not KMS credentials, but it now runs on
+*every* load including every CI job. If the `from_env()` no-KMS fallback yields a
+signer without a public key, R2 turns into a hard failure everywhere. The
+verifier's `PUBKEY_UNAVAILABLE` path must be confirmed reachable and the public
+PEM available to CI — it is not secret and needs no `secretKeyRef`.
+
+**R2c — 19 existing call sites construct `IrreversibilityClassifier` against
+unsigned registries** and will fail closed under R2. Confirmed:
+
+| Site | Registry written |
+|---|---|
+| [`test_ftra_package.py:191`](../tests/test_ftra_package.py:191) `_analyzer` helper, **9 callers** | `{"terminals": ...}` — no version, no signature |
+| [`test_ftra_package.py:172`](../tests/test_ftra_package.py:172) | `{"terminals": ...}` |
+| [`test_aisvs_c9_conformance.py:184`](../tests/test_aisvs_c9_conformance.py:184), [:214](../tests/test_aisvs_c9_conformance.py:214) | explicit `"version": "1.0"`, **6 consumers** |
+| [`test_ftra_boundary_check.py:345`](../tests/test_ftra_boundary_check.py:345), [:358](../tests/test_ftra_boundary_check.py:358), [:368](../tests/test_ftra_boundary_check.py:368) | default committed registry |
+
+The fix is to route them through a signing helper — the `create_signed_registry`
+factory from R4a, applied to these fixtures. Note what this changes about
+`test_ftra_package.py`: those tests currently assert *classification* behaviour
+and would begin asserting *signing* behaviour as a precondition. That is the
+correct trade for a single-posture design, but it is a real coupling: a signing
+regression will now redden tests that have nothing to do with signing.
+
+§8's regression requirement — that PR #1's `tmp_path` v1.0 fixtures keep passing
+under default posture — is **withdrawn**, since there is no longer a default
+posture under which they can pass.
+
+### R3 — D3: advance the high-water mark only after the signature verifies
+
+Split step 4 in
+[`registry_verifier.py:304–330`](../src/gateway/governance/ftra/registry_verifier.py:304).
+Keep the **rejection** where it is — cheap, and it should precede crypto — but
+move the **commit** to after verification succeeds:
+
+```python
+# Step 4: reject regression only. Do not commit.
+with _verification_lock:
+    if serial_value < effective_floor:
+        return VerificationResult(valid=False, reason=SERIAL_REGRESSED, ...)
+
+# ... step 5: signature verification ...
+
+# Only now, on a fully valid registry:
+with _verification_lock:
+    if serial_value > _seen_serial_high_water:
+        _seen_serial_high_water = serial_value
+```
+
+The enforcement-OFF early return at
+[`registry_verifier.py:335`](../src/gateway/governance/ftra/registry_verifier.py:335)
+is **deleted** along with `_get_enforcement_posture()` and its `.sig`-optional
+branch at :218. With one posture there is no unverified path, and therefore no
+route by which an unverified serial can reach the high-water mark.
+
+### R4 — D4: integration tests through `classify()`
+
+New `tests/test_ftra_registry_integration.py`. These call
+`IrreversibilityClassifier.classify()`, never `verify_registry()` — the point is
+to exercise the wiring, which is the only thing that was never tested.
+
+A fixture must reset the module-level cache
+([`classifier.py:70`](../src/gateway/governance/ftra/classifier.py:70)), or the
+first test's registry leaks into the rest:
+
+```python
+@pytest.fixture
+def clean_classifier_cache():
+    from src.gateway.governance.ftra import classifier
+    with classifier._registry_lock:
+        classifier._registry_cache = None
+        classifier._registry_path_used = None
+    yield
+    with classifier._registry_lock:
+        classifier._registry_cache = None
+        classifier._registry_path_used = None
+```
+
+| Test | Setup | Assert |
+|---|---|---|
+| `test_d1_version_downgrade_fails_closed` | v1.0 registry declaring `execute_trade: REVERSIBLE` | `IRREVERSIBLE_TERMINAL` **and** `ENVELOPE_INVALID` in the log |
+| `test_d2_signed_v2_registry_loads` | correctly signed v2.0 | returns the declared classification; **fails today on the `get_signer` ImportError** |
+| `test_tampered_v2_fails_closed` | v2.0 re-declaring `execute_trade: REVERSIBLE`, signature over the original | `IRREVERSIBLE_TERMINAL` **and** `SIG_INVALID` |
+| `test_unsigned_v2_fails_closed` | v2.0, no `.sig` | `IRREVERSIBLE_TERMINAL` **and** `SIG_MISSING` |
+| `test_failure_yields_no_empty_registry` | any failure | `known_actions() == []` **and** `classify()` is `IRREVERSIBLE_TERMINAL` — never `KeyError`, never `{}` |
+| `test_reload_path_reverifies` | valid at startup, swap file, `FTRA_REGISTRY_RELOAD=true` | second `classify()` fails closed |
+
+The VEC-005c vector from §8 — tampered registry loading with enforcement OFF —
+is **deleted**. It tested the posture gate, which no longer exists.
+
+Reuse `hermetic_signer` and `create_signed_registry` from
+[`test_ftra_registry_signing.py`](../tests/test_ftra_registry_signing.py:100);
+extract them to a shared conftest rather than copying.
+
+#### The assertion that needs care
+
+[`classify()`](../src/gateway/governance/ftra/classifier.py:241) catches **every**
+exception and returns `IRREVERSIBLE_TERMINAL`. So `IRREVERSIBLE_TERMINAL` alone
+proves almost nothing — today's broken `ImportError` produces it too. That is
+`FAIL_CLOSED_NOISE`: the right verdict for the wrong reason, indistinguishable
+from the right one.
+
+Each test must therefore **also assert on the failure reason**, via `caplog` on
+the `Gateway.Governance.FTRA.Classifier` logger or a `reason` surfaced through
+telemetry. A test that only checks the verdict would pass against the current
+broken build and against a correct one — unfalsifiable in exactly the way M-B
+turned out to be.
+
+### R5 — mutation re-run, against guards that exist
+
+Once R1–R4 land:
+
+| Mutation | Target | Must fail |
+|---|---|---|
+| **M-B** | revert R2 to `if version == "2.0":` | `test_d1_version_downgrade_fails_closed` |
+| **M-C** | revert R3, commit high-water before verification | new D3 poisoning test |
+| **M-D** | revert R1 to `get_signer` | `test_d2_signed_v2_registry_loads` |
+
+M-D needs care: reverting the import raises `ImportError`, which
+[`classify()`](../src/gateway/governance/ftra/classifier.py:241) swallows into
+`IRREVERSIBLE_TERMINAL`. Only the reason assertion distinguishes it from a
+correct rejection, so M-D is the direct test of whether R4b's discipline holds.
+
+Confirm each mutation actually changes behaviour before recording a result. M1
+and M-B both failed this bar — one against a single-element frozenset, one
+against a guard that did not exist.
+
+### R6 — restate the counts
+
+Re-measure `--collect-only -q` on both branches and correct the `+17` in
+[`enforcement_pipeline_review.md`](enforcement_pipeline_review.md) §9 to the
+measured value. The `3574 + 32 = 3606` identity and the 16-test gap both derive
+from it and must be recomputed, not carried forward.
+
+### Sequencing
+
+```mermaid
+graph TD
+    R1[R1 fix import name] --> R2[R2 verify unconditionally]
+    R1 --> R3[R3 high-water after verify]
+    R2 --> R2a[R2a sign and commit the registry]
+    R2 --> R2b[R2b public key resolvable in CI]
+    R2 --> R2c[R2c re-sign 19 fixture call sites]
+    R2a --> R4[R4 integration tests via classify]
+    R2b --> R4
+    R2c --> R4
+    R3 --> R4
+    R4 --> R5[R5 mutations M-B M-C M-D]
+    R5 --> OSCAL[OSCAL SI-7 and AU-10]
+    R5 --> R6[R6 re-measure counts]
+    OSCAL --> UD[undraft PR #124]
+    R6 --> UD
+```
+
+R2a, R2b and R2c are not optional follow-ons — without them the branch is red on
+arrival, since unconditional enforcement applies to CI as much as to production.
+
+### Compliance — same PR
+
+With enforcement permanently active on merge, the **SI-7** and **AU-10** OSCAL
+component ships in this PR rather than as a follow-on. There is no interval
+during which the artefact would describe a control that does not run.
+
+Write it **after R5 passes**, not before. The evidence an assessor needs is the
+mutation result — the control demonstrably fails closed when broken — and that
+does not exist until R5. Ordering within the PR, not a separate PR.
+
+Two claims must stay out of the component: durable anti-rollback (the in-memory
+high-water is still defeated by rollback plus pod restart, §5) and protection
+against an attacker with write access to the *signed* registry and the signing
+key. The first is a real residual risk to record; SI-7 should cite
+`FTRA_REGISTRY_MIN_SERIAL` as the compensating control.
+
+A Lula validation update is required in the same PR if the Deployment manifest
+gains `FTRA_REGISTRY_MIN_SERIAL`.
