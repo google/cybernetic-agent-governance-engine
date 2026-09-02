@@ -38,16 +38,34 @@ _FINANCE_TIER_NAMES = {"consensus", "causal", "cbf", "fiscal"}
 @pytest.fixture
 def governor_with_finance_tiers():
     """Governor with finance domain plugin registered."""
+    from unittest.mock import MagicMock
+    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+    from src.cage_finance.tiers.causal_tier import CausalTierPlugin
+    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+    from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+    
+    # Create minimal mocks matching the actual SymbolicGovernor.__init__ signature
+    mock_opa = MagicMock()
+    mock_safety = MagicMock()
+    mock_consensus = MagicMock()
+    
     gov = SymbolicGovernor(
-        config={},
-        adapter=None,
-        opa_client=None,
-        cbf_engine=None,
-        confidence_scorer=None,
+        opa_client=mock_opa,
+        safety_filter=mock_safety,
+        consensus_engine=mock_consensus,
+        stpa_validator=None,
+        telemetry_provider=None,
+        fiscal_limit_guard=None,
     )
-    # Register finance domain plugin which registers all four finance tiers
-    finance_plugin = FinanceCagePlugin()
-    finance_plugin.register(gov, None)
+    
+    # Manually register the four finance tiers (bypass plugin to avoid singleton collision)
+    mock_cbf = MagicMock()
+    mock_fiscal_guard = MagicMock()
+    gov.register_domain_tier(ConsensusTierPlugin(mock_consensus))
+    gov.register_domain_tier(CausalTierPlugin())
+    gov.register_domain_tier(CBFTierPlugin(mock_cbf))
+    gov.register_domain_tier(FiscalTierPlugin(mock_fiscal_guard))
+    
     return gov
 
 
@@ -84,6 +102,51 @@ class TestTradeActionCoverage:
                 assert tier.claims_action(
                     action, {}
                 ), f"{tier.tier_name} tier must claim action '{action}' (F1 coherence)"
+
+    def test_synthetic_second_trade_action_is_claimed(
+        self, governor_with_finance_tiers, monkeypatch
+    ):
+        """F1 mutation test: every finance tier must claim a synthetic second trade action.
+
+        This test proves that reverting a tier's claims_action() to a bare literal
+        (e.g., `action == "execute_trade"`) will fail when a second trade verb is added.
+        Without this test, the F1 defect is undetectable because _TRADE_ACTIONS has
+        only one element.
+
+        Monkeypatches a synthetic second action "__synthetic_trade_verb__" into
+        _TRADE_ACTIONS, then asserts every registered finance tier claims it.
+        """
+        # Monkeypatch _TRADE_ACTIONS to include a second trade action
+        synthetic_actions = frozenset({"execute_trade", "__synthetic_trade_verb__"})
+        monkeypatch.setattr("src.cage_finance.tiers._TRADE_ACTIONS", synthetic_actions)
+
+        # Also patch the imported reference in each tier module
+        monkeypatch.setattr(
+            "src.cage_finance.tiers.consensus_tier._TRADE_ACTIONS", synthetic_actions
+        )
+        monkeypatch.setattr(
+            "src.cage_finance.tiers.causal_tier._TRADE_ACTIONS", synthetic_actions
+        )
+        monkeypatch.setattr(
+            "src.cage_finance.tiers.cbf_tier._TRADE_ACTIONS", synthetic_actions
+        )
+        monkeypatch.setattr(
+            "src.cage_finance.tiers.fiscal_tier._TRADE_ACTIONS", synthetic_actions
+        )
+
+        gov = governor_with_finance_tiers
+        finance_tiers = [
+            tier for tier in gov._domain_tiers if tier.tier_name in _FINANCE_TIER_NAMES
+        ]
+
+        # Core assertion: every finance tier claims the synthetic action
+        for tier in finance_tiers:
+            assert tier.claims_action(
+                "__synthetic_trade_verb__", {}
+            ), (
+                f"{tier.tier_name} tier must claim '__synthetic_trade_verb__' "
+                f"(F1 mutation test — proves bare literal would fail)"
+            )
 
     def test_trade_actions_is_nonempty(self):
         """_TRADE_ACTIONS must contain at least one action."""

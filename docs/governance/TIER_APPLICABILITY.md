@@ -37,10 +37,10 @@ For the reference financial deployment, action `execute_trade`:
 | **STPA / UCA** | 0 | `stpa_validator is not None` | Per-UCA condition match | Partially |
 | **Confidence** | 1 | `_is_governed_action()` | Always | ❌ |
 | **OPA** | 2b | **Always** — both pipeline branches ⚠ F6 | Always | ✅ RBAC bands by amount |
-| **Consensus** | 5 | `action == "execute_trade"` ⚠ F1 | Always | ✅ Inside `check_consensus()` |
-| **Causal / DoWhy** | 6 | `action == "execute_trade"` ⚠ F1 | **Cache miss only** ⚠ F2 | ✅ In risk formula |
-| **CBF** | 3 (phase 2) | `action == "execute_trade"` ⚠ F1 | Phase 1 produced zero violations | ✅ Cash balance |
-| **Fiscal** | 4 (phase 2) | `action == "execute_trade"` ⚠ F1 | Phase 1 produced zero violations | ✅ Daily cap |
+| **Consensus** | 5 | `action in _TRADE_ACTIONS` | Always | ✅ Inside `check_consensus()` |
+| **Causal / DoWhy** | 6 | `action in _TRADE_ACTIONS` | Per-amount bucket | ✅ In risk formula |
+| **CBF** | 3 (phase 2) | `action in _TRADE_ACTIONS` | Phase 1 produced zero violations | ✅ Cash balance |
+| **Fiscal** | 4 (phase 2) | `action in _TRADE_ACTIONS` | Phase 1 produced zero violations | ✅ Daily cap |
 
 ---
 
@@ -57,7 +57,7 @@ is a parameter *inside* consensus that governs how it responds, applied strictly
 (`amount_usd > threshold_usd`,
 [`hitl_escalator.py:261`](../../src/gateway/governance/hitl_escalator.py:261)).
 
-### 3.2 DoWhy does not execute per trade ⚠ F2
+### 3.2 DoWhy caches by amount bucket
 
 `causal_safety_check()` is invoked every trade, but DoWhy is reached only past
 three short-circuits
@@ -69,10 +69,11 @@ three short-circuits
 | `not _DOWHY_AVAILABLE` | 588 | Fails **closed** — blocks without evaluating |
 | Redis cache hit | 655 | Returns cached verdict — no DoWhy run |
 
-The cache key is `causal_cache:{action_type}:{market_regime}` — **no amount** —
-while the cached verdict is amount-dependent
-([line 868](../../src/gateway/governance/causal/gatekeeper.py:868)). Within the
-TTL, a large trade can inherit a verdict computed for a small one.
+The cache key is `causal_cache:{action_type}:{market_regime}:{bucket}` where
+`bucket = _bucket_amount(amount)` groups trades into bands ([100, 1000, 5000,
+10000, 50000]) per `causal.amount_bucket_boundaries` in
+[`governance_thresholds.json`](../../config/governance_thresholds.json). This
+prevents a large trade from inheriting a small-trade verdict.
 
 ### 3.3 Phase 2 tiers are conditional on Phase 1 passing
 
@@ -117,8 +118,9 @@ no error is raised.
    **lexicographic** UCA-ID order (`UCA-1`, `UCA-10`, `UCA-11`, `UCA-2`).
 2. Set `terminal_classification` — omitting it defaults to
    `IRREVERSIBLE_TERMINAL` (fail-closed, by design).
-3. Add the action to **every** finance tier that should govern it — currently
-   four independent string literals ⚠ F1.
+3. Add the action to `_TRADE_ACTIONS` in
+   [`src/cage_finance/tiers/__init__.py`](../../src/cage_finance/tiers/__init__.py) —
+   all four finance tiers import and claim this set.
 4. Add NIST **and** ISO 42001 OSCAL mappings — CI enforces this
    ([`test_oscal_ssp_exporter.py`](../../tests/test_oscal_ssp_exporter.py)).
 5. Regenerate all STPA artifacts (validator, rails, saga nodes, Rego, registry).
@@ -130,8 +132,6 @@ no error is raised.
 
 | ID | Summary | Severity |
 |---|---|---|
-| F1 | Four tiers each hold a private copy of `action == "execute_trade"` | High |
-| F2 | Causal cache key omits amount; verdict is amount-dependent | High |
 | F6 | `else` branch documented as "non-trade", also handles trades with violations | Low |
 
 Full list and remediation sequence:
