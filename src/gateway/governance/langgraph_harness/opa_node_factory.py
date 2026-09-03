@@ -167,7 +167,12 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                 span.set_attribute("governance.reason", msg)
                 span.set_attribute("langfuse.observation.output", msg)
 
-                if "Manual Review" in msg or "Consensus Escalation" in msg:
+                if (
+                    "Manual Review" in msg
+                    or "Consensus Escalation" in msg
+                    or "CONSENSUS_ESCALATED" in msg
+                    or "escalating for human review" in msg
+                ):
                     logger.warning(
                         "⚠️ Safety Check ESCALATED: %s — %s",
                         opa_input.get("action", config.policy_action_name),

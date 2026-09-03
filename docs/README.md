@@ -1,8 +1,12 @@
 # CAGE Documentation Index
 
-**System:** Cybernetic Agent Governance Engine (CAGE) — High-Reliability Agentic AI Governance Platform
+**System:** Cybernetic Agent Governance Engine (CAGE) — Domain-Agnostic Agentic AI Governance Platform
 
-> **Reference deployment:** The first production vertical is a governed financial advisory workflow (`src/governed_financial_advisor/`). All domain-specific identifiers in the codebase (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`) reflect that deployment. The governance kernel itself is domain-agnostic and applies to any high-reliability agentic system where an agent can trigger consequential writes to authoritative state stores.
+> **Domain-agnostic by design:** The governance kernel (`src/gateway/`) owns all enforcement *mechanism* and holds no domain knowledge. Domain semantics arrive exclusively through optional `cage.plugins` packages. Two **example domains of equal standing** ship in-tree — finance ([`src/cage_finance/`](../src/cage_finance/)) and healthcare ([`src/cage_healthcare/`](../src/cage_healthcare/)) — and adopters add their own under `src/cage_<domain>/` for manufacturing, logistics, energy, critical infrastructure, or any other vertical. Neither shipped plugin is privileged, and neither is required: `CAGE_ACTIVE_PLUGINS=""` runs the bare substrate.
+>
+> Some domain-flavoured identifiers appear in older documents and in the finance reference application (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`). These belong to the **finance example domain**, not to the kernel. See [DOMAIN_PLUGIN_ARCHITECTURE.md](architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) and [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md).
+>
+> **Jurisdictional compliance is likewise configuration.** `US_FED`, `EU_ECB`, and `APAC_MAS` are configurable postures selected with `CAGE_DEPLOYMENT_REGION`, layered over the universal ISO 42001 baseline. Adding a jurisdiction is a config-only operation — see the Jurisdiction Key below.
 **Last updated:** 2026-08-28
 
 This directory is organised using a **hybrid layout**: function-based top-level sections, with compliance artefacts further sub-divided by jurisdiction. This mirrors the system's own architectural principle: ISO 42001 as the universal baseline, with jurisdiction-specific addenda for US_FED, EU_ECB, and APAC_MAS.
@@ -29,12 +33,22 @@ docs/
 
 | Scope label | Meaning |
 |---|---|
-| **Universal** | Applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`) |
+| **Universal** | Applies to all deployment regions — ISO 42001 baseline, always active |
 | **US_FED** | Applies only when `CAGE_DEPLOYMENT_REGION=US_FED` |
 | **EU_ECB** | Applies only when `CAGE_DEPLOYMENT_REGION=EU_ECB` |
 | **APAC_MAS** | Applies only when `CAGE_DEPLOYMENT_REGION=APAC_MAS` |
+| **LOCAL** | Development default — universal baseline only, no jurisdictional extension |
+| **Custom** | Any adopter-defined region added under `config/thresholds/` and `config/compliance/` |
 
-See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) for the full framework applicability table.
+Jurisdictional postures are **configuration, not code**. Select one at deploy time:
+
+```bash
+export CAGE_DEPLOYMENT_REGION=US_FED    # or EU_ECB, APAC_MAS, LOCAL, or your own
+```
+
+To add a jurisdiction, create `config/thresholds/<REGION>_BASELINE.json` and `config/compliance/<REGION>_BASELINE.json` following the existing schema, register region-specific Rego under `config/opa/` and Lula assertions under `compliance/lula/`, then ship a `<REGION>_OVERLAY.json` inside each active domain plugin. No Python changes are required.
+
+See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) for the full framework applicability table and [REGION_GUARD_AUDIT.md](compliance/REGION_GUARD_AUDIT.md) for region-guard enforcement.
 
 ---
 

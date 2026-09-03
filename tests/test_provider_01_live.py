@@ -33,7 +33,7 @@ from src.gateway.governance.normative_provider import (
 )
 from src.integrations.provider_01.provider import Provider01NormativeProvider
 
-pytestmark = [pytest.mark.eu_ecb, pytest.mark.integration]
+pytestmark = [pytest.mark.eu_ecb, pytest.mark.integration, pytest.mark.live_external]
 
 
 def _get_live_credentials() -> tuple[str, str]:

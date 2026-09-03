@@ -67,8 +67,8 @@ def extract_imports(filepath: Path) -> set[str]:
         visitor = ImportVisitor()
         visitor.visit(tree)
         return visitor.imports
-    except SyntaxError:
-        # Skip files with syntax errors (might be templates or partial files)
+    except (SyntaxError, FileNotFoundError):
+        # Skip files with syntax errors or transient temp files deleted during scan
         return set()
 
 

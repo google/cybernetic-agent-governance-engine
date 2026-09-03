@@ -687,6 +687,27 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
         # Redis password sourced from REDIS_PASSWORD env var (set via setup_test_env.sh
         # or CI secrets — never hardcoded). Falls back to empty string (no-auth Redis).
         redis_password = os.environ.get("REDIS_PASSWORD", "")
+        if not redis_password:
+            try:
+                secret_out = subprocess.check_output(
+                    [
+                        "kubectl",
+                        "get",
+                        "secret",
+                        "redis",
+                        "-n",
+                        "governance-stack",
+                        "-o",
+                        "jsonpath={.data.redis-password}",
+                    ],
+                    text=True,
+                    timeout=5,
+                )
+                if secret_out:
+                    redis_password = base64.b64decode(secret_out.strip()).decode()
+                    os.environ["REDIS_PASSWORD"] = redis_password
+            except Exception:
+                pass
         r = redis.Redis(
             host="localhost",
             port=6379,
@@ -748,6 +769,26 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
             "🗄️ [pytest bootstrap] Seeding Langfuse compliance project in GKE PostgreSQL..."
         )
         pg_password = os.environ.get("PGPASSWORD", "")
+        if not pg_password:
+            try:
+                secret_out = subprocess.check_output(
+                    [
+                        "kubectl",
+                        "get",
+                        "secret",
+                        "postgresql",
+                        "-n",
+                        "governance-stack",
+                        "-o",
+                        "jsonpath={.data.password}",
+                    ],
+                    text=True,
+                    timeout=5,
+                )
+                if secret_out:
+                    pg_password = base64.b64decode(secret_out.strip()).decode()
+            except Exception:
+                pass
         env_vars = f"PGPASSWORD={pg_password}"
         subprocess.run(
             [

@@ -27,7 +27,7 @@ load_dotenv()
 pytestmark = pytest.mark.integration
 
 # Configuration
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8081")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:18080")
 
 
 def _backend_reachable() -> bool:

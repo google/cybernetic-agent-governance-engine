@@ -15,9 +15,25 @@
 
 ## 1. Regulatory Framework Overview
 
-The Cybernetic Governance Engine (CAGE) simultaneously targets federal cybersecurity, international standards, and regional financial AI rules. Using its dynamic regional profile system (`CAGE_DEPLOYMENT_REGION`), CAGE can shift its compliance posture seamlessly between the United States (`US_FED`), European Union (`EU_ECB`), and Singapore (`APAC_MAS`) jurisdictions.
+Jurisdictional compliance in CAGE is a **configurable posture, not a fixed property of the system**. A single environment variable selects which regional framework set is active:
+
+```bash
+export CAGE_DEPLOYMENT_REGION=US_FED    # or EU_ECB, APAC_MAS, LOCAL, or an adopter-defined region
+```
+
+The layering is strict:
+
+| Layer | Scope | Behaviour |
+|---|---|---|
+| **Universal baseline** | ISO/IEC 42001:2023, FIPS 140-2/3, OSCAL, CSA AARM | Active in **every** posture, including `LOCAL`. Blocks the global release gate. |
+| **Jurisdictional extension** | `US_FED`, `EU_ECB`, `APAC_MAS`, adopter-defined | **Additive.** Loaded only when selected. Gates *regional deployment posture only* — a regional gate failure never blocks the global stable tag. |
+| **Domain overlay** | Per-plugin `<REGION>_OVERLAY.json` | Supplied by whichever optional domain plugin is active. Domain and jurisdiction compose independently: any plugin runs under any posture. |
+
+Several frameworks in the table below are sector-specific (FINRA, SEC, GLBA, MiFID II, EBA guidelines). They are listed because the **finance example domain** is one of the two case studies shipped in-tree, and because financial services is the densest regulatory surface available for stress-testing the substrate. They are **not** core CAGE requirements. A healthcare deployment of the same substrate loads clinical frameworks instead — via the same mechanism, with no kernel change — and an adopter in manufacturing, logistics, or energy loads theirs.
 
 ### Summary of Targeted Frameworks
+
+> **Column note:** entries marked *(All Regions)* are universal-baseline obligations. Entries marked with a region label are configurable extensions active only under that posture. Entries whose scope is sector-specific apply only when the corresponding domain plugin is loaded.
 
 | Standard                      | Authority       | Scope in CAGE / Active Region Mappings |
 | ----------------------------- | --------------- | -------------------------------------------- |
@@ -42,6 +58,29 @@ The Cybernetic Governance Engine (CAGE) simultaneously targets federal cybersecu
 | **CSA AARM v1.0**             | Cloud Security Alliance | Autonomous Agent Risk Management — 11 threat vectors *(All Regions)* |
 
 No single compliance program covers all frameworks. CAGE's architecture is designed so that a single evidence artifact (e.g., an OpenTelemetry trace with HMAC seal and regional baseline stamps) simultaneously satisfies NIST AU controls, ISO 42001 A.5.3 documentation, and regional electronic record mandates.
+
+### 1.1 Adding a Jurisdiction
+
+Because the region layer is data rather than code, extending CAGE to a jurisdiction it does not ship — Canada's AIDA, the UK's pro-innovation framework, Japan's FSA guidance, an internal corporate standard — is a configuration exercise:
+
+| Step | Artifact | Purpose |
+|---|---|---|
+| 1 | `config/thresholds/<REGION>_BASELINE.json` | Numeric governance thresholds for the posture, following the schema of the shipped baselines |
+| 2 | `config/compliance/<REGION>_BASELINE.json` | Control profile — which controls are in scope and how they map to the universal baseline |
+| 3 | `config/opa/` region Rego | Any region-specific authorization rules |
+| 4 | `compliance/lula/lula-validation-<region>-*.yaml` | Machine-checkable assertions for the new posture's gates |
+| 5 | `<REGION>_OVERLAY.json` in each active domain plugin | Domain-specific control deltas for that jurisdiction |
+| 6 | `CAGE_DEPLOYMENT_REGION=<REGION>` | Activation |
+
+No Python changes are required at any step. The new posture inherits the universal ISO 42001 baseline automatically and, per the additive rule above, its gates constrain regional deployment posture only.
+
+Verify a posture with the region-marked test subset:
+
+```bash
+CAGE_DEPLOYMENT_REGION=<REGION> uv run pytest tests/ -m <region_marker> -v
+```
+
+See [`docs/compliance/REGION_GUARD_AUDIT.md`](../compliance/REGION_GUARD_AUDIT.md) for region-guard enforcement semantics.
 
 ---
 

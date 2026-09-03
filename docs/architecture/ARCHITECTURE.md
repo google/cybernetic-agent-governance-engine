@@ -1,11 +1,54 @@
 # CAGE Architecture — Cybernetic Governance Engine
 
-> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, Redis-backed multi-agent FiscalLimitGuard, and exhaustively verified NoDirectBind safety invariant.
+> **Architecture:** A domain-agnostic governance substrate — STPA-compiled policy enforcement, Control Barrier Functions, consensus arbitration, DoWhy causal inference validation, LangGraph Saga WAL rollback, Zero-Trust Network cluster hardening (Z3N), and an exhaustively verified NoDirectBind safety invariant — extended by **optional** domain plugins and parameterised by **configurable** jurisdictional postures.
 
+---
+
+## Layering: Substrate, Plugins, Configuration
+
+CAGE separates three concerns that are frequently conflated. Without this distinction the domain-flavoured identifiers later in this document look like core requirements; they are not.
+
+| Layer | Location | Nature | Domain knowledge |
+|---|---|---|---|
+| **Governance substrate** | [`src/gateway/`](../../src/gateway/) | Always present. Owns all *mechanism*: atomic Lua barrier hop, fence epochs, KMS signing, quota reservation, consensus, causal refutation, LIFO rollback, evidence emission | **None** — operates on abstract action primitives |
+| **Domain plugins** | `src/cage_<domain>/` | **Optional.** Owns only *nomenclature and parameters*: claimed actions, watched scalars, threshold keys, critics, tools | All of it |
+| **Jurisdictional configuration** | `config/thresholds/`, `config/compliance/`, `config/opa/` | Selected at deploy time via `CAGE_DEPLOYMENT_REGION` | None — numeric and control-profile data only |
+
+```mermaid
+graph TB
+    subgraph CFG[Configuration Layer -- CAGE_DEPLOYMENT_REGION]
+        REG[US_FED · EU_ECB · APAC_MAS · LOCAL · adopter-defined]
+    end
+    subgraph PLG[Optional Domain Plugins -- CAGE_ACTIVE_PLUGINS]
+        FIN[cage_finance -- example domain]
+        HLT[cage_healthcare -- example domain]
+        OTH[cage_yourdomain -- adopter-supplied]
+    end
+    subgraph SUB[Domain-Neutral Governance Substrate]
+        S1[FTRA Reachability Gate]
+        S2[Pipeline Orchestrator]
+        S3[Control Barrier Function Engine]
+        S4[Consensus Arbitration]
+        S5[Causal Gatekeeper]
+        S6[Evidence Chain and Routing Seal]
+    end
+    REG -.parameterises.-> SUB
+    REG -.overlays.-> PLG
+    FIN -.registers tiers.-> SUB
+    HLT -.registers tiers.-> SUB
+    OTH -.registers tiers.-> SUB
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6
+```
+
+Solid edges are always-on substrate flow. Dashed edges are optional or configuration-time bindings. Two example domains ship in-tree — **finance and healthcare, of equal standing** — and neither is required: `CAGE_ACTIVE_PLUGINS=""` runs the bare substrate with every universal safety mechanism intact. See [DOMAIN_PLUGIN_ARCHITECTURE.md](DOMAIN_PLUGIN_ARCHITECTURE.md) and [EXTENSIBILITY_ARCHITECTURE.md](EXTENSIBILITY_ARCHITECTURE.md).
 
 ---
 
 ## System Overview
+
+> **Reading note:** the narrative and component map below trace the **finance example domain** reference application end to end, because a concrete trace is more legible than an abstract one. Every finance term is plugin-supplied, not kernel-supplied: `execute_trade` is a claimed action, `FiscalLimitGuard` reserves abstract budget tokens, `safety:current_cash` is one plugin's watched scalar, and `trade_governance.rego` is one plugin's policy bundle. The healthcare example plugin substitutes `dose_order`, `SerumConcentrationBarrier`, `dosing_governance.rego`, and clinical critics through the identical seams **with no kernel change** — as do adopter plugins for manufacturing, logistics, energy, or any other vertical.
+>
+> Likewise, `US_FED` / `EU_ECB` / `APAC_MAS` below are **configurable postures** layered on the universal ISO 42001 baseline, not fixed properties of the system.
 
 The Cybernetic Governance Engine (CAGE) is a Python-first backend platform that orchestrates a governed financial advisory workflow under ISO/IEC 42001, SR 26-2, FedRAMP HIGH, the EU AI Act, and MAS FEAT. Through its multi-region compliance profile system (activated via `CAGE_DEPLOYMENT_REGION`), CAGE dynamically adapts its active controls, compliance mappings, and numeric thresholds for US Fed (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`) environments. The canonical reasoning path is a LangGraph multi-agent `StateGraph` (`src/governed_financial_advisor/graph/graph.py`) with **10 nodes** — including the mandatory, fail-closed `nemo_guardrail` input node, `nemo_output_rail` output node — nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → **safety_check** → governed_trader → explainer → nemo_output_rail. Each LLM call and tool invocation traverses an 8-tier gateway governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers: (Aho-Corasick keyword scan → NeMo Guardrails → STPA validator → OPA policy engine → Control Barrier Function → consensus engine → DoWhy causal gatekeeper). The `safety_check_node` was added in Rev8 as an explicit OPA policy gate between the evaluator and the governed trader — BLOCKED/ESCALATED results route to the explainer without executing a trade. A parallel KFP v2 Cybernetic Governance Loop (`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`) provides continuous governance evaluation by fetching compliance metrics from the compliance bridge, evaluating against ISO 42001 thresholds, and hot-reloading NeMo Guardrails configurations in-process via `POST /v1/nemo/apply-refinement` when thresholds are breached. The pipeline is programmatically submitted via `POST /v1/refinement/trigger` or automatically triggered reactively by a Langfuse webhook receiver (`POST /v1/webhooks/langfuse`) equipped with a 5-minute cooldown gate and a 10-sample minimum to prevent policy flapping during noisy bursts. A legacy namespace shim (`src/graph/graph.py`) exposes an optimistic-execution subgraph used only by the legacy test suite; it now emits a `DeprecationWarning` on import. The compliance bridge ingests Lula OSCAL audit findings into Langfuse and broadcasts real-time governance and remediation events via SSE (including dynamic patch advisories on the Kernel Dashboard). All in-flight approval state is checkpointed to Redis via LangGraph's `AsyncRedisSaver` — the fallback `MemorySaver` now emits an ERROR log and OTel attributes on activation. The system deploys on GKE with NVIDIA L4 Spot GPU nodes for two vLLM inference pools routed through a cloud-agnostic NGINX Inference Gateway.
 

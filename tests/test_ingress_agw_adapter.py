@@ -230,7 +230,11 @@ class TestAgwAdapterProcess:
 
     @pytest.mark.asyncio
     async def test_process_returns_adapter_result(self):
-        """process() returns an AgwAdapterResult with success=True."""
+        """process() returns an AgwAdapterResult with fail-closed semantics.
+        
+        Issue #2 remediation: success is now coupled to identity_verified.
+        When OIDC validation fails (identity_verified=False), success is also False.
+        """
         from src.gateway.governance.ingress.agw_adapter import (
             AgwAdapter,
             AgwAdapterResult,
@@ -245,10 +249,12 @@ class TestAgwAdapterProcess:
         result = await adapter.process(raw)
 
         assert isinstance(result, AgwAdapterResult)
-        assert result.success is True
+        # Issue #2: success is now False when OIDC validation fails (fail-closed)
+        assert result.success is False
         assert result.agent_id == "agent-abc"
         assert result.tool_name == "check_market_status"
-        assert result.identity_verified is False  # OIDC stub
+        assert result.identity_verified is False  # OIDC stub returns False
+        assert "OIDC token validation failed" in result.error
 
     @pytest.mark.asyncio
     async def test_process_propagates_parameters(self):

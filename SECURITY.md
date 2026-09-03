@@ -76,8 +76,11 @@ The following are **out of scope**:
 
 ## Security Hardening Notes
 
-CAGE is designed for regulated financial services environments. Key security
-controls are documented in:
+CAGE is a domain-agnostic governance substrate designed for regulated
+environments generally; the shipped example domains (finance and healthcare)
+and the selectable jurisdictional postures (`US_FED`, `EU_ECB`, `APAC_MAS`,
+`LOCAL`) determine which regulatory controls are in scope for a given
+deployment. Key security controls are documented in:
 
 - [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) — full
   security posture, NIST RMF status, and all open POA&M items

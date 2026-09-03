@@ -692,7 +692,12 @@ class TestNegativeCausalSlopeGuard:
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
 
         # causal_safety_check(params, current_telemetry) — pass args directly
-        params = {"amount": 5000, "symbol": "AAPL", "confidence": 0.99}
+        params = {
+            "amount": 5000,
+            "symbol": "AAPL",
+            "confidence": 0.99,
+            "action_type": "test_negative_slope_triggers_causal_lock",
+        }
         result = causal_safety_check(params, negative_slope_telemetry)
         # Must return False (blocked) because β ≤ 0
         assert result is False, "Negative causal slope should trigger CAUSAL LOCK"
@@ -708,7 +713,12 @@ class TestNegativeCausalSlopeGuard:
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
 
         # causal_safety_check(params, current_telemetry) — pass args directly
-        params = {"amount": 1_000_000, "symbol": "AAPL", "confidence": 0.99}
+        params = {
+            "amount": 1_000_000,
+            "symbol": "AAPL",
+            "confidence": 0.99,
+            "action_type": "test_large_adversarial_amount_with_negative_slope",
+        }
         result = causal_safety_check(params, negative_slope_telemetry)
         # Must return False — the β≤0 guard fires before risk calculation
         assert result is False, "β≤0 guard should fire before risk calculation"
