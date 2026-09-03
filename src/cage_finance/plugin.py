@@ -48,7 +48,14 @@ class FinanceCagePlugin(CagePlugin):
     def register(
         self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None
     ) -> None:
-        cbf = ControlBarrierFunction()
+        # Import finance-specific invariants and cost resolver
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
+
+        # Instantiate CBF with finance domain configuration
+        cbf = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+        )
         fiscal_guard = FiscalLimitGuard.from_env()
         consensus_gate = ConsensusGate()
 

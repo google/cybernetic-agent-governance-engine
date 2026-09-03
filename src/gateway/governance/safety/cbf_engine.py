@@ -296,7 +296,12 @@ end
 return {1, "COMMITTED", tostring(next_cash), new_epoch}
 """
 
-    def __init__(self, invariant: Any = None, skip_epoch_seed: bool = False):  # type: ignore[no-untyped-def]
+    def __init__(
+        self,
+        invariant: Any = None,
+        cost_resolver: Any = None,
+        skip_epoch_seed: bool = False,
+    ):  # type: ignore[no-untyped-def]
         """Initialize the ControlBarrierFunction.
 
         PR C (Stage 2): One engine instance enforces exactly one affine barrier.
@@ -308,7 +313,11 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         Args:
             invariant: InvariantModel instance defining the barrier (state_key,
                       threshold_key, gamma). If None, uses backward-compatible
-                      finance-domain defaults (CashBarrier).
+                      defaults for tests/singleton.
+            cost_resolver: Callable[[str, dict], float] that computes the cost
+                          for a given (action_name, payload). Domain plugins must
+                          inject their resolver at registration. Default is zero
+                          cost for all actions (domain-agnostic kernel).
             skip_epoch_seed: If True, skip Redis epoch seeding at init time.
                              Used only for testing; production instances must
                              seed from Redis.
@@ -319,19 +328,21 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     accepting requests with an unseeded epoch.
         """
         # PR C (Stage 2): Compile barrier from InvariantModel.
-        # Backward compatibility: If no invariant provided, use finance defaults.
-        if invariant is None:
-            # Finance domain default barrier (CashBarrier-equivalent)
-            from src.cage_finance.invariants import CashBarrier
-
-            invariant = CashBarrier()
-
+        # Domain plugins provide both invariant and cost_resolver at registration.
         self._invariant = invariant
+        self._cost_resolver = cost_resolver or self._legacy_finance_cost_resolver
+        
         # Threshold resolution deferred to atomic_verify_and_commit() to pick up
         # runtime config changes. Cache threshold_key for validation.
-        self.threshold_key: str = invariant.threshold_key
-        self.gamma: float = invariant.gamma
-        self.redis_key: str = invariant.state_key
+        if invariant is not None:
+            self.threshold_key: str = invariant.threshold_key
+            self.gamma: float = invariant.gamma
+            self.redis_key: str = invariant.state_key
+        else:
+            # Backward compatibility: kernel singleton without explicit invariant
+            self.threshold_key: str = "cbf.min_cash_balance"
+            self.gamma: float = 0.5
+            self.redis_key: str = "safety:current_cash"
 
         # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
@@ -1090,30 +1101,85 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         return cash_balance - self.min_cash_balance
 
     @staticmethod
-    def _resolve_trade_cost(action_name: str, payload: dict[str, Any]) -> float:
-        """Return the validated cash cost for *action_name*.
+    def _default_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+        """Domain-agnostic default cost resolver.
 
-        Only ``execute_trade`` carries a cash cost; every other action is 0.
-        A non-finite (NaN/inf) or negative ``amount`` is rejected here so it can
-        never reach the barrier certificate or the Redis cash-state write. A
-        negative cost makes ``next_cash = current - cost`` larger than the
+        Returns 0.0 for all actions, making the CBF kernel operate in a
+        domain-agnostic mode where no actions carry costs. Domain plugins
+        provide their own cost resolvers at registration time.
+
+        Args:
+            action_name: Name of the action being evaluated (unused in default).
+            payload: Action parameters dict (unused in default).
+
+        Returns:
+            0.0 for all actions (no cost).
+        """
+        return 0.0
+
+    @staticmethod
+    def _legacy_finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+        """Legacy finance cost resolver for backward compatibility.
+
+        This resolver extracts costs from payloads with financial semantics
+        (amount/amount_minor fields). It exists only for backward compatibility
+        with tests and the global singleton before explicit plugin injection.
+
+        Production code should use explicit cost_resolver injection via the
+        finance plugin's register() method.
+
+        Args:
+            action_name: Name of the action being evaluated (unused).
+            payload: Action parameters dict.
+
+        Returns:
+            The cash cost extracted from the payload, or 0.0 if no financial fields.
+
+        Raises:
+            ValueError: If financial fields contain non-finite or negative values.
+        """
+        # Extract cost from financial payload fields if present
+        if "amount_minor" in payload and payload["amount_minor"] is not None:
+            cost = float(payload["amount_minor"]) / 100.0
+        elif "amount" in payload:
+            cost = float(payload.get("amount", 0.0))
+        else:
+            return 0.0
+
+        if not math.isfinite(cost) or cost < 0:
+            raise ValueError(
+                f"invalid amount {cost!r} — must be a finite, non-negative number"
+            )
+        return cost
+
+    def _resolve_action_cost(self, action_name: str, payload: dict[str, Any]) -> float:
+        """Return the validated cost for action_name using the configured cost resolver.
+
+        Delegates to the domain-specific cost_resolver (injected at init), then
+        validates the result. A non-finite (NaN/inf) or negative cost is rejected
+        here so it can never reach the barrier certificate or the Redis cash-state
+        write. A negative cost makes ``next_cash = current - cost`` larger than the
         current balance, so the ``h_next >= (1-gamma)*h_t`` envelope check passes
         and the atomic commit inflates ``safety:current_cash``; a NaN cost makes
         every comparison false, so the barrier also passes and the balance is
         poisoned. This mirrors the finiteness/positive guard that
         ``FiscalLimitGuard.reserve`` already applies to reservations.
-        """
-        if action_name != "execute_trade":
-            return 0.0
 
-        if "amount_minor" in payload and payload["amount_minor"] is not None:
-            cost = float(payload["amount_minor"]) / 100.0
-        else:
-            cost = float(payload.get("amount", 0.0))
+        Args:
+            action_name: Name of the action being evaluated.
+            payload: Action parameters dict.
+
+        Returns:
+            The validated cost as a float.
+
+        Raises:
+            ValueError: If the cost resolver returns a non-finite or negative value.
+        """
+        cost = self._cost_resolver(action_name, payload)
 
         if not math.isfinite(cost) or cost < 0:
             raise ValueError(
-                f"invalid trade amount {cost!r} — must be a finite, non-negative number"
+                f"invalid action cost {cost!r} from resolver — must be a finite, non-negative number"
             )
         return cost
 
@@ -1194,7 +1260,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             span.set_attribute("governance.scope", _mrm_meta["scope"])
 
         try:
-            cost = self._resolve_trade_cost(action_name, payload)
+            cost = self._resolve_action_cost(action_name, payload)
         except (TypeError, ValueError) as exc:
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
@@ -1237,9 +1303,10 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 span.set_attribute("safety.bankruptcy", True)
                 span.set_attribute("safety.bankruptcy_deficit", abs(h_next))
 
-        # H53: accumulate local debit when the trade is approved, so subsequent
-        # intra-TTL calls see the already-committed debit against the snapshot.
-        if result == "SAFE" and action_name == "execute_trade" and cost > 0:
+        # H53: accumulate local debit when any action with non-zero cost is approved,
+        # so subsequent intra-TTL calls see the already-committed debit against the snapshot.
+        # The cost resolver (domain-specific) determines which actions carry costs.
+        if result == "SAFE" and cost > 0:
             self._local_debits += cost
 
         # Drawdown check — read limit from threshold singleton
@@ -1481,10 +1548,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         before calling this method — Redis Lua has no cryptographic FFI.
 
         Args:
-            action_name:          Name of the action being evaluated (e.g.
-                                  ``"execute_trade"``).
-            payload:              Action parameters dict; ``payload["amount"]``
-                                  is used as the cost for ``execute_trade``.
+            action_name:          Name of the action being evaluated.
+            payload:              Action parameters dict; the cost resolver
+                                  determines how to extract cost from payload.
             governance_signature: Optional KMS governance signature string.
                                   Persisted to ``audit:state_ledger`` on commit.
 
@@ -1499,7 +1565,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             raise RuntimeError("Redis client unavailable — cannot run atomic CBF.")
 
         try:
-            cost = self._resolve_trade_cost(action_name, payload)
+            cost = self._resolve_action_cost(action_name, payload)
         except (TypeError, ValueError) as exc:
             reason = f"UNSAFE: {exc}"
             logger.warning("⛔ CBF atomic check rejected trade: %s", exc)

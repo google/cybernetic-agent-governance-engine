@@ -17,9 +17,12 @@
 Per PR C §7.4: barriers are declarative, not callable. The kernel compiles
 (state_key, threshold_key, gamma) into the Lua script at invocation time.
 
-This file contains NO executable safety logic — only data declarations that
-parameterize the kernel's ControlBarrierFunction engine.
+This file contains barrier declarations and the finance-specific cost resolver
+that parameterizes the kernel's ControlBarrierFunction engine.
 """
+
+import math
+from typing import Any
 
 
 class CashBarrier:
@@ -37,3 +40,39 @@ class CashBarrier:
     state_key = "safety:current_cash"
     threshold_key = "cbf.min_cash_balance"
     gamma = 0.5  # Must match THRESHOLDS.cbf.gamma — asserted at registration
+
+
+def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+    """Finance domain cost resolver for CBF engine.
+
+    Only ``execute_trade`` carries a cash cost; every other action is 0.
+    A non-finite (NaN/inf) or negative ``amount`` is rejected here so it can
+    never reach the barrier certificate or the Redis cash-state write.
+
+    This function is injected into the CBF engine at plugin registration time,
+    making the kernel domain-agnostic while preserving the finance-specific
+    cost resolution logic.
+
+    Args:
+        action_name: Name of the action being evaluated.
+        payload: Action parameters dict.
+
+    Returns:
+        The cash cost for the action (0.0 for non-trade actions).
+
+    Raises:
+        ValueError: If execute_trade has a non-finite or negative amount.
+    """
+    if action_name != "execute_trade":
+        return 0.0
+
+    if "amount_minor" in payload and payload["amount_minor"] is not None:
+        cost = float(payload["amount_minor"]) / 100.0
+    else:
+        cost = float(payload.get("amount", 0.0))
+
+    if not math.isfinite(cost) or cost < 0:
+        raise ValueError(
+            f"invalid trade amount {cost!r} — must be a finite, non-negative number"
+        )
+    return cost
