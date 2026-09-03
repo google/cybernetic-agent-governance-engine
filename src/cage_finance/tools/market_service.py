@@ -112,3 +112,46 @@ class MarketService:
 
 
 market_service = MarketService()
+
+
+def get_current_price(symbol: str) -> float | None:
+    """
+    Synchronous helper to fetch current market price for a symbol.
+    
+    Returns the current price as a float, or None if unavailable.
+    Used by safety_node.py for deterministic amount computation.
+    """
+    if not market_service.api_key:
+        logger.debug(f"get_current_price({symbol}): ALPHAVANTAGE_API_KEY not set")
+        return None
+    
+    try:
+        params = {
+            "function": "GLOBAL_QUOTE",
+            "symbol": symbol,
+            "apikey": market_service.api_key,
+        }
+        
+        with httpx.Client() as client:
+            response = client.get(market_service.base_url, params=params, timeout=5.0)
+            data = response.json()
+        
+        # Handle rate limits or errors
+        if "Note" in data or "Error Message" in data:
+            logger.debug(f"get_current_price({symbol}): API limit or error")
+            return None
+        
+        quote = data.get("Global Quote", {})
+        if not quote:
+            logger.debug(f"get_current_price({symbol}): No quote data")
+            return None
+        
+        price_str = quote.get("05. price")
+        if price_str:
+            return float(price_str)
+        
+        return None
+    
+    except Exception as e:
+        logger.debug(f"get_current_price({symbol}): Exception {e}")
+        return None
