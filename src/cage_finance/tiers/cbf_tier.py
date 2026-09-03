@@ -14,8 +14,8 @@
 
 from typing import Any
 
-from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
 class CBFTierPlugin(GovernanceTierPlugin):

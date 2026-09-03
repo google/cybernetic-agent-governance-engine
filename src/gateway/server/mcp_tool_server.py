@@ -160,13 +160,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # That is fail-closed but may indicate a plugin loading failure.
     # Crash loudly rather than silently denying all traffic.
     from src.gateway.governance.singletons import _has_null_components
-    
+
     if os.getenv("CAGE_ACTIVE_PLUGINS") != "" and _has_null_components():
         raise RuntimeError(
             "startup ordering error: plugins were expected but no domain "
             "components were installed — refusing to serve traffic"
         )
-    
+
     logger.info("✅ Domain components verified (startup readiness check passed)")
 
     yield

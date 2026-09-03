@@ -21,11 +21,12 @@ Part of: PR A - Capability-Driven Tier Dispatch (Stage 8)
 Gate: G6 (domain literal enforcement)
 """
 
-import pytest
+import os
 import subprocess
 import tempfile
-import os
 from pathlib import Path
+
+import pytest
 
 
 @pytest.mark.local
@@ -80,7 +81,7 @@ class TestDomainLiteralGate:
             delete=False,
         ) as f:
             f.write('"""Example: execute_trade action."""\n')
-            f.write('def foo(): pass\n')
+            f.write("def foo(): pass\n")
             temp_path = f.name
 
         try:
@@ -104,8 +105,8 @@ class TestDomainLiteralGate:
             dir="src/gateway/governance",
             delete=False,
         ) as f:
-            f.write('# This used to handle execute_trade\n')
-            f.write('def foo(): pass\n')
+            f.write("# This used to handle execute_trade\n")
+            f.write("def foo(): pass\n")
             temp_path = f.name
 
         try:
@@ -130,18 +131,18 @@ class TestDomainLiteralGateExclusions:
         # The gate should skip generated files like generated_stpa_validator.py
         # We can't easily test this without modifying real files,
         # but we can verify the exclusion logic exists
-        
+
         # Read the script to verify exclusion logic
         script_path = Path("scripts/check_domain_literals.py")
         content = script_path.read_text()
-        
+
         assert "EXCLUDED_FILES" in content or "EXCLUDED_DIRS" in content
 
     def test_gate_excludes_proto_generated_files(self) -> None:
         """G6 gate skips *_pb2.py generated protobuf files."""
         script_path = Path("scripts/check_domain_literals.py")
         content = script_path.read_text()
-        
+
         # The script excludes generated files via EXCLUDED_FILES or directory patterns
         assert "EXCLUDED" in content
 
@@ -149,7 +150,7 @@ class TestDomainLiteralGateExclusions:
         """G6 gate only scans src/gateway/ (kernel Layer 1)."""
         script_path = Path("scripts/check_domain_literals.py")
         content = script_path.read_text()
-        
+
         # Should target src/gateway/ specifically
         assert "src/gateway" in content
 

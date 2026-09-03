@@ -19,17 +19,20 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-from src.gateway.governance.consensus.engine import ConsensusGate, _background_audit_worker
-from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
 from src.gateway.governance.background_tasks import register_background_task
+from src.gateway.governance.consensus.engine import (
+    ConsensusGate,
+    _background_audit_worker,
+)
 from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
+from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.singletons import install_domain_components
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 

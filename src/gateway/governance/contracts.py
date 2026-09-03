@@ -360,7 +360,7 @@ class InvariantModel(Protocol):
     @property
     def invariant_id(self) -> str:
         """Stable identifier for this barrier (e.g. 'finance.cash_balance').
-        
+
         Must be unique across all registered plugins. Used for telemetry,
         audit logs, and violation attribution.
         """
@@ -369,7 +369,7 @@ class InvariantModel(Protocol):
     @property
     def state_key(self) -> str:
         """Redis key holding the scalar state variable x.
-        
+
         Must be namespaced (contain ':') to avoid key collisions across domains.
         Example: 'safety:current_cash', 'safety:serum_concentration'
         """
@@ -378,7 +378,7 @@ class InvariantModel(Protocol):
     @property
     def threshold_key(self) -> str:
         """THRESHOLDS lookup path for the floor value.
-        
+
         Resolved from config/thresholds/{REGION}_BASELINE.json at runtime.
         Example: 'cbf.min_cash_balance', 'healthcare.min_therapeutic_concentration'
         """
@@ -387,7 +387,7 @@ class InvariantModel(Protocol):
     @property
     def gamma(self) -> float:
         """CBF class-K function gain (0 < gamma <= 1).
-        
+
         Controls how aggressively the barrier enforces forward invariance.
         """
         ...

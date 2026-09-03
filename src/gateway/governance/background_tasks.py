@@ -23,24 +23,25 @@ does not directly import from cage_finance.consensus.
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.BackgroundTasks")
 
-_STARTUP_TASKS: list[tuple[str, Callable[[], Awaitable[None]]]] = []
+_STARTUP_TASKS: list[tuple[str, Callable[[], Coroutine[Any, Any, None]]]] = []
 
 
 def register_background_task(
-    name: str, coro_factory: Callable[[], Awaitable[None]]
+    name: str, coro_factory: Callable[[], Coroutine[Any, Any, None]]
 ) -> None:
     """Register a coroutine factory to be started at application lifespan.
-    
+
     Args:
         name: Human-readable task name (e.g. "consensus_audit")
         coro_factory: A callable that returns an awaitable. The factory will
                       be called once during lifespan startup to create the
                       background task.
-    
+
     Example:
         >>> register_background_task("consensus_audit", _background_audit_worker)
         >>> # Later, during server lifespan:
@@ -52,11 +53,11 @@ def register_background_task(
 
 def start_all() -> list[asyncio.Task]:
     """Start all registered background tasks.
-    
+
     Called during application lifespan startup. Each task is named and
     configured with a done callback that logs CRITICAL if the task exits
     unexpectedly (closing Finding B silent-death gap).
-    
+
     Returns:
         List of asyncio.Task objects that can be cancelled during shutdown.
     """
@@ -71,7 +72,7 @@ def start_all() -> list[asyncio.Task]:
 
 def _log_task_death(task: asyncio.Task) -> None:
     """Log CRITICAL if a background task exits unexpectedly.
-    
+
     This closes the silent-death gap where a background task raising an
     exception would fail silently. Now we log at CRITICAL level so the
     failure is visible in monitoring.
@@ -79,7 +80,7 @@ def _log_task_death(task: asyncio.Task) -> None:
     if task.cancelled():
         # Normal shutdown via cancel() - no log needed
         return
-    
+
     exc = task.exception()
     if exc is not None:
         logger.critical(

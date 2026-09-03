@@ -22,8 +22,9 @@ Part of: PR A - Capability-Driven Tier Dispatch (Stage 8)
 Gate: G4 (tier interface contract compliance)
 """
 
-import pytest
 from typing import Any
+
+import pytest
 
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
@@ -57,15 +58,11 @@ class MinimalTier:
         """Accept any action containing 'test' in the name."""
         return "test" in action.lower()
 
-    async def evaluate(
-        self, action: str, params: dict[str, Any]
-    ) -> list[Violation]:
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Phase 1: Always pass."""
         return []
 
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> list[Violation]:
+    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Phase 2: Always pass."""
         return []
 
@@ -84,9 +81,7 @@ class UnclaimedTier(MinimalTier):
 class FailingTier(MinimalTier):
     """Tier that always emits a violation."""
 
-    async def evaluate(
-        self, action: str, params: dict[str, Any]
-    ) -> list[Violation]:
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         return [
             Violation(
                 tier=self.tier_name,

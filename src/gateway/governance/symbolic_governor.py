@@ -864,7 +864,9 @@ class SymbolicGovernor:
         # not fall back to a silent None at runtime.
         thresholds = load_and_validate_thresholds()
         threshold_parts = invariant.threshold_key.split(".")
-        current = thresholds.model_dump()  # Convert Pydantic model to dict for traversal
+        current = (
+            thresholds.model_dump()
+        )  # Convert Pydantic model to dict for traversal
         try:
             for part in threshold_parts:
                 current = current[part]
@@ -939,7 +941,8 @@ class SymbolicGovernor:
         pass-through.
         """
         claimed = [
-            t for t in self._domain_tiers
+            t
+            for t in self._domain_tiers
             if t.phase == phase and t.claims_action(action, params)
         ]
         committed: list[GovernanceTierPlugin] = []
@@ -952,7 +955,8 @@ class SymbolicGovernor:
                 _t0 = time.perf_counter()
                 try:
                     violations = (
-                        await tier.evaluate(action, params) if phase == 1
+                        await tier.evaluate(action, params)
+                        if phase == 1
                         else await tier.commit(action, params)
                     )
                 except Exception as exc:
@@ -1003,7 +1007,9 @@ class SymbolicGovernor:
             for v in violations
         ]
 
-    def _violations_to_failures(self, violations: list[Violation]) -> list[dict[str, Any]]:
+    def _violations_to_failures(
+        self, violations: list[Violation]
+    ) -> list[dict[str, Any]]:
         """Convert Violation dataclasses into RefusalReceipt.failures schema."""
         out: list[dict[str, Any]] = []
         for v in violations:
@@ -1032,7 +1038,9 @@ class SymbolicGovernor:
         Returns:
             dict with "failures" (list[dict]) plus any tier-specific standing keys.
         """
-        standing: dict[str, Any] = {"failures": self._violations_to_failures(violations)}
+        standing: dict[str, Any] = {
+            "failures": self._violations_to_failures(violations)
+        }
         for v in violations:
             if hasattr(v, "standing") and v.standing:
                 standing.update(v.standing)
@@ -1307,17 +1315,23 @@ class SymbolicGovernor:
         # Phase 1: Read-only domain tiers
         if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span("cage.domain_tiers_phase1") as tier1_span:
-                tier1_span.set_attribute("langfuse.observation.name", "domain_tiers_phase1")
+                tier1_span.set_attribute(
+                    "langfuse.observation.name", "domain_tiers_phase1"
+                )
                 tier1_span.set_attribute("governance.stage", "domain_tiers")
                 tier1_span.set_attribute("governance.phase", 1)
                 _t_tier1 = time.perf_counter()
 
-                tier_violations = await self._run_domain_tiers(tool_name, params, phase=1)
+                tier_violations = await self._run_domain_tiers(
+                    tool_name, params, phase=1
+                )
                 if tier_violations:
                     _all_tier_violations.extend(tier_violations)
                     violations.extend(self._violations_to_strings(tier_violations))
 
-                tier1_span.set_attribute("governance.tier.violations", len(tier_violations))
+                tier1_span.set_attribute(
+                    "governance.tier.violations", len(tier_violations)
+                )
                 tier1_span.set_attribute(
                     "governance.stage.latency_ms",
                     round((time.perf_counter() - _t_tier1) * 1000, 2),
@@ -1655,17 +1669,23 @@ class SymbolicGovernor:
         # Phase 2: Mutating domain tiers (only if Phase 1 passed)
         if self._is_governed_action(tool_name, params) and not violations:
             with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
-                tier2_span.set_attribute("langfuse.observation.name", "domain_tiers_phase2")
+                tier2_span.set_attribute(
+                    "langfuse.observation.name", "domain_tiers_phase2"
+                )
                 tier2_span.set_attribute("governance.stage", "domain_tiers")
                 tier2_span.set_attribute("governance.phase", 2)
                 _t_tier2 = time.perf_counter()
 
-                tier_violations = await self._run_domain_tiers(tool_name, params, phase=2)
+                tier_violations = await self._run_domain_tiers(
+                    tool_name, params, phase=2
+                )
                 if tier_violations:
                     _all_tier_violations.extend(tier_violations)
                     violations.extend(self._violations_to_strings(tier_violations))
 
-                tier2_span.set_attribute("governance.tier.violations", len(tier_violations))
+                tier2_span.set_attribute(
+                    "governance.tier.violations", len(tier_violations)
+                )
                 tier2_span.set_attribute(
                     "governance.stage.latency_ms",
                     round((time.perf_counter() - _t_tier2) * 1000, 2),
@@ -2019,7 +2039,7 @@ class SymbolicGovernor:
                         action=tool_name,
                         violated_tier="SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
-                        standing_at_refusal=self._build_standing(tier_violations),
+                        standing_at_refusal=self._build_standing([]),
                     )
                     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
                     raise GovernanceError(violations[0], receipt=receipt)
@@ -2138,7 +2158,7 @@ class SymbolicGovernor:
             )
             result = await self._run_checks(tool_name, params, sim_mode=True)
             violations = result["violations"]
-            tier_violations = result.get("tier_violations", [])
+            # tier_violations intentionally not extracted here (used elsewhere in real validation)
             span.set_attribute(
                 "langfuse.observation.output",
                 json.dumps(violations) if violations else "APPROVED",
@@ -2461,7 +2481,9 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_FALLBACK",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal=self._build_standing(tier_violations),
+                                standing_at_refusal=self._build_standing(
+                                    tier_violations
+                                ),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash
@@ -2514,7 +2536,9 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_REDIS_ERROR",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal=self._build_standing(tier_violations),
+                                standing_at_refusal=self._build_standing(
+                                    tier_violations
+                                ),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash

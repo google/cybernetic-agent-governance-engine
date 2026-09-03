@@ -323,15 +323,16 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         if invariant is None:
             # Finance domain default barrier (CashBarrier-equivalent)
             from src.cage_finance.invariants import CashBarrier
+
             invariant = CashBarrier()
-        
+
         self._invariant = invariant
         # Threshold resolution deferred to atomic_verify_and_commit() to pick up
         # runtime config changes. Cache threshold_key for validation.
         self.threshold_key: str = invariant.threshold_key
         self.gamma: float = invariant.gamma
         self.redis_key: str = invariant.state_key
-        
+
         # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
         self.tracer = get_tracer("src.gateway.governance.safety")
@@ -1572,13 +1573,13 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         # PR C (Stage 2): Compile barrier parameters from InvariantModel
         # R-05: Include fence epoch key for atomic increment in Lua script
         keys = [self._invariant.state_key, "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
-        
+
         # Resolve threshold from THRESHOLDS tree at runtime
         threshold_parts = self._invariant.threshold_key.split(".")
         threshold_value = THRESHOLDS
         for part in threshold_parts:
             threshold_value = getattr(threshold_value, part)
-        
+
         argv = [
             str(cost),  # ARGV[1]: magnitude (domain-neutral; was "cost")
             str(threshold_value),  # ARGV[2]: resolved threshold from InvariantModel

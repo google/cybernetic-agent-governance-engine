@@ -13,3 +13,7 @@
 # limitations under the License.
 
 """Domain-agnostic consensus mechanisms."""
+
+from src.gateway.governance.consensus.engine import _background_audit_worker
+
+__all__ = ["_background_audit_worker"]

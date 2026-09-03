@@ -14,6 +14,7 @@
 
 import logging
 import os
+from typing import Any
 
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.generated_stpa_validator import (
@@ -50,42 +51,40 @@ symbolic_governor = SymbolicGovernor(
 
 def install_domain_components(
     *,
-    safety_filter_impl=None,
-    consensus_engine_impl=None,
-    resource_guard=None,
+    safety_filter_impl: Any = None,
+    consensus_engine_impl: Any = None,
+    resource_guard: Any = None,
 ) -> None:
     """Called by CagePlugin.register() to supply domain implementations.
 
     Idempotent per component: a second plugin attempting to replace an
     already-installed component raises, because two domains contending for
     one component slot is a configuration error, not a merge.
-    
+
     Args:
         safety_filter_impl: SafetyFilter implementation (e.g. ControlBarrierFunction)
         consensus_engine_impl: ConsensusProvider implementation (e.g. ConsensusGate)
         resource_guard: ResourceGuard implementation (e.g. FiscalLimitGuard)
-    
+
     Raises:
         RuntimeError: If a component is already installed by another plugin.
     """
     # Safety filter installation
     if safety_filter_impl is not None:
         if not isinstance(symbolic_governor.safety_filter, NullSafetyFilter):
-            raise RuntimeError(
-                "safety_filter already installed by another plugin"
-            )
+            raise RuntimeError("safety_filter already installed by another plugin")
         symbolic_governor.safety_filter = safety_filter_impl
         logger.info(f"✅ Installed safety_filter: {type(safety_filter_impl).__name__}")
-    
+
     # Consensus engine installation
     if consensus_engine_impl is not None:
         if not isinstance(symbolic_governor.consensus_engine, NullConsensusProvider):
-            raise RuntimeError(
-                "consensus_engine already installed by another plugin"
-            )
+            raise RuntimeError("consensus_engine already installed by another plugin")
         symbolic_governor.consensus_engine = consensus_engine_impl
-        logger.info(f"✅ Installed consensus_engine: {type(consensus_engine_impl).__name__}")
-    
+        logger.info(
+            f"✅ Installed consensus_engine: {type(consensus_engine_impl).__name__}"
+        )
+
     # Resource guard installation (if needed by a domain)
     if resource_guard is not None:
         # Note: resource_guard is not currently a SymbolicGovernor dependency,
@@ -95,14 +94,15 @@ def install_domain_components(
 
 def _has_null_components() -> bool:
     """Check if any components are still null objects.
-    
+
     Used by the startup readiness assertion (T-B3) to detect plugin
     loading failures.
     """
-    return (
-        isinstance(symbolic_governor.safety_filter, NullSafetyFilter)
-        or isinstance(symbolic_governor.consensus_engine, NullConsensusProvider)
+    return isinstance(symbolic_governor.safety_filter, NullSafetyFilter) or isinstance(
+        symbolic_governor.consensus_engine, NullConsensusProvider
     )
 
 
-logger.info("✅ Governance Singletons Initialized (bare-kernel mode; awaiting plugin registration).")
+logger.info(
+    "✅ Governance Singletons Initialized (bare-kernel mode; awaiting plugin registration)."
+)

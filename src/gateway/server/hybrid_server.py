@@ -243,7 +243,9 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
     # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
-    from src.gateway.governance.background_tasks import start_all as start_background_tasks
+    from src.gateway.governance.background_tasks import (
+        start_all as start_background_tasks,
+    )
 
     bg_tasks = start_background_tasks()
     app.state.background_tasks = bg_tasks
@@ -253,13 +255,13 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Verify domain components were installed if plugins were expected.
     # Crash loudly rather than serve with null objects that deny everything.
     from src.gateway.governance.singletons import _has_null_components
-    
+
     if os.getenv("CAGE_ACTIVE_PLUGINS") != "" and _has_null_components():
         raise RuntimeError(
             "startup ordering error: plugins were expected but no domain "
             "components were installed — refusing to serve traffic"
         )
-    
+
     logger.info("✅ Domain components verified (startup readiness check passed)")
 
     yield

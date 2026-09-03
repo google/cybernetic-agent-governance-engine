@@ -292,7 +292,8 @@ async def _run_domain_tiers(
     pass-through.
     """
     claimed = [
-        t for t in self._domain_tiers
+        t
+        for t in self._domain_tiers
         if t.phase == phase and t.claims_action(action, params)
     ]
     committed: list[GovernanceTierPlugin] = []
@@ -305,7 +306,8 @@ async def _run_domain_tiers(
             _t0 = time.perf_counter()
             try:
                 violations = (
-                    await tier.evaluate(action, params) if phase == 1
+                    await tier.evaluate(action, params)
+                    if phase == 1
                     else await tier.commit(action, params)
                 )
             except Exception as exc:
@@ -381,6 +383,7 @@ carries a populated `tier_failures` tuple (closes F5 of the prior analysis):
 def _violations_to_strings(violations: list[Violation]) -> list[str]:
     return [f"[{v.tier}/{v.code}] {v.message}" for v in violations]
 
+
 @staticmethod
 def _violations_to_failures(
     violations: list[Violation],
@@ -395,9 +398,7 @@ def _violations_to_failures(
                 "recoverable": v.recoverable,
                 "needs_human_review": v.needs_human_review,
             },
-            protected_consequence=(
-                f"{v.tier} tier blocked the action: {v.code}"
-            ),
+            protected_consequence=(f"{v.tier} tier blocked the action: {v.code}"),
         )
         for v in violations
     ]
@@ -500,13 +501,15 @@ Five sites: [1919](../src/gateway/governance/symbolic_governor.py:1919),
 
 ```python
 # BEFORE
-standing_at_refusal={
-    "symbol": params.get("symbol"),
-    "amount": params.get("amount"),
-},
+standing_at_refusal = (
+    {
+        "symbol": params.get("symbol"),
+        "amount": params.get("amount"),
+    },
+)
 
 # AFTER
-standing_at_refusal=self._build_standing(tier_failures, params),
+standing_at_refusal = (self._build_standing(tier_failures, params),)
 ```
 
 ```python
@@ -532,8 +535,7 @@ def _build_standing(
         standing.update(failure.governing_state)
     if not standing:
         standing = {
-            k: v for k, v in params.items()
-            if k in _NON_SENSITIVE_STANDING_KEYS
+            k: v for k, v in params.items() if k in _NON_SENSITIVE_STANDING_KEYS
         }
     return standing
 ```
@@ -833,9 +835,7 @@ def install_domain_components(
     global safety_filter, consensus_engine  # noqa: PLW0603
     if safety_filter is not None:
         if not isinstance(symbolic_governor.safety_filter, NullSafetyFilter):
-            raise RuntimeError(
-                "safety_filter already installed by another plugin"
-            )
+            raise RuntimeError("safety_filter already installed by another plugin")
         symbolic_governor.safety_filter = safety_filter
     # ... same pattern for consensus_engine and resource_guard
 ```
@@ -913,8 +913,12 @@ start is strictly better than one that admits ungoverned actions.
 ```python
 # BEFORE
 overlay_path = (
-    self._REPO_ROOT / "src" / "cage_finance" / "config"
-    / "compliance" / f"{region}_OVERLAY.json"
+    self._REPO_ROOT
+    / "src"
+    / "cage_finance"
+    / "config"
+    / "compliance"
+    / f"{region}_OVERLAY.json"
 )
 ...
 if overlay_path.exists():
@@ -927,6 +931,7 @@ if overlay_path.exists():
 # Module scope:
 _OVERLAY_DIRS: list[Path] = []
 
+
 def register_overlay_dir(path: Path) -> None:
     """Register a plugin's compliance-overlay directory.
 
@@ -938,6 +943,7 @@ def register_overlay_dir(path: Path) -> None:
     resolved = path.resolve()
     if resolved not in _OVERLAY_DIRS:
         _OVERLAY_DIRS.append(resolved)
+
 
 # In the loader:
 for overlay_dir in _OVERLAY_DIRS:
@@ -997,6 +1003,7 @@ Two sites, one real violation and one dead path:
 ```python
 # src/gateway/server/hybrid_server.py:249 — DELETE (Layer 1 → Layer 2)
 from src.cage_finance.consensus.consensus import _background_audit_worker
+
 asyncio.create_task(_background_audit_worker())
 ```
 
@@ -1004,6 +1011,7 @@ asyncio.create_task(_background_audit_worker())
 # src/gateway/server/mcp_tool_server.py:143 — DELETE (imports a module
 # that does not exist; this create_task has been silently failing)
 from src.gateway.governance.consensus import _background_audit_worker
+
 audit_task = asyncio.create_task(_background_audit_worker())
 ```
 
@@ -1013,17 +1021,19 @@ Replace both with a kernel-owned background-task registry:
 # src/gateway/governance/background_tasks.py  (new)
 _STARTUP_TASKS: list[tuple[str, Callable[[], Awaitable[None]]]] = []
 
+
 def register_background_task(
     name: str, coro_factory: Callable[[], Awaitable[None]]
 ) -> None:
     """Register a coroutine factory to be started at application lifespan."""
     _STARTUP_TASKS.append((name, coro_factory))
 
+
 def start_all(app_state: object) -> list[asyncio.Task]:
     tasks = []
     for name, factory in _STARTUP_TASKS:
         task = asyncio.create_task(factory(), name=f"cage.bg.{name}")
-        task.add_done_callback(_log_task_death)   # never die silently
+        task.add_done_callback(_log_task_death)  # never die silently
         tasks.append(task)
     return tasks
 ```
@@ -1044,16 +1054,15 @@ LAYER_2_CAGE_FINANCE = "src/cage_finance"
 FORBIDDEN_PATTERNS = [
     ("src/gateway", "src.cage_finance"),
     ("src/gateway", "cage_finance"),
-    ...
+    ...,
 ]
 ```
 
 ```python
 # AFTER — glob-based so new domains are covered automatically.
 LAYER_2_GLOB = "src/cage_*"
-_LAYER_2_PREFIXES = tuple(
-    f"{p.name}" for p in Path("src").glob("cage_*") if p.is_dir()
-)
+_LAYER_2_PREFIXES = tuple(f"{p.name}" for p in Path("src").glob("cage_*") if p.is_dir())
+
 
 def _is_layer_2(module: str) -> bool:
     for pkg in _LAYER_2_PREFIXES:
@@ -1124,8 +1133,10 @@ class _BlockCageFinance:
     def find_module(self, fullname, path=None):
         if fullname.startswith(("cage_finance", "src.cage_finance")):
             return self
+
     def load_module(self, fullname):
         raise ImportError(f"blocked for boundary test: {fullname}")
+
 
 def test_gateway_imports_without_cage_finance():
     sys.meta_path.insert(0, _BlockCageFinance())
@@ -1133,7 +1144,7 @@ def test_gateway_imports_without_cage_finance():
         for mod in list(sys.modules):
             if mod.startswith("src.gateway"):
                 del sys.modules[mod]
-        import src.gateway.governance.singletons   # must not raise
+        import src.gateway.governance.singletons  # must not raise
     finally:
         sys.meta_path.pop(0)
 ```
@@ -1432,7 +1443,7 @@ class CashBarrier:
     invariant_id = "finance.cash_balance"
     state_key = "safety:current_cash"
     threshold_key = "cbf.min_cash_balance"
-    gamma = 0.5   # must equal THRESHOLDS.cbf.gamma — asserted at registration
+    gamma = 0.5  # must equal THRESHOLDS.cbf.gamma — asserted at registration
 ```
 
 **T-C5 — Add `register_invariant()` to the registry.**
@@ -1496,7 +1507,7 @@ argv = [
     str(magnitude),
     str(resolve_threshold(self._invariant.threshold_key)),
     str(self._invariant.gamma),
-    ...
+    ...,
 ]
 ```
 
@@ -1905,20 +1916,14 @@ class HealthcareCagePlugin(CagePlugin):
         barrier = SerumConcentrationBarrier()
         registry.register_invariant(barrier)
 
-        registry.register_domain_tier(
-            DoseBarrierTier(ControlBarrierFunction(barrier))
-        )
+        registry.register_domain_tier(DoseBarrierTier(ControlBarrierFunction(barrier)))
         registry.register_domain_tier(
             ClinicalConsensusTier(
-                ConsensusEngine.from_yaml(
-                    "src/cage_healthcare/config/critics.yaml"
-                )
+                ConsensusEngine.from_yaml("src/cage_healthcare/config/critics.yaml")
             )
         )
         registry.register_rail_provider(HealthcareRailProvider())
-        registry.register_overlay_dir(
-            Path("src/cage_healthcare/config/compliance")
-        )
+        registry.register_overlay_dir(Path("src/cage_healthcare/config/compliance"))
         if tool_server:
             ClinicalToolProvider().register_tools(tool_server)
 ```
@@ -1961,18 +1966,18 @@ class DoseBarrierTier(GovernanceTierPlugin):
     async def commit(self, action, params) -> list[Violation]:
         ok, reason = await self.cbf.atomic_verify_and_commit(action, params)
         if not ok:
-            return [Violation(
-                tier=self.tier_name,
-                code="DOSE_BARRIER_VIOLATED",
-                message=reason,
-                recoverable=True,
-            )]
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="DOSE_BARRIER_VIOLATED",
+                    message=reason,
+                    recoverable=True,
+                )
+            ]
         return []
 
     async def rollback(self, action, params) -> None:
-        await self.cbf.rollback_state(
-            magnitude=float(params.get("dose_mg", 0.0))
-        )
+        await self.cbf.rollback_state(magnitude=float(params.get("dose_mg", 0.0)))
 ```
 
 ```toml
@@ -2274,7 +2279,8 @@ def check_single_lua_definition() -> int:
     code and fails the build.
     """
     hits = [
-        p for p in Path("src").rglob("*.py")
+        p
+        for p in Path("src").rglob("*.py")
         if "LUA_ATOMIC_CBF" in p.read_text() and _is_assignment(p)
     ]
     if len(hits) != 1:

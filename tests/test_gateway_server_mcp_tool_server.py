@@ -342,8 +342,10 @@ class TestMCPToolServerFunctions:
 
         # check_market_status was moved to cage_finance plugin as a tool registration
         # This test now validates the market data stub directly
-        from src.governed_financial_advisor.tools.market_data_tool import get_market_data
-        
+        from src.governed_financial_advisor.tools.market_data_tool import (
+            get_market_data,
+        )
+
         res = get_market_data("AAPL")
         assert "AAPL" in res
 

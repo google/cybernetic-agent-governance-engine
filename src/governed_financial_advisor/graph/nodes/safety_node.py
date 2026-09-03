@@ -57,12 +57,10 @@ from langchain_core.messages import HumanMessage
 # handled fail-closed by the OPA rule in trade_governance.rego.
 # ---------------------------------------------------------------------------
 try:
-    from src.cage_finance.tools.market_service import (
-        get_current_price,  # type: ignore[attr-defined]
-    )
+    from src.cage_finance.tools.market_service import get_current_price  # type: ignore[attr-defined]
 except (ImportError, AttributeError):
 
-    def get_current_price(symbol: str) -> float | None:  # type: ignore[misc]
+    def get_current_price(symbol: str) -> float | None:
         """Stub: market price lookup not yet implemented — returns None."""
         return None
 

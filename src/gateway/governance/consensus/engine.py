@@ -56,6 +56,9 @@ from src.gateway.infrastructure.telemetry_client import genai_span
 logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")
 
+# Critics configuration (loaded from YAML if available, else fallback to hardcoded prompts)
+_CRITICS_CONFIG: dict[str, Any] = {}
+
 # ---------------------------------------------------------------------------
 # Background audit queue (Phase 4.4)
 # ---------------------------------------------------------------------------
@@ -244,14 +247,14 @@ class ConsensusGate:
             # Extract financial context for prompt rendering.
             amount = context.get("amount", magnitude or 0.0)
             symbol = context.get("symbol", "UNKNOWN")
-            
+
             # Load prompt template from critics.yaml (PR C §7.3 T-C2)
             critic_config = None
             for critic in _CRITICS_CONFIG.get("critics", []):
                 if critic.get("role") == role:
                     critic_config = critic
                     break
-            
+
             if critic_config:
                 # Use YAML-loaded template
                 prompt_template = critic_config.get("prompt_template", "")
@@ -261,10 +264,15 @@ class ConsensusGate:
                     amount=amount,
                     symbol=symbol,
                 )
-                system_instruction = critic_config.get("system_instruction", "").format(role=role)
+                system_instruction = critic_config.get("system_instruction", "").format(
+                    role=role
+                )
             else:
                 # Fallback to hardcoded prompt if YAML loading failed
-                logger.warning("No critics.yaml config found for role '%s' — using hardcoded prompt", role)
+                logger.warning(
+                    "No critics.yaml config found for role '%s' — using hardcoded prompt",
+                    role,
+                )
                 prompt = (
                     f"You are a {role} for a financial institution.\n"
                     f"Review the following trade proposal:\n"

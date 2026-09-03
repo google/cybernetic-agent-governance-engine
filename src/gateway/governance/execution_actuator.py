@@ -172,7 +172,7 @@ class ActuatorRegistry:
     The registry shape is fixed now so a second actuator does not force a refactor.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._actuators: dict[str, ExecutionActuator] = {}
         self._claims: dict[str, set[str]] = {}  # actuator_id -> set of action patterns
 

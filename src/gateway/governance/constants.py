@@ -97,7 +97,7 @@ def register_overlay_dir(path: Path) -> None:
     registration order, which is deterministic because plugin discovery
     iterates entry points in a stable order. A later plugin overriding an
     earlier plugin's control mapping is logged at WARNING.
-    
+
     Args:
         path: Path to the plugin's compliance overlay directory
               (e.g. src/cage_finance/config/compliance/)
@@ -532,28 +532,28 @@ INJECTION_CITATION_DEFAULT: str = (
 
 def _load_hitl_constants_from_baselines() -> None:
     """Load HITL regulatory constants from regional baseline JSONs.
-    
+
     Called at module import time to populate HITL_CITATIONS, HITL_SLA_HOURS,
     PII_RETENTION_AUTHORITY, and INJECTION_CITATION from the _hitl section
     of each regional baseline JSON file.
-    
+
     These are regulatory constants (not domain-specific), so they belong in
     the regional baselines rather than in cage_finance (PR B, T-B5).
     """
     global HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION
-    
+
     repo_root = Path(__file__).parent.parent.parent
     thresholds_dir = repo_root / "config" / "thresholds"
-    
+
     for region in SUPPORTED_REGIONS:
         baseline_path = thresholds_dir / f"{region}_BASELINE.json"
         if not baseline_path.exists():
             continue
-            
+
         try:
             with open(baseline_path) as fh:
                 baseline = json.load(fh)
-            
+
             hitl = baseline.get("_hitl", {})
             if hitl:
                 if "citation" in hitl:

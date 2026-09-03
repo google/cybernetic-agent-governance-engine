@@ -29,7 +29,6 @@ Usage:
 import ast
 import sys
 from pathlib import Path
-from typing import Set
 
 # Domain action names that must not appear in kernel executable code
 FORBIDDEN_LITERALS = {"execute_trade", "reverse_trade"}
@@ -51,7 +50,7 @@ class DomainLiteralChecker(ast.NodeVisitor):
     def __init__(self, filepath: Path):
         self.filepath = filepath
         self.violations: list[tuple[int, str]] = []
-        self._docstring_nodes: Set[ast.AST] = set()
+        self._docstring_nodes: set[ast.AST] = set()
 
     def visit_Module(self, node: ast.Module) -> None:
         """Track module docstring."""
@@ -167,17 +166,17 @@ def main() -> int:
     if violations_found:
         print()
         print(
-            f"❌ Gate G6 FAILED: Found forbidden domain action literals in kernel code."
+            "❌ Gate G6 FAILED: Found forbidden domain action literals in kernel code."
         )
-        print(
-            f"   Forbidden literals: {', '.join(sorted(FORBIDDEN_LITERALS))}"
-        )
+        print(f"   Forbidden literals: {', '.join(sorted(FORBIDDEN_LITERALS))}")
         print()
         print("   The kernel must be domain-agnostic. Move domain-specific logic")
         print("   to domain plugins (src/cage_finance/, src/cage_healthcare/, etc.).")
         return 1
 
-    print(f"✅ Gate G6 PASSED: No domain action literals found (scanned {scanned_count} files).")
+    print(
+        f"✅ Gate G6 PASSED: No domain action literals found (scanned {scanned_count} files)."
+    )
     return 0
 
 

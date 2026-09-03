@@ -851,13 +851,13 @@ class TestPipelineReorderZeroBudgetLeakage:
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
         governor = SymbolicGovernor(opa_client)
+        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
         governor.register_domain_tier(CBFTierPlugin(safety_filter))
         governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
-        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
-        from unittest.mock import AsyncMock
+
         causal_gatekeeper = AsyncMock()
         causal_gatekeeper.evaluate.return_value = False
         governor.register_domain_tier(CausalTierPlugin(causal_gatekeeper))

@@ -20,10 +20,12 @@ null implementations. They are NOT no-ops: every method returns a denial verdict
 A kernel with no plugin denies everything by intent (G2 gate), not by accident.
 """
 
+from typing import Any
+
 
 class NullSafetyFilter:
     """Fail-closed SafetyFilter used when no domain plugin is loaded.
-    
+
     Every method returns a denial verdict. This ensures that a missing plugin
     produces explicit DENY verdicts rather than silent failures or AttributeError
     exceptions that might be caught by CBF_FAIL_OPEN error handlers.
@@ -36,7 +38,7 @@ class NullSafetyFilter:
         self, action_name: str, payload: dict, governance_signature: str = ""
     ) -> tuple[bool, str]:
         """Always denies. Returns (False, reason).
-        
+
         Critical: This must return (False, ...) NOT raise an exception.
         If it raised, the exception would be caught by broad exception handlers
         in the CBF tier, and with CBF_FAIL_OPEN=true that could produce a
@@ -57,15 +59,15 @@ class NullSafetyFilter:
 
 class NullConsensusProvider:
     """Fail-closed ConsensusProvider used when no domain plugin is loaded.
-    
+
     Always returns REJECT status.
     """
 
     async def check_consensus(
-        self, action: str, context: dict, timeout_ms: int = 5000
-    ) -> dict:
+        self, action: str, context: dict[str, Any], magnitude: float | None = None
+    ) -> dict[str, Any]:
         """Always rejects.
-        
+
         Returns a properly structured consensus response with REJECT status
         so the denial integrates cleanly with the tier loop.
         """

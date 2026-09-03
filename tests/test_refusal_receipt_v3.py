@@ -21,10 +21,11 @@ Part of: PR A - Capability-Driven Tier Dispatch (Stage 8)
 Task: T-A8 (RefusalReceipt schema v3)
 """
 
-import pytest
 import time
 
-from src.gateway.governance.contracts import RefusalReceipt, GovernanceTierFailure
+import pytest
+
+from src.gateway.governance.contracts import GovernanceTierFailure, RefusalReceipt
 
 
 @pytest.mark.local

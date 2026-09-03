@@ -73,8 +73,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ```python
 # Legacy direct trade dispatch (removed)
 response = requests.post(
-    "http://gfa:8080/legacy/trade/dispatch",
-    json={"symbol": "AAPL", "quantity": 100}
+    "http://gfa:8080/legacy/trade/dispatch", json={"symbol": "AAPL", "quantity": 100}
 )
 ```
 
@@ -86,12 +85,9 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 envelope = GovernanceEnvelopeBuilder.build(
     action="execute_trade",
     payload={"symbol": "AAPL", "quantity": 100},
-    seal=routing_seal
+    seal=routing_seal,
 )
-response = requests.post(
-    "http://gateway:8080/v1/execute",
-    json=envelope.to_dict()
-)
+response = requests.post("http://gateway:8080/v1/execute", json=envelope.to_dict())
 ```
 
 #### Compliance Bridge Escalation Authentication
@@ -101,7 +97,7 @@ response = requests.post(
 # Unauthenticated escalation (security vulnerability)
 response = requests.post(
     f"http://compliance-bridge:3002/v1/defer/{defer_id}/escalate",
-    json={"reason": "business justification"}
+    json={"reason": "business justification"},
 )
 ```
 
@@ -111,17 +107,15 @@ response = requests.post(
 from src.gateway.governance.routing_seal import generate_seal
 
 seal = generate_seal(
-    action="escalate_defer",
-    record_hash=defer_record_hash,
-    secret=ROUTING_SEAL_SECRET
+    action="escalate_defer", record_hash=defer_record_hash, secret=ROUTING_SEAL_SECRET
 )
 response = requests.post(
     f"http://compliance-bridge:3002/v1/defer/{defer_id}/escalate",
     json={
         "reason": "business justification",
         "routing_seal": seal,
-        "requester_identity": "user@example.com"
-    }
+        "requester_identity": "user@example.com",
+    },
 )
 ```
 

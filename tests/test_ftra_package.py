@@ -202,9 +202,9 @@ class TestPlanGraphAnalyzer:
         return PlanGraphAnalyzer(classifier=classifier)
 
     def test_empty_plan_is_clear(self, tmp_path):
-        from src.gateway.governance.ftra.models import FTRAVerdict
         from src.gateway.governance.ftra.models import (
             ExecutionPlan,
+            FTRAVerdict,
         )
 
         analyzer = self._analyzer(tmp_path, {})
@@ -1099,11 +1099,11 @@ class TestBugFtraSchema001:
         An empty plan may be a valid choice when no action is required.
         With high confidence, the LLM intentionally chose to do nothing.
         """
-        from src.gateway.governance.ftra.node_factory import create_ftra_node
-        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
         from src.gateway.governance.ftra.models import (
             ExecutionPlan,
         )
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
         node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
@@ -1131,11 +1131,11 @@ class TestBugFtraSchema001:
 
     def test_empty_steps_low_confidence_returns_defer(self, tmp_path):
         """Empty plan with low confidence should DEFER for review."""
-        from src.gateway.governance.ftra.node_factory import create_ftra_node
-        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
         from src.gateway.governance.ftra.models import (
             ExecutionPlan,
         )
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
         node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))

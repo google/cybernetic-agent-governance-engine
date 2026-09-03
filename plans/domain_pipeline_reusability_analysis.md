@@ -453,12 +453,13 @@ class InvariantModel(Protocol):
     Non-affine barriers are a kernel change requiring a
     proof/DistributedCBF.tla update — never a plugin extension.
     """
+
     @property
     def invariant_id(self) -> str: ...
     @property
-    def state_key(self) -> str: ...       # Redis key holding x
+    def state_key(self) -> str: ...  # Redis key holding x
     @property
-    def threshold_key(self) -> str: ...   # THRESHOLDS lookup for the floor
+    def threshold_key(self) -> str: ...  # THRESHOLDS lookup for the floor
     @property
     def gamma(self) -> float: ...
 ```
@@ -478,14 +479,15 @@ class SerumConcentrationBarrier:
 # src/cage_healthcare/plugin.py
 from src.gateway.governance.contracts import CagePlugin, TierRegistry
 
+
 class HealthcareCagePlugin(CagePlugin):
     name = "healthcare"
     api_version = "1.0"
 
     def register(self, registry: TierRegistry, tool_server=None) -> None:
         registry.register_invariant(SerumConcentrationBarrier())
-        registry.register_domain_tier(DoseLimitTier())        # phase 2, order 4
-        registry.register_domain_tier(ClinicalConsensusTier()) # phase 1, order 5
+        registry.register_domain_tier(DoseLimitTier())  # phase 2, order 4
+        registry.register_domain_tier(ClinicalConsensusTier())  # phase 1, order 5
         if tool_server:
             ClinicalToolProvider().register_tools(tool_server)
 ```
@@ -509,12 +511,18 @@ already implement:
 ```python
 # src/gateway/governance/symbolic_governor.py — sketch
 async def _run_domain_tiers(self, action, params, phase):
-    claimed = [t for t in self._domain_tiers
-               if t.phase == phase and t.claims_action(action, params)]
+    claimed = [
+        t
+        for t in self._domain_tiers
+        if t.phase == phase and t.claims_action(action, params)
+    ]
     committed: list[GovernanceTierPlugin] = []
-    for tier in claimed:                       # already sorted by (phase, order, name)
-        violations = (await tier.evaluate(action, params) if phase == 1
-                      else await tier.commit(action, params))
+    for tier in claimed:  # already sorted by (phase, order, name)
+        violations = (
+            await tier.evaluate(action, params)
+            if phase == 1
+            else await tier.commit(action, params)
+        )
         if violations:
             if phase == 2:
                 violations += await self._rollback_committed(committed, action, params)
