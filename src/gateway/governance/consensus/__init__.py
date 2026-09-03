@@ -14,6 +14,9 @@
 
 """Domain-agnostic consensus mechanisms."""
 
-from src.gateway.governance.consensus.engine import _background_audit_worker, ConsensusGate
+from src.gateway.governance.consensus.engine import (
+    ConsensusGate,
+    _background_audit_worker,
+)
 
-__all__ = ["_background_audit_worker", "ConsensusGate"]
+__all__ = ["ConsensusGate", "_background_audit_worker"]

@@ -22,21 +22,21 @@ with existing tests.
 """
 
 from src.gateway.governance.safety.cbf_engine import (
-    ControlBarrierFunction,
-    redis_client,
-    sync_redis_client,
     _FENCE_EPOCH_ENABLED,
     _IS_PRODUCTION,
     _REDIS_SENTINEL_MASTER_NAME,
+    ControlBarrierFunction,
     logger,
+    redis_client,
+    sync_redis_client,
 )
 
 __all__ = [
-    "ControlBarrierFunction",
-    "redis_client",
-    "sync_redis_client",
     "_FENCE_EPOCH_ENABLED",
     "_IS_PRODUCTION",
     "_REDIS_SENTINEL_MASTER_NAME",
+    "ControlBarrierFunction",
     "logger",
+    "redis_client",
+    "sync_redis_client",
 ]
