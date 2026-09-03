@@ -1,6 +1,16 @@
+# CAGE Examples
+
+> **Framing note:** CAGE is a **domain-agnostic** governance substrate. Every enforcement layer exercised by the demos below is domain-neutral — it operates on abstract action primitives. The scenarios use concrete nouns from the **finance example domain** ([`src/cage_finance/`](../src/cage_finance/)) purely because a concrete trace is easier to read than an abstract one. The **healthcare example domain** ([`src/cage_healthcare/`](../src/cage_healthcare/)) is of equal standing and drives the identical tiers with `dose_order`, `SerumConcentrationBarrier`, and clinical critics substituted in. Neither domain is required: `CAGE_ACTIVE_PLUGINS=""` runs the bare substrate. See [`docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md`](../docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md).
+>
+> Reading the tables below: the **Layer / Mechanism** columns are kernel-owned and domain-independent; the scenario narratives are domain-flavoured illustrations.
+
+---
+
 # CAGE · Chaos Agent Playground
 
 > **"Show, don't tell."** — An interactive local demo of the CAGE governance stack intercepting adversarial agent payloads across every enforcement layer.
+>
+> **Domain Plugin Example: Finance.** Scenarios A–E below are written against finance-domain nouns (`execute_trade`, drawdown, slippage). The tiers they trip are domain-neutral: an equivalent healthcare run would trip the same tiers on a `dose_order` exceeding a concentration barrier, and an adopter's manufacturing run on a setpoint exceeding a tolerance band.
 
 ## What It Does
 
@@ -31,7 +41,17 @@ uv run python examples/chaos_agent_playground.py --scenario C
 
 ## Attack Scenarios
 
-### Scenario A — Gas Front-Running / Stale Data Injection
+> All five scenarios are **Domain Plugin Example: Finance**. Each maps to a domain-neutral failure class, shown in the table below. The healthcare column illustrates the same class in the other shipped example domain.
+
+| Scenario | Domain-neutral failure class | Finance framing (shown below) | Healthcare equivalent |
+|---|---|---|---|
+| A | Stale/latent input beyond freshness bound + confidence starvation | Gas front-running on stale market data | Dose computed from a stale lab result |
+| B | Unauthenticated consequential write + unauthorised egress | PII exfiltration via `write_db` | Patient record write without clinician token |
+| C | Prompt injection + control bypass | Guardrail override before risk assessment | Guardrail override before contraindication check |
+| D | Compensating rollback after partial commit | Credit-leg failure LIFO rollback | Reversal of a partially administered order |
+| E | Ghost state after crash between phases | OOM crash between PENDING and COMPLETED | Interrupted order left in an indeterminate state |
+
+### Scenario A — Gas Front-Running / Stale Data Injection *(Domain Plugin Example: Finance)*
 
 An LLM agent receives a market manipulation prompt instructing it to execute a large `NVDA` BUY order during a gas spike. The payload carries:
 
@@ -47,7 +67,7 @@ An LLM agent receives a market manipulation prompt instructing it to execute a l
    ✗ SR 26-2 §IV.B: agentic model confidence 0.87 < 0.95
 ```
 
-### Scenario B — PII Exfiltration via Unauthenticated write_db
+### Scenario B — PII Exfiltration via Unauthenticated write_db *(Domain Plugin Example: Finance)*
 
 A compromised pod attempts to write raw client PII (SSN, account number) to the database without a signed approval token, then tries to open an egress connection to `malicious-exfil.attacker.io`:
 
@@ -60,7 +80,7 @@ A compromised pod attempts to write raw client PII (SSN, account number) to the 
    ✗ CiliumPolicy: 'malicious-exfil.attacker.io' not in allowlist
 ```
 
-### Scenario C — Prompt Injection + Compliance Bypass
+### Scenario C — Prompt Injection + Compliance Bypass *(Domain Plugin Example: Finance)*
 
 Multi-vector attack: Tier-1 keyword injection (`SYSTEM OVERRIDE`, `DISABLE GUARDRAILS`) combined with `compliance_checked=False` and `risk_assessed=False`:
 

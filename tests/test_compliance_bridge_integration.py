@@ -1284,18 +1284,15 @@ class TestSlaAndEvalDataset:
         import time as _time
 
         lf_resp = None
-        for _attempt in range(3):
+        for _attempt in range(10):
             try:
                 lf_resp = requests.get(api_url, auth=(lf_pk, lf_sk), timeout=15)
-                break
+                if lf_resp.status_code == 200 and len(lf_resp.json().get("data", [])) >= 1:
+                    break
             except requests.exceptions.ConnectionError as _ce:
-                if _attempt < 2:
-                    print(
-                        f"\n⚠️ Langfuse GET attempt {_attempt + 1} failed ({_ce}), retrying in 3s…"
-                    )
-                    _time.sleep(3)
-                else:
+                if _attempt == 9:
                     raise
+            _time.sleep(1)
         assert lf_resp is not None
 
         if lf_resp.status_code == 404:
@@ -1600,7 +1597,7 @@ class TestDeferQueueEndpoints:
     def test_defer_inject_unknown_id_returns_404(self, session):
         r = session.post(
             f"{BASE_URL}/v1/defer/definitely-not-real-{_uid()}/inject",
-            json={"injection_data": {"foo": "bar"}},
+            json={"injection_data": {"foo": "bar"}, "confidence_score": 0.95},
             timeout=15,
         )
         if r.status_code == 503:
@@ -1616,6 +1613,7 @@ class TestDeferQueueEndpoints:
     def test_defer_escalate_unknown_id_returns_404(self, session):
         r = session.post(
             f"{BASE_URL}/v1/defer/definitely-not-real-{_uid()}/escalate",
+            json={"operator_urn": "urn:cage:operator:tester"},
             timeout=15,
         )
         if r.status_code == 503:

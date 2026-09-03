@@ -11,7 +11,7 @@
 
 This document is a public transparency statement about the security posture of the Cybernetic Governance Engine (CAGE). It describes the compliance controls being addressed, the frameworks they map to, and the general remediation timeline.
 
-CAGE is an open-source AI governance platform for financial services. It enforces governance policies over multi-agent LLM workflows via:
+CAGE is an open-source, domain-agnostic AI governance platform. Its kernel enforces governance policies over multi-agent LLM workflows independently of any domain; finance and healthcare ship as equal-standing optional example domain plugins, and jurisdictional compliance is a configurable posture. Enforcement is delivered via:
 
 - **Pre-Pipeline Boundary Gate**: FTRA (Forward-Looking Trajectory Reachability Analyzer) — operates on the whole execution graph before per-tool-call checks begin
 - **Tiers 0–6b** (per-tool-call checks in `_run_checks()`): NeMo Guardrails → STPA/UCA validation → Agentic confidence check → Control Barrier Function + OPA Rego (concurrent) → Fiscal Limit Pre-Reservation → Multi-model consensus → Causal gatekeeper → Adaptive FRIA gate

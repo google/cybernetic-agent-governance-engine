@@ -13,19 +13,40 @@
 
 ## 1. System Identity
 
-The **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
+The **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 is a production-grade, **domain-agnostic** multi-agent AI governance framework. Its kernel provides universal runtime safety mechanisms — Control Barrier Functions, consensus arbitration, causal reasoning, forward-reachability boundary analysis, pipeline orchestration, and tamper-evident evidence sealing — that operate on abstract action primitives and encode no domain knowledge.
+
+Two things sit outside that kernel and are supplied as **configuration rather than core requirements**:
+
+| Concern | Mechanism | Shipped instances | Extensible? |
+|---|---|---|---|
+| **Domain semantics** | Optional `cage.plugins` entry-point packages, gated by `CAGE_ACTIVE_PLUGINS` | Finance ([`src/cage_finance/`](../../src/cage_finance/)) and healthcare ([`src/cage_healthcare/`](../../src/cage_healthcare/)) — **equal-standing case studies**, neither privileged nor required | Yes — `src/cage_<domain>/` for manufacturing, logistics, energy, critical infrastructure, clinical operations, or any other vertical |
+| **Jurisdictional compliance** | Region profiles selected by `CAGE_DEPLOYMENT_REGION` over a universal ISO 42001 baseline | `US_FED`, `EU_ECB`, `APAC_MAS`, `LOCAL` | Yes — config-only, no Python changes |
+
+CAGE runs on any conformant Kubernetes 1.24+ cluster (GKE is the reference deployment target).
 
 ### 1.1 Core Problem Solved
 
-Financial services AI operates at the intersection of multiple, simultaneously binding regulatory regimes: FINRA, SEC Regulation S-P, the Gramm-Leach-Bliley Act (GLBA), ISO-20022 transaction standards, the NIST SP 800-53 Rev 5 HIGH security baseline, and the emerging AI-specific standard ISO/IEC 42001:2023. Most AI systems treat compliance as a post-hoc concern — a layer of documentation applied after a system is built.
+Any operator deploying high-reliability agentic AI faces the same structural gap: an LLM-based agent can trigger consequential, difficult-to-reverse writes to authoritative state stores — ledgers, clinical order systems, control-plane APIs, actuator endpoints — through opaque inference calls with no enforceable policy boundary, no tamper-evident audit trail, and no mechanism for human override once a workflow is in motion. Most AI systems treat compliance as a post-hoc concern: a layer of documentation applied after the system is built.
 
-CAGE inverts this model. Every governance control — from a sanctions screening rule to a NIST audit log requirement — is implemented as a first-class citizen inside the agent graph and inference pipeline. Compliance is not checked; it is enforced at the point of inference, producing both governed outputs and cryptographically attributable audit evidence in real time.
+CAGE inverts this model. Every governance control is a first-class citizen inside the agent graph and inference pipeline. Compliance is not checked; it is enforced at the point of inference, producing both governed outputs and cryptographically attributable audit evidence in real time.
+
+The intensity of the regulatory environment varies by domain and jurisdiction, but the *enforcement mechanism* does not. The mathematical invariant `h(x) ≥ 0` does not know what `x` means — only that the boundary must not be crossed. That indifference is what makes the substrate reusable across domains.
+
+### 1.2 Extensibility Model
+
+1. **Kernel owns mechanism.** Everything under [`src/gateway/`](../../src/gateway/): the atomic Redis Lua barrier hop, fence-epoch logic, KMS signature verification, quota reservation, the consensus algorithm, causal refutation, LIFO rollback ordering, evidence emission.
+2. **Plugins own nomenclature and parameters.** Which actions a domain claims, which scalar its barrier watches, which threshold key holds the floor, which critics vote, which tools exist.
+3. **Configuration owns jurisdiction.** Regional thresholds (`config/thresholds/`), control profiles (`config/compliance/`), policy bundles (`config/opa/`), and Lula assertions (`compliance/lula/`).
+
+[`tests/test_domain_independence.py`](../../tests/test_domain_independence.py) is the standing proof: it loads both example plugins together and asserts the kernel was not modified to accommodate the second one. Companion tests assert the healthcare package contains zero Lua scripts and zero KMS imports — it cannot fork the atomicity or signing paths. Authoring guide: [`DOMAIN_PLUGIN_ARCHITECTURE.md`](../architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) §10.
 
 ---
 
-## 2. Key Regulatory Constraints
+## 2. Case Study: Regulatory Constraints in the Finance Example Domain
 
-CAGE's inference pipeline enforces the following hard constraints derived from applicable regulations and codified in `docs/banking_regs.md`:
+> **Scope note:** this section is a **worked case study of the finance example domain under the `US_FED` posture**, not a statement of CAGE's core requirements. The constraints below arrive from the finance plugin's threshold profile and the selected region profile. A healthcare deployment substitutes an entirely different constraint set — dosing ceilings, contraindication screening, HIPAA retention, clinician attestation — through the identical enforcement points, with no kernel change. §2.1 shows the mapping.
+
+CAGE's inference pipeline enforces the following hard constraints when the finance example plugin is active under a US financial-services posture:
 
 | Constraint                                                           | Regulatory Source                | Enforcement Point                                        |
 | -------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------- |
@@ -37,6 +58,22 @@ CAGE's inference pipeline enforces the following hard constraints derived from a
 | All access to account data requires **a valid signed session token** | ISO-20022 (Section 2)            | Gateway authentication middleware                        |
 
 These constraints are not aspirational. They are encoded as machine-enforceable policy in OPA Rego, NeMo Guardrails Colang rails, and the CAGE gateway middleware stack.
+
+### 2.1 The Same Enforcement Points, a Different Domain
+
+The table below maps each enforcement point to its finance-domain and healthcare-domain instantiation. The **Enforcement mechanism** column is kernel-owned and identical in both columns to its left — this is the domain-agnosticism claim stated concretely.
+
+| Enforcement point | Finance example domain | Healthcare example domain | Enforcement mechanism (kernel, unchanged) |
+|---|---|---|---|
+| Barrier scalar | Cash balance floor (`CashBarrier`) | Serum concentration ceiling (`SerumConcentrationBarrier`) | Affine CBF evaluated in the atomic Redis Lua hop |
+| Governed action | `execute_trade` | `dose_order` | Capability dispatch + FTRA irreversibility classification |
+| Resource ceiling | Fiscal pre-reservation of budget tokens | Cumulative dose pre-reservation | `LeaseLedger` + `FiscalLimitStage` (generic budget tokens) |
+| Critic panel | Risk Manager, Compliance Officer | Clinical reviewer personas | Heterogeneous multi-model `ConsensusEngine` |
+| Policy bundle | `trade_governance.rego` | `dosing_governance.rego` | OPA client with fail-closed circuit breaker |
+| Escalation | HITL approval above a value threshold | HITL approval above a clinical-risk threshold | LangGraph interrupt + mandatory hashed rationale |
+| Evidence | Trade decision record | Order decision record | SHA-256 hash-chained accumulator + KMS routing seal |
+
+An adopter domain — manufacturing tolerance limits, logistics capacity, grid dispatch headroom — populates the same seven rows with its own nouns and inherits the right-hand column unchanged.
 
 ---
 
@@ -65,13 +102,17 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 > **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, 57/66-state formal reachability models, Distributed CBF formal verification ($N \in \{2, 3, 4\}$ agents), and external attestation layers (Provider 05 3-axiom, Provider 04, Provider 03).
 
 
-CAGE provides eight integrated capabilities that together constitute a full-stack governed AI financial advisor:
+CAGE provides eight integrated capabilities. **Capabilities 2 and 4–8 are domain-neutral substrate functions** available regardless of which plugin — if any — is loaded. Capability 1 is a reference application belonging to the finance example domain, and capability 3 is the domain-neutral escalation primitive it exercises.
 
-1. **Autonomous AI Financial Advising** — The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It comprises specialist sub-agents (market data analyst, risk analyst, execution analyst, explainer, evaluator, supervisor) orchestrated by a LangGraph `StateGraph` (`src/governed_financial_advisor/graph/graph.py`). Agent orchestration is governed end-to-end via the 8-tier governance pipeline (FTRA + 7 in-pipeline tiers); no agent action bypasses the policy engine. The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces that every graph instance contains a reachable HITL approval path before any LLM inference begins.
+1. **Reference Applications for the Example Domains** *(plugin layer — optional)* — Two case studies demonstrate the substrate under load, and they carry **equal weight**:
+   - **Finance case study.** The Governed Financial Advisor (`src/governed_financial_advisor/`) is a multi-agent reference application comprising specialist sub-agents (market data analyst, risk analyst, execution analyst, explainer, evaluator, supervisor) orchestrated by a LangGraph `StateGraph` (`src/governed_financial_advisor/graph/graph.py`). It pairs with the [`src/cage_finance/`](../../src/cage_finance/) plugin.
+   - **Healthcare case study.** The [`src/cage_healthcare/`](../../src/cage_healthcare/) plugin contributes a dose-barrier tier, a clinical consensus tier, `dose_order` tooling, and `dosing_governance.rego`. It exists specifically to falsify the "this is really a finance product" claim by construction — it names things and implements no mechanism.
+
+   Neither case study is required. `CAGE_ACTIVE_PLUGINS=""` runs the substrate with no domain loaded. In both cases, agent orchestration is governed end-to-end via the 8-tier pipeline (FTRA + 7 in-pipeline tiers); no agent action bypasses the policy engine. The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces that every graph instance contains a reachable HITL approval path before any LLM inference begins — a check that inspects graph topology, not domain semantics.
 
 2. **Real-Time Neuro-Symbolic Governance & 6 Decision Primitives** — An 8-tier policy enforcement architecture (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers 0–6, plus adaptive Tier 6b FRIA gate) applied at inference time. Evaluates actions against 6 first-class runtime primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`). Each tier (STPA/UCA validation, agentic confidence check, Control Barrier Function with synchronous `WAIT` replication barrier and fail-closed rollback, OPA Rego authorization, multi-agent consensus, causal gatekeeper, and external normative validation) intercepts every request before and after the LLM call. The SLM sidecar has been deprecated and replaced by a permanent `slm_available=false` sentinel. Governance is synchronous — not advisory.
 
-3. **Human-in-the-Loop Trade Approval** — High-risk trade recommendations are routed to a mandatory HITL approval node before execution. The approval workflow is logged with full provenance and linked to the originating inference trace.
+3. **Human-in-the-Loop Approval Escalation** *(domain-neutral)* — Any action a plugin classifies as high-risk is routed to a mandatory HITL approval node before execution — a trade recommendation in the finance case study, a dose order in the healthcare case study, or any adopter-defined consequential write. The gate itself is action-agnostic: it triggers on the risk verdict, not on the action's meaning. The approval workflow is logged with full provenance and linked to the originating inference trace.
 
 4. **Continuous Compliance Evidence Generation** — The Compliance Bridge service produces OSCAL component definitions, control implementation statements, and ISO 42001 evidence artifacts as a continuous byproduct of system operation. Evidence is archived to GCS for 7-year audit retention. OSCAL assessment state semantics follow NIST SP 800-53A §3.2 — four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, and `ERROR` (scanner failure — distinct from `NOT_APPLICABLE`).
 
@@ -81,7 +122,9 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 7. **Real-Time Audit Observability** — OpenTelemetry traces are emitted per inference request and forwarded to Langfuse via native OTLP (standalone OTel Collector deprecated 2026-05-31). An AgentSight eBPF DaemonSet provides kernel-level system call telemetry. The AgentSight UI (`src/agentsight-ui/`) is a React/TypeScript real-time governance dashboard (`src/agentsight-ui/src/KernelDashboard.tsx`) that surfaces governance verdicts, agent state transitions, and anomaly signals — including a live `max_slippage_pct` slider (0–10%, persisted via `POST /api/governance/thresholds`), per-item ΔP price-drift badges (green/yellow/red with pulse animation), and HITL TTL countdown timers for pending approvals.
 
-8. **Multi-Jurisdiction Compliance Engine** — Dynamic loading of regional compliance profiles (`config/compliance/`), governance thresholds (`config/thresholds/`), and OSCAL framework routing tables (`config/oscal/framework_mappings/`) via the `CAGE_DEPLOYMENT_REGION` environment variable. Supports three regulatory jurisdictions — `US_FED` (NIST SP 800-53, SR 26-2, FINRA/SEC), `EU_ECB` (EU AI Act, DORA, GDPR Art. 22, EBA/GL/2023/02, with mandatory Fundamental Rights Impact Assessment and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles, MAS TRM Guidelines, MAS Notice 655). The three-region compliance matrix includes separate Lula validation manifests and a pytest parametrize matrix covering all three jurisdictions. The Phase A ingress adapters (`src/gateway/governance/ingress/`) normalize AAIF, ACS, OSCAL, and Lula schemas into the `ControlRegistry` format; the Phase B AGW adapter (`agw_adapter.py` + `agent_gateway_adapter.py`) exposes an Envoy ext_authz gRPC boundary. The CAGE-003 Agent Registry (`agent_registry_adapter.py`) maintains a SPIFFE trust-domain catalog of all authorized agents. Adding a new jurisdiction is a config-only operation requiring no Python code changes.
+8. **Configurable Multi-Jurisdiction Compliance Engine** *(configuration layer)* — Dynamic loading of regional compliance profiles (`config/compliance/`), governance thresholds (`config/thresholds/`), and OSCAL framework routing tables (`config/oscal/framework_mappings/`) via the `CAGE_DEPLOYMENT_REGION` environment variable. **ISO 42001 is the universal baseline active in every posture; the jurisdictional frameworks below are additive, configurable extensions that gate regional deployment posture only.** Four postures ship: `LOCAL` (universal baseline only — the development default), `US_FED` (NIST SP 800-53, NIST AI 600-1, AI RMF, SR 26-2, FINRA/SEC), `EU_ECB` (EU AI Act, DORA, GDPR Art. 22, EBA/GL/2023/02, with mandatory Fundamental Rights Impact Assessment and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles, MAS TRM Guidelines, MAS Notice 655). The compliance matrix includes separate Lula validation manifests and a pytest parametrize matrix covering all jurisdictions. The Phase A ingress adapters (`src/gateway/governance/ingress/`) normalize AAIF, ACS, OSCAL, and Lula schemas into the `ControlRegistry` format; the Phase B AGW adapter (`agw_adapter.py` + `agent_gateway_adapter.py`) exposes an Envoy ext_authz gRPC boundary. The CAGE-003 Agent Registry (`agent_registry_adapter.py`) maintains a SPIFFE trust-domain catalog of all authorized agents.
+
+   **Adding a jurisdiction is a config-only operation requiring no Python code changes:** create `config/thresholds/<REGION>_BASELINE.json` and `config/compliance/<REGION>_BASELINE.json` against the existing schema, register region Rego under `config/opa/` and Lula assertions under `compliance/lula/`, ship a `<REGION>_OVERLAY.json` inside each active domain plugin, then set `CAGE_DEPLOYMENT_REGION=<REGION>`. Domain plugins and jurisdictional postures compose independently — any plugin runs under any posture.
 
 ---
 

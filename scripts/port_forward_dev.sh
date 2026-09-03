@@ -111,3 +111,8 @@ echo "[port-forward] Done. Auto-reconnect loops active."
 echo "  Logs  : $LOG_DIR/"
 echo "  PIDs  : ${PF_PIDS_FILE}"
 echo "  Stop  : xargs kill < ${PF_PIDS_FILE} 2>/dev/null; pkill -f 'kubectl port-forward' || true"
+
+if [[ "${1:-}" == "--daemon" || "${FOREGROUND:-false}" == "true" ]]; then
+  echo "[port-forward] Running in foreground/daemon mode. Keeping tunnels active..."
+  while true; do sleep 3600; done
+fi

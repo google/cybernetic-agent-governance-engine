@@ -53,7 +53,7 @@ def test_redis_noeviction_invariant():
     (Updated to reflect the 256MB LRU policy requested by user).
     """
     client = _get_redis_client(db=1)
-    env = os.environ.get("ENVIRONMENT", "dev").lower()
+    env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT") or "dev").lower()
     expected_policy = "noeviction" if env in ("prod", "production") else "allkeys-lru"
 
     max_memory_policy = client.config_get("maxmemory-policy")["maxmemory-policy"]
@@ -72,7 +72,7 @@ def test_redis_noeviction_invariant():
 def test_redis_maxmemory_configured():
     """Redis MUST have a maxmemory ceiling to prevent unbounded growth."""
     client = _get_redis_client(db=1)
-    env = os.environ.get("ENVIRONMENT", "dev").lower()
+    env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT") or "dev").lower()
     expected_mb = (
         1024 * 1024 * 1024 if env in ("prod", "production") else 256 * 1024 * 1024
     )

@@ -11,6 +11,8 @@
 
 ## Introduction
 
+> **Framing note:** CAGE is a **domain-agnostic** governance substrate, not a finance-specific product. Domain semantics are supplied by optional `cage.plugins` packages — finance ([`src/cage_finance/`](../../src/cage_finance/)) and healthcare ([`src/cage_healthcare/`](../../src/cage_healthcare/)) ship as **equal-standing example domains**, both optional, and adopters author their own for manufacturing, logistics, energy, or any other vertical. Jurisdictional compliance (`US_FED`, `EU_ECB`, `APAC_MAS`, `LOCAL`, or custom) is a **configurable posture** layered over the universal ISO 42001 baseline. Where the sentence below and the documents in this series use finance-domain nouns — "financial advising", `execute_trade`, `governed-financial-advisor` — they illustrate the substrate with one case study rather than describing a core requirement.
+
 The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI governance framework designed for regulated financial advising, deployed on Google Kubernetes Engine (GKE). CAGE v3.0.0 implements **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks — via Cloud KMS HSM-backed signing, strictly human-gated NeMo refinement, heterogeneous multi-model consensus, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`), synchronous replica `WAIT` verification with fail-closed automatic rollback, canonical 1.1 evidence stream hashing with mandatory blocking durability (`validate_evidence_stream_preconditions()`), and externally reconciled Control Barrier Function balances (POAM-023 / POAM-2026-038 closed; GCS WORM ledger + Cloud KMS signing with 300s TTL in Redis). This technical report series documents the full system across **ten** specialized documents, covering its architecture, technology stack, agent pipeline design, neuro-symbolic governance engine, regulatory compliance posture, security controls, deployment infrastructure, an operational runbook capturing verified recovery procedures and integration test results, and a formal verification proof. Together, the documents provide a complete engineering and compliance record for security assessors, architects, compliance officers, operations teams, and AI/ML engineers evaluating or operating the system.
 
 ---
@@ -39,10 +41,14 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | CAGE Version                   | 3.0.0                                     |
 | NIST RMF Overall Readiness     | 24%                                       |
 | System Risk Level              | HIGH (no ATO)                             |
-| Compliance Frameworks          | 19 (NIST, ISO, SEC, FINRA, GLBA, SR 26-2, EU AI Act, DORA, GDPR, EBA, MAS FEAT, MAS TRM, CSA AARM) |
-| Supported Jurisdictions        | 3 (`US_FED`, `EU_ECB`, `APAC_MAS`)        |
-| Regional Compliance Profiles   | 3 (config/compliance/)                    |
-| Regional Threshold Profiles    | 3 (config/thresholds/)                    |
+| Domain Coupling                | None — kernel is domain-agnostic          |
+| Example Domain Plugins Shipped | 2, equal standing (`cage_finance`, `cage_healthcare`); both optional |
+| Adding a Domain                | New `src/cage_<domain>/` plugin package; no kernel change |
+| Compliance Frameworks          | 19 (NIST, ISO, SEC, FINRA, GLBA, SR 26-2, EU AI Act, DORA, GDPR, EBA, MAS FEAT, MAS TRM, CSA AARM) — universal baseline plus posture-selected extensions |
+| Jurisdictional Postures Shipped| 4 (`US_FED`, `EU_ECB`, `APAC_MAS`, `LOCAL`) — configurable, extensible |
+| Adding a Jurisdiction          | Config-only (`config/thresholds/`, `config/compliance/`); no Python change |
+| Regional Compliance Profiles   | 3 jurisdictional (config/compliance/) + universal baseline |
+| Regional Threshold Profiles    | 3 jurisdictional (config/thresholds/) + kernel defaults |
 | OSCAL Framework Routing Tables | 4 (NIST, ISO 42001, EU AI Act, MAS FEAT)  |
 | Agent Nodes                    | 10 (LangGraph StateGraph)                 |
 | AgentState Fields              | 25 (including `hitl_expires_at`, `guardrail_blocked`, `guardrail_reason`, `output_rail_applied`) |
