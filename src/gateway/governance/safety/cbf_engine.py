@@ -338,7 +338,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         self.threshold_key: str
         self.gamma: float
         self.redis_key: str
-        
+
         if invariant is not None:
             self.threshold_key = invariant.threshold_key
             self.gamma = invariant.gamma

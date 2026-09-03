@@ -72,7 +72,6 @@ def _make_governor(**overrides):
         "opa_client": MagicMock(),
         "safety_filter": MagicMock(),
         "consensus_engine": MagicMock(),
-        "enable_legacy_trade_dispatch": False,
     }
     kwargs.update(overrides)
     return SymbolicGovernor(**kwargs)

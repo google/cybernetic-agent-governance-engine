@@ -35,7 +35,7 @@ def test_regional_overlay_merge_hash(region: str, expected_hash: str):
     Prove that the JCS canonical hash of the dynamically merged ControlRegistry
     (core baseline + finance overlay) exactly matches the expected canonical hash
     after the domain pipeline refactor (PR #127). This serves as the regional analogue to Gate 1.
-    
+
     Note: Hash values updated after PR #127 refactoring to reflect the new merged
     configuration with domain-tier dispatch architecture.
     """
