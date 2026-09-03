@@ -313,7 +313,7 @@ component-definition:
       type: software
       description: >
         Open Policy Agent evaluating Rego policies (deployment/system_authz.rego,
-        src/governed_financial_advisor/governance/policy/finance_policy.rego) on
+        src/cage_finance/opa/trade_governance.rego) on
         every trade execution and governance request. Enforces RBAC role limits,
         fiscal thresholds, and request authentication. Decision logs are emitted
         to stdout and captured by Cloud Logging.

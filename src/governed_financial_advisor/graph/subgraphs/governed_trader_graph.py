@@ -601,7 +601,9 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         # Cannot be bypassed or intercepted by any LLM agent.
         span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
         try:
-            await symbolic_governor.revalidate_post_hitl(fresh_params, trace_id=None)
+            await symbolic_governor.revalidate_post_hitl(
+                action="execute_trade", params=fresh_params, trace_id=None
+            )
 
             logger.info(
                 "[RevalidateNode] ✅ Post-HITL re-validation APPROVED — %s within safe bounds.",

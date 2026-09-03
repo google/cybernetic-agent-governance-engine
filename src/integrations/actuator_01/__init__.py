@@ -23,9 +23,9 @@ authorization with dual-control quorum signatures.
 """
 
 __all__ = [
-    "sign_for_quorum",
     "ActuatorHttpClient",
+    "sign_for_quorum",
 ]
 
-from .signatures import sign_for_quorum
 from .client import ActuatorHttpClient
+from .signatures import sign_for_quorum

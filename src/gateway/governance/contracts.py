@@ -62,11 +62,11 @@ class RefusalReceipt:
     Standardizes denial evidence into a cryptographic proof recording the
     exact violated invariant, authority tier, and standing context.
 
-    Schema v2 (5-part proof chain):
-    In addition to the original fields, captures Terry Snyder's complete
-    causal chain: attempted movement, governing standing, the condition
-    that failed, what consequence was protected from forming, and proof
-    of non-formation.
+    Schema evolution:
+    - v1: Original fields (thread_id, action, violated_tier, violated_rule, proof_hash)
+    - v2: Added 5-part proof chain (Terry Snyder seam: attempted_params,
+          standing_snapshot, control_id, protected_consequence, non_formation_proof)
+    - v3: Added tier_failures tuple (multi-tier dispatch architecture)
     """
 
     thread_id: str
@@ -77,7 +77,8 @@ class RefusalReceipt:
     timestamp: float = field(default_factory=time.time)
     proof_hash: str = field(default="")
     # ── 5-part proof chain fields (Terry Snyder, schema v2) ──
-    schema_version: str = field(default="v1")
+    # ── tier_failures (multi-tier dispatch, schema v3) ──
+    schema_version: str = field(default="v3")
     attempted_params: dict[str, Any] = field(default_factory=dict)
     standing_snapshot: dict[str, Any] = field(default_factory=dict)
     control_id: str = field(default="")
@@ -339,31 +340,56 @@ def validate_plugin(plugin: object, entry_point_name: str) -> CagePlugin:
 
 
 class InvariantModel(Protocol):
-    """Abstract safety invariant: h(x) >= 0 must hold.
+    """Declarative affine barrier: h(x) = state[state_key] - thresholds[threshold_key].
 
     Domain plugins declare their safety barriers by implementing this protocol.
-    The kernel evaluates ``barrier_value(state)`` and ensures the value remains
-    non-negative, enforcing the CBF invariance theorem.
+    The barrier is DECLARATIVE, not callable, by necessity: a Python callback
+    cannot execute inside the atomic Redis Lua hop, and moving barrier evaluation
+    outside that hop reopens the TOCTOU window that proof/DistributedCBF.tla
+    exists to close.
 
-    ``state_keys()`` declares which state variables the barrier reads, enabling
-    the kernel to extract the minimal state slice from Redis or the action
-    parameters without exposing the full state space to the domain.
+    Non-affine barriers (h(x) = f(x) for non-affine f) are a KERNEL change
+    requiring a DistributedCBF.tla update and a new proof obligation — never
+    a plugin extension. A plugin that needs h(x) = f(x) for non-affine f must
+    open a kernel RFC.
 
-    ``gamma`` is the CBF class-K function gain (0 < gamma <= 1) controlling
-    how aggressively the barrier enforces forward invariance.
+    The kernel compiles (invariant_id, state_key, threshold_key, gamma) into
+    the Lua script's KEYS and ARGV arrays at invocation time.
     """
 
-    def state_keys(self) -> list[str]:
-        """Return the Redis/state keys this barrier reads."""
+    @property
+    def invariant_id(self) -> str:
+        """Stable identifier for this barrier (e.g. 'finance.cash_balance').
+
+        Must be unique across all registered plugins. Used for telemetry,
+        audit logs, and violation attribution.
+        """
         ...
 
-    def barrier_value(self, state: dict[str, float]) -> float:
-        """Compute h(x) for the current state.  h(x) >= 0 is safe."""
+    @property
+    def state_key(self) -> str:
+        """Redis key holding the scalar state variable x.
+
+        Must be namespaced (contain ':') to avoid key collisions across domains.
+        Example: 'safety:current_cash', 'safety:serum_concentration'
+        """
+        ...
+
+    @property
+    def threshold_key(self) -> str:
+        """THRESHOLDS lookup path for the floor value.
+
+        Resolved from config/thresholds/{REGION}_BASELINE.json at runtime.
+        Example: 'cbf.min_cash_balance', 'healthcare.min_therapeutic_concentration'
+        """
         ...
 
     @property
     def gamma(self) -> float:
-        """CBF class-K function gain (0 < gamma <= 1)."""
+        """CBF class-K function gain (0 < gamma <= 1).
+
+        Controls how aggressively the barrier enforces forward invariance.
+        """
         ...
 
 
@@ -466,26 +492,6 @@ class ConsensusProvider(Protocol):
         Returns a dict with "status" (APPROVE, REJECT, ESCALATE) and "reason".
         """
         ...
-
-
-class _LegacyConsensusAdapter:
-    """Wraps old-style (action, amount, symbol) calls to the new protocol.
-
-    Temporary shim retained through PR 3; deleted in PR 4 when the legacy
-    dispatch path is removed.
-    """
-
-    def __init__(self, inner: ConsensusProvider) -> None:
-        self.inner = inner
-
-    async def check_consensus(
-        self, action: str, amount: float, symbol: str
-    ) -> dict[str, Any]:
-        return await self.inner.check_consensus(
-            action,
-            context={"amount": amount, "symbol": symbol},
-            magnitude=amount,
-        )
 
 
 class PolicyClient(Protocol):
@@ -643,13 +649,7 @@ FiscalGuard = ResourceGuard
 # amount_usd -> magnitude) is source-compatible because Python protocols use
 # structural, not nominal, subtyping.
 
-# Import ReservationToken for use in type annotations above.
-# The import is placed here (after the class body) to avoid a circular import
-# at module load time while still making the type available for runtime
-# isinstance checks and static analysis.
-try:
-    from src.gateway.governance.fiscal_limit_guard import (
-        ReservationToken,
-    )
-except ImportError:
-    pass  # ReservationToken unavailable in minimal test environments
+# Import ReservationToken from kernel types module (promoted from Layer 2 in PR B).
+# Fixes Finding A: the old path src.gateway.governance.fiscal_limit_guard never
+# existed, causing get_type_hints(ResourceGuard) to raise NameError.
+from src.gateway.governance.types import ReservationToken

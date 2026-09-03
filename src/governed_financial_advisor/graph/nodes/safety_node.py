@@ -62,7 +62,7 @@ try:
     )
 except (ImportError, AttributeError):
 
-    def get_current_price(symbol: str) -> float | None:  # type: ignore[misc]
+    def get_current_price(symbol: str) -> float | None:
         """Stub: market price lookup not yet implemented — returns None."""
         return None
 

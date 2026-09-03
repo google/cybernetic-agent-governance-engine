@@ -91,5 +91,12 @@
       "status": "ACKNOWLEDGED",
       "enforcement_tier": 1
     }
+  },
+  "_hitl": {
+    "_comment": "Human-in-the-loop escalation parameters (regulatory, not domain-specific - PR B T-B5)",
+    "citation": "MAS FEAT §3.2 (human oversight of AI decisions — 1 hour)",
+    "sla_hours": 1.0,
+    "pii_retention_authority": "MAS Notice 655 §4.3",
+    "injection_citation": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)"
   }
 }

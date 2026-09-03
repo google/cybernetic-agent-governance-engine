@@ -34,7 +34,7 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_with_context_dict(self):
         """check_consensus accepts the new context-based signature."""
-        from src.cage_finance.consensus.consensus import ConsensusGate
+        from src.gateway.governance.consensus.engine import ConsensusGate
 
         gate = ConsensusGate.__new__(ConsensusGate)
         gate.threshold = 1000.0
@@ -53,7 +53,7 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_magnitude_overrides_context_amount(self):
         """When magnitude is provided, it takes precedence for threshold check."""
-        from src.cage_finance.consensus.consensus import ConsensusGate
+        from src.gateway.governance.consensus.engine import ConsensusGate
 
         gate = ConsensusGate.__new__(ConsensusGate)
         gate.threshold = 1000.0
@@ -71,7 +71,7 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_falls_back_to_context_amount(self):
         """When magnitude is None, falls back to context['amount']."""
-        from src.cage_finance.consensus.consensus import ConsensusGate
+        from src.gateway.governance.consensus.engine import ConsensusGate
 
         gate = ConsensusGate.__new__(ConsensusGate)
         gate.threshold = 1000.0

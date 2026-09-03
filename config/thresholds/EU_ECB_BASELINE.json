@@ -93,5 +93,12 @@
       "status": "ACKNOWLEDGED",
       "enforcement_tier": 1
     }
+  },
+  "_hitl": {
+    "_comment": "Human-in-the-loop escalation parameters (regulatory, not domain-specific - PR B T-B5)",
+    "citation": "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
+    "sla_hours": 2.0,
+    "pii_retention_authority": "GDPR Art. 5(1)(e)",
+    "injection_citation": "EU AI Act Art. 9 (risk management system — robustness)"
   }
 }

@@ -70,7 +70,6 @@ _POLICY_PATH = (
     / "src"
     / "cage_finance"
     / "opa"
-
     / "trade_governance.rego"
 )
 

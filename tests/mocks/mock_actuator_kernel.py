@@ -85,7 +85,7 @@ class MockActuatorKernel:
         # Extract headers
         headers = dict(request.headers)
         fixture = headers.get("x-test-fixture", "success_direct")
-        
+
         # Read body
         body_bytes = await request.body()
 
@@ -135,7 +135,7 @@ class MockActuatorKernel:
             )
 
         # Verify body digest (independent recomputation)
-        expected_digest = hashlib.sha256(body_bytes).hexdigest()
+        _expected_digest = hashlib.sha256(body_bytes).hexdigest()
         if fixture == "digest_mismatch":
             # Simulate digest mismatch → RST
             return Response(status_code=421, content=b"")
@@ -143,12 +143,16 @@ class MockActuatorKernel:
         # Verify assertion (decode and check length)
         try:
             import base64
+
             assertion_bytes = base64.b64decode(assertion_b64)
             if len(assertion_bytes) != 120:
                 if fixture == "assertion_invalid":
                     return JSONResponse(
                         status_code=421,
-                        content={"error": "ASSERTION_INVALID", "message": "Length != 120"},
+                        content={
+                            "error": "ASSERTION_INVALID",
+                            "message": "Length != 120",
+                        },
                     )
         except Exception:
             return JSONResponse(
@@ -163,7 +167,10 @@ class MockActuatorKernel:
             if abs(now - envelope_timestamp) > 30:
                 return JSONResponse(
                     status_code=403,
-                    content={"error": "TTL_EXPIRED", "message": "Timestamp outside 30s window"},
+                    content={
+                        "error": "TTL_EXPIRED",
+                        "message": "Timestamp outside 30s window",
+                    },
                 )
         except ValueError:
             return JSONResponse(
@@ -175,7 +182,10 @@ class MockActuatorKernel:
         if fixture == "load_shed":
             return JSONResponse(
                 status_code=403,
-                content={"error": "LOAD_SHED", "message": "Load shed - retry with backoff"},
+                content={
+                    "error": "LOAD_SHED",
+                    "message": "Load shed - retry with backoff",
+                },
             )
         elif fixture == "replay_detected":
             return JSONResponse(
@@ -185,7 +195,10 @@ class MockActuatorKernel:
         elif fixture == "rate_limited":
             return JSONResponse(
                 status_code=429,
-                content={"error": "RATE_LIMITED", "message": "Tenant rate limit exceeded"},
+                content={
+                    "error": "RATE_LIMITED",
+                    "message": "Tenant rate limit exceeded",
+                },
                 headers={"Retry-After": "5"},
             )
         elif fixture == "fsync_failure":

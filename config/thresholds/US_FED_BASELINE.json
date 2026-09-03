@@ -56,5 +56,12 @@
       "enforcement_tier": 2,
       "worm_bucket_env_var": "OSCAL_S3_BUCKET_US_FED"
     }
+  },
+  "_hitl": {
+    "_comment": "Human-in-the-loop escalation parameters (regulatory, not domain-specific - PR B T-B5)",
+    "citation": "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
+    "sla_hours": 4.0,
+    "pii_retention_authority": "FISMA AU-11",
+    "injection_citation": "AI 600-1 §2.3 (prompt injection — US Federal posture)"
   }
 }

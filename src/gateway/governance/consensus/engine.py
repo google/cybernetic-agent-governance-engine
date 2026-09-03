@@ -56,6 +56,9 @@ from src.gateway.infrastructure.telemetry_client import genai_span
 logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")
 
+# Critics configuration (loaded from YAML if available, else fallback to hardcoded prompts)
+_CRITICS_CONFIG: dict[str, Any] = {}
+
 # ---------------------------------------------------------------------------
 # Background audit queue (Phase 4.4)
 # ---------------------------------------------------------------------------
@@ -241,22 +244,48 @@ class ConsensusGate:
             magnitude: Optional magnitude of the action for threshold comparison.
         """
         try:
-            # Extract financial context for backward-compatible prompt rendering.
-            # In PR 3, this prompt template moves to cage_finance/config/critics.yaml.
+            # Extract financial context for prompt rendering.
             amount = context.get("amount", magnitude or 0.0)
             symbol = context.get("symbol", "UNKNOWN")
-            prompt = (
-                f"You are a {role} for a financial institution.\n"
-                f"Review the following trade proposal:\n"
-                f"ACTION: {action}\nAMOUNT: {amount}\nSYMBOL: {symbol}\n\n"
-                "Your job is to identify high-risk or irregular activity.\n"
-                "If the trade looks reasonable for a standard portfolio, say 'APPROVE'.\n"
-                "If it looks suspicious, reckless, or undefined, say 'REJECT'.\n"
-                "If the trade is legitimate but requires human verification "
-                "(e.g., large withdrawals, complex life events), say 'ESCALATE'.\n\n"
-                "Format: [DECISION] - [Reason]\n"
-                "Example: APPROVE - Standard equity purchase."
-            )
+
+            # Load prompt template from critics.yaml (PR C §7.3 T-C2)
+            critic_config = None
+            for critic in _CRITICS_CONFIG.get("critics", []):
+                if critic.get("role") == role:
+                    critic_config = critic
+                    break
+
+            if critic_config:
+                # Use YAML-loaded template
+                prompt_template = critic_config.get("prompt_template", "")
+                prompt = prompt_template.format(
+                    role=role,
+                    action=action,
+                    amount=amount,
+                    symbol=symbol,
+                )
+                system_instruction = critic_config.get("system_instruction", "").format(
+                    role=role
+                )
+            else:
+                # Fallback to hardcoded prompt if YAML loading failed
+                logger.warning(
+                    "No critics.yaml config found for role '%s' — using hardcoded prompt",
+                    role,
+                )
+                prompt = (
+                    f"You are a {role} for a financial institution.\n"
+                    f"Review the following trade proposal:\n"
+                    f"ACTION: {action}\nAMOUNT: {amount}\nSYMBOL: {symbol}\n\n"
+                    "Your job is to identify high-risk or irregular activity.\n"
+                    "If the trade looks reasonable for a standard portfolio, say 'APPROVE'.\n"
+                    "If it looks suspicious, reckless, or undefined, say 'REJECT'.\n"
+                    "If the trade is legitimate but requires human verification "
+                    "(e.g., large withdrawals, complex life events), say 'ESCALATE'.\n\n"
+                    "Format: [DECISION] - [Reason]\n"
+                    "Example: APPROVE - Standard equity purchase."
+                )
+                system_instruction = f"You are a strict {role}."
 
             dedicated_client = self._registry.get_client(role)
             model = self._registry.get_model(role)
@@ -284,7 +313,7 @@ class ConsensusGate:
                             messages=[
                                 {
                                     "role": "system",
-                                    "content": f"You are a strict {role}.",
+                                    "content": system_instruction,
                                 },
                                 {"role": "user", "content": prompt},
                             ],
@@ -309,7 +338,7 @@ class ConsensusGate:
                     content = await asyncio.wait_for(
                         self._default_client.generate(
                             prompt=prompt,
-                            system_instruction=f"You are a strict {role}.",
+                            system_instruction=system_instruction,
                             mode="verifier",
                             temperature=0.0,
                         ),

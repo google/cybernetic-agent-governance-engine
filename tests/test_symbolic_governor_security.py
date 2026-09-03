@@ -392,7 +392,7 @@ async def test_fiscal_limit_guard_reserve_is_awaited():
     """SymbolicGovernor awaits fiscal_limit_guard.reserve() — AsyncMock is actually awaited, not called synchronously."""
     import time
 
-    from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
+    from src.gateway.governance.safety.resource_guard import ReservationToken
 
     # Create a mock FiscalLimitGuard with AsyncMock for reserve()
     mock_guard = MagicMock()
@@ -437,7 +437,7 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
     """SymbolicGovernor calls reserve() with agent_id and amount_usd from params."""
     import time
 
-    from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
+    from src.gateway.governance.safety.resource_guard import ReservationToken
 
     mock_guard = MagicMock()
     mock_token = ReservationToken(
@@ -487,7 +487,7 @@ async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
     """SymbolicGovernor awaits fiscal_limit_guard.release() when the fiscal reservation is rejected."""
     import time
 
-    from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
+    from src.gateway.governance.safety.resource_guard import ReservationToken
     from src.gateway.governance.symbolic_governor import GovernanceError
 
     mock_guard = MagicMock()

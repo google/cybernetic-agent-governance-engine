@@ -154,6 +154,21 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         plugin.register(governor=symbolic_governor, tool_server=mcp)
     _assert_required_plugins(loaded_plugins)
 
+    # 7. Startup readiness assertion (PR B, T-B3): fail-closed component check
+    # If plugins were expected but no domain components were installed, the
+    # kernel would serve requests with null objects that deny everything.
+    # That is fail-closed but may indicate a plugin loading failure.
+    # Crash loudly rather than silently denying all traffic.
+    from src.gateway.governance.singletons import _has_null_components
+
+    if os.getenv("CAGE_ACTIVE_PLUGINS") != "" and _has_null_components():
+        raise RuntimeError(
+            "startup ordering error: plugins were expected but no domain "
+            "components were installed — refusing to serve traffic"
+        )
+
+    logger.info("✅ Domain components verified (startup readiness check passed)")
+
     yield
 
     # Shutdown

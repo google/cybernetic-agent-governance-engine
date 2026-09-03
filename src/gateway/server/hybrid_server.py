@@ -105,13 +105,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     logger.info("🔥 Pre-warming OPA policy evaluation...")
     synthetic_params = {
-        "action": "execute_trade",
-        "symbol": "AAPL",
+        "action": "system_warmup_test",
+        "resource": "test_resource",
         "amount": 100.0,
-        "currency": "USD",
-        "trader_role": "junior",
         "user_id": "system_warmup",
-        "risk_profile": "moderate",
         "dry_run": True,
     }
     try:
@@ -245,11 +242,27 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as reg_err:
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
-    # ── Start consensus background audit worker (HIGH-06) ──────────────────
-    from src.cage_finance.consensus.consensus import _background_audit_worker
+    # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
+    from src.gateway.governance.background_tasks import (
+        start_all as start_background_tasks,
+    )
 
-    asyncio.create_task(_background_audit_worker())
-    logger.info("✅ Consensus background audit worker started")
+    bg_tasks = start_background_tasks()
+    app.state.background_tasks = bg_tasks
+    logger.info("✅ Plugin background tasks started")
+
+    # ── Startup readiness assertion (PR B, T-B3) ──────────────────────────
+    # Verify domain components were installed if plugins were expected.
+    # Crash loudly rather than serve with null objects that deny everything.
+    from src.gateway.governance.singletons import _has_null_components
+
+    if os.getenv("CAGE_ACTIVE_PLUGINS") != "" and _has_null_components():
+        raise RuntimeError(
+            "startup ordering error: plugins were expected but no domain "
+            "components were installed — refusing to serve traffic"
+        )
+
+    logger.info("✅ Domain components verified (startup readiness check passed)")
 
     yield
 

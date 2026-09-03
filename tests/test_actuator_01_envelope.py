@@ -81,7 +81,8 @@ class TestValidateClearance:
         """Envelope construction refuses non-ALLOW decisions."""
         valid_clearance.decision = "DENY"
         with pytest.raises(
-            InvalidClearanceError, match="decision must be ALLOW.*evidence that ALLOW was reached"
+            InvalidClearanceError,
+            match="decision must be ALLOW.*evidence that ALLOW was reached",
         ):
             validate_clearance(valid_clearance)
 
@@ -118,19 +119,25 @@ class TestValidateClearance:
     def test_rejects_invalid_nonce_length(self, valid_clearance):
         """Nonce must be exactly 32 hex chars."""
         valid_clearance.nonce = "0102030405"  # Too short
-        with pytest.raises(InvalidClearanceError, match="must be 32 lowercase hex chars"):
+        with pytest.raises(
+            InvalidClearanceError, match="must be 32 lowercase hex chars"
+        ):
             validate_clearance(valid_clearance)
 
     def test_rejects_nonce_with_uppercase(self, valid_clearance):
         """Nonce must be lowercase hex."""
         valid_clearance.nonce = "0102030405060708090A0B0C0D0E0F10"  # Uppercase
-        with pytest.raises(InvalidClearanceError, match="must be 32 lowercase hex chars"):
+        with pytest.raises(
+            InvalidClearanceError, match="must be 32 lowercase hex chars"
+        ):
             validate_clearance(valid_clearance)
 
     def test_rejects_nonce_with_non_hex(self, valid_clearance):
         """Nonce must contain only hex characters."""
         valid_clearance.nonce = "010203040506070809GGGGGGGGGGGGGG"  # Invalid chars
-        with pytest.raises(InvalidClearanceError, match="must be 32 lowercase hex chars"):
+        with pytest.raises(
+            InvalidClearanceError, match="must be 32 lowercase hex chars"
+        ):
             validate_clearance(valid_clearance)
 
     def test_accepts_valid_clearance(self, valid_clearance):
@@ -389,8 +396,18 @@ class TestVectorParity:
             governance_decision_digest="a" * 64,
             opa_input_digest="b" * 64,
             approvals=[
-                {"approver_urn": "urn:actuator01:op:op-a", "approved_at_utc": "2026-08-01T12:00:00Z", "auth_method": "OIDC", "auth_principal_hash": "c" * 64},
-                {"approver_urn": "urn:actuator01:op:op-b", "approved_at_utc": "2026-08-01T12:00:05Z", "auth_method": "OIDC", "auth_principal_hash": "d" * 64},
+                {
+                    "approver_urn": "urn:actuator01:op:op-a",
+                    "approved_at_utc": "2026-08-01T12:00:00Z",
+                    "auth_method": "OIDC",
+                    "auth_principal_hash": "c" * 64,
+                },
+                {
+                    "approver_urn": "urn:actuator01:op:op-b",
+                    "approved_at_utc": "2026-08-01T12:00:05Z",
+                    "auth_method": "OIDC",
+                    "auth_principal_hash": "d" * 64,
+                },
             ],
             required_quorum=2,
             nonce="0102030405060708090a0b0c0d0e0f10",
@@ -429,8 +446,18 @@ class TestVectorParity:
             semantic_distance=100.50,  # Should canonicalize to 100.5
             confidence_score=5.0,  # Should canonicalize to 5
             approvals=[
-                {"approver_urn": "urn:actuator01:op:op-a", "approved_at_utc": "2026-08-01T12:00:00Z", "auth_method": "OIDC", "auth_principal_hash": "g" * 64},
-                {"approver_urn": "urn:actuator01:op:op-b", "approved_at_utc": "2026-08-01T12:00:05Z", "auth_method": "OIDC", "auth_principal_hash": "h" * 64},
+                {
+                    "approver_urn": "urn:actuator01:op:op-a",
+                    "approved_at_utc": "2026-08-01T12:00:00Z",
+                    "auth_method": "OIDC",
+                    "auth_principal_hash": "g" * 64,
+                },
+                {
+                    "approver_urn": "urn:actuator01:op:op-b",
+                    "approved_at_utc": "2026-08-01T12:00:05Z",
+                    "auth_method": "OIDC",
+                    "auth_principal_hash": "h" * 64,
+                },
             ],
             required_quorum=2,
             nonce=generate_nonce(),
@@ -444,7 +471,7 @@ class TestVectorParity:
         # 5.0 should appear as 5, not 5.0
         assert '"confidence_score":5' in decoded or '"confidence_score": 5' in decoded
         # 100.50 should appear as 100.5
-        assert '100.5' in decoded
+        assert "100.5" in decoded
 
 
 class TestInvariantEnforcement:

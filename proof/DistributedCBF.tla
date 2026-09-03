@@ -21,6 +21,14 @@
    It formalizes the safety properties of the CAGE CBF fence epoch mechanism
    under N concurrent agents performing simultaneous balance operations.
 
+   PR C (Stage 2): This model abstracts over the specific barrier formula.
+   The barrier evaluation h(x) = state[state_key] - thresholds[threshold_key]
+   is implemented in the atomic Lua script (src/gateway/governance/safety/cbf_engine.py:253).
+   This TLA+ spec models the *distributed TOCTOU-prevention mechanism* (fence epochs)
+   that ensures atomicity across concurrent agents, independent of the barrier formula.
+   The model applies to any affine barrier h(x) = x - threshold, parameterized by
+   InvariantModel (invariant_id, state_key, threshold_key, gamma).
+
    Safety Properties Verified:
    - SP-1: Total balance never exceeds initial pool (no double-spend)
    - SP-2: Individual agent balances always non-negative

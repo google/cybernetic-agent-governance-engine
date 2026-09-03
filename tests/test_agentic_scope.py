@@ -149,7 +149,7 @@ class TestCausalGatekeeperAuthorizedActionSpace:
 
     def test_causal_safety_check_blocks_zero_amount(self):
         """causal_safety_check returns True (no-op) for zero-amount actions."""
-        from src.cage_finance.causal.causal_gatekeeper import causal_safety_check
+        from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         # Zero amount is not a meaningful trade — should pass through
         result = causal_safety_check({"amount": 0, "action_type": "get_portfolio"})

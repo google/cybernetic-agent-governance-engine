@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from src.cage_finance.consensus.consensus import ConsensusGate
+from src.gateway.governance.consensus.engine import ConsensusGate
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
 
 

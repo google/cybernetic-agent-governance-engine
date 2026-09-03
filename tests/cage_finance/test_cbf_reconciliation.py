@@ -40,7 +40,7 @@ pytest.importorskip(
 
 import fakeredis  # type: ignore[import]
 
-from src.cage_finance.compliance.reconciliation_worker import (
+from src.gateway.governance.reconciliation.daemon import (
     _REDIS_KEY_VERIFIED_BALANCE,
     TTL_SECONDS,
     ReconciliationResult,
@@ -160,7 +160,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
         ttl_seconds=TTL_SECONDS,
     )
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
@@ -210,7 +210,7 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
         "fakeredis.aioredis", reason="fakeredis[aioredis] required"
     ).FakeRedis(decode_responses=True)
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
@@ -262,7 +262,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
         sequence=1,
     )
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
@@ -322,7 +322,7 @@ def test_strict_mode_fails_closed_without_reconciliation() -> None:
         "fakeredis.aioredis", reason="fakeredis[aioredis] required"
     ).FakeRedis(decode_responses=True)
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
@@ -379,7 +379,7 @@ def test_fence_epoch_regression_rejected() -> None:
         sequence=1,
     )
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
@@ -442,7 +442,7 @@ def test_local_debits_accumulated_within_cycle() -> None:
         sequence=1,
     )
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
@@ -525,7 +525,7 @@ def test_kms_signature_verified_before_commit() -> None:
         sequence=1,
     )
 
-    from src.cage_finance.safety.cbf import ControlBarrierFunction
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None

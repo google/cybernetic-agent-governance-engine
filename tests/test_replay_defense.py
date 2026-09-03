@@ -160,7 +160,7 @@ class TestCBFSequenceValidation:
         self,
     ) -> None:
         """R-04: Verify CBF rejects payloads with non-advancing sequence numbers."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -184,7 +184,7 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_accepts_advancing_sequence(self) -> None:
         """Verify CBF accepts payloads with advancing sequence numbers."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -208,7 +208,7 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_first_sequence_accepted(self) -> None:
         """Verify first sequence (when last_accepted is 0) is accepted."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -229,7 +229,7 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_rejects_equal_sequence(self) -> None:
         """Verify CBF rejects payloads with sequence equal to last_accepted."""
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         cbf = ControlBarrierFunction()
 
@@ -257,7 +257,7 @@ class TestCBFSequenceValidation:
         - This ensures backward compatibility during staged rollout
         """
         from src.cage_finance.reconciliation_worker import ReconciliationResult
-        from src.cage_finance.safety.cbf import ControlBarrierFunction
+        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         # Create a verified result with sequence=0 (default)
         verified = ReconciliationResult(

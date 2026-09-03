@@ -167,7 +167,7 @@ class TestTelemetryFreshness:
 
     def test_no_timestamp_column_returns_false(self):
         """DataFrame without any timestamp column → False (fail-closed)."""
-        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+        from src.gateway.governance.causal.gatekeeper import _check_telemetry_freshness
 
         df = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         result = _check_telemetry_freshness(df, self._make_span())
@@ -570,11 +570,16 @@ class TestCausalGatekeeperIntegration:
             telemetry_provider = MagicMock()
             telemetry_provider.get_latest_data.return_value = telemetry_data
 
-        gov = SymbolicGovernor(opa_client=opa_client)
+        gov = SymbolicGovernor(
+            opa_client=opa_client,
+            safety_filter=safety_filter,
+            consensus_engine=consensus_engine,
+        )
+        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-        from src.cage_finance.tiers.causal_tier import CausalTierPlugin
-        from src.cage_finance.causal.causal_gatekeeper import CausalGatekeeper
+        from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+
         gov.register_domain_tier(CBFTierPlugin(safety_filter))
         gov.register_domain_tier(ConsensusTierPlugin(consensus_engine))
         gov.register_domain_tier(CausalTierPlugin(CausalGatekeeper(telemetry_provider)))

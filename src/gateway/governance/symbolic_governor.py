@@ -136,6 +136,7 @@ if (
 from src.gateway.governance.contracts import (
     GovernanceTierFailure,
     GovernanceTierPlugin,
+    InvariantModel,
     RefusalReceipt,
     Violation,
 )
@@ -202,6 +203,7 @@ from src.gateway.governance.schemas.thresholds import (
     get_agent_confidence_threshold,
     get_fria_zone_allow,
     get_fria_zone_defer,
+    load_and_validate_thresholds,
 )
 
 # These module-level constants delegate to the config-based accessor functions,
@@ -774,9 +776,9 @@ class SymbolicGovernor:
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
-        enable_legacy_trade_dispatch: bool | None = None,
     ):
         self.opa_client = opa_client
+        # retained for direct-invocation callers; not part of the governance hot path
         self.safety_filter = safety_filter
         self.consensus_engine = consensus_engine
         self.stpa_validator: STPAValidator | None = stpa_validator
@@ -785,21 +787,20 @@ class SymbolicGovernor:
         # When present, atomically pre-reserves the daily fiscal limit in Redis
         # (WATCH/MULTI/EXEC) before the consensus gate, closing the TOCTOU race
         # between the CBF balance check and actual trade execution.
+        # retained for direct-invocation callers; not part of the governance hot path
         self.fiscal_limit_guard = fiscal_limit_guard
-
-        # D4 fix: env-driven legacy dispatch flag.  Constructor arg wins for tests;
-        # otherwise falls back to ENABLE_LEGACY_TRADE_DISPATCH env var (default True).
-        self.enable_legacy_trade_dispatch: bool = (
-            enable_legacy_trade_dispatch
-            if enable_legacy_trade_dispatch is not None
-            else _env_flag("ENABLE_LEGACY_TRADE_DISPATCH", default=True)
-        )
 
         # D5 fix: pluggable domain tier registry.  Tiers are registered via
         # register_domain_tier() at startup and sorted by (phase, order, tier_name)
         # where `order` is an explicit integer matching the formal model, not
         # an alphabetic tier_name sort (which would invert Consensus→Causal).
         self._domain_tiers: list[GovernanceTierPlugin] = []
+
+        # PR C: pluggable invariant registry.  Barriers are registered via
+        # register_invariant() at startup and compiled into Lua KEYS/ARGV
+        # at CBF invocation time, ensuring all barrier evaluation logic
+        # stays inside the atomic Redis hop (proof/DistributedCBF.tla).
+        self._invariants: list[InvariantModel] = []
 
         # FTRA Boundary Check (Phase 3.3): Lazy-initialized IrreversibilityClassifier
         # for boundary-level FTRA validation. Shared instance with in-graph ftra_node
@@ -824,6 +825,67 @@ class SymbolicGovernor:
     def registered_tier_names(self) -> list[str]:
         """Ordered tier names — consumed by the formal-model parity test."""
         return [t.tier_name for t in self._domain_tiers]
+
+    def register_invariant(self, invariant: InvariantModel) -> None:
+        """Register a domain safety barrier.
+
+        PR C (Stage 2): Fail-closed validation at registration time — a malformed
+        barrier must never reach the Lua compiler, as that would silently degrade
+        safety coverage without a runtime signal.
+
+        The declarative InvariantModel protocol (invariant_id, state_key,
+        threshold_key, gamma) compiles into KEYS/ARGV passed to the atomic Redis
+        Lua hop (proof/DistributedCBF.tla), ensuring all barrier evaluation logic
+        stays inside the verified atomic operation.
+
+        Raises:
+            ValueError: If any validation fails:
+                - invariant_id is not unique
+                - state_key is not namespaced (missing ':')
+                - threshold_key does not resolve in active THRESHOLDS tree
+                - gamma is not in (0, 1]
+        """
+        # V1: Uniqueness — each domain must own its invariant_id namespace.
+        if any(inv.invariant_id == invariant.invariant_id for inv in self._invariants):
+            raise ValueError(
+                f"duplicate invariant registration: {invariant.invariant_id}"
+            )
+
+        # V2: State key must be namespaced (e.g., "safety:current_cash") to prevent
+        # cross-domain key collisions in the shared Redis state store.
+        if ":" not in invariant.state_key:
+            raise ValueError(
+                f"invariant {invariant.invariant_id}: state_key must be namespaced "
+                f"(contains ':'): got '{invariant.state_key}'"
+            )
+
+        # V3: Threshold key must resolve in the active THRESHOLDS tree.
+        # This ensures the barrier's threshold is actually configured and will
+        # not fall back to a silent None at runtime.
+        thresholds = load_and_validate_thresholds()
+        threshold_parts = invariant.threshold_key.split(".")
+        current = (
+            thresholds.model_dump()
+        )  # Convert Pydantic model to dict for traversal
+        try:
+            for part in threshold_parts:
+                current = current[part]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                f"invariant {invariant.invariant_id}: threshold_key "
+                f"'{invariant.threshold_key}' does not resolve in THRESHOLDS tree"
+            ) from exc
+
+        # V4: Gamma must be in the open-closed interval (0, 1].
+        # gamma=0 is a degenerate barrier that never constrains;
+        # gamma>1 would make the CBF Lyapunov derivative condition impossible to satisfy.
+        if not (0 < invariant.gamma <= 1):
+            raise ValueError(
+                f"invariant {invariant.invariant_id}: gamma must be in (0, 1], "
+                f"got {invariant.gamma}"
+            )
+
+        self._invariants.append(invariant)
 
     async def _rollback_committed(
         self,
@@ -859,6 +921,130 @@ class SymbolicGovernor:
                     )
                 )
         return failures
+
+    async def _run_domain_tiers(
+        self,
+        action: str,
+        params: dict[str, Any],
+        phase: int,
+    ) -> list[Violation]:
+        """Execute registered domain tiers for one phase.
+
+        Tiers are already sorted by (phase, order, tier_name) at registration
+        time, so iteration order matches proof/model.py TIERS.
+
+        Phase 1 calls evaluate(); phase 2 calls commit() and LIFO-rolls-back
+        every previously committed tier on the first failure.
+
+        Never raises.  A tier that throws is converted into a non-recoverable
+        Violation — an exception inside a governance tier is a denial, not a
+        pass-through.
+        """
+        claimed = [
+            t
+            for t in self._domain_tiers
+            if t.phase == phase and t.claims_action(action, params)
+        ]
+        committed: list[GovernanceTierPlugin] = []
+
+        for tier in claimed:
+            with tracer.start_as_current_span(f"cage.tier.{tier.tier_name}") as span:
+                span.set_attribute("governance.tier.name", tier.tier_name)
+                span.set_attribute("governance.tier.phase", phase)
+                span.set_attribute("governance.tier.order", tier.order)
+                _t0 = time.perf_counter()
+                try:
+                    violations = (
+                        await tier.evaluate(action, params)
+                        if phase == 1
+                        else await tier.commit(action, params)
+                    )
+                except Exception as exc:
+                    logger.exception("tier %s raised", tier.tier_name)
+                    span.record_exception(exc)
+                    violations = [
+                        Violation(
+                            tier=tier.tier_name,
+                            code="TIER_EXCEPTION",
+                            message=(
+                                f"{tier.tier_name} raised {type(exc).__name__} — "
+                                f"failing closed"
+                            ),
+                            recoverable=False,
+                            needs_human_review=True,
+                        )
+                    ]
+                span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t0) * 1000, 2),
+                )
+                span.set_attribute("governance.tier.violations", len(violations))
+
+            if violations:
+                if phase == 2 and committed:
+                    violations = violations + await self._rollback_committed(
+                        committed, action, params
+                    )
+                return violations
+            if phase == 2:
+                committed.append(tier)
+
+        return []
+
+    def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
+        """Return True if at least one tier claims responsibility for this action."""
+        return any(t.claims_action(action, params) for t in self._domain_tiers)
+
+    def _violations_to_strings(self, violations: list[Violation]) -> list[str]:
+        """Convert a list of Violation dataclasses into the legacy list[str] format.
+
+        Used by the 5 sites that still expect standing_at_refusal to return
+        list[str] — these sites will be removed once all 8 execute_trade literals
+        are replaced.
+        """
+        return [
+            f"[{v.tier}] {v.code}: {v.message}" if v.tier else f"{v.code}: {v.message}"
+            for v in violations
+        ]
+
+    def _violations_to_failures(
+        self, violations: list[Violation]
+    ) -> list[dict[str, Any]]:
+        """Convert Violation dataclasses into RefusalReceipt.failures schema."""
+        out: list[dict[str, Any]] = []
+        for v in violations:
+            failure: dict[str, Any] = {"code": v.code, "message": v.message}
+            if v.tier:
+                failure["tier"] = v.tier
+            if v.needs_human_review:
+                failure["needs_human_review"] = True
+            # Optional fields (may not exist on all Violation instances)
+            if hasattr(v, "severity") and v.severity:
+                failure["severity"] = v.severity
+            if hasattr(v, "threshold") and v.threshold is not None:
+                failure["threshold"] = v.threshold
+            if hasattr(v, "observed") and v.observed is not None:
+                failure["observed"] = v.observed
+            out.append(failure)
+        return out
+
+    def _build_standing(self, violations: list[Violation]) -> dict[str, Any]:
+        """Assemble tier-supplied standing_at_refusal state.
+
+        The last violation wins if multiple tiers supply state under the same key.
+        This matches the existing gateway behavior where later checks overwrite
+        earlier checks.
+
+        Returns:
+            dict with "failures" (list[dict]) plus any tier-specific standing keys.
+        """
+        standing: dict[str, Any] = {
+            "failures": self._violations_to_failures(violations)
+        }
+        for v in violations:
+            if hasattr(v, "standing") and v.standing:
+                standing.update(v.standing)
+        return standing
 
     def _get_ftra_classifier(self) -> Any:
         """Return the IrreversibilityClassifier instance, lazily initialized.
@@ -1062,6 +1248,8 @@ class SymbolicGovernor:
         _conf_payload: dict[str, Any] | None = None
         # FTRA boundary check metadata (Phase 3.3)
         _ftra_boundary_result: Any | None = None
+        # Track all tier violations (Violation dataclass instances) for standing_at_refusal
+        _all_tier_violations: list[Violation] = []
 
         # -1. FTRA Boundary Check (Pre-Pipeline Boundary Gate)
         # Runs BEFORE all other checks. Risk R-03 mitigation: Catches direct HTTP
@@ -1123,6 +1311,32 @@ class SymbolicGovernor:
                 round((time.perf_counter() - _t0) * 1000, 2),
             )
 
+        # ── domain tier loop (phase 1) ──
+        # Phase 1: Read-only domain tiers
+        if self._is_governed_action(tool_name, params):
+            with tracer.start_as_current_span("cage.domain_tiers_phase1") as tier1_span:
+                tier1_span.set_attribute(
+                    "langfuse.observation.name", "domain_tiers_phase1"
+                )
+                tier1_span.set_attribute("governance.stage", "domain_tiers")
+                tier1_span.set_attribute("governance.phase", 1)
+                _t_tier1 = time.perf_counter()
+
+                tier_violations = await self._run_domain_tiers(
+                    tool_name, params, phase=1
+                )
+                if tier_violations:
+                    _all_tier_violations.extend(tier_violations)
+                    violations.extend(self._violations_to_strings(tier_violations))
+
+                tier1_span.set_attribute(
+                    "governance.tier.violations", len(tier_violations)
+                )
+                tier1_span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t_tier1) * 1000, 2),
+                )
+
         # ── POAM-TIER2-001: Tier 2 Confidence Self-Authentication Gap (partially mitigated) ──
         # RISK: The confidence score below is 100% agent-self-reported via params["confidence"].
         # Since the SLM sidecar was deprecated (latency reduction), no independent verification
@@ -1155,7 +1369,7 @@ class SymbolicGovernor:
             )
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
-            if tool_name == "execute_trade":
+            if self._is_governed_action(tool_name, params):
                 _confidence = float(params.get("confidence", 0.0))
                 # POAM-TIER2-001: stamp the confidence provenance so every Tier 2 decision
                 # is auditable. The structural heuristic below provides independent
@@ -1238,7 +1452,7 @@ class SymbolicGovernor:
         # precedence over latency optimization.
         # ======================================================================
 
-        if tool_name == "execute_trade" and not violations:
+        if self._is_governed_action(tool_name, params) and not violations:
             # --- Phase 1.1: OPA policy evaluation (read-only) ---
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
@@ -1347,7 +1561,7 @@ class SymbolicGovernor:
         #
         # Conservative treatment: if STPA or OPA results are unavailable (e.g. a tier
         # raised an exception and we have no result at all), treat as structural risk.
-        if tool_name == "execute_trade":
+        if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span(
                 "cage.tier2_structural_corroboration"
             ) as _t2_span:
@@ -1426,159 +1640,11 @@ class SymbolicGovernor:
         # Initialize _fiscal_token for later Phase 2 use
         _fiscal_token = None
 
-        # Phase 1.2: ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
-        if tool_name == "execute_trade":
-            with tracer.start_as_current_span("cage.consensus_gate") as cons_gate_span:
-                cons_gate_span.set_attribute(
-                    "langfuse.observation.name", "consensus_gate"
-                )
-                cons_gate_span.set_attribute("governance.stage", "consensus")
-                try:
-                    amount = params.get("amount", 0.0)
-                    symbol = params.get("symbol", "UNKNOWN")
-                    consensus = await self.consensus_engine.check_consensus(
-                        tool_name,
-                        context={"amount": amount, "symbol": symbol},
-                        magnitude=amount,
-                    )
-                    if consensus["status"] == "REJECT":
-                        violations.append(f"Consensus Rejection: {consensus['reason']}")
-                    elif consensus["status"] == "ESCALATE":
-                        violations.append(
-                            f"Consensus Escalation: {consensus['reason']}"
-                        )
-                    cons_gate_span.set_attribute(
-                        "governance.consensus.status",
-                        consensus.get("status", "UNKNOWN"),
-                    )
-                except Exception as exc:
-                    violations.append(f"Consensus Check Failed: {exc}")
-
-        # 6. DoWhy Causal Gatekeeper — refutation-based safety lock
-        # Gap 4 fix: ImportError is no longer silently swallowed in production.
-        # The startup assertion above (module-level) already fails fast if dowhy
-        # is absent in production, so reaching this branch with ImportError means
-        # we are in a dev/test environment — log at DEBUG and skip.
-        if tool_name == "execute_trade":
-            try:
-                from src.gateway.governance.causal_gatekeeper import (
-                    causal_safety_check,
-                )
-
-                telemetry_data = None
-                if self.telemetry_provider is not None:
-                    telemetry_data = self.telemetry_provider.get_latest_data()
-
-                trade_context = {"params": params, "telemetry": telemetry_data}
-                result = await asyncio.to_thread(causal_safety_check, trade_context)
-                if not result:
-                    violations.append(
-                        "Causal Safety Violation: DoWhy refutation failed — "
-                        "world-model is untrustworthy or risk exceeds safety boundary."
-                    )
-            except ImportError:
-                # Only reachable in dev/test (production startup assertion prevents this).
-                logger.debug(
-                    "DoWhy not installed — skipping causal gatekeeper (dev/test only). "
-                    "Production startup will fail if dowhy is absent."
-                )
-            except Exception as exc:
-                logger.warning(
-                    "⚠️ Causal gatekeeper check failed (%s) — failing closed.", exc
-                )
-                violations.append(
-                    f"Causal Safety Violation: gatekeeper raised an unexpected error — "
-                    f"failing closed. Detail: {exc}"
-                )
-
-        # 6b. Adaptive FRIA Enforcement (External Normative Provider)
-        # When CAGE_NORMATIVE_PROVIDER != "static", the enforcement semantic
-        # is dynamically determined by the consensus confidence score:
-        #   Score ≥ FRIA_ZONE_ALLOW (default 0.95) → async attestation (fire-and-forget)
-        #   FRIA_ZONE_DEFER ≤ Score < FRIA_ZONE_ALLOW → synchronous blocking gate
-        #   Score < FRIA_ZONE_DEFER (default 0.70) → hard abort, no external call
-        # Positioned AFTER all local tiers — if local governance already
-        # DENY'd, the external provider is never contacted.
-        # Override via env: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER (module-level constants).
-        _normative_provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
-        if (
-            tool_name == "execute_trade"
-            and _normative_provider_name != "static"
-            and not violations
-        ):
-            try:
-                from src.gateway.governance.normative_provider import (
-                    ExecutionStatus,
-                    enforce_fria_boundary,
-                    get_normative_provider,
-                )
-
-                provider = get_normative_provider(_normative_provider_name)
-                confidence = params.get("confidence", 0.0)
-                thread_id = params.get("thread_id", "")
-
-                fria_result = await enforce_fria_boundary(
-                    provider=provider,
-                    action_context=params,
-                    consensus_score=confidence,
-                    defer_queue=None,  # DeferQueue injected when available
-                    thread_id=thread_id,
-                )
-
-                # Stamp enforcement path on OTel span
-                current_span = trace.get_current_span()
-                current_span.set_attribute(
-                    "governance.fria.enforcement_path", fria_result.path
-                )
-                current_span.set_attribute(
-                    "governance.fria.consensus_score", fria_result.consensus_score
-                )
-
-                if fria_result.status == ExecutionStatus.DENY:
-                    violations.append(
-                        f"FRIA External Validation: {fria_result.path} — "
-                        f"consensus_score={fria_result.consensus_score:.3f}"
-                    )
-
-            except Exception as exc:
-                logger.warning(
-                    "⚠️ FRIA adaptive enforcement failed (%s) — continuing "
-                    "with local governance only.",
-                    exc,
-                )
-
-        # 6b (continued). FRIA Attestation (EU_ECB only — EU AI Act Art. 29a)
-        # For EU deployments, every governed action must carry a span attribute
-        # attesting that a Fundamental Rights Impact Assessment (FRIA) was
-        # conducted pre-market per Art. 29a. This is not a blocking runtime gate
-        # (FRIA is a pre-market document obligation, not a per-request check),
-        # but the live telemetry MUST record the control is active so that
-        # DORA Art. 10 monitoring logs satisfy the Art. 12 logging obligation.
-        # Stamped here (at the end of the FRIA tier) as a cross-cutting
-        # observability concern — not a separate governance tier.
-        fria_meta = ControlRegistry().get_mapping_safe(
-            GovernanceControl.FRIA_ASSESSMENT
-        )
-        if fria_meta is not None:
-            # Attach to the current OTel span so DORA Art. 10 audit logs include it
-            current_span = trace.get_current_span()
-            current_span.set_attribute(
-                "governance.fria.control_id",
-                fria_meta["internal_id"],
-            )
-            current_span.set_attribute(
-                "governance.fria.framework",
-                fria_meta["primary_framework"],
-            )
-            current_span.set_attribute(
-                "governance.fria.scope",
-                fria_meta["scope"],
-            )
-            logger.debug(
-                "[%s] FRIA attestation active — %s",
-                GovernanceControl.FRIA_ASSESSMENT.value,
-                fria_meta["primary_framework"],
-            )
+        # ══════════════════════════════════════════════════════════════════════
+        # Legacy inline dispatch blocks deleted (T-A5).
+        # Consensus, Causal, FRIA/Normative, CBF, and Fiscal gates are now
+        # invoked via domain tier dispatch in PR C.
+        # ══════════════════════════════════════════════════════════════════════
 
         # ======================================================================
         # PHASE 2: ATOMIC STATE MUTATIONS (only if Phase 1 has 0 violations)
@@ -1599,239 +1665,31 @@ class SymbolicGovernor:
         # parallel with OPA). This adds ~CBF_ms latency but ensures correctness.
         # ======================================================================
 
-        _cbf_committed = False  # Track CBF state for potential rollback
+        # ── domain tier loop (phase 2) ──
+        # Phase 2: Mutating domain tiers (only if Phase 1 passed)
+        if self._is_governed_action(tool_name, params) and not violations:
+            with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
+                tier2_span.set_attribute(
+                    "langfuse.observation.name", "domain_tiers_phase2"
+                )
+                tier2_span.set_attribute("governance.stage", "domain_tiers")
+                tier2_span.set_attribute("governance.phase", 2)
+                _t_tier2 = time.perf_counter()
 
-        if tool_name == "execute_trade" and not violations:
-            _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
+                tier_violations = await self._run_domain_tiers(
+                    tool_name, params, phase=2
+                )
+                if tier_violations:
+                    _all_tier_violations.extend(tier_violations)
+                    violations.extend(self._violations_to_strings(tier_violations))
 
-            # --- Phase 2.1: CBF atomic_verify_and_commit ---
-            with tracer.start_as_current_span("cage.cbf_atomic_commit") as cbf_span:
-                cbf_span.set_attribute("langfuse.observation.name", "cbf_barrier_check")
-                cbf_span.set_attribute("governance.stage", "cbf")
-                cbf_span.set_attribute("governance.phase", "mutation")
-                cbf_span.set_attribute("governance.cbf.atomic", True)
-                _t_cbf = time.perf_counter()
-                try:
-                    (
-                        committed,
-                        reason,
-                    ) = await self.safety_filter.atomic_verify_and_commit(
-                        action_name=tool_name,
-                        payload=params,
-                    )
-                    _cbf_committed = committed
-                    cbf_result = "SAFE" if committed else reason
-                    cbf_span.set_attribute("governance.cbf.result", cbf_result[:80])
-                    cbf_span.set_attribute("governance.cbf.committed", committed)
-                    cbf_span.set_attribute(
-                        "governance.stage.latency_ms",
-                        round((time.perf_counter() - _t_cbf) * 1000, 2),
-                    )
-
-                    if not committed and cbf_result.startswith("UNSAFE"):
-                        violations.append(f"Safety Violation (RBC/CBF): {cbf_result}")
-                        amount_val = params.get("amount", 0.0)
-                        tier_failures.append(
-                            GovernanceTierFailure(
-                                tier="CBF",
-                                control_id="CAGE-CBF-001",
-                                rule_description=cbf_result,
-                                governing_state={
-                                    "cost": amount_val,
-                                    "cbf_result": cbf_result,
-                                    "amount": amount_val,
-                                    "symbol": params.get("symbol"),
-                                },
-                                protected_consequence=f"Balance violation: trade cost {amount_val} "
-                                f"would breach CBF safety envelope",
-                            )
-                        )
-
-                except Exception as cbf_exc:
-                    cbf_span.record_exception(cbf_exc)
-                    cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
-                    if _cbf_fail_open:
-                        logger.warning(
-                            "⚠️ CBF check unavailable (%s) — CBF_FAIL_OPEN=true, "
-                            "skipping CBF gate. ⚠️ AUDIT: Self-reported cash balance "
-                            "cannot be verified; this gap must be closed before "
-                            "production governance examination.",
-                            cbf_exc,
-                        )
-                        logger.critical(
-                            json.dumps(
-                                {
-                                    "event": "CBF_FAIL_OPEN_ACTIVATED",
-                                    "severity": "CRITICAL",
-                                    "tool": tool_name,
-                                    "cbf_error": str(cbf_exc),
-                                    "audit_note": (
-                                        "CBF gate bypassed via CBF_FAIL_OPEN=true. "
-                                        "Cash balance cannot be independently verified for this trade."
-                                    ),
-                                }
-                            )
-                        )
-                    else:
-                        logger.error(
-                            "⛔ CBF check unavailable (%s) — fail-closed: blocking "
-                            "action because cash barrier cannot be independently "
-                            "verified.",
-                            cbf_exc,
-                        )
-                        violations.append(
-                            "CBF Fail-Closed: Redis unavailable — cannot verify "
-                            "cash barrier. Self-reported balance has no independent "
-                            "provenance. Set CBF_FAIL_OPEN=true to override "
-                            "(audit gap)."
-                        )
-
-            # --- Phase 2.2: Fiscal Limit reserve (only if CBF passed) ---
-            if not violations and self.fiscal_limit_guard is not None:
-                with tracer.start_as_current_span(
-                    "cage.fiscal_limit_reserve"
-                ) as fiscal_span:
-                    fiscal_span.set_attribute(
-                        "langfuse.observation.name", "fiscal_limit_reserve"
-                    )
-                    fiscal_span.set_attribute("governance.stage", "fiscal_limit")
-                    fiscal_span.set_attribute("governance.phase", "mutation")
-                    _t_fiscal = time.perf_counter()
-                    try:
-                        _amount_minor = params.get("amount_minor")
-                        if _amount_minor is not None:
-                            _amount_minor = int(_amount_minor)
-                            _amount = _amount_minor / 100.0
-                        else:
-                            _amount = float(params.get("amount", 0.0))
-
-                        _agent_id = str(
-                            params.get(
-                                "agent_id", params.get("user_id", "unknown-agent")
-                            )
-                        )
-
-                        _fiscal_token = None
-                        if _amount_minor is not None and _amount_minor > 0:
-                            _fiscal_token = await self.fiscal_limit_guard.reserve(
-                                agent_id=_agent_id,
-                                amount_minor=_amount_minor,
-                            )
-                        elif _amount > 0:
-                            _fiscal_token = await self.fiscal_limit_guard.reserve(
-                                agent_id=_agent_id,
-                                amount_usd=_amount,
-                            )
-
-                        if _fiscal_token is not None:
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.reservation_id",
-                                _fiscal_token.reservation_id,
-                            )
-                            if _amount_minor is not None:
-                                fiscal_span.set_attribute(
-                                    "governance.fiscal.amount_minor", _amount_minor
-                                )
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.amount_usd", _amount
-                            )
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.running_total_usd",
-                                _fiscal_token.running_total_usd,
-                            )
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.cap_usd", _fiscal_token.cap_usd
-                            )
-                            if _fiscal_token.rejected:
-                                fiscal_span.set_attribute(
-                                    "governance.fiscal.result", "REJECTED"
-                                )
-                                violations.append(
-                                    f"Fiscal Limit Pre-Reservation REJECTED: "
-                                    f"amount=${_amount:,.2f} would exceed daily cap "
-                                    f"${_fiscal_token.cap_usd:,.2f} "
-                                    f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
-                                    f"reservation_id={_fiscal_token.reservation_id}"
-                                )
-                                tier_failures.append(
-                                    GovernanceTierFailure(
-                                        tier="FISCAL",
-                                        control_id="CAGE-FISCAL-001",
-                                        rule_description=f"amount ${_amount:,.2f} exceeds daily cap ${_fiscal_token.cap_usd:,.2f}",
-                                        governing_state={
-                                            "amount_usd": _amount,
-                                            "running_total_usd": _fiscal_token.running_total_usd,
-                                            "cap_usd": _fiscal_token.cap_usd,
-                                            "reservation_id": _fiscal_token.reservation_id,
-                                            "agent_id": _agent_id,
-                                        },
-                                        protected_consequence=f"Fiscal overrun: ${_amount:,.2f} trade "
-                                        f"would push running total beyond ${_fiscal_token.cap_usd:,.2f} daily cap",
-                                    )
-                                )
-                                # Fiscal rejected AFTER CBF committed — must compensate CBF
-                                if _cbf_committed:
-                                    logger.warning(
-                                        "⚠️ Fiscal rejected after CBF commit — initiating "
-                                        "CBF rollback for budget leakage prevention."
-                                    )
-                                    try:
-                                        await self.safety_filter.rollback_state(
-                                            magnitude=_amount
-                                        )
-                                        logger.info(
-                                            "✅ CBF rollback complete after fiscal rejection."
-                                        )
-                                        _cbf_committed = False
-                                    except Exception as cbf_rollback_exc:
-                                        logger.error(
-                                            "⛔ CBF rollback failed after fiscal rejection: %s. "
-                                            "BUDGET LEAKAGE POSSIBLE — requires manual reconciliation.",
-                                            cbf_rollback_exc,
-                                        )
-                                _fiscal_token = None
-                            else:
-                                fiscal_span.set_attribute(
-                                    "governance.fiscal.result", "RESERVED"
-                                )
-                        else:
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.result", "SKIPPED_ZERO_AMOUNT"
-                            )
-                    except Exception as _fiscal_exc:
-                        fiscal_span.record_exception(_fiscal_exc)
-                        fiscal_span.set_attribute("governance.fiscal.result", "ERROR")
-                        logger.error(
-                            "⛔ FiscalLimitGuard.reserve() failed (%s) — failing closed.",
-                            _fiscal_exc,
-                        )
-                        violations.append(
-                            f"Fiscal Limit Pre-Reservation Error: {_fiscal_exc}"
-                        )
-                        # Fiscal error AFTER CBF committed — must compensate CBF
-                        if _cbf_committed:
-                            logger.warning(
-                                "⚠️ Fiscal error after CBF commit — initiating "
-                                "CBF rollback for budget leakage prevention."
-                            )
-                            try:
-                                await self.safety_filter.rollback_state(
-                                    magnitude=_amount
-                                )
-                                logger.info(
-                                    "✅ CBF rollback complete after fiscal error."
-                                )
-                                _cbf_committed = False
-                            except Exception as cbf_rollback_exc:
-                                logger.error(
-                                    "⛔ CBF rollback failed after fiscal error: %s. "
-                                    "BUDGET LEAKAGE POSSIBLE — requires manual reconciliation.",
-                                    cbf_rollback_exc,
-                                )
-                    fiscal_span.set_attribute(
-                        "governance.stage.latency_ms",
-                        round((time.perf_counter() - _t_fiscal) * 1000, 2),
-                    )
+                tier2_span.set_attribute(
+                    "governance.tier.violations", len(tier_violations)
+                )
+                tier2_span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t_tier2) * 1000, 2),
+                )
 
         # Release fiscal reservation if Phase 2 produced violations AFTER fiscal
         # reservation succeeded. This should be rare since we compensate CBF above,
@@ -1862,6 +1720,8 @@ class SymbolicGovernor:
             "stpa_violation_count": _stpa_violation_count,
             # Phase 3.3: FTRA boundary check result (None if disabled)
             "ftra_boundary_result": _ftra_boundary_result,
+            # Tier-supplied violations for standing_at_refusal assembly
+            "tier_violations": _all_tier_violations,
         }
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
@@ -1909,6 +1769,7 @@ class SymbolicGovernor:
                     )
                     _tier_failures = result.get("tier_failures", [])
                     _first_tf = _tier_failures[0] if _tier_failures else None
+                    _tier_violations_list = result.get("tier_violations", [])
                     receipt = RefusalReceipt(
                         thread_id=thread_id,
                         action=tool_name,
@@ -1916,12 +1777,7 @@ class SymbolicGovernor:
                         if _first_tf
                         else "SYMBOLIC_GOVERNOR",
                         violated_rule=violation_msg,
-                        standing_at_refusal={
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "currency": params.get("currency"),
-                            "confidence": params.get("confidence"),
-                        },
+                        standing_at_refusal=self._build_standing(_tier_violations_list),
                         # ── 5-part proof chain (Terry Snyder) ──
                         schema_version="v2",
                         attempted_params={
@@ -1971,11 +1827,17 @@ class SymbolicGovernor:
 
     async def revalidate_post_hitl(
         self,
+        action: str,
         params: dict[str, Any],
         *,
         trace_id: str | None = None,
     ) -> str:
         """Re-run only the tiers that can drift during HITL review.
+
+        Args:
+            action: The action name. Required — a defaulted action name is a
+                fail-open hazard (a healthcare call would be governed as a
+                trade). Callers must pass the real action.
 
         After a human approves a plan, market prices and account balances may
         have changed. Only Tier 3a (CBF cash solvency) and Tier 3b (OPA policy)
@@ -2006,7 +1868,7 @@ class SymbolicGovernor:
         """
         from src.gateway.governance.routing_seal import generate_seal_with_evidence
 
-        tool_name = "execute_trade"
+        tool_name = action
         violations: list[str] = []
 
         with tracer.start_as_current_span(
@@ -2177,11 +2039,7 @@ class SymbolicGovernor:
                         action=tool_name,
                         violated_tier="SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
-                        standing_at_refusal={
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "confidence": params.get("confidence"),
-                        },
+                        standing_at_refusal=self._build_standing([]),
                     )
                     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
                     raise GovernanceError(violations[0], receipt=receipt)
@@ -2209,8 +2067,13 @@ class SymbolicGovernor:
                 span.set_attribute("langfuse.observation.output", str(exc))
                 raise
 
-    async def pre_check(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def pre_check(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """Run lightweight pre-checks for NeMo Layer-0 context injection.
+
+        Args:
+            action: The action name. Required — a defaulted action name is a
+                fail-open hazard (a healthcare call would be governed as a
+                trade). Callers must pass the real action.
 
         Executes STPA validation and CBF barrier check once, returning
         pre-computed results that NeMo actions can read from context instead
@@ -2230,7 +2093,7 @@ class SymbolicGovernor:
                 - ``stpa_result``: ``{"allowed": bool, "violations": list[str]}``
                 - ``cbf_result``:  ``{"allowed": bool, "reason": str}``
         """
-        tool_name = "execute_trade"
+        tool_name = action
 
         # --- STPA validation (synchronous) ---
         stpa_violations: list = []
@@ -2295,6 +2158,7 @@ class SymbolicGovernor:
             )
             result = await self._run_checks(tool_name, params, sim_mode=True)
             violations = result["violations"]
+            # tier_violations intentionally not extracted here (used elsewhere in real validation)
             span.set_attribute(
                 "langfuse.observation.output",
                 json.dumps(violations) if violations else "APPROVED",
@@ -2383,6 +2247,7 @@ class SymbolicGovernor:
                 # approval that was never actually granted.
                 result = await self._run_checks(action, params, sim_mode=False)
                 violations = result["violations"]
+                tier_violations = result.get("tier_violations", [])
 
                 latency_ms = round((time.time() - t0) * 1000, 2)
                 span.set_attribute("cage.governance_latency_ms", latency_ms)
@@ -2616,12 +2481,9 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_FALLBACK",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal={
-                                    "symbol": params.get("symbol"),
-                                    "amount": params.get("amount"),
-                                    "confidence": params.get("confidence"),
-                                    "pause_reason": pause_reason,
-                                },
+                                standing_at_refusal=self._build_standing(
+                                    tier_violations
+                                ),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash
@@ -2674,13 +2536,9 @@ class SymbolicGovernor:
                                 action=action,
                                 violated_tier="PAUSE_REDIS_ERROR",
                                 violated_rule=f"Transient condition: {pause_reason}",
-                                standing_at_refusal={
-                                    "symbol": params.get("symbol"),
-                                    "amount": params.get("amount"),
-                                    "confidence": params.get("confidence"),
-                                    "pause_reason": pause_reason,
-                                    "redis_error": str(pause_exc),
-                                },
+                                standing_at_refusal=self._build_standing(
+                                    tier_violations
+                                ),
                             )
                             span.set_attribute(
                                 "cage.refusal_proof_hash", receipt.proof_hash
@@ -2775,11 +2633,7 @@ class SymbolicGovernor:
                         if _va_first_tf
                         else "SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
-                        standing_at_refusal={
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "confidence": params.get("confidence"),
-                        },
+                        standing_at_refusal=self._build_standing(tier_violations),
                         # ── 5-part proof chain (Terry Snyder) ──
                         schema_version="v2",
                         attempted_params={

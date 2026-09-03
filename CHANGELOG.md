@@ -17,11 +17,33 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > than mandatory SemVer obligations. Breaking changes are documented in full for
 > adopter clarity.
 
-> **Plugin Architecture Refactor:** Normative provider protocol consolidation and
-> execution actuator standardization. Removes legacy trade dispatch API and
-> strengthens Compliance Bridge authentication.
+> **Domain Pipeline Extraction:** Multi-PR refactoring to separate kernel (Layer 1)
+> from domain-specific plugins (Layer 2), establishing capability-driven tier
+> dispatch architecture. Removes legacy inline governance mechanisms.
 
 ### Breaking Changes
+
+#### PR A — Capability-Driven Tier Dispatch
+
+- **Legacy Inline Dispatch Removed** — The inline consensus gate, causal gatekeeper, FRIA/normative provider, and CBF/fiscal blocks have been deleted from `SymbolicGovernor._run_checks()`. These mechanisms are replaced by the tier dispatch loop (`_run_domain_tiers()`) that executes registered `GovernanceTierPlugin` instances. This is a **hollowing refactor**: the kernel now denies all actions by default until PR C restores functionality as domain plugins (`refactor(governance)!`).
+
+- **RefusalReceipt Schema v3** — `RefusalReceipt.schema_version` default changed from "v1" to "v3". Schema v3 includes the `tier_failures` tuple field for multi-tier governance. The proof_hash computation now includes tier_failures when schema_version != "v1". Existing receipt consumers must handle both v1/v2 legacy receipts and v3 receipts (`feat(governance)!`).
+
+- **Domain Literals Removed** — Hardcoded domain action references (`"execute_trade"`, `"reverse_trade"`) removed from kernel code (hybrid_server.py, telemetry_provider.py, ontology.py). Domain-specific warmup, telemetry filtering, and constraints moved to domain plugins per the Three-Layer Split Rule. Gate G6 enforces this in CI (`refactor(governance)!`).
+
+- **Method Signature Changes** — `SymbolicGovernor.revalidate_post_hitl()` and `pre_check()` no longer accept `tool_name` with a default value. The `action` parameter is now required. Callers must explicitly provide the action name (`refactor(governance)!`).
+
+#### PR B — Sever Kernel → Plugin Imports
+
+- **Layer Isolation Enforced** — All Layer 1 (src/gateway/) → Layer 2 (src/cage_*) import dependencies removed. The kernel now uses plugin-supplied components via `install_domain_components()` rather than directly importing domain modules. CI gate G3 (`scripts/check_import_boundaries.py`) now blocks on violations (`refactor(governance)!`).
+
+- **Fail-Closed Null Components** — Kernel singletons (`safety_filter`, `consensus_engine`) default to `NullSafetyFilter` and `NullConsensusProvider` in bare-kernel mode (CAGE_ACTIVE_PLUGINS=""). These null objects explicitly deny all requests rather than silently failing or allowing. Plugins must call `install_domain_components()` to install real implementations (`refactor(governance)!`).
+
+- **Startup Readiness Assertions** — Server lifespans (`mcp_tool_server.py`, `hybrid_server.py`) now assert that domain components were installed if plugins are expected. Missing components cause startup to fail loudly with RuntimeError rather than silently defaulting to null objects (`feat(governance)!`).
+
+- **Background Task Registry** — Plugin-supplied long-running coroutines (e.g. consensus audit worker) must register via `register_background_task()` rather than being directly imported into `hybrid_server.py`. The kernel calls `background_tasks.start_all()` to launch registered tasks (`refactor(governance)!`).
+
+- **HITL Constants Relocated** — Human-in-the-loop escalation parameters (HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION) moved from `cage_finance/constants.py` to the `_hitl` section of regional baseline JSONs (`config/thresholds/*_BASELINE.json`). These are regulatory constants, not domain-specific, and belong in region posture config (TODO(PR-C-OSCAL): update OSCAL component definitions to reference new baseline locations) (`refactor(governance)!`).
 
 #### Plugin Architecture & Provider Protocol (PR #108–#114)
 
@@ -51,8 +73,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ```python
 # Legacy direct trade dispatch (removed)
 response = requests.post(
-    "http://gfa:8080/legacy/trade/dispatch",
-    json={"symbol": "AAPL", "quantity": 100}
+    "http://gfa:8080/legacy/trade/dispatch", json={"symbol": "AAPL", "quantity": 100}
 )
 ```
 
@@ -64,12 +85,9 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 envelope = GovernanceEnvelopeBuilder.build(
     action="execute_trade",
     payload={"symbol": "AAPL", "quantity": 100},
-    seal=routing_seal
+    seal=routing_seal,
 )
-response = requests.post(
-    "http://gateway:8080/v1/execute",
-    json=envelope.to_dict()
-)
+response = requests.post("http://gateway:8080/v1/execute", json=envelope.to_dict())
 ```
 
 #### Compliance Bridge Escalation Authentication
@@ -79,7 +97,7 @@ response = requests.post(
 # Unauthenticated escalation (security vulnerability)
 response = requests.post(
     f"http://compliance-bridge:3002/v1/defer/{defer_id}/escalate",
-    json={"reason": "business justification"}
+    json={"reason": "business justification"},
 )
 ```
 
@@ -89,17 +107,15 @@ response = requests.post(
 from src.gateway.governance.routing_seal import generate_seal
 
 seal = generate_seal(
-    action="escalate_defer",
-    record_hash=defer_record_hash,
-    secret=ROUTING_SEAL_SECRET
+    action="escalate_defer", record_hash=defer_record_hash, secret=ROUTING_SEAL_SECRET
 )
 response = requests.post(
     f"http://compliance-bridge:3002/v1/defer/{defer_id}/escalate",
     json={
         "reason": "business justification",
         "routing_seal": seal,
-        "requester_identity": "user@example.com"
-    }
+        "requester_identity": "user@example.com",
+    },
 )
 ```
 
