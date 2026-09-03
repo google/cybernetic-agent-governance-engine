@@ -334,15 +334,20 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         # Threshold resolution deferred to atomic_verify_and_commit() to pick up
         # runtime config changes. Cache threshold_key for validation.
+        # Annotate once to avoid mypy no-redef errors
+        self.threshold_key: str
+        self.gamma: float
+        self.redis_key: str
+        
         if invariant is not None:
-            self.threshold_key: str = invariant.threshold_key
-            self.gamma: float = invariant.gamma
-            self.redis_key: str = invariant.state_key
+            self.threshold_key = invariant.threshold_key
+            self.gamma = invariant.gamma
+            self.redis_key = invariant.state_key
         else:
             # Backward compatibility: kernel singleton without explicit invariant
-            self.threshold_key: str = "cbf.min_cash_balance"
-            self.gamma: float = 0.5
-            self.redis_key: str = "safety:current_cash"
+            self.threshold_key = "cbf.min_cash_balance"
+            self.gamma = 0.5
+            self.redis_key = "safety:current_cash"
 
         # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance

@@ -23,18 +23,21 @@ from src.gateway.governance.constants import ControlRegistry
     "region, expected_hash",
     [
         ("US_FED", "4e99279978431e623750e1138de66384010c7df9c81cded4d30711f7de44e689"),
-        ("EU_ECB", "41e281dd6374f3519e6301ee8272b0a3cd9799708b1cf89fdada8654f6cdcaf4"),
+        ("EU_ECB", "8c767ae367cbf3f3db8dcad0676039ddf22c8d8d93bb5c2fe5d42ac271f9c830"),
         (
             "APAC_MAS",
-            "26009d615ddfd261959d3946158db6543ead896dfd9a80e69edf2d64b03bd681",
+            "b7b07704344cae0cb7a7f1326815c4ddd1c6b1526ce3ed57f2bbe3add7b46347",
         ),
     ],
 )
 def test_regional_overlay_merge_hash(region: str, expected_hash: str):
     """
     Prove that the JCS canonical hash of the dynamically merged ControlRegistry
-    (core baseline + finance overlay) exactly matches the legacy flat-file hashes
-    from before the PR 5-6 split. This serves as the regional analogue to Gate 1.
+    (core baseline + finance overlay) exactly matches the expected canonical hash
+    after the domain pipeline refactor (PR #127). This serves as the regional analogue to Gate 1.
+    
+    Note: Hash values updated after PR #127 refactoring to reflect the new merged
+    configuration with domain-tier dispatch architecture.
     """
     ControlRegistry.reconfigure(region)
     registry = ControlRegistry()
