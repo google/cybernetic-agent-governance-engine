@@ -80,6 +80,83 @@ _SCOPE_CONTROL = GovernanceControl.AGENTIC_SCOPE_STATEMENT
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+
+# ---------------------------------------------------------------------------
+# ECDSA DER → raw signature conversion (M-2 fix)
+# ---------------------------------------------------------------------------
+
+def _der_to_raw_ecdsa_signature(der_signature: bytes, algorithm: str) -> bytes:
+    """
+    Convert DER-encoded ECDSA signature to raw R||S format for JWT.
+    
+    M-2 Fix: This function removes silent exception swallowing and adds
+    explicit length validation to prevent malformed signatures from being
+    silently accepted.
+    
+    KMS returns ECDSA signatures in DER format (ASN.1), but JWT requires
+    raw concatenated R||S format. This function performs the conversion
+    and validates the output length matches the expected curve size.
+    
+    Args:
+        der_signature: DER-encoded ECDSA signature from KMS.
+        algorithm: JOSE algorithm name (ES256, ES384, or ES512).
+    
+    Returns:
+        Raw R||S signature bytes with proper padding.
+        
+    Raises:
+        ValueError: If algorithm is unsupported or conversion fails.
+    
+    Expected output lengths:
+        ES256 (P-256): 64 bytes (32-byte R + 32-byte S)
+        ES384 (P-384): 96 bytes (48-byte R + 48-byte S)
+        ES512 (P-521): 132 bytes (66-byte R + 66-byte S)
+    """
+    from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
+    
+    # Map JOSE algorithm to expected raw signature length
+    expected_lengths = {
+        "ES256": 64,   # P-256: 32 bytes R + 32 bytes S
+        "ES384": 96,   # P-384: 48 bytes R + 48 bytes S
+        "ES512": 132,  # P-521: 66 bytes R + 66 bytes S (not 128!)
+    }
+    
+    if algorithm not in expected_lengths:
+        raise ValueError(
+            f"Unsupported JOSE algorithm: {algorithm}. "
+            f"Supported: {list(expected_lengths.keys())}"
+        )
+    
+    expected_len = expected_lengths[algorithm]
+    component_len = expected_len // 2
+    
+    try:
+        # Decode DER signature to extract R and S components
+        r, s = asym_utils.decode_dss_signature(der_signature)
+        
+        # Convert R and S to fixed-length byte arrays (big-endian)
+        r_bytes = r.to_bytes(component_len, byteorder='big')
+        s_bytes = s.to_bytes(component_len, byteorder='big')
+        
+        # Concatenate to produce raw signature
+        raw_signature = r_bytes + s_bytes
+        
+        # M-2 fix: Explicit length validation (no silent failures)
+        if len(raw_signature) != expected_len:
+            raise ValueError(
+                f"Converted signature length {len(raw_signature)} does not match "
+                f"expected length {expected_len} for {algorithm}"
+            )
+        
+        return raw_signature
+        
+    except Exception as e:
+        # M-2 fix: Raise explicitly instead of silent exception swallowing
+        raise ValueError(
+            f"Failed to convert DER signature to raw format for {algorithm}: {e}"
+        ) from e
+
+
 # ---------------------------------------------------------------------------
 # Environment detection (module-level so tests can patch it)
 # ---------------------------------------------------------------------------
