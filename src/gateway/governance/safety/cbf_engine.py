@@ -331,7 +331,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         # Domain plugins provide both invariant and cost_resolver at registration.
         self._invariant = invariant
         self._cost_resolver = cost_resolver or self._legacy_finance_cost_resolver
-        
+
         # Threshold resolution deferred to atomic_verify_and_commit() to pick up
         # runtime config changes. Cache threshold_key for validation.
         if invariant is not None:
@@ -1118,7 +1118,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         return 0.0
 
     @staticmethod
-    def _legacy_finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+    def _legacy_finance_cost_resolver(
+        action_name: str, payload: dict[str, Any]
+    ) -> float:
         """Legacy finance cost resolver for backward compatibility.
 
         This resolver extracts costs from payloads with financial semantics
