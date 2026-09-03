@@ -1,0 +1,15 @@
+{
+  "healthcare": {
+    "description": "Healthcare domain compliance overlay for APAC regulations",
+    "controls": {
+      "PATIENT_PRIVACY": {
+        "citation": "HSA Health Products Act",
+        "implementation": "src/cage_healthcare/tiers/clinical_consensus_tier.py"
+      },
+      "SAFE_DOSING": {
+        "citation": "HSA Therapeutic Products Regulations",
+        "implementation": "src/cage_healthcare/tiers/dose_barrier_tier.py"
+      }
+    }
+  }
+}

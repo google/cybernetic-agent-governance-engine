@@ -320,6 +320,15 @@ class TelemetryThresholds(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class HealthcareThresholds(BaseModel):
+    """Healthcare domain threshold configuration."""
+
+    min_therapeutic_concentration: float = Field(
+        default=5.0,
+        description="Minimum therapeutic serum concentration (mg/L) for dose barrier CBF validation",
+    )
+
+
 class GovernanceThresholds(BaseModel):
     """Root schema for config/governance_thresholds.json.
 
@@ -345,6 +354,9 @@ class GovernanceThresholds(BaseModel):
 
     # EV-6: Telemetry thresholds (max_staleness_seconds, cache_ttl_seconds)
     telemetry: TelemetryThresholds = Field(default_factory=TelemetryThresholds)
+
+    # Healthcare domain thresholds
+    healthcare: HealthcareThresholds = Field(default_factory=HealthcareThresholds)
 
     tier1_keywords: list[str] = Field(default_factory=list)
 

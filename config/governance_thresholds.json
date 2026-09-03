@@ -60,6 +60,10 @@
     "threshold_usd": 10000.0,
     "_comment": "Trades above this USD amount trigger the multi-agent consensus check."
   },
+  "healthcare": {
+    "min_therapeutic_concentration": 5.0,
+    "_comment": "Minimum therapeutic serum concentration (mg/L) for dose barrier CBF validation."
+  },
   "tier1_keywords": [
     "SYSTEM OVERRIDE",
     "IGNORE PREVIOUS INSTRUCTIONS",

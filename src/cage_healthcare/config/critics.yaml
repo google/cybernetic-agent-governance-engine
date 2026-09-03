@@ -1,0 +1,32 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Healthcare critic prompts for clinical_consensus_tier
+critics:
+  - id: safety_critic
+    prompt_template: |
+      Evaluate this medication order for patient safety.
+      Medication: {medication}
+      Dose: {dose_mg} mg
+      Route: {route}
+      Does this pose any immediate safety concerns?
+    context_keys: [medication, dose_mg, route]
+
+  - id: protocol_critic
+    prompt_template: |
+      Verify this order aligns with clinical protocols.
+      Indication: {indication}
+      Medication: {medication}
+      Dose: {dose_mg} mg
+    context_keys: [indication, medication, dose_mg]
