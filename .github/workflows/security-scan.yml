@@ -207,7 +207,9 @@ jobs:
         run: |
           opa check \
             compliance/postures/us_fed/opa/ \
-            src/governed_financial_advisor/governance/policy/
+            src/cage_finance/opa/ \
+            config/opa/ \
+            deployment/
 
       - name: Run OPA tests
         run: |
@@ -215,11 +217,12 @@ jobs:
                | grep -q .; then
             # Pass both the test-file directory AND the policy-file directory so
             # that data.trade.governance (declared in
-            # src/governed_financial_advisor/governance/policy/trade_governance.rego)
+            # src/cage_finance/opa/trade_governance.rego)
             # is visible to the test bundle in compliance/postures/us_fed/opa/.
             opa test \
               compliance/postures/us_fed/opa/ \
-              src/governed_financial_advisor/governance/policy/ \
+              src/cage_finance/opa/ \
+              config/opa/ \
               -v
           else
             echo "No OPA test files found — skipping opa test"
