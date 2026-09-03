@@ -174,6 +174,7 @@ class TestTimeoutEnforcement:
 class TestFactoryIntegration:
     """Integration tests for HTTP client factory usage."""
 
+    @pytest.mark.skip(reason="JWKS verifier module removed in Phase 1 domain extraction - test preserved for historical reference")
     @pytest.mark.asyncio
     async def test_jwks_verifier_uses_factory(self):
         """JWKS verifier should use factory-created client with timeout."""
