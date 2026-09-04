@@ -362,7 +362,7 @@ class TestReplayDefenseTelemetry:
     @pytest.mark.asyncio
     async def test_prometheus_counter_incremented_on_replay_rejection(self) -> None:
         """Verify Prometheus counter is incremented when replay is rejected."""
-        from src.gateway.governance import cbf as cbf_module
+        from src.gateway.governance.safety import cbf_engine as cbf_module
 
         # Create a mock counter
         mock_counter = MagicMock()
