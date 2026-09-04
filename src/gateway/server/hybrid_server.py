@@ -242,6 +242,16 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as reg_err:
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
+    # ── Load domain plugins (D7 / PR B) ───────────────────────────────────
+    from src.gateway.governance.plugin_loader import discover_plugins
+    from src.gateway.governance.singletons import symbolic_governor
+    from src.gateway.server.mcp_tool_server import _assert_required_plugins, mcp
+
+    loaded_plugins = discover_plugins()
+    for plugin in loaded_plugins:
+        plugin.register(governor=symbolic_governor, tool_server=mcp)
+    _assert_required_plugins(loaded_plugins)
+
     # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
     from src.gateway.governance.background_tasks import (
         start_all as start_background_tasks,
