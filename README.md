@@ -22,8 +22,10 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 ## What's New in v3.0.0
 
-> **Release date:** 2026-08-28 — Major Version Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
+> **Release date:** 2026-08-28 — Major Version Release: Domain-agnostic kernel extraction, Layer 1/Layer 2 separation, architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
 > See [CHANGELOG.md](CHANGELOG.md#300---2026-08-28) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
+
+**Post-v3.0.0 Consolidation (September 2026):** Following the v3.0.0 release, a comprehensive Phase 1–3 consolidation effort spanning 6 PRs and 20 feature branches completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation initiated in v3.0.0. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Domain-specific semantics (trading controls, dosing barriers, fiscal limits) moved to optional [`cage.plugins`](src/cage_finance/) packages loaded via `CAGE_ACTIVE_PLUGINS`. This architectural shift resolves Issue #107 (FTRA registry signing) and establishes the foundation for third-party domain adoption. See [`plans/post_consolidation_roadmap.md`](plans/post_consolidation_roadmap.md) for the full consolidation roadmap and [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the domain-agnostic kernel thesis.
 
 ### Major Capabilities & Enhancements
 
@@ -88,6 +90,8 @@ CAGE is designed as a **domain-independent governance substrate**. The core enfo
 
 Everything under [`src/gateway/`](src/gateway/) owns *mechanism*: the atomic Redis Lua barrier hop, fence-epoch logic, KMS signature verification, the quota reserver, the consensus algorithm, the causal refutation engine, LIFO rollback ordering, and evidence emission. A domain plugin owns only *nomenclature and parameters*: which actions it claims, which scalar the barrier watches, which threshold key holds the floor, which critics vote, and which tools exist.
 
+**Deny-by-Default Kernel Property:** The bare Layer 1 kernel with `CAGE_ACTIVE_PLUGINS=""` enforces all universal safety mechanisms (FTRA reachability, pipeline orchestration, consensus, causal checks, evidence sealing) but **denies all domain-specific actions** because no plugin has registered action handlers. This is the intended fail-closed behavior: the kernel cannot govern what it does not understand. Domain semantics arrive exclusively through Layer 2 plugins.
+
 **Domain specificity is added through optional plugins:**
 
 | Plugin | Package | Contributes | Status |
@@ -148,25 +152,33 @@ Domain plugins and jurisdictional postures compose independently — any plugin 
 
 ## The CAGE Product Offering
 
-CAGE v3.0.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
+CAGE v3.0.0 provides a **three-layer governance architecture** for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
 
-1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces an **8-tier symbolic governance model** — a pre-execution Forward-Looking Trajectory Reachability Analysis (FTRA, Tier 0.5) plus seven in-pipeline tiers: STPA/UCA validation, agentic confidence check, Control Barrier Function concurrent with OPA Rego, Fiscal Limit Pre-Reservation, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate — combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
-2.  **The FTRA Reachability Gate:** A pre-execution Forward-Looking Trajectory Reachability Analyzer (`src/gateway/governance/ftra/`) that builds a NetworkX directed graph from the agent's `ExecutionPlan`, classifies each step with `IrreversibilityClassifier` against the compiled terminal registry, and issues a CLEAR / HITL_REQUIRED / BLOCKED verdict before any tool call is made. This is Tier 0.5 — it fires at the LangGraph graph level before the `SymbolicGovernor`'s `_run_checks()` pipeline begins.
-3.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
-4.  **The STPA-to-Policy Compiler:** A CLI tool that ingests a declarative YAML control structure (`config/stpa_control_structure.yaml`) and auto-generates OPA Rego policies, NeMo Colang rails, Python `GeneratedSTPAValidator` classes, and **LangGraph Saga compensating sub-graphs** — eliminating the Natural Language Tax between design-time hazard analysis and runtime enforcement.
-5.  **The DoWhy Causal Gatekeeper:** An optional, refutation-based causal inference safety lock (`src/gateway/governance/causal/gatekeeper.py`) that validates world-model integrity via DoWhy placebo refutation before allowing high-stakes trade actions. Integrated as Tier 6 in the SymbolicGovernor pipeline.
-6.  **The LangGraph Saga Engine:** A Write-Ahead Log + LIFO rollback + idempotent compensating node pattern that provides atomic transaction guarantees for `execute_trade` actions, with ghost-state recovery and ISO 42001 telemetry on every rollback.
-7.  **The FiscalLimitGuard:** A Redis-backed atomic pre-reservation guard that prevents multi-agent "race to the rail" collisions when multiple agents simultaneously evaluate OPA fiscal limits.
-8.  **The Cryptographic Hash-Chained Context Accumulator (AARM-V1 / v1.1 Schema):** SHA-256 hash-chained, append-only log of every `OscalFinding`. Each node's `record_hash` binds `SHA-256(prev_hash ‖ content_json ‖ control_id ‖ event_type ‖ node_index ‖ audit_id)`, sealing an unalterable chain-of-custody that detects any Memory Poisoning attempt at the mutated node. Satisfies **ISO 42001 Annex A.5.3** and neutralizes **AARM-V1**.
-9.  **The 6 Governance State Machine Primitives:** Full first-class runtime execution for all six governance primitives (`ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`) in `SymbolicGovernor.validate_action()`. Execution is parked in a Redis-backed `DeferQueue` (`db=1`, `noeviction`) for `DEFER`, partially executed with bounded scope under `NARROW`, and suspended with epoch fencing via `PausePrimitiveManager` under `PAUSE`. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
-10. **Routing Seal v3 (JWT/KMS format with `record_hash` Binding):** 4-tuple cryptographic routing token `<expire_hex>.<action_slug>.<record_hash_hex>.<signature_hex>` produced only after all tiers pass. Actuators fail-closed if `record_hash` is absent or tampered when `CAGE_REQUIRE_EVIDENCE_BINDING=true`.
-11. **Native AARM Threat Vector Mapping (11-Vector Ledger):** Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns a live `NEUTRALIZED | PARTIAL | EXPOSED` verdict per vector, auto-serialized to GCS/S3 on every Lula audit run.
-12. **Cloud KMS HSM-Backed Governance Signing:** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation.
-13. **Human-Gated NeMo Refinement (CR-2):** The autonomous auto-apply branch has been eliminated. All incoming policy changes are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval via `POST /v1/nemo/approve-refinement/{proposal_id}` with reviewer identity and rationale before applying.
-14. **Heterogeneous Multi-Model Consensus:** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
-15. **Lua-Atomic CBF with Strict Replica Barrier & Monotonic Fence Epoch:** Consolidates barrier check and balance debiting into atomic Redis Lua (`atomic_verify_and_commit()`), enforces synchronous `WAIT` replication with automatic fail-closed rollback on replica timeout, and prevents stale-state replay via monotonic `safety:fence_epoch`.
-16. **Externally Reconciled CBF Ground Truth (POAM-023 / POAM-2026-038 CLOSED):** Sourced from an independently reconciled external custody ledger via `src/gateway/governance/reconciliation/daemon.py` (GCS WORM ledger + Cloud KMS ECDSA-P256 signing with 300s TTL in Redis).
-17. **Mechanized Formal Model (57/66 States & Multi-Agent Distributed Proof):** Exhaustive BFS state-space exploration (`proof/model.py` and `proof/distributed_cbf_model.py`) proving the `NoDirectBind` invariant holds across all sequential and concurrent interleavings.
+**Layer 1 (L1) — Domain-Neutral Kernel** provides universal enforcement mechanisms:
+
+1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **pipeline orchestration model** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper, adaptive FRIA gate). Combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). Acts as the "Controller" in our Controller-Plant architecture.
+2.  **The FTRA Reachability Gate** *(L1)*: Pre-execution Forward-Looking Trajectory Reachability Analyzer ([`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)) that builds a NetworkX directed graph from the agent's `ExecutionPlan`, classifies each step with `IrreversibilityClassifier` against the signed terminal registry, and issues a CLEAR / HITL_REQUIRED / BLOCKED verdict before any tool call is made.
+3.  **The Reusable Agent Harness** *(L1)*: Deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
+4.  **The STPA-to-Policy Compiler** *(L1)*: CLI tool ingesting declarative YAML control structure ([`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml)) and auto-generating OPA Rego policies, NeMo Colang rails, Python `GeneratedSTPAValidator` classes, and LangGraph Saga compensating sub-graphs.
+5.  **The DoWhy Causal Gatekeeper** *(L1)*: Optional refutation-based causal inference safety lock ([`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py)) validating world-model integrity via DoWhy placebo refutation before allowing high-stakes actions. Integrated as a pipeline stage.
+6.  **The Cryptographic Hash-Chained Context Accumulator** *(L1)*: SHA-256 hash-chained, append-only log of every `OscalFinding`. Each node's `record_hash` binds `SHA-256(prev_hash ‖ content_json ‖ control_id ‖ event_type ‖ node_index ‖ audit_id)`, sealing an unalterable chain-of-custody. Satisfies **ISO 42001 Annex A.5.3** and neutralizes **AARM-V1**.
+7.  **The 6 Governance State Machine Primitives** *(L1)*: Full first-class runtime execution for all six governance primitives (`ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`) in `SymbolicGovernor.validate_action()`. Execution is parked in Redis-backed `DeferQueue` for `DEFER`, partially executed under `NARROW`, and suspended with epoch fencing under `PAUSE`. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
+8.  **Routing Seal v3 (JWT/KMS format)** *(L1)*: 4-tuple cryptographic routing token `<expire_hex>.<action_slug>.<record_hash_hex>.<signature_hex>` produced only after all tiers pass. Actuators fail-closed if `record_hash` is absent or tampered when `CAGE_REQUIRE_EVIDENCE_BINDING=true`.
+9.  **Cloud KMS HSM-Backed Governance Signing** *(L1)*: Asymmetric signing via Google Cloud KMS HSM ([`src/gateway/governance/kms_signer.py`](src/gateway/governance/kms_signer.py)). Private key never leaves the HSM; verification uses locally-embedded public key PEM for sub-millisecond latency.
+10. **Heterogeneous Multi-Model Consensus** *(L1)*: `ConsensusModelRegistry` routes each critic persona to distinct vLLM inference backends. No single model can "consent" to its own output — system invariants are no longer vulnerable to shared semantic blind spots.
+11. **Lua-Atomic CBF with Strict Replica Barrier** *(L1)*: Consolidates barrier check and balance debiting into atomic Redis Lua (`atomic_verify_and_commit()`), enforces synchronous `WAIT` replication with fail-closed rollback on replica timeout, prevents stale-state replay via monotonic `safety:fence_epoch`.
+12. **Externally Reconciled CBF Ground Truth** *(L1)*: Sourced from independently reconciled external custody ledger via [`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py) (GCS WORM ledger + Cloud KMS ECDSA-P256 signing with 300s TTL).
+13. **Mechanized Formal Model** *(L1)*: Exhaustive BFS state-space exploration ([`proof/model.py`](proof/model.py) and [`proof/distributed_cbf_model.py`](proof/distributed_cbf_model.py)) proving the `NoDirectBind` invariant holds across all sequential and concurrent interleavings.
+
+**Layer 2 (L2) — Domain Plugins** contribute domain-specific semantics (optional, loaded via `CAGE_ACTIVE_PLUGINS`):
+
+14. **Finance Plugin** *(L2)*: Trading controls, `FiscalLimitGuard` (atomic pre-reservation preventing multi-agent "race to the rail"), `CashBarrier` declaration, `execute_trade` tooling, market-abuse critics, LangGraph Saga atomic transaction guarantees with WAL + LIFO rollback ([`src/cage_finance/`](src/cage_finance/)).
+15. **Healthcare Plugin** *(L2)*: Dosing concentration barriers, clinical decision oversight, `dose_order` tooling, `SerumConcentrationBarrier` declaration ([`src/cage_healthcare/`](src/cage_healthcare/)).
+
+**Layer 3 (L3) — Operational Tooling**:
+
+16. **Native AARM Threat Vector Mapping** *(L3)*: Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns live `NEUTRALIZED | PARTIAL | EXPOSED` verdicts per vector.
+17. **Human-Gated NeMo Refinement** *(L3)*: All incoming policy changes staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying.
 
 Compliance is not documented after the fact; it is enforced at the point of inference, producing both governed outputs and a cryptographically hash-chained, tamper-evident audit evidence trail in real time.
 
@@ -176,20 +188,19 @@ Compliance is not documented after the fact; it is enforced at the point of infe
 
 CAGE is composed of the following runtime subsystems:
 
-| Subsystem                        | Root Path                         | Role                                                                        |
-| -------------------------------- | --------------------------------- | --------------------------------------------------------------------------- |
-| **Gateway / Governance Harness** | `src/gateway/governance/`         | Reusable `langgraph_harness` factories, OPA symbolic governor, NeMo manager |
-| **Reference Application (finance example)** | `src/governed_financial_advisor/` | Example-domain LangGraph multi-agent pipeline and FastAPI server. Demonstrates the harness; **not** part of the kernel and not required to run CAGE |
-| **Hybrid Inference Gateway**     | `src/gateway/`                    | MCP tool server + inference proxy + 8-tier SymbolicGovernor (FTRA + 7 in-pipeline tiers) + KMS signer + ConsensusModelRegistry |
-| **Pipeline Orchestration**       | `src/gateway/governance/pipeline/`| `GovernanceStage` protocol, `StageRegistry`, `PipelineOrchestrator`, `DeferQueue`, `LeaseLedger`; A0–A6 arbitration ladder — see [`PIPELINE_ORCHESTRATION.md`](docs/architecture/PIPELINE_ORCHESTRATION.md) |
-| **FTRA Boundary Enforcement**    | `src/gateway/governance/ftra/`    | Forward-Looking Trajectory Reachability Analyzer (Tier 0.5); signed terminal registry; bounding contracts B1–B10 — see [`FTRA_BOUNDARY_ENFORCEMENT.md`](docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md) |
-| **Policy Ingress Adapters**      | `src/gateway/governance/ingress/` | Absorbs ACS / AAIF / OSCAL / Lula policy, AGW requests, and the GEAP agent registry into CAGE artifacts — see [`INGRESS_ADAPTER_ARCHITECTURE.md`](docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md) |
-| **Domain Plugins** *(optional)*  | `src/cage_finance/`, `src/cage_healthcare/` | Entry-point (`cage.plugins`) capability packages contributing tiers, barriers, rails, tools, and compliance overlays. Finance and healthcare are equal-standing example domains; adopters add `src/cage_<domain>/` — see [`DOMAIN_PLUGIN_ARCHITECTURE.md`](docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) |
-| **Jurisdictional Configuration** *(config layer)* | `config/thresholds/`, `config/compliance/`, `config/opa/` | Region-selected thresholds, control profiles, and policy bundles resolved from `CAGE_DEPLOYMENT_REGION`. No Python code is region-specific |
-| **Compliance Bridge**            | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API |
-| **AgentSight UI**                | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
-| **AgentSight eBPF DaemonSet**    | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
-| **Vendor Integrations**          | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `provider_04/` (socket-level execution guillotine), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier) |
+| Subsystem                        | Layer | Root Path                         | Role                                                                        |
+| -------------------------------- | ----- | --------------------------------- | --------------------------------------------------------------------------- |
+| **Gateway / Governance Harness** | **L1** | `src/gateway/governance/`         | Domain-neutral enforcement kernel: FTRA gate, pipeline orchestrator, CBF engine, consensus arbitration, causal gatekeeper, evidence chain, routing seal |
+| **Pipeline Orchestration**       | **L1** | `src/gateway/governance/pipeline/`| `GovernanceStage` protocol, `StageRegistry`, `PipelineOrchestrator`, `DeferQueue`, `LeaseLedger`; A0–A6 arbitration ladder — see [`PIPELINE_ORCHESTRATION.md`](docs/architecture/PIPELINE_ORCHESTRATION.md) |
+| **FTRA Boundary Enforcement**    | **L1** | `src/gateway/governance/ftra/`    | Forward-Looking Trajectory Reachability Analyzer (Tier 0.5); signed terminal registry; bounding contracts B1–B10 — see [`FTRA_BOUNDARY_ENFORCEMENT.md`](docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md) |
+| **Policy Ingress Adapters**      | **L1** | `src/gateway/governance/ingress/` | Absorbs ACS / AAIF / OSCAL / Lula policy, AGW requests, and the GEAP agent registry into CAGE artifacts — see [`INGRESS_ADAPTER_ARCHITECTURE.md`](docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md) |
+| **Compliance Bridge**            | **L1** | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API |
+| **Vendor Integrations**          | **L1** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `provider_04/` (socket-level execution guillotine), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier) |
+| **Domain Plugins** *(optional)*  | **L2** | `src/cage_finance/`, `src/cage_healthcare/` | Entry-point (`cage.plugins`) capability packages contributing domain-specific tiers, barriers, rails, tools, and compliance overlays. Finance and healthcare are equal-standing example domains; adopters add `src/cage_<domain>/`. **Zero plugins loaded:** kernel denies all domain actions (fail-closed) |
+| **Jurisdictional Configuration** *(config layer)* | **L3** | `config/thresholds/`, `config/compliance/`, `config/opa/` | Region-selected thresholds, control profiles, and policy bundles resolved from `CAGE_DEPLOYMENT_REGION`. No Python code is region-specific |
+| **AgentSight UI**                | **L3** | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
+| **AgentSight eBPF DaemonSet**    | **L3** | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
+| **Reference Application** *(example)* | **—** | `src/governed_financial_advisor/` | Example-domain LangGraph multi-agent pipeline and FastAPI server. Demonstrates the harness; **not** part of CAGE and not required to run the kernel |
 
 The layering below separates the **domain-neutral substrate** (always present), the **optional domain plugins** (dashed — load zero, one, or many), and the **jurisdictional configuration layer** (selected at deploy time):
 
@@ -551,117 +562,90 @@ bash setup_test_env.sh && python -m pytest tests/   # 1,509 unit tests passing, 
 
 ## Project Structure
 
+**Layer 1 (L1)** — Domain-neutral kernel, always present
+**Layer 2 (L2)** — Optional domain plugins (`CAGE_ACTIVE_PLUGINS`)
+**Layer 3 (L3)** — Configuration & operational tooling
+
 ```
 cybernetic-agent-governance-engine/
 ├── src/
-│   ├── gateway/
-│   │   ├── governance/               # SymbolicGovernor, STPAValidator, NeMo manager
-│   │   │   ├── kms_signer.py         # v2.0.0: Cloud KMS HSM-backed governance signer
-│   │   │   ├── consensus/            # v2.0.0: ConsensusModelRegistry + heterogeneous consensus
+│   ├── gateway/                      # [L1] Domain-neutral governance kernel
+│   │   ├── governance/               #      SymbolicGovernor, pipeline orchestrator, evidence chain
+│   │   │   ├── kms_signer.py         #      Cloud KMS HSM-backed governance signer
+│   │   │   ├── consensus/            #      ConsensusModelRegistry + heterogeneous consensus
 │   │   │   │   └── engine.py
-│   │   │   ├── normative_provider.py  # v2.0.0: External Normative Provider + Adaptive Gating Primitive
-│   │   │   ├── pipeline/             # Unified governance pipeline orchestration
-│   │   │   │   ├── stage_protocol.py #   GovernanceStage Protocol
-│   │   │   │   ├── stage_registry.py #   StageRegistry — ordered stage container
-│   │   │   │   ├── orchestrator.py   #   PipelineOrchestrator — execution + HITL routing
-│   │   │   │   ├── defer_queue.py    #   DeferQueue — HITL parking for REVIEWABLE findings
-│   │   │   │   ├── lease_ledger.py   #   LeaseLedger — idempotent resource leases
-│   │   │   │   └── stages/           #   FTRA, bounded autonomy, CBF safety, fiscal limit
-│   │   │   ├── ftra/                 # Forward-Looking Trajectory Reachability Analyzer (Tier 0.5)
-│   │   │   │   ├── classifier.py     #   IrreversibilityClassifier — signed registry, fail-closed
-│   │   │   │   ├── registry_verifier.py #  Envelope / expiry / serial / ES256 verification
-│   │   │   │   ├── graph_analyzer.py #   PlanGraphAnalyzer — DFS reachability
-│   │   │   │   ├── node_factory.py   #   create_ftra_node() LangGraph gate
-│   │   │   │   └── bounding_contract.py # B1–B10 hard constraints
-│   │   │   ├── ingress/              # Policy ingress adapters (ACS/AAIF/OSCAL/Lula/AGW/registry)
-│   │   │   │   ├── policy_translator.py # Format detection + ArtifactBundle
-│   │   │   │   └── ...               #   acs_, aaif_, oscal_, lula_, agw_, agent_registry_ adapters
-│   │   │   ├── arbitration.py        # Pure A0–A6 precedence ladder + flag downgrades
-│   │   │   ├── contracts.py          # Finding, Disposition, PipelineContext, CagePlugin protocols
-│   │   │   ├── plugin_loader.py      # cage.plugins entry-point discovery (CAGE_ACTIVE_PLUGINS)
-│   │   │   ├── stpa_compiler.py      # STPA-to-Policy compiler CLI (OPA/NeMo/Python/LangGraph)
-│   │   │   ├── oscal_ssp_exporter.py # Automated OSCAL SSP patcher
-│   │   │   ├── generated_stpa_validator.py  # Auto-generated from YAML
-│   │   │   ├── generated_saga_nodes.py      # Auto-generated LangGraph Saga nodes
-│   │   │   ├── safety/               # Safety components
-│   │   │   │   ├── cbf_engine.py     # Control Barrier Function implementation
-│   │   │   │   └── resource_guard.py
-│   │   │   ├── token_quota_proxy.py  # CTRL_TQP_007: per-session step/token quota circuit breaker (ISO 42001 A.4)
-│   │   │   ├── pii_sanitizer.py      # Pre-ledger PII sanitization pipeline (ISO 42001 A.6)
-│   │   │   └── uca_logger.py         # ISO 42001 Clause 6.1 UCA record builder, KMS signer, WORM persister
-│   │   └── server/                   # MCP tool server + inference proxy
-│   ├── governed_financial_advisor/
-│   │   ├── graph/
-│   │   │   └── state.py              # AgentState + LedgerEntry WAL schema
-│   │   └── utils/
-│   │       └── langfuse_utils.py     # SagaCallbackHandler OTel interceptor
-│   ├── compliance_bridge/            # OSCAL audit ingest + SSE event bus
-│   │   ├── context_accumulator.py    # AARM-V1: SHA-256 hash-chained Context Accumulator
-│   │   ├── aarm_mapper.py            # AARM 11-vector static threat ledger
-│   │   ├── aarm_report_generator.py  # vLLM narrative enrichment (Semaphore(3))
-│   │   └── audit_workflow.py         # 6-step compliance pipeline (upgraded from 5-step)
-│   ├── gateway/
-│   │   └── governance/
-│   │       ├── defer_queue.py        # AARM-V7: Redis DEFER state machine (db=1, noeviction)
-│   │       └── ...                   # SymbolicGovernor, STPAValidator, NeMo manager
-│   ├── cage_finance/                 # Finance domain plugin (cage.plugins entry point)
-│   │   ├── plugin.py                 #   FinanceCagePlugin — 4 tiers, rails, tools
-│   │   ├── invariants.py             #   CashBarrier declaration (declarative, no logic)
-│   │   ├── tiers/                    #   cbf (2,3) · fiscal (2,4) · consensus (1,5) · causal (1,6)
-│   │   ├── rails/  tools/  opa/      #   NeMo actions, MCP tools, trade_governance.rego
-│   │   └── config/compliance/        #   US_FED / EU_ECB / APAC_MAS overlays
-│   ├── cage_healthcare/              # Healthcare domain plugin (zero Lua, zero KMS)
-│   │   ├── plugin.py                 #   HealthcareCagePlugin — 2 tiers, rails, tools
-│   │   ├── invariants.py             #   SerumConcentrationBarrier declaration
-│   │   ├── tiers/                    #   dose_barrier (2,3) · clinical_consensus (1,5)
+│   │   │   ├── pipeline/             #      Unified governance pipeline orchestration
+│   │   │   │   ├── stage_protocol.py #        GovernanceStage Protocol
+│   │   │   │   ├── orchestrator.py   #        PipelineOrchestrator — execution + HITL routing
+│   │   │   │   ├── defer_queue.py    #        DeferQueue — HITL parking (ISO 42001 A.8.4)
+│   │   │   │   └── stages/           #        FTRA, bounded autonomy, CBF safety
+│   │   │   ├── ftra/                 #      Forward-Looking Trajectory Reachability Analyzer
+│   │   │   │   ├── classifier.py     #        IrreversibilityClassifier — signed registry
+│   │   │   │   ├── graph_analyzer.py #        PlanGraphAnalyzer — DFS reachability
+│   │   │   │   └── bounding_contract.py #     B1–B10 hard constraints
+│   │   │   ├── ingress/              #      Policy ingress adapters (ACS/AAIF/OSCAL/Lula)
+│   │   │   ├── safety/               #      Safety components
+│   │   │   │   ├── cbf_engine.py     #        Control Barrier Function (Lua-atomic hop)
+│   │   │   │   └── reconciliation/   #        External ledger reconciliation daemon
+│   │   │   ├── causal/               #      DoWhy causal gatekeeper
+│   │   │   │   └── gatekeeper.py
+│   │   │   ├── plugin_loader.py      #      cage.plugins entry-point discovery
+│   │   │   ├── token_quota_proxy.py  #      Per-session step/token quota (ISO 42001 A.4)
+│   │   │   └── pii_sanitizer.py      #      Pre-ledger PII sanitization (ISO 42001 A.6)
+│   │   └── server/                   #      MCP tool server + inference proxy
+│   ├── compliance_bridge/            # [L1] OSCAL audit ingest + SSE event bus
+│   │   ├── context_accumulator.py    #      SHA-256 hash-chained Context Accumulator
+│   │   ├── aarm_mapper.py            #      AARM 11-vector static threat ledger
+│   │   └── audit_workflow.py         #      6-step compliance pipeline
+│   ├── integrations/                 # [L1] Vendor-isolated third-party adapters
+│   │   ├── provider_01/              #      External normative provider adapter
+│   │   ├── provider_02/              #      SDK attestation adapter
+│   │   └── provider_03/              #      JCS canonicalization adapter
+│   ├── cage_finance/                 # [L2] Finance domain plugin (optional)
+│   │   ├── plugin.py                 #      FinanceCagePlugin — 4 tiers, rails, tools
+│   │   ├── invariants.py             #      CashBarrier declaration
+│   │   ├── tiers/                    #      cbf (2,3) · fiscal (2,4) · consensus (1,5)
+│   │   ├── rails/  tools/  opa/      #      NeMo actions, MCP tools, trade_governance.rego
+│   │   └── config/compliance/        #      US_FED / EU_ECB / APAC_MAS overlays
+│   ├── cage_healthcare/              # [L2] Healthcare domain plugin (optional)
+│   │   ├── plugin.py                 #      HealthcareCagePlugin — 2 tiers, rails, tools
+│   │   ├── invariants.py             #      SerumConcentrationBarrier declaration
+│   │   ├── tiers/                    #      dose_barrier (2,3) · clinical_consensus (1,5)
 │   │   └── opa/dosing_governance.rego
-│   ├── integrations/                 # v2.0.0: Vendor-isolated third-party adapters
-│   │   ├── provider_01/              # External normative provider adapter
-│   │   └── provider_02/              # SDK attestation adapter + provider
-│   └── agentsight-ui/                # React/TypeScript operator dashboard
-├── config/
-│   ├── stpa_control_structure.yaml   # Single source of truth for all STPA UCAs
-│   ├── governance_thresholds.json    # All numeric thresholds (THRESHOLDS singleton)
-│   ├── ftra/terminal_registry.json   # Signed FTRA terminal registry (+ detached .sig)
-│   ├── schemas/terminal_registry_schema.json  # v3.0 multi-domain registry schema
-│   ├── compliance/                   # v2.0.0: Regional control-mapping JSON profiles
-│   │   ├── US_FED_BASELINE.json      #   SR 26-2 / NIST AI RMF / ISO 42001
-│   │   ├── EU_ECB_BASELINE.json      #   EU AI Act / DORA / GDPR / EBA
-│   │   ├── APAC_MAS_BASELINE.json    #   MAS FEAT / MAS TRM / ISO 42001
-│   │   └── reconciliation/daemon.py  # External ledger reconciliation daemon: Stub/GCS/S3(ObjectStore)/Plaid/Anchorage providers
-│   ├── thresholds/                   # v2.0.0: Regionalized numeric threshold profiles
+│   ├── agentsight-ui/                # [L3] React/TypeScript operator dashboard
+│   └── governed_financial_advisor/   # [Example] Reference application (not part of CAGE)
+│       ├── graph/state.py            #         AgentState + LedgerEntry WAL schema
+│       └── utils/langfuse_utils.py   #         SagaCallbackHandler OTel interceptor
+├── config/                           # [L3] Jurisdictional configuration layer
+│   ├── stpa_control_structure.yaml   #      Single source of truth for STPA UCAs
+│   ├── ftra/terminal_registry.json   #      Signed FTRA terminal registry (+ detached .sig)
+│   ├── compliance/                   #      Regional control-mapping JSON profiles
+│   │   ├── US_FED_BASELINE.json      #        SR 26-2 / NIST AI RMF / ISO 42001
+│   │   ├── EU_ECB_BASELINE.json      #        EU AI Act / DORA / GDPR
+│   │   └── APAC_MAS_BASELINE.json    #        MAS FEAT / MAS TRM / ISO 42001
+│   ├── thresholds/                   #      Regionalized numeric threshold profiles
 │   │   ├── US_FED_BASELINE.json
 │   │   ├── EU_ECB_BASELINE.json
 │   │   └── APAC_MAS_BASELINE.json
-│   ├── oscal/framework_mappings/     # v2.0.0: OSCAL exporter UCA routing tables (FrameworkRouter)
-│   │   ├── NIST_SP800_53.json
-│   │   ├── ISO_42001.json
-│   │   ├── EU_AI_ACT.json
-│   │   └── MAS_FEAT.json
-│   ├── opa/                          # Generated OPA Rego policies
-│   └── rails/                        # NeMo Guardrails Colang 2.x definitions
-├── deployment/k8s/
-│   ├── linkerd-mtls-policy.yaml      # Z3N: Linkerd Server/AuthorizationPolicy/MeshTLSAuthentication
-│   └── cilium-egress-lockdown.yaml   # Z3N: Cilium L7 FQDN egress lockdown
-├── examples/
-│   ├── chaos_agent_playground.py     # Scenarios A–E: adversarial governance + Saga chaos tests
-│   ├── governance_demo.py            # 3-act Governance-as-Code walkthrough
-│   ├── telemetry.py                  # SHA-256 evidence chain + view-access audit log
-│   └── evidence/                     # Generated NDJSON evidence chain (gitignored)
+│   ├── opa/                          #      Generated OPA Rego policies
+│   └── rails/                        #      NeMo Guardrails Colang 2.x definitions
 ├── compliance/oscal/
-│   ├── system-security-plan.yaml     # 1,151-line hand-authored OSCAL SSP (patched by exporter)
-│   └── component-definition.yaml    # OSCAL component registry
-├── tests/
-│   ├── test_context_accumulator.py   # 15 tests: chain integrity, tamper detection
-│   ├── test_defer_queue.py           # hermetic fakeredis DeferQueue tests
-│   ├── test_aarm_mapper.py           # 11-vector ledger, NEUTRALIZED/PARTIAL/EXPOSED scoring
-│   ├── test_compliance_bridge_integration.py  # 104 live GKE integration tests (Groups 1–17)
-│   ├── test_stpa_compiler.py         # 33 compiler tests
-│   ├── test_fiscal_limit_guard.py    # 16 multi-agent collision tests
-│   └── ...                           # Full test suite
-├── docs/                             # Architecture, compliance, and operational docs
-└── pyproject.toml                    # Project metadata and dependencies
+│   ├── system-security-plan.yaml     # [L3] OSCAL SSP (1,151 lines, auto-patched)
+│   └── component-definition.yaml     #      OSCAL component registry
+├── deployment/k8s/                   # [L3] Kubernetes manifests
+│   ├── linkerd-mtls-policy.yaml      #      Linkerd mTLS enforcement
+│   └── cilium-egress-lockdown.yaml   #      Cilium L7 FQDN egress lockdown
+├── tests/                            #      Full test suite (3,747 passing)
+│   ├── test_domain_independence.py   #      Proves L2 plugins don't modify L1 kernel
+│   ├── test_causal_gatekeeper.py     #      DoWhy causal inference tests
+│   ├── test_fiscal_limit_guard.py    #      Multi-agent collision tests
+│   └── ...
+├── docs/                             #      Architecture, compliance, operational docs
+├── plans/                            #      Implementation plans & roadmaps
+└── pyproject.toml                    #      Project metadata and dependencies
 ```
+
+**What you get with `CAGE_ACTIVE_PLUGINS=""`:** The full Layer 1 kernel (FTRA reachability, pipeline orchestration, CBF enforcement, consensus, causal checks, evidence chain, KMS routing seals) but **zero domain-specific action handlers** — all domain actions denied (fail-closed). Load one or more Layer 2 plugins to add trade controls, dosing barriers, or custom domain semantics.
 
 ---
 
