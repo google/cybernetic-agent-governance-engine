@@ -111,7 +111,7 @@ export CAGE_ACTIVE_PLUGINS=""
 
 [`tests/test_domain_independence.py`](tests/test_domain_independence.py) is the standing proof of this claim: it loads both plugins together and asserts the kernel was not modified to accommodate the second one. Companion tests assert the healthcare package contains **zero** Lua files and **zero** KMS imports — it cannot fork the atomicity or signing paths.
 
-See [`docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md`](docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) for the plugin authoring guide and [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the domain-agnostic kernel thesis.
+See [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the plugin authoring guide and domain-agnostic kernel thesis.
 
 ---
 

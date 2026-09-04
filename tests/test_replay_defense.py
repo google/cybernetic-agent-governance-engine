@@ -36,7 +36,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_default_zero(self) -> None:
         """Verify sequence defaults to 0 for backward compatibility."""
-        from src.cage_finance.reconciliation_worker import ReconciliationResult
+        from src.gateway.governance.reconciliation.daemon import ReconciliationResult
 
         result = ReconciliationResult(
             source="test",
@@ -46,7 +46,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_in_redis_payload(self) -> None:
         """Verify sequence is included in serialized Redis payload."""
-        from src.cage_finance.reconciliation_worker import ReconciliationResult
+        from src.gateway.governance.reconciliation.daemon import ReconciliationResult
 
         result = ReconciliationResult(
             source="plaid",
@@ -63,7 +63,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_deserialized_from_payload(self) -> None:
         """Verify sequence is correctly deserialized from Redis payload."""
-        from src.cage_finance.reconciliation_worker import ReconciliationResult
+        from src.gateway.governance.reconciliation.daemon import ReconciliationResult
 
         payload = json.dumps(
             {
@@ -80,7 +80,7 @@ class TestReconciliationResultSequence:
 
     def test_sequence_backward_compat_missing_field(self) -> None:
         """Verify sequence defaults to 0 when missing from payload (backward compat)."""
-        from src.cage_finance.reconciliation_worker import ReconciliationResult
+        from src.gateway.governance.reconciliation.daemon import ReconciliationResult
 
         # Old-format payload without sequence field
         payload = json.dumps(
@@ -106,7 +106,7 @@ class TestSequenceInSignedPayload:
 
     def test_sequence_included_in_kms_signature(self) -> None:
         """Verify sequence is part of the payload passed to KMS signer.sign()."""
-        from src.cage_finance.reconciliation_worker import (
+        from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -256,7 +256,7 @@ class TestCBFSequenceValidation:
         - The _validate_sequence method should not even be called
         - This ensures backward compatibility during staged rollout
         """
-        from src.cage_finance.reconciliation_worker import ReconciliationResult
+        from src.gateway.governance.reconciliation.daemon import ReconciliationResult
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         # Create a verified result with sequence=0 (default)
@@ -299,7 +299,7 @@ class TestReconciliationSequenceIntegration:
 
     def test_reconcile_stamps_sequence_when_enabled(self) -> None:
         """Verify reconcile() stamps sequence on payload when feature flag is enabled."""
-        from src.cage_finance.reconciliation_worker import (
+        from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -326,7 +326,7 @@ class TestReconciliationSequenceIntegration:
 
     def test_reconcile_skips_sequence_when_disabled(self) -> None:
         """Verify reconcile() does not stamp sequence when feature flag is disabled."""
-        from src.cage_finance.reconciliation_worker import (
+        from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
@@ -399,7 +399,7 @@ class TestReplayDefenseTelemetry:
         the reconcile() method stamps sequence on the result, which
         is then recorded as an OTel span attribute.
         """
-        from src.cage_finance.reconciliation_worker import (
+        from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
             StubLedgerProvider,
         )
