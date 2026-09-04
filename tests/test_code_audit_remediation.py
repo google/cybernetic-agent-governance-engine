@@ -26,8 +26,9 @@ Validates fixes for the 7 issues discovered during documentation audit:
 """
 
 import json
-import pytest
 from pathlib import Path
+
+import pytest
 
 from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractConfig,
@@ -42,14 +43,16 @@ from src.gateway.governance.ingress.agw_adapter import AgwAdapter
 async def test_agw_adapter_fails_closed_on_invalid_oidc():
     """Verify AgwAdapter returns success=False when OIDC validation fails."""
     adapter = AgwAdapter()
-    
+
     # Test with missing token
-    result = await adapter.process({
-        "agent_id": "test-agent",
-        "tool": {"name": "execute_trade", "parameters": {}},
-        "auth": {"token": ""},  # Empty token
-    })
-    
+    result = await adapter.process(
+        {
+            "agent_id": "test-agent",
+            "tool": {"name": "execute_trade", "parameters": {}},
+            "auth": {"token": ""},  # Empty token
+        }
+    )
+
     # Issue #2 fix: success must be False when identity_verified is False
     assert result.success is False, "success should be False when OIDC validation fails"
     assert result.identity_verified is False
@@ -61,15 +64,17 @@ async def test_agw_adapter_fails_closed_on_invalid_oidc():
 async def test_agw_adapter_success_coupled_to_identity():
     """Verify AgwAdapter couples success to identity_verified (no hardcoded True)."""
     adapter = AgwAdapter()
-    
+
     # Even with valid-looking request structure, no OIDC issuer means fail-closed
-    result = await adapter.process({
-        "agent_id": "test-agent",
-        "tool": {"name": "execute_trade", "parameters": {"quantity": 100}},
-        "auth": {"token": "fake-jwt-token"},
-        "trace_id": "test-trace-123",
-    })
-    
+    result = await adapter.process(
+        {
+            "agent_id": "test-agent",
+            "tool": {"name": "execute_trade", "parameters": {"quantity": 100}},
+            "auth": {"token": "fake-jwt-token"},
+            "trace_id": "test-trace-123",
+        }
+    )
+
     # Both success and identity_verified must be False
     assert result.success == result.identity_verified, (
         "success must match identity_verified (no decoupling)"
@@ -83,7 +88,7 @@ def test_empty_bounding_contract_config_rejected():
     """Verify BoundingContractEnforcer rejects empty configuration (fail-safe)."""
     # Empty config (no whitelists) should raise ValueError
     empty_config = BoundingContractConfig()
-    
+
     with pytest.raises(ValueError, match="must specify at least one of"):
         BoundingContractEnforcer(empty_config)
 
@@ -97,33 +102,33 @@ def test_bounding_contract_requires_at_least_one_whitelist():
     )
     enforcer = BoundingContractEnforcer(config_with_instruments)
     assert enforcer.config.allowed_instruments == {"AAPL", "MSFT"}
-    
+
     # Only allowed_venues populated - should succeed
-    config_with_venues = BoundingContractConfig(
-        allowed_venues={"NYSE", "NASDAQ"}
-    )
+    config_with_venues = BoundingContractConfig(allowed_venues={"NYSE", "NASDAQ"})
     enforcer = BoundingContractEnforcer(config_with_venues)
     assert enforcer.config.allowed_venues == {"NYSE", "NASDAQ"}
 
 
 # Issue #5: Stage migration exports
-@pytest.mark.skip(reason="Stage classes moved to plugin architecture in Phase 1 domain extraction")
+@pytest.mark.skip(
+    reason="Stage classes moved to plugin architecture in Phase 1 domain extraction"
+)
 @pytest.mark.local
 def test_cbf_and_fiscal_stages_exported():
     """Verify CbfSafetyStage and FiscalLimitStage are exported from stages package."""
     from src.gateway.governance.pipeline.stages import (
+        BoundedAutonomyStage,
         CbfSafetyStage,
         FiscalLimitStage,
-        BoundedAutonomyStage,
         FtraBoundaryStage,
     )
-    
+
     # Verify all expected stages are importable
     assert CbfSafetyStage is not None
     assert FiscalLimitStage is not None
     assert BoundedAutonomyStage is not None
     assert FtraBoundaryStage is not None
-    
+
     # Verify stage names
     cbf = CbfSafetyStage()
     fiscal = FiscalLimitStage()
@@ -132,16 +137,18 @@ def test_cbf_and_fiscal_stages_exported():
 
 
 # Issue #6: adapt_legacy_violations_to_findings documentation
-@pytest.mark.skip(reason="Arbitration module removed in Phase 1 - functionality moved to plugin architecture")
+@pytest.mark.skip(
+    reason="Arbitration module removed in Phase 1 - functionality moved to plugin architecture"
+)
 @pytest.mark.local
 def test_adapt_legacy_violations_has_migration_docs():
     """Verify adapt_legacy_violations_to_findings has transitional status documented."""
     from src.gateway.governance.arbitration import adapt_legacy_violations_to_findings
-    
+
     # Verify function has docstring explaining transitional nature
     assert adapt_legacy_violations_to_findings.__doc__ is not None
     docstring = adapt_legacy_violations_to_findings.__doc__
-    
+
     assert "Issue #6 remediation" in docstring
     assert "transitional" in docstring.lower() or "migration" in docstring.lower()
     assert "substring" in docstring.lower()  # Documents substring matching approach
@@ -152,41 +159,43 @@ def test_adapt_legacy_violations_has_migration_docs():
 def test_terminal_registry_version_3_0():
     """Verify terminal registry uses v3.0 schema format."""
     registry_path = Path("config/ftra/terminal_registry.json")
-    
+
     with open(registry_path) as f:
         registry = json.load(f)
-    
+
     # Version must be 3.0 (not 2.0)
     assert registry["version"] == "3.0", "Registry must use v3.0 schema"
-    
+
     # v3.0 requires domain field
     assert "domain" in registry, "v3.0 schema requires domain field"
     assert registry["domain"] == "finance"
-    
+
     # Serial must be >= 2 (incremented from v2.0)
     assert registry["serial"] >= 2, "Serial must increment on version upgrade"
-    
+
     # v3.0 schema-required fields
     assert "issued_at" in registry
     assert "expires_at" in registry
     assert "terminals" in registry
 
 
-@pytest.mark.skip(reason="Schema file not present on main - test documents expected structure for reference")
+@pytest.mark.skip(
+    reason="Schema file not present on main - test documents expected structure for reference"
+)
 @pytest.mark.local
 def test_terminal_registry_schema_validation():
     """Verify terminal registry validates against v3.0 schema."""
     import jsonschema
-    
+
     registry_path = Path("config/ftra/terminal_registry.json")
     schema_path = Path("config/schemas/terminal_registry_schema.json")
-    
+
     with open(registry_path) as f:
         registry = json.load(f)
-    
+
     with open(schema_path) as f:
         schema = json.load(f)
-    
+
     # Should validate without errors
     try:
         jsonschema.validate(instance=registry, schema=schema)
@@ -200,36 +209,41 @@ def test_ftra_acronym_documentation_consistency():
     """Verify FTRA is consistently expanded as 'Forward-Looking Trajectory Reachability Analyzer'."""
     # This is a documentation audit - code grep found zero instances of the incorrect expansion
     # Test verifies the correct expansion is used in key source files
-    
+
     from src.gateway.governance import ftra
-    
+
     # Verify FTRA module docstring has correct expansion
     assert ftra.__doc__ is not None
     assert "Forward-Looking Trajectory Reachability Analyzer" in ftra.__doc__
-    
+
     # Verify source file comments have correct expansion
     import inspect
+
     ftra_source = inspect.getsourcefile(ftra)
     assert ftra_source is not None
-    
+
     with open(ftra_source.replace("__init__.py", "../constants.py")) as f:
         constants_content = f.read()
         # constants.py line 204 has the docstring with correct expansion
         assert "Forward-Looking Trajectory Reachability Analyzer" in constants_content
-        assert "Financial Trading" not in constants_content  # Verify wrong expansion absent
+        assert (
+            "Financial Trading" not in constants_content
+        )  # Verify wrong expansion absent
 
 
 # Issue #4: Healthcare plugin entry point verification
-@pytest.mark.skip(reason="Healthcare plugin entry point added in Phase 3 - test premature for Phase 2")
+@pytest.mark.skip(
+    reason="Healthcare plugin entry point added in Phase 3 - test premature for Phase 2"
+)
 @pytest.mark.local
 def test_healthcare_plugin_entry_point_registered():
     """Verify healthcare plugin has proper entry point in pyproject.toml."""
     pyproject_path = Path("pyproject.toml")
-    
+
     # Read pyproject.toml manually (toml not in dependencies)
     with open(pyproject_path) as f:
         content = f.read()
-    
+
     # Verify both plugins are present in [project.entry-points."cage.plugins"]
     assert '[project.entry-points."cage.plugins"]' in content
     assert 'finance = "cage_finance.plugin:FinanceCagePlugin"' in content

@@ -542,12 +542,20 @@ def _load_hitl_constants_from_baselines() -> None:
     """
     global HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION
 
-    repo_root = Path(__file__).parent.parent.parent
-    thresholds_dir = repo_root / "config" / "thresholds"
+    # Path(__file__) = src/gateway/governance/constants.py
+    # .parent = src/gateway/governance/
+    # .parent = src/gateway/
+    # .parent = src/
+    # .parent = repo_root
+    repo_root = Path(__file__).parent.parent.parent.parent
+    compliance_dir = repo_root / "config" / "compliance"
+
+    logger.debug(f"Loading HITL constants from {compliance_dir}")
 
     for region in SUPPORTED_REGIONS:
-        baseline_path = thresholds_dir / f"{region}_BASELINE.json"
+        baseline_path = compliance_dir / f"{region}_BASELINE.json"
         if not baseline_path.exists():
+            logger.debug(f"Baseline not found: {baseline_path}")
             continue
 
         try:
@@ -556,6 +564,7 @@ def _load_hitl_constants_from_baselines() -> None:
 
             hitl = baseline.get("_hitl", {})
             if hitl:
+                logger.debug(f"Found _hitl section for {region}: {hitl}")
                 if "citation" in hitl:
                     HITL_CITATIONS[region] = hitl["citation"]
                 if "sla_hours" in hitl:
@@ -564,12 +573,17 @@ def _load_hitl_constants_from_baselines() -> None:
                     PII_RETENTION_AUTHORITY[region] = hitl["pii_retention_authority"]
                 if "injection_citation" in hitl:
                     INJECTION_CITATION[region] = hitl["injection_citation"]
+            else:
+                logger.debug(f"No _hitl section found for {region}")
         except Exception as e:
             logger.warning(
                 "Failed to load HITL constants from %s: %s",
                 baseline_path,
                 e,
             )
+
+    logger.debug(f"Loaded INJECTION_CITATION: {INJECTION_CITATION}")
+    logger.debug(f"Loaded HITL_CITATIONS: {HITL_CITATIONS}")
 
 
 # Load HITL constants at module import time

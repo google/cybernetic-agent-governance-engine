@@ -96,13 +96,13 @@ class AgwAdapter:
 
     async def process(self, raw_request: dict[str, Any]) -> AgwAdapterResult:
         """Full AGW request processing: translate + OIDC validate.
-        
+
         Issue #2 remediation: Fail-closed authentication semantics.
         If OIDC validation fails (identity_verified=False), the adapter
         returns success=False to prevent unauthenticated traffic from
         being admitted by callers that gate on success rather than
         identity_verified.
-        
+
         Callers MUST check identity_verified before trusting the request.
         success=True AND identity_verified=True are both required for
         authenticated admission.

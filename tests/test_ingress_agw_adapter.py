@@ -231,7 +231,7 @@ class TestAgwAdapterProcess:
     @pytest.mark.asyncio
     async def test_process_returns_adapter_result(self):
         """process() returns an AgwAdapterResult with fail-closed semantics.
-        
+
         Issue #2 remediation: success is now coupled to identity_verified.
         When OIDC validation fails (identity_verified=False), success is also False.
         """

@@ -131,8 +131,10 @@ try:
             ["status"],
         )
     except ValueError:
-        EVIDENCE_COMMIT_TOTAL = REGISTRY._names_to_collectors.get("cage_evidence_commit_total")  # type: ignore[assignment]
-    
+        EVIDENCE_COMMIT_TOTAL = REGISTRY._names_to_collectors.get(
+            "cage_evidence_commit_total"
+        )  # type: ignore[assignment]
+
     try:
         EVIDENCE_COMMIT_DURATION = Histogram(
             "cage_evidence_commit_duration_seconds",
@@ -140,8 +142,10 @@ try:
             buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
         )
     except ValueError:
-        EVIDENCE_COMMIT_DURATION = REGISTRY._names_to_collectors.get("cage_evidence_commit_duration_seconds")  # type: ignore[assignment]
-    
+        EVIDENCE_COMMIT_DURATION = REGISTRY._names_to_collectors.get(
+            "cage_evidence_commit_duration_seconds"
+        )  # type: ignore[assignment]
+
     try:
         EVIDENCE_BLOCKING_DISABLED = Gauge(
             "cage_evidence_blocking_disabled",
@@ -149,8 +153,10 @@ try:
             ["env"],
         )
     except ValueError:
-        EVIDENCE_BLOCKING_DISABLED = REGISTRY._names_to_collectors.get("cage_evidence_blocking_disabled")  # type: ignore[assignment]
-    
+        EVIDENCE_BLOCKING_DISABLED = REGISTRY._names_to_collectors.get(
+            "cage_evidence_blocking_disabled"
+        )  # type: ignore[assignment]
+
     try:
         EVIDENCE_STREAM_DISABLED = Gauge(
             "cage_evidence_stream_disabled",
@@ -158,8 +164,10 @@ try:
             ["env"],
         )
     except ValueError:
-        EVIDENCE_STREAM_DISABLED = REGISTRY._names_to_collectors.get("cage_evidence_stream_disabled")  # type: ignore[assignment]
-    
+        EVIDENCE_STREAM_DISABLED = REGISTRY._names_to_collectors.get(
+            "cage_evidence_stream_disabled"
+        )  # type: ignore[assignment]
+
     _PROM_AVAILABLE = True
 except ImportError:
     pass

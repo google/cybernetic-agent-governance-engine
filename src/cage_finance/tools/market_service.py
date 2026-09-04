@@ -114,6 +114,68 @@ class MarketService:
 market_service = MarketService()
 
 
+def get_market_data(ticker: str) -> str:
+    """
+    Fetches comprehensive market data for a given ticker using yfinance.
+    Includes historical price data and recent news.
+
+    NOTE: This is a temporary wrapper pending full yfinance integration.
+    For AlphaVantage sentiment, use market_service.get_sentiment().
+    """
+    import yfinance as yf
+
+    logger.info(f"Fetching market data for {ticker} via yfinance")
+    report = [f"# Market Data Report for {ticker}"]
+
+    try:
+        # 1. Fetch Historical Price
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1mo")
+
+        if not hist.empty:
+            report.append("## Recent Price History (Last 1 Month)")
+            # Format nicely
+            report.append(hist[["Close", "Volume"]].to_markdown())
+
+            latest_close = hist.iloc[-1]["Close"]
+            report.append(f"\n**Latest Close:** {latest_close:.2f}")
+        else:
+            report.append("No price data available.")
+
+    except Exception as e:
+        logger.error(f"Error fetching price for {ticker}: {e}")
+        report.append(f"Error fetching price: {e}")
+
+    try:
+        # 2. Fetch Company News
+        news = stock.news
+        if news:
+            report.append("\n## Recent News")
+            # Show top 3
+            for item in news[:3]:
+                content = item.get("content", item)
+                title = content.get("title", "No Title")
+                provider = content.get("provider", {})
+                publisher = (
+                    provider.get("displayName", "Unknown")
+                    if isinstance(provider, dict)
+                    else provider
+                )
+                link_obj = content.get("clickThroughUrl", content.get("link", ""))
+                link = (
+                    link_obj.get("url", "") if isinstance(link_obj, dict) else link_obj
+                )
+                report.append(f"- **{title}** ({publisher}) [Link]({link})")
+        else:
+            report.append("\nNo recent news found.")
+
+    except Exception as e:
+        logger.error(f"Error fetching news for {ticker}: {e}")
+        report.append(f"\nError fetching news: {e}")
+
+    return "\n".join(report)
+
+
 def get_current_price(symbol: str) -> float | None:
     """
     Synchronous helper to fetch current market price for a symbol.

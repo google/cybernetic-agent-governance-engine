@@ -8,78 +8,78 @@
   "_jurisdiction": "Singapore / APAC",
   "_primary_prudential_authority": "Monetary Authority of Singapore (MAS)",
   "_references": [
-    "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) \u2014 November 2019",
-    "MAS Notice 655 \u2013 Technology Risk Management",
-    "MAS TRM Guidelines \u2013 Technology Risk Management Guidelines (January 2021)",
-    "MAS Guidelines on Environmental Risk Management (ENRM) for Banks \u2014 December 2020",
+    "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) — November 2019",
+    "MAS Notice 655 – Technology Risk Management",
+    "MAS TRM Guidelines – Technology Risk Management Guidelines (January 2021)",
+    "MAS Guidelines on Environmental Risk Management (ENRM) for Banks — December 2020",
     "ISO/IEC 42001:2023 (AI Management System Standard)",
     "NIST AI RMF 1.0 (adopted as supplementary reference)"
   ],
   "CTRL_AGT_001": {
     "internal_id": "THR-CONF-001",
-    "primary_framework": "MAS FEAT \u2013 Fairness Principle F1: Bias Impact Assessment",
+    "primary_framework": "MAS FEAT – Fairness Principle F1: Bias Impact Assessment",
     "co_frameworks": [
-      "MAS FEAT \u2013 Ethics Principle E2: Well-reasoned AI Decisions",
-      "MAS TRM Guidelines \u00a76.3 \u2013 AI and Machine Learning Controls",
-      "ISO 42001 \u00a7A.5.2"
+      "MAS FEAT – Ethics Principle E2: Well-reasoned AI Decisions",
+      "MAS TRM Guidelines §6.3 – AI and Machine Learning Controls",
+      "ISO 42001 §A.5.2"
     ],
-    "legacy_citation": "ISO 42001 \u00a7A.5.2 (framework-agnostic baseline)",
+    "legacy_citation": "ISO 42001 §A.5.2 (framework-agnostic baseline)",
     "scope": "agentic",
-    "description": "Minimum agentic model confidence required to execute a decision. Under MAS FEAT Principle F1, AI decisions affecting customers must be regularly tested for bias. The confidence threshold is a necessary but not sufficient control: MAS expects ongoing Fairness Impact Assessments (FIA) with quantitative bias metrics across demographic groups. MAS TRM Guidelines \u00a76.3 require documented model risk management for AI/ML systems, including drift detection and performance monitoring, which the DoWhy causal gatekeeper directly satisfies."
+    "description": "Minimum agentic model confidence required to execute a decision. Under MAS FEAT Principle F1, AI decisions affecting customers must be regularly tested for bias. The confidence threshold is a necessary but not sufficient control: MAS expects ongoing Fairness Impact Assessments (FIA) with quantitative bias metrics across demographic groups. MAS TRM Guidelines §6.3 require documented model risk management for AI/ML systems, including drift detection and performance monitoring, which the DoWhy causal gatekeeper directly satisfies."
   },
   "CTRL_WAL_002": {
     "internal_id": "THR-WAL-002",
-    "primary_framework": "MAS TRM Guidelines \u00a79.1 \u2013 Business Continuity Management",
+    "primary_framework": "MAS TRM Guidelines §9.1 – Business Continuity Management",
     "co_frameworks": [
-      "MAS Notice 655 \u00a712 \u2013 Recovery Time Objectives",
-      "MAS FEAT \u2013 Accountability Principle A3: Explainable AI Decisions",
-      "ISO 42001 \u00a7A.8.4"
+      "MAS Notice 655 §12 – Recovery Time Objectives",
+      "MAS FEAT – Accountability Principle A3: Explainable AI Decisions",
+      "ISO 42001 §A.8.4"
     ],
-    "legacy_citation": "ISO 42001 \u00a7A.8.4 (framework-agnostic baseline)",
+    "legacy_citation": "ISO 42001 §A.8.4 (framework-agnostic baseline)",
     "scope": "agentic",
-    "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. MAS TRM Guidelines \u00a79.1 require financial institutions to maintain business continuity for critical systems with documented recovery procedures. MAS Notice 655 \u00a712 specifies Recovery Time Objectives that the WAL LIFO rollback mechanism directly satisfies by ensuring no partial transaction state persists. MAS FEAT Accountability Principle A3 requires that AI decisions be explainable; WAL audit trails provide the decision provenance required for this."
+    "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. MAS TRM Guidelines §9.1 require financial institutions to maintain business continuity for critical systems with documented recovery procedures. MAS Notice 655 §12 specifies Recovery Time Objectives that the WAL LIFO rollback mechanism directly satisfies by ensuring no partial transaction state persists. MAS FEAT Accountability Principle A3 requires that AI decisions be explainable; WAL audit trails provide the decision provenance required for this."
   },
   "CTRL_TEL_003": {
     "internal_id": "THR-TEL-003",
-    "primary_framework": "MAS TRM Guidelines \u00a76.4 \u2013 Model Risk Management and Monitoring",
+    "primary_framework": "MAS TRM Guidelines §6.4 – Model Risk Management and Monitoring",
     "co_frameworks": [
-      "MAS FEAT \u2013 Transparency Principle T1: Decision Explainability",
-      "MAS FEAT \u2013 Accountability Principle A2: Audit Trail Requirements",
-      "MAS Notice 655 \u00a710 \u2013 Audit Logging Requirements",
-      "ISO 42001 \u00a7A.9.4"
+      "MAS FEAT – Transparency Principle T1: Decision Explainability",
+      "MAS FEAT – Accountability Principle A2: Audit Trail Requirements",
+      "MAS Notice 655 §10 – Audit Logging Requirements",
+      "ISO 42001 §A.9.4"
     ],
-    "legacy_citation": "ISO 42001 \u00a7A.9.4 (framework-agnostic baseline)",
+    "legacy_citation": "ISO 42001 §A.9.4 (framework-agnostic baseline)",
     "scope": "agentic",
-    "description": "World-model validation must reflect live runtime telemetry. MAS TRM Guidelines \u00a76.4 mandate continuous monitoring of AI model performance in production, including drift detection. MAS FEAT Transparency Principle T1 requires that AI systems be able to explain their decisions to affected customers and regulators. MAS Notice 655 \u00a710 requires audit logs that enable reconstruction of all system decisions. The live Langfuse governance spans directly satisfy all three requirements."
+    "description": "World-model validation must reflect live runtime telemetry. MAS TRM Guidelines §6.4 mandate continuous monitoring of AI model performance in production, including drift detection. MAS FEAT Transparency Principle T1 requires that AI systems be able to explain their decisions to affected customers and regulators. MAS Notice 655 §10 requires audit logs that enable reconstruction of all system decisions. The live Langfuse governance spans directly satisfy all three requirements."
   },
   "CTRL_OPA_005": {
     "internal_id": "THR-OPA-005",
-    "primary_framework": "MAS FEAT \u2013 Accountability Principle A1: Defined Human Oversight",
+    "primary_framework": "MAS FEAT – Accountability Principle A1: Defined Human Oversight",
     "co_frameworks": [
-      "MAS FEAT \u2013 Ethics Principle E3: AI System Boundaries",
-      "MAS TRM Guidelines \u00a76.3.2 \u2013 Human-in-the-Loop Controls",
-      "ISO 42001 \u00a7A.6.1"
+      "MAS FEAT – Ethics Principle E3: AI System Boundaries",
+      "MAS TRM Guidelines §6.3.2 – Human-in-the-Loop Controls",
+      "ISO 42001 §A.6.1"
     ],
-    "legacy_citation": "ISO 42001 \u00a7A.6.1 (framework-agnostic baseline)",
+    "legacy_citation": "ISO 42001 §A.6.1 (framework-agnostic baseline)",
     "scope": "agentic",
-    "description": "OPA policy evaluation must ALLOW before any agentic action is executed. MAS FEAT Accountability Principle A1 requires that financial institutions define clear human oversight responsibilities for AI systems. The OPA MANUAL_REVIEW outcome is the technical implementation of this human oversight requirement. MAS FEAT Ethics Principle E3 requires that AI systems operate within defined boundaries; OPA DENY outcomes enforce these boundaries. MAS TRM Guidelines \u00a76.3.2 explicitly requires human-in-the-loop controls for high-impact AI decisions, directly mapping to the MANUAL_REVIEW escalation path."
+    "description": "OPA policy evaluation must ALLOW before any agentic action is executed. MAS FEAT Accountability Principle A1 requires that financial institutions define clear human oversight responsibilities for AI systems. The OPA MANUAL_REVIEW outcome is the technical implementation of this human oversight requirement. MAS FEAT Ethics Principle E3 requires that AI systems operate within defined boundaries; OPA DENY outcomes enforce these boundaries. MAS TRM Guidelines §6.3.2 explicitly requires human-in-the-loop controls for high-impact AI decisions, directly mapping to the MANUAL_REVIEW escalation path."
   },
   "CTRL_TQP_007": {
     "internal_id": "THR-TQP-007",
-    "primary_framework": "ISO 42001 \u00a7A.4 \u2013 Resource Management",
+    "primary_framework": "ISO 42001 §A.4 – Resource Management",
     "co_frameworks": [
-      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
-      "MAS TRM Guidelines \u00a76.3 \u2013 Artificial Intelligence and Machine Learning",
-      "MAS TRM Guidelines \u00a74.2 \u2013 Data Residency and Sovereignty",
-      "MAS Notice 655 \u00a710 \u2013 Audit Logging Requirements",
-      "MAS FEAT \u2013 Accountability Principle A2: Audit Trail Requirements"
+      "ISO 42001 §6.1 – STPA Risk Logging",
+      "MAS TRM Guidelines §6.3 – Artificial Intelligence and Machine Learning",
+      "MAS TRM Guidelines §4.2 – Data Residency and Sovereignty",
+      "MAS Notice 655 §10 – Audit Logging Requirements",
+      "MAS FEAT – Accountability Principle A2: Audit Trail Requirements"
     ],
-    "legacy_citation": "ISO 42001 \u00a7A.4 (framework-agnostic baseline)",
+    "legacy_citation": "ISO 42001 §A.4 (framework-agnostic baseline)",
     "scope": "agentic",
     "enforcement_tier": 2,
     "worm_bucket_env_var": "OSCAL_S3_BUCKET_APAC_MAS",
     "data_residency": "asia-southeast1",
-    "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within asia-southeast1 only (MAS TRM Guidelines \u00a74.2 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6. MAS Notice 655 \u00a710 audit logging satisfied by WORM-persisted UCA records. MAS FEAT Accountability Principle A2 audit trail requirement satisfied by KMS-signed, immutable UCA records. WORM bucket routed via OSCAL_S3_BUCKET_APAC_MAS environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
+    "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within asia-southeast1 only (MAS TRM Guidelines §4.2 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6. MAS Notice 655 §10 audit logging satisfied by WORM-persisted UCA records. MAS FEAT Accountability Principle A2 audit trail requirement satisfied by KMS-signed, immutable UCA records. WORM bucket routed via OSCAL_S3_BUCKET_APAC_MAS environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
   },
   "CTRL_FTRA_001": {
     "internal_id": "CTRL_FTRA_001",
@@ -88,5 +88,10 @@
     "legacy_citation": "ISO 42001 A.8.4",
     "scope": "agentic",
     "description": "FTRA reachability gate"
+  },
+  "_hitl": {
+    "citation": "MAS FEAT §3.4",
+    "sla_hours": 12.0,
+    "injection_citation": "MAS FEAT §4.2 (robustness of AI systems)"
   }
 }

@@ -38,7 +38,7 @@ import future.keywords.in
 # ---------------------------------------------------------------------------
 
 # Allow if: caller is in approved_agents AND tool is in caller's allowed_tools
-allow if {
+allow {
     agent := approved_agents[input.caller_identity.sub]
     input.tool_name in agent.allowed_tools
 }
@@ -48,7 +48,7 @@ allow if {
 # ---------------------------------------------------------------------------
 
 # Deny with reason if caller is not in approved_agents
-violation contains msg if {
+violation[msg] {
     not approved_agents[input.caller_identity.sub]
     msg := sprintf(
         "caller '%v' is not in the approved agent catalog",
@@ -57,7 +57,7 @@ violation contains msg if {
 }
 
 # Deny with reason if tool is not in caller's allowed_tools
-violation contains msg if {
+violation[msg] {
     agent := approved_agents[input.caller_identity.sub]
     not input.tool_name in agent.allowed_tools
     msg := sprintf(
@@ -82,13 +82,13 @@ approved_agents := data.agent_catalog_data.agents
 # If caller_identity is absent (OIDC middleware not configured), the catalog
 # policy is a no-op — existing deployments without OIDC are unaffected.
 # When OIDC is configured, caller_identity.sub is always present.
-caller_sub_present if {
+caller_sub_present {
     input.caller_identity.sub != ""
 }
 
 # Override allow to false when caller_identity is absent and catalog is non-empty
 # (defense-in-depth: if catalog has entries, require identity)
-allow if {
+allow {
     not caller_sub_present
     count(approved_agents) == 0
 }

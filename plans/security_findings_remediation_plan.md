@@ -363,9 +363,12 @@ documentation.
 
 ```python
 kty = jwk.get("kty", "EC")
-if kty == "EC":     algs = ["ES256", "ES384", "ES512", "EdDSA"]
-elif kty == "OKP":  algs = ["EdDSA"]
-else:               algs = ["RS256", "PS256"]
+if kty == "EC":
+    algs = ["ES256", "ES384", "ES512", "EdDSA"]
+elif kty == "OKP":
+    algs = ["EdDSA"]
+else:
+    algs = ["RS256", "PS256"]
 ```
 
 The permitted algorithm set is computed from the key material rather than from
