@@ -1,0 +1,15 @@
+{
+  "healthcare": {
+    "description": "Healthcare domain compliance overlay for EU regulations",
+    "controls": {
+      "GDPR_HEALTH_DATA": {
+        "citation": "GDPR Article 9",
+        "implementation": "src/cage_healthcare/tiers/clinical_consensus_tier.py"
+      },
+      "SAFE_DOSING": {
+        "citation": "EMA GMP Guidelines",
+        "implementation": "src/cage_healthcare/tiers/dose_barrier_tier.py"
+      }
+    }
+  }
+}
