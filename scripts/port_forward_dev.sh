@@ -93,12 +93,15 @@ fi
 if kubectl get svc -n "$NS" compliance-bridge &>/dev/null; then
   start_pf compliance   compliance-bridge          3002    80  # Compliance bridge — BASE_URL (:3002)
 fi
+if kubectl get svc -n "$NS" governed-financial-advisor &>/dev/null; then
+  start_pf backend      governed-financial-advisor 8081    80  # Governed Financial Advisor backend (:8081)
+fi
 
 echo "[port-forward] Waiting for readiness (3s)..."
 sleep 3
 
 echo "[port-forward] Status checks:"
-for port in 8181 3001 3000 8001 8000 8080 3002; do
+for port in 8181 3001 3000 8001 8000 8080 3002 8081 6379; do
   if nc -z localhost "$port" 2>/dev/null; then
     echo "  ✅ localhost:$port reachable"
   else

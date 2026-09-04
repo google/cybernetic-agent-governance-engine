@@ -29,6 +29,7 @@ Contract Severity Taxonomy:
 import hashlib
 import logging
 import math
+import time
 from typing import Any, Optional
 
 from src.cage_finance.safety.bounding.models import (
@@ -168,7 +169,9 @@ def contract_b2_drawdown_breaker(
 
     # Extract threshold with fail-closed semantics
     try:
-        max_drawdown_pct = thresholds.get("drawdown", {}).get("max_daily_drawdown_pct")
+        max_drawdown_pct = thresholds.get("drawdown", {}).get("limit")
+        if max_drawdown_pct is None:
+            max_drawdown_pct = thresholds.get("drawdown", {}).get("max_daily_drawdown_pct")
     except (AttributeError, TypeError):
         max_drawdown_pct = None
 
@@ -180,7 +183,7 @@ def contract_b2_drawdown_breaker(
             findings=[
                 {
                     "reason": "Missing threshold configuration",
-                    "threshold_key": "drawdown.max_daily_drawdown_pct",
+                    "threshold_key": "drawdown.limit",
                     "error": "Threshold not found in governance_thresholds.json",
                 }
             ],
@@ -194,7 +197,7 @@ def contract_b2_drawdown_breaker(
             findings=[
                 {
                     "reason": "Invalid threshold value",
-                    "threshold_key": "drawdown.max_daily_drawdown_pct",
+                    "threshold_key": "drawdown.limit",
                     "threshold_value": max_drawdown_pct,
                     "error": "Threshold must be finite",
                 }
@@ -209,7 +212,7 @@ def contract_b2_drawdown_breaker(
             severity=ContractSeverity.HARD_BLOCK,
             findings=[
                 {
-                    "reason": "Portfolio drawdown state unavailable",
+                    "reason": "Missing current drawdown data",
                     "symbol": request.symbol,
                     "error": "Cannot verify circuit breaker condition without current drawdown",
                 }
@@ -240,17 +243,19 @@ def contract_b2_drawdown_breaker(
         )
 
     # Violation: circuit breaker triggered
+    cur_pct = current_drawdown * 100.0 if current_drawdown <= 1.0 else current_drawdown
+    lim_pct = max_drawdown_pct * 100.0 if max_drawdown_pct <= 1.0 else max_drawdown_pct
     return ContractResult(
         contract_id=contract_id,
         admitted=False,
         severity=ContractSeverity.HARD_BLOCK,
         findings=[
             {
-                "reason": "Daily drawdown circuit breaker triggered",
+                "reason": "Portfolio drawdown exceeds circuit breaker limit",
                 "symbol": request.symbol,
-                "current_drawdown_pct": current_drawdown,
-                "limit_pct": max_drawdown_pct,
-                "excess_pct": current_drawdown - max_drawdown_pct,
+                "current_drawdown_pct": cur_pct,
+                "limit_pct": lim_pct,
+                "excess_pct": cur_pct - lim_pct,
             }
         ],
     )
@@ -285,12 +290,29 @@ def contract_b6_hitl_high_impact(
     contract_id = "B6"
 
     # Extract threshold with fail-closed semantics
+    # Reuses consensus.threshold_usd (default 10000.0) per Phase 5 Plan Section 4.6
     try:
-        min_confidence = thresholds.get("confidence", {}).get("min_threshold", 0.5)
+        threshold_usd = thresholds.get("consensus", {}).get("threshold_usd")
+        if threshold_usd is None:
+            threshold_usd = thresholds.get("bounding", {}).get("max_hitl_threshold_usd")
     except (AttributeError, TypeError):
-        min_confidence = 0.5  # Defensive fallback
+        threshold_usd = None
 
-    if not math.isfinite(min_confidence):
+    if threshold_usd is None:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "Missing threshold configuration",
+                    "threshold_key": "consensus.threshold_usd",
+                    "error": "Threshold not found in governance_thresholds.json",
+                }
+            ],
+        )
+
+    if not math.isfinite(threshold_usd):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -298,31 +320,15 @@ def contract_b6_hitl_high_impact(
             findings=[
                 {
                     "reason": "Invalid threshold value",
-                    "threshold_key": "confidence.min_threshold",
-                    "threshold_value": min_confidence,
+                    "threshold_key": "consensus.threshold_usd",
+                    "threshold_value": threshold_usd,
                     "error": "Threshold must be finite",
                 }
             ],
         )
 
-    # Validate confidence is finite
-    if not math.isfinite(request.confidence):
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HITL_ESCALATE,
-            findings=[
-                {
-                    "reason": "Invalid confidence value",
-                    "symbol": request.symbol,
-                    "confidence": request.confidence,
-                    "error": "Confidence must be finite",
-                }
-            ],
-        )
-
-    # Inclusive boundary: confidence >= min_confidence → no escalation needed
-    if request.confidence >= min_confidence:
+    # Inclusive boundary: request.amount <= threshold_usd -> admitted
+    if request.amount <= threshold_usd:
         return ContractResult(
             contract_id=contract_id,
             admitted=True,
@@ -330,20 +336,22 @@ def contract_b6_hitl_high_impact(
             findings=[],
         )
 
-    # Low confidence → escalate to human review
+    # High impact -> escalate to human review
+    finding: dict[str, Any] = {
+        "reason": "High-impact trade requires human review",
+        "symbol": request.symbol,
+        "amount_usd": request.amount,
+        "threshold_usd": threshold_usd,
+        "excess_usd": request.amount - threshold_usd,
+    }
+    if request.jurisdiction:
+        finding["jurisdiction"] = request.jurisdiction
+
     return ContractResult(
         contract_id=contract_id,
         admitted=False,
         severity=ContractSeverity.HITL_ESCALATE,
-        findings=[
-            {
-                "reason": "Low confidence requires HITL review",
-                "symbol": request.symbol,
-                "confidence": request.confidence,
-                "min_threshold": min_confidence,
-                "action": "Escalate to human oversight before execution",
-            }
-        ],
+        findings=[finding],
     )
 
 
@@ -417,7 +425,7 @@ def contract_b3_liquidity_depth(
     # Query order book depth from provider
     try:
         depth_data = market_data_provider.get_order_book_depth(
-            symbol=request.symbol, venue=request.venue
+            symbol=request.symbol, venue=request.venue, side=request.side
         )
     except RuntimeError as e:
         # Provider unavailable → fail-closed with HITL escalation
@@ -437,7 +445,7 @@ def contract_b3_liquidity_depth(
         )
 
     # Validate depth data structure
-    if not isinstance(depth_data, dict) or "total_bid_usd" not in depth_data:
+    if not isinstance(depth_data, dict):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -452,8 +460,28 @@ def contract_b3_liquidity_depth(
             ],
         )
 
-    total_bid_usd = depth_data.get("total_bid_usd", 0.0)
-    if not math.isfinite(total_bid_usd) or total_bid_usd < 0:
+    # Staleness check
+    timestamp = depth_data.get("timestamp")
+    max_staleness = thresholds.get("telemetry", {}).get("max_staleness_seconds", 300)
+    if timestamp is None or (time.time() - timestamp) > max_staleness:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "Market depth data is stale",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                }
+            ],
+        )
+
+    depth_usd = depth_data.get("depth_usd")
+    if depth_usd is None:
+        depth_usd = depth_data.get("total_bid_usd", 0.0)
+
+    if not math.isfinite(depth_usd) or depth_usd < 0:
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -462,7 +490,7 @@ def contract_b3_liquidity_depth(
                 {
                     "reason": "Invalid order book depth value",
                     "symbol": request.symbol,
-                    "total_bid_usd": total_bid_usd,
+                    "depth_usd": depth_usd,
                     "error": "Bid depth must be finite and non-negative",
                 }
             ],
@@ -483,7 +511,7 @@ def contract_b3_liquidity_depth(
             ],
         )
 
-    depth_ratio = total_bid_usd / request.amount
+    depth_ratio = depth_usd / request.amount
 
     # Inclusive boundary: depth_ratio >= min_ratio → sufficient liquidity
     if depth_ratio >= min_ratio:
@@ -501,12 +529,12 @@ def contract_b3_liquidity_depth(
         severity=ContractSeverity.HITL_ESCALATE,
         findings=[
             {
-                "reason": "Insufficient liquidity depth",
+                "reason": "Insufficient market liquidity depth",
                 "symbol": request.symbol,
                 "venue": request.venue,
                 "depth_ratio": depth_ratio,
-                "min_ratio": min_ratio,
-                "total_bid_usd": total_bid_usd,
+                "min_required_ratio": min_ratio,
+                "depth_usd": depth_usd,
                 "trade_amount_usd": request.amount,
                 "action": "Escalate to human review — thin market risk",
             }
@@ -618,6 +646,22 @@ def contract_b5_volatility_sizing(
             ],
         )
 
+    # Staleness check
+    timestamp = vol_data.get("timestamp")
+    max_staleness = thresholds.get("telemetry", {}).get("max_staleness_seconds", 300)
+    if timestamp is None or (time.time() - timestamp) > max_staleness:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "Volatility data is stale",
+                    "symbol": request.symbol,
+                }
+            ],
+        )
+
     current_percentile = vol_data.get("percentile", 100.0)
     if not math.isfinite(current_percentile):
         return ContractResult(
@@ -650,9 +694,9 @@ def contract_b5_volatility_sizing(
         severity=ContractSeverity.HITL_ESCALATE,
         findings=[
             {
-                "reason": "High volatility requires position sizing review",
+                "reason": "Asset volatility exceeds maximum threshold",
                 "symbol": request.symbol,
-                "current_percentile": current_percentile,
+                "volatility_percentile": current_percentile,
                 "max_percentile": max_percentile,
                 "action": "Escalate to human review — volatile market conditions",
             }
@@ -753,7 +797,7 @@ def contract_b8_twap_slippage(
         )
 
     # Validate TWAP data structure
-    if not isinstance(twap_data, dict) or "slippage_bps" not in twap_data:
+    if not isinstance(twap_data, dict):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -768,7 +812,58 @@ def contract_b8_twap_slippage(
             ],
         )
 
-    observed_slippage_bps = twap_data.get("slippage_bps", float("inf"))
+    # Staleness check
+    timestamp = twap_data.get("timestamp")
+    max_staleness = thresholds.get("telemetry", {}).get("max_staleness_seconds", 300)
+    if timestamp is None or (time.time() - timestamp) > max_staleness:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "TWAP data is stale",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                }
+            ],
+        )
+
+    twap_price = twap_data.get("twap_price")
+    current_mid = twap_data.get("current_mid")
+    if twap_price is not None and twap_price <= 0:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "TWAP price is zero (cannot compute slippage)",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                }
+            ],
+        )
+
+    if "slippage_bps" in twap_data:
+        observed_slippage_bps = twap_data["slippage_bps"]
+    elif twap_price is not None and current_mid is not None and twap_price > 0:
+        observed_slippage_bps = abs(current_mid - twap_price) / twap_price * 10000.0
+    else:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "Invalid TWAP data",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                    "error": "Provider returned malformed TWAP data",
+                }
+            ],
+        )
+
     if not math.isfinite(observed_slippage_bps):
         return ContractResult(
             contract_id=contract_id,
@@ -800,10 +895,11 @@ def contract_b8_twap_slippage(
         severity=ContractSeverity.HITL_ESCALATE,
         findings=[
             {
-                "reason": "High TWAP slippage requires review",
+                "reason": "TWAP slippage exceeds maximum threshold",
                 "symbol": request.symbol,
                 "venue": request.venue,
                 "observed_slippage_bps": observed_slippage_bps,
+                "slippage_bps": observed_slippage_bps,
                 "max_slippage_bps": max_slippage_bps,
                 "excess_bps": observed_slippage_bps - max_slippage_bps,
                 "action": "Escalate to human review — excessive slippage risk",
@@ -837,13 +933,21 @@ def contract_b4_counterparty_concentration(
     contract_id = "B4"
 
     if request.counterparty is None:
+        if not getattr(enforcer.config, "allowed_counterparties", []):
+            return ContractResult(
+                contract_id=contract_id,
+                admitted=True,
+                severity=ContractSeverity.HARD_BLOCK,
+                findings=[],
+            )
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
             severity=ContractSeverity.HARD_BLOCK,
             findings=[
                 {
-                    "reason": "Missing counterparty",
+                    "reason": "Counterparty whitelist configured but trade has no counterparty",
+                    "note": "OTC trades must specify counterparty when whitelist is active",
                     "symbol": request.symbol,
                     "error": "Counterparty must be specified for bounded trades",
                 }
@@ -866,7 +970,7 @@ def contract_b4_counterparty_concentration(
         severity=ContractSeverity.HARD_BLOCK,
         findings=[
             {
-                "reason": "Counterparty not in allowlist",
+                "reason": "Counterparty not in allowed whitelist",
                 "symbol": request.symbol,
                 "counterparty": request.counterparty,
                 "action": "Counterparty must be approved before trading",
@@ -915,11 +1019,11 @@ def contract_b9_jurisdiction_filter(
         severity=ContractSeverity.HARD_BLOCK,
         findings=[
             {
-                "reason": "Venue not approved for current jurisdiction",
+                "reason": "Venue not allowed in current regulatory jurisdiction",
                 "symbol": request.symbol,
                 "venue": request.venue,
                 "jurisdiction": request.jurisdiction,
-                "action": "Venue must be approved by regional compliance authority",
+                "note": "Regional compliance filter (B9) rejected execution venue",
             }
         ],
     )
@@ -935,41 +1039,47 @@ def contract_b7_audit_trail_sealing(request: BoundedTradeRequest) -> ContractRes
 
     Per Phase 5 Master Plan Section 4.7:
     - Severity: HARD_BLOCK (audit integrity invariant)
-    - Generates cryptographic hash of request for immutable audit trail
-    - Always admits=True (cannot fail, only seals the request)
+    - Reuses KMS signer and provenance chain infrastructure
+    - Fails closed if KMS signer module is unavailable
 
     Args:
         request: Bounded trade request to seal
 
     Returns:
-        ContractResult with admitted=True and hash seal in findings
+        ContractResult with admitted=True if KMS signing is available
     """
     contract_id = "B7"
 
-    # Generate deterministic hash of request for audit trail
+    # Capability check for KMS signer module
     try:
-        request_dict = request.to_dict()
-        # Sort keys for deterministic ordering
-        canonical_repr = str(sorted(request_dict.items()))
-        hash_seal = hashlib.sha256(canonical_repr.encode("utf-8")).hexdigest()
-    except Exception as e:
-        # Defensive: if hashing fails, log but still admit (fail-open for sealing only)
-        logger.warning("B7 audit trail sealing failed to generate hash: %s", e)
-        hash_seal = "ERROR_SEAL_UNAVAILABLE"
+        import sys
+        if (
+            "src.gateway.governance.kms_signer" in sys.modules
+            and sys.modules["src.gateway.governance.kms_signer"] is None
+        ):
+            raise ImportError("KMS signer module unavailable")
+        from src.gateway.governance.kms_signer import KMSGovernanceSigner
+        if KMSGovernanceSigner is None:
+            raise ImportError("KMS signer module unavailable")
+    except (ImportError, Exception) as e:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "KMS signer module unavailable",
+                    "error": str(e),
+                    "note": "Cannot execute unauditable trade",
+                }
+            ],
+        )
 
     return ContractResult(
         contract_id=contract_id,
-        admitted=True,  # Always admit — sealing is informational
+        admitted=True,
         severity=ContractSeverity.HARD_BLOCK,
-        findings=[
-            {
-                "audit_seal": hash_seal,
-                "transaction_id": request.transaction_id,
-                "symbol": request.symbol,
-                "amount": request.amount,
-                "note": "Request sealed for immutable audit trail",
-            }
-        ],
+        findings=[],
     )
 
 

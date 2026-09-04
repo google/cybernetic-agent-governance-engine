@@ -163,6 +163,13 @@ class BoundedTradeRequest:
         """Validate bounded trade request invariants."""
         import math
 
+        # Fail-closed: Missing/empty symbol or venue rejected immediately
+        if not self.symbol or not self.symbol.strip():
+            raise ValueError("symbol must not be empty")
+
+        if not self.venue or not self.venue.strip():
+            raise ValueError("venue must not be empty")
+
         # Fail-closed: Non-finite amounts rejected immediately
         if not math.isfinite(self.amount):
             raise ValueError(

@@ -134,7 +134,7 @@ class TestBoundingContractTierPlugin:
         thresholds = {
             "bounding": {
                 "enabled_contracts": ["B3"],  # B3 = HITL_ESCALATE (liquidity depth)
-                "min_liquidity_depth_ratio": 1000.0,  # Unreachable threshold → escalate
+                "min_liquidity_depth_ratio": 2000.0,  # Unreachable threshold (> 1000 ratio from stub) → escalate
             },
         }
         # Use stub market data provider that returns insufficient depth
