@@ -41,6 +41,14 @@
     "UCA-9": [
       "ac-3",
       "cm-6"
+    ],
+    "UCA-10": [
+      "cm-6",
+      "si-4"
+    ],
+    "UCA-11": [
+      "ac-3",
+      "sc-4"
     ]
   },
   "control_descriptions": {
@@ -52,6 +60,7 @@
     "si-7": "Software, Firmware, and Information Integrity",
     "au-10": "Non-Repudiation",
     "si-3": "Malicious Code Protection",
+    "si-4": "System Monitoring",
     "sc-8": "Transmission Confidentiality and Integrity",
     "sc-7": "Boundary Protection",
     "ia-3": "Device Identification and Authentication"
