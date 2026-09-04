@@ -55,7 +55,9 @@ class TestContractResult:
             contract_id="B1",
             admitted=False,
             severity=ContractSeverity.HARD_BLOCK,
-            findings=[{"reason": "Max notional exceeded", "limit": 10000, "actual": 15000}],
+            findings=[
+                {"reason": "Max notional exceeded", "limit": 10000, "actual": 15000}
+            ],
         )
         assert result.contract_id == "B1"
         assert result.admitted is False
@@ -88,7 +90,7 @@ class TestContractResult:
 
     def test_advisory_severity_cannot_block(self):
         """ADVISORY severity with admitted=False raises ValueError (developer error).
-        
+
         Per Phase 5 plan Section 3.3: ADVISORY contracts must never block execution.
         If a contract needs to block, it must use HITL_ESCALATE or HARD_BLOCK severity.
         """
@@ -237,7 +239,9 @@ class TestBoundedTradeRequest:
 
     def test_rejects_negative_rollback_window(self):
         """Negative rollback window raises ValueError (fail-closed)."""
-        with pytest.raises(ValueError, match="rollback_window_seconds must be non-negative"):
+        with pytest.raises(
+            ValueError, match="rollback_window_seconds must be non-negative"
+        ):
             BoundedTradeRequest(
                 symbol="AAPL",
                 amount=1000.0,

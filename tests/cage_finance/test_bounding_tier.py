@@ -139,7 +139,7 @@ class TestBoundingContractTierPlugin:
         }
         # Use stub market data provider that returns insufficient depth
         from src.cage_finance.safety.bounding.providers import StubMarketDataProvider
-        
+
         market_data_provider = StubMarketDataProvider()
         registry = BoundingContractRegistry(
             thresholds, market_data_provider=market_data_provider

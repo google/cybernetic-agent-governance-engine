@@ -143,7 +143,7 @@ def contract_b1_max_notional(
 def contract_b2_drawdown_breaker(
     request: BoundedTradeRequest,
     thresholds: dict[str, Any],
-    current_drawdown: Optional[float] = None,
+    current_drawdown: float | None = None,
 ) -> ContractResult:
     """B2 — Daily drawdown portfolio circuit breaker.
 
@@ -171,7 +171,9 @@ def contract_b2_drawdown_breaker(
     try:
         max_drawdown_pct = thresholds.get("drawdown", {}).get("limit")
         if max_drawdown_pct is None:
-            max_drawdown_pct = thresholds.get("drawdown", {}).get("max_daily_drawdown_pct")
+            max_drawdown_pct = thresholds.get("drawdown", {}).get(
+                "max_daily_drawdown_pct"
+            )
     except (AttributeError, TypeError):
         max_drawdown_pct = None
 
@@ -611,7 +613,9 @@ def contract_b5_volatility_sizing(
 
     # Query volatility percentile from provider
     try:
-        vol_window_days = thresholds.get("bounding", {}).get("volatility_window_days", 30)
+        vol_window_days = thresholds.get("bounding", {}).get(
+            "volatility_window_days", 30
+        )
         vol_data = market_data_provider.get_volatility_percentile(
             symbol=request.symbol, window_days=vol_window_days
         )
@@ -773,7 +777,9 @@ def contract_b8_twap_slippage(
 
     # Query TWAP slippage from provider
     try:
-        twap_window_seconds = thresholds.get("bounding", {}).get("twap_window_seconds", 300)
+        twap_window_seconds = thresholds.get("bounding", {}).get(
+            "twap_window_seconds", 300
+        )
         twap_data = market_data_provider.get_recent_twap(
             symbol=request.symbol,
             venue=request.venue,
@@ -1053,12 +1059,14 @@ def contract_b7_audit_trail_sealing(request: BoundedTradeRequest) -> ContractRes
     # Capability check for KMS signer module
     try:
         import sys
+
         if (
             "src.gateway.governance.kms_signer" in sys.modules
             and sys.modules["src.gateway.governance.kms_signer"] is None
         ):
             raise ImportError("KMS signer module unavailable")
         from src.gateway.governance.kms_signer import KMSGovernanceSigner
+
         if KMSGovernanceSigner is None:
             raise ImportError("KMS signer module unavailable")
     except (ImportError, Exception) as e:
@@ -1092,7 +1100,7 @@ def contract_b10_rollback_window(
     request: BoundedTradeRequest,
     thresholds: dict[str, Any],
     rollback_provider: RollbackCapabilityProvider,
-) -> tuple[ContractResult, Optional[str]]:
+) -> tuple[ContractResult, str | None]:
     """B10 — Rollback window validation.
 
     Per Phase 5 Master Plan Section 4.10:
@@ -1139,7 +1147,10 @@ def contract_b10_rollback_window(
         )
 
     # Validate threshold is non-negative
-    if not isinstance(min_rollback_window_seconds, (int, float)) or min_rollback_window_seconds < 0:
+    if (
+        not isinstance(min_rollback_window_seconds, (int, float))
+        or min_rollback_window_seconds < 0
+    ):
         return (
             ContractResult(
                 contract_id=contract_id,

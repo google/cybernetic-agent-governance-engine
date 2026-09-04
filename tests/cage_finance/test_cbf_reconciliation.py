@@ -160,23 +160,13 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
         ttl_seconds=TTL_SECONDS,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
 
@@ -225,23 +215,13 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
         "fakeredis.aioredis", reason="fakeredis[aioredis] required"
     ).FakeRedis(decode_responses=True)
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
 
@@ -292,23 +272,13 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
 
@@ -367,23 +337,13 @@ def test_strict_mode_fails_closed_without_reconciliation() -> None:
         "fakeredis.aioredis", reason="fakeredis[aioredis] required"
     ).FakeRedis(decode_responses=True)
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
 
@@ -439,23 +399,13 @@ def test_fence_epoch_regression_rejected() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
     cbf._last_verified_fence_epoch = 10  # Simulate previous epoch
@@ -517,23 +467,13 @@ def test_local_debits_accumulated_within_cycle() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
 
@@ -615,23 +555,13 @@ def test_kms_signature_verified_before_commit() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-
-
     cbf = ControlBarrierFunction(
-
-
         invariant=CashBarrier(),
-
-
         cost_resolver=finance_cost_resolver,
-
-
         skip_epoch_seed=True,
-
-
     )
     cbf.tracer = None
 

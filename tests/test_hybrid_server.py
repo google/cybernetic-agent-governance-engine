@@ -522,4 +522,3 @@ async def test_lifespan_succeeds_in_dev_mode(monkeypatch):
 
         async with _gateway_lifespan(app_mock):
             pass
-

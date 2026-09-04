@@ -183,7 +183,9 @@ class TestContractB5VolatilitySizing:
         assert result.admitted is False
         assert result.severity == ContractSeverity.HITL_ESCALATE
         assert len(result.findings) == 1
-        assert result.findings[0]["reason"] == "Asset volatility exceeds maximum threshold"
+        assert (
+            result.findings[0]["reason"] == "Asset volatility exceeds maximum threshold"
+        )
         assert result.findings[0]["volatility_percentile"] == 30.0
         assert result.findings[0]["max_percentile"] == 20.0
 
@@ -193,7 +195,9 @@ class TestContractB5VolatilitySizing:
             symbol="AAPL", amount=1000.0, side="buy", venue="NASDAQ"
         )
         mock_provider = MagicMock()
-        mock_provider.get_volatility_percentile.side_effect = RuntimeError("Provider down")
+        mock_provider.get_volatility_percentile.side_effect = RuntimeError(
+            "Provider down"
+        )
 
         result = contract_b5_volatility_sizing(request, valid_thresholds, mock_provider)
 
@@ -314,7 +318,10 @@ class TestContractB8TwapSlippage:
 
         assert result.admitted is False
         assert result.severity == ContractSeverity.HITL_ESCALATE
-        assert result.findings[0]["reason"] == "TWAP price is zero (cannot compute slippage)"
+        assert (
+            result.findings[0]["reason"]
+            == "TWAP price is zero (cannot compute slippage)"
+        )
 
     def test_stale_twap_data_fails_closed(self, valid_thresholds):
         """Stale TWAP data fails closed."""
@@ -376,8 +383,12 @@ class TestMarketDataContractInteractions:
             symbol="AAPL", amount=1000.0, side="buy", venue="NASDAQ"
         )
 
-        b3_result = contract_b3_liquidity_depth(request, permissive_thresholds, provider)
-        b5_result = contract_b5_volatility_sizing(request, permissive_thresholds, provider)
+        b3_result = contract_b3_liquidity_depth(
+            request, permissive_thresholds, provider
+        )
+        b5_result = contract_b5_volatility_sizing(
+            request, permissive_thresholds, provider
+        )
         b8_result = contract_b8_twap_slippage(request, permissive_thresholds, provider)
 
         assert b3_result.admitted is True
@@ -391,12 +402,20 @@ class TestMarketDataContractInteractions:
         )
         mock_provider = MagicMock()
         mock_provider.get_order_book_depth.side_effect = RuntimeError("Provider down")
-        mock_provider.get_volatility_percentile.side_effect = RuntimeError("Provider down")
+        mock_provider.get_volatility_percentile.side_effect = RuntimeError(
+            "Provider down"
+        )
         mock_provider.get_recent_twap.side_effect = RuntimeError("Provider down")
 
-        b3_result = contract_b3_liquidity_depth(request, permissive_thresholds, mock_provider)
-        b5_result = contract_b5_volatility_sizing(request, permissive_thresholds, mock_provider)
-        b8_result = contract_b8_twap_slippage(request, permissive_thresholds, mock_provider)
+        b3_result = contract_b3_liquidity_depth(
+            request, permissive_thresholds, mock_provider
+        )
+        b5_result = contract_b5_volatility_sizing(
+            request, permissive_thresholds, mock_provider
+        )
+        b8_result = contract_b8_twap_slippage(
+            request, permissive_thresholds, mock_provider
+        )
 
         assert b3_result.admitted is False
         assert b5_result.admitted is False

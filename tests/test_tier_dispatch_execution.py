@@ -40,7 +40,7 @@ def mock_governor() -> SymbolicGovernor:
     return SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
 
 
@@ -179,7 +179,7 @@ class TestTierDispatchOrdering:
         self, mock_governor: SymbolicGovernor
     ) -> None:
         """When a tier returns violations, execution stops and violations are returned.
-        
+
         With the v3.0 architecture, _run_domain_tiers() returns early on first violation
         to enforce fail-fast semantics. This test verifies that behavior.
         """

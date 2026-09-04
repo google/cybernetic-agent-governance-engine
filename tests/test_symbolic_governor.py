@@ -94,7 +94,7 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe):
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -119,7 +119,7 @@ async def test_symbolic_governor_confidence_fail(mock_ftra_safe):
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -152,7 +152,7 @@ async def test_symbolic_governor_opa_fail(mock_ftra_safe):
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -186,7 +186,7 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe):
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -232,7 +232,7 @@ async def test_symbolic_governor_cbf_fail(mock_ftra_safe):
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -266,7 +266,7 @@ async def test_symbolic_governor_consensus_fail(mock_ftra_safe):
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine
+        consensus_engine=consensus_engine,
     )
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -320,7 +320,7 @@ class TestSymbolicGovernorDefer:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -362,7 +362,7 @@ class TestSymbolicGovernorDefer:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -431,7 +431,7 @@ class TestSymbolicGovernorNarrow:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -487,7 +487,7 @@ class TestSymbolicGovernorNarrow:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -541,7 +541,7 @@ class TestSymbolicGovernorNarrow:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -612,7 +612,7 @@ class TestSymbolicGovernorPause:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -669,7 +669,7 @@ class TestSymbolicGovernorPause:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -729,7 +729,7 @@ class TestValidateActionDecisionRouting:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -762,7 +762,7 @@ class TestValidateActionDecisionRouting:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -793,7 +793,7 @@ class TestValidateActionDecisionRouting:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -865,7 +865,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -921,7 +921,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.causal_tier import CausalTierPlugin
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
@@ -937,7 +937,9 @@ class TestPipelineReorderZeroBudgetLeakage:
         params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
 
         # Mock causal_safety_check to reject
-        with patch('src.cage_finance.tiers.causal_tier.causal_safety_check', return_value=False):
+        with patch(
+            "src.cage_finance.tiers.causal_tier.causal_safety_check", return_value=False
+        ):
             with pytest.raises(GovernanceError) as excinfo:
                 await governor.govern("execute_trade", params)
 
@@ -968,7 +970,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         governor = SymbolicGovernor(
             opa_client=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine
+            consensus_engine=consensus_engine,
         )
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -1000,7 +1002,9 @@ class TestPipelineReorderZeroBudgetLeakage:
         async def mock_cbf_commit(action_name, payload):
             return (True, "SAFE")
 
-        async def mock_cbf_rollback(magnitude=None, cost=None, governance_signature=None):
+        async def mock_cbf_rollback(
+            magnitude=None, cost=None, governance_signature=None
+        ):
             nonlocal cbf_rollback_called
             cbf_rollback_called = True
 
@@ -1016,6 +1020,7 @@ class TestPipelineReorderZeroBudgetLeakage:
 
         mock_fiscal_guard = AsyncMock()
         import time
+
         mock_fiscal_guard.reserve.return_value = ReservationToken(
             reservation_id="test-res-id",
             agent_id="test-agent",

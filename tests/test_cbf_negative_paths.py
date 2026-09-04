@@ -48,13 +48,13 @@ _GAMMA = 0.9
 def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     """Return a CBF wired to *fake_redis* with deterministic thresholds."""
     from dataclasses import replace
-    
+
     from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # W1 (Post-v3): Mandatory invariant with custom gamma
     invariant = replace(CashBarrier(), gamma=_GAMMA)
-    
+
     # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
     cbf = ControlBarrierFunction(
         invariant=invariant,
@@ -255,7 +255,9 @@ async def test_read_cbf_state_accepts_unsigned_balance_in_dev_mode(make_cbf):
 
     with (
         patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
-        patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", False),  # dev mode
+        patch(
+            "src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", False
+        ),  # dev mode
         patch(
             "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
             AsyncMock(return_value=verified),
@@ -293,7 +295,9 @@ async def test_read_cbf_state_rejects_unsigned_balance_in_production(make_cbf):
 
     with (
         patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
-        patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),  # production
+        patch(
+            "src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True
+        ),  # production
         patch(
             "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
             AsyncMock(return_value=verified),
@@ -896,7 +900,7 @@ def test_get_h_returns_correct_barrier_value(balance, min_cash, expected_h):
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
-    
+
     # get_h(balance) with the CBF's current min_cash_balance (default 10000.0)
     # This test expects: get_h(balance) = balance - min_cash
     assert cbf.get_h(balance) == pytest.approx(balance - min_cash)
@@ -998,7 +1002,10 @@ class TestFenceEpochColdStartFailClosed:
         )
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", mock_sync_redis),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
@@ -1023,7 +1030,10 @@ class TestFenceEpochColdStartFailClosed:
         mock_sync_redis.get = MagicMock(side_effect=TimeoutError("Redis read timeout"))
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", mock_sync_redis),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
@@ -1046,7 +1056,10 @@ class TestFenceEpochColdStartFailClosed:
         )
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", mock_sync_redis),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", False),
             patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
@@ -1078,19 +1091,18 @@ class TestFenceEpochColdStartFailClosed:
         mock_sync_redis.get = MagicMock()
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", mock_sync_redis),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),
         ):
             from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
             cbf = ControlBarrierFunction(
-
                 invariant=CashBarrier(),
-
                 cost_resolver=finance_cost_resolver,
-
                 skip_epoch_seed=True,
-
             )
 
         # Should not have called Redis
@@ -1110,7 +1122,10 @@ class TestFenceEpochColdStartFailClosed:
         mock_sync_redis.get = MagicMock(side_effect=original_error)
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", mock_sync_redis),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                mock_sync_redis,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._IS_PRODUCTION", True),
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
@@ -1153,10 +1168,15 @@ class TestStrictReplicationFailClosed:
         cbf.rollback_state = AsyncMock()
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_module,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
-            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
         ):
             # Small trade that would normally succeed
             result = await cbf.atomic_verify_and_commit(
@@ -1190,10 +1210,17 @@ class TestStrictReplicationFailClosed:
         cbf.rollback_state = AsyncMock()
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_module,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
-            patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", False),
-            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", False
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
             patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             result = await cbf.atomic_verify_and_commit(
@@ -1229,10 +1256,15 @@ class TestStrictReplicationFailClosed:
         cbf.rollback_state = AsyncMock()
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_module,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
-            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
         ):
             result = await cbf.atomic_verify_and_commit(
                 action_name="execute_trade",
@@ -1264,7 +1296,10 @@ class TestStrictReplicationFailClosed:
         cbf.rollback_state = AsyncMock()
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_module,
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
             patch(
@@ -1298,10 +1333,17 @@ class TestStrictReplicationFailClosed:
         cbf._sync_to_replicas = AsyncMock(return_value=False)
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module),
-            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),  # Disabled
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                mock_redis_module,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0
+            ),  # Disabled
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
-            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
         ):
             result = await cbf.atomic_verify_and_commit(
                 action_name="execute_trade",

@@ -112,9 +112,7 @@ async def execute_trade_action(
 
                     receipt_payload = json.loads(receipt_data)
                     narrowed_params = receipt_payload.get("narrowed_params", {})
-                    receipt_signature = receipt_payload.get(
-                        "original_signature", ""
-                    )
+                    receipt_signature = receipt_payload.get("original_signature", "")
 
                     # Verify original signature matches (prevents receipt forgery)
                     if receipt_signature != seal:

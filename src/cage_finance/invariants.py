@@ -36,7 +36,7 @@ class CashBarrier:
     The barrier algebra (h(x) = x - threshold) is evaluated atomically
     inside Redis via the Lua script in gateway/governance/safety/cbf_engine.py.
     This class only declares the parameters.
-    
+
     Implements the InvariantModel protocol from src.gateway.governance.contracts.
     """
 

@@ -199,14 +199,11 @@ DOMAIN_ACTION_REGISTRY = {
     # Read-only actions (no state mutation)
     "market_lookup": TerminalClassification.READ_ONLY,
     "portfolio_summary": TerminalClassification.READ_ONLY,
-    
     # Internally reversible actions (undo within system)
     "reserve_funds": TerminalClassification.REVERSIBLE,
     "create_draft_order": TerminalClassification.REVERSIBLE,
-    
     # Externally reversible actions (undo requires external coordination)
     "execute_trade_bounded": TerminalClassification.EXTERNALLY_REVERSIBLE,
-    
     # Irreversible terminal actions (no undo mechanism)
     "wire_transfer": TerminalClassification.IRREVERSIBLE_TERMINAL,
     "delete_account": TerminalClassification.IRREVERSIBLE_TERMINAL,
@@ -317,15 +314,13 @@ define flow trading safety check
 # config/rails/actions.py
 from typing import Optional
 
+
 async def execute_trade(
-    symbol: str,
-    amount: float,
-    price: float,
-    context: Optional[dict] = None
+    symbol: str, amount: float, price: float, context: Optional[dict] = None
 ) -> dict:
     """
     NeMo-triggered trade execution action.
-    
+
     This function is called by the NeMo runtime when a trading
     flow triggers an execution step.
     """
@@ -410,16 +405,17 @@ Test domain actions across all three regional postures:
 # tests/cage_{domain}/test_{domain}_regional.py
 import pytest
 
+
 @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
 async def test_domain_action_regional_compliance(region, monkeypatch):
     """
     Verify domain action respects regional compliance constraints.
     """
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", region)
-    
+
     # Test domain action
     result = await execute_domain_action(...)
-    
+
     # Assert regional constraints
     if region == "US_FED":
         assert result["audit_logged"] is True  # FISMA AU-11
@@ -477,6 +473,7 @@ from src.cage_finance.ontology import TRADING_ACTIONS  # ❌ VIOLATES G3
 # src/cage_finance/__init__.py
 def register_finance_plugin(governor):
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+
     governor.register_domain_tier(CBFTierPlugin())
 ```
 

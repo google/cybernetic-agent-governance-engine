@@ -84,7 +84,9 @@ class TestStubMarketDataProviderDevEnvironment:
     def test_get_order_book_depth_timestamp_is_recent(self):
         """get_order_book_depth() timestamp is current (not stale)."""
         provider = StubMarketDataProvider()
-        depth = provider.get_order_book_depth(symbol="BTC", venue="COINBASE", side="sell")
+        depth = provider.get_order_book_depth(
+            symbol="BTC", venue="COINBASE", side="sell"
+        )
 
         now = time.time()
         assert abs(depth["timestamp"] - now) < 5.0  # Within 5 seconds
@@ -106,7 +108,9 @@ class TestStubMarketDataProviderDevEnvironment:
     def test_get_recent_twap_returns_permissive_data(self):
         """get_recent_twap() returns zero slippage mock data."""
         provider = StubMarketDataProvider()
-        twap = provider.get_recent_twap(symbol="AAPL", venue="NASDAQ", window_seconds=300)
+        twap = provider.get_recent_twap(
+            symbol="AAPL", venue="NASDAQ", window_seconds=300
+        )
 
         assert "twap_price" in twap
         assert "current_mid" in twap
@@ -115,14 +119,18 @@ class TestStubMarketDataProviderDevEnvironment:
         # Permissive mock: zero slippage (should pass B8 contract)
         assert twap["twap_price"] > 0
         assert twap["current_mid"] > 0
-        assert abs(twap["twap_price"] - twap["current_mid"]) < 0.01  # Near-zero slippage
+        assert (
+            abs(twap["twap_price"] - twap["current_mid"]) < 0.01
+        )  # Near-zero slippage
         assert isinstance(twap["timestamp"], float)
 
     def test_stub_provider_works_in_test_env(self, monkeypatch):
         """StubMarketDataProvider works when CAGE_ENV=test."""
         monkeypatch.setenv("CAGE_ENV", "test")
         provider = StubMarketDataProvider()
-        depth = provider.get_order_book_depth(symbol="TEST", venue="TEST_VENUE", side="buy")
+        depth = provider.get_order_book_depth(
+            symbol="TEST", venue="TEST_VENUE", side="buy"
+        )
         assert depth["depth_usd"] > 0
 
 
@@ -131,7 +139,7 @@ class TestStubMarketDataProviderProductionFailure:
 
     def test_stub_provider_raises_when_cage_env_production(self, monkeypatch):
         """StubMarketDataProvider raises RuntimeError when CAGE_ENV=production.
-        
+
         Per Ratified Decision 3 (Section 12): Stub providers must hard-fail
         when CAGE_ENV=production to prevent accidental production deployment
         with permissive mock data.
@@ -171,7 +179,9 @@ class TestStubRollbackCapabilityProviderDevEnvironment:
     def test_verify_rollback_window_returns_permissive_data(self):
         """verify_rollback_window() returns permissive mock capability."""
         provider = StubRollbackCapabilityProvider()
-        result = provider.verify_rollback_window(venue="NASDAQ", rollback_window_seconds=300)
+        result = provider.verify_rollback_window(
+            venue="NASDAQ", rollback_window_seconds=300
+        )
 
         assert "supported" in result
         assert "max_window_seconds" in result
@@ -188,7 +198,9 @@ class TestStubRollbackCapabilityProviderDevEnvironment:
 
         test_venues = ["NYSE", "NASDAQ", "COINBASE", "UNKNOWN_VENUE"]
         for venue in test_venues:
-            result = provider.verify_rollback_window(venue=venue, rollback_window_seconds=300)
+            result = provider.verify_rollback_window(
+                venue=venue, rollback_window_seconds=300
+            )
             assert result["supported"] is True
 
     def test_verify_rollback_window_accepts_any_window(self):
@@ -197,7 +209,9 @@ class TestStubRollbackCapabilityProviderDevEnvironment:
 
         test_windows = [60, 120, 300]
         for window in test_windows:
-            result = provider.verify_rollback_window(venue="NASDAQ", rollback_window_seconds=window)
+            result = provider.verify_rollback_window(
+                venue="NASDAQ", rollback_window_seconds=window
+            )
             assert result["supported"] is True
             assert result["max_window_seconds"] >= window
 
@@ -207,7 +221,7 @@ class TestStubRollbackCapabilityProviderProductionFailure:
 
     def test_stub_provider_raises_when_cage_env_production(self, monkeypatch):
         """StubRollbackCapabilityProvider raises when CAGE_ENV=production.
-        
+
         Per Ratified Decision 3 (Section 12): Stub providers must hard-fail
         when CAGE_ENV=production to prevent accidental production deployment
         with permissive mock data.
@@ -260,7 +274,9 @@ class TestProviderIntegrationScenarios:
     def test_market_data_provider_supports_b8_twap_check(self):
         """MarketDataProvider provides data required for B8 TWAP slippage check."""
         provider = StubMarketDataProvider()
-        twap = provider.get_recent_twap(symbol="AAPL", venue="NASDAQ", window_seconds=300)
+        twap = provider.get_recent_twap(
+            symbol="AAPL", venue="NASDAQ", window_seconds=300
+        )
 
         # B8 contract needs twap_price and current_mid to compute slippage
         assert twap["twap_price"] > 0
@@ -270,7 +286,9 @@ class TestProviderIntegrationScenarios:
     def test_rollback_provider_supports_b10_window_check(self):
         """RollbackCapabilityProvider provides data required for B10 rollback window check."""
         provider = StubRollbackCapabilityProvider()
-        result = provider.verify_rollback_window(venue="NASDAQ", rollback_window_seconds=300)
+        result = provider.verify_rollback_window(
+            venue="NASDAQ", rollback_window_seconds=300
+        )
 
         # B10 contract needs supported flag and max_window_seconds
         assert isinstance(result["supported"], bool)

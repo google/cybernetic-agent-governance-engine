@@ -209,7 +209,7 @@ class TestGetHitlSlaHours:
 
     The module previously declared "Region: US_FED" in its docstring only,
     with no runtime CAGE_DEPLOYMENT_REGION check.
-    
+
     Note: SLA values reflect current regional baseline configuration:
     - US_FED: 4.0 hours (SR 26-2 §IV.D)
     - EU_ECB: 8.0 hours (DORA Art. 10)

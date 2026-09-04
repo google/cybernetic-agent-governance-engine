@@ -66,11 +66,11 @@ def mock_governor() -> SymbolicGovernor:
     safety_filter = MagicMock()
     consensus_engine = MagicMock()
     gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-    
+
     # Register a mock tier that claims all actions
     # This simulates the behavior after domain plugin registration
     gov.register_domain_tier(MockTier())
-    
+
     return gov
 
 
@@ -82,7 +82,7 @@ class TestCapabilityDispatchCoverage:
         self, mock_governor: SymbolicGovernor
     ) -> None:
         """_is_governed_action() delegates to tier claims_action() predicates.
-        
+
         The kernel is domain-agnostic: it doesn't hardcode action names.
         Instead, it queries registered tiers via claims_action().
         With a mock tier that claims all actions, any action name is accepted.
@@ -121,10 +121,10 @@ class TestDomainAgnosticismEnforcement:
         self, mock_governor: SymbolicGovernor
     ) -> None:
         """Kernel does not hardcode 'execute_trade' action name.
-        
+
         The old implementation had literals like:
             if tool_name == "execute_trade": ...
-        
+
         The new implementation uses capability predicates via registered tiers.
         The kernel treats all actions uniformly by delegating to tier.claims_action().
         """

@@ -119,7 +119,7 @@ providers. This is deliberate:
 ```python
 @dataclass(frozen=True)
 class ContractResult:
-    contract_id: str          # "B1" ... "B10"
+    contract_id: str  # "B1" ... "B10"
     passed: bool
     severity: ContractSeverity  # HARD_BLOCK | HITL_ESCALATE | ADVISORY
     message: str

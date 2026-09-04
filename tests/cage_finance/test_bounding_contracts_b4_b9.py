@@ -33,7 +33,6 @@ from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractEnforcer,
 )
 
-
 # ───────────────────────────────────────────────────────────────────────────────
 # B4 — Counterparty Risk Concentration Tests
 # ───────────────────────────────────────────────────────────────────────────────
@@ -368,7 +367,7 @@ class TestContractB9JurisdictionFilter:
 
     def test_b9_empty_venue_whitelist_permits_all(self):
         """B9 permits all venues when venue whitelist is empty (no restriction for venue dimension).
-        
+
         BoundingContractEnforcer design: empty whitelist for a dimension means no restriction
         for that dimension, as long as at least one other whitelist is populated.
         This allows partial whitelisting (e.g., restrict instruments but not venues).

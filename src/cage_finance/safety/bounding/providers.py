@@ -70,7 +70,9 @@ class MarketDataProvider(Protocol):
         """
         ...
 
-    def get_volatility_percentile(self, symbol: str, window_days: int) -> dict[str, float]:
+    def get_volatility_percentile(
+        self, symbol: str, window_days: int
+    ) -> dict[str, float]:
         """Fetch rolling volatility percentile for sizing validation (Contract B5).
 
         Args:
@@ -183,7 +185,9 @@ class StubMarketDataProvider:
             "levels_aggregated": 10,
         }
 
-    def get_volatility_percentile(self, symbol: str, window_days: int) -> dict[str, float]:
+    def get_volatility_percentile(
+        self, symbol: str, window_days: int
+    ) -> dict[str, float]:
         """Return permissive mock volatility (always low volatility percentile)."""
         import time
 

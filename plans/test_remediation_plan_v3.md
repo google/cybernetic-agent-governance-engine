@@ -99,16 +99,16 @@ that leaves `self._invariant = None` and instead sets three loose scalars.
 
 ```python
 # cbf_engine.py:332-353  (current — two sources of truth)
-self._invariant = invariant                    # may be None
+self._invariant = invariant  # may be None
 if invariant is not None:
     self.threshold_key = invariant.threshold_key
-    self.gamma        = invariant.gamma
-    self.redis_key    = invariant.state_key
+    self.gamma = invariant.gamma
+    self.redis_key = invariant.state_key
 else:
-    self.threshold_key = "cbf.min_cash_balance"   # finance literal in the kernel
-    self.gamma         = 0.5
-    self.redis_key     = "safety:current_cash"    # finance literal in the kernel
-self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance   # finance literal
+    self.threshold_key = "cbf.min_cash_balance"  # finance literal in the kernel
+    self.gamma = 0.5
+    self.redis_key = "safety:current_cash"  # finance literal in the kernel
+self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance  # finance literal
 ```
 
 Three distinct defects compound here:
@@ -135,6 +135,7 @@ the barrier can be described, and it can never be `None`.
 @dataclass(frozen=True, slots=True)
 class AffineBarrier:
     """Concrete, immutable InvariantModel. h(x) = state[state_key] - THRESHOLDS[threshold_key]."""
+
     invariant_id: str
     state_key: str
     threshold_key: str
@@ -151,22 +152,36 @@ class AffineBarrier:
 # src/gateway/governance/safety/cbf_engine.py  (target)
 def __init__(
     self,
-    invariant: InvariantModel,               # REQUIRED — no default, no None branch
+    invariant: InvariantModel,  # REQUIRED — no default, no None branch
     cost_resolver: CostResolver | None = None,
     skip_epoch_seed: bool = False,
 ) -> None:
     self._invariant = invariant
-    self._cost_resolver = cost_resolver or self._default_cost_resolver   # zero-cost, domain-agnostic
+    self._cost_resolver = (
+        cost_resolver or self._default_cost_resolver
+    )  # zero-cost, domain-agnostic
     ...
 
+
 @property
-def redis_key(self) -> str:      return self._invariant.state_key
+def redis_key(self) -> str:
+    return self._invariant.state_key
+
+
 @property
-def threshold_key(self) -> str:  return self._invariant.threshold_key
+def threshold_key(self) -> str:
+    return self._invariant.threshold_key
+
+
 @property
-def gamma(self) -> float:        return self._invariant.gamma
+def gamma(self) -> float:
+    return self._invariant.gamma
+
+
 @property
-def threshold(self) -> float:    return resolve_threshold(self._invariant.threshold_key)
+def threshold(self) -> float:
+    return resolve_threshold(self._invariant.threshold_key)
+
 
 def get_h(self, state_value: float) -> float:
     """Barrier function h(x). Safe when h(x) >= 0."""
@@ -213,9 +228,10 @@ Replace ~62 ad-hoc constructions with **one factory fixture**. Hermetic, offline
 TEST_BARRIER = AffineBarrier(
     invariant_id="test.scalar_barrier",
     state_key="safety:test_state",
-    threshold_key="cbf.min_cash_balance",   # kernel-namespaced key, present in all baselines
+    threshold_key="cbf.min_cash_balance",  # kernel-namespaced key, present in all baselines
     gamma=0.5,
 )
+
 
 @pytest.fixture
 def make_cbf(monkeypatch):
@@ -225,10 +241,17 @@ def make_cbf(monkeypatch):
     - Threshold is monkeypatched into the loaded THRESHOLDS tree, never mutated on the engine.
     - tracer disabled by default so span assertions do not leak across tests.
     """
-    def _make(*, threshold: float = 10_000.0, gamma: float = 0.5,
-              barrier: InvariantModel | None = None,
-              cost_resolver: CostResolver | None = None) -> ControlBarrierFunction:
-        monkeypatch.setattr(THRESHOLDS.cbf, "min_cash_balance", threshold, raising=False)
+
+    def _make(
+        *,
+        threshold: float = 10_000.0,
+        gamma: float = 0.5,
+        barrier: InvariantModel | None = None,
+        cost_resolver: CostResolver | None = None,
+    ) -> ControlBarrierFunction:
+        monkeypatch.setattr(
+            THRESHOLDS.cbf, "min_cash_balance", threshold, raising=False
+        )
         cbf = ControlBarrierFunction(
             invariant=barrier or replace(TEST_BARRIER, gamma=gamma),
             cost_resolver=cost_resolver,
@@ -236,6 +259,7 @@ def make_cbf(monkeypatch):
         )
         cbf.tracer = None
         return cbf
+
     return _make
 ```
 
@@ -281,9 +305,9 @@ Two independent causes wear the same label.
 DENY vs DEFER vs NARROW vs PAUSE by substring-matching English:
 
 ```python
-is_cbf           = "CBF" in v or "Safety Violation (RBC" in v or "cash barrier" in v.lower()
+is_cbf = "CBF" in v or "Safety Violation (RBC" in v or "cash barrier" in v.lower()
 is_fiscal_reject = "Fiscal Limit Pre-Reservation REJECTED" in v
-is_opa_deny      = "OPA Denied Action" in v
+is_opa_deny = "OPA Denied Action" in v
 ```
 
 But v3 tier plugins emit structured [`Violation`](../src/gateway/governance/contracts.py:191)
@@ -330,10 +354,11 @@ Step 1 — extend the `Violation` dataclass with the signal it should always hav
 ```python
 # src/gateway/governance/contracts.py
 class ViolationDisposition(StrEnum):
-    HARD       = "hard"        # → DENY
-    SOFT       = "soft"        # → DEFER
+    HARD = "hard"  # → DENY
+    SOFT = "soft"  # → DEFER
     NARROWABLE = "narrowable"  # → NARROW (clamp params and retry)
-    PAUSABLE   = "pausable"    # → PAUSE (transient; will resolve)
+    PAUSABLE = "pausable"  # → PAUSE (transient; will resolve)
+
 
 @dataclass(frozen=True)
 class Violation:
@@ -342,17 +367,21 @@ class Violation:
     message: str
     recoverable: bool = True
     needs_human_review: bool = False
-    disposition: ViolationDisposition = ViolationDisposition.HARD   # fail-closed default
+    disposition: ViolationDisposition = ViolationDisposition.HARD  # fail-closed default
 ```
 
 Step 2 — `classify_violations()` consumes `list[Violation]`, not `list[str]`:
 
 ```python
-def classify_violations(violations: list[Violation], context: dict | None = None) -> dict:
-    hard       = [v for v in violations if v.disposition is ViolationDisposition.HARD]
-    soft       = [v for v in violations if v.disposition is ViolationDisposition.SOFT]
-    narrowable = [v for v in violations if v.disposition is ViolationDisposition.NARROWABLE]
-    pausable   = [v for v in violations if v.disposition is ViolationDisposition.PAUSABLE]
+def classify_violations(
+    violations: list[Violation], context: dict | None = None
+) -> dict:
+    hard = [v for v in violations if v.disposition is ViolationDisposition.HARD]
+    soft = [v for v in violations if v.disposition is ViolationDisposition.SOFT]
+    narrowable = [
+        v for v in violations if v.disposition is ViolationDisposition.NARROWABLE
+    ]
+    pausable = [v for v in violations if v.disposition is ViolationDisposition.PAUSABLE]
     ...
 ```
 
@@ -360,8 +389,13 @@ Step 3 — each tier declares its own disposition. The finance plugin owns finan
 
 ```python
 # src/cage_finance/tiers/fiscal_tier.py
-Violation(tier="fiscal", code="FISCAL_LIMIT_EXCEEDED", message=...,
-          recoverable=True, disposition=ViolationDisposition.NARROWABLE)
+Violation(
+    tier="fiscal",
+    code="FISCAL_LIMIT_EXCEEDED",
+    message=...,
+    recoverable=True,
+    disposition=ViolationDisposition.NARROWABLE,
+)
 ```
 
 Step 4 — kernel-internal violations (STPA, OPA, confidence, FTRA) are converted from raw
@@ -385,15 +419,27 @@ constructions across `test_symbolic_governor.py`, `test_symbolic_governor_securi
 @pytest.fixture
 def make_governor():
     """Hermetic SymbolicGovernor: FTRA bypassed, tiers opt-in, no live collaborators."""
-    def _make(*, tiers: Sequence[GovernanceTierPlugin] = (),
-              safety_filter=None, consensus_engine=None,
-              opa_verdict="ALLOW", fiscal_limit_guard=None) -> SymbolicGovernor:
-        gov = SymbolicGovernor(opa_client=..., safety_filter=..., consensus_engine=...,
-                               stpa_validator=None, telemetry_provider=None)
+
+    def _make(
+        *,
+        tiers: Sequence[GovernanceTierPlugin] = (),
+        safety_filter=None,
+        consensus_engine=None,
+        opa_verdict="ALLOW",
+        fiscal_limit_guard=None,
+    ) -> SymbolicGovernor:
+        gov = SymbolicGovernor(
+            opa_client=...,
+            safety_filter=...,
+            consensus_engine=...,
+            stpa_validator=None,
+            telemetry_provider=None,
+        )
         for t in tiers:
             gov.register_domain_tier(t)
         gov._ftra_boundary_check = AsyncMock(return_value=_SAFE_FTRA_RESULT)
         return gov
+
     return _make
 ```
 
@@ -402,8 +448,11 @@ Fix the fake tier so it honours the phase contract:
 ```python
 class OrderTrackingTier:
     async def evaluate(self, action, params):
-        OrderTrackingTier.execution_log.append((self._tier_name, action))   # ← was missing
+        OrderTrackingTier.execution_log.append(
+            (self._tier_name, action)
+        )  # ← was missing
         return self._violations()
+
     async def commit(self, action, params):
         OrderTrackingTier.execution_log.append((self._tier_name, action))
         return self._violations()
@@ -502,9 +551,10 @@ class RailProvider(Protocol):
 class FinancialRailsProvider:
     def provide_rail_actions(self) -> list[tuple[str, Callable[..., Any]]]:
         from src.cage_finance.rails import actions
+
         return [
-            ("CheckTradeRiskLevelAction",   actions.check_trade_risk_level),
-            ("ValidateMarketHoursAction",   actions.validate_market_hours),
+            ("CheckTradeRiskLevelAction", actions.check_trade_risk_level),
+            ("ValidateMarketHoursAction", actions.validate_market_hours),
             ("CheckPortfolioExposureAction", actions.check_portfolio_exposure),
         ]
 ```
@@ -724,7 +774,9 @@ removed from the ontology.
 (`trace_name: str`), supplied by the domain plugin. The test then asserts the injected value:
 
 ```python
-provider = LangfuseTelemetryProvider(client=mock_client, trace_name="test_action", fallback=...)
+provider = LangfuseTelemetryProvider(
+    client=mock_client, trace_name="test_action", fallback=...
+)
 provider.get_latest_data(n_samples=200)
 mock_client.fetch_traces.assert_called_once_with(name="test_action", limit=200)
 ```

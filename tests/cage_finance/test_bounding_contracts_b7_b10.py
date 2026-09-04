@@ -19,8 +19,9 @@ B10 is the critical contract that justifies EXTERNALLY_REVERSIBLE classification
 When B10 fails, it must emit a classification override to IRREVERSIBLE_TERMINAL.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.cage_finance.safety.bounding.contracts import (
     contract_b7_audit_trail_sealing,
@@ -30,7 +31,6 @@ from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,
     ContractSeverity,
 )
-
 
 # ───────────────────────────────────────────────────────────────────────────────
 # B7 — Audit Trail Cryptographic Hash Chain Sealing Tests
@@ -211,7 +211,9 @@ class TestContractB10RollbackWindow:
         assert "Cannot guarantee reversibility" in result.findings[0]["note"]
         assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
 
-    def test_b10_requested_window_exceeds_venue_capability_rejects_and_reclassifies(self):
+    def test_b10_requested_window_exceeds_venue_capability_rejects_and_reclassifies(
+        self,
+    ):
         """B10 rejects when requested window > venue max, emits IRREVERSIBLE_TERMINAL override."""
         request = BoundedTradeRequest(
             symbol="AAPL",
@@ -252,7 +254,9 @@ class TestContractB10RollbackWindow:
         assert "Rollback window too long" in result.findings[0]["note"]
         assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
 
-    def test_b10_requested_window_below_minimum_threshold_rejects_and_reclassifies(self):
+    def test_b10_requested_window_below_minimum_threshold_rejects_and_reclassifies(
+        self,
+    ):
         """B10 rejects when requested window < min threshold, emits IRREVERSIBLE_TERMINAL override."""
         request = BoundedTradeRequest(
             symbol="AAPL",

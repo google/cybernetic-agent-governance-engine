@@ -54,7 +54,7 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
             registry: BoundingContractRegistry orchestrating B1-B10
         """
         self.registry = registry
-        self._classification_override: Optional[str] = None
+        self._classification_override: str | None = None
 
     @property
     def tier_name(self) -> str:
@@ -96,9 +96,7 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
                 counterparty=params.get("counterparty"),
                 trader_role=params.get("trader_role", "autonomous"),
                 jurisdiction=params.get("jurisdiction"),
-                rollback_window_seconds=int(
-                    params.get("rollback_window_seconds", 300)
-                ),
+                rollback_window_seconds=int(params.get("rollback_window_seconds", 300)),
                 transaction_id=params.get("transaction_id"),
             )
         except (ValueError, TypeError, KeyError) as e:
@@ -180,7 +178,7 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
             recoverable=recoverable,
         )
 
-    def get_classification_override(self) -> Optional[str]:
+    def get_classification_override(self) -> str | None:
         """Retrieve B10 classification override if emitted.
 
         Used by FTRA boundary to re-classify execute_trade_bounded from

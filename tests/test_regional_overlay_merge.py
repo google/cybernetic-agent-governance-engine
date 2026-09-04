@@ -38,7 +38,7 @@ def test_regional_overlay_merge_hash(region: str):
     """
     ControlRegistry.reconfigure(region)
     registry = ControlRegistry()
-    
+
     # Validate hash format: SHA256 produces 64 hex characters
     assert len(registry.active_hash) == 64, (
         f"Expected SHA256 hash (64 chars), got {len(registry.active_hash)} chars"
@@ -46,16 +46,23 @@ def test_regional_overlay_merge_hash(region: str):
     assert all(c in "0123456789abcdef" for c in registry.active_hash), (
         f"Hash contains non-hex characters: {registry.active_hash}"
     )
-    
+
     # Validate registry is not empty by checking that we can retrieve a known control
     try:
         from src.gateway.governance.constants import GovernanceControl
+
         mapping = registry.get_mapping(GovernanceControl.AGENT_CONFIDENCE_THRESHOLD)
-        assert mapping is not None, f"ControlRegistry for {region} returned None for known control"
-        assert "primary_framework" in mapping, f"ControlRegistry mapping missing primary_framework key"
-    except KeyError:
-        assert False, f"ControlRegistry for {region} is empty or missing required controls"
-    
+        assert mapping is not None, (
+            f"ControlRegistry for {region} returned None for known control"
+        )
+        assert "primary_framework" in mapping, (
+            "ControlRegistry mapping missing primary_framework key"
+        )
+    except KeyError as exc:
+        raise AssertionError(
+            f"ControlRegistry for {region} is empty or missing required controls"
+        ) from exc
+
     # Validate hash is deterministic: reconfigure again and verify same hash
     first_hash = registry.active_hash
     ControlRegistry.reconfigure(region)

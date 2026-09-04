@@ -19,13 +19,13 @@ Phase 5 implementation per plans/phase_5_autonomous_trading_plan.md.
 
 __all__ = [
     "BoundedTradeRequest",
+    "BoundingContractRegistry",
     "ContractResult",
     "ContractSeverity",
     "MarketDataProvider",
     "RollbackCapabilityProvider",
     "StubMarketDataProvider",
     "StubRollbackCapabilityProvider",
-    "BoundingContractRegistry",
 ]
 
 from src.cage_finance.safety.bounding.models import (

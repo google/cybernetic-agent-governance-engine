@@ -55,7 +55,7 @@ class TestContractB1MaxNotional:
 
     def test_trade_exactly_at_limit_is_admitted(self, valid_thresholds):
         """Trade exactly at max notional limit is admitted (inclusive boundary).
-        
+
         Per Ratified Decision 1: Boundaries use inclusive comparison (≤).
         """
         request = BoundedTradeRequest(
@@ -77,7 +77,10 @@ class TestContractB1MaxNotional:
         assert result.admitted is False
         assert result.severity == ContractSeverity.HARD_BLOCK
         assert len(result.findings) == 1
-        assert result.findings[0]["reason"] == "Trade notional exceeds maximum single-order limit"
+        assert (
+            result.findings[0]["reason"]
+            == "Trade notional exceeds maximum single-order limit"
+        )
         assert result.findings[0]["amount_usd"] == 15000.0
         assert result.findings[0]["limit_usd"] == 10000.0
         assert result.findings[0]["excess_usd"] == 5000.0
@@ -141,7 +144,7 @@ class TestContractB2DrawdownBreaker:
 
     def test_drawdown_exactly_at_limit_is_admitted(self, valid_thresholds):
         """Drawdown exactly at limit is admitted (inclusive boundary).
-        
+
         Per Ratified Decision 1: Boundaries use inclusive comparison (≤).
         """
         request = BoundedTradeRequest(
@@ -167,7 +170,10 @@ class TestContractB2DrawdownBreaker:
         assert result.admitted is False
         assert result.severity == ContractSeverity.HARD_BLOCK
         assert len(result.findings) == 1
-        assert result.findings[0]["reason"] == "Portfolio drawdown exceeds circuit breaker limit"
+        assert (
+            result.findings[0]["reason"]
+            == "Portfolio drawdown exceeds circuit breaker limit"
+        )
         assert result.findings[0]["current_drawdown_pct"] == 8.0
         assert result.findings[0]["limit_pct"] == 5.0
         assert result.findings[0]["excess_pct"] == 3.0
@@ -243,7 +249,7 @@ class TestContractB6HitlHighImpact:
 
     def test_trade_exactly_at_threshold_is_admitted(self, valid_thresholds):
         """Trade exactly at HITL threshold is admitted (inclusive boundary).
-        
+
         Per Ratified Decision 1: Boundaries use inclusive comparison (≤).
         """
         request = BoundedTradeRequest(
@@ -257,7 +263,7 @@ class TestContractB6HitlHighImpact:
 
     def test_high_impact_trade_escalates_to_hitl(self, valid_thresholds):
         """High-impact trade is rejected with HITL_ESCALATE (not HARD_BLOCK).
-        
+
         Unlike B1/B2, B6 uses HITL_ESCALATE severity to route to human review
         rather than blocking outright.
         """
@@ -281,7 +287,7 @@ class TestContractB6HitlHighImpact:
 
     def test_missing_threshold_fails_with_hitl_escalate(self):
         """Missing threshold fails with HITL_ESCALATE (not HARD_BLOCK).
-        
+
         B6 uses HITL_ESCALATE for all failures to ensure human review.
         """
         request = BoundedTradeRequest(
@@ -320,7 +326,9 @@ class TestContractInteractions:
         }
 
         b1_result = contract_b1_max_notional(request, thresholds)
-        b2_result = contract_b2_drawdown_breaker(request, thresholds, current_drawdown=0.02)
+        b2_result = contract_b2_drawdown_breaker(
+            request, thresholds, current_drawdown=0.02
+        )
         b6_result = contract_b6_hitl_high_impact(request, thresholds)
 
         assert b1_result.admitted is True
@@ -339,7 +347,9 @@ class TestContractInteractions:
         }
 
         b1_result = contract_b1_max_notional(request, thresholds)
-        b2_result = contract_b2_drawdown_breaker(request, thresholds, current_drawdown=0.02)
+        b2_result = contract_b2_drawdown_breaker(
+            request, thresholds, current_drawdown=0.02
+        )
         b6_result = contract_b6_hitl_high_impact(request, thresholds)
 
         assert b1_result.admitted is False
@@ -359,7 +369,9 @@ class TestContractInteractions:
         }
 
         b1_result = contract_b1_max_notional(request, thresholds)
-        b2_result = contract_b2_drawdown_breaker(request, thresholds, current_drawdown=0.08)
+        b2_result = contract_b2_drawdown_breaker(
+            request, thresholds, current_drawdown=0.08
+        )
         b6_result = contract_b6_hitl_high_impact(request, thresholds)
 
         assert b1_result.admitted is True
@@ -379,7 +391,9 @@ class TestContractInteractions:
         }
 
         b1_result = contract_b1_max_notional(request, thresholds)
-        b2_result = contract_b2_drawdown_breaker(request, thresholds, current_drawdown=0.02)
+        b2_result = contract_b2_drawdown_breaker(
+            request, thresholds, current_drawdown=0.02
+        )
         b6_result = contract_b6_hitl_high_impact(request, thresholds)
 
         assert b1_result.admitted is True

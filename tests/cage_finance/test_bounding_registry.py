@@ -14,8 +14,9 @@
 
 """Tests for bounding contract registry and orchestration."""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,
@@ -114,7 +115,7 @@ class TestBoundingContractRegistry:
             venue="NYSE",
         )
 
-        results, override = registry.evaluate_all(request)
+        results, _override = registry.evaluate_all(request)
 
         # Should stop after B1 fails (fail-fast optimization)
         assert len(results) == 1
@@ -195,7 +196,5 @@ class TestBoundingContractRegistry:
             venue="NYSE",
         )
 
-        with pytest.raises(
-            ValueError, match="Contract B3 requires MarketDataProvider"
-        ):
+        with pytest.raises(ValueError, match="Contract B3 requires MarketDataProvider"):
             registry.evaluate_all(request)

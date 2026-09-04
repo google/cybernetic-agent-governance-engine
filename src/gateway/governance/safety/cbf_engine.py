@@ -30,7 +30,6 @@ TOCTOU windows between check and commit.
 """
 
 import asyncio
-from dataclasses import dataclass
 import inspect
 import json
 import logging
@@ -41,6 +40,7 @@ import math
 # ---------------------------------------------------------------------------
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
@@ -143,24 +143,24 @@ try:
 
     def _get_or_create_metric(metric_cls, name, *args, **kwargs):
         """Thread-safe metric registry lookup with fallback to singleton.
-        
+
         Race-safe: If metric creation fails due to duplicate registration
         (ValueError from Prometheus), falls back to the shared singleton
         from REGISTRY._names_to_collectors. Concurrent calls will all
         return the same collector instance (intended behavior).
-        
+
         The broad exception handler catches both:
         - ValueError: Raised by Prometheus for duplicate metric names
         - Exception: Any unexpected Prometheus internal errors
-        
+
         Args:
             metric_cls: Prometheus metric class (Counter, Gauge, Histogram)
             name: Metric name
             *args, **kwargs: Arguments passed to metric constructor
-        
+
         Returns:
             Prometheus collector instance (new or existing singleton)
-        
+
         Raises:
             Exception: If metric creation fails and no existing collector found
         """
@@ -417,7 +417,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
     @gamma.setter
     def gamma(self, value: float) -> None:
         """Allow test harness and configuration override of gamma.
-        
+
         Warning: This setter is NOT thread-safe and is intended for test
         harnesses and single-threaded configuration only. Do not call
         during concurrent request processing in production.
@@ -1733,7 +1733,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         argv = [
             str(cost),  # ARGV[1]: magnitude (domain-neutral; was "cost")
-            str(resolved_threshold),  # ARGV[2]: resolved threshold from InvariantModel or override
+            str(
+                resolved_threshold
+            ),  # ARGV[2]: resolved threshold from InvariantModel or override
             str(self.gamma),  # ARGV[3]: gamma from InvariantModel or override
             governance_signature,
             str(effective_balance),  # ARGV[5]: ground truth balance (POAM-023)

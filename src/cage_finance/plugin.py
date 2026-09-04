@@ -95,7 +95,7 @@ class FinanceCagePlugin(CagePlugin):
         bounding_enforcer = BoundingContractEnforcer(bounding_config)
         market_data_provider = StubMarketDataProvider()
         rollback_provider = StubRollbackCapabilityProvider()
-        
+
         bounding_registry = BoundingContractRegistry(
             thresholds=THRESHOLDS.model_dump(),  # Use global singleton
             market_data_provider=market_data_provider,

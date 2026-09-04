@@ -71,9 +71,9 @@ class BoundingContractRegistry:
     def __init__(
         self,
         thresholds: dict[str, Any],
-        market_data_provider: Optional[MarketDataProvider] = None,
-        rollback_provider: Optional[RollbackCapabilityProvider] = None,
-        enforcer: Optional[BoundingContractEnforcer] = None,
+        market_data_provider: MarketDataProvider | None = None,
+        rollback_provider: RollbackCapabilityProvider | None = None,
+        enforcer: BoundingContractEnforcer | None = None,
     ):
         """Initialize bounding contract registry.
 
@@ -100,7 +100,7 @@ class BoundingContractRegistry:
 
     def evaluate_all(
         self, request: BoundedTradeRequest
-    ) -> tuple[list[ContractResult], Optional[str]]:
+    ) -> tuple[list[ContractResult], str | None]:
         """Evaluate all enabled bounding contracts for the given request.
 
         Per Phase 5 Master Plan Section 3.2:
@@ -117,7 +117,7 @@ class BoundingContractRegistry:
             - classification_override: "IRREVERSIBLE_TERMINAL" if B10 failed, else None
         """
         results: list[ContractResult] = []
-        classification_override: Optional[str] = None
+        classification_override: str | None = None
 
         for contract_id in self.enabled_contracts:
             result = self._evaluate_contract(contract_id, request)
@@ -153,7 +153,7 @@ class BoundingContractRegistry:
 
     def _evaluate_contract(
         self, contract_id: str, request: BoundedTradeRequest
-    ) -> ContractResult | tuple[ContractResult, Optional[str]]:
+    ) -> ContractResult | tuple[ContractResult, str | None]:
         """Evaluate a single bounding contract.
 
         Args:
