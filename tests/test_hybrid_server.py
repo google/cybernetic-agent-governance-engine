@@ -66,7 +66,19 @@ def _make_hybrid_stubs() -> dict:
 
     return {
         # Sub-apps
-        "src.gateway.server.mcp_tool_server": MagicMock(app=mock_mcp_app),
+        "src.gateway.server.mcp_tool_server": MagicMock(
+            app=mock_mcp_app,
+            mcp=MagicMock(),
+            _assert_required_plugins=MagicMock(),
+        ),
+        "src.gateway.governance.plugin_loader": MagicMock(
+            discover_plugins=MagicMock(
+                return_value=[MagicMock(name="finance", register=MagicMock())]
+            )
+        ),
+        "src.gateway.governance.background_tasks": MagicMock(
+            start_all=MagicMock(return_value=[])
+        ),
         "src.gateway.server.inference_proxy": MagicMock(
             inference_app=mock_inference_app
         ),
@@ -92,6 +104,8 @@ def _make_hybrid_stubs() -> dict:
             symbolic_governor=MagicMock(
                 verify=AsyncMock(return_value={"violations": []}),
             ),
+            install_domain_components=MagicMock(),
+            _has_null_components=MagicMock(return_value=False),
         ),
         # Consensus
         "src.cage_finance.consensus.consensus": MagicMock(
@@ -506,13 +520,5 @@ async def test_lifespan_succeeds_in_dev_mode(monkeypatch):
         app_mock = MagicMock()
         app_mock.state = MagicMock()
 
-        # Should not raise in dev mode
-        raised = False
-        try:
-            async with _gateway_lifespan(app_mock):
-                pass
-        except Exception as exc:
-            raised = True
-            pytest.fail(f"lifespan raised unexpectedly in dev mode: {exc}")
-
-    assert not raised
+        async with _gateway_lifespan(app_mock):
+            pass

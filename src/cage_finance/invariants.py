@@ -22,9 +22,11 @@ that parameterizes the kernel's ControlBarrierFunction engine.
 """
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 
+@dataclass(frozen=True)
 class CashBarrier:
     """Finance domain barrier: h(x) = cash_balance - min_cash_balance.
 
@@ -34,20 +36,23 @@ class CashBarrier:
     The barrier algebra (h(x) = x - threshold) is evaluated atomically
     inside Redis via the Lua script in gateway/governance/safety/cbf_engine.py.
     This class only declares the parameters.
+
+    Implements the InvariantModel protocol from src.gateway.governance.contracts.
     """
 
-    invariant_id = "finance.cash_balance"
-    state_key = "safety:current_cash"
-    threshold_key = "cbf.min_cash_balance"
-    gamma = 0.5  # Must match THRESHOLDS.cbf.gamma — asserted at registration
+    invariant_id: str = "finance.cash_balance"
+    state_key: str = "safety:current_cash"
+    threshold_key: str = "cbf.min_cash_balance"
+    gamma: float = 0.5  # Must match THRESHOLDS.cbf.gamma — asserted at registration
 
 
 def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
     """Finance domain cost resolver for CBF engine.
 
-    Only ``execute_trade`` carries a cash cost; every other action is 0.
-    A non-finite (NaN/inf) or negative ``amount`` is rejected here so it can
-    never reach the barrier certificate or the Redis cash-state write.
+    Only ``execute_trade`` and ``execute_trade_bounded`` carry a cash cost;
+    every other action is 0. A non-finite (NaN/inf) or negative ``amount`` is
+    rejected here so it can never reach the barrier certificate or the Redis
+    cash-state write.
 
     This function is injected into the CBF engine at plugin registration time,
     making the kernel domain-agnostic while preserving the finance-specific
@@ -61,9 +66,10 @@ def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
         The cash cost for the action (0.0 for non-trade actions).
 
     Raises:
-        ValueError: If execute_trade has a non-finite or negative amount.
+        ValueError: If execute_trade or execute_trade_bounded has a non-finite
+            or negative amount.
     """
-    if action_name != "execute_trade":
+    if action_name not in ("execute_trade", "execute_trade_bounded"):
         return 0.0
 
     if "amount_minor" in payload and payload["amount_minor"] is not None:

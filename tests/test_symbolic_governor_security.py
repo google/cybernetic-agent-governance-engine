@@ -60,6 +60,8 @@ def _make_governor(fiscal_limit_guard=None):
 
     governor = SymbolicGovernor(
         opa_client=opa_client,
+        safety_filter=safety_filter,
+        consensus_engine=consensus_engine,
         stpa_validator=None,
         telemetry_provider=None,
     )
@@ -410,6 +412,7 @@ async def test_fiscal_limit_guard_reserve_is_awaited():
     )
     mock_guard.reserve = AsyncMock(return_value=mock_token)
     mock_guard.release = AsyncMock(return_value=0.0)
+    mock_guard.confirm = AsyncMock()
 
     governor = _make_governor(fiscal_limit_guard=mock_guard)
 
@@ -454,6 +457,7 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
     )
     mock_guard.reserve = AsyncMock(return_value=mock_token)
     mock_guard.release = AsyncMock(return_value=0.0)
+    mock_guard.confirm = AsyncMock()
 
     governor = _make_governor(fiscal_limit_guard=mock_guard)
 
@@ -467,7 +471,7 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
 
     with (
         patch(
-            "src.cage_finance.causal.causal_gatekeeper.causal_safety_check",
+            "src.gateway.governance.causal.gatekeeper.causal_safety_check",
             return_value=True,
         ),
         patch(
@@ -506,6 +510,7 @@ async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
     )
     mock_guard.reserve = AsyncMock(return_value=rejected_token)
     mock_guard.release = AsyncMock(return_value=0.0)
+    mock_guard.confirm = AsyncMock()
 
     governor = _make_governor(fiscal_limit_guard=mock_guard)
 

@@ -1544,9 +1544,14 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     for conflict in conflicts:
         logger.warning("generate_terminal_registry: %s", conflict)
 
+    now = _dt.datetime.now(_dt.timezone.utc)
     registry = {
-        "version": "1.0",
-        "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "version": "3.0",
+        "domain": "finance",
+        "serial": 2,
+        "generated_at": now.isoformat(),
+        "issued_at": now.isoformat(),
+        "expires_at": (now + _dt.timedelta(days=365)).isoformat(),
         "system": cs.system.name,
         "system_version": cs.system.version,
         "fail_closed_note": (

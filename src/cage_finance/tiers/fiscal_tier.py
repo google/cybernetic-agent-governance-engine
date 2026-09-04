@@ -47,7 +47,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         amount = float(params.get("amount", 0.0))
-        agent_id = params.get("trader_id", "anonymous")
+        agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
         transaction_id = params.get("transaction_id", str(uuid.uuid4()))
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
@@ -56,7 +56,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
                 Violation(
                     tier=self.tier_name,
                     code="FISCAL_LIMIT_EXCEEDED",
-                    message=f"Daily fiscal limit exceeded for {agent_id}",
+                    message=f"Daily fiscal limit exceeded for {agent_id}. Fiscal Limit Pre-Reservation REJECTED",
                     recoverable=True,
                 )
             ]

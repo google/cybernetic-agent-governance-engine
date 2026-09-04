@@ -58,8 +58,12 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
         from config.rails.actions import (
             check_approval_token_action,
             check_atomic_execution_action,
+            check_data_latency_action,
+            check_drawdown_limit_action,
+            check_slippage_risk_action,
             custom_self_check_input,
             custom_self_check_output,
+            log_safety_audit_action,
             mask_pii_action,
             retrieve_knowledge,
         )
@@ -74,6 +78,10 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
                 ("RetrieveKnowledgeAction", retrieve_knowledge),
                 ("CheckApprovalTokenAction", check_approval_token_action),
                 ("CheckAtomicExecutionAction", check_atomic_execution_action),
+                ("CheckDataLatencyAction", check_data_latency_action),
+                ("CheckDrawdownLimitAction", check_drawdown_limit_action),
+                ("CheckSlippageRiskAction", check_slippage_risk_action),
+                ("LogSafetyAuditAction", log_safety_audit_action),
             ]
         )
     except ImportError as exc:

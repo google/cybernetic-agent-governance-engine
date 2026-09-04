@@ -16,7 +16,7 @@ FROM python:3.12-slim-bookworm
 
 # Set working directory
 WORKDIR /app
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/src
 
 # Install system dependencies
 # git is often needed for installing dependencies from git

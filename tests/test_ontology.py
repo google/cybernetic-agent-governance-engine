@@ -55,7 +55,7 @@ def test_trading_knowledge_graph_constraints_populated():
     graph = TradingKnowledgeGraph()
     assert len(graph.constraints) >= 2
     assert "SC-1" in graph.constraints
-    assert "FIN-2" in graph.constraints
+    assert "FIN-1" in graph.constraints
 
 
 def test_get_rubric_returns_all_ucas():
@@ -71,15 +71,15 @@ def test_get_rubric_returns_all_ucas():
     assert "UCA-5" in uca_ids
 
 
-def test_get_constraints_for_action_execute_trade():
-    """get_constraints_for_action('execute_trade') should return FIN-2 constraint."""
+def test_get_constraints_for_action_execute_sell():
+    """get_constraints_for_action('execute_sell') should return FIN-1 constraint."""
     from src.gateway.governance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
-    constraints = graph.get_constraints_for_action("execute_trade")
+    constraints = graph.get_constraints_for_action("execute_sell")
     assert isinstance(constraints, list)
     constraint_ids = {c.id for c in constraints}
-    assert "FIN-2" in constraint_ids
+    assert "FIN-1" in constraint_ids
 
 
 def test_get_constraints_for_action_write_db():

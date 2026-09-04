@@ -36,8 +36,17 @@ Or via Docker/Kubernetes:
 
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
+
+# Ensure both workspace root and src/ are in sys.path so both
+# 'src.gateway...' and plugin entrypoints like 'cage_finance...' resolve cleanly.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "src")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -241,6 +250,16 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         )
     except Exception as reg_err:
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
+
+    # ── Load domain plugins (D7 / PR B) ───────────────────────────────────
+    from src.gateway.governance.plugin_loader import discover_plugins
+    from src.gateway.governance.singletons import symbolic_governor
+    from src.gateway.server.mcp_tool_server import _assert_required_plugins, mcp
+
+    loaded_plugins = discover_plugins()
+    for plugin in loaded_plugins:
+        plugin.register(governor=symbolic_governor, tool_server=mcp)
+    _assert_required_plugins(loaded_plugins)
 
     # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
     from src.gateway.governance.background_tasks import (

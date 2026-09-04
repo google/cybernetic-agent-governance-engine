@@ -154,11 +154,6 @@ class TestDomainLiteralGateExclusions:
         # Should target src/gateway/ specifically
         assert "src/gateway" in content
 
-
-@pytest.mark.local
-class TestDomainLiteralGateOutput:
-    """G6 gate output format tests."""
-
     def test_gate_reports_file_count_on_pass(self) -> None:
         """G6 gate reports number of files scanned on pass."""
         result = subprocess.run(

@@ -160,9 +160,14 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
         ttl_seconds=TTL_SECONDS,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     # Seed self-reported balance and initial fence epoch
@@ -174,11 +179,11 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=fresh_result,
         ),
         patch(
@@ -210,9 +215,14 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
         "fakeredis.aioredis", reason="fakeredis[aioredis] required"
     ).FakeRedis(decode_responses=True)
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     # Seed self-reported balance and initial fence epoch
@@ -221,11 +231,11 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=None,  # reconciliation key absent / stale
         ),
     ):
@@ -262,9 +272,14 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     # Seed self-reported balance and fence epoch
@@ -285,7 +300,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(
                 get_raw_client=MagicMock(return_value=fake_redis_async),
                 lrange=MagicMock(side_effect=mock_lrange),
@@ -294,7 +309,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
             ),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=fresh_result,
         ),
         patch(
@@ -322,9 +337,14 @@ def test_strict_mode_fails_closed_without_reconciliation() -> None:
         "fakeredis.aioredis", reason="fakeredis[aioredis] required"
     ).FakeRedis(decode_responses=True)
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     # Seed self-reported balance and fence epoch
@@ -336,17 +356,17 @@ def test_strict_mode_fails_closed_without_reconciliation() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(
                 get_raw_client=MagicMock(return_value=fake_redis_async),
                 get=MagicMock(side_effect=mock_get),
             ),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=None,  # reconciliation unavailable
         ),
-        patch("src.cage_finance.safety.cbf._CBF_STRICT_MODE", True),
+        patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", True),
     ):
         # Attempt trade with strict mode enabled and no reconciliation
         committed, message = asyncio.run(
@@ -379,9 +399,14 @@ def test_fence_epoch_regression_rejected() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
     cbf._last_verified_fence_epoch = 10  # Simulate previous epoch
 
@@ -397,14 +422,14 @@ def test_fence_epoch_regression_rejected() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(
                 get_raw_client=MagicMock(return_value=fake_redis_async),
                 lrange=MagicMock(side_effect=mock_lrange),
             ),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=fresh_result,
         ),
         patch(
@@ -442,9 +467,14 @@ def test_local_debits_accumulated_within_cycle() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
@@ -461,7 +491,7 @@ def test_local_debits_accumulated_within_cycle() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(
                 get_raw_client=MagicMock(return_value=fake_redis_async),
                 lrange=MagicMock(side_effect=mock_lrange),
@@ -469,7 +499,7 @@ def test_local_debits_accumulated_within_cycle() -> None:
             ),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=fresh_result,
         ),
         patch(
@@ -525,9 +555,14 @@ def test_kms_signature_verified_before_commit() -> None:
         sequence=1,
     )
 
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction(skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
@@ -541,21 +576,21 @@ def test_kms_signature_verified_before_commit() -> None:
 
     with (
         patch(
-            "src.cage_finance.safety.cbf.redis_client",
+            "src.gateway.governance.safety.cbf_engine.redis_client",
             new=MagicMock(
                 get_raw_client=MagicMock(return_value=fake_redis_async),
                 get=MagicMock(side_effect=mock_get),
             ),
         ),
         patch(
-            "src.cage_finance.compliance.reconciliation_worker.read_verified_balance",
+            "src.gateway.governance.reconciliation.daemon.read_verified_balance",
             return_value=fresh_result,
         ),
         patch(
             "src.gateway.governance.kms_signer.get_governance_signer",
             return_value=mock_signer,
         ),
-        patch("src.cage_finance.safety.cbf._CBF_STRICT_MODE", False),
+        patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", False),
     ):
         # Attempt commit with invalid signature (should fall back to self-reported in non-strict mode)
         committed, message = asyncio.run(

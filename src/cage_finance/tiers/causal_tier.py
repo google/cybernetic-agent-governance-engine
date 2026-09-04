@@ -14,8 +14,13 @@
 
 from typing import Any
 
-from src.gateway.governance.causal.gatekeeper import causal_safety_check
+from src.gateway.governance.causal import gatekeeper
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+
+
+def causal_safety_check(params: dict[str, Any]) -> bool:
+    """Forwarding wrapper for causal safety check, supporting both module-level and gatekeeper patching."""
+    return gatekeeper.causal_safety_check(params)
 
 
 class CausalTierPlugin(GovernanceTierPlugin):
@@ -37,15 +42,16 @@ class CausalTierPlugin(GovernanceTierPlugin):
         return action == "execute_trade"
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        # causal_safety_check is synchronous but performs model evaluation.
-        # Using it directly here.
+        # Calling the module-level causal_safety_check function allows patching at either
+        # src.cage_finance.tiers.causal_tier.causal_safety_check or
+        # src.gateway.governance.causal.gatekeeper.causal_safety_check.
         is_safe = causal_safety_check(params)
         if not is_safe:
             return [
                 Violation(
                     tier=self.tier_name,
                     code="CAUSAL_CHECK_FAILED",
-                    message="World-model is untrustworthy or predicted risk exceeds safety boundary.",
+                    message="World-model is untrustworthy or predicted risk exceeds safety boundary (DoWhy refutation failed).",
                     recoverable=False,
                 )
             ]

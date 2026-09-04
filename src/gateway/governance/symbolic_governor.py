@@ -48,6 +48,19 @@ from src.gateway.governance.generated_stpa_validator import (
 logger = logging.getLogger("SymbolicGovernor")
 tracer = trace.get_tracer(__name__)
 
+# Prometheus counter for FTRA boundary checks (module-level to avoid duplicate registration)
+_ftra_boundary_counter = None
+try:
+    from prometheus_client import Counter
+
+    _ftra_boundary_counter = Counter(
+        "cage_ftra_boundary_checks_total",
+        "Total FTRA boundary checks performed",
+        ["result"],
+    )
+except (ImportError, Exception):
+    pass  # prometheus_client not installed or counter already registered
+
 # SLM sidecar has been completely deprecated to optimize latency.
 
 # ---------------------------------------------------------------------------
@@ -1155,20 +1168,11 @@ class SymbolicGovernor:
                 )
 
                 # Prometheus counter (if available)
-                try:
-                    from prometheus_client import Counter
-
-                    _ftra_boundary_counter = Counter(
-                        "cage_ftra_boundary_checks_total",
-                        "Total FTRA boundary checks performed",
-                        ["result"],
-                    )
+                if _ftra_boundary_counter is not None:
                     if result.requires_hitl:
                         _ftra_boundary_counter.labels(result="hitl_required").inc()
                     else:
                         _ftra_boundary_counter.labels(result="passed").inc()
-                except ImportError:
-                    pass  # prometheus_client not installed — skip metrics
 
                 return result
 
@@ -1188,17 +1192,8 @@ class SymbolicGovernor:
                 )
 
                 # Prometheus counter for skipped/error
-                try:
-                    from prometheus_client import Counter
-
-                    _ftra_boundary_counter = Counter(
-                        "cage_ftra_boundary_checks_total",
-                        "Total FTRA boundary checks performed",
-                        ["result"],
-                    )
+                if _ftra_boundary_counter is not None:
                     _ftra_boundary_counter.labels(result="error").inc()
-                except ImportError:
-                    pass
 
                 # Return fail-closed result
                 return FtraBoundaryResult(

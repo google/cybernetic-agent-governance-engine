@@ -1531,7 +1531,7 @@ Per [`AGENTS.md`](../AGENTS.md) and
 - [ ] B3 — `DOMAIN_PLUGIN_ARCHITECTURE.md` + `MIGRATION_v3.md` published
 - [ ] B4 — stale branch-relative status language removed
 - [ ] E4 — structural simplification (SBOM paths, root files, historical dirs)
-- [ ] C2 — regional postures green; plugin × region composition validated
+- [x] C2 — regional postures green; plugin × region composition validated
 - [ ] C1 — live integration run; delta vs 2553/51/1 explained
 
 **P2 — elective**

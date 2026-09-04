@@ -406,7 +406,7 @@ class TestSafetyNodeIntegration:
         }
         with (
             patch(
-                "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+                "src.gateway.governance.causal.gatekeeper.causal_safety_check",
                 return_value=True,
             ),
             patch(
@@ -459,7 +459,7 @@ class TestSafetyNodeIntegration:
         }
         with (
             patch(
-                "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+                "src.gateway.governance.causal.gatekeeper.causal_safety_check",
                 return_value=True,
             ),
             patch(

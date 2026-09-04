@@ -98,5 +98,21 @@
     "improvised explosive device",
     "CBRN attack"
   ],
-  "tier1_keywords_cbrn_enabled": true
+  "tier1_keywords_cbrn_enabled": true,
+  "bounding": {
+    "_comment": "Phase 5: Bounding contracts B1–B10 for execute_trade_bounded verb. All contracts enabled by default for reference architecture demonstration. Production deployments should tune thresholds per risk appetite.",
+    "enabled_contracts": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10"],
+    "max_single_order_usd": 50000.0,
+    "_comment_b1": "B1 — Maximum single-order notional value (USD). HARD_BLOCK severity.",
+    "min_liquidity_depth_ratio": 10.0,
+    "_comment_b3": "B3 — Minimum liquidity depth ratio (order_book_depth_usd / trade_amount). HITL_ESCALATE severity. Larger ratio = deeper liquidity.",
+    "max_volatility_percentile": 75.0,
+    "volatility_window_days": 30,
+    "_comment_b5": "B5 — Maximum volatility percentile (0–100). HITL_ESCALATE severity. Lower value = stricter sizing in volatile markets. Window defaults to 30 days.",
+    "max_twap_slippage_bps": 50.0,
+    "twap_window_seconds": 300,
+    "_comment_b8": "B8 — Maximum TWAP slippage in basis points (1 bps = 0.01%). HITL_ESCALATE severity. 50 bps = 0.5% max slippage. Window defaults to 300 seconds.",
+    "b10_min_rollback_window_seconds": 60,
+    "_comment_b10": "B10 — Minimum rollback window (seconds). HARD_BLOCK severity. Must be >= 60s to justify EXTERNALLY_REVERSIBLE classification. If B10 fails, action is re-classified to IRREVERSIBLE_TERMINAL."
+  }
 }

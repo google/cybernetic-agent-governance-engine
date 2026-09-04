@@ -37,7 +37,11 @@ def mock_governor() -> SymbolicGovernor:
     opa_client = MagicMock()
     safety_filter = MagicMock()
     consensus_engine = MagicMock()
-    return SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+    return SymbolicGovernor(
+        opa_client=opa_client,
+        safety_filter=safety_filter,
+        consensus_engine=consensus_engine,
+    )
 
 
 class OrderTrackingTier:
@@ -75,9 +79,20 @@ class OrderTrackingTier:
         return self._claims_all
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        # Phase 1 evaluation - log execution and check for violations
+        OrderTrackingTier.execution_log.append((self._tier_name, action))
+        if self._violation_rule:
+            return [
+                Violation(
+                    tier=self._tier_name,
+                    code=self._violation_rule,
+                    message=f"Violation from {self._tier_name}",
+                )
+            ]
         return []
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        # Phase 2 commit - log execution and check for violations
         OrderTrackingTier.execution_log.append((self._tier_name, action))
         if self._violation_rule:
             return [
@@ -163,7 +178,11 @@ class TestTierDispatchOrdering:
     async def test_violations_aggregated_across_tiers(
         self, mock_governor: SymbolicGovernor
     ) -> None:
-        """Violations from multiple tiers are aggregated."""
+        """When a tier returns violations, execution stops and violations are returned.
+
+        With the v3.0 architecture, _run_domain_tiers() returns early on first violation
+        to enforce fail-fast semantics. This test verifies that behavior.
+        """
         gov = mock_governor
 
         gov.register_domain_tier(
@@ -175,11 +194,10 @@ class TestTierDispatchOrdering:
 
         violations = await gov._run_domain_tiers("test_action", {}, phase=1)
 
-        assert len(violations) == 2
+        # Only tier1 violation is returned - tier2 never executes due to early return
+        assert len(violations) == 1
         assert violations[0].tier == "tier1"
-        assert violations[0].rule == "RULE_A"
-        assert violations[1].tier == "tier2"
-        assert violations[1].rule == "RULE_B"
+        assert violations[0].code == "RULE_A"
 
     @pytest.mark.asyncio
     async def test_empty_tier_registry_returns_no_violations(

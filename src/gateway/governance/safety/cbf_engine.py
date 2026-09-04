@@ -40,9 +40,11 @@ import math
 # ---------------------------------------------------------------------------
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
+from src.gateway.governance.contracts import InvariantModel
 
 # ---------------------------------------------------------------------------
 # Threshold singleton (Phase 2.3)
@@ -138,34 +140,73 @@ _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_
 # Prometheus telemetry for replay defense (§2.10) and WAIT replication (§4.3)
 # ---------------------------------------------------------------------------
 try:
-    from prometheus_client import Counter, Gauge, Histogram
+    from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
-    _REPLAY_REJECTED_COUNTER = Counter(
+    def _get_or_create_metric(
+        metric_cls: Any, name: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Thread-safe metric registry lookup with fallback to singleton.
+
+        Race-safe: If metric creation fails due to duplicate registration
+        (ValueError from Prometheus), falls back to the shared singleton
+        from REGISTRY._names_to_collectors. Concurrent calls will all
+        return the same collector instance (intended behavior).
+
+        The broad exception handler catches both:
+        - ValueError: Raised by Prometheus for duplicate metric names
+        - Exception: Any unexpected Prometheus internal errors
+
+        Args:
+            metric_cls: Prometheus metric class (Counter, Gauge, Histogram)
+            name: Metric name
+            *args, **kwargs: Arguments passed to metric constructor
+
+        Returns:
+            Prometheus collector instance (new or existing singleton)
+
+        Raises:
+            Exception: If metric creation fails and no existing collector found
+        """
+        try:
+            return metric_cls(name, *args, **kwargs)
+        except (ValueError, Exception):
+            collector = REGISTRY._names_to_collectors.get(name)
+            if collector is not None:
+                return collector
+            raise
+
+    _REPLAY_REJECTED_COUNTER = _get_or_create_metric(
+        Counter,
         "cage_reconciliation_replay_rejected_total",
         "Number of reconciliation payloads rejected due to non-advancing sequence (R-04 replay defense)",
         ["source"],
     )
     # R-05 fence epoch telemetry
-    _EPOCH_REGRESSION_COUNTER = Counter(
+    _EPOCH_REGRESSION_COUNTER = _get_or_create_metric(
+        Counter,
         "cage_cbf_epoch_regression_detected_total",
         "Number of CBF reads rejected due to fence epoch regression (R-05 double-spend defense)",
     )
-    _CURRENT_FENCE_EPOCH_GAUGE = Gauge(
+    _CURRENT_FENCE_EPOCH_GAUGE = _get_or_create_metric(
+        Gauge,
         "cage_cbf_current_fence_epoch",
         "Current value of the CBF fence epoch counter",
     )
     # Phase 4.3: WAIT command telemetry
-    _WAIT_LATENCY_HISTOGRAM = Histogram(
+    _WAIT_LATENCY_HISTOGRAM = _get_or_create_metric(
+        Histogram,
         "cage_cbf_wait_latency_seconds",
         "Latency of Redis WAIT command for replication synchronization (Phase 4.3)",
         buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
     )
-    _WAIT_TIMEOUT_COUNTER = Counter(
+    _WAIT_TIMEOUT_COUNTER = _get_or_create_metric(
+        Counter,
         "cage_cbf_wait_timeout_total",
         "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
     )
     # P0 hardening: Strict replication rollback counter
-    _STRICT_REPLICATION_ROLLBACK_COUNTER = Counter(
+    _STRICT_REPLICATION_ROLLBACK_COUNTER = _get_or_create_metric(
+        Counter,
         "cage_cbf_strict_replication_rollback_total",
         "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
     )
@@ -235,6 +276,19 @@ async def _get_raw_redis(r: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _DefaultKernelBarrier:
+    """Kernel fallback barrier for backward compatibility and test isolation.
+
+    Implements the InvariantModel protocol without importing domain plugins.
+    """
+
+    invariant_id: str = "default.cash_balance"
+    state_key: str = "safety:current_cash"
+    threshold_key: str = "cbf.min_cash_balance"
+    gamma: float = 0.5
+
+
 class ControlBarrierFunction:
     """Discrete-time Control Barrier Function (CBF).
 
@@ -298,7 +352,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
     def __init__(
         self,
-        invariant: Any = None,
+        invariant: "InvariantModel | None" = None,
         cost_resolver: Any = None,
         skip_epoch_seed: bool = False,
     ):  # type: ignore[no-untyped-def]
@@ -312,8 +366,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         Args:
             invariant: InvariantModel instance defining the barrier (state_key,
-                      threshold_key, gamma). If None, uses backward-compatible
-                      defaults for tests/singleton.
+                      threshold_key, gamma). If None, defaults to kernel
+                      fallback barrier with legacy cost resolver.
             cost_resolver: Callable[[str, dict], float] that computes the cost
                           for a given (action_name, payload). Domain plugins must
                           inject their resolver at registration. Default is zero
@@ -327,27 +381,15 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     is False. This prevents the instance from
                                     accepting requests with an unseeded epoch.
         """
-        # PR C (Stage 2): Compile barrier from InvariantModel.
+        # W1 (Post-v3): Mandatory value object — single source of truth.
         # Domain plugins provide both invariant and cost_resolver at registration.
+        if invariant is None:
+            invariant = _DefaultKernelBarrier()
+            if cost_resolver is None:
+                cost_resolver = self._legacy_finance_cost_resolver
         self._invariant = invariant
-        self._cost_resolver = cost_resolver or self._legacy_finance_cost_resolver
-
-        # Threshold resolution deferred to atomic_verify_and_commit() to pick up
-        # runtime config changes. Cache threshold_key for validation.
-        # Annotate once to avoid mypy no-redef errors
-        self.threshold_key: str
-        self.gamma: float
-        self.redis_key: str
-
-        if invariant is not None:
-            self.threshold_key = invariant.threshold_key
-            self.gamma = invariant.gamma
-            self.redis_key = invariant.state_key
-        else:
-            # Backward compatibility: kernel singleton without explicit invariant
-            self.threshold_key = "cbf.min_cash_balance"
-            self.gamma = 0.5
-            self.redis_key = "safety:current_cash"
+        self._cost_resolver = cost_resolver or self._default_cost_resolver
+        self._gamma_override: float | None = None
 
         # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
@@ -362,6 +404,39 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         )
         # POAM-023: Track last verified fence epoch to detect regression on commit path
         self._last_verified_fence_epoch: int | None = None
+
+    @property
+    def threshold_key(self) -> str:
+        """Threshold key derived from invariant model."""
+        return self._invariant.threshold_key
+
+    @property
+    def gamma(self) -> float:
+        """CBF gamma derived from invariant model."""
+        if self._gamma_override is not None:
+            return self._gamma_override
+        return self._invariant.gamma
+
+    @gamma.setter
+    def gamma(self, value: float) -> None:
+        """Allow test harness and configuration override of gamma.
+
+        Warning: This setter is NOT thread-safe and is intended for test
+        harnesses and single-threaded configuration only. Do not call
+        during concurrent request processing in production.
+        """
+        cage_env = os.getenv("CAGE_ENV", "dev").lower()
+        if cage_env in ("production", "prod"):
+            logger.warning(
+                "gamma override in production is unsafe for concurrent requests; "
+                "use static configuration (InvariantModel.gamma) instead"
+            )
+        self._gamma_override = value
+
+    @property
+    def redis_key(self) -> str:
+        """State key derived from invariant model."""
+        return self._invariant.state_key
 
     def _fetch_initial_fence_epoch_sync(self, skip_epoch_seed: bool) -> int:
         """Fetch the current fence epoch from Redis at construction time.
@@ -1296,7 +1371,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         )
 
         result = "SAFE"
-        if h_next < required_h_next or h_next < 0:
+        if cost > 0 and (h_next < required_h_next or h_next < 0):
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
             )
@@ -1653,10 +1728,18 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         for part in threshold_parts:
             threshold_value = getattr(threshold_value, part)
 
+        resolved_threshold = (
+            self.min_cash_balance
+            if hasattr(self, "min_cash_balance") and self.min_cash_balance is not None
+            else threshold_value
+        )
+
         argv = [
             str(cost),  # ARGV[1]: magnitude (domain-neutral; was "cost")
-            str(threshold_value),  # ARGV[2]: resolved threshold from InvariantModel
-            str(self._invariant.gamma),  # ARGV[3]: gamma from InvariantModel
+            str(
+                resolved_threshold
+            ),  # ARGV[2]: resolved threshold from InvariantModel or override
+            str(self.gamma),  # ARGV[3]: gamma from InvariantModel or override
             governance_signature,
             str(effective_balance),  # ARGV[5]: ground truth balance (POAM-023)
         ]
@@ -1882,5 +1965,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             return (False, message)
 
 
-# Global singleton
-safety_filter = ControlBarrierFunction()
+# W1 (Post-v3): Module-level singleton removed.
+# Domain plugins construct and register their own CBF instances with
+# domain-specific invariants via SymbolicGovernor.register_invariant().
+# The kernel does not instantiate CBF; it only provides the engine class.

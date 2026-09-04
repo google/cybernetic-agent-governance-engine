@@ -92,6 +92,7 @@
   "_hitl": {
     "citation": "MAS FEAT §3.4",
     "sla_hours": 12.0,
+    "pii_retention_authority": "MAS Notice 655 §4.3",
     "injection_citation": "MAS FEAT §4.2 (robustness of AI systems)"
   }
 }

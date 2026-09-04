@@ -955,3 +955,10 @@ def assert_formal_tier_ordering_matches():
         assert actual == expected, (
             f"Tier order mismatch! Expected {expected}, got {actual}"
         )
+
+
+# ── W1/W3 Post-v3 Remediation: Register fixture modules ───────────────────────
+
+pytest_plugins = [
+    "tests.fixtures.cbf",
+]
