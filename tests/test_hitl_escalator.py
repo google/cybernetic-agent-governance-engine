@@ -209,19 +209,24 @@ class TestGetHitlSlaHours:
 
     The module previously declared "Region: US_FED" in its docstring only,
     with no runtime CAGE_DEPLOYMENT_REGION check.
+    
+    Note: SLA values reflect current regional baseline configuration:
+    - US_FED: 4.0 hours (SR 26-2 §IV.D)
+    - EU_ECB: 8.0 hours (DORA Art. 10)
+    - APAC_MAS: 12.0 hours (MAS FEAT §3.4)
     """
 
     def test_us_fed_sla_is_4_hours(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
         assert get_hitl_sla_hours() == 4.0
 
-    def test_eu_ecb_sla_is_2_hours(self, monkeypatch):
+    def test_eu_ecb_sla_is_8_hours(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-        assert get_hitl_sla_hours() == 2.0
+        assert get_hitl_sla_hours() == 8.0
 
-    def test_apac_mas_sla_is_1_hour(self, monkeypatch):
+    def test_apac_mas_sla_is_12_hours(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
-        assert get_hitl_sla_hours() == 1.0
+        assert get_hitl_sla_hours() == 12.0
 
     def test_unset_region_falls_back_to_4_hours(self, monkeypatch):
         monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
@@ -229,7 +234,7 @@ class TestGetHitlSlaHours:
 
     def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
-        assert get_hitl_sla_hours(region="APAC_MAS") == 1.0
+        assert get_hitl_sla_hours(region="APAC_MAS") == 12.0
 
 
 class TestGetHitlRegulatoryCitation:

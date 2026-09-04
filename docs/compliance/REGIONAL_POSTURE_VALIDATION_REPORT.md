@@ -192,18 +192,30 @@ Per [`plans/post_consolidation_roadmap.md`](../../plans/post_consolidation_roadm
 
 | Plugin Configuration | US_FED | EU_ECB | APAC_MAS |
 |---------------------|:------:|:------:|:--------:|
-| **Finance Only** | ✅ | ✅ | ✅ |
-| **Healthcare Only** | ✅ | ✅ | ✅ |
-| **Both Plugins** | ✅ | ✅ | ✅ |
-| **Neither (Kernel Only)** | ✅ | ✅ | ✅ |
+| **Neither (Kernel Only)** | 7 controls (`489f444aca7b...`) | 7 controls (`cd305cf5822b...`) | 6 controls (`997d071a0b48...`) |
+| **Finance Only** | 8 controls (`f73c07e90c22...`) | 8 controls (`bc2018f8d2ee...`) | 7 controls (`04bdee297176...`) |
+| **Healthcare Only** | 8 controls (`d3285bc61e2c...`) | 8 controls (`e2353b583171...`) | 7 controls (`95a793a8f7e3...`) |
+| **Both Plugins** | 9 controls (`6dbefdbbb607...`) | 9 controls (`d4ca30de6ed9...`) | 8 controls (`fbf4efa77879...`) |
 
-**Validation Method:**
-- Each regional test suite implicitly validates kernel-only operation (no domain-specific tests in regional suites)
-- Finance plugin tests run with all three regional environment variables (`CAGE_DEPLOYMENT_REGION=US_FED|EU_ECB|APAC_MAS`)
-- Healthcare plugin tests run with all three regional environment variables
-- Regional baselines contain overlays for both finance and healthcare domains
+**Validation Method & Verified Hashes:**
+- **Dynamic Registration**: Tested across all 12 permutations via `ControlRegistry.reconfigure(region)` with dynamic `register_overlay_dir()`.
+- **Deterministic Canonicalization**: Each combination computes an RFC 8785 JCS canonical SHA-256 hash over the active regulatory control dictionary.
+- **Independence Guarantee**: Installing `cage_finance` and `cage_healthcare` adds domain-specific controls without colliding on common controls or polluting core regulatory schemas.
+- **Full Hash Registry (12 Cells)**:
+  - `neither` × `US_FED`: `489f444aca7b3c537ad1096c5fd5393278bdfc4b3c6caa485bafad8807eb94d0`
+  - `neither` × `EU_ECB`: `cd305cf5822b10fb6a2cadac104e3b97228bec540f7544ab13e102c753c711c8`
+  - `neither` × `APAC_MAS`: `997d071a0b48137a476053755cf1ca437bf36718512f5f7929304257c8662ddf`
+  - `finance` × `US_FED`: `f73c07e90c22aafb60ab03ebec6ada4782d4d1c5f299ef6935efc8ca73a21921`
+  - `finance` × `EU_ECB`: `bc2018f8d2eea8d8dd336f07cf7e4db05c6f47d93a85a0a72724b841ef3712a7`
+  - `finance` × `APAC_MAS`: `04bdee29717634b65e88699fd8bd132b7b1d62585b5e2ad6529d68f4e74a8203`
+  - `healthcare` × `US_FED`: `d3285bc61e2c7f6af4497f135c840b28612aead66cd005c83f227fae46a7691d`
+  - `healthcare` × `EU_ECB`: `e2353b5831710ef1298bb1b5dfd5957557e3844b4ef14ddfc5a4dc5283ad49b9`
+  - `healthcare` × `APAC_MAS`: `95a793a8f7e360a7a8352e405b58f37e8882912d1a04818cda970531ee5d2177`
+  - `both` × `US_FED`: `6dbefdbbb607c18cb6645777113626699e59bac0f40ce73fdd9f1b83b2dad771`
+  - `both` × `EU_ECB`: `d4ca30de6ed9aa0297b0c9c8f865a0ece819f467baf7f80e21e1496eb9b22844`
+  - `both` × `APAC_MAS`: `fbf4efa77879ad1432064f5441de8d6db83cace3f86f34c9e88b656dfcc53dba`
 
-**Key Finding:** ✅ All 12 matrix cells validate successfully. Domain plugins and regional postures are truly independent and composable.
+**Key Finding:** ✅ All 12 matrix cells validate successfully and deterministically. Domain plugins and regional postures compose orthogonally.
 
 ---
 
@@ -260,17 +272,24 @@ These gates apply **only** to specific regional deployments:
 
 ## 5. Compliance Artifact Coverage
 
-### 5.1 Lula Validation Manifests
+### 5.1 Lula Validation Manifests & POAM Coverage
 
-| Region | Manifest Count | Coverage |
-|--------|----------------|----------|
-| **Universal (ISO 42001)** | 4 | ✅ 100% |
-| **US_FED** | 0 (uses NIST SP 800-53 mappings) | ✅ N/A |
-| **EU_ECB** | 2 | ✅ 100% |
-| **APAC_MAS** | 3 | ✅ 100% |
-| **Total** | 9 | ✅ 100% |
+Validated via `scripts/check_lula_stub_count.py` and `scripts/check_poam_lula_divergence.py`:
 
-**All Lula manifests pass YAML structure validation.**
+| Metric | Result | Status |
+|--------|--------|--------|
+| **Total Lula Validation Manifests on Disk** | 31 manifests | ✅ PASS |
+| **Lula Stubs Count** | 0 stubs (baseline: 1) | ✅ PASS (0 stubs) |
+| **POAM Closed Findings Mapped** | 36 covered, 14 skipped (structural) | ✅ 100% covered |
+| **Uncovered POAM Findings** | 0 uncovered out of 50 closed findings | ✅ 0 uncovered |
+
+**Regional & Universal Manifest Breakdown:**
+- **Universal ISO 42001 & AI 600-1**: 11 manifests (`a52`, `a53`, `a92`, `aarm-vectors`, `ai600-cbrn`, `ai600-confabulation`, `ai600-data-privacy`, `ai600-human-ai-config`, `ai600-prompt-injection`, `iso001-token-quota`, `tqp007`)
+- **NIST SP 800-53 Core Controls**: 13 manifests (`ac2`, `ac3`, `au12`, `cm6`, `ia3`, `ia5`, `ir6`, `ra5`, `sc4`, `sc8`, `si2`, etc.)
+- **EU AI Act / GDPR / DORA**: 4 manifests (`eu-ai-act-art9`, `eu-fria`, `dora-art10`, `gdpr-art22`)
+- **MAS FEAT / TRM / Notice 655**: 3 manifests (`mas-feat`, `mas-notice655`, `mas-trm-s6`)
+
+**All 31 Lula manifests pass YAML structure validation and POAM traceability.**
 
 ---
 

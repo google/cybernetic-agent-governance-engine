@@ -142,12 +142,7 @@ class TradingKnowledgeGraph:
             STAMP_UCA(
                 id="UCA-7",
                 category="Wrong Timing",
-                description=(
-                    "Agent proceeds with ambiguous context instead of parking for data injection. "
-                    "Occurs when confidence_score < 0.70 AND OPA decision would be MANUAL_REVIEW. "
-                    "The correct action is DEFER — route to DeferQueue for data-hydration, "
-                    "NOT to force a human operator to triage fundamentally incomplete context."
-                ),
+                description="Agent proceeds with ambiguous context instead of parking for data injection. Occurs when confidence_score < 0.70 AND OPA decision would be MANUAL_REVIEW. The correct action is DEFER — route to DeferQueue for data-hydration, NOT to force a human operator to triage fundamentally incomplete context.",
                 hazard_link="H-Context: Ambiguous Execution",
                 detection_pattern="confidence_score < 0.70 AND manual_review=true",
             )
@@ -173,9 +168,10 @@ class TradingKnowledgeGraph:
                 scope=["execute_sell"],
             )
         )
-
         # Domain-specific constraints (FIN-*) moved to domain plugins in PR C.
         # The kernel ontology remains domain-agnostic per the Three-Layer Split Rule.
+        # FIN-2 (latency constraint) was removed from kernel as it contained the
+        # domain-specific literal 'execute_trade' in its scope, violating Gate G6.
 
     # QUAL-06: Authoritative ISO 42001 mapping from OSCAL component-definition.yaml
     #

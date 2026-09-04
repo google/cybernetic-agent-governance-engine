@@ -1,15 +1,19 @@
 # AGENTS.md — Contributor & AI-Agent Standards
 
-> **Reference architecture — deployable and live-testable.** CAGE demonstrates
-> governance patterns for AI systems. The codebase is fully deployable to a
-> real GKE cluster (dev or prod), and live GKE testing is supported and
-> expected — this is not a paper design. The "reference architecture" framing
-> means the governance, compliance, and region-guard patterns below are
-> illustrative models for adopters to adapt to their own environments, not
-> that the system is restricted to local or simulated execution. Deployment,
-> change-management, and region-guard rules below describe how to operate a
-> live instance of CAGE; they are illustrative patterns for adopters, not
-> mandatory production obligations imposed on this repository's maintainers.
+> **Reference Architecture — Clean Architecture Over Operational Continuity.** CAGE
+> demonstrates governance patterns for AI systems. Because CAGE is a reference
+> architecture and not a deployed production service, **breaking changes and
+> operational considerations are far less important than a clean, legible
+> architecture.** The optimization target is clean code structure, modularity,
+> and architectural clarity — not operational safety, uptime, or backward
+> compatibility. There is no live production instance to protect. Breaking
+> changes are therefore **acceptable and often desirable**: they remove designs
+> the project is deliberately moving away from, and no deprecation window is owed
+> to anyone. Where a choice exists between operational completeness and
+> structural clarity, always choose structural clarity. Deployment,
+> change-management, and region-guard rules describe illustrative models for
+> adopters to adapt to their own environments, not operational constraints that
+> compromise the cleanliness of the codebase.
 
 This file defines standards for anyone (human or AI coding agent) contributing
 to this repository. It is written in the tool-agnostic `AGENTS.md` convention
@@ -45,7 +49,8 @@ Full detail (examples, self-validation checklist) lives in
 `perf` | `test` | `chore` | `ci` | `revert`
 
 **Scopes (use at most one):** `gateway` | `compliance` | `infra` | `governance` |
-`tests` | `docs` | `ci` | `agentsight` | `advisor` | `nemo` | `opa`
+`tests` | `docs` | `ci` | `agentsight` | `advisor` | `nemo` | `opa` | `ftra` |
+`finance` | `healthcare` | `security` | `imports`
 
 **Rules:**
 - Imperative mood ("add", not "added"/"adds")
@@ -155,14 +160,14 @@ reuse and prevent cross-worker fixture churn.
 **Test Performance & Fast Local Iteration Rules:**
 1. **Parallel Worker Distribution**: Use `-n auto --dist loadscope` to group module/class tests on the same worker process.
 2. **Disable Coverage Locally**: Do not run `--cov` during fast development cycles — `pytest-cov` / `sys.settrace` adds 30% to 100% overhead. Pass `--no-cov` (or use `make test-fast`) and reserve `--cov` for pre-merge validation (`make test-coverage`) or CI.
-3. **Disable Heavy Telemetry Plugins**: Disable LangSmith/tracing plugins during local test runs with `-p no:langsmith` and `LANGCHAIN_TRACING_V2=false`.
+3. **Disable Heavy Telemetry Plugins (LangSmith / Tracing)**: CAGE uses Langfuse for sovereign compliance telemetry; LangSmith is never used by CAGE application code, but is pulled in transitively by `langchain-core` / `langgraph`. Prevent LangSmith's Pytest entrypoint hook from loading by passing `-p no:langsmith_plugin -p no:langsmith` and setting `LANGCHAIN_TRACING_V2=false` and `LANGSMITH_TRACING=false`.
 4. **Asyncio Loop Scoping**: `pytest-asyncio` is configured with `asyncio_default_fixture_loop_scope = module` and `asyncio_default_test_loop_scope = module` in `pytest.ini` to avoid per-test event loop teardown overhead.
 5. **Slow Test Profiling**: Use `--durations=20 --durations-min=1.0` to diagnose slow tests and setup/teardown bottlenecks.
 
 Correct:
 ```bash
 uv run pytest
-uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith --tb=short
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
 uv run pytest tests/test_tls_enforcement.py -v
 uv run pytest --cov=src --cov-report=term-missing
 uv run python proof/model.py
@@ -180,7 +185,12 @@ python proof/model.py
 This applies to all agents, contributors, and CI documentation examples.
 
 **Note for Autonomous Agents (Sandbox Execution):**
-When running `uv run ...` as an AI agent inside a restricted terminal sandbox, the command may fail with `zsh:1: operation not permitted: uv` (exit code 127). This occurs because `uv` is installed globally on the host machine (e.g. `/opt/homebrew/bin/uv`) and falls outside the sandbox's permitted path boundaries. When you encounter this, do not switch to a different test runner like `python3 -m pytest`; instead, configure your tool call to bypass the sandbox (e.g. `BypassSandbox: true`) so that the command can execute natively in the user's host environment and access the `uv` executable.
+When running `uv run ...` as an AI agent inside a restricted terminal sandbox, the command may fail due to sandbox path boundaries (e.g. `zsh:1: operation not permitted: uv`, exit code 127) or socket connectivity resets (`connecting to sandbox server: read unix @->@: recvmsg: connection reset by peer`). When encountering this, do not switch to a different test runner like bare `python` or `pytest`; instead, configure the tool call to bypass the sandbox (e.g. `BypassSandbox: true`) so that the command executes natively in the host environment and accesses `uv`. When retrying with `BypassSandbox: true`, keep `toolAction` and `toolSummary` strictly identical.
+
+**Hermetic Local Test Execution vs. Active Port-Forwards:**
+When background port-forwards are running (such as those started via `scripts/port_forward_dev.sh`), localhost ports (Redis `6379`, OPA `8181`, Langfuse `3000`/`3001`, Gateway `8080`) are actively bridged to the live GKE development cluster. Local unit tests (`pytest tests/ -m "local or unit"`) that do not strictly isolate network sockets can inadvertently connect to the live GKE cluster and encounter live state (e.g., existing fence epochs, active cache keys), causing unexpected assertions like `assert cbf._last_seen_epoch == 42` reading live Redis epoch `17`.
+- **Before running pure local/unit tests**: Verify no background tunnels are running (`ps aux | grep port-forward`), or terminate them if isolated offline execution is desired (`pkill -f "kubectl port-forward"`).
+- **For integration testing against live GKE**: Launch `scripts/port_forward_dev.sh` and run with `tests/ --run-integration`.
 
 ---
 
@@ -234,12 +244,17 @@ When adding diagnostic logging, tracing, or debug output:
 
 Check these jobs in order:
 
-1. **license-check** — missing Apache 2.0 header in a new `src/` file.
-2. **stpa-freshness-check** — STPA source changed without regenerating
-   artifacts. Fix: run `scripts/check_stpa_freshness.py`.
-3. **langfuse-posture-check** — run `scripts/verify_langfuse_posture.py`.
-4. **pytest** — address the failing test before suggesting any workaround.
-5. **security-scan** — rotate the credential; never suggest suppressing the scan.
+1. **squash-merge-guard** — non-squash merge commit detected on `main`. Fix: ensure GitHub PR uses "Squash and merge" (never merge commits or rebase).
+2. **license-check** — missing Apache 2.0 header in a new `src/` file. Fix: prepend the Apache 2.0 license header.
+3. **import-boundary-check (Gate G3 in `lint`)** — Layer 1 (`src/gateway/`) imported from Layer 2 (`src/cage_*`) or Layer 4 (`src/governed_financial_advisor/`). Fix: run `uv run python scripts/check_import_boundaries.py --verbose` and sever illegal upward imports to maintain kernel/plugin isolation.
+4. **nemo-freshness-check** — `deployment/k8s/nemo-rails-configmap.yaml` is out of sync with `config/rails/actions.py`. Fix: run `make update-nemo-configmap`.
+5. **stpa-freshness-check** — STPA source changed without regenerating artifacts. Fix: run `scripts/check_stpa_freshness.py`.
+6. **langfuse-posture-check** — requires mock cloud and Langfuse environment variables in local/offline environments. Fix: supply mock project/keys with derived `GOOGLE_CLOUD_LOCATION` and run `python scripts/verify_langfuse_posture.py --dry-run --posture development` (see [Langfuse Regional & Local Testing Limitations](#langfuse-regional--local-testing-limitations)).
+7. **pytest** — address the failing test before suggesting any workaround. Always verify:
+   - **No active port-forward contamination**: ensure `kubectl port-forward` to dev Redis (6379) / OPA (8181) is not polluting local test state.
+   - **Canonical module paths**: verify imports use post-v3 locations (`src.gateway.governance.causal.gatekeeper`, `src.gateway.governance.reconciliation.worker`, `src.gateway.governance.safety.cbf_engine`).
+   - **Governor contracts**: verify `SymbolicGovernor` instantiations provide `safety_filter`, `consensus_engine`, and context parameters.
+8. **security-scan** — rotate the credential or address Bandit SAST / dependency CVE findings; never suggest suppressing the scan.
 
 **Never suggest disabling or skipping a CI check as a fix.**
 
@@ -281,6 +296,14 @@ When modifying STPA source files:
 
 ## Architecture & Design Standards
 
+### Core Principle: Clean Architecture Over Operational Continuity & Backward Compatibility
+
+CAGE is an illustrative **reference architecture**, not an active production service:
+- **Optimization Target**: The primary design goal is **clean code structure, strict layer separation, and architectural legibility** — not operational safety, uptime, or backward compatibility.
+- **Breaking Changes Are Desirable**: There is no live production instance to protect. Breaking changes are acceptable and often desirable when they eliminate legacy baggage, sever illegal coupling, or simplify the mental model. No deprecation window or migration shim is owed.
+- **Operational Patterns Are Illustrative**: Infrastructure manifests, Cloud Build pipelines, and operational procedures describe reference patterns for adopters, not operational obligations that constrain maintainers or justify architectural compromises.
+- **Decision Rule**: Whenever forced to choose between operational convenience/backwards compatibility and structural clarity, **always choose structural clarity**.
+
 ### Release Versioning
 
 - Releases follow SemVer (`MAJOR.MINOR.PATCH`).
@@ -289,6 +312,51 @@ When modifying STPA source files:
 - Stable tags are annotated: `git tag -a v<X.Y.Z> -m "release: v<X.Y.Z> — ..."`.
 - Regional gates (US_FED, EU_ECB, APAC_MAS) are additive — they block regional
   deployment posture only, never the global stable tag.
+
+### The Three-Layer Architecture (Kernel vs. Domain Plugins vs. Rails)
+
+CAGE enforces strict separation between the universal governance kernel, domain-specific plugins, and external rails:
+
+| Layer | Path | Role & Responsibilities | Invariants & Boundary Rules |
+|---|---|---|---|
+| **Layer 1: Kernel** | `src/gateway/` | Core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, and audit rails. | **Strictly domain-agnostic.** Must NEVER import from `src/cage_*` or `src/governed_financial_advisor/` (enforced by Gate G3 `scripts/check_import_boundaries.py`). Must not hardcode domain verbs (e.g. `execute_trade`) or domain data structures. |
+| **Layer 2: Domain Plugins** | `src/cage_{domain}/` (e.g. `src/cage_finance/`, `src/cage_healthcare/`) | Domain-specific tiers (`GovernanceTierPlugin`), domain action registries, ontologies, policies, and causal graphs. | Registers tiers into the kernel via `SymbolicGovernor.register_tier()`. Encapsulates domain vocabulary and semantics without polluting the kernel. |
+| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/cage_finance/rails/` | External vendor normative/attestation adapters, NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture Specification. Communicates via canonical dataclasses. |
+
+**The Three-Layer Split Rule:**
+- **Layer 1 (Kernel)**: Code that can fail closed unsafely lives in the kernel. Code covered by TLA+ proofs, formal CBF math, or core NIST control assertions. Code that holds Redis Lua scripts, KMS envelope signing, or fence epoch tracking.
+- **Layer 2 (Domain Plugin)**: Code that merely names domain concepts (actions, symbols, tickers, dosages), Rego domain packages, domain Pydantic models, or ledger providers.
+- **Config**: Numbers, thresholds, citations, and STPA hazard declarations (`config/`).
+
+**Decision test for ambiguous code:** *"If two domains had different copies of this, would a security fix have to be applied twice?"* If yes → Layer 1 (Kernel).
+
+### FTRA (Tier 0.5 — Commencement-Time Reachability & Action Taxonomy)
+
+Action reachability analysis and registry integrity controls live in `src/gateway/governance/ftra/`:
+- **Action Taxonomy**: Actions are classified into canonical categories: `REVERSIBLE`, `IRREVERSIBLE`, and `EXTERNALLY_REVERSIBLE` (per OWASP AISVS C9).
+- **Fail-Closed Boundary**: Any unknown or unclassified action must fail closed. Read-only actions bypass heavy barrier verification only when explicitly verified as read-only.
+- **Registry Integrity**: Registries must be signed using KMS/JCS canonicalization, preventing untracked runtime capability escalation.
+
+### Canonical Module Namespaces (v3.0.0 Architecture)
+
+Refactoring across v3.0.0 extracted domain mechanisms into domain plugins and modularized gateway subpackages. All imports and test mocks must use these canonical locations:
+
+| Component | Canonical Location | Deprecated / Relocated Path (Do Not Import) |
+|---|---|---|
+| Causal Gatekeeper | `src.gateway.governance.causal.gatekeeper` | `src.gateway.governance.causal_gatekeeper` |
+| Reconciliation Worker | `src.gateway.governance.reconciliation.worker` | `src.cage_finance.compliance.reconciliation_worker` |
+| CBF Engine | `src.gateway.governance.safety.cbf_engine` | `src.cage_finance.safety.cbf` |
+| FTRA Package | `src.gateway.governance.ftra` | Legacy flat imports in root governance |
+| Financial Tiers | `src.cage_finance.tiers` | Hardcoded blocks in `symbolic_governor.py` |
+| Healthcare Tiers | `src.cage_healthcare.tiers` | N/A (new domain plugin) |
+
+### Observability Architecture: Langfuse Sovereign Telemetry vs. LangSmith
+
+CAGE standardizes strictly on **Langfuse** for its runtime model observability and compliance telemetry.
+
+- **Why Langfuse**: Langfuse is open-source and self-hosted within each designated Kubernetes cluster and cloud region (`europe-west1`, `asia-southeast1`, `us-central1`), fulfilling strict jurisdictional sovereign data residency mandates (GDPR Art. 44, MAS TRM §4.2, NIST SP 800-53). It also supports CAGE's dual-pipeline telemetry architecture (separating the hot application performance pipeline on port `3000` from the immutable compliance audit attestation pipeline on port `3001`).
+- **Why LangSmith is in Dependencies**: `langsmith` is a mandatory upstream dependency of `langchain-core` (which is pulled in by `langgraph` and `nemoguardrails`). It is present purely as a transitive library requirement.
+- **Strict Invariant**: LangSmith is **never** used by CAGE application code, and no code under `src/` may import or rely on LangSmith. LangSmith tracing is explicitly disabled across all Kubernetes deployment templates (`deployment/k8s/backend-deployment.yaml.tpl`), Terraform modules (`infra/modules/governed_advisor/main.tf`), and test harnesses (`tests/conftest.py`) via `LANGSMITH_TRACING=false` and `LANGCHAIN_TRACING_V2=false`.
 
 ### External Vendor Adapter Standards (Plugin Architecture)
 
@@ -366,7 +434,7 @@ If you use a tool that requires a legacy configuration filename (e.g. `CLAUDE.md
 The canonical way to run the full local and unit test suite across multiple workers:
 
 ```bash
-uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith --tb=short
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
 # Or via Makefile shortcut:
 make test-fast
 ```
@@ -376,7 +444,7 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 
 | Goal / Workflow | Canonical Command |
 |---|---|
-| **Fast dev run (parallel, no coverage)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q` (or `make test-fast`) |
+| **Fast dev run (parallel, no coverage)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin -q` (or `make test-fast`) |
 | **Run only last failed tests** | `uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q` (or `make test-last-failed`) |
 | **Profile slowest tests & fixtures** | `uv run pytest --durations=20 --durations-min=1.0` |
 | **Full suite with coverage (mirrors CI)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75` (or `make test-coverage`) |
@@ -387,6 +455,11 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 |---|---|
 | **Single test file** | `uv run pytest tests/test_tls_enforcement.py -v` |
 | **Specific test method** | `uv run pytest tests/test_tls_enforcement.py::TestTlsProtocolStandards::test_default_client_context_minimum_version -v` |
+| **Finance domain plugin tests** | `uv run pytest tests/cage_finance/ -v` |
+| **Healthcare domain plugin tests** | `uv run pytest tests/cage_healthcare/ -v` |
+| **FTRA & AISVS C9 action classification** | `uv run pytest tests/test_ftra*.py -v` |
+| **Import boundary check (Gate G3)** | `uv run python scripts/check_import_boundaries.py --verbose` |
+| **NeMo ConfigMap sync** | `make update-nemo-configmap` |
 | **Adversarial / Red-team unit tests** | `uv run pytest tests/red_team/ -m "red_team and not integration" -v` |
 | **US Federal region posture** | `CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/ -m us_fed -v` |
 | **EU ECB region posture** | `CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/ -m eu_ecb -v` |
@@ -397,7 +470,37 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 | **Type checking** | `uv run mypy src/` |
 | **Bandit SAST security scan** | `uv run bandit -r src/ -c pyproject.toml -ll` |
 | **STPA artifact freshness** | `uv run python scripts/check_stpa_freshness.py --verbose` |
-| **Langfuse posture validation** | `uv run python scripts/verify_langfuse_posture.py --dry-run --posture development` |
+| **Langfuse posture validation** | `uv run python scripts/verify_langfuse_posture.py --dry-run --posture development` (requires mock env vars; see below) |
+
+### Langfuse Regional & Local Testing Limitations
+
+`scripts/verify_langfuse_posture.py` validates dual-pipeline telemetry isolation (primary application telemetry vs. compliance audit pipeline). Because CAGE strictly enforces secret hygiene, live credentials are never committed or present in local environments.
+
+1. **Local Dry-Run Requirements**:
+   Running `verify_langfuse_posture.py` locally or in pre-merge validation requires `--dry-run --posture development` and mock environment variables. If run without these, it will fail with missing variable errors (`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `LANGFUSE_*`):
+   ```bash
+   export GOOGLE_CLOUD_PROJECT="mock-dev-project"
+   _region="${CAGE_DEPLOYMENT_REGION:-US_FED}"
+   case "$_region" in
+     EU_ECB)    export GOOGLE_CLOUD_LOCATION="europe-west1" ;;
+     APAC_MAS)  export GOOGLE_CLOUD_LOCATION="asia-southeast1" ;;
+     *)         export GOOGLE_CLOUD_LOCATION="us-central1" ;;
+   esac
+   export LANGFUSE_HOST="http://localhost:3000"
+   export LANGFUSE_PUBLIC_KEY="pk-lf-mock"
+   export LANGFUSE_SECRET_KEY="sk-lf-mock"
+   export LANGFUSE_COMPLIANCE_HOST="http://localhost:3001"
+   export LANGFUSE_COMPLIANCE_PUBLIC_KEY="pk-lf-comp-mock"
+   export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
+   uv run python scripts/verify_langfuse_posture.py --dry-run --posture development
+   ```
+2. **Jurisdictional Region Derivation**:
+   `GOOGLE_CLOUD_LOCATION` must be derived from `CAGE_DEPLOYMENT_REGION`:
+   - `US_FED` → `us-central1`
+   - `EU_ECB` → `europe-west1`
+   - `APAC_MAS` → `asia-southeast1`
+3. **Live GKE Testing**:
+   Live dual-pipeline attestation, trace verification, and SLA timing are validated exclusively against live GKE clusters via port-forwarding (`scripts/port_forward_dev.sh`, forwarding ports `3000` and `3001`) with `uv run pytest tests/ --run-integration`. Local offline tests must keep telemetry tracing disabled (`-p no:langsmith -p no:langsmith_plugin`, `LANGCHAIN_TRACING_V2=false`, `LANGSMITH_TRACING=false`).
 
 ### Full Integration Suite Against Live GKE
 

@@ -440,6 +440,8 @@ async def enforce_fria_boundary(
 ) -> FRIAEnforcementResult:
     """Adaptive FRIA enforcement anchored to the confidence boundary.
 
+    Control: GovernanceControl.FRIA_ASSESSMENT (EU_ECB only)
+    
     Maps the blocking semantic directly to CAGE's existing 4-State DEFER
     Router Engine thresholds:
 

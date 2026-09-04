@@ -96,6 +96,7 @@
   "_hitl": {
     "citation": "SR 26-2 §IV.D",
     "sla_hours": 4.0,
+    "pii_retention_authority": "FISMA AU-11",
     "injection_citation": "AI 600-1 §3.2.1 (input validation and prompt injection defense)"
   }
 }

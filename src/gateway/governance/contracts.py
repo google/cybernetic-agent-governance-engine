@@ -494,6 +494,37 @@ class ConsensusProvider(Protocol):
         ...
 
 
+class _LegacyConsensusAdapter:
+    """
+    Adapter that bridges legacy (action, amount, symbol) calls to the new
+    context-based check_consensus(action, context, magnitude) signature.
+    
+    This adapter is used in tests to verify backward compatibility during
+    the v4.0 signature migration. Production code should use the new signature
+    directly.
+    """
+
+    def __init__(self, inner: ConsensusProvider):
+        """
+        Args:
+            inner: The ConsensusProvider instance with the new signature.
+        """
+        self._inner = inner
+
+    async def check_consensus(
+        self, action: str, amount: float, symbol: str
+    ) -> dict[str, Any]:
+        """
+        Legacy signature: (action, amount, symbol) → dict.
+        
+        Translates to the new signature: check_consensus(action, context, magnitude).
+        """
+        context = {"amount": amount, "symbol": symbol}
+        return await self._inner.check_consensus(
+            action, context=context, magnitude=amount
+        )
+
+
 class PolicyClient(Protocol):
     """
     Protocol for an OPA (Open Policy Agent) HTTP client.

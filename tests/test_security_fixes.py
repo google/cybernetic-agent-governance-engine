@@ -239,6 +239,7 @@ class TestC02CbfFailClosed:
         gov = SymbolicGovernor.__new__(SymbolicGovernor)
         gov.stpa_validator = mock_stpa
         gov.opa_client = mock_opa
+        gov.safety_filter = mock_cbf  # Add safety_filter attribute for pre_check()
 
         mock_cbf.tier_name = "cbf"
         mock_cbf.claims_action.return_value = True
@@ -249,9 +250,9 @@ class TestC02CbfFailClosed:
     async def test_cbf_redis_error_returns_denied(self):
         """When CBF raises (Redis down), pre_check must return cbf_allowed=False."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.evaluate.side_effect = ConnectionError("Redis connection refused")
+        mock_cbf.verify_action.side_effect = ConnectionError("Redis connection refused")
 
-        result = await gov.pre_check({"symbol": "AAPL", "qty": 100})
+        result = await gov.pre_check("execute_trade", {"symbol": "AAPL", "qty": 100})
 
         assert result["cbf_result"]["allowed"] is False, (
             "CBF fail-closed: allowed must be False when Redis is unavailable"
@@ -266,9 +267,9 @@ class TestC02CbfFailClosed:
         import asyncio
 
         gov, mock_cbf = self._make_governor()
-        mock_cbf.evaluate.side_effect = asyncio.TimeoutError("CBF timed out")
+        mock_cbf.verify_action.side_effect = asyncio.TimeoutError("CBF timed out")
 
-        result = await gov.pre_check({"symbol": "MSFT", "qty": 50})
+        result = await gov.pre_check("execute_trade", {"symbol": "MSFT", "qty": 50})
 
         assert result["cbf_result"]["allowed"] is False
         assert "CBF unavailable" in result["cbf_result"]["reason"]
@@ -277,9 +278,10 @@ class TestC02CbfFailClosed:
     async def test_cbf_success_returns_allowed_when_safe(self):
         """When CBF returns SAFE, pre_check must return cbf_allowed=True."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.evaluate.return_value = []
+        # pre_check calls safety_filter.verify_action, not evaluate
+        mock_cbf.verify_action = AsyncMock(return_value="SAFE")
 
-        result = await gov.pre_check({"symbol": "GOOG", "qty": 10})
+        result = await gov.pre_check("execute_trade", {"symbol": "GOOG", "qty": 10})
 
         assert result["cbf_result"]["allowed"] is True
         assert result["cbf_result"]["reason"] == "SAFE"
@@ -288,9 +290,9 @@ class TestC02CbfFailClosed:
     async def test_cbf_unsafe_result_returns_denied(self):
         """When CBF returns an UNSAFE verdict, pre_check must return cbf_allowed=False."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.evaluate.return_value = "UNSAFE: position limit exceeded"
+        mock_cbf.verify_action.return_value = "UNSAFE: position limit exceeded"
 
-        result = await gov.pre_check({"symbol": "TSLA", "qty": 9999})
+        result = await gov.pre_check("execute_trade", {"symbol": "TSLA", "qty": 9999})
 
         assert result["cbf_result"]["allowed"] is False
 
@@ -298,10 +300,10 @@ class TestC02CbfFailClosed:
     async def test_cbf_error_does_not_propagate_exception(self):
         """A Redis error must be caught — pre_check must not raise to the caller."""
         gov, mock_cbf = self._make_governor()
-        mock_cbf.evaluate.side_effect = RuntimeError("unexpected Redis failure")
+        mock_cbf.verify_action.side_effect = RuntimeError("unexpected Redis failure")
 
         # Must not raise — the exception is swallowed and converted to a deny.
-        result = await gov.pre_check({"symbol": "AMZN", "qty": 1})
+        result = await gov.pre_check("execute_trade", {"symbol": "AMZN", "qty": 1})
 
         assert isinstance(result, dict)
         assert "cbf_result" in result

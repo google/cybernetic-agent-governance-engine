@@ -87,6 +87,40 @@ control_actions:
         type: string
         required: false
 
+  - name: execute_trade_bounded
+    description: >
+      Execute a bounded trade with 10 bounding contracts (B1-B10) for safety validation.
+      Phase 5 implementation extends execute_trade with rollback_window_seconds parameter
+      and adds defense-in-depth validation via BoundingContractTierPlugin.
+    params:
+      - name: symbol
+        type: string
+        required: true
+      - name: amount
+        type: float
+        required: true
+      - name: side
+        type: string
+        required: true
+      - name: venue
+        type: string
+        required: true
+      - name: rollback_window_seconds
+        type: int
+        required: true
+      - name: counterparty
+        type: string
+        required: false
+      - name: jurisdiction
+        type: string
+        required: false
+      - name: trader_role
+        type: string
+        required: false
+      - name: transaction_id
+        type: string
+        required: false
+
 unsafe_control_actions:
   - id: UCA-2
     action: execute_trade
@@ -238,6 +272,25 @@ unsafe_control_actions:
     nemo_rail:
       flow_name: require_dual_approval_wire
       message: "Wire transfer requires dual approval before release."
+
+  - id: UCA-12
+    action: execute_trade_bounded
+    uca_type: unsafe_action
+    hazard_refs: [H-1, H-4]
+    description: "Agent executes bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling HITL review without confidence hard-gate per VEC-004. When B10 fails, classification override to IRREVERSIBLE_TERMINAL prevents execution."
+    terminal_classification: EXTERNALLY_REVERSIBLE
+    condition:
+      semantic_pattern: "bounding_contract_violation_detected"
+    enforcement: [python, opa]
+    python_tier:
+      tier_name: BoundingContractTierPlugin
+      phase: 1
+      order: 2
+      contracts: [B1, B2, B3, B4, B5, B6, B7, B8, B9, B10]
+    opa_rule:
+      policy_file: bounding_contracts.rego
+      decision: DENY
+      message: "UCA-12: Bounding contract violation — trade blocked."
 
 safety_constraints:
   - id: FIN-1

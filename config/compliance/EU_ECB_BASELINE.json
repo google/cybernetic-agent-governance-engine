@@ -109,6 +109,7 @@
   "_hitl": {
     "citation": "DORA Art. 10",
     "sla_hours": 8.0,
+    "pii_retention_authority": "GDPR Art. 5(1)(e)",
     "injection_citation": "EU AI Act Article 15 (accuracy, robustness and cybersecurity)"
   }
 }

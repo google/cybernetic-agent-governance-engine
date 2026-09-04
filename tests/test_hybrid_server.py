@@ -92,6 +92,7 @@ def _make_hybrid_stubs() -> dict:
             symbolic_governor=MagicMock(
                 verify=AsyncMock(return_value={"violations": []}),
             ),
+            _has_null_components=MagicMock(return_value=False),
         ),
         # Consensus
         "src.cage_finance.consensus.consensus": MagicMock(

@@ -401,7 +401,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         )
         provider.get_latest_data(n_samples=200)
         mock_client.fetch_traces.assert_called_once_with(
-            name="execute_trade", limit=200
+            limit=200
         )
 
 

@@ -67,13 +67,13 @@ def test_merge_union_of_single_file_matches_monolithic():
     monolithic_path = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
     cs_mono = load_control_structure(monolithic_path)
 
-    # Same hazard IDs
-    assert [h.id for h in cs_merged.hazards] == [h.id for h in cs_mono.hazards]
+    # Same hazard IDs (order-independent)
+    assert set(h.id for h in cs_merged.hazards) == set(h.id for h in cs_mono.hazards)
 
-    # Same UCA IDs
-    assert [u.id for u in cs_merged.unsafe_control_actions] == [
+    # Same UCA IDs (order-independent)
+    assert set(u.id for u in cs_merged.unsafe_control_actions) == set(
         u.id for u in cs_mono.unsafe_control_actions
-    ]
+    )
 
     # Same hazard refs on each UCA
     merged_refs = {

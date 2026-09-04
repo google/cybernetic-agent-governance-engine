@@ -19,6 +19,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+from src.cage_finance.safety.bounding.providers import (
+    StubMarketDataProvider,
+    StubRollbackCapabilityProvider,
+)
+from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
+from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
@@ -31,8 +37,13 @@ from src.gateway.governance.consensus.engine import (
 )
 from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.ftra.bounding_contract import (
+    BoundingContractConfig,
+    BoundingContractEnforcer,
+)
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
+from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.singletons import install_domain_components
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
@@ -73,7 +84,27 @@ class FinanceCagePlugin(CagePlugin):
         # Register background task (PR B, T-B6)
         register_background_task("consensus_audit_worker", _background_audit_worker)
 
-        # Register tiers
+        # Instantiate bounding contract registry with providers
+        # Phase 5: Dev/test environment uses stub providers that fail-closed in production
+        # Create dev/test-friendly enforcer config (permissive allowlists for common test cases)
+        bounding_config = BoundingContractConfig(
+            allowed_instruments={"AAPL", "MSFT", "GOOGL", "AMZN"},
+            allowed_venues={"NYSE", "NASDAQ", "CBOE"},
+            allowed_counterparties={"BROKER_A", "BROKER_B", "TEST_COUNTERPARTY"},
+        )
+        bounding_enforcer = BoundingContractEnforcer(bounding_config)
+        market_data_provider = StubMarketDataProvider()
+        rollback_provider = StubRollbackCapabilityProvider()
+        
+        bounding_registry = BoundingContractRegistry(
+            thresholds=THRESHOLDS.model_dump(),  # Use global singleton
+            market_data_provider=market_data_provider,
+            rollback_provider=rollback_provider,
+            enforcer=bounding_enforcer,
+        )
+
+        # Register tiers (Phase 5: bounding tier runs at order 2, before CBF at order 3)
+        governor.register_domain_tier(BoundingContractTierPlugin(bounding_registry))
         governor.register_domain_tier(CBFTierPlugin(cbf))
         governor.register_domain_tier(FiscalTierPlugin(fiscal_guard))
         governor.register_domain_tier(ConsensusTierPlugin(consensus_gate))

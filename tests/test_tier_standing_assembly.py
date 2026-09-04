@@ -100,11 +100,8 @@ class TestStandingAssembly:
             Violation(
                 tier="finance_tier",
                 code="CBF_BARRIER",
-                # severity removed - not in base Violation,
                 message="Barrier violation",
-                # control_id removed - not in base Violation,
-                # governing_state removed,
-                # protected_consequence removed,
+                needs_human_review=True,
             )
         ]
 
@@ -113,9 +110,8 @@ class TestStandingAssembly:
         failure = standing["failures"][0]
         assert failure["tier"] == "finance_tier"
         assert failure["code"] == "CBF_BARRIER"
-        assert failure["control_id"] == "FIN-001"
-        assert failure["governing_state"] == {"balance": 1000.0}
-        assert failure["protected_consequence"] == "fiscal_breach"
+        assert failure["message"] == "Barrier violation"
+        assert failure["needs_human_review"] is True
 
     def test_build_standing_with_empty_violations_list(
         self, mock_governor: SymbolicGovernor
@@ -189,7 +185,6 @@ class TestStandingAssemblyEdgeCases:
             Violation(
                 tier="min_tier",
                 code="MIN_RULE",
-                # severity removed - not in base Violation,
                 message="Minimal",
             )
         ]
@@ -199,10 +194,11 @@ class TestStandingAssemblyEdgeCases:
 
         assert failure["tier"] == "min_tier"
         assert failure["code"] == "MIN_RULE"
-        # Optional fields should have default values
-        assert failure.get("control_id") == ""
-        assert failure.get("governing_state") == {}
-        assert failure.get("protected_consequence") == ""
+        assert failure["message"] == "Minimal"
+        # Optional fields that don't exist on Violation should not be in the dict
+        assert "control_id" not in failure
+        assert "governing_state" not in failure
+        assert "protected_consequence" not in failure
 
     def test_violation_severity_preserved(
         self, mock_governor: SymbolicGovernor
