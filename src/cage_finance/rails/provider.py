@@ -15,14 +15,13 @@
 """Financial domain NeMo Guardrails provider."""
 
 from pathlib import Path
-from typing import Optional
 
 
 class FinancialRailsProvider:
     """Provides NeMo Guardrails configuration for financial domain."""
 
     @staticmethod
-    def get_config_path() -> Optional[Path]:
+    def get_config_path() -> Path | None:
         """Return path to financial rails config directory."""
         # Placeholder - would return actual config path
         return None

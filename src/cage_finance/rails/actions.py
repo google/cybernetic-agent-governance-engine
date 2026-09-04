@@ -14,8 +14,6 @@
 
 """Financial domain-specific NeMo Guardrails actions."""
 
-from typing import Optional
-
 
 def check_trade_risk_level(amount: float, asset: str) -> str:
     """Assess risk level for a proposed trade."""
@@ -33,7 +31,7 @@ def validate_market_hours(asset: str) -> bool:
     return True
 
 
-def check_portfolio_exposure(asset: str, amount: float) -> Optional[str]:
+def check_portfolio_exposure(asset: str, amount: float) -> str | None:
     """Verify portfolio exposure limits."""
     # Placeholder - would query portfolio state
     return None
