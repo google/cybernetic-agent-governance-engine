@@ -130,7 +130,7 @@ class TestSequenceInSignedPayload:
 
         with (
             patch(
-                "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED",
+                "src.gateway.governance.reconciliation.daemon.REPLAY_DEFENSE_ENABLED",
                 True,
             ),
             patch(
@@ -317,7 +317,7 @@ class TestReconciliationSequenceIntegration:
         )
 
         with patch(
-            "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
+            "src.gateway.governance.reconciliation.daemon.REPLAY_DEFENSE_ENABLED", True
         ):
             result = reconciler.reconcile()
 
@@ -343,7 +343,7 @@ class TestReconciliationSequenceIntegration:
         )
 
         with patch(
-            "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED", False
+            "src.gateway.governance.reconciliation.daemon.REPLAY_DEFENSE_ENABLED", False
         ):
             result = reconciler.reconcile()
 
@@ -416,7 +416,7 @@ class TestReplayDefenseTelemetry:
         )
 
         with patch(
-            "src.cage_finance.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
+            "src.gateway.governance.reconciliation.daemon.REPLAY_DEFENSE_ENABLED", True
         ):
             result = reconciler.reconcile()
 

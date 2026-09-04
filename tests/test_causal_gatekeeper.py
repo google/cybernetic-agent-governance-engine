@@ -159,7 +159,7 @@ class TestTelemetryFreshness:
         df = pd.DataFrame({"timestamp": [now - 3600, now - 1800]})
         # Patch the accessor to return 10 seconds (much less than 1800s age)
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_telemetry_max_staleness_seconds",
+            "src.gateway.governance.causal.gatekeeper.get_telemetry_max_staleness_seconds",
             return_value=10,
         ):
             result = causal_gatekeeper._check_telemetry_freshness(df, self._make_span())
@@ -273,7 +273,7 @@ class TestCausalCacheHelpers:
 
         mock_redis = MagicMock()
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            "src.gateway.governance.causal.gatekeeper.get_causal_cache_ttl_seconds",
             return_value=0,
         ):
             with patch(
@@ -288,7 +288,7 @@ class TestCausalCacheHelpers:
 
         mock_redis = MagicMock()
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            "src.gateway.governance.causal.gatekeeper.get_causal_cache_ttl_seconds",
             return_value=60,
         ):
             with patch(
@@ -305,7 +305,7 @@ class TestCausalCacheHelpers:
         from src.gateway.governance.causal import gatekeeper as causal_gatekeeper
 
         with patch(
-            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            "src.gateway.governance.causal.gatekeeper.get_causal_cache_ttl_seconds",
             return_value=60,
         ):
             with patch(
@@ -380,7 +380,7 @@ class TestCausalSafetyCheckNoDoWhy:
                 }
             )
             with patch(
-                "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+                "src.gateway.governance.causal.gatekeeper._causal_cache_get_sync",
                 return_value=None,
             ):
                 result = causal_safety_check({"amount": 100}, df)
@@ -483,11 +483,11 @@ class TestCausalSafetyCheckUnit:
 
         with (
             patch(
-                "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+                "src.gateway.governance.causal.gatekeeper._causal_cache_get_sync",
                 return_value=None,
             ),
             patch(
-                "src.gateway.governance.causal_gatekeeper._causal_cache_set_sync",
+                "src.gateway.governance.causal.gatekeeper._causal_cache_set_sync",
                 return_value=None,
             ),
         ):
@@ -534,7 +534,7 @@ class TestCausalSafetyCheckUnit:
         # No timestamp column → freshness check fails closed → returns False.
         bad_data = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         with patch(
-            "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+            "src.gateway.governance.causal.gatekeeper._causal_cache_get_sync",
             return_value=None,  # force cache miss so the check actually runs
         ):
             result = causal_safety_check({"amount": 100}, bad_data)
@@ -601,7 +601,7 @@ class TestCausalGatekeeperIntegration:
         intent = {"amount": 1, "confidence": 0.99, "symbol": "AAPL"}
 
         with patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check"
+            "src.gateway.governance.causal.gatekeeper.causal_safety_check"
         ) as mock_check:
             mock_check.return_value = False
             result = await governor.verify("execute_trade", intent)
