@@ -66,7 +66,7 @@ RUN uv pip install --no-deps .
 
 # Environment Variables
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/src
 
 # M-24: Run as non-root user (UID 1000) to satisfy PSA restricted policy.
 # Create the user before chowning so the RUN layer is cached independently

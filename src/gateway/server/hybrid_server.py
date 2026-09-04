@@ -36,8 +36,17 @@ Or via Docker/Kubernetes:
 
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
+
+# Ensure both workspace root and src/ are in sys.path so both
+# 'src.gateway...' and plugin entrypoints like 'cage_finance...' resolve cleanly.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "src")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
