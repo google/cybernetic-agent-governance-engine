@@ -30,13 +30,12 @@ Test Coverage:
 """
 
 import pytest
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
-from cryptography.hazmat.backends import default_backend
 
 from src.gateway.governance.routing_seal import _der_to_raw_ecdsa_signature
-
 
 # ---------------------------------------------------------------------------
 # Helper: Generate real ECDSA signatures
@@ -233,7 +232,7 @@ def test_wrong_curve_for_algorithm():
     der_sig = _generate_ecdsa_signature(ec.SECP384R1())
     # This should either raise or produce wrong length
     try:
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
+        _der_to_raw_ecdsa_signature(der_sig, "ES256")
         # If it doesn't raise, it should fail length validation
         # (though PyJWT might not detect this mismatch)
     except ValueError:

@@ -28,10 +28,11 @@ import json
 import logging
 import os
 import uuid
-import pytest
 from unittest.mock import MagicMock, patch
 
-from src.gateway.governance.defer_queue import DeferToken, DeferReason, ApprovalRecord
+import pytest
+
+from src.gateway.governance.defer_queue import ApprovalRecord, DeferReason, DeferToken
 
 
 class TestL2_MCPRateLimitMetrics:
@@ -44,9 +45,9 @@ class TestL2_MCPRateLimitMetrics:
         monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus")
         
         from src.gateway.server.mcp_tool_server import (
+            _METRICS_AVAILABLE,
             _check_rate_limit,
             _rate_limit_hits_total,
-            _METRICS_AVAILABLE,
         )
 
         if not _METRICS_AVAILABLE:
@@ -72,9 +73,9 @@ class TestL2_MCPRateLimitMetrics:
         monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus")
         
         from src.gateway.server.mcp_tool_server import (
+            _METRICS_AVAILABLE,
             _check_rate_limit,
             _rate_limit_active_buckets,
-            _METRICS_AVAILABLE,
         )
 
         if not _METRICS_AVAILABLE:
@@ -111,6 +112,7 @@ class TestL3_RedisHostEnvironmentVariables:
 
         # Reimport to pick up new env vars
         import importlib
+
         import src.compliance_bridge.main
         importlib.reload(src.compliance_bridge.main)
 
@@ -152,7 +154,10 @@ class TestL4_RoutingSealAuditLogging:
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
         
-        from src.gateway.governance.routing_seal import verify_seal, SymbolicGovernorViolation
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            verify_seal,
+        )
 
         caplog.set_level(logging.WARNING)
 
@@ -174,7 +179,10 @@ class TestL4_RoutingSealAuditLogging:
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
         
-        from src.gateway.governance.routing_seal import verify_seal, SymbolicGovernorViolation
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            verify_seal,
+        )
 
         caplog.set_level(logging.WARNING)
 
@@ -195,7 +203,10 @@ class TestL4_RoutingSealAuditLogging:
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
         
-        from src.gateway.governance.routing_seal import verify_seal, SymbolicGovernorViolation
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            verify_seal,
+        )
 
         caplog.set_level(logging.WARNING)
 
@@ -213,7 +224,10 @@ class TestL4_RoutingSealAuditLogging:
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
         
-        from src.gateway.governance.routing_seal import verify_seal, SymbolicGovernorViolation
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            verify_seal,
+        )
 
         caplog.set_level(logging.WARNING)
 
@@ -298,8 +312,9 @@ class TestL7_DeferQueueCorrelationID:
     @pytest.mark.asyncio
     async def test_park_with_explicit_correlation_id(self, caplog):
         """park() should accept and store explicit correlation_id."""
-        from src.gateway.governance.defer_queue import DeferQueue, DeferToken, DeferReason
         from unittest.mock import AsyncMock
+
+        from src.gateway.governance.defer_queue import DeferQueue
 
         caplog.set_level(logging.INFO)
 
@@ -329,8 +344,9 @@ class TestL7_DeferQueueCorrelationID:
     @pytest.mark.asyncio
     async def test_park_correlation_id_in_audit_log(self, caplog):
         """park() should include correlation_id in audit log."""
-        from src.gateway.governance.defer_queue import DeferQueue, DeferToken, DeferReason
         from unittest.mock import AsyncMock
+
+        from src.gateway.governance.defer_queue import DeferQueue
 
         caplog.set_level(logging.INFO)
 
@@ -357,8 +373,9 @@ class TestL7_DeferQueueCorrelationID:
     @pytest.mark.asyncio
     async def test_resolve_correlation_id_in_audit_log(self, caplog):
         """resolve() should include correlation_id in audit log."""
-        from src.gateway.governance.defer_queue import DeferQueue, DeferToken, DeferReason
         from unittest.mock import AsyncMock
+
+        from src.gateway.governance.defer_queue import DeferQueue
 
         caplog.set_level(logging.INFO)
 
@@ -388,13 +405,11 @@ class TestL7_DeferQueueCorrelationID:
     @pytest.mark.asyncio
     async def test_approve_correlation_id_in_audit_log(self, caplog):
         """approve() should include correlation_id in audit log."""
+        from unittest.mock import AsyncMock
+
         from src.gateway.governance.defer_queue import (
             DeferQueue,
-            DeferToken,
-            DeferReason,
-            ApprovalRecord,
         )
-        from unittest.mock import AsyncMock
 
         caplog.set_level(logging.INFO)
 
@@ -440,7 +455,6 @@ class TestL7_DeferQueueCorrelationID:
 
     def test_default_correlation_id_generated(self):
         """Token without correlation_id should have one generated."""
-        from src.gateway.governance.defer_queue import DeferToken, DeferReason
 
         token = DeferToken(
             thread_id="test-thread-auto",

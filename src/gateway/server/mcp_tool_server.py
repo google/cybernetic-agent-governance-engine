@@ -56,13 +56,13 @@ from src.gateway.governance.nemo.manager import (
 )
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.singletons import opa_client, symbolic_governor
+from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
 from src.gateway.server.governance_middleware import (
     enforce_governance,
     enforce_routing_seal,
 )
 from src.gateway.tracing_setup import setup_tracing
-from src.gateway.infrastructure.config_manager import config_manager
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")

@@ -26,8 +26,9 @@ Validates fixes for the 7 issues discovered during documentation audit:
 """
 
 import json
-import pytest
 from pathlib import Path
+
+import pytest
 
 from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractConfig,
@@ -112,9 +113,9 @@ def test_bounding_contract_requires_at_least_one_whitelist():
 def test_cbf_and_fiscal_stages_exported():
     """Verify CbfSafetyStage and FiscalLimitStage are exported from stages package."""
     from src.gateway.governance.pipeline.stages import (
+        BoundedAutonomyStage,
         CbfSafetyStage,
         FiscalLimitStage,
-        BoundedAutonomyStage,
         FtraBoundaryStage,
     )
     

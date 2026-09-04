@@ -27,7 +27,6 @@ Security Note:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Set
 
 
 @dataclass
@@ -44,9 +43,9 @@ class BoundingContractConfig:
         allowed_counterparties: Set of allowed counterparty identifiers
     """
     
-    allowed_instruments: Set[str] = field(default_factory=set)
-    allowed_venues: Set[str] = field(default_factory=set)
-    allowed_counterparties: Set[str] = field(default_factory=set)
+    allowed_instruments: set[str] = field(default_factory=set)
+    allowed_venues: set[str] = field(default_factory=set)
+    allowed_counterparties: set[str] = field(default_factory=set)
 
 
 class BoundingContractEnforcer:

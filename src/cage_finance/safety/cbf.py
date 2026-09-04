@@ -38,7 +38,7 @@ from src.gateway.governance.safety.cbf_engine import (
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 __all__ = [
-    "asyncio",
+    "THRESHOLDS",
     "_CURRENT_FENCE_EPOCH_GAUGE",
     "_EPOCH_REGRESSION_COUNTER",
     "_FENCE_EPOCH_ENABLED",
@@ -46,8 +46,8 @@ __all__ = [
     "_REDIS_SENTINEL_MASTER_NAME",
     "_STRICT_REPLICATION",
     "ControlBarrierFunction",
+    "asyncio",
     "logger",
     "redis_client",
     "sync_redis_client",
-    "THRESHOLDS",
 ]

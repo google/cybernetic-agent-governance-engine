@@ -20,16 +20,17 @@ posture-aware timeouts and prevents indefinite hangs.
 """
 
 import asyncio
-import pytest
+
 import httpx
+import pytest
 import respx
 from httpx import AsyncClient, Client
 
 from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.governance.http_client_factory import (
+    _get_default_timeout,
     create_async_client,
     create_sync_client,
-    _get_default_timeout,
 )
 
 
@@ -215,7 +216,7 @@ class TestFactoryIntegration:
         """Multiple concurrent timeout failures should not exhaust resources."""
         # Test that multiple clients can be created and closed without issues
         clients_created = []
-        for i in range(5):
+        for _i in range(5):
             client = create_async_client(timeout_seconds=1.0)
             clients_created.append(client)
             
