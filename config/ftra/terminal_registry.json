@@ -2,9 +2,9 @@
   "version": "3.0",
   "domain": "finance",
   "serial": 2,
-  "generated_at": "2026-09-04T17:03:00.000000+00:00",
-  "issued_at": "2026-09-04T17:03:00.000000+00:00",
-  "expires_at": "2027-09-04T17:03:00.000000+00:00",
+  "generated_at": "2026-09-04T21:22:27.359246+00:00",
+  "issued_at": "2026-09-04T21:22:27.359246+00:00",
+  "expires_at": "2027-09-04T21:22:27.359246+00:00",
   "system": "CAGE Financial Advisor",
   "system_version": "1.1.0",
   "fail_closed_note": "Any action absent from this registry is treated as IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime.",
@@ -13,7 +13,7 @@
     "check_balance": "READ_ONLY",
     "release_wire": "EXTERNALLY_REVERSIBLE",
     "execute_trade": "IRREVERSIBLE_TERMINAL",
-    "execute_trade_bounded": "EXTERNALLY_REVERSIBLE",
-    "prompt_injection_check": "READ_ONLY"
+    "prompt_injection_check": "READ_ONLY",
+    "execute_trade_bounded": "EXTERNALLY_REVERSIBLE"
   }
 }

@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
+from src.gateway.governance.contracts import InvariantModel
 
 # ---------------------------------------------------------------------------
 # Threshold singleton (Phase 2.3)
@@ -141,7 +142,9 @@ _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_
 try:
     from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
-    def _get_or_create_metric(metric_cls, name, *args, **kwargs):
+    def _get_or_create_metric(
+        metric_cls: Any, name: str, *args: Any, **kwargs: Any
+    ) -> Any:
         """Thread-safe metric registry lookup with fallback to singleton.
 
         Race-safe: If metric creation fails due to duplicate registration

@@ -115,8 +115,8 @@ async def execute_trade_bounded(
         order = TradeOrder(
             symbol=symbol,
             amount=amount,
+            currency="USD",
             side=side,
-            venue=venue,
             trader_role=trader_role,
             transaction_id=transaction_id,
             confidence=1.0,  # Bounding contracts replace confidence-based filtering

@@ -369,7 +369,7 @@ unsafe_control_actions:
     terminal_classification: EXTERNALLY_REVERSIBLE
     condition:
       semantic_pattern: "bounding_contract_violation_detected"
-    enforcement: [python, opa]
+    enforcement: [python]
     python_tier:
       tier_name: BoundingContractTierPlugin
       phase: 1
