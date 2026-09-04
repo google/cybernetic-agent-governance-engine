@@ -128,7 +128,7 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile -v ${{ matrix.cov_branch_flag }} --cov=src --cov-fail-under=70
+        run: uv run pytest tests/ -m "local or unit" -n auto --dist=loadscope -v ${{ matrix.cov_branch_flag }} --cov=src --cov-fail-under=70
       - name: Run Bandit SAST (medium+ severity)
         run: uv run bandit -r src/ -c pyproject.toml -ll
 
