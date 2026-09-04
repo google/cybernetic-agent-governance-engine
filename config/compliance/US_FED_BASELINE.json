@@ -1,15 +1,15 @@
 {
   "agentic_scope_statement": {
     "internal_id": "DOC-SCOPE-001",
-    "primary_framework": "SR 26-2 \u00a73.1",
+    "primary_framework": "SR 26-2 §3.1",
     "co_frameworks": [
-      "AI 600-1 \u00a72.5",
+      "AI 600-1 §2.5",
       "NIST AI RMF GOVERN-1.1",
-      "ISO 42001 \u00a7A.2.2"
+      "ISO 42001 §A.2.2"
     ],
-    "legacy_citation": "SR 26-2 \u00a7III.A",
+    "legacy_citation": "SR 26-2 §III.A",
     "scope": "agentic",
-    "description": "Reference to the agentic scope statement document (docs/AGENTIC_SCOPE_STATEMENT.md) that declares the authorized action space, HITL boundaries, and inter-agent trust model. Required under SR 26-2 \u00a73.1 and AI 600-1 \u00a72.5 before any agentic system may be deployed in a regulated environment."
+    "description": "Reference to the agentic scope statement document (docs/AGENTIC_SCOPE_STATEMENT.md) that declares the authorized action space, HITL boundaries, and inter-agent trust model. Required under SR 26-2 §3.1 and AI 600-1 §2.5 before any agentic system may be deployed in a regulated environment."
   },
   "_baseline_type": "additive_regional_layer",
   "_global_baseline": "ISO_42001",
@@ -28,20 +28,20 @@
   ],
   "CTRL_AGT_001": {
     "internal_id": "THR-CONF-001",
-    "primary_framework": "ISO 42001 \u00a7A.5.2",
+    "primary_framework": "ISO 42001 §A.5.2",
     "co_frameworks": [
-      "DORA Art. 11 \u2013 ICT Risk Management",
+      "DORA Art. 11 – ICT Risk Management",
       "NIST AI RMF GOVERN-5"
     ],
-    "legacy_citation": "SR 26-2 \u00a7IV.B",
+    "legacy_citation": "SR 26-2 §IV.B",
     "scope": "agentic",
     "description": "Minimum agentic model confidence required to execute a trade. Agentic AI is explicitly excluded from SR 26-2 MRM scope (Footnote 3); governed here under ISO 42001 Operational Risk."
   },
   "CTRL_WAL_002": {
     "internal_id": "THR-WAL-002",
-    "primary_framework": "ISO 42001 \u00a7A.8.4",
+    "primary_framework": "ISO 42001 §A.8.4",
     "co_frameworks": [
-      "DORA Art. 12 \u2013 Backup and Recovery",
+      "DORA Art. 12 – Backup and Recovery",
       "NIST SP 800-53 CP-10"
     ],
     "legacy_citation": "SR 26-2 Non-Determinism Containment",
@@ -50,9 +50,9 @@
   },
   "CTRL_TEL_003": {
     "internal_id": "THR-TEL-003",
-    "primary_framework": "ISO 42001 \u00a7A.9.4",
+    "primary_framework": "ISO 42001 §A.9.4",
     "co_frameworks": [
-      "DORA Art. 10 \u2013 ICT-Related Incident Detection and Monitoring",
+      "DORA Art. 10 – ICT-Related Incident Detection and Monitoring",
       "NIST AI RMF MEASURE-2.6"
     ],
     "legacy_citation": "SR 26-2 World-Model Validation",
@@ -61,7 +61,7 @@
   },
   "CTRL_OPA_005": {
     "internal_id": "THR-OPA-005",
-    "primary_framework": "ISO 42001 \u00a7A.6.1",
+    "primary_framework": "ISO 42001 §A.6.1",
     "co_frameworks": [
       "NIST SP 800-53 AC-3",
       "NIST AI RMF GOVERN-6"
@@ -72,14 +72,14 @@
   },
   "CTRL_TQP_007": {
     "internal_id": "THR-TQP-007",
-    "primary_framework": "ISO 42001 \u00a7A.4 \u2013 Resource Management",
+    "primary_framework": "ISO 42001 §A.4 – Resource Management",
     "co_frameworks": [
-      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
-      "ISO 42001 \u00a7A.6 \u2013 Data Lineage and PII Leak Mitigation",
-      "NIST SP 800-53 SC-5 \u2013 Denial-of-Service Protection",
-      "NIST AI RMF GOVERN-1.7 \u2013 Resource Constraints"
+      "ISO 42001 §6.1 – STPA Risk Logging",
+      "ISO 42001 §A.6 – Data Lineage and PII Leak Mitigation",
+      "NIST SP 800-53 SC-5 – Denial-of-Service Protection",
+      "NIST AI RMF GOVERN-1.7 – Resource Constraints"
     ],
-    "legacy_citation": "SR 26-2 \u00a7IV.C \u2013 Operational Risk Controls for Agentic AI",
+    "legacy_citation": "SR 26-2 §IV.C – Operational Risk Controls for Agentic AI",
     "scope": "agentic",
     "enforcement_tier": 2,
     "worm_bucket_env_var": "OSCAL_S3_BUCKET_US_FED",
@@ -92,5 +92,10 @@
     "legacy_citation": "ISO 42001 A.8.4",
     "scope": "agentic",
     "description": "FTRA reachability gate"
+  },
+  "_hitl": {
+    "citation": "SR 26-2 §IV.D",
+    "sla_hours": 4.0,
+    "injection_citation": "AI 600-1 §3.2.1 (input validation and prompt injection defense)"
   }
 }

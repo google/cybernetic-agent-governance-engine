@@ -50,7 +50,6 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
-from src.gateway.core.tools import TradeOrder, execute_trade
 from src.gateway.governance.nemo.manager import (
     initialize_rails,
     validate_with_nemo,
@@ -63,8 +62,7 @@ from src.gateway.server.governance_middleware import (
     enforce_routing_seal,
 )
 from src.gateway.tracing_setup import setup_tracing
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.governed_financial_advisor.tools.market_data_tool import get_market_data
+from src.gateway.infrastructure.config_manager import config_manager
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
@@ -462,7 +460,7 @@ async def health_check():  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     import uvicorn
 
-    from src.governed_financial_advisor.utils.telemetry import configure_telemetry
+    from src.gateway.infrastructure.telemetry_client import configure_telemetry
 
     configure_telemetry()
     http_port = int(os.getenv("PORT", "8080"))

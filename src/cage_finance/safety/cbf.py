@@ -21,22 +21,33 @@ This module re-exports the moved components to maintain backward compatibility
 with existing tests.
 """
 
+import asyncio  # Re-exported for test patching
+
 from src.gateway.governance.safety.cbf_engine import (
+    _CURRENT_FENCE_EPOCH_GAUGE,
+    _EPOCH_REGRESSION_COUNTER,
     _FENCE_EPOCH_ENABLED,
     _IS_PRODUCTION,
     _REDIS_SENTINEL_MASTER_NAME,
+    _STRICT_REPLICATION,
     ControlBarrierFunction,
     logger,
     redis_client,
     sync_redis_client,
 )
+from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 __all__ = [
+    "asyncio",
+    "_CURRENT_FENCE_EPOCH_GAUGE",
+    "_EPOCH_REGRESSION_COUNTER",
     "_FENCE_EPOCH_ENABLED",
     "_IS_PRODUCTION",
     "_REDIS_SENTINEL_MASTER_NAME",
+    "_STRICT_REPLICATION",
     "ControlBarrierFunction",
     "logger",
     "redis_client",
     "sync_redis_client",
+    "THRESHOLDS",
 ]

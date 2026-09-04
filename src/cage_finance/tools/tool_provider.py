@@ -26,7 +26,7 @@ from src.cage_finance.tools.trade_executor import execute_trade
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.singletons import symbolic_governor
 from src.gateway.server.governance_middleware import enforce_governance
-from src.governed_financial_advisor.tools.market_data_tool import get_market_data
+from src.cage_finance.tools.market_service import get_market_data
 
 logger = logging.getLogger(__name__)
 
