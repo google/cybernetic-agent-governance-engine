@@ -549,7 +549,7 @@ def _load_hitl_constants_from_baselines() -> None:
     # .parent = repo_root
     repo_root = Path(__file__).parent.parent.parent.parent
     compliance_dir = repo_root / "config" / "compliance"
-    
+
     logger.debug(f"Loading HITL constants from {compliance_dir}")
 
     for region in SUPPORTED_REGIONS:
@@ -581,7 +581,7 @@ def _load_hitl_constants_from_baselines() -> None:
                 baseline_path,
                 e,
             )
-    
+
     logger.debug(f"Loaded INJECTION_CITATION: {INJECTION_CITATION}")
     logger.debug(f"Loaded HITL_CITATIONS: {HITL_CITATIONS}")
 

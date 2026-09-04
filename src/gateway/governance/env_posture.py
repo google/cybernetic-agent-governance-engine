@@ -30,7 +30,7 @@ from enum import Enum
 
 class DeploymentPosture(Enum):
     """Deployment posture/environment enumeration."""
-    
+
     PRODUCTION = "production"
     STAGING = "staging"
     DEV = "dev"
@@ -42,17 +42,17 @@ class DeploymentPosture(Enum):
 def resolve_posture() -> DeploymentPosture:
     """
     Resolve the current deployment posture from environment variables.
-    
+
     Checks CAGE_ENV first, then falls back to ENVIRONMENT. Defaults to
     PRODUCTION for fail-secure behavior.
-    
+
     Returns:
         DeploymentPosture: The resolved deployment posture.
     """
     cage_env = (
         os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
     ).lower()
-    
+
     # Map common variations to canonical values
     if cage_env in ("production", "prod"):
         return DeploymentPosture.PRODUCTION

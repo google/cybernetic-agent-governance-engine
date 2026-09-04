@@ -41,6 +41,7 @@ from src.gateway.governance.routing_seal import _der_to_raw_ecdsa_signature
 # Helper: Generate real ECDSA signatures
 # ---------------------------------------------------------------------------
 
+
 def _generate_ecdsa_signature(curve, message: bytes = b"test message") -> bytes:
     """Generate a real DER-encoded ECDSA signature."""
     private_key = ec.generate_private_key(curve, default_backend())
@@ -52,13 +53,14 @@ def _generate_ecdsa_signature(curve, message: bytes = b"test message") -> bytes:
 # Tests: ES256 (P-256)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 @pytest.mark.local
 def test_es256_conversion():
     """Test ES256 DER→raw conversion with real signature."""
     der_sig = _generate_ecdsa_signature(ec.SECP256R1())
     raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
-    
+
     # ES256: 32 bytes R + 32 bytes S = 64 bytes
     assert len(raw_sig) == 64
     assert isinstance(raw_sig, bytes)
@@ -81,27 +83,27 @@ def test_es256_round_trip():
     """Test that raw signature can be converted back to DER and verified."""
     message = b"test message for round trip"
     curve = ec.SECP256R1()
-    
+
     # Generate key pair
     private_key = ec.generate_private_key(curve, default_backend())
     public_key = private_key.public_key()
-    
+
     # Sign
     der_sig = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
-    
+
     # Convert to raw
     raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
     assert len(raw_sig) == 64
-    
+
     # Extract R and S from raw signature
     r_bytes = raw_sig[:32]
     s_bytes = raw_sig[32:]
-    r = int.from_bytes(r_bytes, byteorder='big')
-    s = int.from_bytes(s_bytes, byteorder='big')
-    
+    r = int.from_bytes(r_bytes, byteorder="big")
+    s = int.from_bytes(s_bytes, byteorder="big")
+
     # Convert back to DER
     der_sig_reconstructed = asym_utils.encode_dss_signature(r, s)
-    
+
     # Verify reconstructed signature
     public_key.verify(der_sig_reconstructed, message, ec.ECDSA(hashes.SHA256()))
 
@@ -110,13 +112,14 @@ def test_es256_round_trip():
 # Tests: ES384 (P-384)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 @pytest.mark.local
 def test_es384_conversion():
     """Test ES384 DER→raw conversion with real signature."""
     der_sig = _generate_ecdsa_signature(ec.SECP384R1())
     raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES384")
-    
+
     # ES384: 48 bytes R + 48 bytes S = 96 bytes
     assert len(raw_sig) == 96
     assert isinstance(raw_sig, bytes)
@@ -136,13 +139,14 @@ def test_es384_multiple_conversions():
 # Tests: ES512 (P-521)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 @pytest.mark.local
 def test_es512_conversion():
     """Test ES512 DER→raw conversion with real signature."""
     der_sig = _generate_ecdsa_signature(ec.SECP521R1())
     raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES512")
-    
+
     # ES512 (P-521): 66 bytes R + 66 bytes S = 132 bytes (not 128!)
     assert len(raw_sig) == 132
     assert isinstance(raw_sig, bytes)
@@ -161,6 +165,7 @@ def test_es512_multiple_conversions():
 # ---------------------------------------------------------------------------
 # Tests: Output Length Validation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.local
@@ -195,6 +200,7 @@ def test_output_length_validation_es512():
 # ---------------------------------------------------------------------------
 # Tests: Error Handling
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.local
@@ -244,21 +250,22 @@ def test_wrong_curve_for_algorithm():
 # Tests: M-2 Fix Verification (No Silent Exception Swallowing)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 @pytest.mark.local
 def test_m2_fix_no_silent_exception_swallowing():
     """Verify that M-2 fix removes silent exception swallowing.
-    
+
     The original code had:
         try:
             signature = der_to_raw_signature(signature, curve)
         except ValueError:
             pass
-    
+
     This test verifies that exceptions are now properly raised.
     """
     invalid_der = bytes([0x30, 0x00])  # Minimal invalid SEQUENCE
-    
+
     # Should raise, not silently swallow the exception
     with pytest.raises(ValueError):
         _der_to_raw_ecdsa_signature(invalid_der, "ES256")

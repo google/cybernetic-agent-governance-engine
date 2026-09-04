@@ -166,7 +166,7 @@ class TestTimeoutEnforcement:
         async with create_async_client(posture=DeploymentPosture.PRODUCTION) as client:
             assert client.timeout.read == 10.0
             assert client.timeout.connect == 10.0
-            
+
         # Test that staging also uses 10s timeout
         async with create_async_client(posture=DeploymentPosture.STAGING) as client:
             assert client.timeout.read == 10.0
@@ -175,13 +175,17 @@ class TestTimeoutEnforcement:
 class TestFactoryIntegration:
     """Integration tests for HTTP client factory usage."""
 
-    @pytest.mark.skip(reason="JWKS verifier module removed in Phase 1 domain extraction - test preserved for historical reference")
+    @pytest.mark.skip(
+        reason="JWKS verifier module removed in Phase 1 domain extraction - test preserved for historical reference"
+    )
     @pytest.mark.asyncio
     async def test_jwks_verifier_uses_factory(self):
         """JWKS verifier should use factory-created client with timeout."""
         with respx.mock:
             # This is a regression test to ensure jwks_verifier.py uses the factory
-            jwks_route = respx.get("https://issuer.example.com/.well-known/jwks.json").mock(
+            jwks_route = respx.get(
+                "https://issuer.example.com/.well-known/jwks.json"
+            ).mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -219,12 +223,12 @@ class TestFactoryIntegration:
         for _i in range(5):
             client = create_async_client(timeout_seconds=1.0)
             clients_created.append(client)
-            
+
         # All clients should have timeout set
         for client in clients_created:
             assert client.timeout.read == 1.0
             await client.aclose()
-            
+
         # Verify we can still create more clients (no resource exhaustion)
         async with create_async_client(timeout_seconds=2.0) as final_client:
             assert final_client.timeout.read == 2.0

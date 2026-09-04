@@ -43,7 +43,7 @@ class TestL2_MCPRateLimitMetrics:
         """Rate limit hit should emit Prometheus counter metric."""
         # Import after monkeypatch to ensure metrics are available
         monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus")
-        
+
         from src.gateway.server.mcp_tool_server import (
             _METRICS_AVAILABLE,
             _check_rate_limit,
@@ -71,7 +71,7 @@ class TestL2_MCPRateLimitMetrics:
     async def test_active_buckets_gauge_updated(self, monkeypatch):
         """Active bucket gauge should be updated on bucket access."""
         monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus")
-        
+
         from src.gateway.server.mcp_tool_server import (
             _METRICS_AVAILABLE,
             _check_rate_limit,
@@ -114,6 +114,7 @@ class TestL3_RedisHostEnvironmentVariables:
         import importlib
 
         import src.compliance_bridge.main
+
         importlib.reload(src.compliance_bridge.main)
 
         # Check that the URL is constructed correctly
@@ -122,7 +123,7 @@ class TestL3_RedisHostEnvironmentVariables:
         redis_host = os.environ.get("REDIS_HOST", "localhost")
         redis_port = os.environ.get("REDIS_PORT", "6379")
         expected_url = f"redis://{redis_host}:{redis_port}"
-        
+
         assert expected_url == "redis://redis.example.com:6380"
 
     def test_redis_defaults_to_localhost(self):
@@ -130,7 +131,7 @@ class TestL3_RedisHostEnvironmentVariables:
         redis_host = os.environ.get("REDIS_HOST", "localhost")
         redis_port = os.environ.get("REDIS_PORT", "6379")
         default_url = f"redis://{redis_host}:{redis_port}"
-        
+
         # Should contain localhost:6379 when no env vars set
         assert "localhost" in default_url or redis_host == "localhost"
         assert "6379" in default_url or redis_port == "6379"
@@ -153,7 +154,7 @@ class TestL4_RoutingSealAuditLogging:
         # Disable strict mode to allow HMAC seals in test
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
-        
+
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             verify_seal,
@@ -178,7 +179,7 @@ class TestL4_RoutingSealAuditLogging:
         # Disable strict mode to allow HMAC seals in test
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
-        
+
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             verify_seal,
@@ -194,15 +195,20 @@ class TestL4_RoutingSealAuditLogging:
             verify_seal(expired_seal, "execute_trade", {})
 
         # Verify audit logging structure
-        assert any("SEAL_VERIFICATION_FAILED" in record.message for record in caplog.records)
-        assert any("event=routing_seal_verification_failed" in record.message for record in caplog.records)
+        assert any(
+            "SEAL_VERIFICATION_FAILED" in record.message for record in caplog.records
+        )
+        assert any(
+            "event=routing_seal_verification_failed" in record.message
+            for record in caplog.records
+        )
 
     def test_audit_log_contains_action(self, caplog, monkeypatch):
         """Audit log should include the action name."""
         # Disable strict mode to allow HMAC seals in test
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
-        
+
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             verify_seal,
@@ -223,7 +229,7 @@ class TestL4_RoutingSealAuditLogging:
         # Disable strict mode to allow HMAC seals in test
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("CAGE_ENV", "test")
-        
+
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             verify_seal,
@@ -237,7 +243,9 @@ class TestL4_RoutingSealAuditLogging:
             verify_seal(secret_seal, "execute_trade", {})
 
         # Verify secret signature is NOT in logs
-        assert not any("secret-signature-abc123" in record.message for record in caplog.records)
+        assert not any(
+            "secret-signature-abc123" in record.message for record in caplog.records
+        )
 
 
 class TestL6_KMSBatchSignerInputValidation:
@@ -424,6 +432,7 @@ class TestL7_DeferQueueCorrelationID:
         )
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
+
         # Return both token and status="PARKED"
         async def mock_hget(key, field):
             if field == "token":
@@ -431,6 +440,7 @@ class TestL7_DeferQueueCorrelationID:
             elif field == "status":
                 return "PARKED"
             return None
+
         mock_redis.hget = mock_hget
         mock_pipe = AsyncMock()
         mock_pipe.execute = AsyncMock(return_value=[None, None])

@@ -1287,7 +1287,10 @@ class TestSlaAndEvalDataset:
         for _attempt in range(10):
             try:
                 lf_resp = requests.get(api_url, auth=(lf_pk, lf_sk), timeout=15)
-                if lf_resp.status_code == 200 and len(lf_resp.json().get("data", [])) >= 1:
+                if (
+                    lf_resp.status_code == 200
+                    and len(lf_resp.json().get("data", [])) >= 1
+                ):
                     break
             except requests.exceptions.ConnectionError as _ce:
                 if _attempt == 9:
