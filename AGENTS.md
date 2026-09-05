@@ -345,7 +345,6 @@ Refactoring across v3.0.0 extracted domain mechanisms into domain plugins and mo
 |---|---|---|
 | Causal Gatekeeper | `src.gateway.governance.causal.gatekeeper` | `src.gateway.governance.causal_gatekeeper` |
 | Reconciliation Worker | `src.gateway.governance.reconciliation.worker` | `src.cage_finance.compliance.reconciliation_worker` |
-| CBF Engine | `src.gateway.governance.safety.cbf_engine` | `src.cage_finance.safety.cbf` |
 | FTRA Package | `src.gateway.governance.ftra` | Legacy flat imports in root governance |
 | Financial Tiers | `src.cage_finance.tiers` | Hardcoded blocks in `symbolic_governor.py` |
 | Healthcare Tiers | `src.cage_healthcare.tiers` | N/A (new domain plugin) |
