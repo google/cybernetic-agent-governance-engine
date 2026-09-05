@@ -21,6 +21,7 @@ This guard prevents accidental re-introduction of the compatibility shim.
 """
 
 import importlib.util
+
 import pytest
 
 
@@ -46,4 +47,3 @@ def test_cbf_engine_canonical_import():
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     assert callable(ControlBarrierFunction)
-
