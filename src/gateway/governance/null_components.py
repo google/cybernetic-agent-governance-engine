@@ -78,3 +78,65 @@ class NullConsensusProvider:
             "critics_polled": 0,
             "critics_agreed": 0,
         }
+
+
+class NullColdStore:
+    """Fail-closed EvidenceColdStore used when no cloud storage is configured.
+
+    Succeeds locally/dev but fails on startup if CAGE_ENV=prod.
+    Emits distinct metric label for observability.
+
+    This allows local development without GCS/S3 credentials while enforcing
+    that production deployments MUST have cold storage configured for compliance.
+    """
+
+    def __init__(self) -> None:
+        """Initialize NullColdStore.
+
+        Raises:
+            RuntimeError: If CAGE_ENV=prod (production must have real cold storage)
+        """
+        import os
+
+        cage_env = os.environ.get("CAGE_ENV", "dev")
+        if cage_env == "prod":
+            raise RuntimeError(
+                "[NullColdStore] CAGE_ENV=prod requires real cold storage. "
+                "Configure EVIDENCE_STREAM_BUCKET_{region} and use "
+                "GcsColdStore or S3ColdStore."
+            )
+
+    def put_batch(self, ndjson: str, batch_id: str, region: str) -> str:
+        """No-op upload for local/dev environments.
+
+        Args:
+            ndjson: NDJSON string (ignored)
+            batch_id: Batch identifier
+            region: Compliance region tag
+
+        Returns:
+            Null URI indicating no actual storage
+        """
+        import logging
+
+        logger = logging.getLogger("cage.evidence.null_cold_store")
+        logger.warning(
+            f"[NullColdStore] Skipping cold storage for batch {batch_id} "
+            f"(region={region}, size={len(ndjson)} bytes) — dev/local mode"
+        )
+        return f"null://dev/{batch_id}.ndjson"
+
+    def get_batch(self, batch_id: str, region: str) -> str:
+        """Always fails (no storage exists).
+
+        Args:
+            batch_id: Batch identifier
+            region: Compliance region tag
+
+        Raises:
+            FileNotFoundError: Always (NullColdStore has no actual storage)
+        """
+        raise FileNotFoundError(
+            f"[NullColdStore] Batch {batch_id} not found — "
+            "NullColdStore has no persistent storage"
+        )
