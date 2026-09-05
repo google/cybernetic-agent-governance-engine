@@ -85,9 +85,12 @@ class TestNullColdStore:
             assert health.backend_id == "null"
 
     def test_prod_mode_raises_runtime_error(self):
-        with patch.dict(os.environ, {"CAGE_ENV": "prod"}):
+        with patch.dict(
+            os.environ,
+            {"CAGE_ENV": "prod", "CAGE_ALLOW_NONBLOCKING_PROD": "false"},
+        ):
             with pytest.raises(
-                RuntimeError, match="CAGE_ENV=prod requires real cold storage"
+                RuntimeError, match="CAGE_ENV=prod requires durable cold storage"
             ):
                 NullColdStore()
 
@@ -102,7 +105,10 @@ class TestNullColdStore:
             assert receipt.key == "batches/batch_1.json"
             assert receipt.uri == "null://batches/batch_1.json"
             assert len(receipt.content_sha256) == 64
-            assert not (await store.exists("batches/batch_1.json"))
+            # Canonical NullColdStore keeps a bounded in-memory buffer, so a
+            # previously written key is reported as present.
+            assert await store.exists("batches/batch_1.json")
+            assert not (await store.exists("batches/never_written.json"))
 
 
 class TestNullSafetyFilterAndConsensus:
