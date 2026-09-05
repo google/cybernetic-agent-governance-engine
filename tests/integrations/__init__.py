@@ -12,22 +12,3 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evidence storage abstractions for vendor-decoupled compliance archival.
-
-This package provides Protocol-based abstractions for evidence cold storage,
-allowing CAGE to decouple from specific cloud vendor SDKs (GCS, S3, etc).
-"""
-
-from .cold_store import (
-    ColdStoreError,
-    ColdStoreHealth,
-    ColdStoreReceipt,
-    EvidenceColdStore,
-)
-
-__all__ = [
-    "ColdStoreError",
-    "ColdStoreHealth",
-    "ColdStoreReceipt",
-    "EvidenceColdStore",
-]

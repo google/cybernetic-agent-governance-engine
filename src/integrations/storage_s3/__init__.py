@@ -12,22 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evidence storage abstractions for vendor-decoupled compliance archival.
+"""S3-compatible cold storage adapter (AWS S3, MinIO, GCS interop) for CAGE compliance evidence."""
 
-This package provides Protocol-based abstractions for evidence cold storage,
-allowing CAGE to decouple from specific cloud vendor SDKs (GCS, S3, etc).
-"""
+from .cold_store import S3ColdStore
 
-from .cold_store import (
-    ColdStoreError,
-    ColdStoreHealth,
-    ColdStoreReceipt,
-    EvidenceColdStore,
-)
+__all__ = ["S3ColdStore"]
 
-__all__ = [
-    "ColdStoreError",
-    "ColdStoreHealth",
-    "ColdStoreReceipt",
-    "EvidenceColdStore",
-]

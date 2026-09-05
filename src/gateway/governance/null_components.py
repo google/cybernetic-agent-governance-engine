@@ -20,7 +20,20 @@ null implementations. They are NOT no-ops: every method returns a denial verdict
 A kernel with no plugin denies everything by intent (G2 gate), not by accident.
 """
 
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any
+
+from src.gateway.governance.evidence.cold_store import (
+    ColdStoreHealth,
+    ColdStoreReceipt,
+    EvidenceColdStore,
+)
 
 
 class NullSafetyFilter:
@@ -80,7 +93,7 @@ class NullConsensusProvider:
         }
 
 
-class NullColdStore:
+class NullColdStore(EvidenceColdStore):
     """Fail-closed EvidenceColdStore used when no cloud storage is configured.
 
     Succeeds locally/dev but fails on startup if CAGE_ENV=prod.
@@ -96,8 +109,6 @@ class NullColdStore:
         Raises:
             RuntimeError: If CAGE_ENV=prod (production must have real cold storage)
         """
-        import os
-
         cage_env = os.environ.get("CAGE_ENV", "dev")
         if cage_env == "prod":
             raise RuntimeError(
@@ -105,38 +116,54 @@ class NullColdStore:
                 "Configure EVIDENCE_STREAM_BUCKET_{region} and use "
                 "GcsColdStore or S3ColdStore."
             )
+        self._logger = logging.getLogger("cage.evidence.null_cold_store")
 
-    def put_batch(self, ndjson: str, batch_id: str, region: str) -> str:
+    @property
+    def backend_id(self) -> str:
+        return "null"
+
+    async def put_batch(
+        self,
+        key: str,
+        content: bytes,
+        metadata: Mapping[str, str] | None = None,
+    ) -> ColdStoreReceipt:
         """No-op upload for local/dev environments.
 
-        Args:
-            ndjson: NDJSON string (ignored)
-            batch_id: Batch identifier
-            region: Compliance region tag
-
-        Returns:
-            Null URI indicating no actual storage
+        Computes exact SHA-256 digest and returns a simulated receipt.
         """
-        import logging
-
-        logger = logging.getLogger("cage.evidence.null_cold_store")
-        logger.warning(
-            f"[NullColdStore] Skipping cold storage for batch {batch_id} "
-            f"(region={region}, size={len(ndjson)} bytes) — dev/local mode"
+        digest = hashlib.sha256(content).hexdigest()
+        self._logger.warning(
+            "[NullColdStore] Skipping cold storage for key '%s' (%d bytes) — dev/local mode",
+            key,
+            len(content),
         )
-        return f"null://dev/{batch_id}.ndjson"
+        return ColdStoreReceipt(
+            uri=f"null://{key}",
+            key=key,
+            content_sha256=digest,
+            backend_id="null",
+            written_at=datetime.now(timezone.utc),
+        )
 
-    def get_batch(self, batch_id: str, region: str) -> str:
-        """Always fails (no storage exists).
+    async def exists(self, key: str) -> bool:
+        """NullColdStore does not persist objects; always returns False."""
+        return False
 
-        Args:
-            batch_id: Batch identifier
-            region: Compliance region tag
+    async def put_if_absent(
+        self,
+        key: str,
+        content: bytes,
+        metadata: Mapping[str, str] | None = None,
+    ) -> tuple[ColdStoreReceipt, bool]:
+        """Simulates atomic put_if_absent (always succeeds in dev)."""
+        receipt = await self.put_batch(key, content, metadata)
+        return receipt, True
 
-        Raises:
-            FileNotFoundError: Always (NullColdStore has no actual storage)
-        """
-        raise FileNotFoundError(
-            f"[NullColdStore] Batch {batch_id} not found — "
-            "NullColdStore has no persistent storage"
+    def health(self) -> ColdStoreHealth:
+        """Synchronously reports availability for dev/local environments."""
+        return ColdStoreHealth(
+            available=True,
+            backend_id="null",
+            detail="in-memory dev null cold store (no durable persistence)",
         )

@@ -12,507 +12,155 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-cold_store.py — Vendor-Decoupled Evidence Cold Storage Protocol
+"""cold_store.py — Vendor-Decoupled Evidence Cold Storage Protocol (Layer 1)
 
-Provides Protocol-based abstractions for evidence archival to cloud object storage,
-decoupling CAGE's kernel from specific vendor SDKs (google-cloud-storage, boto3, etc).
+Provides the vendor-neutral protocol and receipt abstractions for durable
+evidence archival and OSCAL artifact persistence to cloud object storage.
 
-Architecture Position:
-    Redis Streams → Compliance Bridge → GCS Flush Daemon → EvidenceColdStore
-                                                               ├── GcsColdStore
-                                                               ├── S3ColdStore
-                                                               └── NullColdStore
+Layer Invariant (Layer 1 Kernel):
+    This module defines the abstract seam only. It contains ZERO vendor imports
+    (no google-cloud-storage, boto3, or azure-storage-blob). Concrete adapters
+    live strictly in Layer 3 integrations (src/integrations/storage_*).
 
-Design Rationale:
-    - Protocol-based interface allows swapping vendors without changing kernel code
-    - Lazy imports ensure vendor SDKs are only loaded when actually used
-    - Each implementation handles its own credential/region configuration
-    - Fail-fast on misconfiguration (missing bucket/credentials)
-
-Key Invariants:
-    1. All vendor SDK imports must be lazy (inside methods, not at module level)
-    2. put_batch() must preserve NDJSON byte-for-byte (no re-serialization)
-    3. Batch IDs must be globally unique (typically UUID4 or timestamp-based)
-    4. Region parameter allows multi-region compliance (GDPR, MAS, FedRAMP)
-    5. All methods are synchronous (async handled by caller's thread pool)
-
-Environment Variables (examples):
-    GcsColdStore:
-        EVIDENCE_STREAM_BUCKET_US_FED=cage-evidence-us-federal
-        EVIDENCE_STREAM_BUCKET_EU_ECB=cage-evidence-eu-west1
-        GOOGLE_CLOUD_PROJECT=cage-prod-us
-        GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-
-    S3ColdStore:
-        EVIDENCE_STREAM_BUCKET_US_FED=cage-evidence-us-east-1
-        AWS_ACCESS_KEY_ID=...
-        AWS_SECRET_ACCESS_KEY=...
-        AWS_REGION=us-east-1
-
-Wave 1 Scope (this file):
-    - EvidenceColdStore Protocol (W1.1)
-    - GcsColdStore implementation (W1.2)
-    - S3ColdStore implementation (W1.3)
-
-Wave 2 Scope (evidence_stream.py migration):
-    - Replace direct GCS SDK calls with EvidenceColdStore protocol
-    - Add factory function: create_cold_store(region: str) -> EvidenceColdStore
-    - Preserve existing flush daemon behavior
+Contract Specification:
+    - EvidenceColdStore: runtime-checkable Protocol for async cold storage
+    - ColdStoreReceipt: immutable record of successful persistence
+    - ColdStoreHealth: snapshot of storage backend availability
+    - ColdStoreError: unified exception boundary for cold storage failures
 """
 
 from __future__ import annotations
 
-import logging
-import os
-from typing import Protocol
-
-logger = logging.getLogger("cage.evidence.cold_store")
-
-
-# ---------------------------------------------------------------------------
-# Protocol Definition (W1.1)
-# ---------------------------------------------------------------------------
+import dataclasses
+from collections.abc import Mapping
+from datetime import datetime
+from typing import Protocol, runtime_checkable
 
 
+class ColdStoreError(Exception):
+    """Base exception for all evidence cold storage operations.
+
+    Vendor-specific exceptions (e.g. GoogleAPICallError, ClientError) must never
+    cross the seam and must be wrapped into ColdStoreError with the underlying
+    cause attached via `__cause__`.
+    """
+
+    def __init__(self, message: str, backend_id: str = "unknown") -> None:
+        super().__init__(message)
+        self.backend_id = backend_id
+
+
+@dataclasses.dataclass(frozen=True)
+class ColdStoreReceipt:
+    """Immutable receipt returned upon successful persistence to cold storage.
+
+    Attributes:
+        uri: Complete URI where content is stored (e.g. gs://bucket/key, s3://bucket/key, null://key).
+        key: Storage key / object path within the storage bucket.
+        content_sha256: Hexadecimal SHA-256 digest computed over the persisted content bytes.
+        backend_id: Identifier of the storage backend ('gcs', 's3', 'null').
+        written_at: UTC timestamp when the write was confirmed.
+    """
+
+    uri: str
+    key: str
+    content_sha256: str
+    backend_id: str
+    written_at: datetime
+
+
+@dataclasses.dataclass(frozen=True)
+class ColdStoreHealth:
+    """Health status snapshot of a cold storage backend.
+
+    Attributes:
+        available: True if backend connectivity and authorization are operational.
+        backend_id: Identifier of the storage backend ('gcs', 's3', 'null').
+        detail: Human-readable diagnostic or error string.
+    """
+
+    available: bool
+    backend_id: str
+    detail: str
+
+
+@runtime_checkable
 class EvidenceColdStore(Protocol):
-    """Protocol for vendor-agnostic evidence cold storage.
+    """Protocol for vendor-agnostic asynchronous evidence cold storage.
 
-    Implementers must provide put_batch() and get_batch() methods for
-    archiving hash-chained evidence batches to durable cloud object storage.
-
-    Critical Design Rules:
-        1. Implementations MUST NOT import vendor SDKs at module level
-        2. Implementations MUST preserve NDJSON byte-for-byte (no re-encoding)
-        3. Implementations MUST raise on missing credentials/bucket config
-        4. All methods are synchronous (caller wraps in thread pool if needed)
-
-    Examples:
-        >>> store = GcsColdStore()
-        >>> ndjson = '{"seq": 1}\\n{"seq": 2}\\n'
-        >>> batch_id = "2026-09-05T16:00:00_epoch42"
-        >>> uri = store.put_batch(ndjson, batch_id, region="US_FED")
-        >>> assert uri.startswith("gs://cage-evidence-us-federal/")
-        >>>
-        >>> retrieved = store.get_batch(batch_id, region="US_FED")
-        >>> assert retrieved == ndjson
+    All methods operate on bytes (never str) to ensure exact cryptographic
+    hash consistency across storage and retrieval.
     """
 
-    def put_batch(self, ndjson: str, batch_id: str, region: str) -> str:
-        """Upload hash-chained evidence batch to cold storage.
+    @property
+    def backend_id(self) -> str:
+        """Identifier of the backend adapter ('gcs', 's3', 'null')."""
+        ...
+
+    async def put_batch(
+        self,
+        key: str,
+        content: bytes,
+        metadata: Mapping[str, str] | None = None,
+    ) -> ColdStoreReceipt:
+        """Persist content bytes to cold storage under key.
 
         Args:
-            ndjson: Newline-delimited JSON records (raw string, not bytes).
-                Must preserve original serialization byte-for-byte to maintain
-                hash chain integrity.
-            batch_id: Globally unique batch identifier (e.g. timestamp_epoch).
-                Used as object key/blob name.
-            region: Compliance region tag (US_FED, EU_ECB, APAC_MAS, etc).
-                Determines which bucket/container to use.
+            key: Target object key/path in the cold storage bucket.
+            content: Raw bytes to persist (e.g. NDJSON evidence stream batch).
+            metadata: Optional key-value metadata to attach to the stored object.
 
         Returns:
-            URI of uploaded object (e.g. "gs://bucket/batch_id.ndjson").
+            ColdStoreReceipt confirming URI, digest, and write timestamp.
 
         Raises:
-            ValueError: Missing bucket configuration for region
-            RuntimeError: Upload failed after retries
-            ImportError: Vendor SDK not installed (lazy import failed)
+            ColdStoreError: On network, authorization, or I/O failure.
         """
         ...
 
-    def get_batch(self, batch_id: str, region: str) -> str:
-        """Retrieve evidence batch from cold storage.
+    async def exists(self, key: str) -> bool:
+        """Check whether an object exists under key in cold storage.
 
         Args:
-            batch_id: Batch identifier (matches put_batch key)
-            region: Compliance region tag
+            key: Object key/path to check.
 
         Returns:
-            NDJSON string (raw, byte-for-byte identical to put_batch input)
+            True if the object exists, False otherwise.
 
         Raises:
-            ValueError: Missing bucket configuration for region
-            FileNotFoundError: Batch does not exist
-            RuntimeError: Download failed after retries
-            ImportError: Vendor SDK not installed
+            ColdStoreError: On connectivity or permission errors.
         """
         ...
 
+    async def put_if_absent(
+        self,
+        key: str,
+        content: bytes,
+        metadata: Mapping[str, str] | None = None,
+    ) -> tuple[ColdStoreReceipt, bool]:
+        """Atomically persist content only if no object exists under key.
 
-# ---------------------------------------------------------------------------
-# Google Cloud Storage Implementation (W1.2)
-# ---------------------------------------------------------------------------
-
-
-class GcsColdStore:
-    """Google Cloud Storage implementation of EvidenceColdStore.
-
-    Uses google-cloud-storage SDK with lazy imports. Credentials are
-    autodiscovered via GOOGLE_APPLICATION_CREDENTIALS or GKE Workload Identity.
-
-    Environment Variables:
-        EVIDENCE_STREAM_BUCKET_{region} — GCS bucket name for region
-            Example: EVIDENCE_STREAM_BUCKET_US_FED=cage-evidence-us-federal
-        GOOGLE_CLOUD_PROJECT — GCP project ID (required for bucket access)
-        GOOGLE_APPLICATION_CREDENTIALS — Path to service account JSON (optional)
-
-    Bucket Naming Convention:
-        cage-evidence-{region-slug}
-        Examples:
-            US_FED   → cage-evidence-us-federal
-            EU_ECB   → cage-evidence-eu-west1
-            APAC_MAS → cage-evidence-asia-southeast1
-
-    Object Key Format:
-        {batch_id}.ndjson
-        Example: 2026-09-05T16:00:00_epoch42.ndjson
-
-    Note: This implementation does NOT manage CMEK configuration.
-          CMEK must be configured at the bucket level via Terraform/gcloud.
-    """
-
-    def __init__(self) -> None:
-        """Initialize GCS cold store.
-
-        No SDK imports happen here — imports are deferred to method calls.
-        """
-        self._project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        if not self._project_id:
-            logger.warning(
-                "[GcsColdStore] GOOGLE_CLOUD_PROJECT not set — GCS access may fail"
-            )
-
-    def _get_bucket_name(self, region: str) -> str:
-        """Resolve GCS bucket name for compliance region.
+        Backends supporting native generation / precondition checks (e.g. GCS
+        if_generation_match=0) must execute this atomically.
 
         Args:
-            region: Compliance region tag (US_FED, EU_ECB, etc)
+            key: Target object key/path.
+            content: Raw bytes to persist.
+            metadata: Optional key-value metadata.
 
         Returns:
-            GCS bucket name
+            Tuple of (ColdStoreReceipt, created). If the object already existed,
+            created is False.
 
         Raises:
-            ValueError: Bucket not configured for region
+            ColdStoreError: On backend failure.
         """
-        env_key = f"EVIDENCE_STREAM_BUCKET_{region}"
-        bucket_name = os.environ.get(env_key)
-        if not bucket_name:
-            raise ValueError(
-                f"[GcsColdStore] Missing bucket config for region {region}: "
-                f"set {env_key} environment variable"
-            )
-        return bucket_name
+        ...
 
-    def put_batch(self, ndjson: str, batch_id: str, region: str) -> str:
-        """Upload evidence batch to GCS.
-
-        Lazy-imports google.cloud.storage only when called.
-
-        Args:
-            ndjson: NDJSON string (preserved byte-for-byte)
-            batch_id: Unique batch identifier
-            region: Compliance region tag
+    def health(self) -> ColdStoreHealth:
+        """Synchronously report backend health and accessibility.
 
         Returns:
-            GCS URI (gs://bucket/batch_id.ndjson)
-
-        Raises:
-            ValueError: Missing bucket configuration
-            RuntimeError: Upload failed
-            ImportError: google-cloud-storage not installed
+            ColdStoreHealth reporting availability status and details.
         """
-        try:
-            from google.cloud import storage
-        except ImportError as e:
-            raise ImportError(
-                "[GcsColdStore] google-cloud-storage not installed. "
-                "Install with: pip install google-cloud-storage"
-            ) from e
-
-        bucket_name = self._get_bucket_name(region)
-        blob_name = f"{batch_id}.ndjson"
-
-        try:
-            client = storage.Client(project=self._project_id)
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-
-            # Upload with content type for audit log friendliness
-            blob.upload_from_string(
-                ndjson,
-                content_type="application/x-ndjson",
-                retry=storage.retry.DEFAULT_RETRY,
-            )
-
-            uri = f"gs://{bucket_name}/{blob_name}"
-            logger.info(
-                f"[GcsColdStore] Uploaded batch {batch_id} to {uri} "
-                f"(region={region}, size={len(ndjson)} bytes)"
-            )
-            return uri
-
-        except Exception as e:
-            logger.error(
-                f"[GcsColdStore] Upload failed for batch {batch_id} "
-                f"(region={region}): {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"GCS upload failed for batch {batch_id}: {e}"
-            ) from e
-
-    def get_batch(self, batch_id: str, region: str) -> str:
-        """Retrieve evidence batch from GCS.
-
-        Args:
-            batch_id: Batch identifier
-            region: Compliance region tag
-
-        Returns:
-            NDJSON string
-
-        Raises:
-            ValueError: Missing bucket configuration
-            FileNotFoundError: Batch does not exist
-            RuntimeError: Download failed
-            ImportError: google-cloud-storage not installed
-        """
-        try:
-            from google.cloud import storage
-        except ImportError as e:
-            raise ImportError(
-                "[GcsColdStore] google-cloud-storage not installed"
-            ) from e
-
-        bucket_name = self._get_bucket_name(region)
-        blob_name = f"{batch_id}.ndjson"
-
-        try:
-            client = storage.Client(project=self._project_id)
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-
-            if not blob.exists():
-                raise FileNotFoundError(
-                    f"Batch {batch_id} not found in gs://{bucket_name}/"
-                )
-
-            ndjson = blob.download_as_text()
-            logger.info(
-                f"[GcsColdStore] Retrieved batch {batch_id} from "
-                f"gs://{bucket_name}/{blob_name} (size={len(ndjson)} bytes)"
-            )
-            return ndjson
-
-        except FileNotFoundError:
-            raise
-        except Exception as e:
-            logger.error(
-                f"[GcsColdStore] Download failed for batch {batch_id}: {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"GCS download failed for batch {batch_id}: {e}"
-            ) from e
-
-
-# ---------------------------------------------------------------------------
-# S3-Compatible Storage Implementation (W1.3)
-# ---------------------------------------------------------------------------
-
-
-class S3ColdStore:
-    """S3-compatible storage implementation of EvidenceColdStore.
-
-    Uses boto3 SDK with lazy imports. Works with:
-        - AWS S3
-        - Google Cloud Storage S3 interoperability
-        - MinIO
-        - Any S3-compatible object storage
-
-    Environment Variables:
-        EVIDENCE_STREAM_BUCKET_{region} — S3 bucket name for region
-            Example: EVIDENCE_STREAM_BUCKET_US_FED=cage-evidence-us-east-1
-        AWS_ACCESS_KEY_ID — S3 access key (required)
-        AWS_SECRET_ACCESS_KEY — S3 secret key (required)
-        AWS_REGION — Default S3 region (optional, defaults to us-east-1)
-        S3_ENDPOINT_URL — Custom endpoint for non-AWS S3 (e.g. MinIO)
-
-    Bucket Naming Convention:
-        Same as GCS: cage-evidence-{region-slug}
-
-    Object Key Format:
-        {batch_id}.ndjson
-
-    Encryption:
-        - Uses server-side encryption (SSE-S3 or SSE-KMS)
-        - KMS key ARN configured at bucket level, not in SDK calls
-    """
-
-    def __init__(self) -> None:
-        """Initialize S3 cold store.
-
-        No SDK imports happen here — imports are deferred to method calls.
-        """
-        self._region = os.environ.get("AWS_REGION", "us-east-1")
-        self._endpoint_url = os.environ.get("S3_ENDPOINT_URL")
-        self._access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-        self._secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-
-        if not self._access_key or not self._secret_key:
-            logger.warning(
-                "[S3ColdStore] AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set — "
-                "S3 access may fail unless using IAM role credentials"
-            )
-
-    def _get_bucket_name(self, region: str) -> str:
-        """Resolve S3 bucket name for compliance region.
-
-        Args:
-            region: Compliance region tag (US_FED, EU_ECB, etc)
-
-        Returns:
-            S3 bucket name
-
-        Raises:
-            ValueError: Bucket not configured for region
-        """
-        env_key = f"EVIDENCE_STREAM_BUCKET_{region}"
-        bucket_name = os.environ.get(env_key)
-        if not bucket_name:
-            raise ValueError(
-                f"[S3ColdStore] Missing bucket config for region {region}: "
-                f"set {env_key} environment variable"
-            )
-        return bucket_name
-
-    def put_batch(self, ndjson: str, batch_id: str, region: str) -> str:
-        """Upload evidence batch to S3.
-
-        Lazy-imports boto3 only when called.
-
-        Args:
-            ndjson: NDJSON string (preserved byte-for-byte)
-            batch_id: Unique batch identifier
-            region: Compliance region tag
-
-        Returns:
-            S3 URI (s3://bucket/batch_id.ndjson)
-
-        Raises:
-            ValueError: Missing bucket configuration
-            RuntimeError: Upload failed
-            ImportError: boto3 not installed
-        """
-        try:
-            import boto3
-        except ImportError as e:
-            raise ImportError(
-                "[S3ColdStore] boto3 not installed. Install with: pip install boto3"
-            ) from e
-
-        bucket_name = self._get_bucket_name(region)
-        object_key = f"{batch_id}.ndjson"
-
-        try:
-            s3_client = boto3.client(
-                "s3",
-                region_name=self._region,
-                endpoint_url=self._endpoint_url,
-                aws_access_key_id=self._access_key,
-                aws_secret_access_key=self._secret_key,
-            )
-
-            # Upload with metadata for audit trail
-            s3_client.put_object(
-                Bucket=bucket_name,
-                Key=object_key,
-                Body=ndjson.encode("utf-8"),
-                ContentType="application/x-ndjson",
-                Metadata={
-                    "batch_id": batch_id,
-                    "compliance_region": region,
-                    "schema": "cage-evidence-stream/3.0",
-                },
-            )
-
-            uri = f"s3://{bucket_name}/{object_key}"
-            logger.info(
-                f"[S3ColdStore] Uploaded batch {batch_id} to {uri} "
-                f"(region={region}, size={len(ndjson)} bytes)"
-            )
-            return uri
-
-        except Exception as e:
-            logger.error(
-                f"[S3ColdStore] Upload failed for batch {batch_id} "
-                f"(region={region}): {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"S3 upload failed for batch {batch_id}: {e}"
-            ) from e
-
-    def get_batch(self, batch_id: str, region: str) -> str:
-        """Retrieve evidence batch from S3.
-
-        Args:
-            batch_id: Batch identifier
-            region: Compliance region tag
-
-        Returns:
-            NDJSON string
-
-        Raises:
-            ValueError: Missing bucket configuration
-            FileNotFoundError: Batch does not exist
-            RuntimeError: Download failed
-            ImportError: boto3 not installed
-        """
-        try:
-            import boto3
-            from botocore.exceptions import ClientError
-        except ImportError as e:
-            raise ImportError("[S3ColdStore] boto3 not installed") from e
-
-        bucket_name = self._get_bucket_name(region)
-        object_key = f"{batch_id}.ndjson"
-
-        try:
-            s3_client = boto3.client(
-                "s3",
-                region_name=self._region,
-                endpoint_url=self._endpoint_url,
-                aws_access_key_id=self._access_key,
-                aws_secret_access_key=self._secret_key,
-            )
-
-            response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-            ndjson = response["Body"].read().decode("utf-8")
-
-            logger.info(
-                f"[S3ColdStore] Retrieved batch {batch_id} from "
-                f"s3://{bucket_name}/{object_key} (size={len(ndjson)} bytes)"
-            )
-            return ndjson
-
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "NoSuchKey":
-                raise FileNotFoundError(
-                    f"Batch {batch_id} not found in s3://{bucket_name}/"
-                ) from e
-            logger.error(
-                f"[S3ColdStore] Download failed for batch {batch_id}: {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"S3 download failed for batch {batch_id}: {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[S3ColdStore] Download failed for batch {batch_id}: {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"S3 download failed for batch {batch_id}: {e}"
-            ) from e
+        ...
