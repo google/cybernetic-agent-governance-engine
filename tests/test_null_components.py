@@ -23,17 +23,18 @@ Verifies:
 
 import os
 from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from src.gateway.governance.causal.gatekeeper import causal_safety_check
 from src.gateway.governance.null_components import (
     NullColdStore,
     NullConsensusProvider,
     NullSafetyFilter,
     NullTelemetryProvider,
 )
-from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
 
 class TestNullTelemetryProvider:
@@ -62,10 +63,12 @@ class TestNullTelemetryProvider:
 
         # causal_safety_check must evaluate insufficient samples and fail closed
         result = causal_safety_check(
+            params={
+                "amount": 1000.0,
+                "action": "execute_trade",
+                "market_volatility": 0.5,
+            },
             current_telemetry=df,
-            trade_amount=1000.0,
-            action="execute_trade",
-            market_volatility=0.5,
         )
         assert result is False
 
@@ -83,7 +86,9 @@ class TestNullColdStore:
 
     def test_prod_mode_raises_runtime_error(self):
         with patch.dict(os.environ, {"CAGE_ENV": "prod"}):
-            with pytest.raises(RuntimeError, match="CAGE_ENV=prod requires real cold storage"):
+            with pytest.raises(
+                RuntimeError, match="CAGE_ENV=prod requires real cold storage"
+            ):
                 NullColdStore()
 
     @pytest.mark.asyncio
@@ -121,4 +126,3 @@ class TestNullSafetyFilterAndConsensus:
         result = await provider.check_consensus("execute_trade", {})
         assert result["status"] == "REJECT"
         assert result["agreement_level"] == 0.0
-
