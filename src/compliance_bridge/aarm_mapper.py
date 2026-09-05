@@ -315,7 +315,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ],
         implementation_files=[
             "src/gateway/governance/nemo/manager.py",
-            "deployment/k8s/cilium-network-policy.yaml",
+            "deployment/k8s/cilium-egress-lockdown.yaml",
         ],
         notes=(
             "Presidio PII masking (20 entity types, spaCy en_core_web_sm) strips "

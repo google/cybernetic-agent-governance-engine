@@ -45,6 +45,7 @@ from typing import Any, Literal
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
@@ -212,6 +213,46 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     _get_app_langfuse()  # eager init so first request isn't slow
 
     # ------------------------------------------------------------------
+    # Sprint 1.6: Start Evidence Stream sink and consumer (G-2, G-3)
+    # The evidence sink must start before the bus attachment, and the
+    # consumer must start to provide metrics. Without this, every
+    # hash-chained evidence path is a silent no-op.
+    # ------------------------------------------------------------------
+    from .evidence_consumer import get_evidence_consumer
+    from .evidence_stream import get_evidence_sink, is_evidence_stream_enabled
+    from .sse_events import event_bus
+
+    _sink = get_evidence_sink()
+    _consumer = get_evidence_consumer()
+
+    if is_evidence_stream_enabled():
+        await _sink.start()
+        if not _sink.is_running:
+            raise RuntimeError(
+                "[compliance-bridge] EVIDENCE_STREAM_ENABLED=true but the "
+                "evidence sink failed to start. Refusing to serve compliance "
+                "attestations without a durable evidence chain."
+            )
+        event_bus.attach_evidence_sink(_sink)
+        logger.info(
+            "✅ Evidence sink started and attached: chain_id=%s seq=%d head=%s...",
+            _sink._chain_id,
+            _sink._sequence,
+            _sink._prev_hash[:16],
+        )
+
+        # Start consumer
+        await _consumer.start()
+        if _consumer.is_running:
+            # Start consume loop in background
+            asyncio.create_task(_consumer.consume_loop(), name="evidence-consumer")
+            logger.info("✅ Evidence consumer started")
+    else:
+        logger.warning(
+            "[INFO] Evidence stream disabled (EVIDENCE_STREAM_ENABLED != true)"
+        )
+
+    # ------------------------------------------------------------------
     # C-08: Start KMS batch signer for evidence chain signing.
     # The signer is disabled by default (kms_batch.enabled=false in
     # config/governance_thresholds.json). Can be explicitly enabled
@@ -247,6 +288,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     try:
         yield
     finally:
+        # Sprint 1.6: Graceful shutdown of evidence stream and consumer
+        if is_evidence_stream_enabled():
+            await _consumer.stop()
+            await _sink.stop()
+            logger.info("✅ Evidence stream and consumer stopped gracefully")
+
         for _task in (_sla_task, _lula_task):
             _task.cancel()
             try:
@@ -311,6 +358,30 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Sprint 2: Prometheus Metrics Endpoint
+# ---------------------------------------------------------------------------
+
+# Consumer health metrics
+evidence_consumer_records_processed = Counter(
+    "cage_evidence_consumer_records_processed_total",
+    "Total records processed by evidence consumer",
+    ["control_id"],
+)
+
+evidence_consumer_lag = Gauge(
+    "cage_evidence_consumer_lag_seconds",
+    "Time lag between record creation and consumption",
+)
+
+evidence_chain_verified = Gauge(
+    "cage_evidence_chain_verified", "Chain verification status (1=verified, 0=broken)"
+)
+
+# Mount Prometheus metrics endpoint after app initialization
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 
 # ---------------------------------------------------------------------------
@@ -1683,6 +1754,94 @@ async def get_telemetry_history(
             status_code=500,
             detail={"error": "HISTORY_FETCH_FAILED", "message": str(exc)},
         )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2: POST /v1/kernel/ingest — eBPF Kernel Event Ingest
+# ---------------------------------------------------------------------------
+
+
+class KernelEvent(BaseModel):
+    """eBPF kernel event from AgentSight daemon."""
+
+    trace_id: str  # W3C trace ID for correlation
+    event_type: str  # Literal["uprobe_ssl", "syscall_execve", "syscall_openat", "syscall_connect", "syscall_socket", "syscall_bind"]
+    timestamp_ns: int  # Nanosecond precision kernel timestamp
+    process_name: str
+    pid: int
+    payload: dict  # Event-specific data (e.g., syscall args, SSL buffer)
+
+
+@app.post(
+    "/v1/kernel/ingest", tags=["observability"], summary="Ingest eBPF kernel events"
+)
+async def ingest_kernel_event(event: KernelEvent) -> JSONResponse:
+    """
+    Ingest eBPF kernel events into Evidence Stream.
+
+    This endpoint receives events from the AgentSight DaemonSet
+    and hash-chains them into the cryptographically sealed Evidence Stream.
+
+    Sprint 2, Deliverable 2.4: eBPF kernel event ingest endpoint.
+
+    Args:
+        event: KernelEvent from AgentSight daemon (syscall/probe data).
+
+    Returns:
+        JSON response with ingest status and evidence_id.
+
+    Raises:
+        HTTPException(400): If trace_id is missing or event is malformed.
+        HTTPException(503): If Evidence Stream is unavailable.
+    """
+    # Validate event
+    if not event.trace_id:
+        raise HTTPException(400, detail="trace_id required")
+
+    # Build evidence payload
+    from .pii_scrubber import PIIScrubber
+
+    raw_payload = {
+        "trace_id": event.trace_id,
+        "event_type": f"KERNEL_{event.event_type.upper()}",
+        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+        "kernel_timestamp_ns": event.timestamp_ns,
+        "payload": {"process": event.process_name, "pid": event.pid, **event.payload},
+    }
+
+    # Sprint 2: Mandatory PII scrubbing before Evidence Stream ingest
+    scrubbed = PIIScrubber.scrub(raw_payload)
+
+    # Ingest into Evidence Stream
+    from .evidence_stream import get_evidence_sink
+
+    sink = get_evidence_sink()
+    evidence_id = await sink.ingest(scrubbed)
+
+    if evidence_id is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "EVIDENCE_STREAM_UNAVAILABLE",
+                "message": "Evidence Stream is not running or Redis is unavailable",
+            },
+        )
+
+    # Publish to SSE for AgentSight UI
+    await event_bus.publish(
+        {
+            "type": "kernel-event",
+            "traceId": event.trace_id,
+            "kernel_event_type": event.event_type,
+            "evidence_id": evidence_id,
+            "timestamp": event.timestamp_ns,
+            "controlId": "A.10.1",  # ISO 42001 system monitoring
+        }
+    )
+
+    return JSONResponse(
+        status_code=200, content={"status": "ingested", "evidence_id": evidence_id}
+    )
 
 
 # ---------------------------------------------------------------------------

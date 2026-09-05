@@ -13,11 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Import Boundary Enforcement — Gate G3 CI Check (PR B)
+"""Import Boundary Enforcement — Gate G3 CI Check (PR B + Sprint 3)
 
 Verifies layer isolation (domain-generic):
 - Layer 1 (src/gateway/) must NOT import from Layer 2 (src/cage_*/)
+- Layer 1 (src/gateway/) must NOT import from Layer 3 (langfuse SDK)
 - Layer 1 must NOT import from Layer 4 (src/governed_financial_advisor/)
+
+Sprint 3.3: Blocks gateway → Langfuse SDK boundary violation
+All telemetry flows through Evidence Stream or OTel only.
 
 Usage:
     python scripts/check_import_boundaries.py
@@ -37,6 +41,7 @@ from pathlib import Path
 # Layer definitions (in dependency order, lower layers cannot import higher layers)
 LAYER_1_GATEWAY = "src/gateway"
 LAYER_2_CAGE_PATTERN = re.compile(r"^(src\.)?cage_\w+")  # Matches src.cage_* or cage_*
+LAYER_3_LANGFUSE_PATTERN = re.compile(r"^langfuse")  # Matches langfuse or from langfuse
 LAYER_4_GFA_PATTERN = re.compile(r"^(src\.)?governed_financial_advisor")
 
 
@@ -86,13 +91,19 @@ def check_file_boundaries(
     # Determine which layer this file belongs to
     filepath_str = str(filepath)
     if LAYER_1_GATEWAY in filepath_str:
-        # Gateway files cannot import cage_* (Layer 2)
+        # Gateway files cannot import cage_* (Layer 2) or langfuse (Layer 3)
         # NOTE: Layer 1 → Layer 4 (GFA) check will be added in PR D
         for imp in imports:
             if LAYER_2_CAGE_PATTERN.match(imp):
                 violations.append((filepath_str, imp))
                 if verbose:
                     print(f"❌ {filepath}: imports {imp} (Layer 1 → Layer 2 violation)")
+            elif LAYER_3_LANGFUSE_PATTERN.match(imp):
+                violations.append((filepath_str, imp))
+                if verbose:
+                    print(
+                        f"❌ {filepath}: imports {imp} (Layer 1 → Layer 3 Langfuse SDK violation)"
+                    )
 
     return violations
 
@@ -102,7 +113,9 @@ def main() -> int:
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
-    print("🔍 Checking import boundaries (Layer 1 must not import Layer 2 cage_*)...")
+    print(
+        "🔍 Checking import boundaries (Layer 1 must not import Layer 2 cage_* or Layer 3 langfuse)..."
+    )
 
     # Scan all Python files in src/gateway/
     gateway_root = Path(LAYER_1_GATEWAY)
@@ -129,9 +142,15 @@ def main() -> int:
             print(f"  {filepath}")
             print(f"    └─ imports {imported_module}\n")
 
-        print("🚨 Layer 1 (gateway) must NOT import from Layer 2 (cage_*).")
+        print(
+            "🚨 Layer 1 (gateway) must NOT import from Layer 2 (cage_*) or Layer 3 (langfuse)."
+        )
         print(
             "   Use plugin entry points, dependency injection, or the plugin seam instead."
+        )
+        print("   All telemetry flows through Evidence Stream or OTel only.")
+        print(
+            "   Violation: See plans/evidence_integration_implementation_plan.md §4.8"
         )
         print("   NOTE: Layer 1 → Layer 4 (GFA) violations will be addressed in PR D.")
         return 1

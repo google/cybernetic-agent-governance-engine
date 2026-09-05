@@ -330,24 +330,21 @@ NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
     "sc-7": {
         "title": "Boundary Protection — Cilium L7 FQDN Egress Lockdown",
         "implemented_by": "Cilium CNI CiliumNetworkPolicy (L7 FQDN rules)",
-        "status": "implemented",
+        "status": "planned",
+        "implementation_status": "partially-implemented",
         "evidence_file": "deployment/k8s/cilium-egress-lockdown.yaml",
+        "evidence_status": "documented",
         "iso_clause": "A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)",
         "narrative": (
-            "Layer-7 FQDN-aware egress boundaries are enforced on all governance-stack pods "
-            "by Cilium CiliumNetworkPolicy resources. Standard Kubernetes NetworkPolicies "
-            "(network-policy.yaml) provide L3/L4 default-deny; Cilium extends this to the "
-            "application layer by intercepting DNS responses and binding resolved IP addresses "
-            "to the FQDN allow-list in real time. Gateway pods may reach only approved external "
-            "LLM provider endpoints (api.openai.com, api.anthropic.com, "
-            "generativelanguage.googleapis.com) and required GCP service APIs. Sovereign "
-            "agent pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080, "
-            "OTel:4317/4318) and cannot contact any external endpoint directly, preventing "
-            "lateral movement and data exfiltration even if a pod is compromised. "
-            "Evidence: cilium monitor --type l7."
+            "Network boundary enforcement via Cilium CNI is documented "
+            "but requires GKE Dataplane V2 cluster recreation. "
+            "Current deployment uses standard GKE networking with "
+            "compensating controls: (1) GKE VPC firewall rules, "
+            "(2) Kubernetes NetworkPolicy (Calico), (3) Pod Security Standards "
+            "restricted enforcement, (4) Redis AUTH + TLS."
         ),
         "poam_refs": "POAM-007 (IA-3)",
-        "poam_status": "CLOSED — Cilium L7 egress lockdown implemented",
+        "poam_status": "OPEN — Cilium L7 egress lockdown requires cluster migration",
     },
 }
 

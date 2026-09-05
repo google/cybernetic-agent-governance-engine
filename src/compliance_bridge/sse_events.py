@@ -68,6 +68,8 @@ GovernanceEventType = Literal[
     "CONTEXT_CHAIN_SEALED",  # emitted when the SHA-256 hash chain is sealed after each audit
     "DEFER_PARKING",  # emitted when an execution context is parked in the DEFER queue
     "DEFER_RESOLVED",  # emitted when a deferred token is resolved (ESCALATED/INJECTED/EXPIRED)
+    # Sprint 2 — eBPF kernel observability
+    "kernel-event",  # emitted when eBPF daemon reports kernel-level syscall/probe events
 ]
 OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE"]
 

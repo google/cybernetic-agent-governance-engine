@@ -50,6 +50,7 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "src")]:
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram, make_asgi_app
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.gateway.server.governance_middleware import governance_app
@@ -58,6 +59,27 @@ from src.gateway.server.mcp_tool_server import app as mcp_app
 from src.gateway.tracing_setup import setup_tracing
 
 logger = logging.getLogger("Gateway.HybridServer")
+
+# ---------------------------------------------------------------------------
+# Sprint 2: Prometheus Metrics for Evidence Stream Health
+# ---------------------------------------------------------------------------
+
+# Evidence Stream health metrics
+evidence_stream_ingests = Counter(
+    "cage_evidence_stream_ingests_total",
+    "Total evidence records ingested",
+    ["event_type", "control_id"],
+)
+
+evidence_stream_latency = Histogram(
+    "cage_evidence_stream_ingest_duration_seconds",
+    "Evidence Stream ingest latency",
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
+)
+
+evidence_chain_sequence = Gauge(
+    "cage_evidence_chain_sequence", "Current evidence chain sequence number"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +475,12 @@ root_app.mount("/inference", inference_app)
 # Governance middleware handles /governance/check
 root_app.mount("/governance", governance_app)
 
+# Sprint 2: Mount Prometheus metrics endpoint (before "/" to avoid being caught by MCP)
+metrics_app = make_asgi_app(registry=REGISTRY)
+root_app.mount("/metrics", metrics_app)
+
 # MCP tool server handles /, /mcp, /tools/execute, /health
+# MUST be last since it mounts at "/"
 root_app.mount("/", mcp_app)
 
 logger.info(

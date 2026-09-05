@@ -86,6 +86,10 @@ spec:
               value: "http://opa-service:8181/v1/data/trade/governance"
             - name: SLM_BASE_URL
               value: "http://governed-financial-advisor-slm:5000"
+            # Compliance Bridge Configuration (Layer 2 proxy for Langfuse/telemetry)
+            # Maintains Layer 1 → Layer 2 → Layer 3 separation
+            - name: COMPLIANCE_BRIDGE_HOST
+              value: "http://compliance-bridge.governance-stack.svc.cluster.local:80"
           resources:
             requests:
               cpu: "1000m"

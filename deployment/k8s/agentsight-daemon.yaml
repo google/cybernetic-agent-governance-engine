@@ -50,11 +50,13 @@ data:
           - bind
 
     # Output / Export Configuration
-    # type: "remote" sends events to the AgentSight UI backend over HTTP.
-    # endpoint resolves to kubernetes_service.agentsight_ui in governance-stack namespace.
+    # type: "remote" sends events to the compliance-bridge kernel ingest endpoint.
+    # Sprint 2: Updated to POST /v1/kernel/ingest for Evidence Stream integration.
     exporter:
       type: "remote"
-      endpoint: "http://agentsight-ui.governance-stack.svc.cluster.local:8080"
+      endpoint: "http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/kernel/ingest"
+      batch_size: 100
+      flush_interval_ms: 1000
 
 ---
 apiVersion: apps/v1

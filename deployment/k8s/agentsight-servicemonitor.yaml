@@ -1,0 +1,74 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+# Sprint 3.5: AgentSight Prometheus ServiceMonitor
+#
+# Assumes AgentSight daemon exposes a /metrics endpoint on a named port.
+# If the daemon does not yet expose Prometheus metrics, this ServiceMonitor
+# serves as a documented template for future observability integration.
+#
+# NOTE: This is an illustrative reference architecture pattern.
+# Actual AgentSight metric exposure depends on upstream daemon implementation.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agentsight-daemon
+  namespace: agentsight
+  labels:
+    app: agentsight-daemon
+    component: ebpf-observability
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: agentsight-daemon
+  endpoints:
+  - port: metrics  # Assumes daemon exposes metrics on named port "metrics"
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: '(agentsight_.*|ebpf_.*)'
+      action: keep
+---
+# AgentSight Service (if not already defined)
+# This Service is required for ServiceMonitor to discover targets.
+# If agentsight-daemon.yaml already defines a Service, this can be removed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentsight-daemon
+  namespace: agentsight
+  labels:
+    app: agentsight-daemon
+    component: ebpf-observability
+spec:
+  selector:
+    app: agentsight-daemon
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  clusterIP: None  # Headless service for DaemonSet
+  type: ClusterIP

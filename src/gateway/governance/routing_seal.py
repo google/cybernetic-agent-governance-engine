@@ -511,6 +511,13 @@ async def generate_seal_with_evidence(
         normalized_params = _normalize(params)
         params_bytes = jcs_canonicalize_plan(normalized_params)
 
+        # Sprint 1.2: Extract current OTel trace ID for evidence correlation
+        current_span = trace.get_current_span()
+        span_context = current_span.get_span_context()
+        trace_id = (
+            format(span_context.trace_id, "032x") if span_context.is_valid else None
+        )
+
         evidence_event = {
             "type": "GOVERNANCE_DECISION",
             "controlId": _SCOPE_CONTROL.value,
@@ -518,6 +525,7 @@ async def generate_seal_with_evidence(
             "params_hash": hashlib.sha256(params_bytes).hexdigest()[:16],
             "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
             "seal_ttl_s": ttl_s,
+            "trace_id": trace_id,  # Sprint 1.2: W3C trace ID for bidirectional correlation
         }
 
         sink = get_evidence_sink()
@@ -567,7 +575,10 @@ async def generate_seal_with_evidence(
             if sink.is_running:
                 # Best-effort async ingest — do not block on result
                 try:
-                    await sink.ingest(evidence_event)
+                    evidence_id = await sink.ingest(evidence_event)
+                    # Sprint 1.3: Add evidence_id to span for reverse correlation
+                    if evidence_id:
+                        span.set_attribute("cage.evidence_id", evidence_id)
                 except Exception as exc:
                     # Log but do not block seal issuance
                     logger.warning(

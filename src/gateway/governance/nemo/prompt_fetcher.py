@@ -15,6 +15,7 @@
 import logging
 import os
 
+import httpx
 import yaml
 
 logger = logging.getLogger("PromptFetcher")
@@ -23,54 +24,63 @@ logger = logging.getLogger("PromptFetcher")
 def fetch_managed_prompts() -> str | None:
     """
     Fetches the NeMo Guardrails 'self_check_input' and 'self_check_output' prompts
-    from Langfuse Prompt Management and returns them as a YAML formatted string.
-    Returns None if fetching fails.
-    """
-    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
-    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
-    host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    from Langfuse Prompt Management via compliance-bridge HTTP proxy and returns
+    them as a YAML formatted string. Returns None if fetching fails.
 
-    if not public_key or not secret_key:
+    Maintains Layer 1 → Layer 2 → Layer 3 separation by proxying through
+    compliance-bridge instead of importing Langfuse SDK directly.
+    """
+    bridge_host = os.environ.get(
+        "COMPLIANCE_BRIDGE_HOST",
+        "http://compliance-bridge.governance-stack.svc.cluster.local:80",
+    )
+
+    if not bridge_host:
         logger.warning(
-            "Langfuse credentials not found. Falling back to local prompts.yml"
+            "COMPLIANCE_BRIDGE_HOST not set. Falling back to local prompts.yml"
         )
         return None
 
     try:
-        from langfuse import Langfuse
-
-        # We configure the client explicitly to ensure it points to our internal host
-        langfuse = Langfuse(public_key=public_key, secret_key=secret_key, host=host)
-
         nemo_prompts = []
 
-        # 1. Fetch Input Check
+        # 1. Fetch Input Check via compliance-bridge proxy
         try:
-            input_prompt_obj = langfuse.get_prompt(
-                "nemo/self_check_input", label="production"
-            )
-            if input_prompt_obj and hasattr(input_prompt_obj, "prompt"):
-                nemo_prompts.append(
-                    {"task": "self_check_input", "content": input_prompt_obj.prompt}
-                )
-        except Exception as e:
-            logger.error(f"Failed to fetch nemo/self_check_input from Langfuse: {e}")
+            url = f"{bridge_host}/v1/prompts/nemo/self_check_input"
+            params = {"label": "production"}
 
-        # 2. Fetch Output Check
-        try:
-            output_prompt_obj = langfuse.get_prompt(
-                "nemo/self_check_output", label="production"
-            )
-            if output_prompt_obj and hasattr(output_prompt_obj, "prompt"):
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            if data and "text" in data:
                 nemo_prompts.append(
-                    {"task": "self_check_output", "content": output_prompt_obj.prompt}
+                    {"task": "self_check_input", "content": data["text"]}
                 )
         except Exception as e:
-            logger.error(f"Failed to fetch nemo/self_check_output from Langfuse: {e}")
+            logger.error(f"Failed to fetch nemo/self_check_input via bridge: {e}")
+
+        # 2. Fetch Output Check via compliance-bridge proxy
+        try:
+            url = f"{bridge_host}/v1/prompts/nemo/self_check_output"
+            params = {"label": "production"}
+
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            if data and "text" in data:
+                nemo_prompts.append(
+                    {"task": "self_check_output", "content": data["text"]}
+                )
+        except Exception as e:
+            logger.error(f"Failed to fetch nemo/self_check_output via bridge: {e}")
 
         if not nemo_prompts:
             logger.warning(
-                "No NeMo prompts fetched from Langfuse. Falling back to local prompts.yml"
+                "No NeMo prompts fetched via compliance-bridge. Falling back to local prompts.yml"
             )
             return None
 
@@ -79,10 +89,10 @@ def fetch_managed_prompts() -> str | None:
         yaml_str = yaml.dump(config_data, default_flow_style=False)
 
         logger.info(
-            f"Successfully fetched {len(nemo_prompts)} prompts from Langfuse Prompt Management"
+            f"Successfully fetched {len(nemo_prompts)} prompts via compliance-bridge proxy"
         )
         return yaml_str
 
     except Exception as e:
-        logger.error(f"Critical failure initializing Langfuse SDK for prompts: {e}")
+        logger.error(f"Critical failure fetching prompts via compliance-bridge: {e}")
         return None

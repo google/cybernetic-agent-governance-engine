@@ -597,12 +597,28 @@ async def _emit_refusal_receipt(
 
     # Publish to evidence stream
     try:
+        from opentelemetry import trace
+
         from src.compliance_bridge.evidence_stream import (
             get_evidence_sink,
         )
 
+        # Sprint 1.2: Extract current OTel trace ID for evidence correlation
+        current_span = trace.get_current_span()
+        span_context = current_span.get_span_context()
+        trace_id = (
+            format(span_context.trace_id, "032x") if span_context.is_valid else None
+        )
+
+        # Add trace_id to receipt before ingesting
+        receipt["trace_id"] = trace_id
+
         sink = get_evidence_sink()
-        await sink.ingest(receipt)
+        evidence_id = await sink.ingest(receipt)
+
+        # Sprint 1.3: Add evidence_id to span for reverse correlation (Evidence → Langfuse)
+        if evidence_id and current_span.is_recording():
+            current_span.set_attribute("cage.evidence_id", evidence_id)
         # MED-7 fix: a successfully emitted refusal receipt is not an error —
         # logging it at ERROR level polluted error dashboards with normal events.
         logger.info(
