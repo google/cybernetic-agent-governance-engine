@@ -71,7 +71,9 @@ async def test_gcs_cold_store_put_batch_success():
     )
 
     mock_client.bucket.assert_called_once_with("test-bucket")
-    mock_bucket.blob.assert_called_once_with("evidence/2026/09/batch_42.ndjson", kms_key_name=None)
+    mock_bucket.blob.assert_called_once_with(
+        "evidence/2026/09/batch_42.ndjson", kms_key_name=None
+    )
     mock_blob.upload_from_string.assert_called_once_with(
         content,
         content_type="application/x-ndjson",
@@ -156,7 +158,11 @@ async def test_gcs_cold_store_upload_error_wrapped():
 @pytest.mark.asyncio
 async def test_gcs_cold_store_missing_bucket_raises(monkeypatch):
     """put_batch without a bucket name raises ColdStoreError."""
-    for var in ("EVIDENCE_STREAM_BUCKET_GCS", "EVIDENCE_STREAM_GCS_BUCKET", "GCS_BUCKET"):
+    for var in (
+        "EVIDENCE_STREAM_BUCKET_GCS",
+        "EVIDENCE_STREAM_GCS_BUCKET",
+        "GCS_BUCKET",
+    ):
         monkeypatch.delenv(var, raising=False)
     store = GcsColdStore(bucket_name=None)
     store._client = MagicMock()
@@ -167,7 +173,11 @@ async def test_gcs_cold_store_missing_bucket_raises(monkeypatch):
 
 def test_gcs_cold_store_health_reporting(monkeypatch):
     """health() reports status based on configuration and client availability."""
-    for var in ("EVIDENCE_STREAM_BUCKET_GCS", "EVIDENCE_STREAM_GCS_BUCKET", "GCS_BUCKET"):
+    for var in (
+        "EVIDENCE_STREAM_BUCKET_GCS",
+        "EVIDENCE_STREAM_GCS_BUCKET",
+        "GCS_BUCKET",
+    ):
         monkeypatch.delenv(var, raising=False)
     store_no_bucket = GcsColdStore(bucket_name=None)
     health1 = store_no_bucket.health()
@@ -180,4 +190,3 @@ def test_gcs_cold_store_health_reporting(monkeypatch):
     assert health2.available is True
     assert health2.backend_id == "gcs"
     assert "bucket=prod-bucket" in health2.detail
-

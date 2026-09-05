@@ -92,9 +92,10 @@ autonomy is enabled.**
 
 ```python
 token = await self.guard.reserve(...)
-if token.rejected: return [Violation(...)]
+if token.rejected:
+    return [Violation(...)]
 self._tokens[transaction_id] = token
-await self.guard.confirm(token)      # ← immediately
+await self.guard.confirm(token)  # ← immediately
 ```
 
 `confirm()` means *"the reservation became a real spend"*
@@ -281,7 +282,7 @@ Consider making applicability **declarative** rather than imperative:
 ```python
 class GovernanceTierPlugin(Protocol):
     @property
-    def applies_to(self) -> frozenset[str]: ...   # action names
+    def applies_to(self) -> frozenset[str]: ...  # action names
 ```
 
 A property can be **enumerated at startup**, so the matrix in §2 becomes

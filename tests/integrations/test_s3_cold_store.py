@@ -174,7 +174,12 @@ async def test_s3_cold_store_put_if_absent_fallback_when_ifnonematch_unsupported
 @pytest.mark.asyncio
 async def test_s3_cold_store_missing_bucket_raises(monkeypatch):
     """put_batch without a bucket name raises ColdStoreError."""
-    for var in ("EVIDENCE_STREAM_BUCKET_S3", "EVIDENCE_STREAM_S3_BUCKET", "S3_BUCKET", "OSCAL_S3_BUCKET"):
+    for var in (
+        "EVIDENCE_STREAM_BUCKET_S3",
+        "EVIDENCE_STREAM_S3_BUCKET",
+        "S3_BUCKET",
+        "OSCAL_S3_BUCKET",
+    ):
         monkeypatch.delenv(var, raising=False)
     store = S3ColdStore(bucket_name=None)
     store._client = MagicMock()
@@ -185,17 +190,23 @@ async def test_s3_cold_store_missing_bucket_raises(monkeypatch):
 
 def test_s3_cold_store_health_reporting(monkeypatch):
     """health() reports status based on configuration."""
-    for var in ("EVIDENCE_STREAM_BUCKET_S3", "EVIDENCE_STREAM_S3_BUCKET", "S3_BUCKET", "OSCAL_S3_BUCKET"):
+    for var in (
+        "EVIDENCE_STREAM_BUCKET_S3",
+        "EVIDENCE_STREAM_S3_BUCKET",
+        "S3_BUCKET",
+        "OSCAL_S3_BUCKET",
+    ):
         monkeypatch.delenv(var, raising=False)
     store_no_bucket = S3ColdStore(bucket_name=None)
     health1 = store_no_bucket.health()
     assert health1.available is False
     assert health1.backend_id == "s3"
 
-    store_with_bucket = S3ColdStore(bucket_name="my-bucket", endpoint_url="http://minio:9000")
+    store_with_bucket = S3ColdStore(
+        bucket_name="my-bucket", endpoint_url="http://minio:9000"
+    )
     store_with_bucket._client = MagicMock()
     health2 = store_with_bucket.health()
     assert health2.available is True
     assert health2.backend_id == "s3"
     assert "bucket=my-bucket" in health2.detail
-

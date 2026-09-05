@@ -43,7 +43,9 @@ pytestmark = [pytest.mark.unit]
 def test_layer1_cold_store_ast_zero_vendor_imports():
     """Gate G3/Layer 1 isolation: cold_store.py must contain zero vendor imports."""
     cold_store_path = Path("src/gateway/governance/evidence/cold_store.py")
-    assert cold_store_path.exists(), "src/gateway/governance/evidence/cold_store.py must exist"
+    assert cold_store_path.exists(), (
+        "src/gateway/governance/evidence/cold_store.py must exist"
+    )
 
     tree = ast.parse(cold_store_path.read_text(encoding="utf-8"))
 
@@ -60,7 +62,9 @@ def test_layer1_cold_store_ast_zero_vendor_imports():
             if any(module.startswith(p) for p in prohibited_vendor_prefixes):
                 violations.append(f"from {module} import ... (line {node.lineno})")
 
-    assert not violations, f"Layer 1 cold_store.py contains prohibited vendor imports: {violations}"
+    assert not violations, (
+        f"Layer 1 cold_store.py contains prohibited vendor imports: {violations}"
+    )
 
 
 def test_cold_store_receipt_immutable():
@@ -143,4 +147,3 @@ def test_cold_store_error_preserves_cause():
     assert err.backend_id == "gcs"
     assert str(err) == "GCS failure"
     assert err.__cause__ is cause
-

@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Mock clickhouse_connect before importing ClickHouseSink
-sys.modules['clickhouse_connect'] = MagicMock()
+sys.modules["clickhouse_connect"] = MagicMock()
 
 from src.compliance_bridge.clickhouse_sink import CircuitBreaker, ClickHouseSink
 
@@ -66,8 +66,8 @@ async def test_clickhouse_sink_batch_buffering():
     """Verify batch insert triggers at configured batch size (100 records default)."""
     mock_conn = MagicMock()
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,
@@ -126,8 +126,8 @@ async def test_clickhouse_sink_time_based_flush():
     """Verify flush interval triggers even with partial batch."""
     mock_conn = MagicMock()
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,
@@ -177,8 +177,8 @@ async def test_clickhouse_sink_retry_exponential_backoff():
     mock_conn = MagicMock()
     mock_conn.insert.side_effect = Exception("ClickHouse unavailable")
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,
@@ -281,8 +281,8 @@ async def test_clickhouse_sink_queue_overflow_drops_oldest():
     """Verify bounded queue drops oldest on overflow."""
     mock_conn = MagicMock()
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,
@@ -380,8 +380,8 @@ async def test_clickhouse_sink_schema_mapping():
 async def test_clickhouse_sink_non_blocking_failure():
     """Verify failures never raise exceptions (non-blocking design)."""
     mock_get_client = MagicMock(side_effect=Exception("Connection refused"))
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,
@@ -424,16 +424,19 @@ async def test_clickhouse_sink_metrics_emitted():
     """Verify Prometheus metrics incremented on insert."""
     mock_conn = MagicMock()
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         from src.compliance_bridge.metrics import (
             CLICKHOUSE_SINK_BATCH_DURATION_SECONDS,
             CLICKHOUSE_SINK_RECORDS_TOTAL,
         )
 
-        with patch.object(CLICKHOUSE_SINK_BATCH_DURATION_SECONDS, "observe") as mock_observe, \
-             patch.object(CLICKHOUSE_SINK_RECORDS_TOTAL, "inc") as mock_inc:
-
+        with (
+            patch.object(
+                CLICKHOUSE_SINK_BATCH_DURATION_SECONDS, "observe"
+            ) as mock_observe,
+            patch.object(CLICKHOUSE_SINK_RECORDS_TOTAL, "inc") as mock_inc,
+        ):
             sink = ClickHouseSink(
                 host="localhost",
                 port=9000,
@@ -483,8 +486,8 @@ async def test_clickhouse_sink_health_check():
     mock_conn = MagicMock()
     mock_conn.command.return_value = 1
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,
@@ -533,8 +536,8 @@ async def test_clickhouse_sink_circuit_breaker_integration():
     mock_conn = MagicMock()
     mock_conn.insert.side_effect = Exception("ClickHouse unavailable")
     mock_get_client = MagicMock(return_value=mock_conn)
-    
-    with patch.object(sys.modules['clickhouse_connect'], 'get_client', mock_get_client):
+
+    with patch.object(sys.modules["clickhouse_connect"], "get_client", mock_get_client):
         sink = ClickHouseSink(
             host="localhost",
             port=9000,

@@ -171,14 +171,14 @@ Every record includes a machine-readable disclaimer (line 155-163):
 # Genesis: SHA-256("EVIDENCE_STREAM_GENESIS")
 # Header (JCS-canonicalized):
 header = {
-  "schema": "cage-audit/3.0",
-  "sequence": int,
-  "event_type": str,
-  "control_id": str,
-  "trace_id": str,      # v3.0 REQUIRED
-  "hash_algorithm": str, # v3.0 REQUIRED
-  "canonicalization": str, # v3.0 REQUIRED
-  "chain_id": str       # v3.0 REQUIRED
+    "schema": "cage-audit/3.0",
+    "sequence": int,
+    "event_type": str,
+    "control_id": str,
+    "trace_id": str,  # v3.0 REQUIRED
+    "hash_algorithm": str,  # v3.0 REQUIRED
+    "canonicalization": str,  # v3.0 REQUIRED
+    "chain_id": str,  # v3.0 REQUIRED
 }
 # Link: SHA-256(prev_hash + jcs_canonicalize(header) + payload_json_bytes)
 ```

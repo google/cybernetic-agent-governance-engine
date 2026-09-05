@@ -70,8 +70,16 @@ class S3ColdStore(EvidenceColdStore):
             or os.environ.get("S3_BUCKET")
             or os.environ.get("OSCAL_S3_BUCKET")
         )
-        self._endpoint_url = endpoint_url or os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_ENDPOINT_URL")
-        self._region_name = region_name or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        self._endpoint_url = (
+            endpoint_url
+            or os.environ.get("S3_ENDPOINT_URL")
+            or os.environ.get("AWS_ENDPOINT_URL")
+        )
+        self._region_name = (
+            region_name
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        )
         self._timeout = timeout
 
         self._client: Any = None
@@ -293,4 +301,3 @@ class S3ColdStore(EvidenceColdStore):
                 backend_id="s3",
                 detail=f"Client initialization failed: {exc}",
             )
-

@@ -1132,6 +1132,7 @@ respects the CAGE three-layer split:
 ```python
 class EvidenceSink(Protocol):
     """Secondary, non-authoritative evidence sink."""
+
     async def write_batch(self, records: list[dict[str, Any]]) -> None: ...
     async def flush(self) -> None: ...
     async def close(self) -> None: ...
@@ -1171,13 +1172,14 @@ drop-oldest-and-count** policy on overflow:
 try:
     self._queue.put_nowait(record)
 except asyncio.QueueFull:
-    dropped = self._queue.get_nowait()          # shed the oldest
+    dropped = self._queue.get_nowait()  # shed the oldest
     self._queue.put_nowait(record)
     CLICKHOUSE_SINK_DROPPED.inc()
     logger.error(
         "[ClickHouseSink] Queue full; dropped record seq=%s chain=%s. "
         "Evidence remains durable in Redis and GCS.",
-        dropped.get("sequence"), dropped.get("chain_id"),
+        dropped.get("sequence"),
+        dropped.get("chain_id"),
     )
 ```
 
@@ -1202,26 +1204,27 @@ structurally, not by discipline:
 
 ```python
 async def _flush_batch(self, batch: list[dict]) -> None:
-    for attempt in range(self._max_retries):          # max_retries = 3
+    for attempt in range(self._max_retries):  # max_retries = 3
         try:
             await self._client.insert(...)
             CLICKHOUSE_SINK_RECORDS.inc(len(batch))
             self._breaker.record_success()
             return
         except Exception as exc:
-            CLICKHOUSE_SINK_ERRORS.labels(
-                error_type=type(exc).__name__).inc()
+            CLICKHOUSE_SINK_ERRORS.labels(error_type=type(exc).__name__).inc()
             if attempt == self._max_retries - 1:
                 self._breaker.record_failure()
                 logger.error(
                     "[ClickHouseSink] Batch of %d dropped after %d attempts: %s. "
                     "Evidence remains durable in Redis and GCS.",
-                    len(batch), self._max_retries, exc,
+                    len(batch),
+                    self._max_retries,
+                    exc,
                 )
-                return                                 # never re-raise
+                return  # never re-raise
             await asyncio.sleep(
-                min(0.5 * (2 ** attempt), 8.0)
-                * (0.5 + random.random())              # decorrelated jitter
+                min(0.5 * (2**attempt), 8.0)
+                * (0.5 + random.random())  # decorrelated jitter
             )
 ```
 

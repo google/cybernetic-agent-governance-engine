@@ -116,9 +116,7 @@ SPAN_ATTR_TRACE_METADATA_ISO_CONTROL_ID_SECONDARY = (
 )
 """ISO 42001 secondary control ID for multi-control compliance"""
 
-SPAN_ATTR_TRACE_METADATA_ISO_REQUIREMENT = (
-    "langfuse.trace.metadata.iso.requirement"
-)
+SPAN_ATTR_TRACE_METADATA_ISO_REQUIREMENT = "langfuse.trace.metadata.iso.requirement"
 """ISO 42001 control requirement description"""
 
 SPAN_ATTR_TRACE_METADATA_ISO_REQUIREMENT_SECONDARY = (
@@ -132,9 +130,7 @@ SPAN_ATTR_TRACE_METADATA_GOVERNANCE_OPA_URL = (
 )
 """OPA policy server URL"""
 
-SPAN_ATTR_TRACE_METADATA_GOVERNANCE_ACTION = (
-    "langfuse.trace.metadata.governance.action"
-)
+SPAN_ATTR_TRACE_METADATA_GOVERNANCE_ACTION = "langfuse.trace.metadata.governance.action"
 """Governance action being evaluated (e.g. 'execute_trade', 'prescribe')"""
 
 SPAN_ATTR_TRACE_METADATA_GOVERNANCE_POLICY_INPUT_SIZE = (

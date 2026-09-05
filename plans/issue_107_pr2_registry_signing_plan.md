@@ -180,7 +180,7 @@ verification logic is unit-testable without touching the classifier cache.
 @dataclass(frozen=True)
 class VerificationResult:
     valid: bool
-    reason: str            # machine-readable failure code
+    reason: str  # machine-readable failure code
     serial: int | None
     expires_at: datetime | None
 ```

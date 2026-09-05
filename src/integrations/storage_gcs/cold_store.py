@@ -252,4 +252,3 @@ class GcsColdStore(EvidenceColdStore):
                 backend_id="gcs",
                 detail=f"Client initialization failed: {exc}",
             )
-

@@ -17,4 +17,3 @@
 from .cold_store import S3ColdStore
 
 __all__ = ["S3ColdStore"]
-

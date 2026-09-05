@@ -17,4 +17,3 @@
 from .cold_store import GcsColdStore
 
 __all__ = ["GcsColdStore"]
-
