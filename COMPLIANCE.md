@@ -38,7 +38,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
-| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/cbf.py` |
+| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` |
 | **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` |
 | **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** · **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` |
 
@@ -60,14 +60,14 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
-| **Statistical Code** | Control Barrier Function (MAS FEAT fairness boundary) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/cbf.py` |
+| **Statistical Code** | Control Barrier Function (MAS FEAT fairness boundary) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` |
 | **Statistical Code** | DoWhy Causal Inference (MAS FEAT accountability) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` |
 
 ### 1.5 Summary Mapping for Examiners
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact | Active Regions |
 | --- | --- | --- | --- | --- | --- |
-| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/cbf.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
+| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/symbolic_governor.py` | *All Regions* |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` | *All Regions* |
@@ -92,7 +92,7 @@ The following formal invariants are implemented directly in source code and enfo
 
 ### 2.1 Control Barrier Function (CBF)
 
-**Source:** [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py) · **Control:** `CTRL_MRM_004`
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](src/gateway/governance/safety/cbf_engine.py) · **Control:** `CTRL_MRM_004`
 
 The safe set is `S = {x ∈ ℝⁿ : h(x) ≥ 0}` where the barrier function is:
 
