@@ -38,7 +38,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: benchmark-runner
-          image: gcr.io/laah-cybernetics/governed-financial-advisor:latest
+          image: ${REGISTRY_URL}/governed-financial-advisor:latest
           imagePullPolicy: Always
           command: ["/bin/bash", "-c"]
           args:
@@ -100,7 +100,7 @@ spec:
             - name: REQUEST_TIMEOUT_S
               value: "180"
             - name: KMS_GOVERNANCE_KEY
-              value: "projects/laah-cybernetics/locations/us-central1/keyRings/cybernetics-keyring/cryptoKeys/cage-bench-ec-key/cryptoKeyVersions/1"
+              value: "projects/${GOOGLE_CLOUD_PROJECT}/locations/us-central1/keyRings/cybernetics-keyring/cryptoKeys/cage-bench-ec-key/cryptoKeyVersions/1"
             - name: ADVERSARIAL_JSON
               value: "/app/tests/red_team/adversarial_dataset.json"
             - name: BENIGN_JSON

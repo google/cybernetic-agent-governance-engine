@@ -22,7 +22,7 @@ The CAGE audit log system produces two complementary NDJSON streams:
 > **Scope note.** This document describes the **playground telemetry** chains
 > produced by [`examples/telemetry.py`](../../examples/telemetry.py), which are
 > separate from the production audit chains in
-> [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py)
+> [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)
 > (`cage-evidence-stream/2.0`) and
 > [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py)
 > (`cage-context-accumulator/2.0`). Those production chains canonicalize with

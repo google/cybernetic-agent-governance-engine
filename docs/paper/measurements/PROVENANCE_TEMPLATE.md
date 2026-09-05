@@ -26,7 +26,7 @@
 | Target | <!-- e.g. GKE governance-cluster-2, us-central1-a --> |
 | Node type | <!-- e.g. e2-standard-4 --> |
 | Kubernetes version | <!-- e.g. v1.35.6-gke.1127000 --> |
-| GCP project | <!-- e.g. laah-cybernetics --> |
+| GCP project | <!-- e.g. <your-gcp-project> --> |
 | `CAGE_ENV` | <!-- development / test --> |
 
 ---

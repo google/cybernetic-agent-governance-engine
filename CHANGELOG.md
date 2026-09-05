@@ -45,6 +45,22 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **HITL Constants Relocated** — Human-in-the-loop escalation parameters (HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION) moved from `cage_finance/constants.py` to the `_hitl` section of regional baseline JSONs (`config/thresholds/*_BASELINE.json`). These are regulatory constants, not domain-specific, and belong in region posture config (TODO(PR-C-OSCAL): update OSCAL component definitions to reference new baseline locations) (`refactor(governance)!`).
 
+#### Vendor Decoupling Program (AW-1 through AW-8)
+
+- **Explicit Cold Storage Selection (AW-1, AW-7)** — Eliminated implicit GCS activation. Storage selection requires explicit `EVIDENCE_COLD_STORE` ∈ `{gcs, s3, null}` (defaults to `null`). Running `CAGE_ENV=prod` with `EVIDENCE_COLD_STORE=null` fails fast on startup unless `CAGE_ALLOW_NONBLOCKING_PROD=true` is set (`refactor(compliance)!`).
+
+- **Vendor-Neutral Storage Configuration (AW-2)** — Removed `EVIDENCE_STREAM_GCS_BUCKET*` variables in favor of `EVIDENCE_COLD_STORE_BUCKET*` and declarative configuration in `config/compliance/residency.json`. No legacy alias is read (`refactor(compliance)!`).
+
+- **OSCAL S3 Dispatcher Consolidation (AW-3)** — Consolidated duplicate S3/GCS storage dispatch in `storage.py` into the unified `EvidenceColdStore` abstraction (`refactor(compliance)!`).
+
+- **Evidence Stream Promoted to Kernel (AW-4)** — Promoted `src/compliance_bridge/evidence_stream.py` to `src/gateway/governance/evidence/stream.py`. Severed all Layer 1 → Layer 3 imports. No backward compatibility shim is provided; stale imports fail loudly (`refactor(governance)!`).
+
+- **CBF Compatibility Shim Deleted (AW-5)** — Removed deprecated `src/cage_finance/safety/cbf.py` shim; canonical CBF engine resides in kernel (`refactor(governance)!`).
+
+- **Telemetry Vendor String Neutrality (AW-6)** — Eliminated raw `"langfuse.*"` string literals outside `src/gateway/observability/attributes.py`. Enforced in CI via Gate G7 (`refactor(gateway)!`).
+
+- **Explicit Telemetry Provider Selection (AW-8)** — Removed silent fallback to `MockTelemetryProvider` when credentials are absent; missing credentials with `langfuse` selected now fails fast with `ConfigurationError` (`fix(gateway)!`).
+
 #### Plugin Architecture & Provider Protocol (PR #108–#114)
 
 - **Legacy Trade Dispatch API Removed (PR #111)** — The deprecated trade dispatch API in `src/governed_financial_advisor/` has been removed as part of the GFA-kernel decoupling initiative. All trade execution now flows through the canonical execution actuator protocol. Legacy clients must migrate to the `/v1/execute` endpoint with proper governance envelope wrapping (`refactor(governance)!`).

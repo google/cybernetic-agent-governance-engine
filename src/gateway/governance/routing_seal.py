@@ -60,6 +60,13 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
+from src.gateway.governance.evidence import stream as es
+from src.gateway.governance.evidence.stream import (
+    EvidenceChainUnavailableError,
+    get_evidence_sink,
+    is_evidence_chain_blocking,
+)
+
 import jwt as pyjwt
 from opentelemetry import trace
 
@@ -478,25 +485,19 @@ async def generate_seal_with_evidence(
             commit fails or times out. Caller MUST NOT proceed with execution when
             this exception is raised — the seal is not issued.
     """
-    from src.compliance_bridge.evidence_stream import (
-        EvidenceChainUnavailableError,
-        get_evidence_sink,
-        is_evidence_chain_blocking,
-    )
-
     with tracer.start_as_current_span(
         "cage.routing_seal.generate_with_evidence"
     ) as span:
-        blocking_mode = is_evidence_chain_blocking()
+        blocking_mode = es.is_evidence_chain_blocking()
         span.set_attribute("cage.evidence.blocking_mode", blocking_mode)
         span.set_attribute("cage.seal.action", action)
 
         # Build evidence payload from governance decision
-        # v3.1.0: Migrated params_hash to JCS
-        # Note: default=str was used, so pre-normalize datetime/Decimal
+        # B1: JCS-canonicalize parameters for deterministic hashing (RFC 8785)
+        # Recursively coerce non-standard types to serializable equivalents
         def _normalize(obj: Any) -> Any:
-            if isinstance(obj, (datetime,)):
-                return obj.isoformat()
+            if hasattr(obj, "to_dict") and callable(obj.to_dict):
+                return _normalize(obj.to_dict())
             elif isinstance(obj, dict):
                 return {k: _normalize(v) for k, v in obj.items()}
             elif isinstance(obj, (list, tuple)):
@@ -520,7 +521,7 @@ async def generate_seal_with_evidence(
             "seal_ttl_s": ttl_s,
         }
 
-        sink = get_evidence_sink()
+        sink = es.get_evidence_sink()
         record_hash: str | None = None  # Will be set if evidence commit succeeds
 
         if blocking_mode:

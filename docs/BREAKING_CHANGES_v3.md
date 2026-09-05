@@ -692,5 +692,22 @@ Recorded as a deliberate no-change decision (BC-06) in [`docs/POAM.md`](POAM.md)
 
 ---
 
-**Last updated:** 2026-08-28 (v3.0.0 release + FlowSignal Phase 2 ST-5
-+ backward-compatibility remediation BC-01–BC-08 / POAM-2026-060, -062–-068)
+## Architectural Decoupling Clean Breaks (AW-1 through AW-8)
+
+Per the Core Architectural Principle in [`AGENTS.md`](../AGENTS.md), CAGE is a reference architecture that prioritizes clean, legible architecture and modular layer separation over backward compatibility. The following clean breaks decouple CAGE from vendor-specific leaks:
+
+| Item | Wave | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **AW-1** | W1.5 | Implicit GCS activation eliminated. Cold storage now requires explicit `EVIDENCE_COLD_STORE` ∈ `{gcs, s3, null}`, defaulting to `null`. | Backend selection becomes an explicit architectural decision instead of an emergent property of which bucket env var happens to be set. | Unset → `null` backend, startup WARNING, and Prometheus metric `cage_evidence_cold_store_available{backend="null"}`. |
+| **AW-2** | W1.4 | `EVIDENCE_STREAM_GCS_BUCKET*` removed. Replaced by `EVIDENCE_COLD_STORE_BUCKET*` and `config/compliance/residency.json`. **No alias is read.** | The `GCS` infix was a vendor leak in adopter-facing configuration. Residency policy moved from Python code to declarative config. | Loud `MissingBucketConfigError` raised on startup if unconfigured. |
+| **AW-3** | W1.5 | `STORAGE_BACKEND` and duplicate OSCAL S3 dispatcher in `storage.py` removed. Consolidated into unified `EvidenceColdStore`. | Satisfies invariant I-3: one unified cold store interface across all subsystems. Fixes applied once. | Stale helper calls fail at import; callers use `put_oscal_artifact_atomic()` or `EvidenceColdStore`. |
+| **AW-4** | W2.1 | `src.compliance_bridge.evidence_stream` promoted to `src.gateway.governance.evidence.stream`. Lazy kernel→bridge imports severed. **No compatibility shim.** | Enforces strict Three-Layer Architecture: Layer 1 (kernel) must never import from Layer 3 (bridge). Enforced by Gate G3. | `ModuleNotFoundError` on any stale import or patch path. |
+| **AW-5** | W1.7 | `src.cage_finance.safety.cbf` shim deleted. | Eliminates forbidden shim in domain package; canonical CBF engine lives in kernel. | `ModuleNotFoundError` at collection. |
+| **AW-6** | W1.6 | Raw `"langfuse.*"` string literals banned outside `attributes.py`. Enforced by CI Gate G7. | Enforces OTLP wire format neutrality. Kernel attributes imported from `src.gateway.observability.attributes`. | CI Gate G7 fails with file and line number. |
+| **AW-7** | W1.5 | Silent tolerance of `CAGE_ENV=prod` + `EVIDENCE_COLD_STORE=null` blocked. | Refuses to run production posture without durable cold storage unless explicitly overridden. | Fails fast with `RuntimeError` on startup unless `CAGE_ALLOW_NONBLOCKING_PROD=true`. |
+| **AW-8** | W1.6 | `LangfuseTelemetryProvider.from_env()` silent fallback to `MockTelemetryProvider` eliminated. | Prevents causal gatekeeper from governing on fabricated synthetic data when credentials are missing. | Raises explicit `ConfigurationError` when credentials are missing. |
+
+---
+
+**Last updated:** 2026-09-05 (Vendor Decoupling Program AW-1–AW-8 + Gate G3 & G7 hardening)
+

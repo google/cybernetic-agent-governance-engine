@@ -571,7 +571,7 @@ The AARM Profile Mapper translates CAGE governance decisions into the 11-vector 
 
 The AARM report generator (`src/compliance_bridge/aarm_report_generator.py`) produces AARM-format compliance reports from the 11-vector ledger for submission to regulatory reviewers.
 
-### Evidence Chain Metadata Binding & Durability Preconditions (`src/compliance_bridge/evidence_stream.py`)
+### Evidence Chain Metadata Binding & Durability Preconditions (`src/gateway/governance/evidence/stream.py`)
 
 The evidence stream module binds governance decision metadata to OSCAL evidence artifacts at the point of creation, enforcing strict durability guarantees. Each evidence record includes:
 

@@ -18,7 +18,7 @@
 -- Schema Name:         cage_evidence
 -- Migration Version:   001
 -- Evidence Schema:     cage-audit/3.0
--- Source of Truth:     src/compliance_bridge/evidence_stream.py:508
+-- Source of Truth:     src/gateway/governance/evidence/stream.py:508
 -- Architecture Doc:    docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md
 --
 -- CRITICAL: This is an append-only, WORM-enforced audit mirror.
