@@ -84,8 +84,12 @@ jobs:
       - name: Install Lula binary
         # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
         # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
+        env:
+          # Passed via env rather than interpolated directly into the script:
+          # a `${{ }}` expansion is substituted before the shell runs, so a
+          # value containing shell metacharacters would execute as code.
+          LULA_VERSION: ${{ env.LULA_VERSION }}
         run: |
-          LULA_VERSION="${{ env.LULA_VERSION }}"
           LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
           echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
           curl -fsSL \
@@ -98,7 +102,7 @@ jobs:
         run: |
           if [ -d "tests/core" ]; then
             echo "Running core unit tests..."
-            pytest -p no:langsmith -p no:langsmith_plugin tests/core/ -v
+            uv run pytest -p no:langsmith -p no:langsmith_plugin tests/core/ -v
           else
             echo "::warning::tests/core/ not found — skipping core unit tests"
           fi
@@ -175,8 +179,12 @@ jobs:
       - name: Install Lula binary
         # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
         # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
+        env:
+          # Passed via env rather than interpolated directly into the script:
+          # a `${{ }}` expansion is substituted before the shell runs, so a
+          # value containing shell metacharacters would execute as code.
+          LULA_VERSION: ${{ env.LULA_VERSION }}
         run: |
-          LULA_VERSION="${{ env.LULA_VERSION }}"
           LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
           echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
           curl -fsSL \

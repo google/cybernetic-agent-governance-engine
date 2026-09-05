@@ -192,7 +192,7 @@ jobs:
           CAGE_DEPLOYMENT_REGION: EU_ECB
           VLLM_FAST_API_BASE: ${{ vars.VLLM_FAST_API_BASE || 'http://localhost:8001/v1' }}
         run: |
-          pytest -p no:langsmith -p no:langsmith_plugin compliance/postures/eu_ecb/llm_eval/ -v --timeout=300
+          uv run pytest -p no:langsmith -p no:langsmith_plugin compliance/postures/eu_ecb/llm_eval/ -v --timeout=300
 
   stpa-freshness-check:
     name: "STPA Artifact Freshness Check"

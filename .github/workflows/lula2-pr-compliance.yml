@@ -81,9 +81,13 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env rather than interpolated directly into the script:
+          # `${{ github.base_ref }}` expands before the shell runs, so a branch
+          # name containing shell metacharacters would execute as code.
+          BASE_REF: ${{ github.base_ref }}
         run: |
           # List changed files that touch compliance-relevant paths
-          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | \
+          CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" | \
             grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|deployment/k8s/|infra/|\.github/workflows/)" || true)
           if [ -n "$CHANGED" ]; then
             echo "Compliance-relevant files changed in this PR:"
