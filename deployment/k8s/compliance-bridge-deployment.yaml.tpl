@@ -72,22 +72,24 @@ spec:
                   name: compliance-alert-secrets
                   key: webhook-url
                   optional: true
-            - name: OSCAL_S3_ENDPOINT
-              value: "https://storage.googleapis.com"
-            - name: OSCAL_S3_BUCKET
-              value: "${OSCAL_S3_BUCKET}"
-            - name: OSCAL_S3_REGION
-              value: "${OSCAL_S3_REGION}"
-            - name: OSCAL_S3_ACCESS_KEY
+            - name: EVIDENCE_COLD_STORE
+              value: "${EVIDENCE_COLD_STORE}"
+            - name: EVIDENCE_COLD_STORE_BUCKET
+              value: "${EVIDENCE_COLD_STORE_BUCKET}"
+            - name: EVIDENCE_COLD_STORE_S3_ENDPOINT
+              value: "${EVIDENCE_COLD_STORE_S3_ENDPOINT}"
+            - name: EVIDENCE_COLD_STORE_S3_REGION
+              value: "${EVIDENCE_COLD_STORE_S3_REGION}"
+            - name: EVIDENCE_COLD_STORE_S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: oscal-artifact-secrets
+                  name: cold-store-secrets
                   key: hmac-access-key
                   optional: true
-            - name: OSCAL_S3_SECRET_KEY
+            - name: EVIDENCE_COLD_STORE_S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: oscal-artifact-secrets
+                  name: cold-store-secrets
                   key: hmac-secret-key
                   optional: true
           livenessProbe:

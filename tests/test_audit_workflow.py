@@ -45,8 +45,9 @@ def _dev_env(monkeypatch):
     monkeypatch.setenv("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "pk-dummy")
     monkeypatch.setenv("LANGFUSE_COMPLIANCE_SECRET_KEY", "sk-dummy")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-dummy")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-dummy")
-    # Clear OSCAL_S3_ENDPOINT so Step 1 is skipped by default
+    # Clear EVIDENCE_COLD_STORE so Step 1 is skipped by default
+    monkeypatch.delenv("EVIDENCE_COLD_STORE", raising=False)
+    monkeypatch.delenv("EVIDENCE_COLD_STORE_S3_ENDPOINT", raising=False)
     monkeypatch.delenv("OSCAL_S3_ENDPOINT", raising=False)
 
 
@@ -127,18 +128,19 @@ class TestStep1ArtifactPersistence:
     """Tests for _step1_persist_artifact."""
 
     @pytest.mark.asyncio
-    async def test_step1_skipped_when_no_s3_endpoint(self, monkeypatch):
-        """Step 1 returns None when OSCAL_S3_ENDPOINT is not set."""
-        monkeypatch.delenv("OSCAL_S3_ENDPOINT", raising=False)
+    async def test_step1_skipped_when_no_cold_store(self, monkeypatch):
+        """Step 1 returns None when EVIDENCE_COLD_STORE is not set to durable backend."""
+        monkeypatch.delenv("EVIDENCE_COLD_STORE", raising=False)
+        monkeypatch.delenv("EVIDENCE_COLD_STORE_S3_ENDPOINT", raising=False)
         from src.compliance_bridge.audit_workflow import _step1_persist_artifact
 
         result = await _step1_persist_artifact("yaml-content", "audit-001")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_step1_calls_put_when_endpoint_set(self, monkeypatch):
-        """Step 1 calls put_oscal_artifact when OSCAL_S3_ENDPOINT is set."""
-        monkeypatch.setenv("OSCAL_S3_ENDPOINT", "http://minio:9000")
+    async def test_step1_calls_put_when_cold_store_configured(self, monkeypatch):
+        """Step 1 calls put_oscal_artifact when EVIDENCE_COLD_STORE is configured."""
+        monkeypatch.setenv("EVIDENCE_COLD_STORE", "s3")
 
         with patch(
             "src.compliance_bridge.audit_workflow.put_oscal_artifact",
@@ -155,7 +157,7 @@ class TestStep1ArtifactPersistence:
     @pytest.mark.asyncio
     async def test_step1_returns_none_on_storage_failure(self, monkeypatch):
         """Step 1 returns None (non-fatal) when put_oscal_artifact raises."""
-        monkeypatch.setenv("OSCAL_S3_ENDPOINT", "http://minio:9000")
+        monkeypatch.setenv("EVIDENCE_COLD_STORE", "s3")
 
         with patch(
             "src.compliance_bridge.audit_workflow.put_oscal_artifact",

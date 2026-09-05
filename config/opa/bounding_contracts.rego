@@ -53,11 +53,20 @@ default allow := false
 
 violation_b1 := msg if {
 	input.action == "execute_trade_bounded"
+	amount := object.get(input, "amount", 0.0)
+	amount <= 0
+	msg := "B1 HARD_BLOCK: Trade amount must be positive"
+}
+
+violation_b1 := msg if {
+	input.action == "execute_trade_bounded"
+	amount := object.get(input, "amount", 0.0)
+	amount > 0
 	max_notional := input._thresholds.bounding.max_single_order_usd
-	input.amount > max_notional
+	amount > max_notional
 	msg := sprintf(
 		"B1 HARD_BLOCK: Trade amount %.2f USD exceeds maximum single-order notional %.2f USD",
-		[input.amount, max_notional],
+		[amount + 1e-9, max_notional + 1e-9],
 	)
 }
 
@@ -73,7 +82,7 @@ violation_b2 := msg if {
 	current_drawdown_pct > max_drawdown
 	msg := sprintf(
 		"B2 HARD_BLOCK: Current daily drawdown %.2f%% exceeds circuit breaker threshold %.2f%%",
-		[current_drawdown_pct, max_drawdown],
+		[current_drawdown_pct + 1e-9, max_drawdown + 1e-9],
 	)
 }
 
@@ -83,16 +92,18 @@ violation_b2 := msg if {
 
 violation_b3 := msg if {
 	input.action == "execute_trade_bounded"
+	amount := object.get(input, "amount", 0.0)
+	amount > 0
 	order_book_depth := object.get(input, "order_book_depth", 0.0)
 	min_ratio := input._thresholds.bounding.min_liquidity_depth_ratio
 
 	# Fail-closed: if order_book_depth is absent or zero, ratio is 0
-	depth_ratio := order_book_depth / input.amount
+	depth_ratio := order_book_depth / amount
 	depth_ratio < min_ratio
 
 	msg := sprintf(
 		"B3 HARD_BLOCK: Liquidity depth ratio %.2f is below minimum %.2f (order book depth %.2f USD / trade amount %.2f USD)",
-		[depth_ratio, min_ratio, order_book_depth, input.amount],
+		[depth_ratio + 1e-9, min_ratio + 1e-9, order_book_depth + 1e-9, amount + 1e-9],
 	)
 }
 
@@ -116,7 +127,7 @@ violation_b4 := msg if {
 
 	msg := sprintf(
 		"B4 HARD_BLOCK: Counterparty '%s' exposure %.2f USD exceeds maximum %.2f USD",
-		[counterparty, counterparty_exposure, max_exposure],
+		[counterparty, counterparty_exposure + 1e-9, max_exposure + 1e-9],
 	)
 }
 
@@ -131,7 +142,7 @@ violation_b5 := msg if {
 	volatility_percentile > max_percentile
 	msg := sprintf(
 		"B5 HARD_BLOCK: Volatility percentile %.2f exceeds maximum %.2f",
-		[volatility_percentile, max_percentile],
+		[volatility_percentile + 1e-9, max_percentile + 1e-9],
 	)
 }
 
@@ -146,7 +157,7 @@ violation_b8 := msg if {
 	twap_slippage_bps > max_slippage_bps
 	msg := sprintf(
 		"B8 HARD_BLOCK: TWAP slippage %.2f bps exceeds maximum %.2f bps",
-		[twap_slippage_bps, max_slippage_bps],
+		[twap_slippage_bps + 1e-9, max_slippage_bps + 1e-9],
 	)
 }
 
@@ -154,15 +165,28 @@ violation_b8 := msg if {
 # Aggregate violations
 # ---------------------------------------------------------------------------
 
-violations := {msg |
-	some msg in [
-		violation_b1,
-		violation_b2,
-		violation_b3,
-		violation_b4,
-		violation_b5,
-		violation_b8,
-	]
+violations contains msg if {
+	msg := violation_b1
+}
+
+violations contains msg if {
+	msg := violation_b2
+}
+
+violations contains msg if {
+	msg := violation_b3
+}
+
+violations contains msg if {
+	msg := violation_b4
+}
+
+violations contains msg if {
+	msg := violation_b5
+}
+
+violations contains msg if {
+	msg := violation_b8
 }
 
 # ---------------------------------------------------------------------------

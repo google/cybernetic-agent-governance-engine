@@ -175,10 +175,9 @@ async def test_s3_cold_store_put_if_absent_fallback_when_ifnonematch_unsupported
 async def test_s3_cold_store_missing_bucket_raises(monkeypatch):
     """put_batch without a bucket name raises ColdStoreError."""
     for var in (
-        "EVIDENCE_STREAM_BUCKET_S3",
-        "EVIDENCE_STREAM_S3_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET_S3",
         "S3_BUCKET",
-        "OSCAL_S3_BUCKET",
     ):
         monkeypatch.delenv(var, raising=False)
     store = S3ColdStore(bucket_name=None)
@@ -191,10 +190,9 @@ async def test_s3_cold_store_missing_bucket_raises(monkeypatch):
 def test_s3_cold_store_health_reporting(monkeypatch):
     """health() reports status based on configuration."""
     for var in (
-        "EVIDENCE_STREAM_BUCKET_S3",
-        "EVIDENCE_STREAM_S3_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET_S3",
         "S3_BUCKET",
-        "OSCAL_S3_BUCKET",
     ):
         monkeypatch.delenv(var, raising=False)
     store_no_bucket = S3ColdStore(bucket_name=None)

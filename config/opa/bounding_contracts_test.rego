@@ -42,7 +42,7 @@ baseline_input := {
 	"side": "buy",
 	"venue": "NYSE",
 	"current_drawdown": 0.01,
-	"order_book_depth": 200000.0,
+	"order_book_depth": 1000000.0,
 	"volatility_percentile": 50.0,
 	"twap_slippage_bps": 25.0,
 	"_thresholds": {

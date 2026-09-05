@@ -228,16 +228,24 @@ def _make_app_langfuse():  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
+def _is_cold_store_configured() -> bool:
+    """Check if durable cold store is configured for OSCAL artifact persistence."""
+    backend = os.environ.get("EVIDENCE_COLD_STORE", "null").lower()
+    return backend in ("gcs", "s3") or bool(
+        os.environ.get("EVIDENCE_COLD_STORE_S3_ENDPOINT")
+    )
+
+
 async def _step1_persist_artifact(
     oscal_yaml: str,
     audit_id: str,
 ) -> str | None:
     """Returns artifact key on success, None if storage is unconfigured or fails."""
-    if not os.environ.get("OSCAL_S3_ENDPOINT"):
+    if not _is_cold_store_configured():
         logger.warning(
-            "[audit_workflow] OSCAL_S3_ENDPOINT not set — skipping artifact persistence. "
-            "Set OSCAL_S3_ENDPOINT, OSCAL_S3_BUCKET, OSCAL_S3_ACCESS_KEY, "
-            "OSCAL_S3_SECRET_KEY to enable durable evidence storage (ISO 42001 A.7.5)."
+            "[audit_workflow] EVIDENCE_COLD_STORE not configured for durable storage — skipping artifact persistence. "
+            "Set EVIDENCE_COLD_STORE to 'gcs' or 's3' with regional bucket configuration "
+            "to enable durable evidence storage (ISO 42001 A.7.5)."
         )
         return None
 
@@ -808,9 +816,9 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
         chain_integrity_valid,
     )
 
-    # Persist the NDJSON context chain to GCS/S3 alongside the OSCAL artifact (non-fatal)
+    # Persist the NDJSON context chain to cold storage alongside the OSCAL artifact (non-fatal)
     chain_artifact_key: str | None = None
-    if artifact_key and os.environ.get("OSCAL_S3_ENDPOINT"):
+    if artifact_key and _is_cold_store_configured():
         try:
             chain_ndjson = accumulator.export_ndjson()
             chain_artifact_key = await put_oscal_artifact(
@@ -953,8 +961,8 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
 
     # Step 6 — AARM Conformance Report Card.
     # The report is always generated synchronously so the artifact key can be
-    # returned in the response.  Persistence to GCS/S3 is attempted when
-    # OSCAL_S3_ENDPOINT is configured; if storage is unavailable the key is
+    # returned in the response. Persistence to cold store is attempted when
+    # EVIDENCE_COLD_STORE is configured; if storage is unavailable the key is
     # still returned as a logical identifier (<audit_id>/aarm_conformance.json).
     aarm_report_artifact: str | None = None
     try:
@@ -968,7 +976,7 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
         aarm_report_json = aarm_report.model_dump_json(indent=2)
         # Logical artifact key — always set so callers can reference the report.
         aarm_report_artifact = f"{audit_id}/aarm_conformance.json"
-        if os.environ.get("OSCAL_S3_ENDPOINT"):
+        if _is_cold_store_configured():
             try:
                 persisted_key = await put_oscal_artifact(
                     f"{audit_id}/aarm_conformance", aarm_report_json

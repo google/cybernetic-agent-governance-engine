@@ -24,10 +24,20 @@ from .cold_store import (
     ColdStoreReceipt,
     EvidenceColdStore,
 )
+from .null_cold_store import NullColdStore
+from .residency import (
+    MissingBucketConfigError,
+    ResidencyViolationError,
+    resolve_cold_store_bucket,
+)
 
 __all__ = [
     "ColdStoreError",
     "ColdStoreHealth",
     "ColdStoreReceipt",
     "EvidenceColdStore",
+    "MissingBucketConfigError",
+    "NullColdStore",
+    "ResidencyViolationError",
+    "resolve_cold_store_bucket",
 ]

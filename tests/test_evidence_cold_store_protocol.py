@@ -121,20 +121,25 @@ async def test_null_cold_store_conforms_to_protocol(monkeypatch):
     assert receipt.backend_id == "null"
 
     # Test exists
-    exists = await store.exists("batch/2026-09-05.ndjson")
-    assert exists is False
+    assert await store.exists("batch/2026-09-05.ndjson") is True
+    assert await store.exists("batch/nonexistent.ndjson") is False
 
-    # Test put_if_absent
+    # Test put_if_absent on existing key
     receipt2, created = await store.put_if_absent("batch/2026-09-05.ndjson", payload)
-    assert created is True
+    assert created is False
     assert receipt2.content_sha256 == expected_sha
+
+    # Test put_if_absent on new key
+    receipt3, created3 = await store.put_if_absent("batch/another.ndjson", payload)
+    assert created3 is True
+    assert receipt3.content_sha256 == expected_sha
 
 
 def test_null_cold_store_fails_closed_in_production(monkeypatch):
     """NullColdStore must refuse to instantiate in production (CAGE_ENV=prod)."""
     monkeypatch.setenv("CAGE_ENV", "prod")
 
-    with pytest.raises(RuntimeError, match="CAGE_ENV=prod requires real cold storage"):
+    with pytest.raises(RuntimeError, match="requires durable cold storage"):
         NullColdStore()
 
 

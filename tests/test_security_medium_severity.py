@@ -667,27 +667,27 @@ class TestM20RateLimiting:
 
 
 class TestM21StorageBackendLazy:
-    """M-21: _get_storage_backend() must read env var at call time, not import time."""
+    """M-21: Cold store backend selection must be resolved at call time, not import time."""
 
-    def test_get_storage_backend_function_exists(self):
-        from src.compliance_bridge.storage import _get_storage_backend
+    def test_get_cold_store_function_exists(self):
+        from src.gateway.governance.evidence.factory import get_cold_store
 
-        assert callable(_get_storage_backend)
+        assert callable(get_cold_store)
 
     def test_storage_backend_reads_env_at_call_time(self):
-        from src.compliance_bridge.storage import _get_storage_backend
+        from src.gateway.governance.evidence.factory import get_cold_store
 
-        with patch.dict(os.environ, {"STORAGE_BACKEND": "s3"}):
-            backend = _get_storage_backend()
-        assert backend == "s3"
+        with patch.dict(os.environ, {"EVIDENCE_COLD_STORE": "null"}):
+            store = get_cold_store()
+        assert store.backend_id == "null"
 
-    def test_storage_backend_defaults_to_s3(self):
-        from src.compliance_bridge.storage import _get_storage_backend
+    def test_storage_backend_defaults_to_null(self):
+        from src.gateway.governance.evidence.factory import get_cold_store
 
-        env = {k: v for k, v in os.environ.items() if k != "STORAGE_BACKEND"}
+        env = {k: v for k, v in os.environ.items() if k != "EVIDENCE_COLD_STORE"}
         with patch.dict(os.environ, env, clear=True):
-            backend = _get_storage_backend()
-        assert backend == "s3"
+            store = get_cold_store()
+        assert store.backend_id == "null"
 
     def test_no_module_level_storage_backend_constant(self):
         import inspect
@@ -695,10 +695,8 @@ class TestM21StorageBackendLazy:
         from src.compliance_bridge import storage
 
         source = inspect.getsource(storage)
-        # The old pattern: _STORAGE_BACKEND: str = os.environ.get(...)
-        assert "_STORAGE_BACKEND: str = os.environ.get" not in source, (
-            "Module-level _STORAGE_BACKEND constant must be replaced with _get_storage_backend()"
-        )
+        assert "_STORAGE_BACKEND: str = os.environ.get" not in source
+        assert "STORAGE_BACKEND" not in source
 
 
 # ---------------------------------------------------------------------------

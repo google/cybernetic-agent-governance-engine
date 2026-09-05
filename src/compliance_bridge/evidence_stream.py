@@ -34,13 +34,13 @@ Architecture
                │
                └──→ Redis Streams (db=1, noeviction policy)
                       │
-                      └──→ GCS Flush Daemon (background, 60s interval, CMEK)
+                      └──→ Cold Store Flush Daemon (background, 60s interval)
 
 Durability strategy
 -------------------
 Redis Streams (db=1, noeviction) provides sub-millisecond ingestion speed.
-The GCS Flush Daemon asynchronously persists hash-chained Redis logs to
-Customer-Managed Encryption Key (CMEK) secured GCS buckets every 60 seconds.
+The Cold Store Flush Daemon asynchronously persists hash-chained Redis logs to
+the configured EvidenceColdStore (GCS, S3, or Null) every 60 seconds.
 
 This gives: real-time processing speed at the edge + cold, immutable
 compliance storage at rest.
@@ -67,8 +67,7 @@ Environment variables
   EVIDENCE_STREAM_REDIS_DB          — Redis DB number (default: 1)
   EVIDENCE_STREAM_KEY               — Redis Stream key name (default: "cage:evidence:stream")
   EVIDENCE_STREAM_MAX_LEN           — Max stream entries (default: 100000)
-  EVIDENCE_STREAM_GCS_FLUSH_SECONDS — GCS flush interval (default: 60)
-  EVIDENCE_STREAM_GCS_BUCKET        — GCS bucket for cold storage
+  EVIDENCE_COLD_STORE_FLUSH_SECONDS — Cold store flush interval (default: 60)
   EVIDENCE_STREAM_KMS_SIGN          — "true" for per-record KMS signing
 """
 
@@ -82,7 +81,10 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.gateway.governance.evidence.cold_store import EvidenceColdStore
 
 from opentelemetry import trace
 
@@ -121,6 +123,9 @@ tracer = trace.get_tracer(__name__)
 
 # Prometheus metrics (lazy import to avoid dependency in tests)
 _PROM_AVAILABLE = False
+EVIDENCE_COLD_STORE_WRITES_TOTAL = None
+EVIDENCE_COLD_STORE_AVAILABLE = None
+
 try:
     from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
@@ -166,6 +171,28 @@ try:
     except ValueError:
         EVIDENCE_STREAM_DISABLED = REGISTRY._names_to_collectors.get(
             "cage_evidence_stream_disabled"
+        )  # type: ignore[assignment]
+
+    try:
+        EVIDENCE_COLD_STORE_WRITES_TOTAL = Counter(
+            "cage_evidence_cold_store_writes_total",
+            "Total cold store write operations",
+            ["backend", "outcome"],
+        )
+    except ValueError:
+        EVIDENCE_COLD_STORE_WRITES_TOTAL = REGISTRY._names_to_collectors.get(
+            "cage_evidence_cold_store_writes_total"
+        )  # type: ignore[assignment]
+
+    try:
+        EVIDENCE_COLD_STORE_AVAILABLE = Gauge(
+            "cage_evidence_cold_store_available",
+            "Cold store backend availability (1=available, 0=unavailable)",
+            ["backend"],
+        )
+    except ValueError:
+        EVIDENCE_COLD_STORE_AVAILABLE = REGISTRY._names_to_collectors.get(
+            "cage_evidence_cold_store_available"
         )  # type: ignore[assignment]
 
     _PROM_AVAILABLE = True
@@ -364,8 +391,9 @@ _REDIS_URL: str = os.environ.get(
 _REDIS_DB: int = int(os.environ.get("EVIDENCE_STREAM_REDIS_DB", "1"))
 _STREAM_KEY: str = os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream")
 _MAX_LEN: int = int(os.environ.get("EVIDENCE_STREAM_MAX_LEN", "100000"))
-_GCS_FLUSH_SECONDS: int = int(os.environ.get("EVIDENCE_STREAM_GCS_FLUSH_SECONDS", "60"))
-_GCS_BUCKET: str = os.environ.get("EVIDENCE_STREAM_GCS_BUCKET", "")
+_COLD_STORE_FLUSH_SECONDS: int = int(
+    os.environ.get("EVIDENCE_COLD_STORE_FLUSH_SECONDS", "60")
+)
 _KMS_SIGN: bool = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
 
 # EVIDENCE_CHAIN_BLOCKING: When "true", seal issuance blocks until evidence commit
@@ -730,12 +758,14 @@ class EvidenceStreamSink:
         stream_key: str = _STREAM_KEY,
         max_len: int = _MAX_LEN,
         kms_sign: bool = _KMS_SIGN,
+        cold_store: EvidenceColdStore | None = None,
     ) -> None:
         self._redis_url = redis_url
         self._redis_db = redis_db
         self._stream_key = stream_key
         self._max_len = max_len
         self._kms_sign = kms_sign
+        self._cold_store = cold_store
 
         self._redis = None  # Lazy-loaded redis.asyncio client
         self._prev_hash: str = _sha256("EVIDENCE_STREAM_GENESIS")
@@ -745,7 +775,7 @@ class EvidenceStreamSink:
         self._chain_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        """Connect to Redis and start the GCS flush daemon."""
+        """Connect to Redis and start the cold store flush daemon."""
         if self._running:
             return
 
@@ -776,12 +806,24 @@ class EvidenceStreamSink:
 
         self._running = True
 
-        # Start GCS flush daemon if configured
-        if _GCS_BUCKET:
-            self._flush_task = asyncio.create_task(
-                self._gcs_flush_loop(),
-                name="evidence-gcs-flush",
-            )
+        # Resolve cold store via factory if not injected
+        if self._cold_store is None:
+            from src.gateway.governance.evidence.factory import get_cold_store
+
+            self._cold_store = get_cold_store()
+
+        # Update cold store availability metric
+        if _PROM_AVAILABLE and EVIDENCE_COLD_STORE_AVAILABLE is not None:
+            health = self._cold_store.health()
+            EVIDENCE_COLD_STORE_AVAILABLE.labels(
+                backend=self._cold_store.backend_id
+            ).set(1 if health.available else 0)
+
+        # Start cold store flush daemon
+        self._flush_task = asyncio.create_task(
+            self._cold_flush_loop(),
+            name="evidence-cold-flush",
+        )
 
         logger.info("[EvidenceStream] Started.")
 
@@ -1119,18 +1161,18 @@ class EvidenceStreamSink:
         except Exception as exc:
             logger.warning("[EvidenceStream] KMS enqueue failed: %s", exc)
 
-    async def _gcs_flush_loop(self) -> None:
-        """Background daemon that flushes Redis Stream entries to GCS.
+    async def _cold_flush_loop(self) -> None:
+        """Background daemon that flushes Redis Stream entries to cold store.
 
-        Runs every ``_GCS_FLUSH_SECONDS`` seconds. Reads all entries since
+        Runs every ``_COLD_STORE_FLUSH_SECONDS`` seconds. Reads all entries since
         the last flush and writes them as a hash-chained NDJSON blob to
-        a CMEK-encrypted GCS bucket.
+        the configured EvidenceColdStore.
         """
         last_id = "0-0"
 
         while self._running:
             try:
-                await asyncio.sleep(_GCS_FLUSH_SECONDS)
+                await asyncio.sleep(_COLD_STORE_FLUSH_SECONDS)
 
                 if self._redis is None:
                     continue
@@ -1152,58 +1194,61 @@ class EvidenceStreamSink:
                     last_id = msg_id
 
                 ndjson_content = "\n".join(lines) + "\n"
+                ndjson_bytes = ndjson_content.encode("utf-8")
 
-                # Upload to GCS (async)
-                await self._upload_to_gcs(ndjson_content, last_id)
+                if self._cold_store is None:
+                    from src.gateway.governance.evidence.factory import get_cold_store
+
+                    self._cold_store = get_cold_store()
+
+                batch_key = (
+                    f"evidence-stream/"
+                    f"{datetime.now(tz=timezone.utc).strftime('%Y/%m/%d')}/"
+                    f"batch-{last_id.replace(':', '-')}.ndjson"
+                )
+
+                receipt = await self._cold_store.put_batch(
+                    key=batch_key,
+                    content=ndjson_bytes,
+                    metadata={
+                        "content-type": "application/x-ndjson",
+                        "entries-count": str(len(entries)),
+                        "last-id": last_id,
+                    },
+                )
+
+                if _PROM_AVAILABLE and EVIDENCE_COLD_STORE_WRITES_TOTAL is not None:
+                    EVIDENCE_COLD_STORE_WRITES_TOTAL.labels(
+                        backend=self._cold_store.backend_id,
+                        outcome="success",
+                    ).inc()
 
                 logger.info(
-                    "[EvidenceStream] GCS flush: %d entries → %s (last_id=%s)",
+                    "[EvidenceStream] Cold store flush: %d entries → %s (backend=%s, last_id=%s, sha256=%s…)",
                     len(entries),
-                    _GCS_BUCKET,
+                    receipt.uri,
+                    receipt.backend_id,
                     last_id,
+                    receipt.content_sha256[:12],
                 )
 
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error("[EvidenceStream] GCS flush error: %s", exc)
-                await asyncio.sleep(5.0)
-
-    async def _upload_to_gcs(self, content: str, batch_id: str) -> None:
-        """Upload NDJSON content to a CMEK-encrypted GCS bucket.
-
-        Uses the google-cloud-storage async client. If not available,
-        logs a warning (GCS flush is best-effort — the Redis Stream
-        retains all data).
-        """
-        try:
-            from google.cloud import storage  # type: ignore[import, attr-defined]
-
-            client = storage.Client()
-            bucket = client.bucket(_GCS_BUCKET)
-            blob_name = (
-                f"evidence-stream/"
-                f"{datetime.now(tz=timezone.utc).strftime('%Y/%m/%d')}/"
-                f"batch-{batch_id.replace(':', '-')}.ndjson"
-            )
-            blob = bucket.blob(blob_name)
-            blob.upload_from_string(
-                content,
-                content_type="application/x-ndjson",
-            )
-            logger.debug(
-                "[EvidenceStream] GCS upload: gs://%s/%s (%d bytes)",
-                _GCS_BUCKET,
-                blob_name,
-                len(content),
-            )
-        except ImportError:
-            logger.warning(
-                "[EvidenceStream] google-cloud-storage not installed — "
-                "GCS flush disabled. Install with: pip install google-cloud-storage"
-            )
-        except Exception as exc:
-            logger.error("[EvidenceStream] GCS upload failed: %s", exc)
+                if (
+                    self._cold_store
+                    and _PROM_AVAILABLE
+                    and EVIDENCE_COLD_STORE_WRITES_TOTAL is not None
+                ):
+                    EVIDENCE_COLD_STORE_WRITES_TOTAL.labels(
+                        backend=self._cold_store.backend_id,
+                        outcome="error",
+                    ).inc()
+                logger.error("[EvidenceStream] Cold store flush error: %s", exc)
+                try:
+                    await asyncio.sleep(5.0)
+                except asyncio.CancelledError:
+                    break
 
     @property
     def chain_root(self) -> str:

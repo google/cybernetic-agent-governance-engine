@@ -180,7 +180,7 @@ def validate_cmek_configuration(region: str | None = None) -> dict:
     # Check 2: Verify GCS bucket encryption metadata (best-effort)
     # ------------------------------------------------------------------
     bucket_name = os.environ.get(
-        "OSCAL_BUCKET_NAME", os.environ.get("OSCAL_S3_BUCKET", "")
+        "OSCAL_BUCKET_NAME", os.environ.get("EVIDENCE_COLD_STORE_BUCKET", "")
     )
     bucket_verified = False
 
