@@ -13,6 +13,13 @@
 # limitations under the License.
 
 name: "Security Scanning — Vulnerability & SBOM (Universal) + NIST RMF Gate (US_FED only)"
+# Cancel superseded runs for the same ref. Without this, the push +
+# pull_request double-trigger consumes two identical sets of runners on
+# every push to an open PR (measured: 23.3 duplicated job-minutes per push).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 
 # Regional Compliance Posture:
 # - US_FED: NIST SP 800-53 Rev 5 HIGH (this workflow's NIST gate)
@@ -23,8 +30,9 @@ name: "Security Scanning — Vulnerability & SBOM (Universal) + NIST RMF Gate (U
 on:
   push:
     branches:
+      # PR validation runs via the pull_request event. Pushing to a
+      # feature branch no longer double-triggers this workflow.
       - main
-      - "feature/**"
   pull_request:
     branches:
       - main
@@ -50,15 +58,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
@@ -108,7 +116,7 @@ jobs:
             --output pip-audit-compliance-bridge.json || true
 
       - name: Upload pip-audit results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: pip-audit-results
@@ -134,7 +142,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Build Docker image
         run: |
@@ -145,7 +153,7 @@ jobs:
       - name: Run Trivy filesystem scan
         # Pinned to v0.31.0 — Node 20 deprecation fix (was @master, unpinned).
         # Update via Dependabot PR or bump manually when a new release ships.
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -155,7 +163,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         if: always()
         continue-on-error: true # Fixed: Code scanning not enabled on this private repo
         with:
@@ -164,7 +172,7 @@ jobs:
 
       - name: Generate SBOM with Trivy (CycloneDX — POAM-006)
         # Pinned to v0.31.0 — Node 20 deprecation fix (was @master, unpinned).
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -172,7 +180,7 @@ jobs:
           output: "sbom-${{ strategy.job-index }}.cdx.json"
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: sbom-${{ strategy.job-index }}
@@ -189,7 +197,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install OPA
         run: |
@@ -245,10 +253,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
@@ -284,7 +292,7 @@ jobs:
             || echo "::warning::Syft dir scan encountered issues — check SBOM output"
 
       - name: Upload SBOM artifacts (90-day retention — POAM-006 evidence)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: sbom-${{ github.sha }}
@@ -324,10 +332,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
@@ -356,7 +364,7 @@ jobs:
           wc -l dependency-snapshot.txt
 
       - name: Upload dependency snapshot artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: dependency-snapshot
@@ -370,7 +378,11 @@ jobs:
   nist-compliance-gate:
     name: "NIST SP 800-53 Compliance Gate (US_FED only)"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'US_FED'
+    # Previously gated on `vars.CAGE_DEPLOYMENT_REGION == 'US_FED'`. That
+    # repository variable is not set, so this aggregate gate never executed.
+    # It is a pure fan-in over the four universal scan jobs below and carries
+    # no region-specific work, so it now always runs and genuinely enforces
+    # that those four upstream jobs succeeded.
     needs:
       - python-dependency-audit
       - container-image-scan
@@ -379,7 +391,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: NIST RMF gate
         run: echo "NIST RMF gate active for US_FED deployment"
@@ -399,7 +411,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
