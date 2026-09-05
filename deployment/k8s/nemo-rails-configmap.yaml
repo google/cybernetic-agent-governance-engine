@@ -103,9 +103,7 @@ data:
         """
         with _tracer.start_as_current_span("nemo.action.retrieve_knowledge") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "RetrieveKnowledgeAction"
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "RetrieveKnowledgeAction")
             span.set_attribute("iso42001.control_id", "A.6.1.2")
 
             kb_url = os.environ.get("KNOWLEDGE_BASE_URL", "")
@@ -797,9 +795,7 @@ data:
         """
         with _tracer.start_as_current_span("nemo.action.check_approval_token") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "CheckApprovalTokenAction"
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckApprovalTokenAction")
             span.set_attribute("iso42001.control_id", "A.6.1.2")
             span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
             span.set_attribute("nemo.action.stpa_ref", "SC-1")
@@ -818,9 +814,7 @@ data:
         """
         with _tracer.start_as_current_span("nemo.action.check_data_latency") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "CheckDataLatencyAction"
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckDataLatencyAction")
             span.set_attribute("iso42001.control_id", "A.6.1.2")
             span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
             span.set_attribute("nemo.action.stpa_ref", "FIN-2")
@@ -839,9 +833,7 @@ data:
         """
         with _tracer.start_as_current_span("nemo.action.check_drawdown_limit") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "CheckDrawdownLimitAction"
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckDrawdownLimitAction")
             span.set_attribute("iso42001.control_id", "A.6.1.2")
             span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
             span.set_attribute("nemo.action.stpa_ref", "UCA-5")
@@ -860,9 +852,7 @@ data:
         """
         with _tracer.start_as_current_span("nemo.action.check_slippage_risk") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "CheckSlippageRiskAction"
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckSlippageRiskAction")
             span.set_attribute("iso42001.control_id", "A.6.1.2")
             span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
             span.set_attribute("nemo.action.stpa_ref", "UCA-6")
@@ -902,9 +892,7 @@ data:
         """
         with _tracer.start_as_current_span("nemo.action.log_safety_audit") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "LogSafetyAuditAction"
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "LogSafetyAuditAction")
             span.set_attribute("iso42001.control_id", "A.6.2.8")
             span.set_attribute("nemo.action.outcome", "LOGGED")
             event_type = (
