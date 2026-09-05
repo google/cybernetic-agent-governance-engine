@@ -164,10 +164,17 @@ reuse and prevent cross-worker fixture churn.
 4. **Asyncio Loop Scoping**: `pytest-asyncio` is configured with `asyncio_default_fixture_loop_scope = module` and `asyncio_default_test_loop_scope = module` in `pytest.ini` to avoid per-test event loop teardown overhead.
 5. **Slow Test Profiling**: Use `--durations=20 --durations-min=1.0` to diagnose slow tests and setup/teardown bottlenecks.
 
+**Performance Optimization for High-Core Linux / VM Environments (e.g., `dev-thin-client`):**
+To maximize throughput and avoid disk lock contention across parallel workers, point pytest's temporary directory to shared memory (`tmpfs`):
+```bash
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short --basetemp=/dev/shm/pytest
+```
+
 Correct:
 ```bash
 uv run pytest
 uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short --basetemp=/dev/shm/pytest
 uv run pytest tests/test_tls_enforcement.py -v
 uv run pytest --cov=src --cov-report=term-missing
 uv run python proof/model.py
@@ -448,6 +455,12 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 | **Run only last failed tests** | `uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q` (or `make test-last-failed`) |
 | **Profile slowest tests & fixtures** | `uv run pytest --durations=20 --durations-min=1.0` |
 | **Full suite with coverage (mirrors CI)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75` (or `make test-coverage`) |
+
+**High-Throughput / In-Memory Optimization:**
+On Linux development hosts (such as the `dev-thin-client` VM), point pytest temporary directory allocations to shared memory (`tmpfs`) to avoid disk lock contention and speed up test runs across 16+ parallel workers:
+```bash
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short --basetemp=/dev/shm/pytest
+```
 
 ### Targeted Test Commands Reference
 
