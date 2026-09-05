@@ -32,6 +32,12 @@ on:
       - main
       - 'release/**'
 
+# Default least-privilege permissions for every job in this workflow.
+# Without this block jobs inherit the (potentially broad) repository default,
+# which zizmor flags as an excessive-permissions finding.
+permissions:
+  contents: read
+
 jobs:
   license-check:
     runs-on: ubuntu-latest

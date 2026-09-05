@@ -35,6 +35,12 @@ on:
 # Only run this workflow for EU_ECB deployments.
 # If CAGE_DEPLOYMENT_REGION is not set, skip gracefully (not an EU_ECB deployment).
 
+# Default least-privilege permissions for every job in this workflow.
+# Without this block jobs inherit the (potentially broad) repository default,
+# which zizmor flags as an excessive-permissions finding.
+permissions:
+  contents: read
+
 jobs:
   eu-ai-act-posture:
     name: "EU AI Act Compliance Posture (EU_ECB only)"

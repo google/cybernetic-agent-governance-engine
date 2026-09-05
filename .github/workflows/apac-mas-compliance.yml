@@ -35,6 +35,12 @@ on:
 # Only run this workflow for APAC_MAS deployments.
 # If CAGE_DEPLOYMENT_REGION is not set, skip gracefully (not an APAC_MAS deployment).
 
+# Default least-privilege permissions for every job in this workflow.
+# Without this block jobs inherit the (potentially broad) repository default,
+# which zizmor flags as an excessive-permissions finding.
+permissions:
+  contents: read
+
 jobs:
   mas-feat-posture:
     name: "MAS FEAT Compliance Posture (APAC_MAS only)"

@@ -40,9 +40,11 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+# Least-privilege default. `security-events: write` is NOT granted here — only
+# container-image-scan uploads SARIF, so that scope is granted at the job level
+# instead of to every job in the workflow.
 permissions:
   contents: read
-  security-events: write # Required for SARIF upload
   actions: read
 
 jobs:
@@ -131,6 +133,12 @@ jobs:
   container-image-scan:
     name: "Container Image Vulnerability Scan — Trivy (Universal — NIST RA-5/CM-8 reporting: US_FED only)"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      # Scoped here rather than workflow-wide: this is the only job that
+      # uploads a SARIF report to code scanning.
+      security-events: write
 
     strategy:
       fail-fast: false
