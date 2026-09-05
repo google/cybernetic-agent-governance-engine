@@ -63,6 +63,53 @@ jobs:
           fi
           echo "OK: HEAD is a single-parent commit (squash or direct push)."
 
+  branch-name-validator:
+    name: "Branch Name Validator"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate branch name
+        run: |
+          BRANCH_NAME="${{ github.head_ref }}"
+          echo "Validating PR branch name: $BRANCH_NAME"
+          
+          # Pattern matches AGENTS.md enforcement rules.
+          # Hotfix has different structure (version-desc), so use alternation:
+          # Standard: (type)/(description)
+          # Hotfix:   hotfix/(version)-(description)
+          PATTERN='^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$'
+          
+          if ! echo "$BRANCH_NAME" | grep -qE "$PATTERN"; then
+            echo "::error::Branch name '$BRANCH_NAME' does not follow the project's naming convention."
+            echo "::error::See AGENTS.md § Branch Naming & Merge Strategy for rules."
+            echo ""
+            echo "Valid patterns:"
+            echo "  feat/<description>     — new feature"
+            echo "  fix/<description>      — bug fix"
+            echo "  docs/<description>     — documentation"
+            echo "  refactor/<description> — code restructuring"
+            echo "  ci/<description>       — CI/CD changes"
+            echo "  test/<description>     — test additions"
+            echo "  chore/<description>    — maintenance"
+            echo "  hotfix/<version>-<desc> — production hotfix"
+            echo "  spike/<description>    — experiment"
+            echo ""
+            echo "Where <description>:"
+            echo "  - lowercase kebab-case only (a-z, 0-9, hyphens)"
+            echo "  - ≤ 30 characters"
+            echo "  - no uppercase, no underscores, no trailing hyphens"
+            echo ""
+            echo "Rejected patterns:"
+            echo "  ❌ feature/... (use feat/)"
+            echo "  ❌ bugfix/...  (use fix/)"
+            echo "  ❌ Feature/... (no uppercase)"
+            echo "  ❌ feat_thing  (no underscores)"
+            echo "  ❌ random-name (missing prefix)"
+            exit 1
+          fi
+          
+          echo "✅ Branch name is valid: $BRANCH_NAME"
+
   license-check:
     runs-on: ubuntu-latest
     steps:

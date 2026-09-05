@@ -171,6 +171,7 @@ line-length = 88
 target-version = "py310"
 exclude = [
     "src/gateway/governance/vendor",
+    ".github/",
 ]
 
 [tool.ruff.lint]
