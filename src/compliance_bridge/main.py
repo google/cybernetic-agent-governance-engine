@@ -391,8 +391,8 @@ async def health() -> dict:
                                       and LANGFUSE_COMPLIANCE_SECRET_KEY are set.
         langfuse_app_configured:     True if LANGFUSE_PUBLIC_KEY and
                                       LANGFUSE_SECRET_KEY are set.
-        oscal_storage_configured:    True if OSCAL_S3_ENDPOINT is set,
-                                      indicating artifact storage is available.
+        oscal_storage_configured:    True if EVIDENCE_COLD_STORE is set to 'gcs' or 's3'
+                                      or EVIDENCE_COLD_STORE_S3_ENDPOINT is set.
         environment:                 Active CAGE_ENV / ENVIRONMENT value.
     """
     langfuse_compliance_configured = bool(
@@ -402,7 +402,11 @@ async def health() -> dict:
     langfuse_app_configured = bool(
         os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
     )
-    oscal_storage_configured = bool(os.environ.get("OSCAL_S3_ENDPOINT"))
+    oscal_storage_configured = os.environ.get(
+        "EVIDENCE_COLD_STORE", "null"
+    ).lower() in ("gcs", "s3") or bool(
+        os.environ.get("EVIDENCE_COLD_STORE_S3_ENDPOINT")
+    )
     active_env = os.environ.get(
         "CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")
     ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement

@@ -87,37 +87,37 @@ spec:
             # ---------------------------------------------------------------------------
             # S3-compatible artifact storage (ISO 42001 A.7.5 evidence)
             # Supports any S3-compatible backend: AWS S3, MinIO, Ceph, or GCS via interop.
-            # GCS interop: https://cloud.google.com/storage/docs/authentication/hmackeys
             # ---------------------------------------------------------------------------
-            - name: OSCAL_S3_ENDPOINT
-              value: ""  # Set to your S3-compatible endpoint: https://s3.amazonaws.com, http://minio:9000, or https://storage.googleapis.com (GCS)
-            # DEP-07: OSCAL_S3_REGION must not be "auto" — it must reflect the
-            # GCS bucket region for the active jurisdiction to satisfy data residency
-            # requirements (GDPR Art. 44 / MAS TRM §4.2).
-            # Sourced from oscal-artifact-secrets so deploy_all.sh / Terraform can
-            # inject the correct region per CAGE_DEPLOYMENT_REGION:
-            # US_FED → us-central1 | EU_ECB → europe-west1 | APAC_MAS → asia-southeast1
-            - name: OSCAL_S3_REGION
+            # Cold Storage Configuration (GCS, S3, or null) — Wave 1 vendor decoupling
+            # ---------------------------------------------------------------------------
+            - name: EVIDENCE_COLD_STORE
+              value: "null"
+            - name: EVIDENCE_COLD_STORE_BUCKET
               valueFrom:
                 secretKeyRef:
-                  name: oscal-artifact-secrets
-                  key: gcs-region
-                  optional: false
-            - name: OSCAL_S3_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: oscal-artifact-secrets
+                  name: cold-store-secrets
                   key: bucket-name
-            - name: OSCAL_S3_ACCESS_KEY
+                  optional: true
+            - name: EVIDENCE_COLD_STORE_S3_ENDPOINT
+              value: ""
+            - name: EVIDENCE_COLD_STORE_S3_REGION
               valueFrom:
                 secretKeyRef:
-                  name: oscal-artifact-secrets
+                  name: cold-store-secrets
+                  key: s3-region
+                  optional: true
+            - name: EVIDENCE_COLD_STORE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cold-store-secrets
                   key: hmac-access-key
-            - name: OSCAL_S3_SECRET_KEY
+                  optional: true
+            - name: EVIDENCE_COLD_STORE_S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: oscal-artifact-secrets
+                  name: cold-store-secrets
                   key: hmac-secret-key
+                  optional: true
 
             # Critical control failure alerting (Slack or PagerDuty webhook)
             - name: COMPLIANCE_ALERT_WEBHOOK_URL

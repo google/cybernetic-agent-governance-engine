@@ -159,8 +159,8 @@ async def test_gcs_cold_store_upload_error_wrapped():
 async def test_gcs_cold_store_missing_bucket_raises(monkeypatch):
     """put_batch without a bucket name raises ColdStoreError."""
     for var in (
-        "EVIDENCE_STREAM_BUCKET_GCS",
-        "EVIDENCE_STREAM_GCS_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET_GCS",
         "GCS_BUCKET",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -174,8 +174,8 @@ async def test_gcs_cold_store_missing_bucket_raises(monkeypatch):
 def test_gcs_cold_store_health_reporting(monkeypatch):
     """health() reports status based on configuration and client availability."""
     for var in (
-        "EVIDENCE_STREAM_BUCKET_GCS",
-        "EVIDENCE_STREAM_GCS_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET",
+        "EVIDENCE_COLD_STORE_BUCKET_GCS",
         "GCS_BUCKET",
     ):
         monkeypatch.delenv(var, raising=False)

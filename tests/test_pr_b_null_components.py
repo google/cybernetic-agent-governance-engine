@@ -22,9 +22,14 @@ posture rather than silently allowing requests when domain components
 are absent.
 """
 
+import hashlib
+import os
+from unittest.mock import patch
+
 import pytest
 
 from src.gateway.governance.null_components import (
+    NullColdStore,
     NullConsensusProvider,
     NullSafetyFilter,
 )
@@ -179,3 +184,62 @@ def test_install_domain_components_prevents_double_installation():
         # Components already installed by another plugin, so even first attempt should fail
         with pytest.raises(RuntimeError, match="safety_filter already installed"):
             singletons.install_domain_components(safety_filter_impl=mock_filter)
+
+
+@pytest.mark.local
+@pytest.mark.unit
+class TestNullColdStore:
+    """Test suite for NullColdStore (succeed-locally bounded cold store placeholder)."""
+
+    @pytest.mark.asyncio
+    async def test_null_cold_store_succeeds_locally_and_receipt_well_formed(self):
+        """NullColdStore stores to bounded memory and returns valid receipt with real sha256."""
+        store = NullColdStore()
+        payload = b'{"event": "test_event", "status": "OK"}\n'
+        key = "evidence/2026/09/batch-1.ndjson"
+        receipt = await store.put_batch(key, payload)
+
+        assert receipt.uri == f"null://{key}"
+        assert receipt.key == key
+        assert receipt.backend_id == "null"
+        assert receipt.content_sha256 == hashlib.sha256(payload).hexdigest()
+        assert await store.exists(key) is True
+
+    @pytest.mark.asyncio
+    async def test_null_cold_store_put_if_absent(self):
+        """put_if_absent indicates created=True on first write, False on second."""
+        store = NullColdStore()
+        key = "oscal-artifacts/2026-09-05/audit-001.yaml"
+        content = b"sample-oscal-yaml"
+
+        receipt1, created1 = await store.put_if_absent(key, content)
+        assert created1 is True
+        assert receipt1.uri == f"null://{key}"
+
+        receipt2, created2 = await store.put_if_absent(key, content)
+        assert created2 is False
+        assert receipt2.uri == f"null://{key}"
+
+    def test_null_cold_store_health(self):
+        """health() reports available=True with backend_id='null'."""
+        store = NullColdStore()
+        health = store.health()
+        assert health.available is True
+        assert health.backend_id == "null"
+        assert "in-memory" in health.detail.lower()
+
+    def test_prod_and_null_fails_startup(self):
+        """CAGE_ENV=prod + NullColdStore fails startup unless explicitly overridden."""
+        with patch.dict(
+            os.environ, {"CAGE_ENV": "prod", "CAGE_ALLOW_NONBLOCKING_PROD": "false"}
+        ):
+            with pytest.raises(RuntimeError, match="requires durable cold storage"):
+                NullColdStore()
+
+    def test_prod_and_null_allowed_with_explicit_override(self):
+        """CAGE_ENV=prod + NullColdStore succeeds when CAGE_ALLOW_NONBLOCKING_PROD=true."""
+        with patch.dict(
+            os.environ, {"CAGE_ENV": "prod", "CAGE_ALLOW_NONBLOCKING_PROD": "true"}
+        ):
+            store = NullColdStore()
+            assert store.backend_id == "null"

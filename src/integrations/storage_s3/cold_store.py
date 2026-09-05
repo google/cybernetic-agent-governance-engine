@@ -62,25 +62,39 @@ class S3ColdStore(EvidenceColdStore):
         endpoint_url: str | None = None,
         region_name: str | None = None,
         timeout: float = 15.0,
+        bucket: str | None = None,
+        timeout_seconds: float | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        use_ssl: bool = True,
     ) -> None:
         self._bucket_name = (
-            bucket_name
-            or os.environ.get("EVIDENCE_STREAM_BUCKET_S3")
-            or os.environ.get("EVIDENCE_STREAM_S3_BUCKET")
+            bucket
+            or bucket_name
+            or os.environ.get("EVIDENCE_COLD_STORE_BUCKET_S3")
+            or os.environ.get("EVIDENCE_COLD_STORE_BUCKET")
             or os.environ.get("S3_BUCKET")
-            or os.environ.get("OSCAL_S3_BUCKET")
         )
         self._endpoint_url = (
             endpoint_url
+            or os.environ.get("EVIDENCE_COLD_STORE_S3_ENDPOINT")
             or os.environ.get("S3_ENDPOINT_URL")
             or os.environ.get("AWS_ENDPOINT_URL")
         )
         self._region_name = (
             region_name
+            or os.environ.get("EVIDENCE_COLD_STORE_S3_REGION")
             or os.environ.get("AWS_REGION")
             or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
         )
-        self._timeout = timeout
+        self._timeout = timeout_seconds if timeout_seconds is not None else timeout
+        self._aws_access_key_id = aws_access_key_id or os.environ.get(
+            "EVIDENCE_COLD_STORE_S3_ACCESS_KEY"
+        )
+        self._aws_secret_access_key = aws_secret_access_key or os.environ.get(
+            "EVIDENCE_COLD_STORE_S3_SECRET_KEY"
+        )
+        self._use_ssl = use_ssl
 
         self._client: Any = None
         self._lock = threading.Lock()
@@ -120,12 +134,19 @@ class S3ColdStore(EvidenceColdStore):
                     read_timeout=self._timeout,
                     retries={"max_attempts": 1},
                 )
-                self._client = boto3.client(
-                    "s3",
-                    endpoint_url=self._endpoint_url,
-                    region_name=self._region_name,
-                    config=config,
-                )
+                client_kwargs: dict[str, Any] = {
+                    "service_name": "s3",
+                    "endpoint_url": self._endpoint_url,
+                    "region_name": self._region_name,
+                    "config": config,
+                    "use_ssl": self._use_ssl,
+                }
+                if self._aws_access_key_id:
+                    client_kwargs["aws_access_key_id"] = self._aws_access_key_id
+                if self._aws_secret_access_key:
+                    client_kwargs["aws_secret_access_key"] = self._aws_secret_access_key
+
+                self._client = boto3.client(**client_kwargs)
                 logger.info(
                     "[storage_s3] Initialized S3 client (endpoint=%s, region=%s)",
                     self._endpoint_url or "aws-default",

@@ -93,77 +93,10 @@ class NullConsensusProvider:
         }
 
 
-class NullColdStore(EvidenceColdStore):
-    """Fail-closed EvidenceColdStore used when no cloud storage is configured.
+from .evidence.null_cold_store import NullColdStore
 
-    Succeeds locally/dev but fails on startup if CAGE_ENV=prod.
-    Emits distinct metric label for observability.
-
-    This allows local development without GCS/S3 credentials while enforcing
-    that production deployments MUST have cold storage configured for compliance.
-    """
-
-    def __init__(self) -> None:
-        """Initialize NullColdStore.
-
-        Raises:
-            RuntimeError: If CAGE_ENV=prod (production must have real cold storage)
-        """
-        cage_env = os.environ.get("CAGE_ENV", "dev")
-        if cage_env == "prod":
-            raise RuntimeError(
-                "[NullColdStore] CAGE_ENV=prod requires real cold storage. "
-                "Configure EVIDENCE_STREAM_BUCKET_{region} and use "
-                "GcsColdStore or S3ColdStore."
-            )
-        self._logger = logging.getLogger("cage.evidence.null_cold_store")
-
-    @property
-    def backend_id(self) -> str:
-        return "null"
-
-    async def put_batch(
-        self,
-        key: str,
-        content: bytes,
-        metadata: Mapping[str, str] | None = None,
-    ) -> ColdStoreReceipt:
-        """No-op upload for local/dev environments.
-
-        Computes exact SHA-256 digest and returns a simulated receipt.
-        """
-        digest = hashlib.sha256(content).hexdigest()
-        self._logger.warning(
-            "[NullColdStore] Skipping cold storage for key '%s' (%d bytes) — dev/local mode",
-            key,
-            len(content),
-        )
-        return ColdStoreReceipt(
-            uri=f"null://{key}",
-            key=key,
-            content_sha256=digest,
-            backend_id="null",
-            written_at=datetime.now(timezone.utc),
-        )
-
-    async def exists(self, key: str) -> bool:
-        """NullColdStore does not persist objects; always returns False."""
-        return False
-
-    async def put_if_absent(
-        self,
-        key: str,
-        content: bytes,
-        metadata: Mapping[str, str] | None = None,
-    ) -> tuple[ColdStoreReceipt, bool]:
-        """Simulates atomic put_if_absent (always succeeds in dev)."""
-        receipt = await self.put_batch(key, content, metadata)
-        return receipt, True
-
-    def health(self) -> ColdStoreHealth:
-        """Synchronously reports availability for dev/local environments."""
-        return ColdStoreHealth(
-            available=True,
-            backend_id="null",
-            detail="in-memory dev null cold store (no durable persistence)",
-        )
+__all__ = [
+    "NullColdStore",
+    "NullConsensusProvider",
+    "NullSafetyFilter",
+]

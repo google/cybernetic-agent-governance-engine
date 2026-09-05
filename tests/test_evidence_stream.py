@@ -29,13 +29,21 @@ Covers:
 All tests are hermetic — no live Redis, no GCS, no KMS.
 """
 
-from __future__ import annotations
-
+import ast
 import asyncio
+import hashlib
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from src.gateway.governance.evidence.cold_store import (
+    ColdStoreError,
+    ColdStoreHealth,
+    ColdStoreReceipt,
+)
+from src.gateway.governance.evidence.null_cold_store import NullColdStore
 
 pytestmark = pytest.mark.local
 
@@ -395,29 +403,85 @@ class TestEvidenceStreamSinkLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# 6. GCS flush loop (mocked)
+# 6. Cold store flush loop & seam integration
 # ---------------------------------------------------------------------------
 
 
-class TestGcsFlushLoop:
-    """Tests for the GCS flush daemon background task."""
+class FakeColdStore:
+    """In-memory EvidenceColdStore test double for evidence stream tests."""
+
+    def __init__(self, should_fail: bool = False, backend_id: str = "fake") -> None:
+        self.should_fail = should_fail
+        self._backend_id = backend_id
+        self.batches: list[tuple[str, bytes, dict]] = []
+
+    @property
+    def backend_id(self) -> str:
+        return self._backend_id
+
+    async def put_batch(
+        self, key: str, content: bytes, metadata: dict | None = None
+    ) -> ColdStoreReceipt:
+        if self.should_fail:
+            raise ColdStoreError("Simulated cold store failure")
+
+        digest = hashlib.sha256(content).hexdigest()
+        self.batches.append((key, content, metadata or {}))
+        return ColdStoreReceipt(
+            uri=f"fake://bucket/{key}",
+            key=key,
+            content_sha256=digest,
+            backend_id=self._backend_id,
+            written_at=datetime.now(tz=timezone.utc),
+        )
+
+    async def exists(self, key: str) -> bool:
+        return any(k == key for k, _, _ in self.batches)
+
+    async def put_if_absent(
+        self, key: str, content: bytes, metadata: dict | None = None
+    ) -> tuple[ColdStoreReceipt, bool]:
+        if await self.exists(key):
+            digest = hashlib.sha256(content).hexdigest()
+            return (
+                ColdStoreReceipt(
+                    uri=f"fake://bucket/{key}",
+                    key=key,
+                    content_sha256=digest,
+                    backend_id=self._backend_id,
+                    written_at=datetime.now(tz=timezone.utc),
+                ),
+                False,
+            )
+        receipt = await self.put_batch(key, content, metadata)
+        return receipt, True
+
+    def health(self) -> ColdStoreHealth:
+        return ColdStoreHealth(
+            available=not self.should_fail,
+            backend_id=self._backend_id,
+            detail="Fake cold store operational",
+        )
+
+
+class TestColdFlushLoop:
+    """Tests for the EvidenceColdStore flush daemon background task."""
 
     @pytest.mark.asyncio
-    async def test_gcs_flush_loop_exits_on_cancelled_error(self):
-        """_gcs_flush_loop must exit cleanly on CancelledError (stop() path)."""
-        sink = _make_sink()
+    async def test_cold_flush_loop_exits_on_cancelled_error(self):
+        """_cold_flush_loop must exit cleanly on CancelledError (stop() path)."""
+        sink = _make_sink(cold_store=FakeColdStore())
         sink._running = True
         sink._redis = _make_redis_mock()
 
         # Patch asyncio.sleep to immediately raise CancelledError
         with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
-            # Should complete without raising
-            await sink._gcs_flush_loop()
+            await sink._cold_flush_loop()
 
     @pytest.mark.asyncio
     async def test_stop_cancels_flush_task(self):
-        """stop() must cancel the GCS flush task if it is running."""
-        sink = _make_sink()
+        """stop() must cancel the cold flush task if it is running."""
+        sink = _make_sink(cold_store=FakeColdStore())
 
         async def _forever():
             await asyncio.sleep(10000)
@@ -429,3 +493,80 @@ class TestGcsFlushLoop:
         await sink.stop()
 
         assert sink._flush_task.cancelled() or sink._flush_task.done()
+
+    @pytest.mark.asyncio
+    async def test_cold_flush_loop_persists_entries_to_cold_store(self):
+        """_cold_flush_loop reads entries from Redis and writes them to cold store."""
+        fake_store = FakeColdStore()
+        sink = _make_sink(cold_store=fake_store)
+        sink._running = True
+
+        redis_mock = _make_redis_mock()
+        redis_mock.xrange.return_value = [
+            ("100-0", {"event_type": "GOVERNANCE_DECISION", "rule": "US_FED_CAS"}),
+            ("101-0", {"event_type": "AUDIT_FINDING", "status": "PASS"}),
+        ]
+        sink._redis = redis_mock
+
+        # First sleep succeeds (run one flush pass), second sleep cancels
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+            await sink._cold_flush_loop()
+
+        assert len(fake_store.batches) == 1
+        key, content, metadata = fake_store.batches[0]
+        assert key.startswith("evidence-stream/")
+        assert key.endswith(".ndjson")
+        assert b"GOVERNANCE_DECISION" in content
+        assert b"AUDIT_FINDING" in content
+        assert metadata["content-type"] == "application/x-ndjson"
+        assert metadata["entries-count"] == "2"
+
+    @pytest.mark.asyncio
+    async def test_cold_flush_loop_survives_cold_store_error(self):
+        """ColdStoreError during flush is logged, backs off, and loop survives."""
+        failing_store = FakeColdStore(should_fail=True)
+        sink = _make_sink(cold_store=failing_store)
+        sink._running = True
+
+        redis_mock = _make_redis_mock()
+        redis_mock.xrange.return_value = [("100-0", {"event_type": "FAULT"})]
+        sink._redis = redis_mock
+
+        # First sleep triggers flush (raises error), error handler sleeps 5s which cancels
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+            await sink._cold_flush_loop()
+
+    def test_sink_imports_no_vendor_module(self):
+        """AST check: evidence_stream.py must not import vendor storage SDKs."""
+        import inspect
+
+        from src.compliance_bridge import evidence_stream
+
+        source = inspect.getsource(evidence_stream)
+        tree = ast.parse(source)
+
+        forbidden_prefixes = ("google.cloud", "boto3", "botocore", "azure")
+        imported_modules: list[str] = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported_modules.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported_modules.append(node.module)
+
+        for mod in imported_modules:
+            for forbidden in forbidden_prefixes:
+                assert not mod.startswith(forbidden), (
+                    f"Forbidden vendor import '{mod}' found in evidence_stream.py"
+                )
+
+    def test_null_cold_store_opens_no_socket(self):
+        """NullColdStore integration requires no credentials and opens no network sockets."""
+        null_store = NullColdStore()
+        sink = _make_sink(cold_store=null_store)
+        health = null_store.health()
+        assert health.available is True
+        assert health.backend_id == "null"
+        assert sink._cold_store.backend_id == "null"

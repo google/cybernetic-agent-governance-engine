@@ -56,20 +56,25 @@ class GcsColdStore(EvidenceColdStore):
         project_id: str | None = None,
         cmek_key: str | None = None,
         timeout: float = 15.0,
+        bucket: str | None = None,
+        timeout_seconds: float | None = None,
+        project: str | None = None,
     ) -> None:
         self._bucket_name = (
-            bucket_name
-            or os.environ.get("EVIDENCE_STREAM_BUCKET_GCS")
-            or os.environ.get("EVIDENCE_STREAM_GCS_BUCKET")
+            bucket
+            or bucket_name
+            or os.environ.get("EVIDENCE_COLD_STORE_BUCKET_GCS")
+            or os.environ.get("EVIDENCE_COLD_STORE_BUCKET")
             or os.environ.get("GCS_BUCKET")
         )
         self._project_id = (
-            project_id
+            project
+            or project_id
             or os.environ.get("GOOGLE_CLOUD_PROJECT")
             or os.environ.get("GCS_PROJECT_ID")
         )
+        self._timeout = timeout_seconds if timeout_seconds is not None else timeout
         self._cmek_key = cmek_key
-        self._timeout = timeout
 
         self._client: Any = None
         self._lock = threading.Lock()

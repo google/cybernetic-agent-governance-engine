@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Declarative cold storage evidence residency rules and bucket mapping across CAGE jurisdictions.",
+  "regions": {
+    "US_FED": {
+      "jurisdiction": "United States (Federal Reserve / NIST SP 800-53)",
+      "env_var": "EVIDENCE_COLD_STORE_BUCKET_US",
+      "allowed_prefixes": ["us-", "cage-us-"],
+      "allowed_locations": [
+        "us-central1",
+        "us-east1",
+        "us-east4",
+        "us-west1",
+        "us-west2",
+        "us-west3",
+        "us-west4",
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2"
+      ],
+      "allow_prefixes": true
+    },
+    "EU_ECB": {
+      "jurisdiction": "European Union (European Central Bank / GDPR Art. 44)",
+      "env_var": "EVIDENCE_COLD_STORE_BUCKET_EU",
+      "allowed_prefixes": ["eu-", "cage-eu-"],
+      "allowed_locations": [
+        "europe-west1",
+        "europe-west3",
+        "europe-west4",
+        "europe-central2",
+        "eu-central-1",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-west-3"
+      ],
+      "allow_prefixes": true
+    },
+    "APAC_MAS": {
+      "jurisdiction": "Asia-Pacific (Monetary Authority of Singapore / MAS TRM §4.2)",
+      "env_var": "EVIDENCE_COLD_STORE_BUCKET_APAC",
+      "allowed_prefixes": ["apac-", "cage-apac-"],
+      "allowed_locations": [
+        "asia-southeast1",
+        "asia-southeast2",
+        "asia-east1",
+        "ap-southeast-1",
+        "ap-southeast-2"
+      ],
+      "allow_prefixes": true
+    },
+    "LOCAL": {
+      "jurisdiction": "Local Developer Workstation / Isolated Test Environment",
+      "env_var": "EVIDENCE_COLD_STORE_BUCKET_LOCAL",
+      "allowed_prefixes": ["local-", "cage-local-", "dev-", "test-"],
+      "allowed_locations": [
+        "local",
+        "us-central1",
+        "europe-west1",
+        "asia-southeast1"
+      ],
+      "default_bucket": "local-evidence-bucket",
+      "allow_prefixes": true
+    }
+  }
+}
+
