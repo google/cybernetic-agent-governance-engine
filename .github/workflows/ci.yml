@@ -487,8 +487,13 @@ jobs:
   locust-load-test:
     name: "Nightly Load Test (Locust)"
     runs-on: ubuntu-latest
-    # Run only on the nightly schedule — not on every push or pull_request.
-    if: github.event_name == 'schedule'
+    # DISABLED: cannot start the gateway. Three defects must be fixed first:
+    #  1. vllm_client.py:76 reads VLLM_BASE_URL but the job sets VLLM_GATEWAY_URL
+    #  2. no services: containers for Redis (6379) or OPA (8181) that the env points at
+    #  3. the health loop prints "Gateway ready" even after 30 failed curl attempts,
+    #     so Locust would silently hammer a dead port with no early failure signal
+    # Verified by execution: gateway crashes with "VLLM_BASE_URL must be set"
+    if: false  # was: github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

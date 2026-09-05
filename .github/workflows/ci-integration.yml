@@ -22,8 +22,15 @@ concurrency:
 
 
 on:
-  schedule:
-    - cron: '0 3 * * *'   # 03:00 UTC daily
+  # DISABLED: 25/25 nightly runs failed at "Set up job" before any test ran.
+  # Root cause: required secrets do not exist (only MIRROR_SECRET is configured).
+  # Needs: GOOGLE_CREDENTIALS, GKE_CLUSTER_NAME, GKE_CLUSTER_LOCATION
+  # Per AGENTS.md, live-GKE validation is a deliberate manual activity via
+  # port_forward_dev.sh + --run-integration, not an unattended nightly against
+  # a cluster this repo has no credentials for. Keep workflow_dispatch for
+  # manual runs once secrets are configured.
+  # schedule:
+  #   - cron: '0 3 * * *'   # 03:00 UTC daily (disabled)
   workflow_dispatch:
     inputs:
       namespace:

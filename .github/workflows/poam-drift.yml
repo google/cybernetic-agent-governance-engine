@@ -22,8 +22,11 @@ concurrency:
 
 
 on:
-  schedule:
-    - cron: '0 4 * * *'   # 04:00 UTC daily
+  # REMOVED SCHEDULE: this is a deterministic function of repo content
+  # (check_poam_lula_divergence.py reads docs/POAM.md and compliance/lula/).
+  # The pull_request trigger already runs on changes to those exact paths,
+  # so the nightly cron re-computed an identical answer on an unchanged tree.
+  # Verified offline: 36 covered, 14 skipped, 0 uncovered, exit 0.
   pull_request:
     paths:
       - 'docs/POAM.md'
