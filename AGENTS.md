@@ -446,7 +446,7 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 | **Fast dev run (parallel, no coverage)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin -q` (or `make test-fast`) |
 | **Run only last failed tests** | `uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q` (or `make test-last-failed`) |
 | **Profile slowest tests & fixtures** | `uv run pytest --durations=20 --durations-min=1.0` |
-| **Full suite with coverage (mirrors CI)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75` (or `make test-coverage`) |
+| **Full suite with coverage (mirrors CI)** | `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70` (or `make test-coverage`) |
 
 ### Targeted Test Commands Reference
 

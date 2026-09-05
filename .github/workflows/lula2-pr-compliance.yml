@@ -13,6 +13,13 @@
 # limitations under the License.
 
 name: Lula2 PR Compliance Crawler
+# Cancel superseded runs for the same ref. Without this, the push +
+# pull_request double-trigger consumes two identical sets of runners on
+# every push to an open PR (measured: 23.3 duplicated job-minutes per push).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 
 on:
   pull_request:
@@ -43,12 +50,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
 
@@ -74,9 +81,13 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env rather than interpolated directly into the script:
+          # `${{ github.base_ref }}` expands before the shell runs, so a branch
+          # name containing shell metacharacters would execute as code.
+          BASE_REF: ${{ github.base_ref }}
         run: |
           # List changed files that touch compliance-relevant paths
-          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | \
+          CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" | \
             grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|deployment/k8s/|infra/|\.github/workflows/)" || true)
           if [ -n "$CHANGED" ]; then
             echo "Compliance-relevant files changed in this PR:"

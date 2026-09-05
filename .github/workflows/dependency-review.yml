@@ -13,6 +13,13 @@
 # limitations under the License.
 
 name: Dependency Review
+# Cancel superseded runs for the same ref. Without this, the push +
+# pull_request double-trigger consumes two identical sets of runners on
+# every push to an open PR (measured: 23.3 duplicated job-minutes per push).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 # POAM-013 / NIST SP 800-53 SI-2 / ISO 42001 §A.8.3
 # Reviews dependency changes on every pull request.
 # Blocks PRs that introduce new dependencies with known vulnerabilities,
@@ -36,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # GitHub's dependency review action checks for:
       # 1. New dependencies with known CVEs (blocks CRITICAL/HIGH by default)
@@ -49,7 +56,7 @@ jobs:
         # on the repository. Until GHAS is provisioned, this step is non-blocking
         # so that the rest of the POAM-013 checks (unpinned specifier scan below)
         # can still run and report. Track GHAS enablement under POAM-013.
-        uses: actions/dependency-review-action@v5
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
         continue-on-error: true
         with:
           # Fail on CRITICAL and HIGH vulnerabilities in new/changed dependencies

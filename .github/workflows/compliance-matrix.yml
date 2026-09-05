@@ -56,6 +56,12 @@ env:
 # Runs first, unconditionally, for all regions.
 # Source: docs/RELEASE_PLAN.md §5.1
 # ---------------------------------------------------------------------------
+# Default least-privilege permissions for every job in this workflow.
+# Without this block jobs inherit the (potentially broad) repository default,
+# which zizmor flags as an excessive-permissions finding.
+permissions:
+  contents: read
+
 jobs:
   universal-iso42001:
     name: "Universal ISO 42001 Gates"
@@ -64,12 +70,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -84,8 +90,12 @@ jobs:
       - name: Install Lula binary
         # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
         # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
+        env:
+          # Passed via env rather than interpolated directly into the script:
+          # a `${{ }}` expansion is substituted before the shell runs, so a
+          # value containing shell metacharacters would execute as code.
+          LULA_VERSION: ${{ env.LULA_VERSION }}
         run: |
-          LULA_VERSION="${{ env.LULA_VERSION }}"
           LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
           echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
           curl -fsSL \
@@ -98,7 +108,7 @@ jobs:
         run: |
           if [ -d "tests/core" ]; then
             echo "Running core unit tests..."
-            pytest tests/core/ -v
+            uv run pytest -p no:langsmith -p no:langsmith_plugin tests/core/ -v
           else
             echo "::warning::tests/core/ not found — skipping core unit tests"
           fi
@@ -156,12 +166,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -175,8 +185,12 @@ jobs:
       - name: Install Lula binary
         # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
         # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
+        env:
+          # Passed via env rather than interpolated directly into the script:
+          # a `${{ }}` expansion is substituted before the shell runs, so a
+          # value containing shell metacharacters would execute as code.
+          LULA_VERSION: ${{ env.LULA_VERSION }}
         run: |
-          LULA_VERSION="${{ env.LULA_VERSION }}"
           LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
           echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
           curl -fsSL \
@@ -216,7 +230,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: compliance-results-${{ matrix.region }}-${{ matrix.environment }}
           path: |
