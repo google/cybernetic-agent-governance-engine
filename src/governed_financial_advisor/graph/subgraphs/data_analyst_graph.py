@@ -26,6 +26,13 @@ from langgraph.graph.message import add_messages
 
 from src.gateway.infrastructure.mcp_client import get_mcp_client
 from src.gateway.infrastructure.telemetry_client import get_tracer
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_MODEL_NAME,
+    OBSERVATION_OUTPUT,
+    TRACE_METADATA_CURRENT_NODE,
+    TRACE_METADATA_MCP_SERVER,
+)
 from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 
 
@@ -114,10 +121,8 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
 
     with tracer.start_as_current_span("DataAnalyst: Thinker") as span:
         model_name = os.getenv("MODEL_REASONING")
-        span.set_attribute("langfuse.observation.model.name", model_name)
-        span.set_attribute(
-            "langfuse.trace.metadata.current_node", "data_analyst_thinker"
-        )
+        span.set_attribute(OBSERVATION_MODEL_NAME, model_name)
+        span.set_attribute(TRACE_METADATA_CURRENT_NODE, "data_analyst_thinker")
         span.set_attribute("gen_ai.operation.name", "chat")
 
         _reasoning_base = os.getenv("VLLM_REASONING_API_BASE")
@@ -153,7 +158,7 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
             "gen_ai.input.messages",
             json.dumps([{"role": "user", "content": input_str}]),
         )
-        span.set_attribute("langfuse.observation.input", input_str)
+        span.set_attribute(OBSERVATION_INPUT, input_str)
 
         response = llm.invoke(messages, config={"run_name": "Analyst Thinker"})
         raw_output = response.content
@@ -163,7 +168,7 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
             "gen_ai.output.messages",
             json.dumps([{"role": "assistant", "content": clean_plan}]),
         )
-        span.set_attribute("langfuse.observation.output", clean_plan)
+        span.set_attribute(OBSERVATION_OUTPUT, clean_plan)
 
         # Return LOCAL state update
         return {"reasoning_output": raw_output}
@@ -179,9 +184,9 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
 
     with tracer.start_as_current_span("DataAnalyst: Doer") as span:
         model_name = os.getenv("MODEL_FAST", "default-fast-model")
-        span.set_attribute("langfuse.observation.model.name", model_name)
-        span.set_attribute("langfuse.trace.metadata.current_node", "data_analyst_doer")
-        span.set_attribute("langfuse.trace.metadata.mcp_server", "gateway_mcp")
+        span.set_attribute(OBSERVATION_MODEL_NAME, model_name)
+        span.set_attribute(TRACE_METADATA_CURRENT_NODE, "data_analyst_doer")
+        span.set_attribute(TRACE_METADATA_MCP_SERVER, "gateway_mcp")
         span.set_attribute("gen_ai.operation.name", "chat")
 
         _fast_base = os.getenv("VLLM_FAST_API_BASE")
@@ -234,7 +239,7 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
             "gen_ai.input.messages",
             json.dumps([{"role": "user", "content": input_str}]),
         )
-        span.set_attribute("langfuse.observation.input", input_str)
+        span.set_attribute(OBSERVATION_INPUT, input_str)
 
         mcp_client = get_mcp_client()
         if not mcp_client.session:
@@ -274,7 +279,7 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
             "gen_ai.output.messages",
             json.dumps([{"role": "assistant", "content": output_str}]),
         )
-        span.set_attribute("langfuse.observation.output", output_str)
+        span.set_attribute(OBSERVATION_OUTPUT, output_str)
 
         return {"messages": [response]}
 
@@ -287,10 +292,8 @@ def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-d
 
     with tracer.start_as_current_span("DataAnalyst: Reporter") as span:
         model_name = os.getenv("MODEL_FAST")
-        span.set_attribute("langfuse.observation.model.name", model_name)
-        span.set_attribute(
-            "langfuse.trace.metadata.current_node", "data_analyst_reporter"
-        )
+        span.set_attribute(OBSERVATION_MODEL_NAME, model_name)
+        span.set_attribute(TRACE_METADATA_CURRENT_NODE, "data_analyst_reporter")
         span.set_attribute("gen_ai.operation.name", "chat")
 
         _reporter_fast_base = os.getenv("VLLM_FAST_API_BASE")
@@ -343,7 +346,7 @@ def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-d
             "gen_ai.input.messages",
             json.dumps([{"role": "user", "content": input_str}]),
         )
-        span.set_attribute("langfuse.observation.input", input_str)
+        span.set_attribute(OBSERVATION_INPUT, input_str)
 
         response = llm.invoke(messages, config={"run_name": "Analyst Reporter"})
 
@@ -354,7 +357,7 @@ def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-d
             "gen_ai.output.messages",
             json.dumps([{"role": "assistant", "content": response.content}]),
         )
-        span.set_attribute("langfuse.observation.output", response.content)
+        span.set_attribute(OBSERVATION_OUTPUT, response.content)
 
         return {"messages": [response]}
 

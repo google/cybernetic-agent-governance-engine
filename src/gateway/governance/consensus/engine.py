@@ -52,6 +52,14 @@ from opentelemetry import trace
 from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.infrastructure.telemetry_client import genai_span
+from src.gateway.observability.attributes import (
+    TRACE_METADATA_CONSENSUS_DECISION,
+    TRACE_METADATA_CONSENSUS_VOTES,
+    TRACE_METADATA_ISO_CONTROL_ID,
+    TRACE_METADATA_ISO_CONTROL_ID_SECONDARY,
+    TRACE_METADATA_ISO_REQUIREMENT,
+    TRACE_METADATA_ISO_REQUIREMENT_SECONDARY,
+)
 
 logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")
@@ -404,7 +412,7 @@ class ConsensusGate:
         with genai_span(
             "consensus.check", prompt=f"Review trade: {action} {amount} {symbol}"
         ) as span:
-            span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.8.4")
+            span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.8.4")
 
             # Parallel critic calls — each on a distinct model backend (Priority 4)
             vote1, vote2 = await asyncio.gather(
@@ -507,18 +515,16 @@ class ConsensusGate:
                 decision = "ESCALATE"
                 reason = f"Consensus unclear. Votes: {votes}"
 
-            span.set_attribute("langfuse.trace.metadata.consensus.decision", decision)
-            span.set_attribute("langfuse.trace.metadata.consensus.votes", str(votes))
-            span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.8.4")
+            span.set_attribute(TRACE_METADATA_CONSENSUS_DECISION, decision)
+            span.set_attribute(TRACE_METADATA_CONSENSUS_VOTES, str(votes))
+            span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.8.4")
             span.set_attribute(
-                "langfuse.trace.metadata.iso.requirement", "AI System Impact Assessment"
+                TRACE_METADATA_ISO_REQUIREMENT, "AI System Impact Assessment"
             )
             if decision == "ESCALATE":
+                span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID_SECONDARY, "A.4.2")
                 span.set_attribute(
-                    "langfuse.trace.metadata.iso.control_id_secondary", "A.4.2"
-                )
-                span.set_attribute(
-                    "langfuse.trace.metadata.iso.requirement_secondary",
+                    TRACE_METADATA_ISO_REQUIREMENT_SECONDARY,
                     "Risk Management",
                 )
 

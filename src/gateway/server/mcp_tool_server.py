@@ -46,6 +46,13 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, field_validator
 
+from src.gateway.observability.attributes import (
+    OBSERVATION_NAME,
+    OBSERVATION_TYPE,
+    SESSION_ID,
+    SPAN_ATTR_OPA_POLICY_PATH,
+)
+
 sys.path.append(".")
 
 from opentelemetry import trace
@@ -217,7 +224,7 @@ try:
         }
         session_id = headers.get("x-session-id")
         if session_id:
-            span.set_attribute("langfuse.session.id", session_id)
+            span.set_attribute(SESSION_ID, session_id)
 
     FastAPIInstrumentor.instrument_app(
         app,
@@ -303,9 +310,9 @@ async def _evaluate_policy_internal(
     # bridging the gap between the FastAPI HTTP span and the governance.opa_check
     # child span already emitted by OPAClient.evaluate_policy().
     with tracer.start_as_current_span("governance.opa_policy_evaluation") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.observation.name", "opa_policy_eval_internal")
-        span.set_attribute("opa.policy_path", "trade_governance")
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(OBSERVATION_NAME, "opa_policy_eval_internal")
+        span.set_attribute(SPAN_ATTR_OPA_POLICY_PATH, "trade_governance")
         span.set_attribute("governance.action", action)
         span.set_attribute("governance.trader_role", trader_role)
         span.set_attribute("governance.amount", amount)

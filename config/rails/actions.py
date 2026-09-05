@@ -37,6 +37,11 @@ import httpx
 from opentelemetry import trace as _otel_trace
 from opentelemetry.trace import Status, StatusCode
 
+from src.gateway.observability.attributes import (
+    OBSERVATION_TYPE,
+    TRACE_METADATA_GUARDRAIL_ACTION,
+)
+
 # Import the ContextVar from manager.py so Stage-1/1'/1B/1C/1D deterministic
 # block verdicts can be signalled back to validate_with_nemo().  The import is
 # wrapped in a try/except so the action module remains importable in restricted
@@ -94,10 +99,8 @@ def retrieve_knowledge(events=None, context=None):
     if the knowledge base is not configured (non-blocking for guardrails).
     """
     with _tracer.start_as_current_span("nemo.action.retrieve_knowledge") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "RetrieveKnowledgeAction"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "RetrieveKnowledgeAction")
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         kb_url = os.environ.get("KNOWLEDGE_BASE_URL", "")
@@ -159,8 +162,8 @@ async def mask_pii_action(
     ``last_user_message`` context key.
     """
     with _tracer.start_as_current_span("nemo.action.mask_pii") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "MaskPIIAction")
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "MaskPIIAction")
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         logger.debug("MaskPIIAction called with kwargs keys: %s", list(kwargs.keys()))
@@ -312,9 +315,9 @@ async def custom_self_check_input(
     intentionally BROADER than the regex detector (see list below).
     """
     with _tracer.start_as_current_span("nemo.action.self_check_input") as span:
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CustomSelfCheckInputAction"
+            TRACE_METADATA_GUARDRAIL_ACTION, "CustomSelfCheckInputAction"
         )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
@@ -654,9 +657,9 @@ async def custom_self_check_output(
     fix and rationale.
     """
     with _tracer.start_as_current_span("nemo.action.self_check_output") as span:
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CustomSelfCheckOutputAction"
+            TRACE_METADATA_GUARDRAIL_ACTION, "CustomSelfCheckOutputAction"
         )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
@@ -788,10 +791,8 @@ async def check_approval_token_action(context: dict | None = None, **kwargs) -> 
     ImportError fallback path in nemo_action_registry.get_all_actions().
     """
     with _tracer.start_as_current_span("nemo.action.check_approval_token") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CheckApprovalTokenAction"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckApprovalTokenAction")
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "SC-1")
@@ -809,10 +810,8 @@ async def check_data_latency_action(context: dict | None = None, **kwargs) -> bo
     See CheckApprovalTokenAction for rationale.
     """
     with _tracer.start_as_current_span("nemo.action.check_data_latency") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CheckDataLatencyAction"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckDataLatencyAction")
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "FIN-2")
@@ -830,10 +829,8 @@ async def check_drawdown_limit_action(context: dict | None = None, **kwargs) -> 
     See CheckApprovalTokenAction for rationale.
     """
     with _tracer.start_as_current_span("nemo.action.check_drawdown_limit") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CheckDrawdownLimitAction"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckDrawdownLimitAction")
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "UCA-5")
@@ -851,10 +848,8 @@ async def check_slippage_risk_action(context: dict | None = None, **kwargs) -> b
     See CheckApprovalTokenAction for rationale.
     """
     with _tracer.start_as_current_span("nemo.action.check_slippage_risk") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CheckSlippageRiskAction"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckSlippageRiskAction")
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "UCA-6")
@@ -872,9 +867,9 @@ async def check_atomic_execution_action(context: dict | None = None, **kwargs) -
     See CheckApprovalTokenAction for rationale.
     """
     with _tracer.start_as_current_span("nemo.action.check_atomic_execution") as span:
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CheckAtomicExecutionAction"
+            TRACE_METADATA_GUARDRAIL_ACTION, "CheckAtomicExecutionAction"
         )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
@@ -893,10 +888,8 @@ async def log_safety_audit_action(context: dict | None = None, **kwargs) -> bool
     Emits an OTel span so any invocation is visible in Langfuse.
     """
     with _tracer.start_as_current_span("nemo.action.log_safety_audit") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "LogSafetyAuditAction"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "LogSafetyAuditAction")
         span.set_attribute("iso42001.control_id", "A.6.2.8")
         span.set_attribute("nemo.action.outcome", "LOGGED")
         event_type = (

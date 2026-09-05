@@ -47,6 +47,17 @@ except ImportError:
 from config.settings import Config
 from src.gateway.infrastructure.mcp_client import get_mcp_client
 from src.gateway.infrastructure.telemetry_client import configure_telemetry
+from src.gateway.observability.attributes import (
+    AI_WEBHOOK_COOLDOWN_ACTIVE,
+    AI_WEBHOOK_COOLDOWN_SECONDS_REMAINING,
+    AI_WEBHOOK_SCORE_NAME,
+    AI_WEBHOOK_SCORE_VALUE,
+    AI_WEBHOOK_TRACE_ID,
+    OBSERVATION_INPUT,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+    WEBHOOK_THRESHOLD_BREACH,
+)
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.tools.api import tools_router
@@ -326,13 +337,13 @@ async def query_agent(  # type: ignore[no-untyped-def]
         if current_span and current_span.is_recording():
             current_span.set_attribute("enduser.id", req.user_id)
             current_span.set_attribute("thread.id", req.thread_id)
-            current_span.set_attribute("langfuse.observation.type", "generation")
+            current_span.set_attribute(OBSERVATION_TYPE, "generation")
             current_span.set_attribute("gen_ai.operation.name", "chat")
             current_span.set_attribute(
                 "gen_ai.input.messages",
                 _json.dumps([{"role": "user", "content": req.prompt}]),
             )
-            current_span.set_attribute("langfuse.observation.input", req.prompt)
+            current_span.set_attribute(OBSERVATION_INPUT, req.prompt)
             current_span.set_attribute("gen_ai.system", "financial-advisor-gateway")
             ctx = current_span.get_span_context()
             if ctx.trace_flags.sampled:
@@ -373,9 +384,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
             if current_span and current_span.is_recording():
                 current_span.set_attribute("gen_ai.system", "langchain")
                 current_span.set_attribute("gen_ai.request.model", "cached")
-                current_span.set_attribute(
-                    "langfuse.observation.output", cached_response
-                )
+                current_span.set_attribute(OBSERVATION_OUTPUT, cached_response)
                 current_span.set_attribute("cache.hit", True)
 
             return JSONResponse(
@@ -466,9 +475,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
                 "gen_ai.output.messages",
                 _json.dumps([{"role": "assistant", "content": final_response_text}]),
             )
-            current_span.set_attribute(
-                "langfuse.observation.output", final_response_text
-            )
+            current_span.set_attribute(OBSERVATION_OUTPUT, final_response_text)
 
         return {"response": final_response_text, "trace_id": trace_id}
 
@@ -1215,9 +1222,9 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):  # type: ignore[no-untype
         )
         current_span = trace.get_current_span()
         if current_span and current_span.is_recording():
-            current_span.set_attribute("ai.webhook.langfuse.cooldown_active", True)
+            current_span.set_attribute(AI_WEBHOOK_COOLDOWN_ACTIVE, True)
             current_span.set_attribute(
-                "ai.webhook.langfuse.cooldown_seconds_remaining", seconds_remaining
+                AI_WEBHOOK_COOLDOWN_SECONDS_REMAINING, seconds_remaining
             )
         return {
             "status": "cooldown",
@@ -1250,12 +1257,12 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):  # type: ignore[no-untype
 
     current_span = trace.get_current_span()
     if current_span and current_span.is_recording():
-        current_span.set_attribute("ai.webhook.langfuse.score_name", req.name)
-        current_span.set_attribute("ai.webhook.langfuse.score_value", req.value)
-        current_span.set_attribute("ai.webhook.langfuse.trace_id", req.traceId)
-        current_span.set_attribute("ai.webhook.langfuse.cooldown_active", False)
+        current_span.set_attribute(AI_WEBHOOK_SCORE_NAME, req.name)
+        current_span.set_attribute(AI_WEBHOOK_SCORE_VALUE, req.value)
+        current_span.set_attribute(AI_WEBHOOK_TRACE_ID, req.traceId)
+        current_span.set_attribute(AI_WEBHOOK_COOLDOWN_ACTIVE, False)
         current_span.add_event(
-            "langfuse.webhook.threshold_breach",
+            WEBHOOK_THRESHOLD_BREACH,
             {
                 "score_name": req.name,
                 "score_value": req.value,

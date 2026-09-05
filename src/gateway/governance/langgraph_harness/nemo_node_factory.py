@@ -37,6 +37,7 @@ from typing import Any
 from opentelemetry import trace
 
 from src.gateway.governance.langgraph_harness.types import NemoNodeConfig, StateDict
+from src.gateway.observability.attributes import OBSERVATION_TYPE
 
 logger = logging.getLogger("gateway.governance.langgraph_harness.nemo_node_factory")
 tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.nemo_node_factory")
@@ -357,7 +358,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
     async def nemo_guardrail_node(state: StateDict) -> dict[str, Any]:
         with tracer.start_as_current_span("nemo.input_rail") as span:
-            span.set_attribute("langfuse.observation.type", "span")
+            span.set_attribute(OBSERVATION_TYPE, "span")
 
             user_input = _extract(state)
 
@@ -591,7 +592,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
 
     async def nemo_output_rail_node(state: StateDict) -> dict[str, Any]:
         with tracer.start_as_current_span("nemo.output_rail") as span:
-            span.set_attribute("langfuse.observation.type", "span")
+            span.set_attribute(OBSERVATION_TYPE, "span")
 
             output_text, found = _default_ai_message_extractor(state)
 

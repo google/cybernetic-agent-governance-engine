@@ -33,6 +33,19 @@ from opentelemetry.trace import Status, StatusCode
 
 from config.settings import Config
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_NAME,
+    OBSERVATION_TYPE,
+    TRACE_METADATA_GOVERNANCE_ACTION,
+    TRACE_METADATA_GOVERNANCE_DECISION,
+    TRACE_METADATA_GOVERNANCE_DENIAL_REASON,
+    TRACE_METADATA_GOVERNANCE_OPA_URL,
+    TRACE_METADATA_GOVERNANCE_POLICY_INPUT_SIZE,
+    TRACE_METADATA_ISO_CONTROL_ID,
+    TRACE_METADATA_ISO_REQUIREMENT,
+    TRACE_METADATA_LATENCY_CURRENCY_TAX,
+)
 
 logger = logging.getLogger("Gateway.Policy")
 tracer = trace.get_tracer("gateway.policy")
@@ -477,22 +490,22 @@ class OPAClient:
             return cached
 
         with tracer.start_as_current_span("governance.opa_check") as span:
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "opa_policy_check")
-            span.set_attribute("langfuse.observation.input", json.dumps(input_data))
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "opa_policy_check")
+            span.set_attribute(OBSERVATION_INPUT, json.dumps(input_data))
             start_time = time.time()
-            span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.10.1")
+            span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.10.1")
             span.set_attribute(
-                "langfuse.trace.metadata.iso.requirement",
+                TRACE_METADATA_ISO_REQUIREMENT,
                 "Transparency & Explainability",
             )
-            span.set_attribute("langfuse.trace.metadata.governance.opa_url", self.url)  # type: ignore[arg-type]
+            span.set_attribute(TRACE_METADATA_GOVERNANCE_OPA_URL, self.url)  # type: ignore[arg-type]
             span.set_attribute(
-                "langfuse.trace.metadata.governance.action",
+                TRACE_METADATA_GOVERNANCE_ACTION,
                 input_data.get("action", "unknown"),
             )
             span.set_attribute(
-                "langfuse.trace.metadata.governance.policy_input_size",
+                TRACE_METADATA_GOVERNANCE_POLICY_INPUT_SIZE,
                 len(json.dumps(input_data)),
             )
             span.set_attribute("governance.opa.cache_hit", False)
@@ -524,7 +537,7 @@ class OPAClient:
 
                 governance_tax_ms = (time.time() - start_time) * 1000
                 span.set_attribute(
-                    "langfuse.trace.metadata.latency_currency_tax", governance_tax_ms
+                    TRACE_METADATA_LATENCY_CURRENCY_TAX, governance_tax_ms
                 )
 
                 response.raise_for_status()
@@ -556,9 +569,7 @@ class OPAClient:
                         str(raw_result).upper() if raw_result is not None else "DENY"
                     )
 
-                span.set_attribute(
-                    "langfuse.trace.metadata.governance.decision", decision_str
-                )
+                span.set_attribute(TRACE_METADATA_GOVERNANCE_DECISION, decision_str)
 
                 # Return the decision string (documented API).
                 # The explanation is logged for the Auditor via the OTel span above.
@@ -601,6 +612,6 @@ class OPAClient:
                 span.record_exception(e)
                 span.set_status(Status(StatusCode.ERROR))
                 span.set_attribute(
-                    "langfuse.trace.metadata.governance.denial_reason", "SYSTEM_FAILURE"
+                    TRACE_METADATA_GOVERNANCE_DENIAL_REASON, "SYSTEM_FAILURE"
                 )
                 return "DENY"

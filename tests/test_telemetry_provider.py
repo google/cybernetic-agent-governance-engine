@@ -38,8 +38,11 @@ import pytest
 from src.gateway.governance.telemetry_provider import (
     MIN_SAMPLES,
     BaseTelemetryProvider,
+    ConfigurationError,
     LangfuseTelemetryProvider,
     MockTelemetryProvider,
+    NullTelemetryProvider,
+    get_telemetry_provider,
 )
 
 # ---------------------------------------------------------------------------
@@ -169,12 +172,12 @@ class TestMockTelemetryProvider:
 
 
 # ---------------------------------------------------------------------------
-# LangfuseTelemetryProvider — None-client path (fallback to mock)
+# LangfuseTelemetryProvider — None-client path (default fallback is NullTelemetryProvider)
 # ---------------------------------------------------------------------------
 
 
 class TestLangfuseTelemetryProviderNoneClient:
-    """When client=None, all calls fall back to the mock provider."""
+    """When client=None, all calls fall back to the configured fallback provider."""
 
     def test_none_client_fallback_returns_dataframe(self):
         provider = LangfuseTelemetryProvider(langfuse_client=None)
@@ -182,9 +185,9 @@ class TestLangfuseTelemetryProviderNoneClient:
         assert isinstance(df, pd.DataFrame)
         assert _REQUIRED_COLUMNS.issubset(set(df.columns))
 
-    def test_none_client_uses_default_mock_fallback(self):
+    def test_none_client_uses_default_null_fallback(self):
         provider = LangfuseTelemetryProvider(langfuse_client=None)
-        assert provider._fallback is not None
+        assert isinstance(provider._fallback, NullTelemetryProvider)
 
     def test_none_client_custom_fallback_is_used(self):
         custom_fallback = MockTelemetryProvider(seed=123)
@@ -192,11 +195,14 @@ class TestLangfuseTelemetryProviderNoneClient:
             langfuse_client=None, fallback=custom_fallback
         )
         assert provider._fallback is custom_fallback
-
-    def test_none_client_fallback_data_has_correct_shape(self):
-        provider = LangfuseTelemetryProvider(langfuse_client=None)
         df = provider.get_latest_data(n_samples=100)
         assert len(df) == 100
+
+    def test_none_client_default_fallback_data_is_empty(self):
+        """Default fallback is NullTelemetryProvider which returns 0 rows (fail-closed)."""
+        provider = LangfuseTelemetryProvider(langfuse_client=None)
+        df = provider.get_latest_data(n_samples=100)
+        assert len(df) == 0
 
     def test_none_client_stores_client_as_none(self):
         provider = LangfuseTelemetryProvider(langfuse_client=None)
@@ -204,37 +210,28 @@ class TestLangfuseTelemetryProviderNoneClient:
 
 
 # ---------------------------------------------------------------------------
-# LangfuseTelemetryProvider.from_env() — credential / import-error paths
+# LangfuseTelemetryProvider.from_env() — credential / import-error paths (AW-8)
 # ---------------------------------------------------------------------------
 
 
 class TestLangfuseTelemetryProviderFromEnv:
-    """from_env() constructor with various environment configurations."""
+    """from_env() constructor enforces explicit configuration (no silent fallback)."""
 
-    def test_from_env_without_credentials_returns_instance(self):
-        """Missing credentials should produce a provider using MockTelemetryProvider."""
+    def test_from_env_without_credentials_raises_configuration_error(self):
+        """Missing credentials must raise ConfigurationError (AW-8)."""
         env = {
             k: v
             for k, v in os.environ.items()
             if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
         }
         with patch.dict(os.environ, env, clear=True):
-            provider = LangfuseTelemetryProvider.from_env()
-        assert isinstance(provider, LangfuseTelemetryProvider)
+            with pytest.raises(
+                ConfigurationError, match="LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"
+            ):
+                LangfuseTelemetryProvider.from_env()
 
-    def test_from_env_without_credentials_uses_mock_fallback(self):
-        """When credentials are absent, the client should be None."""
-        clean_env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
-        }
-        with patch.dict(os.environ, clean_env, clear=True):
-            provider = LangfuseTelemetryProvider.from_env()
-        assert provider._client is None
-
-    def test_from_env_import_error_returns_mock_fallback(self):
-        """If langfuse is not installed, from_env() must return a fallback provider."""
+    def test_from_env_import_error_raises_configuration_error(self):
+        """If langfuse SDK is not installed, from_env() must raise ConfigurationError (AW-8)."""
         with patch.dict(
             os.environ,
             {"LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test"},
@@ -242,21 +239,8 @@ class TestLangfuseTelemetryProviderFromEnv:
             with patch(
                 "builtins.__import__", side_effect=_selective_import_error("langfuse")
             ):
-                provider = LangfuseTelemetryProvider.from_env()
-        assert isinstance(provider, LangfuseTelemetryProvider)
-        assert provider._client is None
-
-    def test_from_env_fallback_data_is_valid(self):
-        clean_env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
-        }
-        with patch.dict(os.environ, clean_env, clear=True):
-            provider = LangfuseTelemetryProvider.from_env()
-        df = provider.get_latest_data(n_samples=10)
-        assert isinstance(df, pd.DataFrame)
-        assert _REQUIRED_COLUMNS.issubset(set(df.columns))
+                with pytest.raises(ConfigurationError, match="package is required"):
+                    LangfuseTelemetryProvider.from_env()
 
     def test_from_env_with_credentials_creates_langfuse_client(self):
         """When credentials are set and langfuse is importable, client should be non-None."""
@@ -277,6 +261,65 @@ class TestLangfuseTelemetryProviderFromEnv:
             ):
                 provider = LangfuseTelemetryProvider.from_env()
 
+        assert provider._client is not None
+
+
+# ---------------------------------------------------------------------------
+# get_telemetry_provider() Factory (AW-8)
+# ---------------------------------------------------------------------------
+
+
+class TestGetTelemetryProviderFactory:
+    """Explicit provider selection via CAGE_TELEMETRY_PROVIDER."""
+
+    def test_factory_null_provider(self):
+        with patch.dict(os.environ, {"CAGE_TELEMETRY_PROVIDER": "null"}):
+            provider = get_telemetry_provider()
+        assert isinstance(provider, NullTelemetryProvider)
+
+    def test_factory_mock_provider_non_prod(self):
+        with patch.dict(
+            os.environ,
+            {"CAGE_TELEMETRY_PROVIDER": "mock", "CAGE_ENV": "development"},
+        ):
+            provider = get_telemetry_provider()
+        assert isinstance(provider, MockTelemetryProvider)
+
+    def test_factory_mock_provider_rejected_in_prod(self):
+        with patch.dict(
+            os.environ,
+            {"CAGE_TELEMETRY_PROVIDER": "mock", "CAGE_ENV": "prod"},
+        ):
+            with pytest.raises(
+                ConfigurationError, match="[Mm]ock.*forbidden in production"
+            ):
+                get_telemetry_provider()
+
+    def test_factory_unknown_provider_rejected(self):
+        with patch.dict(os.environ, {"CAGE_TELEMETRY_PROVIDER": "unsupported_vendor"}):
+            with pytest.raises(ConfigurationError, match="Unknown telemetry provider"):
+                get_telemetry_provider()
+
+    def test_factory_langfuse_delegates_to_from_env(self):
+        mock_langfuse_cls = MagicMock()
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        with patch.dict(
+            os.environ,
+            {
+                "CAGE_TELEMETRY_PROVIDER": "langfuse",
+                "LANGFUSE_PUBLIC_KEY": "pk-test-1234",
+                "LANGFUSE_SECRET_KEY": "sk-test-5678",
+                "LANGFUSE_HOST": "https://test.langfuse.example",
+            },
+        ):
+            with patch.dict(
+                "sys.modules", {"langfuse": MagicMock(Langfuse=mock_langfuse_cls)}
+            ):
+                provider = get_telemetry_provider()
+
+        assert isinstance(provider, LangfuseTelemetryProvider)
         assert provider._client is not None
 
 

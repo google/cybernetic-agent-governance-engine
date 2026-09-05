@@ -16,35 +16,25 @@
 [CTRL_TEL_003] Live Telemetry Provider for DoWhy Causal Gatekeeper
 ==================================================================
 
-Replaces generate_mock_telemetry() (np.random.seed(42)) in causal_gatekeeper.py
-with production telemetry sourced from Langfuse governance spans.
+Provides telemetry data consumed by the CausalGatekeeper for empirical
+world-model validation.
 
 Control CTRL_TEL_003 (see config/control_mappings.json) requires that world-model
-validation reflect actual runtime conditions, not synthetic data.  The placebo
-refutation in causal_gatekeeper.py proves the *math* works against mock data;
-it says nothing about whether the deployed agent's world-model beliefs are
-coherent with live market dynamics.
+validation reflect actual runtime conditions, not synthetic data.
 
-Architecture:
+Architecture (Wave 1, Task W1.6):
   - BaseTelemetryProvider:       Abstract interface consumed by SymbolicGovernor.
-  - LangfuseTelemetryProvider:   Fetches {market_volatility, trade_amount, risk_score}
-                                 triples from Langfuse governance spans tagged
-                                 iso42001.control_id=A.6.2.8 (UCA-4 governance).
-  - MockTelemetryProvider:       Retained for test environments; wraps the original
-                                 generate_mock_telemetry() function.
+  - NullTelemetryProvider:       Clean fail-closed null provider returning an empty,
+                                 correctly-typed DataFrame without fabricating data.
+  - LangfuseTelemetryProvider:   Fetches live triples from Langfuse governance spans.
+  - MockTelemetryProvider:       Retained for test environments; forbidden in production.
+  - get_telemetry_provider:      Factory resolving CAGE_TELEMETRY_PROVIDER env var.
 
-Integration:
-  The SymbolicGovernor already exposes a `telemetry_provider` constructor arg:
-    governor = SymbolicGovernor(
-        ...
-        telemetry_provider=LangfuseTelemetryProvider.from_env(),
-    )
-  No interface changes are required in symbolic_governor.py.
-
-Fallback policy:
-  If Langfuse returns fewer than MIN_SAMPLES live samples, the provider falls
-  back to mock data and logs a WARNING so the gap is visible in audit trails.
-  This prevents the causal gatekeeper from failing open on cold-start.
+Explicit Provider Selection (AW-8):
+  Provider selection is controlled via ``CAGE_TELEMETRY_PROVIDER``:
+    - 'langfuse': Pulls live telemetry. Hard failure (ConfigurationError) if credentials missing.
+    - 'null': Returns NullTelemetryProvider. Safe for offline / bare-kernel mode.
+    - 'mock': Explicitly runs MockTelemetryProvider. Forbidden if CAGE_ENV=prod.
 """
 
 from __future__ import annotations
@@ -58,16 +48,22 @@ import pandas as pd
 
 logger = logging.getLogger("Gateway.Governance.TelemetryProvider")
 
-# EV-4 Migration: MIN_SAMPLES is now sourced from config/governance_thresholds.json
+# EV-4 Migration: MIN_SAMPLES is sourced from config/governance_thresholds.json
 # with environment variable overrides supported (CAUSAL_MIN_SAMPLES or legacy
 # CAUSAL_MIN_LIVE_SAMPLES). See schemas/thresholds.py for details.
 from src.gateway.governance.schemas.thresholds import get_causal_min_samples
 
-# Minimum number of live Langfuse samples required before trusting the
-# LangfuseTelemetryProvider over the MockTelemetryProvider fallback.
-# CTRL_TEL_003 implication: below this threshold, the world-model cannot be
-# considered representative of live market conditions.
+# Minimum number of live samples required before trusting live telemetry.
 MIN_SAMPLES: int = get_causal_min_samples()
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ConfigurationError(ValueError):
+    """Raised when telemetry provider configuration or credentials are invalid."""
 
 
 # ---------------------------------------------------------------------------
@@ -98,20 +94,48 @@ class BaseTelemetryProvider(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Mock provider (test / cold-start fallback)
+# Null provider (bare-kernel / offline safe)
+# ---------------------------------------------------------------------------
+
+
+class NullTelemetryProvider(BaseTelemetryProvider):
+    """Null telemetry provider returning an empty DataFrame with correct column types.
+
+    Used when:
+      - CAGE_TELEMETRY_PROVIDER is set to "null"
+      - Running in offline, bare-kernel, or test environments without telemetry
+      - Telemetry is explicitly disabled
+
+    Returns an empty DataFrame with the required schema:
+        market_volatility: float64
+        trade_amount:      float64
+        risk_score:        float64
+
+    This allows the causal gatekeeper to cleanly take its documented
+    insufficient-samples fail-closed path without fabricating synthetic data.
+    """
+
+    def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
+        """Return an empty typed DataFrame."""
+        return pd.DataFrame(
+            {
+                "market_volatility": pd.Series(dtype="float64"),
+                "trade_amount": pd.Series(dtype="float64"),
+                "risk_score": pd.Series(dtype="float64"),
+            }
+        )
+
+
+# ---------------------------------------------------------------------------
+# Mock provider (test / deterministic synthesis)
 # ---------------------------------------------------------------------------
 
 
 class MockTelemetryProvider(BaseTelemetryProvider):
-    """Wraps the original generate_mock_telemetry() helper.
+    """Wraps the deterministic synthetic telemetry generator.
 
-    Used in:
-      - Unit tests (deterministic seed)
-      - Cold-start fallback when Langfuse has fewer than MIN_SAMPLES live records
-      - Environments where LANGFUSE_PUBLIC_KEY is not configured
-
-    The seed is configurable via CAUSAL_MOCK_SEED (default: 42) so tests can
-    exercise different synthetic distributions.
+    Used in unit and property tests. Forbidden in production (CAGE_ENV=prod).
+    The seed is configurable via CAUSAL_MOCK_SEED (default: 42).
     """
 
     def __init__(self, seed: int = 42) -> None:
@@ -152,16 +176,16 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
     (iso42001.control_id = A.6.2.8) and extracts:
         - market_volatility: from span metadata ("market_volatility" key)
         - trade_amount:      from span input payload ("amount" key)
-        - risk_score:        from span scores (Langfuse score name "risk_score")
+        - risk_score:        from span scores (score name "risk_score")
 
     If fewer than MIN_SAMPLES live records are available, falls back to
-    MockTelemetryProvider and emits a WARNING stamped to the audit log so
-    the gap is visible to governance examiners.
+    the configured fallback provider (defaulting to NullTelemetryProvider)
+    and emits a WARNING stamped to the audit log.
 
     Args:
         langfuse_client:  An initialised ``langfuse.Langfuse`` instance.
         fallback:         Provider to use when live data is insufficient.
-                          Defaults to MockTelemetryProvider(seed=42).
+                          Defaults to NullTelemetryProvider().
     """
 
     def __init__(
@@ -170,7 +194,7 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
         fallback: BaseTelemetryProvider | None = None,
     ) -> None:
         self._client = langfuse_client
-        self._fallback = fallback or MockTelemetryProvider()
+        self._fallback = fallback or NullTelemetryProvider()
 
     @classmethod
     def from_env(cls) -> LangfuseTelemetryProvider:
@@ -181,24 +205,24 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
             LANGFUSE_SECRET_KEY
             LANGFUSE_HOST  (default: https://cloud.langfuse.com)
 
-        Falls back to MockTelemetryProvider if the Langfuse SDK is not
-        installed or credentials are missing.
+        Raises:
+            ConfigurationError: If LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY are
+                missing, or if the langfuse package is not installed.
+                Silent fallback to mock data is strictly eliminated (AW-8).
         """
+        public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
+        secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
+        host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com").strip()
+
+        if not (public_key and secret_key):
+            raise ConfigurationError(
+                "[CTRL_TEL_003] LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set "
+                "when using LangfuseTelemetryProvider. Set CAGE_TELEMETRY_PROVIDER=null "
+                "or explicit CAGE_TELEMETRY_PROVIDER=mock for offline/testing environments."
+            )
+
         try:
             from langfuse import Langfuse  # type: ignore[import]
-
-            public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
-            secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
-            host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
-
-            if not (public_key and secret_key):
-                logger.warning(
-                    "[CTRL_TEL_003] LANGFUSE_PUBLIC_KEY/SECRET_KEY not set — "
-                    "causal gatekeeper will use MockTelemetryProvider. "
-                    "This is acceptable in non-production environments but MUST "
-                    "be remediated before a governance examination."
-                )
-                return cls(langfuse_client=None, fallback=MockTelemetryProvider())
 
             client = Langfuse(
                 public_key=public_key,
@@ -210,35 +234,28 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
             )
             return cls(langfuse_client=client)
 
-        except ImportError:
-            logger.warning(
-                "[CTRL_TEL_003] langfuse package not installed — "
-                "falling back to MockTelemetryProvider."
-            )
-            return cls(langfuse_client=None, fallback=MockTelemetryProvider())
+        except ImportError as err:
+            raise ConfigurationError(
+                "[CTRL_TEL_003] The 'langfuse' package is required when using "
+                "LangfuseTelemetryProvider. Install dependencies or set "
+                "CAGE_TELEMETRY_PROVIDER=null."
+            ) from err
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
         """Fetch live trade governance telemetry from Langfuse.
 
-        Queries traces with the 'execute_trade' name, extracts governance
-        metadata, and builds the causal model DataFrame.
-
-        Falls back to MockTelemetryProvider when:
-          - Langfuse client is None (missing credentials / offline)
-          - Fewer than MIN_SAMPLES records are available
-          - Any exception is raised during the fetch
+        Queries traces with governance metadata and builds the causal model
+        DataFrame. Falls back to configured fallback provider (NullTelemetryProvider
+        by default) when live records are below MIN_SAMPLES or client is unavailable.
         """
         if self._client is None:
             logger.warning(
-                "[CTRL_TEL_003] No Langfuse client — using MockTelemetryProvider fallback."
+                "[CTRL_TEL_003] No Langfuse client — using fallback provider."
             )
             return self._fallback.get_latest_data(n_samples)
 
         try:
             # Fetch recent traces from Langfuse (domain-agnostic).
-            # The Langfuse SDK `fetch_traces` returns a paginated response;
-            # we limit to n_samples to bound latency.
-            # Note: Without a name filter, this fetches all recent traces.
             response = self._client.fetch_traces(  # type: ignore[attr-defined]
                 limit=n_samples,
             )
@@ -246,13 +263,11 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
 
             rows: list[dict] = []
             for trace in traces:
-                # Extract governance metadata injected by the governed trader node.
-                # Keys are set by NeMoOTelCallback and evaluator_node.py.
                 meta = getattr(trace, "metadata", {}) or {}
                 input_data = getattr(trace, "input", {}) or {}
                 scores_list = getattr(trace, "scores", []) or []
 
-                # Build the score lookup: {name -> value}
+                # Build score lookup: {name -> value}
                 scores = {
                     getattr(s, "name", ""): getattr(s, "value", None)
                     for s in scores_list
@@ -279,11 +294,10 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
             if len(rows) < MIN_SAMPLES:
                 logger.warning(
                     "[CTRL_TEL_003] Only %d live Langfuse samples available "
-                    "(minimum %d required). Falling back to MockTelemetryProvider. "
-                    "Remediate by ensuring governance spans emit market_volatility, "
-                    "amount, and risk_score metadata on execute_trade traces.",
+                    "(minimum %d required). Falling back to %s.",
                     len(rows),
                     MIN_SAMPLES,
+                    type(self._fallback).__name__,
                 )
                 return self._fallback.get_latest_data(n_samples)
 
@@ -297,7 +311,69 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
         except Exception as exc:
             logger.error(
                 "[CTRL_TEL_003] LangfuseTelemetryProvider fetch failed (%s) — "
-                "falling back to MockTelemetryProvider.",
+                "falling back to %s.",
                 exc,
+                type(self._fallback).__name__,
             )
             return self._fallback.get_latest_data(n_samples)
+
+
+# ---------------------------------------------------------------------------
+# Provider factory
+# ---------------------------------------------------------------------------
+
+
+def get_telemetry_provider(
+    provider_type: str | None = None,
+) -> BaseTelemetryProvider:
+    """Return an initialized telemetry provider based on configuration.
+
+    Resolution order:
+      1. Explicit ``provider_type`` argument if provided.
+      2. ``CAGE_TELEMETRY_PROVIDER`` environment variable ('langfuse', 'null', 'mock').
+      3. If unset: defaults to 'langfuse' if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY
+         are configured, otherwise defaults to 'null'.
+
+    Rules:
+      - 'mock': forbidden when CAGE_ENV=prod (raises ConfigurationError).
+      - 'langfuse': raises ConfigurationError if credentials or SDK are missing.
+      - 'null': returns NullTelemetryProvider().
+    """
+    if provider_type is None:
+        provider_type = os.environ.get("CAGE_TELEMETRY_PROVIDER", "").strip().lower()
+
+    if not provider_type:
+        has_keys = bool(
+            os.environ.get("LANGFUSE_PUBLIC_KEY")
+            and os.environ.get("LANGFUSE_SECRET_KEY")
+        )
+        if has_keys:
+            provider_type = "langfuse"
+        else:
+            provider_type = "null"
+
+    provider_type = provider_type.lower()
+
+    if provider_type == "null":
+        return NullTelemetryProvider()
+
+    if provider_type == "mock":
+        cage_env = (
+            (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", ""))
+            .strip()
+            .lower()
+        )
+        if cage_env in ("prod", "production"):
+            raise ConfigurationError(
+                "MockTelemetryProvider is strictly forbidden in production (CAGE_ENV=prod). "
+                "Configure live telemetry credentials or select a valid production provider."
+            )
+        return MockTelemetryProvider()
+
+    if provider_type == "langfuse":
+        return LangfuseTelemetryProvider.from_env()
+
+    raise ConfigurationError(
+        f"Unknown telemetry provider '{provider_type}'. "
+        "Valid choices are: 'langfuse', 'null', 'mock'."
+    )

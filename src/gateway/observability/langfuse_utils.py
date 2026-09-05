@@ -31,6 +31,7 @@ import httpx
 import opentelemetry.trace
 
 from src.compliance_bridge.types import get_iso_control_map
+from src.gateway.observability.attributes import TRACE_TAGS
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ def trace_with_iso_control(
         span.set_attribute("iso42001.outcome", outcome)
         span.set_attribute("iso42001.standard", "ISO/IEC 42001:2023")
         span.set_attribute(
-            "langfuse.trace.tags",
+            TRACE_TAGS,
             json.dumps(["iso-42001", f"control:{control_id}"]),
         )
         if metadata is not None:

@@ -43,6 +43,17 @@ import logging
 import os
 from typing import Any
 
+from nemoguardrails.actions import action
+from opentelemetry import trace
+
+from src.gateway.observability.attributes import (
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+    TRACE_METADATA_GUARDRAILS_INTERVENTION,
+    TRACE_METADATA_ISO_CONTROL_ID,
+    TRACE_METADATA_ISO_REQUIREMENT,
+)
+
 logger = logging.getLogger("NeMo.Actions")
 
 # ---------------------------------------------------------------------------
@@ -292,14 +303,10 @@ async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
     ) as span:
         if span:
             # ISO 42001 Compliance: Transparency & Explainability
-            span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.10.1")
-            span.set_attribute(
-                "langfuse.trace.metadata.iso.requirement", "Transparency"
-            )
-            span.set_attribute(
-                "langfuse.trace.metadata.guardrails.intervention", "fallback"
-            )
-            span.set_attribute("langfuse.observation.type", "generation")
+            span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.10.1")
+            span.set_attribute(TRACE_METADATA_ISO_REQUIREMENT, "Transparency")
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_INTERVENTION, "fallback")
+            span.set_attribute(OBSERVATION_TYPE, "generation")
 
         try:
             if not final_content:
@@ -325,7 +332,7 @@ async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
             response = await llm._acall(messages)  # type: ignore[arg-type]
 
             if span:
-                span.set_attribute("langfuse.observation.output", response)
+                span.set_attribute(OBSERVATION_OUTPUT, response)
 
             logger.debug(
                 "InvokeVllmFallbackAction returning response length=%d", len(response)

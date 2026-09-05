@@ -20,6 +20,14 @@ from nemoguardrails.streaming import StreamingHandler
 from opentelemetry import trace
 from opentelemetry.trace import Span
 
+from src.gateway.observability.attributes import (
+    TRACE_METADATA_GUARDRAIL_BLOCK_REASON,
+    TRACE_METADATA_GUARDRAIL_ID,
+    TRACE_METADATA_GUARDRAIL_OUTCOME,
+    TRACE_METADATA_ISO_CONTROL_ID,
+    TRACE_METADATA_ISO_REQUIREMENT,
+)
+
 logger = logging.getLogger("NeMoOTelExporter")
 tracer = trace.get_tracer("src.governance.nemo")
 
@@ -99,10 +107,10 @@ class NeMoOTelCallback(StreamingHandler):
         ):
             iso_control = _ACTION_TO_ISO_CONTROL.get(action, "A.6.2.8")
             span = tracer.start_span(f"guardrail.intervention.{action}")
-            span.set_attribute("langfuse.trace.metadata.guardrail.id", action)
-            span.set_attribute("langfuse.trace.metadata.iso.control_id", iso_control)
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_ID, action)
+            span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, iso_control)
             span.set_attribute(
-                "langfuse.trace.metadata.iso.requirement", "Transparency of AI Systems"
+                TRACE_METADATA_ISO_REQUIREMENT, "Transparency of AI Systems"
             )
             span.set_attribute("iso42001.control_id", iso_control)
             _current_nemo_span.set(span)
@@ -140,16 +148,14 @@ class NeMoOTelCallback(StreamingHandler):
                 outcome = "BLOCKED"
 
             iso_control = _ACTION_TO_ISO_CONTROL.get(action, "A.6.2.8")
-            span.set_attribute("langfuse.trace.metadata.guardrail.outcome", outcome)
+            span.set_attribute(TRACE_METADATA_GUARDRAIL_OUTCOME, outcome)
             span.set_attribute("iso42001.control_id", iso_control)
             span.set_attribute(
                 "iso42001.outcome", "BLOCK" if outcome == "BLOCKED" else "PASS"
             )
 
             if outcome == "BLOCKED":
-                span.set_attribute(
-                    "langfuse.trace.metadata.guardrail.block_reason", str(result)
-                )
+                span.set_attribute(TRACE_METADATA_GUARDRAIL_BLOCK_REASON, str(result))
                 logger.warning(f"⛔ Guardrail BLOCKED: {action} | Result: {result}")
             else:
                 logger.info(f"✅ Guardrail PASSED: {action}")

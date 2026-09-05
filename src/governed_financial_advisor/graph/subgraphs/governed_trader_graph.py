@@ -45,6 +45,14 @@ from langgraph.graph import END, START, StateGraph
 
 from src.gateway.infrastructure.mcp_client import get_mcp_client
 from src.gateway.infrastructure.telemetry_client import get_tracer
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_MODEL_NAME,
+    OBSERVATION_NAME,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+    TRACE_METADATA_CURRENT_NODE,
+)
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
@@ -248,10 +256,8 @@ async def executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-
 
     with tracer.start_as_current_span("GovernedTrader: Executor") as span:
         model_name = os.getenv("MODEL_FAST")
-        span.set_attribute("langfuse.observation.model.name", model_name)
-        span.set_attribute(
-            "langfuse.trace.metadata.current_node", "governed_trader_executor"
-        )
+        span.set_attribute(OBSERVATION_MODEL_NAME, model_name)
+        span.set_attribute(TRACE_METADATA_CURRENT_NODE, "governed_trader_executor")
         span.set_attribute("gen_ai.operation.name", "chat")
 
         _fast_api_base = os.getenv("VLLM_FAST_API_BASE")
@@ -289,12 +295,12 @@ async def executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-
 
         messages = [system_msg, *state.get("messages", [])]
 
-        span.set_attribute("langfuse.observation.input", str(messages))
+        span.set_attribute(OBSERVATION_INPUT, str(messages))
 
         response = await llm_with_tools.ainvoke(messages)
 
         span.set_attribute(
-            "langfuse.observation.output", getattr(response, "content", "No content")
+            OBSERVATION_OUTPUT, getattr(response, "content", "No content")
         )
 
         return {"messages": [response]}
@@ -349,8 +355,8 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
     tracer = get_tracer()
 
     with tracer.start_as_current_span("GovernedTrader: HITL Rehydration") as span:
-        span.set_attribute("langfuse.observation.name", "hitl_rehydration")
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_NAME, "hitl_rehydration")
+        span.set_attribute(OBSERVATION_TYPE, "span")
 
         # 1. Resolve ticker — prefer explicit state field, fall back to plan JSON.
         ticker: str | None = state.get("data_analyst_ticker")
@@ -510,8 +516,8 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
     tracer = get_tracer()
 
     with tracer.start_as_current_span("GovernedTrader: HITL Revalidation") as span:
-        span.set_attribute("langfuse.observation.name", "hitl_revalidation")
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_NAME, "hitl_revalidation")
+        span.set_attribute(OBSERVATION_TYPE, "span")
 
         rehydration: dict[str, Any] = state.get("rehydration_result") or {}
         approval_decision: dict[str, Any] = state.get("approval_decision") or {}

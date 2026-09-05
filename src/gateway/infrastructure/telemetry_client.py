@@ -24,6 +24,14 @@ import os
 import sys
 
 from src.gateway.infrastructure.privacy import scrub_pii as global_scrub
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_MODEL_NAME,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+    SPAN_ATTR_GEN_AI_OPERATION_NAME,
+    SPAN_ATTR_GEN_AI_REQUEST_MODEL,
+)
 
 # Force OTel GenAI Instrumentation to capture inputs and outputs (PII is handled by Gateway)
 os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"
@@ -566,8 +574,8 @@ def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignor
     from opentelemetry import trace as otel_trace
 
     with tracer.start_as_current_span(name) as span:
-        span.set_attribute("gen_ai.operation.name", "chat")
-        span.set_attribute("langfuse.observation.type", "generation")
+        span.set_attribute(SPAN_ATTR_GEN_AI_OPERATION_NAME, "chat")
+        span.set_attribute(OBSERVATION_TYPE, "generation")
 
         if prompt:
             truncated_prompt = _truncate_attr(prompt)
@@ -575,12 +583,12 @@ def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignor
                 "gen_ai.input.messages",
                 json.dumps([{"role": "user", "content": truncated_prompt}]),
             )
-            span.set_attribute("langfuse.observation.input", truncated_prompt)
+            span.set_attribute(OBSERVATION_INPUT, truncated_prompt)
 
         if model:
             cleaned_model = clean_model_name(model)
-            span.set_attribute("gen_ai.request.model", cleaned_model)
-            span.set_attribute("langfuse.observation.model.name", cleaned_model)
+            span.set_attribute(SPAN_ATTR_GEN_AI_REQUEST_MODEL, cleaned_model)
+            span.set_attribute(OBSERVATION_MODEL_NAME, cleaned_model)
 
         try:
             yield span
@@ -603,7 +611,7 @@ def record_completion(span, completion: str):  # type: ignore[no-untyped-def]
             "gen_ai.output.messages",
             json.dumps([{"role": "assistant", "content": truncated}]),
         )
-        span.set_attribute("langfuse.observation.output", truncated)
+        span.set_attribute(OBSERVATION_OUTPUT, truncated)
 
 
 def record_usage(span, usage):  # type: ignore[no-untyped-def]

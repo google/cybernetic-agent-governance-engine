@@ -48,6 +48,12 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from src.gateway.observability.attributes import (
+    TRACE_METADATA_ISO_CONTROL_ID,
+    TRACE_METADATA_ISO_REQUIREMENT,
+    TRACE_METADATA_POAM_REF,
+)
+
 logger = logging.getLogger("Gateway.Governance.HITLEscalator")
 
 
@@ -320,9 +326,9 @@ def hitl_override_audit_span(
         "hitl.override_ts": _ts,
         "hitl.trace_id": trace_id,
         "hitl.regulatory_citation": citation,
-        "langfuse.trace.metadata.iso.control_id": "A.8.4",
-        "langfuse.trace.metadata.iso.requirement": "Human Oversight and Control",
-        "langfuse.trace.metadata.poam_ref": "AI600-005",
+        TRACE_METADATA_ISO_CONTROL_ID: "A.8.4",
+        TRACE_METADATA_ISO_REQUIREMENT: "Human Oversight and Control",
+        TRACE_METADATA_POAM_REF: "AI600-005",
     }
 
     try:
