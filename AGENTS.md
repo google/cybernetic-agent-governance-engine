@@ -93,8 +93,104 @@ reaching `main`. Never suggest `git merge <branch>` into `main`, `git merge
 Always say: *"Use 'Squash and merge' on GitHub; confirm the pre-filled commit
 message matches the PR title and follows Conventional Commits format."*
 
-When asked to commit or push directly to `main` or `rc-v*`, refuse and instead
-suggest a feature branch + PR.
+When asked to commit or push directly to `main` or `rc-v*`, **refuse** and respond:
+
+```
+Direct commits to `main` are not allowed. I'll create a feature branch instead:
+
+git checkout -b <type>/<description>
+
+After committing your changes, I'll push this branch and open a pull request.
+The pre-push hook and CI will enforce this rule.
+```
+
+Always validate the branch name matches the patterns below before creating it.
+
+### Branch Strategy Enforcement
+
+This repository enforces branching rules through multiple layers:
+
+**Layer 1: Local Git Hooks** (opt-in for humans, N/A for AI agents)
+
+Human contributors run once after cloning:
+```bash
+bash scripts/setup_git_hooks.sh
+```
+
+This installs `commit-msg` (rejects non-Conventional-Commits) and `pre-push` (blocks direct pushes to `main`).
+
+AI agents cannot install hooks. Instead, agents must:
+- Never suggest `git push origin main` or committing directly to `main`
+- Always create a feature branch with a compliant name before making changes
+- Validate commit messages match Conventional Commits before calling `git commit`
+
+**Layer 2: CI Validation** (enforced for all)
+
+[`squash-merge-guard`](.github/workflows/ci.yml:46) fails any build where a merge commit reaches `main`. [`branch-name-validator`](.github/workflows/ci.yml) (when added) will reject PRs from branches with non-compliant names.
+
+**Layer 3: Branch Naming Validation** (enforced by agents)
+
+Before creating a branch, validate the name matches one of these patterns:
+- `feat/<description>` — new feature
+- `fix/<description>` — bug fix
+- `docs/<description>` — documentation
+- `refactor/<description>` — code restructuring
+- `ci/<description>` — CI/CD changes
+- `test/<description>` — test additions
+- `chore/<description>` — maintenance
+- `hotfix/<version>-<description>` — production hotfix (e.g. `hotfix/2.0.1-redis-timeout`)
+- `spike/<description>` — experiment
+
+Where `<description>`:
+- Is lowercase kebab-case
+- Contains only `[a-z0-9-]`
+- Is ≤ 30 characters
+- Does not end with a hyphen
+
+**Reject these patterns:**
+- `feature/...` (use `feat/`)
+- `bugfix/...` (use `fix/`)
+- Any uppercase letters
+- Underscores
+- CamelCase
+- Random names without prefix
+
+**Example validation:**
+```python
+import re
+# Hotfix has different structure (version-desc), so use alternation
+pattern = r'^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?\d+\.\d+\.\d+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$'
+assert re.match(pattern, 'feat/redis-limiter')       # ✅
+assert re.match(pattern, 'hotfix/2.0.1-redis-fix')   # ✅
+assert not re.match(pattern, 'random-branch')        # ❌
+assert not re.match(pattern, 'Feature/Thing')        # ❌
+```
+
+### Agent Workflow: Enforcing Branch Strategy
+
+When a user asks you to make code changes:
+
+1. **Check current branch:**
+   ```bash
+   git symbolic-ref --short HEAD
+   ```
+
+2. **If on `main` or `rc-v*`:**
+   - **DO NOT** make commits
+   - **DO** create a properly-named feature branch first
+   - Explain: "You're on a protected branch. I'll create a feature branch."
+
+3. **If on a feature branch with an invalid name:**
+   - **STOP** and ask: "This branch name doesn't follow the project's convention. Should I create a new branch with a compliant name like `feat/<description>`?"
+
+4. **If on a valid feature branch:**
+   - Proceed with changes
+   - Validate commit messages before committing
+   - When pushing, confirm: "I'll push to `origin/<branch-name>` (not `main`)"
+
+5. **After pushing:**
+   - Offer to open a PR
+   - Remind: "Use 'Squash and merge' when merging"
 
 ---
 
