@@ -21,6 +21,7 @@ import httpx
 from opentelemetry import trace
 
 from src.gateway.infrastructure.mcp_client import get_mcp_client
+from src.gateway.observability.attributes import OBSERVATION_TYPE
 
 logger = logging.getLogger("EvaluatorAgent")
 tracer = trace.get_tracer("src.governed_financial_advisor.agents.evaluator")
@@ -48,7 +49,7 @@ async def _call_opa_direct(input_data: dict) -> str:
         headers["Authorization"] = f"Bearer {auth_token}"
 
     with tracer.start_as_current_span("opa.evaluate_policy") as span:
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute("opa.url", opa_url)
         span.set_attribute("opa.action", input_data.get("action", "unknown"))
         try:

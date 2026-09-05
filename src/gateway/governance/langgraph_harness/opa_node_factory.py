@@ -38,6 +38,12 @@ from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
 from src.gateway.governance.singletons import symbolic_governor
 from src.gateway.governance.symbolic_governor import GovernanceError
+from src.gateway.observability.attributes import (
+    OBSERVATION_NAME,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+    metadata,
+)
 
 logger = logging.getLogger("gateway.governance.langgraph_harness.opa_node_factory")
 tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.opa_node_factory")
@@ -104,8 +110,8 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
 
     async def opa_safety_node(state: StateDict) -> dict[str, Any]:
         with tracer.start_as_current_span("governance.opa_safety_node") as span:
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "opa_safety_gate")
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "opa_safety_gate")
 
             # ----- Apply user-provided span attributes -----
             for attr_key, attr_val in config.span_attributes.items():
@@ -116,7 +122,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
             if not plan:
                 span.set_attribute("governance.decision", "SKIPPED")
                 span.set_attribute(
-                    "langfuse.observation.output",
+                    OBSERVATION_OUTPUT,
                     f"SKIPPED: no {config.plan_state_key}",
                 )
                 logger.warning(
@@ -132,7 +138,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
             for key in ("action", "trader_role", "amount"):
                 if key in opa_input:
                     span.set_attribute(
-                        f"langfuse.trace.metadata.governance.{key}",
+                        metadata(f"governance.{key}"),
                         opa_input[key],
                     )
 
@@ -147,7 +153,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                 )
                 span.set_attribute("governance.decision", "APPROVED")
                 span.set_attribute("governance.blocked", False)
-                span.set_attribute("langfuse.observation.output", "APPROVED")
+                span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
                 stamp_iso_control(
                     span,
                     tier=config.iso_tier,
@@ -165,7 +171,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
             except GovernanceError as exc:
                 msg = str(exc)
                 span.set_attribute("governance.reason", msg)
-                span.set_attribute("langfuse.observation.output", msg)
+                span.set_attribute(OBSERVATION_OUTPUT, msg)
 
                 if (
                     "Manual Review" in msg

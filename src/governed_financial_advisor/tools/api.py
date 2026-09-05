@@ -25,6 +25,12 @@ from pydantic import BaseModel
 from src.gateway.governance.langgraph_harness.nemo_node_factory import get_nemo_rails
 from src.gateway.governance.nemo.manager import validate_with_nemo
 from src.gateway.governance.singletons import opa_client, symbolic_governor
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_NAME,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+)
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
@@ -108,8 +114,8 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             with _tracer.start_as_current_span("cage.tool_execute") as span:
                 span.set_attribute("cage.tool_name", "verify_content_safety")
                 span.set_attribute("cage.governance", True)
-                span.set_attribute("langfuse.observation.type", "span")
-                span.set_attribute("langfuse.observation.name", "cage.tool_execute")
+                span.set_attribute(OBSERVATION_TYPE, "span")
+                span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
                 text = params.get("text", "")
                 is_safe, response, _deterministic = await validate_with_nemo(
                     text, get_nemo_rails()
@@ -126,10 +132,10 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             with _tracer.start_as_current_span("cage.tool_execute") as span:
                 span.set_attribute("cage.tool_name", "evaluate_policy")
                 span.set_attribute("cage.governance", True)
-                span.set_attribute("langfuse.observation.type", "span")
-                span.set_attribute("langfuse.observation.name", "cage.tool_execute")
+                span.set_attribute(OBSERVATION_TYPE, "span")
+                span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
                 span.set_attribute(
-                    "langfuse.observation.input",
+                    OBSERVATION_INPUT,
                     json.dumps(params)[:2000],
                 )
                 t0 = time.perf_counter()
@@ -137,7 +143,7 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                 latency_ms = (time.perf_counter() - t0) * 1000
                 span.set_attribute("cage.opa_latency_ms", round(latency_ms, 2))
                 span.set_attribute("cage.verdict", decision)
-                span.set_attribute("langfuse.observation.output", decision)
+                span.set_attribute(OBSERVATION_OUTPUT, decision)
                 if decision == "ALLOW":
                     output = "APPROVED: Action matches policy."
                 elif decision == "DENY":
@@ -180,12 +186,10 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                 root_span.set_attribute(
                     "cage.confidence", float(params.get("confidence", 0))
                 )
-                root_span.set_attribute("langfuse.observation.type", "span")
+                root_span.set_attribute(OBSERVATION_TYPE, "span")
+                root_span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
                 root_span.set_attribute(
-                    "langfuse.observation.name", "cage.tool_execute"
-                )
-                root_span.set_attribute(
-                    "langfuse.observation.input",
+                    OBSERVATION_INPUT,
                     json.dumps(
                         {
                             "symbol": params.get("symbol"),
@@ -234,9 +238,7 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                 root_span.set_attribute(
                     "cage.total_latency_ms", round(gov_ms + exec_ms, 2)
                 )
-                root_span.set_attribute(
-                    "langfuse.observation.output", str(output)[:500]
-                )
+                root_span.set_attribute(OBSERVATION_OUTPUT, str(output)[:500])
                 root_span.set_status(Status(StatusCode.OK))
 
         else:

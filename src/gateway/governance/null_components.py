@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fail-closed null objects for bare-kernel mode.
+"""Fail-closed null objects for bare-kernel and offline mode.
 
 When no domain plugin is loaded (CAGE_ACTIVE_PLUGINS=""), the kernel uses these
-null implementations. They are NOT no-ops: every method returns a denial verdict.
-
+null implementations. They are NOT no-ops: every method returns an explicit denial verdict.
 A kernel with no plugin denies everything by intent (G2 gate), not by accident.
+
+Wave 1 Additions and Differing Semantics:
+  - NullColdStore (W1.5): Fail-closed evidence storage. In dev/test environments,
+    it accepts flushes and returns well-formed receipts without durable persistence.
+    In production (CAGE_ENV=prod), it raises a hard RuntimeError at startup.
+  - NullTelemetryProvider (W1.6): Clean null telemetry source. Returns an empty,
+    correctly-typed DataFrame (float64 columns) without fabricating synthetic numpy data,
+    allowing CausalGatekeeper to take its documented insufficient-samples fail-closed path.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ from src.gateway.governance.evidence.cold_store import (
     ColdStoreReceipt,
     EvidenceColdStore,
 )
+from src.gateway.governance.telemetry_provider import NullTelemetryProvider
 
 
 class NullSafetyFilter:
@@ -99,4 +107,5 @@ __all__ = [
     "NullColdStore",
     "NullConsensusProvider",
     "NullSafetyFilter",
+    "NullTelemetryProvider",
 ]

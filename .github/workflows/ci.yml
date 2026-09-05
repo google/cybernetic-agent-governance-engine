@@ -161,6 +161,11 @@ jobs:
         # Violations indicate a regression in the plugin seam architecture.
         run: |
           uv run python scripts/check_import_boundaries.py --verbose
+      - name: Telemetry literal check (G7 - No raw vendor literals in executable code)
+        # AW-6: Gate G7 blocks any raw telemetry vendor string literals in executable code.
+        # All telemetry attributes must be imported from src.gateway.observability.attributes.
+        run: |
+          uv run python scripts/check_telemetry_literals.py --verbose
 
   eu-ecb-bias-eval:
     name: EU_ECB LLM Bias Evaluation

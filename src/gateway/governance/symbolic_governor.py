@@ -44,6 +44,12 @@ from src.gateway.governance.ftra.models import FtraBoundaryResult
 from src.gateway.governance.generated_stpa_validator import (
     GeneratedSTPAValidator as STPAValidator,
 )
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_NAME,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+)
 
 logger = logging.getLogger("SymbolicGovernor")
 tracer = trace.get_tracer(__name__)
@@ -1114,7 +1120,7 @@ class SymbolicGovernor:
         )
 
         with tracer.start_as_current_span("cage.ftra_boundary_check") as span:
-            span.set_attribute("langfuse.observation.name", "ftra_boundary_check")
+            span.set_attribute(OBSERVATION_NAME, "ftra_boundary_check")
             span.set_attribute("governance.stage", "ftra_boundary")
             span.set_attribute("cage.ftra.boundary_check_triggered", True)
             span.set_attribute("cage.ftra.action", tool_name)
@@ -1251,9 +1257,7 @@ class SymbolicGovernor:
         # access to /validate-action or ext_authz that would bypass the in-graph ftra_node.
         # This check is MANDATORY — there is no flag to disable it.
         with tracer.start_as_current_span("cage.ftra_boundary_gate") as ftra_gate_span:
-            ftra_gate_span.set_attribute(
-                "langfuse.observation.name", "ftra_boundary_gate"
-            )
+            ftra_gate_span.set_attribute(OBSERVATION_NAME, "ftra_boundary_gate")
             ftra_gate_span.set_attribute("governance.stage", "ftra_boundary")
             _t_ftra = time.perf_counter()
 
@@ -1286,7 +1290,7 @@ class SymbolicGovernor:
 
         # 0. STAMP/STPA: Unsafe Control Actions
         with tracer.start_as_current_span("cage.stpa_check") as stpa_span:
-            stpa_span.set_attribute("langfuse.observation.name", "stpa_uca_check")
+            stpa_span.set_attribute(OBSERVATION_NAME, "stpa_uca_check")
             stpa_span.set_attribute("governance.tool", tool_name)
             _t0 = time.perf_counter()
             if self.stpa_validator is not None:
@@ -1310,9 +1314,7 @@ class SymbolicGovernor:
         # Phase 1: Read-only domain tiers
         if self._is_governed_action(tool_name, params):
             with tracer.start_as_current_span("cage.domain_tiers_phase1") as tier1_span:
-                tier1_span.set_attribute(
-                    "langfuse.observation.name", "domain_tiers_phase1"
-                )
+                tier1_span.set_attribute(OBSERVATION_NAME, "domain_tiers_phase1")
                 tier1_span.set_attribute("governance.stage", "domain_tiers")
                 tier1_span.set_attribute("governance.phase", 1)
                 _t_tier1 = time.perf_counter()
@@ -1359,9 +1361,7 @@ class SymbolicGovernor:
         # This local check fires first to avoid unnecessary CBF/OPA round-trips when
         # the confidence score is obviously below threshold.
         with tracer.start_as_current_span("cage.confidence_check") as conf_span:
-            conf_span.set_attribute(
-                "langfuse.observation.name", "confidence_threshold_check"
-            )
+            conf_span.set_attribute(OBSERVATION_NAME, "confidence_threshold_check")
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
             if self._is_governed_action(tool_name, params):
@@ -1453,9 +1453,7 @@ class SymbolicGovernor:
             opa_payload["action"] = tool_name
 
             with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
-                opa_span.set_attribute(
-                    "langfuse.observation.name", "opa_policy_pre_check"
-                )
+                opa_span.set_attribute(OBSERVATION_NAME, "opa_policy_pre_check")
                 opa_span.set_attribute("governance.stage", "opa")
                 opa_span.set_attribute("governance.phase", "read_only")
                 _t_opa = time.perf_counter()
@@ -1515,9 +1513,7 @@ class SymbolicGovernor:
             opa_payload["action"] = tool_name
             try:
                 with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
-                    opa_span.set_attribute(
-                        "langfuse.observation.name", "opa_policy_pre_check"
-                    )
+                    opa_span.set_attribute(OBSERVATION_NAME, "opa_policy_pre_check")
                     opa_span.set_attribute("governance.stage", "opa")
                     policy_resp = await self.opa_client.evaluate_policy(opa_payload)
                 if isinstance(policy_resp, dict):
@@ -1561,7 +1557,7 @@ class SymbolicGovernor:
                 "cage.tier2_structural_corroboration"
             ) as _t2_span:
                 _t2_span.set_attribute(
-                    "langfuse.observation.name", "tier2_structural_corroboration"
+                    OBSERVATION_NAME, "tier2_structural_corroboration"
                 )
                 _t2_span.set_attribute("governance.stage", "tier2_corroboration")
                 _t2_corr_t0 = time.perf_counter()
@@ -1664,9 +1660,7 @@ class SymbolicGovernor:
         # Phase 2: Mutating domain tiers (only if Phase 1 passed)
         if self._is_governed_action(tool_name, params) and not violations:
             with tracer.start_as_current_span("cage.domain_tiers_phase2") as tier2_span:
-                tier2_span.set_attribute(
-                    "langfuse.observation.name", "domain_tiers_phase2"
-                )
+                tier2_span.set_attribute(OBSERVATION_NAME, "domain_tiers_phase2")
                 tier2_span.set_attribute("governance.stage", "domain_tiers")
                 tier2_span.set_attribute("governance.phase", 2)
                 _t_tier2 = time.perf_counter()
@@ -1742,10 +1736,10 @@ class SymbolicGovernor:
         from src.gateway.governance.routing_seal import generate_seal_with_evidence
 
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "governance_evaluation")
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
             span.set_attribute(
-                "langfuse.observation.input",
+                OBSERVATION_INPUT,
                 json.dumps({"tool": tool_name, "params": params}),
             )
             logger.info("⚖️ Symbolic Governor evaluating: %s", tool_name)
@@ -1811,13 +1805,13 @@ class SymbolicGovernor:
                 logger.info(
                     "✅ Symbolic Governor Approved: %s (seal issued)", tool_name
                 )
-                span.set_attribute("langfuse.observation.output", "APPROVED")
+                span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
                 span.set_attribute("cage.seal_issued", True)
                 return seal
             except Exception as exc:
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR))
-                span.set_attribute("langfuse.observation.output", str(exc))
+                span.set_attribute(OBSERVATION_OUTPUT, str(exc))
                 raise
 
     async def revalidate_post_hitl(
@@ -1869,12 +1863,10 @@ class SymbolicGovernor:
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
         ) as span:
-            span.set_attribute("langfuse.observation.type", "span")
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "governance_revalidate_post_hitl")
             span.set_attribute(
-                "langfuse.observation.name", "governance_revalidate_post_hitl"
-            )
-            span.set_attribute(
-                "langfuse.observation.input",
+                OBSERVATION_INPUT,
                 json.dumps({"tool": tool_name, "params": params}),
             )
             span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
@@ -1893,9 +1885,7 @@ class SymbolicGovernor:
             async def _cbf_revalidate() -> str | None:
                 """Atomic CBF verify-and-commit inside a dedicated span."""
                 with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
-                    cbf_span.set_attribute(
-                        "langfuse.observation.name", "cbf_barrier_check"
-                    )
+                    cbf_span.set_attribute(OBSERVATION_NAME, "cbf_barrier_check")
                     cbf_span.set_attribute("governance.stage", "cbf")
                     cbf_span.set_attribute("governance.cbf.atomic", True)
                     cbf_span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
@@ -1928,9 +1918,7 @@ class SymbolicGovernor:
             async def _opa_revalidate() -> Any:
                 """OPA policy evaluation inside a dedicated span."""
                 with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
-                    opa_span.set_attribute(
-                        "langfuse.observation.name", "opa_policy_pre_check"
-                    )
+                    opa_span.set_attribute(OBSERVATION_NAME, "opa_policy_pre_check")
                     opa_span.set_attribute("governance.stage", "opa")
                     opa_span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
                     _t = time.perf_counter()
@@ -2052,14 +2040,14 @@ class SymbolicGovernor:
                     "(seal issued, Tiers 3a/3b only)",
                     tool_name,
                 )
-                span.set_attribute("langfuse.observation.output", "APPROVED")
+                span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
                 span.set_attribute("cage.seal_issued", True)
                 return seal
 
             except Exception as exc:
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR))
-                span.set_attribute("langfuse.observation.output", str(exc))
+                span.set_attribute(OBSERVATION_OUTPUT, str(exc))
                 raise
 
     async def pre_check(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -2145,17 +2133,17 @@ class SymbolicGovernor:
         Used by the Evaluator Agent (System 3) for simulation.
         """
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "governance_simulation")
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "governance_simulation")
             span.set_attribute(
-                "langfuse.observation.input",
+                OBSERVATION_INPUT,
                 json.dumps({"tool": tool_name, "params": params}),
             )
             result = await self._run_checks(tool_name, params, sim_mode=True)
             violations = result["violations"]
             # tier_violations intentionally not extracted here (used elsewhere in real validation)
             span.set_attribute(
-                "langfuse.observation.output",
+                OBSERVATION_OUTPUT,
                 json.dumps(violations) if violations else "APPROVED",
             )
             return result
@@ -2209,10 +2197,10 @@ class SymbolicGovernor:
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute("cage.action", action)
             span.set_attribute("cage.governance", True)
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "cage.validate_action")
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "cage.validate_action")
             span.set_attribute(
-                "langfuse.observation.input",
+                OBSERVATION_INPUT,
                 json.dumps(
                     {
                         "action": action,
@@ -2304,7 +2292,7 @@ class SymbolicGovernor:
                             "cage.verdict", GovernanceDecision.REQUIRE_APPROVAL
                         )
                         span.set_attribute(
-                            "langfuse.observation.output",
+                            OBSERVATION_OUTPUT,
                             GovernanceDecision.REQUIRE_APPROVAL,
                         )
                         span.set_status(Status(StatusCode.OK))
@@ -2340,7 +2328,7 @@ class SymbolicGovernor:
                         span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
                         span.set_attribute("cage.defer_token", defer_token)
                         span.set_attribute(
-                            "langfuse.observation.output",
+                            OBSERVATION_OUTPUT,
                             GovernanceDecision.DEFER,
                         )
                         span.set_status(Status(StatusCode.OK))
@@ -2406,7 +2394,7 @@ class SymbolicGovernor:
                             json.dumps(constraints_applied)[:500],
                         )
                         span.set_attribute(
-                            "langfuse.observation.output",
+                            OBSERVATION_OUTPUT,
                             GovernanceDecision.NARROW,
                         )
                         span.set_status(Status(StatusCode.OK))
@@ -2568,9 +2556,7 @@ class SymbolicGovernor:
                         span.set_attribute(
                             "cage.pause_receipt_hash", pause_receipt.proof_hash
                         )
-                        span.set_attribute(
-                            "langfuse.observation.output", GovernanceDecision.PAUSE
-                        )
+                        span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.PAUSE)
                         span.set_status(Status(StatusCode.OK))
 
                         logger.info(
@@ -2604,9 +2590,7 @@ class SymbolicGovernor:
                     # This is the fallback for all other decisions (including
                     # explicitly classified DENY). Preserves existing behavior.
                     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
-                    span.set_attribute(
-                        "langfuse.observation.output", json.dumps(violations)
-                    )
+                    span.set_attribute(OBSERVATION_OUTPUT, json.dumps(violations))
                     span.set_status(Status(StatusCode.ERROR))
                     logger.warning(
                         "🚫 validate_action DENIED: action=%s violations=%s reason=%s",
@@ -2665,9 +2649,7 @@ class SymbolicGovernor:
                     seal_span.set_attribute("cage.seal_issued", True)
 
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
-                span.set_attribute(
-                    "langfuse.observation.output", GovernanceDecision.ALLOW
-                )
+                span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
                 logger.info(
                     "✅ validate_action ALLOW: action=%s (%.1fms)",

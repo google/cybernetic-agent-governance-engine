@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.check_domain_literals import check_file
+
 
 @pytest.mark.local
 class TestDomainLiteralGate:
@@ -47,84 +49,44 @@ class TestDomainLiteralGate:
 
     def test_gate_detects_execute_trade_literal(self) -> None:
         """G6 gate detects 'execute_trade' in executable code."""
-        # Create a temporary file with a forbidden literal
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".py",
-            dir="src/gateway/governance",
-            delete=False,
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write('action = "execute_trade"\n')
             temp_path = f.name
 
         try:
-            result = subprocess.run(
-                ["uv", "run", "python", "scripts/check_domain_literals.py"],
-                capture_output=True,
-                text=True,
-            )
-
-            # Should fail (exit code 1)
-            assert result.returncode == 1
-            assert "❌ Gate G6 FAILED" in result.stdout
-            assert "execute_trade" in result.stdout
+            violations = check_file(Path(temp_path))
+            assert len(violations) == 1
+            assert violations[0][1] == "execute_trade"
         finally:
             os.unlink(temp_path)
 
     def test_gate_allows_literals_in_docstrings(self) -> None:
         """G6 gate allows domain literals in docstrings."""
-        # Create a temporary file with literal in docstring
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".py",
-            dir="src/gateway/governance",
-            delete=False,
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write('"""Example: execute_trade action."""\n')
             f.write("def foo(): pass\n")
             temp_path = f.name
 
         try:
-            result = subprocess.run(
-                ["uv", "run", "python", "scripts/check_domain_literals.py"],
-                capture_output=True,
-                text=True,
-            )
-
-            # Should pass (docstrings are excluded)
-            assert result.returncode == 0
+            violations = check_file(Path(temp_path))
+            assert len(violations) == 0
         finally:
             os.unlink(temp_path)
 
     def test_gate_allows_literals_in_comments(self) -> None:
         """G6 gate allows domain literals in comments."""
-        # Create a temporary file with literal in comment
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".py",
-            dir="src/gateway/governance",
-            delete=False,
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("# This used to handle execute_trade\n")
             f.write("def foo(): pass\n")
             temp_path = f.name
 
         try:
-            result = subprocess.run(
-                ["uv", "run", "python", "scripts/check_domain_literals.py"],
-                capture_output=True,
-                text=True,
-            )
-
-            # Should pass (comments are excluded by line-level filtering)
-            assert result.returncode == 0
+            violations = check_file(Path(temp_path))
+            assert len(violations) == 0
         finally:
             os.unlink(temp_path)
 
-
-@pytest.mark.local
-class TestDomainLiteralGateExclusions:
-    """G6 gate exclusion tests."""
+    # --- Exclusion and Reporting Tests ---
 
     def test_gate_excludes_generated_files(self) -> None:
         """G6 gate skips files in EXCLUDED_FILES list."""

@@ -40,6 +40,8 @@ except ImportError:
 logger = logging.getLogger("NeMo.LLM")
 tracer = trace.get_tracer("src.gateway.governance.nemo.vllm_client")
 
+from src.gateway.observability.attributes import OBSERVATION_TYPE
+
 # Maximum characters for span string attributes (mirrors telemetry.py limit).
 _VLLM_SPAN_ATTR_MAX_CHARS = 8_000
 
@@ -102,7 +104,7 @@ class VLLMLLM(BaseChatModel):
         """Call the vLLM model via LiteLLM."""
         with tracer.start_as_current_span("nemo.guardrails.llm.generate") as span:
             span.set_attribute("gen_ai.operation.name", "chat")
-            span.set_attribute("langfuse.observation.type", "generation")
+            span.set_attribute(OBSERVATION_TYPE, "generation")
             span.set_attribute("gen_ai.system", "nemo-guardrails")
             span.set_attribute("nemo.vllm.timeout", self.timeout)
             try:
@@ -211,7 +213,7 @@ class VLLMLLM(BaseChatModel):
         """Async call to the vLLM model via LiteLLM."""
         with tracer.start_as_current_span("nemo.guardrails.llm.agenerate") as span:
             span.set_attribute("gen_ai.operation.name", "chat")
-            span.set_attribute("langfuse.observation.type", "generation")
+            span.set_attribute(OBSERVATION_TYPE, "generation")
             span.set_attribute("gen_ai.system", "nemo-guardrails")
             span.set_attribute("nemo.vllm.timeout", self.timeout)
             try:
@@ -362,7 +364,7 @@ class VLLMLLM(BaseChatModel):
         """
         with tracer.start_as_current_span("nemo.guardrails.llm.astream") as span:
             span.set_attribute("gen_ai.operation.name", "chat")
-            span.set_attribute("langfuse.observation.type", "generation")
+            span.set_attribute(OBSERVATION_TYPE, "generation")
             span.set_attribute("gen_ai.system", "nemo-guardrails")
             span.set_attribute("gen_ai.request.model", self.model_name)
             try:

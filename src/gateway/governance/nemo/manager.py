@@ -47,6 +47,19 @@ from opentelemetry.trace import Status, StatusCode
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.nemo.vllm_client import VLLMLLM
 from src.gateway.governance.text_filter import ac_keyword_scan
+from src.gateway.observability.attributes import (
+    OBSERVATION_METADATA_FALLBACK_REASON,
+    OBSERVATION_METADATA_GOVERNANCE_STATE,
+    OBSERVATION_METADATA_ISO_CONTROL,
+    OBSERVATION_METADATA_STPA_HAZARD,
+    OBSERVATION_NAME,
+    OBSERVATION_TYPE,
+    TRACE_METADATA_GUARDRAILS_FRAMEWORK,
+    TRACE_METADATA_GUARDRAILS_INPUT_LENGTH,
+    TRACE_METADATA_GUARDRAILS_INTERVENED,
+    TRACE_METADATA_GUARDRAILS_OUTCOME,
+    TRACE_METADATA_RISK_VERDICT,
+)
 
 logger = logging.getLogger("NeMoManager")
 handler = logging.StreamHandler()
@@ -537,19 +550,17 @@ async def validate_with_nemo(
         # This provides full audit visibility into every request processed while
         # NeMo's semantic layer was offline (ISO 42001 A.5.2 / STPA UCA-1).
         if getattr(rails, "is_transparent_fallback", False) is True:
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute(
-                "langfuse.observation.name", "nemo_guardrails_validation"
-            )
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "nemo_guardrails_validation")
             span.set_attribute("input", scrub_pii(user_input))
             # Langfuse-indexed metadata fields (langfuse.observation.metadata.* prefix
             # elevates these to top-level searchable columns in the Langfuse UI).
             span.set_attribute(
-                "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+                OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
             )
-            span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
+            span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
             span.set_attribute(
-                "langfuse.observation.metadata.fallback_reason",
+                OBSERVATION_METADATA_FALLBACK_REASON,
                 "NeMo_config_parse_failed",
             )
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
@@ -564,7 +575,7 @@ async def validate_with_nemo(
                     CAGE_SEAL_ENFORCEMENT,
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "CIRCUIT_OPEN_REJECTED",
                 )
                 span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
@@ -582,7 +593,7 @@ async def validate_with_nemo(
                     "⚠️ Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA."
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "DEGRADED_FAIL_OPEN",
                 )
                 span.set_attribute("output", "PASS_THROUGH_ACTIVE")
@@ -595,9 +606,9 @@ async def validate_with_nemo(
             logger.warning(
                 "🛑 Blocking systemic bypass attempt: %s...", user_input[:50]
             )
-            span.set_attribute("langfuse.trace.metadata.guardrails.outcome", "BLOCKED")
-            span.set_attribute("langfuse.trace.metadata.risk.verdict", "REJECTED")
-            span.set_attribute("langfuse.trace.metadata.guardrails.intervened", True)
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "BLOCKED")
+            span.set_attribute(TRACE_METADATA_RISK_VERDICT, "REJECTED")
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_INTERVENED, True)
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="BLOCK")
             if token is not None:
                 streaming_handler_var.reset(token)
@@ -608,15 +619,11 @@ async def validate_with_nemo(
             )
 
         try:
-            span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute(
-                "langfuse.observation.name", "nemo_guardrails_validation"
-            )
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "nemo_guardrails_validation")
             span.set_attribute("input", scrub_pii(user_input))
-            span.set_attribute("langfuse.trace.metadata.guardrails.framework", "nemo")
-            span.set_attribute(
-                "langfuse.trace.metadata.guardrails.input_length", len(user_input)
-            )
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_FRAMEWORK, "nemo")
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_INPUT_LENGTH, len(user_input))
 
             if pre_check_results is not None:
                 logger.debug(
@@ -663,10 +670,8 @@ async def validate_with_nemo(
             span.set_attribute(
                 "guardrails.outcome", "ALLOWED" if is_safe else "BLOCKED"
             )
-            span.set_attribute("langfuse.trace.metadata.risk.verdict", verdict)
-            span.set_attribute(
-                "langfuse.trace.metadata.guardrails.intervened", not is_safe
-            )
+            span.set_attribute(TRACE_METADATA_RISK_VERDICT, verdict)
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_INTERVENED, not is_safe)
             span.set_attribute("output", response_content)
             span.set_attribute("guardrails.deterministic_verdict", is_deterministic)
             stamp_iso_control(
@@ -691,13 +696,13 @@ async def validate_with_nemo(
                 span.set_attribute("guardrails.outcome", "BYPASSED_NO_MAIN_FLOW")
                 # Stamp Langfuse so auditors can filter by this degraded state
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "DEGRADED_NO_MAIN_FLOW",
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+                    OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
                 )
-                span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
+                span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
                 return True, "", False
             logger.error("NeMo Validation Error: %s", exc)
             span.record_exception(exc)
@@ -808,13 +813,13 @@ async def verify_input(
             governor's sub-components (breaking the re-entrant loop).
     """
     with tracer.start_as_current_span("guardrails.verify_input") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.observation.name", "nemo_input_verification")
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(OBSERVATION_NAME, "nemo_input_verification")
         span.set_attribute("input", scrub_pii(text))
 
         if _detect_bypass(text):
             logger.warning("🛑 Blocking systemic bypass attempt: %s...", text[:50])
-            span.set_attribute("langfuse.trace.metadata.guardrails.outcome", "BLOCKED")
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "BLOCKED")
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="BLOCK")
             return SafetyResult(
                 is_safe=False,
@@ -824,11 +829,11 @@ async def verify_input(
         # --- Transparent Fallback Circuit Breaker ---
         if getattr(rails, "is_transparent_fallback", False):
             span.set_attribute(
-                "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+                OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
             )
-            span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
+            span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
             span.set_attribute(
-                "langfuse.observation.metadata.fallback_reason",
+                OBSERVATION_METADATA_FALLBACK_REASON,
                 "NeMo_config_parse_failed",
             )
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
@@ -843,7 +848,7 @@ async def verify_input(
                     CAGE_SEAL_ENFORCEMENT,
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "CIRCUIT_OPEN_REJECTED",
                 )
                 span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
@@ -858,7 +863,7 @@ async def verify_input(
                     "⚠️ verify_input: Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA."
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "DEGRADED_FAIL_OPEN",
                 )
                 span.set_attribute("output", "PASS_THROUGH_ACTIVE")
@@ -904,13 +909,13 @@ async def verify_input(
                 )
                 # Stamp Langfuse so auditors can filter by this degraded state
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "DEGRADED_NO_MAIN_FLOW",
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+                    OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
                 )
-                span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
+                span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
                 return SafetyResult(is_safe=True)
             logger.error("NeMo Input Verification Error: %s", exc)
             span.record_exception(exc)
@@ -929,8 +934,8 @@ async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
     (the rail requires a live vLLM instance; in dev this may be unavailable).
     """
     with tracer.start_as_current_span("guardrails.verify_and_mask_output") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.observation.name", "nemo_output_masking")
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(OBSERVATION_NAME, "nemo_output_masking")
         span.set_attribute("input", scrub_pii(text))
 
         scrubbed_text = scrub_pii(text)
@@ -1012,22 +1017,20 @@ async def validate_output_semantics(
     cage_enforcement = os.environ.get("CAGE_SEAL_ENFORCEMENT", "enforce").lower()
 
     with tracer.start_as_current_span("guardrails.validate_output_semantics") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute(
-            "langfuse.observation.name", "nemo_output_semantic_validation"
-        )
+        span.set_attribute(OBSERVATION_TYPE, "span")
+        span.set_attribute(OBSERVATION_NAME, "nemo_output_semantic_validation")
         span.set_attribute("input", scrub_pii(output_text))
         span.set_attribute("nemo.cage_enforcement", cage_enforcement)
 
         # --- Transparent Fallback Circuit Breaker ---
         if getattr(rails, "is_transparent_fallback", False):
             span.set_attribute(
-                "langfuse.observation.metadata.stpa_hazard",
+                OBSERVATION_METADATA_STPA_HAZARD,
                 "UCA-3_SEMANTIC_OUTPUT_BYPASS",
             )
-            span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
+            span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
             span.set_attribute(
-                "langfuse.observation.metadata.fallback_reason",
+                OBSERVATION_METADATA_FALLBACK_REASON,
                 "NeMo_config_parse_failed",
             )
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
@@ -1039,7 +1042,7 @@ async def validate_output_semantics(
                     cage_enforcement,
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "CIRCUIT_OPEN_REJECTED",
                 )
                 span.set_status(Status(StatusCode.ERROR))
@@ -1050,7 +1053,7 @@ async def validate_output_semantics(
                     "passing output through without semantic validation."
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "DEGRADED_FAIL_OPEN",
                 )
                 span.set_status(Status(StatusCode.OK))
@@ -1110,7 +1113,7 @@ async def validate_output_semantics(
                     exc_str,
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state",
+                    OBSERVATION_METADATA_GOVERNANCE_STATE,
                     "DEGRADED_NO_MAIN_FLOW",
                 )
                 span.set_attribute("output.semantic_safe", True)

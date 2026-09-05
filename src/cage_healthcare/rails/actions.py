@@ -20,6 +20,11 @@ from typing import Any
 
 from opentelemetry import trace as _otel_trace
 
+from src.gateway.observability.attributes import (
+    OBSERVATION_TYPE,
+    TRACE_METADATA_GUARDRAIL_ACTION,
+)
+
 try:
     from nemoguardrails.actions import action as _nemo_action
 
@@ -51,9 +56,9 @@ async def check_contraindication_action(
     is enforced by the clinical_consensus_tier → multi-critic consensus path.
     """
     with _tracer.start_as_current_span("nemo.action.check_contraindication") as span:
-        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(
-            "langfuse.trace.metadata.guardrail.action", "CheckContraindicationAction"
+            TRACE_METADATA_GUARDRAIL_ACTION, "CheckContraindicationAction"
         )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute(

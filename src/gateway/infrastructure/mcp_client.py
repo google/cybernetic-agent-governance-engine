@@ -19,6 +19,12 @@ from typing import Any
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
+from src.gateway.observability.attributes import (
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+    SPAN_ATTR_GEN_AI_OPERATION_NAME,
+)
+
 logger = logging.getLogger("Infrastructure.MCPClient")
 
 
@@ -106,8 +112,8 @@ class GatewayMCPClient:
 
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span(f"mcp_tool:{name}") as span:
-            span.set_attribute("langfuse.observation.type", "generation")
-            span.set_attribute("gen_ai.operation.name", "tool_call")
+            span.set_attribute(OBSERVATION_TYPE, "generation")
+            span.set_attribute(SPAN_ATTR_GEN_AI_OPERATION_NAME, "tool_call")
 
             try:
                 async with AsyncExitStack() as stack:
@@ -128,7 +134,7 @@ class GatewayMCPClient:
                             output.append(content.text)
 
                 final_output = "\n".join(output)
-                span.set_attribute("langfuse.observation.output", final_output)
+                span.set_attribute(OBSERVATION_OUTPUT, final_output)
                 return final_output
             except Exception as e:
                 span.record_exception(e)

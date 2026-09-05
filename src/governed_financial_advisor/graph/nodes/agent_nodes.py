@@ -26,6 +26,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from src.gateway.infrastructure.telemetry_client import get_tracer
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_OUTPUT,
+    TRACE_METADATA_CURRENT_NODE,
+)
 from src.governed_financial_advisor.agents.execution_analyst.agent import (
     create_execution_analyst_agent,
 )
@@ -146,8 +151,8 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
     # 4. Invoke LangChain structured output asynchronously (ARCH-05)
     tracer = get_tracer()
     with tracer.start_as_current_span("ExecutionAnalyst: Planner") as span:
-        span.set_attribute("langfuse.trace.metadata.current_node", "execution_analyst")
-        span.set_attribute("langfuse.observation.input", injected_msg)
+        span.set_attribute(TRACE_METADATA_CURRENT_NODE, "execution_analyst")
+        span.set_attribute(OBSERVATION_INPUT, injected_msg)
 
         # P1 fix: bounded retry loop — up to MAX_PLAN_RETRIES additional
         # attempts on semantically-incomplete plans (empty rationale, empty
@@ -192,7 +197,7 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
         if plan_obj is not None:
             # Serialize for state dictionary
             plan_output = plan_obj.model_dump()
-            span.set_attribute("langfuse.observation.output", json.dumps(plan_output))
+            span.set_attribute(OBSERVATION_OUTPUT, json.dumps(plan_output))
             logger.info(
                 f"✅ Generated Execution Plan: {plan_output.get('plan_id', 'unknown')}"
             )

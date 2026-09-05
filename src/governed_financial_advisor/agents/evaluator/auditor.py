@@ -27,6 +27,8 @@ import logging
 import os
 from typing import Any
 
+from src.gateway.observability.attributes import TRACE_TAGS
+
 logger = logging.getLogger("EvaluatorAuditor")
 
 # ---------------------------------------------------------------------------
@@ -287,7 +289,7 @@ class EvaluatorAuditor:
 
                     # Inject standardized tags format for Langfuse indexing
                     span.set_attribute(
-                        "langfuse.trace.tags",
+                        TRACE_TAGS,
                         json.dumps(
                             ["iso-42001", "control:A.5.3", f"verdict:{verdict}"]
                         ),

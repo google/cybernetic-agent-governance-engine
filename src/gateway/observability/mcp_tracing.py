@@ -37,6 +37,12 @@ import logging
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_OUTPUT,
+    SPAN_ATTR_MCP_TOOL_RESULT_LENGTH,
+)
+
 logger = logging.getLogger("Gateway.MCP.Tracing")
 tracer = trace.get_tracer("mcp.server.tools")
 propagator = TraceContextTextMapPropagator()
@@ -64,7 +70,7 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
         with tracer.start_as_current_span(f"mcp.tool:{name}", context=otel_ctx) as span:
             span.set_attribute("mcp.tool.name", name)
             span.set_attribute(
-                "langfuse.observation.input",
+                OBSERVATION_INPUT,
                 json.dumps({"tool": name, "args": _filter_args(arguments)}),
             )
 
@@ -75,8 +81,8 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
 
             # 4. Record output
             result_str = str(result)
-            span.set_attribute("mcp.tool.result_length", len(result_str))
-            span.set_attribute("langfuse.observation.output", result_str[:4096])
+            span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(result_str))
+            span.set_attribute(OBSERVATION_OUTPUT, result_str[:4096])
             return result
 
     # Replace the method on the instance
