@@ -33,6 +33,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from cachetools import TTLCache
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
 # Lazy import: langfuse is only required at runtime, not at import time.
 Langfuse = None  # populated by _get_langfuse_class() on first use
@@ -50,6 +51,72 @@ def _get_langfuse_class():  # type: ignore[no-untyped-def]
 from .types import ComplianceMetrics
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# ClickHouse Sink Metrics
+# ---------------------------------------------------------------------------
+
+try:
+    CLICKHOUSE_SINK_ERRORS_TOTAL = Counter(
+        "clickhouse_sink_errors_total",
+        "Total ClickHouse insert failures",
+        labelnames=["error_type"],
+    )
+except ValueError:
+    CLICKHOUSE_SINK_ERRORS_TOTAL = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+        "clickhouse_sink_errors_total"
+    )
+
+try:
+    CLICKHOUSE_SINK_RECORDS_TOTAL = Counter(
+        "clickhouse_sink_records_total",
+        "Total evidence records persisted to ClickHouse",
+    )
+except ValueError:
+    CLICKHOUSE_SINK_RECORDS_TOTAL = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+        "clickhouse_sink_records_total"
+    )
+
+try:
+    CLICKHOUSE_SINK_DROPPED_TOTAL = Counter(
+        "clickhouse_sink_dropped_total",
+        "Total records dropped due to queue overflow",
+    )
+except ValueError:
+    CLICKHOUSE_SINK_DROPPED_TOTAL = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+        "clickhouse_sink_dropped_total"
+    )
+
+try:
+    CLICKHOUSE_SINK_BATCH_DURATION_SECONDS = Histogram(
+        "clickhouse_sink_batch_duration_seconds",
+        "ClickHouse batch insert latency distribution",
+        buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    )
+except ValueError:
+    CLICKHOUSE_SINK_BATCH_DURATION_SECONDS = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+        "clickhouse_sink_batch_duration_seconds"
+    )
+
+try:
+    CLICKHOUSE_SINK_QUEUE_DEPTH = Gauge(
+        "clickhouse_sink_queue_depth",
+        "Current ClickHouse sink queue depth",
+    )
+except ValueError:
+    CLICKHOUSE_SINK_QUEUE_DEPTH = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+        "clickhouse_sink_queue_depth"
+    )
+
+try:
+    CLICKHOUSE_SINK_CIRCUIT_OPEN = Gauge(
+        "clickhouse_sink_circuit_open",
+        "ClickHouse sink circuit breaker state (1=open, 0=closed)",
+    )
+except ValueError:
+    CLICKHOUSE_SINK_CIRCUIT_OPEN = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+        "clickhouse_sink_circuit_open"
+    )
 
 
 # ---------------------------------------------------------------------------
