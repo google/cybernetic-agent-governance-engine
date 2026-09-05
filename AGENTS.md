@@ -158,12 +158,13 @@ Where `<description>`:
 **Example validation:**
 ```python
 import re
+
 # Hotfix has different structure (version-desc), so use alternation
-pattern = r'^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?\d+\.\d+\.\d+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$'
-assert re.match(pattern, 'feat/redis-limiter')       # ✅
-assert re.match(pattern, 'hotfix/2.0.1-redis-fix')   # ✅
-assert not re.match(pattern, 'random-branch')        # ❌
-assert not re.match(pattern, 'Feature/Thing')        # ❌
+pattern = r"^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?\d+\.\d+\.\d+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$"
+assert re.match(pattern, "feat/redis-limiter")  # ✅
+assert re.match(pattern, "hotfix/2.0.1-redis-fix")  # ✅
+assert not re.match(pattern, "random-branch")  # ❌
+assert not re.match(pattern, "Feature/Thing")  # ❌
 ```
 
 ### Agent Workflow: Enforcing Branch Strategy
