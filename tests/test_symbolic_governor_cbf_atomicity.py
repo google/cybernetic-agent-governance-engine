@@ -71,7 +71,7 @@ def _make_cbf_with_fakeredis(
 ) -> ControlBarrierFunction:
     """Construct a ControlBarrierFunction whose Redis calls are served by fakeredis.
 
-    Patches src.cage_finance.safety.cbf.redis_client so that get_raw_client()
+    Patches src.gateway.governance.safety.cbf_engine.redis_client so that get_raw_client()
     returns the caller-supplied fakeredis instance — matching the pattern used
     in test_cbf_reconciliation.py.
     """

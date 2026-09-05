@@ -995,8 +995,8 @@ class TestRealCBFIntegration:
         mock, _ = mock_redis_client
 
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 0),
+            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
         ):
             cbf = ControlBarrierFunction()
             result = await cbf._sync_to_replicas()
@@ -1017,9 +1017,9 @@ class TestRealCBFIntegration:
         mock.get_raw_client().execute_command = AsyncMock(return_value=1)
 
         with (
-            patch("src.cage_finance.safety.cbf.redis_client", mock),
-            patch("src.cage_finance.safety.cbf._WAIT_REPLICAS", 3),
-            patch("src.cage_finance.safety.cbf._WAIT_TIMEOUT_MS", 100),
+            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 3),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_MS", 100),
         ):
             cbf = ControlBarrierFunction()
             result = await cbf._sync_to_replicas()
