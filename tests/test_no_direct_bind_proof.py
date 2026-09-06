@@ -391,10 +391,7 @@ def test_ftra_is_first_tier_in_sequence() -> None:
 def test_ftra_tier_can_fail_and_block_execution() -> None:
     """FTRA tier can independently block execution when it fails."""
     states = model.enumerate_reachable(model.gated_transitions)
-    ftra_failed = [
-        s for s in states
-        if s.tier_result("ftra") == "FAIL"
-    ]
+    ftra_failed = [s for s in states if s.tier_result("ftra") == "FAIL"]
     # Verify FTRA failures exist and lead to DENIED
     assert ftra_failed, "expected states where FTRA fails"
     for state in ftra_failed:
@@ -407,15 +404,13 @@ def test_ftra_pass_allows_pipeline_to_continue() -> None:
     """When FTRA passes, the governance pipeline continues to subsequent tiers."""
     states = model.enumerate_reachable(model.gated_transitions)
     ftra_passed = [
-        s for s in states
-        if s.tier_result("ftra") == "PASS" and s.phase == "CHECKING"
+        s for s in states if s.tier_result("ftra") == "PASS" and s.phase == "CHECKING"
     ]
     assert ftra_passed, "expected states where FTRA passes and checking continues"
-    
+
     # Verify that after FTRA passes, other tiers can be evaluated
     stpa_after_ftra = [
-        s for s in ftra_passed
-        if s.tier_result("stpa") in ("PASS", "FAIL")
+        s for s in ftra_passed if s.tier_result("stpa") in ("PASS", "FAIL")
     ]
     assert stpa_after_ftra, "STPA tier should be reachable after FTRA passes"
 
@@ -424,18 +419,16 @@ def test_all_executed_states_have_ftra_pass() -> None:
     """Every EXECUTED state must have FTRA tier passed."""
     states = model.enumerate_reachable(model.gated_transitions)
     executed = [s for s in states if s.phase == "EXECUTED"]
-    
+
     for state in executed:
-        assert state.tier_result("ftra") == "PASS", (
-            "EXECUTED state must have FTRA=PASS"
-        )
+        assert state.tier_result("ftra") == "PASS", "EXECUTED state must have FTRA=PASS"
 
 
 def test_ftra_in_concurrent_model() -> None:
     """FTRA behavior is consistent in the concurrent interleaving model."""
     states = model.enumerate_reachable(model.concurrent_tier_transitions)
     executed = [s for s in states if s.phase == "EXECUTED"]
-    
+
     # All executed states must have FTRA=PASS even in concurrent model
     for state in executed:
         assert state.tier_result("ftra") == "PASS", (
