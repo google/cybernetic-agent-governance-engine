@@ -272,6 +272,9 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
         "stpa_compile": "SA-11",  # Developer Safety Testing — compiler run
         "linkerd_mtls": "SC-8",  # Transmission Confidentiality — Linkerd mTLS
         "cilium_l7_egress": "SC-7",  # Boundary Protection — Cilium FQDN filtering
+        "agentsight_syscall": "AU-2",  # AgentSight execve/connect syscall events
+        "agentsight_fim": "SI-7",  # AgentSight file integrity events
+        "cilium_l7_flow": "SC-7",  # Cilium L7 FQDN enforcement evidence
     },
 }
 

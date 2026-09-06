@@ -272,6 +272,23 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
                 "fedramp": "IR-1 (Incident Response Policy and Procedures)",
             },
         },
+        "AU-2": {
+            "name": "Audit Events — AgentSight Kernel + Cilium L7 Flows",
+            "scoreName": "nist.AU-2.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 AU-2",
+            "frameworks": {
+                "fedramp": "AU-2 (Event Logging)",
+                "nist_ai_rmf": "GOVERN-5",
+            },
+        },
+        "SI-7": {
+            "name": "Software Integrity — AgentSight File Integrity Monitoring",
+            "scoreName": "nist.SI-7.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 SI-7",
+            "frameworks": {
+                "fedramp": "SI-7 (Software, Firmware, and Information Integrity)",
+            },
+        },
     },
     # ------------------------------------------------------------------
     # EU_ECB — EU AI Act (2024/1689) / GDPR / DORA
@@ -397,6 +414,8 @@ _JURISDICTIONAL_SLA: dict[str, dict[str, int]] = {
     "US_FED": {
         "SC-8": 86_400,  # mTLS — daily is fine (infrastructure-level, NIST SC-8)
         "SC-7": 86_400,  # Cilium L7 — daily is fine (NIST SC-7)
+        "AU-2": 3_600,  # Kernel audit events — max 1 h stale (NIST AU-2 continuous monitoring)
+        "SI-7": 14_400,  # File integrity — max 4 h stale (NIST SI-7)
     },
     # EU_ECB: DORA Art. 10 mandates tighter audit logging cadence
     "EU_ECB": {
@@ -467,6 +486,9 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
         "stpa_compile": "SA-11",  # Developer Safety Testing — compiler run
         "linkerd_mtls": "SC-8",  # Transmission Confidentiality — Linkerd mTLS
         "cilium_l7_egress": "SC-7",  # Boundary Protection — Cilium FQDN filtering
+        "agentsight_syscall": "AU-2",  # AgentSight execve/connect syscall events
+        "agentsight_fim": "SI-7",  # AgentSight file integrity events
+        "cilium_l7_flow": "SC-7",  # Cilium L7 FQDN enforcement evidence
     },
 }
 

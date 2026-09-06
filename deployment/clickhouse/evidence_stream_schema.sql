@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS cage_evidence.evidence_stream
     trace_id              String CODEC(ZSTD(1)),
     hash_algorithm        LowCardinality(String) DEFAULT 'SHA-256',
     canonicalization      LowCardinality(String) DEFAULT 'RFC8785',
+    evidence_class        Enum8('GOVERNANCE' = 1, 'INFRA' = 2) DEFAULT 'GOVERNANCE',
 
     -- ---- Payload (opaque canonical bytes, never re-serialized) -----------
     payload               String CODEC(ZSTD(3)),
@@ -312,6 +313,18 @@ SELECT
     quantileState(0.99)(dateDiff('millisecond', timestamp, ingested_at)) AS ingest_lag_ms_p99
 FROM cage_evidence.evidence_stream
 GROUP BY bucket_5m, chain_id, event_type, control_id, schema_version;
+
+-- ===========================================================================
+-- §6.4 — Infrastructure Events Materialized View (PR 2 / AU-2 / SI-7)
+-- ===========================================================================
+CREATE MATERIALIZED VIEW IF NOT EXISTS cage_evidence.infra_events_mv
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (event_type, timestamp)
+POPULATE AS
+SELECT *
+FROM cage_evidence.evidence_stream
+WHERE evidence_class = 'INFRA';
 
 CREATE VIEW IF NOT EXISTS cage_evidence.v_prometheus_metrics AS
 SELECT
