@@ -219,8 +219,9 @@ class GovernanceTierPlugin(Protocol):
     """Protocol for a domain-specific governance evaluation tier.
 
     Domain plugins (e.g. ``cage_finance``) implement this protocol for each
-    governance tier they contribute to the kernel.  Tiers are registered via
-    ``SymbolicGovernor.register_domain_tier()`` at startup and are executed in
+    governance tier they contribute to the kernel.  Tiers are provided to
+    ``SymbolicGovernor.__init__()`` via ``core_tiers`` and ``domain_tiers``
+    constructor parameters at instantiation time. They are executed in
     ``(phase, order, tier_name)`` order during ``_run_checks()``.
 
     Phase semantics:
