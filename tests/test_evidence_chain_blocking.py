@@ -45,7 +45,7 @@ class TestEvidenceChainBlockingGate:
             # Force reimport to pick up env var
             import importlib
 
-            import src.compliance_bridge.evidence_stream as es
+            import src.gateway.governance.evidence.stream as es
 
             importlib.reload(es)
 
@@ -60,7 +60,7 @@ class TestEvidenceChainBlockingGate:
         ):
             import importlib
 
-            import src.compliance_bridge.evidence_stream as es
+            import src.gateway.governance.evidence.stream as es
 
             importlib.reload(es)
 
@@ -72,7 +72,7 @@ class TestEvidenceChainBlockingGate:
         with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
             import importlib
 
-            import src.compliance_bridge.evidence_stream as es
+            import src.gateway.governance.evidence.stream as es
 
             importlib.reload(es)
 
@@ -85,7 +85,7 @@ class TestEvidenceCommitResult:
 
     def test_evidence_commit_result_fields(self):
         """Verify EvidenceCommitResult has all required fields."""
-        from src.compliance_bridge.evidence_stream import EvidenceCommitResult
+        from src.gateway.governance.evidence.stream import EvidenceCommitResult
 
         result = EvidenceCommitResult(
             success=True,
@@ -103,7 +103,7 @@ class TestEvidenceCommitResult:
 
     def test_evidence_commit_result_is_frozen(self):
         """Verify EvidenceCommitResult is immutable."""
-        from src.compliance_bridge.evidence_stream import EvidenceCommitResult
+        from src.gateway.governance.evidence.stream import EvidenceCommitResult
 
         result = EvidenceCommitResult(
             success=True,
@@ -121,7 +121,7 @@ class TestEvidenceChainUnavailableError:
 
     def test_error_preserves_original_exception(self):
         """Verify EvidenceChainUnavailableError preserves original error."""
-        from src.compliance_bridge.evidence_stream import EvidenceChainUnavailableError
+        from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 
         original = ConnectionError("Redis unavailable")
         error = EvidenceChainUnavailableError(
@@ -133,7 +133,7 @@ class TestEvidenceChainUnavailableError:
 
     def test_error_without_original_exception(self):
         """Verify EvidenceChainUnavailableError works without original error."""
-        from src.compliance_bridge.evidence_stream import EvidenceChainUnavailableError
+        from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 
         error = EvidenceChainUnavailableError("Redis connection not established")
 
@@ -147,7 +147,7 @@ class TestIngestSync:
     @pytest.mark.asyncio
     async def test_ingest_sync_raises_when_redis_unavailable(self):
         """Verify ingest_sync raises EvidenceChainUnavailableError when Redis is None."""
-        from src.compliance_bridge.evidence_stream import (
+        from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
             EvidenceStreamSink,
         )
@@ -164,7 +164,7 @@ class TestIngestSync:
     @pytest.mark.asyncio
     async def test_ingest_sync_success_returns_commit_result(self):
         """Verify ingest_sync returns EvidenceCommitResult on success."""
-        from src.compliance_bridge.evidence_stream import (
+        from src.gateway.governance.evidence.stream import (
             EvidenceCommitResult,
             EvidenceStreamSink,
         )
@@ -187,7 +187,7 @@ class TestIngestSync:
     @pytest.mark.asyncio
     async def test_ingest_sync_timeout_raises_error(self):
         """Verify ingest_sync raises EvidenceChainUnavailableError on timeout."""
-        from src.compliance_bridge.evidence_stream import (
+        from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
             EvidenceStreamSink,
         )
@@ -220,7 +220,7 @@ class TestIngestSync:
         The original_error is only preserved for timeout and unexpected exceptions,
         not for graceful failure results.
         """
-        from src.compliance_bridge.evidence_stream import (
+        from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
             EvidenceStreamSink,
         )
@@ -250,7 +250,7 @@ class TestGenerateSealWithEvidence:
         ):
             import importlib
 
-            import src.compliance_bridge.evidence_stream as es
+            import src.gateway.governance.evidence.stream as es
 
             importlib.reload(es)
 
@@ -281,7 +281,7 @@ class TestGenerateSealWithEvidence:
         with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
             import importlib
 
-            import src.compliance_bridge.evidence_stream as es
+            import src.gateway.governance.evidence.stream as es
 
             importlib.reload(es)
 
@@ -309,7 +309,7 @@ class TestGenerateSealWithEvidence:
         with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
             import importlib
 
-            import src.compliance_bridge.evidence_stream as es
+            import src.gateway.governance.evidence.stream as es
 
             importlib.reload(es)
 

@@ -3,7 +3,7 @@
 **Status:** Design specification (reference architecture)
 **Schema Version:** `cage-audit/3.0`
 **DDL Artifact:** [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
-**Source of Truth:** [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py:508)
+**Source of Truth:** [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py:508)
 **Last Updated:** 2026-09-05
 
 > **Reference Architecture Note.** CAGE is an illustrative reference
@@ -82,7 +82,7 @@ ClickHouse exists.
 ## 2. Source Schema Contract (`cage-audit/3.0`)
 
 Wire record as written by
-[`EvidenceStreamSink`](../../src/compliance_bridge/evidence_stream.py:508):
+[`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py:508):
 
 ```json
 {
@@ -103,7 +103,7 @@ Wire record as written by
 }
 ```
 
-**Link function** ([`_link_hash()`](../../src/compliance_bridge/evidence_stream.py:659)):
+**Link function** ([`_link_hash()`](../../src/gateway/governance/evidence/stream.py:659)):
 
 ```text
 header = JCS({
@@ -433,7 +433,7 @@ because it is itself a JCS-canonicalized JSON object, not a string scalar;
 wrapping it would double-encode and guarantee a false mismatch.
 
 Recomputation then mirrors
-[`_link_hash()`](../../src/compliance_bridge/evidence_stream.py:659) exactly:
+[`_link_hash()`](../../src/gateway/governance/evidence/stream.py:659) exactly:
 
 ```sql
 lower(hex(SHA256(
@@ -470,7 +470,7 @@ hash*, eliminating all reimplementation risk:
 2. Fetch the corresponding canonical records from GCS cold storage (the
    immutable tier), **not** from ClickHouse — comparing ClickHouse against
    itself proves nothing.
-3. Call [`verify_record()`](../../src/compliance_bridge/evidence_stream.py:728)
+3. Call [`verify_record()`](../../src/gateway/governance/evidence/stream.py:728)
    for each.
 4. Insert a new row with `verdict = 'CONFIRMED'` or `'CLEARED'`.
 
@@ -1556,7 +1556,7 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov \
 ## 13. References
 
 ### Code
-- [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py) — schema, `_link_hash()`, `verify_record()`
+- [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py) — schema, `_link_hash()`, `verify_record()`
 - [`src/compliance_bridge/evidence_consumer.py`](../../src/compliance_bridge/evidence_consumer.py) — consumer to extend with the sink
 - [`src/compliance_bridge/pii_scrubber.py`](../../src/compliance_bridge/pii_scrubber.py) — upstream PII control
 - [`src/compliance_bridge/metrics.py`](../../src/compliance_bridge/metrics.py) — Prometheus registry

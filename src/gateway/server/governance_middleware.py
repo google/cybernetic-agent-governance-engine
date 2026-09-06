@@ -45,6 +45,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
 from pydantic import BaseModel, field_validator
 
+from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
@@ -597,10 +598,6 @@ async def _emit_refusal_receipt(
 
     # Publish to evidence stream
     try:
-        from src.compliance_bridge.evidence_stream import (
-            get_evidence_sink,
-        )
-
         sink = get_evidence_sink()
         await sink.ingest(receipt)
         # MED-7 fix: a successfully emitted refusal receipt is not an error —

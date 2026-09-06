@@ -51,7 +51,7 @@ spec:
             - name: reconciliation-worker
               # Reuse the compliance-bridge image; the reconciliation_worker module
               # ships inside it.  Override IMAGE_REGISTRY at deploy time.
-              image: gcr.io/laah-cybernetics/compliance-bridge:latest
+              image: ${REGISTRY_URL}/compliance-bridge:latest
               imagePullPolicy: Always
               command:
                 - python

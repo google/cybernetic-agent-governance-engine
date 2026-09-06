@@ -30,12 +30,12 @@ from typing import Any, Literal
 import httpx
 import opentelemetry.trace
 
-from src.compliance_bridge.types import get_iso_control_map
+from src.gateway.governance.iso_control import get_iso_control_map
 from src.gateway.observability.attributes import TRACE_TAGS
 
 logger = logging.getLogger(__name__)
 
-# Use region-aware get_iso_control_map(region) from src.compliance_bridge.types
+# Use region-aware get_iso_control_map(region) from src.gateway.governance.iso_control
 
 
 def _get_iso_control_map() -> dict[str, str]:

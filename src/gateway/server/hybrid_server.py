@@ -83,7 +83,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # ── Evidence Stream Precondition Check (R-06) ──────────────────────────────
     # Fail fast if EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
     # This invalid configuration would cause all seal issuances to fail at runtime.
-    from src.compliance_bridge.evidence_stream import (
+    from src.gateway.governance.evidence.stream import (
         ConfigurationError,
         validate_evidence_stream_preconditions,
     )

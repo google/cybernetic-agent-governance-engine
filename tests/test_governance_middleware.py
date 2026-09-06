@@ -151,7 +151,7 @@ def mock_evidence_sink():
     sink = MagicMock()
     sink.ingest = AsyncMock(return_value=None)
     with patch(
-        "src.compliance_bridge.evidence_stream.get_evidence_sink",
+        "src.gateway.server.governance_middleware.get_evidence_sink",
         return_value=sink,
     ):
         yield sink
@@ -802,7 +802,7 @@ class TestEmitRefusalReceipt:
         sink.ingest = AsyncMock(return_value=None)
 
         with patch(
-            "src.compliance_bridge.evidence_stream.get_evidence_sink",
+            "src.gateway.server.governance_middleware.get_evidence_sink",
             return_value=sink,
         ):
             await _emit_refusal_receipt(
@@ -840,7 +840,7 @@ class TestEmitRefusalReceipt:
                 return_value=failing_signer,
             ),
             patch(
-                "src.compliance_bridge.evidence_stream.get_evidence_sink",
+                "src.gateway.server.governance_middleware.get_evidence_sink",
                 return_value=sink,
             ),
         ):
@@ -871,7 +871,7 @@ class TestEmitRefusalReceipt:
         )
 
         with patch(
-            "src.compliance_bridge.evidence_stream.get_evidence_sink",
+            "src.gateway.server.governance_middleware.get_evidence_sink",
             return_value=failing_sink,
         ):
             with caplog.at_level(logging.ERROR, logger="Gateway.GovernanceMiddleware"):

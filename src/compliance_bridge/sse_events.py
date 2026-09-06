@@ -254,7 +254,7 @@ class GovernanceEventBus:
         """Attach an EvidenceStreamSink for hash-chained event persistence.
 
         Args:
-            sink: An EvidenceStreamSink instance (from evidence_stream.py).
+            sink: An EvidenceStreamSink instance (from src.gateway.governance.evidence.stream).
         """
         self._evidence_sink = sink
         logger.info(

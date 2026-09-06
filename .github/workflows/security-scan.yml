@@ -270,14 +270,14 @@ jobs:
 
       - name: Install Syft (SBOM generator — anchore/syft)
         run: |
-          curl -sSfL \
+          curl -sSfL --retry 5 --retry-connrefused --retry-delay 2 \
             https://raw.githubusercontent.com/anchore/syft/main/install.sh \
             | sh -s -- -b /usr/local/bin
           syft version
 
       - name: Install Grype (vulnerability scanner — anchore/grype)
         run: |
-          curl -sSfL \
+          curl -sSfL --retry 5 --retry-connrefused --retry-delay 2 \
             https://raw.githubusercontent.com/anchore/grype/main/install.sh \
             | sh -s -- -b /usr/local/bin
           grype version

@@ -55,7 +55,7 @@ pytestmark = pytest.mark.local
 
 def _make_sink(**kwargs):
     """Return an EvidenceStreamSink instance with sensible test defaults."""
-    from src.compliance_bridge.evidence_stream import EvidenceStreamSink
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
 
     defaults = {
         "redis_url": "redis://localhost:6379",
@@ -88,7 +88,7 @@ class TestSha256Helpers:
 
     def test_sha256_returns_hex_string(self):
         """_sha256 must return a 64-character lowercase hex string."""
-        from src.compliance_bridge.evidence_stream import _sha256
+        from src.gateway.governance.evidence.stream import _sha256
 
         result = _sha256("hello")
         assert len(result) == 64
@@ -97,19 +97,19 @@ class TestSha256Helpers:
 
     def test_sha256_deterministic(self):
         """Same input must always produce the same digest."""
-        from src.compliance_bridge.evidence_stream import _sha256
+        from src.gateway.governance.evidence.stream import _sha256
 
         assert _sha256("test-input") == _sha256("test-input")
 
     def test_sha256_different_inputs_differ(self):
         """Different inputs must produce different digests."""
-        from src.compliance_bridge.evidence_stream import _sha256
+        from src.gateway.governance.evidence.stream import _sha256
 
         assert _sha256("foo") != _sha256("bar")
 
     def test_link_hash_deterministic(self):
         """_link_hash must be deterministic given the same inputs."""
-        from src.compliance_bridge.evidence_stream import _link_hash
+        from src.gateway.governance.evidence.stream import _link_hash
 
         h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"key": "val"}')
         h2 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"key": "val"}')
@@ -117,7 +117,7 @@ class TestSha256Helpers:
 
     def test_link_hash_changes_on_sequence_change(self):
         """Changing sequence must produce a different record_hash (tamper detection)."""
-        from src.compliance_bridge.evidence_stream import _link_hash
+        from src.gateway.governance.evidence.stream import _link_hash
 
         h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", "{}")
         h2 = _link_hash("prev", 1, "AUDIT_FINDING", "A.5.3", "{}")
@@ -125,7 +125,7 @@ class TestSha256Helpers:
 
     def test_link_hash_changes_on_payload_change(self):
         """Changing payload must change the record_hash (tamper detection)."""
-        from src.compliance_bridge.evidence_stream import _link_hash
+        from src.gateway.governance.evidence.stream import _link_hash
 
         h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"a": 1}')
         h2 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"a": 2}')
@@ -142,7 +142,7 @@ class TestEvidenceStreamSinkProperties:
 
     def test_chain_root_is_genesis_hash(self):
         """Initial chain_root must equal the hash of the genesis string."""
-        from src.compliance_bridge.evidence_stream import EvidenceStreamSink, _sha256
+        from src.gateway.governance.evidence.stream import EvidenceStreamSink, _sha256
 
         sink = _make_sink()
         expected = _sha256("EVIDENCE_STREAM_GENESIS")
@@ -160,13 +160,13 @@ class TestEvidenceStreamSinkProperties:
 
     def test_singleton_returns_same_instance(self):
         """get_evidence_sink() must return the same instance on repeated calls."""
-        import src.compliance_bridge.evidence_stream as mod
+        import src.gateway.governance.evidence.stream as mod
 
         # Temporarily reset singleton for test isolation
         original = mod._evidence_sink
         try:
             mod._evidence_sink = None
-            from src.compliance_bridge.evidence_stream import get_evidence_sink
+            from src.gateway.governance.evidence.stream import get_evidence_sink
 
             s1 = get_evidence_sink()
             s2 = get_evidence_sink()
@@ -194,7 +194,7 @@ class TestIngestWithNoRedis:
     @pytest.mark.asyncio
     async def test_ingest_does_not_advance_chain_when_redis_unavailable(self):
         """Chain state must not change when Redis is unavailable."""
-        from src.compliance_bridge.evidence_stream import _sha256
+        from src.gateway.governance.evidence.stream import _sha256
 
         sink = _make_sink()
         initial_hash = sink.chain_root
@@ -540,7 +540,7 @@ class TestColdFlushLoop:
         """AST check: evidence_stream.py must not import vendor storage SDKs."""
         import inspect
 
-        from src.compliance_bridge import evidence_stream
+        from src.gateway.governance.evidence import stream as evidence_stream
 
         source = inspect.getsource(evidence_stream)
         tree = ast.parse(source)

@@ -69,8 +69,9 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Validate branch name
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
-          BRANCH_NAME="${{ github.head_ref }}"
           echo "Validating PR branch name: $BRANCH_NAME"
           
           # Pattern matches AGENTS.md enforcement rules.
@@ -216,6 +217,26 @@ jobs:
         # All telemetry attributes must be imported from src.gateway.observability.attributes.
         run: |
           uv run python scripts/check_telemetry_literals.py --verbose
+      - name: Project-ID hygiene check
+        # W1.8: Ensure no maintainer-specific cloud project identifiers are leaked in tracked files.
+        run: |
+          uv run python scripts/check_project_id_hygiene.py --verbose
+
+  bare-kernel-smoke:
+    name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "latest"
+      - name: Install bare dependencies (no cloud extras)
+        run: uv sync --extra gateway --group dev
+      - name: Run bare-kernel portability tests
+        run: |
+          uv run pytest tests/test_bare_kernel_portability.py -v -p no:langsmith -p no:langsmith_plugin
 
   eu-ecb-bias-eval:
     name: EU_ECB LLM Bias Evaluation

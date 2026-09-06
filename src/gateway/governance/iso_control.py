@@ -246,3 +246,39 @@ def stamp_iso_control(
     _audit_trail.append(result)
     # Persist to Redis stream for durable cross-pod audit trail
     _persist_evaluation(result)
+
+
+# ---------------------------------------------------------------------------
+# ISO_CONTROL_MAP — governance event name → control ID (universal / ISO 42001)
+# Canonical source of truth in Layer 1 Kernel.
+# ---------------------------------------------------------------------------
+
+_UNIVERSAL_CONTROL_MAP: dict[str, str] = {
+    "nemo_input_scan": "A.9.2",  # Data Privacy / PII Masking
+    "nemo_output_rail": "A.5.2",  # Social Impact / Content Safety
+    "opa_policy_check": "SC-4",  # Fiscal Controls / RBAC
+    "otel_trace": "A.5.3",  # Logging & Monitoring / Audit Trail
+    "stpa_validation": "A.8.4",  # AI System Operation — STPA UCA checks
+    "causal_gatekeeper": "A.6.2",  # AI Lifecycle — DoWhy causal refutation
+    "saga_rollback": "A.8.4",  # AI System Operation — Saga compensating node execution
+    # CAGE v2.0.0+ — AARM primitives
+    "context_accumulate": "A.5.3",  # Context Accumulator chain node — Logging & Monitoring
+    "defer_parking": "A.8.4",  # DEFER state machine — AI System Operation Controls
+}
+
+_JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
+    # US_FED — NIST SP 800-53 / FedRAMP HIGH governance event mappings.
+    "US_FED": {
+        "stpa_compile": "SA-11",  # Developer Safety Testing — compiler run
+        "linkerd_mtls": "SC-8",  # Transmission Confidentiality — Linkerd mTLS
+        "cilium_l7_egress": "SC-7",  # Boundary Protection — Cilium FQDN filtering
+    },
+}
+
+
+def get_iso_control_map(region: str) -> dict[str, str]:
+    """Return the governance event → control ID map for the given deployment region."""
+    return {
+        **_UNIVERSAL_CONTROL_MAP,
+        **_JURISDICTIONAL_CONTROL_MAP.get(region, {}),
+    }

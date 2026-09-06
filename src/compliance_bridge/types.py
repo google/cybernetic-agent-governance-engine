@@ -471,21 +471,4 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
 }
 
 
-def get_iso_control_map(region: str) -> dict[str, str]:
-    """Return the governance event → control ID map for the given deployment region.
-
-    Merges the universal ISO 42001 control map with the jurisdictional
-    event mappings for the specified region.  Entries from other regions
-    are excluded so each deployment only exposes its applicable framework.
-
-    Args:
-        region: CAGE_DEPLOYMENT_REGION value — one of "US_FED", "EU_ECB",
-                "APAC_MAS".  Unknown values return universal controls only.
-
-    Returns:
-        A dict mapping governance event name → control identifier.
-    """
-    return {
-        **_UNIVERSAL_CONTROL_MAP,
-        **_JURISDICTIONAL_CONTROL_MAP.get(region, {}),
-    }
+from src.gateway.governance.iso_control import get_iso_control_map

@@ -34,7 +34,7 @@ from unittest import mock
 
 import pytest
 
-from src.compliance_bridge import evidence_stream
+from src.gateway.governance.evidence import stream as evidence_stream
 
 
 class TestValidateEvidenceStreamPreconditions:
@@ -215,7 +215,7 @@ class TestConfigurationErrorException:
 
     def test_configuration_error_distinct_from_evidence_chain_error(self) -> None:
         """ConfigurationError should be distinct from EvidenceChainUnavailableError."""
-        from src.compliance_bridge.evidence_stream import EvidenceChainUnavailableError
+        from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 
         assert evidence_stream.ConfigurationError is not EvidenceChainUnavailableError
         assert not issubclass(

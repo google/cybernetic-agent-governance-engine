@@ -24,20 +24,44 @@ from .cold_store import (
     ColdStoreReceipt,
     EvidenceColdStore,
 )
+from .factory import get_cold_store
 from .null_cold_store import NullColdStore
 from .residency import (
     MissingBucketConfigError,
     ResidencyViolationError,
     resolve_cold_store_bucket,
 )
+from .stream import (
+    ConfigurationError,
+    EvidenceChainUnavailableError,
+    EvidenceCommitResult,
+    EvidenceRecord,
+    EvidenceStreamSink,
+    get_evidence_sink,
+    is_evidence_chain_blocking,
+    is_evidence_stream_enabled,
+    validate_evidence_stream_preconditions,
+    verify_record,
+)
 
 __all__ = [
     "ColdStoreError",
     "ColdStoreHealth",
     "ColdStoreReceipt",
+    "ConfigurationError",
+    "EvidenceChainUnavailableError",
     "EvidenceColdStore",
+    "EvidenceCommitResult",
+    "EvidenceRecord",
+    "EvidenceStreamSink",
     "MissingBucketConfigError",
     "NullColdStore",
     "ResidencyViolationError",
+    "get_cold_store",
+    "get_evidence_sink",
+    "is_evidence_chain_blocking",
+    "is_evidence_stream_enabled",
     "resolve_cold_store_bucket",
+    "validate_evidence_stream_preconditions",
+    "verify_record",
 ]

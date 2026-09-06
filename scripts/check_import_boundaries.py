@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Import Boundary Enforcement — Gate G3 CI Check (PR B)
+"""Import Boundary Enforcement — Gate G3 CI Check
 
-Verifies layer isolation (domain-generic):
+Verifies layer isolation (clean architecture):
 - Layer 1 (src/gateway/) must NOT import from Layer 2 (src/cage_*/)
+- Layer 1 must NOT import from Layer 3 (src/compliance_bridge/)
 - Layer 1 must NOT import from Layer 4 (src/governed_financial_advisor/)
+- Evidence kernel (src/gateway/governance/evidence/) must NOT import vendor SDKs:
+  (google.cloud, boto3, botocore, azure, langfuse)
 
 Usage:
     python scripts/check_import_boundaries.py
@@ -32,35 +35,51 @@ import argparse
 import ast
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-# Layer definitions (in dependency order, lower layers cannot import higher layers)
-LAYER_1_GATEWAY = "src/gateway"
-LAYER_2_CAGE_PATTERN = re.compile(r"^(src\.)?cage_\w+")  # Matches src.cage_* or cage_*
+# Layer definitions
+LAYER_1_GATEWAY = Path("src/gateway")
+EVIDENCE_DIR = Path("src/gateway/governance/evidence")
+
+# Forbidden import patterns for Layer 1
+LAYER_2_CAGE_PATTERN = re.compile(r"^(src\.)?cage_\w+")
+LAYER_3_BRIDGE_PATTERN = re.compile(r"^(src\.)?compliance_bridge")
 LAYER_4_GFA_PATTERN = re.compile(r"^(src\.)?governed_financial_advisor")
+
+# Forbidden vendor SDKs for Evidence Kernel
+FORBIDDEN_VENDOR_SDKS = ("google.cloud", "boto3", "botocore", "azure", "langfuse")
+
+
+@dataclass(frozen=True)
+class BoundaryViolation:
+    file_path: str
+    line_number: int
+    imported_module: str
+    rule_violated: str
 
 
 class ImportVisitor(ast.NodeVisitor):
-    """AST visitor to extract all import statements."""
+    """AST visitor to extract all import statements with line numbers."""
 
-    def __init__(self):
-        self.imports: set[str] = set()
+    def __init__(self) -> None:
+        self.imports: list[tuple[str, int]] = []
 
     def visit_Import(self, node: ast.Import) -> None:
         """Visit `import x` statements."""
         for alias in node.names:
-            self.imports.add(alias.name)
+            self.imports.append((alias.name, node.lineno))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Visit `from x import y` statements."""
         if node.module:
-            self.imports.add(node.module)
+            self.imports.append((node.module, node.lineno))
         self.generic_visit(node)
 
 
-def extract_imports(filepath: Path) -> set[str]:
-    """Extract all import module names from a Python file."""
+def extract_imports(filepath: Path) -> list[tuple[str, int]]:
+    """Extract all (import_module_name, line_number) tuples from a Python file."""
     try:
         with open(filepath, encoding="utf-8") as f:
             tree = ast.parse(f.read(), filename=str(filepath))
@@ -68,31 +87,109 @@ def extract_imports(filepath: Path) -> set[str]:
         visitor.visit(tree)
         return visitor.imports
     except (SyntaxError, FileNotFoundError):
-        # Skip files with syntax errors or transient temp files deleted during scan
-        return set()
+        return []
 
 
 def check_file_boundaries(
     filepath: Path, verbose: bool = False
-) -> list[tuple[str, str]]:
+) -> list[BoundaryViolation]:
     """Check if a file violates import boundaries.
 
     Returns:
-        List of (importing_layer, forbidden_module) tuples for violations.
+        List of BoundaryViolation instances.
     """
-    violations = []
+    violations: list[BoundaryViolation] = []
     imports = extract_imports(filepath)
-
-    # Determine which layer this file belongs to
     filepath_str = str(filepath)
-    if LAYER_1_GATEWAY in filepath_str:
-        # Gateway files cannot import cage_* (Layer 2)
-        # NOTE: Layer 1 → Layer 4 (GFA) check will be added in PR D
-        for imp in imports:
-            if LAYER_2_CAGE_PATTERN.match(imp):
-                violations.append((filepath_str, imp))
-                if verbose:
-                    print(f"❌ {filepath}: imports {imp} (Layer 1 → Layer 2 violation)")
+
+    is_layer1 = False
+    try:
+        if filepath.is_relative_to(
+            LAYER_1_GATEWAY
+        ) or filepath.resolve().is_relative_to(LAYER_1_GATEWAY.resolve()):
+            is_layer1 = True
+    except (ValueError, FileNotFoundError):
+        pass
+
+    if not is_layer1:
+        parts = filepath.parts
+        for i in range(len(parts) - 1):
+            if parts[i] == "src" and parts[i + 1] == "gateway":
+                is_layer1 = True
+                break
+
+    if not is_layer1:
+        return violations
+
+    is_evidence_kernel = False
+    try:
+        if filepath.is_relative_to(EVIDENCE_DIR) or filepath.resolve().is_relative_to(
+            EVIDENCE_DIR.resolve()
+        ):
+            is_evidence_kernel = True
+    except (ValueError, FileNotFoundError):
+        pass
+
+    if not is_evidence_kernel:
+        parts = filepath.parts
+        for i in range(len(parts) - 3):
+            if parts[i : i + 4] == ("src", "gateway", "governance", "evidence"):
+                is_evidence_kernel = True
+                break
+
+    for imp, lineno in imports:
+        # Check Layer 1 -> Layer 2
+        if LAYER_2_CAGE_PATTERN.match(imp):
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=imp,
+                rule_violated="Layer 1 → Layer 2 (gateway must not import cage_*)",
+            )
+            violations.append(v)
+            if verbose:
+                print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+
+        # Check Layer 1 -> Layer 3
+        if LAYER_3_BRIDGE_PATTERN.match(imp):
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=imp,
+                rule_violated="Layer 1 → Layer 3 (gateway must not import compliance_bridge)",
+            )
+            violations.append(v)
+            if verbose:
+                print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+
+        # Check Layer 1 -> Layer 4
+        if LAYER_4_GFA_PATTERN.match(imp):
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=imp,
+                rule_violated="Layer 1 → Layer 4 (gateway must not import governed_financial_advisor)",
+            )
+            violations.append(v)
+            if verbose:
+                print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+
+        # Check evidence kernel vendor neutrality
+        if is_evidence_kernel:
+            for vendor_sdk in FORBIDDEN_VENDOR_SDKS:
+                if imp == vendor_sdk or imp.startswith(f"{vendor_sdk}."):
+                    v = BoundaryViolation(
+                        file_path=filepath_str,
+                        line_number=lineno,
+                        imported_module=imp,
+                        rule_violated=f"Evidence kernel vendor neutrality (forbidden vendor SDK: {vendor_sdk})",
+                    )
+                    violations.append(v)
+                    if verbose:
+                        print(
+                            f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                        )
+                    break
 
     return violations
 
@@ -102,15 +199,14 @@ def main() -> int:
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
-    print("🔍 Checking import boundaries (Layer 1 must not import Layer 2 cage_*)...")
+    print("🔍 Checking import boundaries (Gate G3)...")
 
-    # Scan all Python files in src/gateway/
     gateway_root = Path(LAYER_1_GATEWAY)
     if not gateway_root.exists():
         print(f"❌ Gateway layer not found: {gateway_root}")
         return 1
 
-    all_violations: list[tuple[str, str]] = []
+    all_violations: list[BoundaryViolation] = []
     scanned_count = 0
 
     for py_file in gateway_root.rglob("*.py"):
@@ -120,20 +216,17 @@ def main() -> int:
         violations = check_file_boundaries(py_file, verbose=args.verbose)
         all_violations.extend(violations)
 
-    # Report results
     print(f"📊 Scanned {scanned_count} files in {LAYER_1_GATEWAY}/")
 
     if all_violations:
         print(f"\n❌ BOUNDARY VIOLATIONS DETECTED ({len(all_violations)}):\n")
-        for filepath, imported_module in all_violations:
-            print(f"  {filepath}")
-            print(f"    └─ imports {imported_module}\n")
+        for v in all_violations:
+            print(f"  {v.file_path}:{v.line_number}")
+            print(f"    └─ imports {v.imported_module} [{v.rule_violated}]\n")
 
-        print("🚨 Layer 1 (gateway) must NOT import from Layer 2 (cage_*).")
-        print(
-            "   Use plugin entry points, dependency injection, or the plugin seam instead."
-        )
-        print("   NOTE: Layer 1 → Layer 4 (GFA) violations will be addressed in PR D.")
+        print("🚨 Layer 1 (gateway) must NOT import from Layer 2, Layer 3, or Layer 4.")
+        print("🚨 Evidence kernel must NOT import proprietary vendor SDKs.")
+        print("   Use dependency injection, canonical interfaces, or external plugins.")
         return 1
 
     print("✅ All import boundaries respected.")

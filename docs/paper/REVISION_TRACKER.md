@@ -25,7 +25,7 @@ rather than repaired) · `DEFERRED` (moved to §7.3 Future Work with rationale).
 
 **Measurement environment (Phase 2):** GKE `governance-cluster-2`
 (`us-central1-a`, 4 × `e2-standard-4`, v1.35.6-gke.1127000) in project
-`laah-cybernetics`.
+`<your-gcp-project>`.
 
 ---
 

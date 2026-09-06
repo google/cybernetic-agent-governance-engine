@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """
-evidence_stream.py — Evidence-Grade Streaming Sink for Governance Events (Feature 4)
-====================================================================================
+stream.py — Evidence-Grade Streaming Sink for Governance Events (Layer 1 Kernel)
+================================================================================
 
 Promotes the SSE event bus from fire-and-forget UI notifications to a
 cryptographically hash-chained, durable evidence stream.
@@ -118,7 +118,7 @@ def _normalize_for_jcs(obj: Any) -> Any:
         return str(obj)
 
 
-logger = logging.getLogger("cage.evidence_stream")
+logger = logging.getLogger("cage.governance.evidence.stream")
 tracer = trace.get_tracer(__name__)
 
 # Prometheus metrics (lazy import to avoid dependency in tests)
@@ -407,6 +407,10 @@ _EVIDENCE_CHAIN_BLOCKING: bool = (
     os.environ.get("EVIDENCE_CHAIN_BLOCKING", "true").lower() == "true"
 )
 
+_EVIDENCE_STREAM_ENABLED: bool = (
+    os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
+)
+
 # Default timeout for blocking evidence commits (seconds)
 _EVIDENCE_COMMIT_TIMEOUT_S: float = float(
     os.environ.get("EVIDENCE_COMMIT_TIMEOUT_S", "5.0")
@@ -552,6 +556,11 @@ def is_evidence_chain_blocking() -> bool:
     evidence-of-execution (risk R-06).
     """
     return _EVIDENCE_CHAIN_BLOCKING
+
+
+def is_evidence_stream_enabled() -> bool:
+    """Return True if evidence stream is enabled."""
+    return _EVIDENCE_STREAM_ENABLED
 
 
 # ---------------------------------------------------------------------------

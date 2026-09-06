@@ -416,9 +416,9 @@ CAGE enforces strict separation between the universal governance kernel, domain-
 
 | Layer | Path | Role & Responsibilities | Invariants & Boundary Rules |
 |---|---|---|---|
-| **Layer 1: Kernel** | `src/gateway/` | Core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, and audit rails. | **Strictly domain-agnostic.** Must NEVER import from `src/cage_*` or `src/governed_financial_advisor/` (enforced by Gate G3 `scripts/check_import_boundaries.py`). Must not hardcode domain verbs (e.g. `execute_trade`) or domain data structures. |
+| **Layer 1: Kernel** | `src/gateway/` | Core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, and audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from `src/cage_*` (Layer 2), `src/compliance_bridge/` (Layer 3), or `src/governed_financial_advisor/` (Layer 4). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `azure`, `langfuse`). Enforced in CI by Gate G3 (`scripts/check_import_boundaries.py`). Must not hardcode domain verbs (e.g. `execute_trade`) or domain data structures. |
 | **Layer 2: Domain Plugins** | `src/cage_{domain}/` (e.g. `src/cage_finance/`, `src/cage_healthcare/`) | Domain-specific tiers (`GovernanceTierPlugin`), domain action registries, ontologies, policies, and causal graphs. | Registers tiers into the kernel via `SymbolicGovernor.register_tier()`. Encapsulates domain vocabulary and semantics without polluting the kernel. |
-| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/cage_finance/rails/` | External vendor normative/attestation adapters, NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture Specification. Communicates via canonical dataclasses. |
+| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/cage_finance/rails/`, `src/compliance_bridge/` | External vendor normative/attestation adapters, durable sinks (ClickHouse, GCS, S3), NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture Specification. Communicates via canonical dataclasses. |
 
 **The Three-Layer Split Rule:**
 - **Layer 1 (Kernel)**: Code that can fail closed unsafely lives in the kernel. Code covered by TLA+ proofs, formal CBF math, or core NIST control assertions. Code that holds Redis Lua scripts, KMS envelope signing, or fence epoch tracking.
@@ -445,6 +445,9 @@ Refactoring across v3.0.0 extracted domain mechanisms into domain plugins and mo
 | FTRA Package | `src.gateway.governance.ftra` | Legacy flat imports in root governance |
 | Financial Tiers | `src.cage_finance.tiers` | Hardcoded blocks in `symbolic_governor.py` |
 | Healthcare Tiers | `src.cage_healthcare.tiers` | N/A (new domain plugin) |
+| Evidence Stream | `src.gateway.governance.evidence.stream` | `src.compliance_bridge.evidence_stream` |
+| Evidence Cold Store | `src.gateway.governance.evidence.cold_store` | Legacy ad-hoc storage modules |
+| ISO Control Registry | `src.gateway.governance.iso_control` | `src.compliance_bridge.types` control mappings |
 
 ### Observability Architecture: Langfuse Sovereign Telemetry vs. LangSmith
 

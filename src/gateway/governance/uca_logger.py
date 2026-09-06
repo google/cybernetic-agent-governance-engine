@@ -367,7 +367,7 @@ class UCALogger:
     async def _write_to_worm(self, path: str, content: str) -> None:
         """Write ``content`` to the WORM bucket at ``path``.
 
-        Uses ``src.compliance_bridge.storage.WORMStorage`` when available.
+        Uses ``src.gateway.governance.evidence.cold_store.EvidenceColdStore`` seam when available.
         Falls back to a structured stderr log when storage is unavailable
         (e.g. in unit tests where ``_write_to_worm`` is patched).
         """
@@ -381,24 +381,22 @@ class UCALogger:
             return
 
         try:
-            from src.compliance_bridge import storage
+            from src.gateway.governance.evidence.factory import get_cold_store
 
-            worm_cls: Any = getattr(storage, "WORMStorage", None)
-            if worm_cls is None:
-                raise ImportError(
-                    "WORMStorage class not defined in compliance_bridge.storage"
-                )
-
-            region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-            await worm_cls.write(
-                bucket=bucket, path=path, content=content, region=region
+            cold_store = get_cold_store(bucket=bucket)
+            await cold_store.put_batch(
+                key=path,
+                content=content.encode("utf-8"),
+                metadata={
+                    "x-standard": "ISO/IEC 42001:2023",
+                    "x-content-type": "application/json",
+                },
             )
-        except ImportError:
-            # compliance_bridge not available in this deployment unit
+        except Exception as exc:
             logger.warning(
-                "UCALogger: WORMStorage not available; writing UCA record to stderr. "
-                "Path: %s",
+                "UCALogger: Cold store persistence failed; writing UCA record to stderr. Path: %s, Error: %s",
                 path,
+                exc,
             )
             print(
                 json.dumps({"level": "UCA_RECORD", "path": path, "content": content}),

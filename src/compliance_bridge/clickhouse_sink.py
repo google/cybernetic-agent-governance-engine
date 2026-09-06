@@ -28,7 +28,7 @@ Architecture Position (Layer 3):
 
 Design Specification: docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md
 Schema DDL: deployment/clickhouse/evidence_stream_schema.sql
-Source of Truth: src/compliance_bridge/evidence_stream.py (cage-audit/3.0)
+Source of Truth: src/gateway/governance/evidence/stream.py (cage-audit/3.0)
 
 Key Invariants:
     1. Never block Redis consumption (all operations are async, fire-and-forget)
