@@ -7,7 +7,7 @@ Get CAGE running locally in under 10 minutes using Docker Compose.
 ## Prerequisites
 
 - Docker and Docker Compose
-- Python 3.11+ with `uv` (`pip install uv`)
+- Python >=3.10, <3.13 with `uv` (`pip install uv`)
 - An OpenAI-compatible API key (or local model endpoint)
 
 ## 1. Clone and configure
@@ -44,11 +44,9 @@ docker compose up -d
 
 This starts:
 - **Gateway** (`localhost:8080`) — Governance enforcement proxy with 8-tier governance pipeline (FTRA pre-pipeline boundary gate + 7 in-pipeline tiers via SymbolicGovernor), and Phase A/B ingress adapters
-- **Compliance Bridge** (`localhost:8081`) — OSCAL/compliance automation; CBF reconciliation worker; AARM 11-vector conformance engine
-- **AgentSight UI** (`localhost:5173`) — React/TypeScript real-time governance dashboard (`KernelDashboard` with slippage slider, price drift badges, HITL TTL countdown)
-- **Governed Financial Advisor** (`localhost:8000`) — Full multi-agent LangGraph reference implementation with NeMo Guardrails and OPA policy enforcement
-- **Redis** — State and quota management
-- **OPA** — Policy engine
+- **Governed Application (`app`)** (`localhost:3000`) — Governed application service container
+- **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies
+- **SLM Sidecar** (`localhost:5000`) — Sentence-transformers similarity scoring service
 
 ## 3. Verify the gateway is running
 
@@ -85,7 +83,7 @@ Navigate to `http://localhost:5173` to see:
 ## 6. Run the test suite
 
 ```bash
-uv run pytest tests/ -x -q
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
 ```
 
 ## 7. Confirm the substrate is domain-independent

@@ -4,7 +4,7 @@
 
 > **Domain-agnostic by design:** The governance kernel (`src/gateway/`) owns all enforcement *mechanism* and holds no domain knowledge. Domain semantics arrive exclusively through optional `cage.plugins` packages. Two **example domains of equal standing** ship in-tree — finance ([`src/cage_finance/`](../src/cage_finance/)) and healthcare ([`src/cage_healthcare/`](../src/cage_healthcare/)) — and adopters add their own under `src/cage_<domain>/` for manufacturing, logistics, energy, critical infrastructure, or any other vertical. Neither shipped plugin is privileged, and neither is required: `CAGE_ACTIVE_PLUGINS=""` runs the bare substrate.
 >
-> Some domain-flavoured identifiers appear in older documents and in the finance reference application (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`). These belong to the **finance example domain**, not to the kernel. See [DOMAIN_PLUGIN_ARCHITECTURE.md](architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) and [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md).
+> Some domain-flavoured identifiers appear in older documents and in the finance reference application (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`). These belong to the **finance example domain**, not to the kernel. See [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md).
 >
 > **Jurisdictional compliance is likewise configuration.** `US_FED`, `EU_ECB`, and `APAC_MAS` are configurable postures selected with `CAGE_DEPLOYMENT_REGION`, layered over the universal ISO 42001 baseline. Adding a jurisdiction is a config-only operation — see the Jurisdiction Key below.
 **Last updated:** 2026-08-28

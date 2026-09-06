@@ -56,14 +56,14 @@ Explicit allow rules cover: agent server → gateway, gateway → OPA, gateway �
 | ------------------- | --------------------------------- | -------------------------------------- |
 | GCS Artifact Bucket | OSCAL results; model artifacts    | GCP ToS                                |
 | MinIO               | Model weight storage              | Internal cluster service               |
-| Langfuse SaaS       | Observability; compliance metrics | ISA — DPA risk (Langfuse DPA required) |
+| Langfuse v3         | Observability; compliance metrics | Internal cluster service (self-hosted v3 on GKE) |
 | yfinance            | Market data                       | **Yes** — read-only API; ISA required for data correlation risk |
 
 > **ADR**: GCP Secret Manager was removed as an external interconnection.
 > Secrets are now provided exclusively via Kubernetes `Secret` objects mounted
 > as environment variables. No runtime dependency on `google-cloud-secret-manager`.
 
-> ⚠️ **Langfuse DPA Risk**: Langfuse SaaS processes compliance metrics and agent traces. A Data Processing Agreement (DPA) is required before production use. This represents a residual ISA risk until the DPA is executed.
+> **ADR**: Langfuse was migrated from SaaS to a sovereign, self-hosted deployment on GKE (`deployment/k8s/langfuse/`), eliminating cross-border telemetry exfiltration and third-party DPA dependencies.
 
 ---
 
@@ -85,7 +85,7 @@ All four gaps have been remediated and machine-verified. The system is now hard-
 
 **Remediation:**
 
-[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues an HMAC-SHA256 routing seal on approval and returns it as a non-empty string. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a dedicated `cage.routing_seal` OTel span, after all 7 governance tiers have passed. [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade; a missing or invalid seal produces an immediate `BLOCKED` response.
+[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a cryptographic routing seal (asymmetric v3 JWT with KMS HSM signing in production, 4-tuple HMAC in dev/test) on approval and returns it as a non-empty string. The seal is generated via [`routing_seal.generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py) inside a dedicated `cage.routing_seal` OTel span, after all 7 governance tiers have passed. [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade; a missing or invalid seal produces an immediate `BLOCKED` response.
 
 Both `govern()` and `validate_action()` now satisfy the `NoDirectBind` invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
@@ -201,7 +201,7 @@ This change eliminates the split-brain attack surface where an operator could se
 > **Classification:** Security Hardening — Governance Tier Integrity
 > **Date:** 2026-06-15
 > **Commit:** `e959cc3`
-> **Affected Component:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) — Tier 6 (DoWhy Causal Gate)
+> **Affected Component:** [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) — Tier 6 (DoWhy Causal Gate)
 
 ### Background
 
@@ -214,7 +214,7 @@ Prior to this hardening, if `causal_safety_check()` was called with `current_tel
 
 ### Remediation
 
-[`causal_safety_check()`](../../src/gateway/governance/causal_gatekeeper.py) now applies environment-aware fail-closed logic when `current_telemetry` is `None`:
+[`causal_safety_check()`](../../src/gateway/governance/causal/gatekeeper.py) now applies environment-aware fail-closed logic when `current_telemetry` is `None`:
 
 ```python
 if current_telemetry is None:
@@ -329,7 +329,7 @@ A second HMAC-SHA256 layer protects agent state transitions within the LangGraph
 
 Policy files:
 
-- [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../src/governed_financial_advisor/governance/policy/trade_governance.rego)
+- [`config/opa/trade_policy.rego`](../../config/opa/trade_policy.rego)
 - [`deployment/system_authz.rego`](../../deployment/system_authz.rego)
 
 | Role     | Trade Limit      | Behavior            |
@@ -412,8 +412,8 @@ Three `CiliumNetworkPolicy` resources extend the standard L3/L4 NetworkPolicies 
 | `generativelanguage.googleapis.com` | Google Gemini / Vertex AI |
 | `*.googleapis.com` | GCS, Cloud KMS, Cloud Audit Logs, Workload Identity |
 | `metadata.google.internal` | GKE Workload Identity metadata server |
-| `us.i.posthog.com` | Product analytics (Langfuse telemetry) |
-| `cloud.langfuse.com` | Langfuse SaaS OTLP ingestion |
+| `us.i.posthog.com` | Product analytics (disabled in sovereign self-hosted mode) |
+| `cloud.langfuse.com` | Langfuse SaaS OTLP ingestion (disabled; in-cluster `http://langfuse-web:3000` used) |
 | `api.trade.gov` | OFAC sanctions screening |
 | `www.treasury.gov` | OFAC SDN list reference |
 
@@ -595,7 +595,6 @@ All third-party compliance and attestation provider adapters are isolated under 
 | Provider 01   | `src/integrations/provider_01/provider.py` | `NormativeProvider` | Normative legal-baseline provider and synchronous FRIA gate (Tier 6b) | `ALLOW` / `REFUSE` / `ESCALATE` | Isolated package; lazy-loaded only when provider API key is set |
 | Provider 02   | `src/integrations/provider_02/`           | Vendor attestation surface | Certified Evidence Receipt creation, JWK-cached verification, and LangGraph bundle assembly | — (no gate verdict) | Isolated package; lazy-loaded only when provider API key is set |
 | Provider 03   | `src/integrations/provider_03/`           | `NormativeProvider` | Decision-governance and bind-receipt provider; synchronous FRIA gate | `APPROVED` / `ESCALATE` / `REJECTED` | Isolated package; lazy-loaded |
-| Provider 04   | `src/integrations/provider_04/`           | `AttestationProvider` + envelope mapper | Attestation fetch (**stub — returns an empty list**) and bidirectional `GovernanceEnvelope` ↔ vendor wire-format mapping | — (emits `AttestationStatus`) | Isolated package; lazy-loaded |
 | Provider 05   | `src/integrations/provider_05/`           | `AttestationProvider` ×3 | Verifiable Execution Evidence Pack — three axioms (Blueprint, Key, Physics); seeded/synthetic data store | — (emits `AttestationStatus`) | Isolated package; lazy-loaded |
 | Provider 06   | `src/integrations/provider_06/adapter.py` | `NormativeProvider` | Agent-integrity verifier; synchronous gate. In-repo component is a **SPIKE** with a mock endpoint; upstream vendored at `third_party/agent-integrity/` | `PASS` / `REVIEW` / `BLOCKED` | Isolated package; lazy-loaded |
 
@@ -610,8 +609,7 @@ All third-party compliance and attestation provider adapters are isolated under 
 > Providers 01, 02, and 03 are `INTERFACE READY` — the HTTP clients are
 > complete, but **no live endpoints are configured** in this repository;
 > documentation uses placeholders such as `https://api.example.com/normative`.
-> Provider 04's fetch path is a stub and Provider 05 serves seeded synthetic
-> records, so neither performs live I/O today.
+> Provider 05 serves seeded synthetic records and does not perform live I/O today.
 
 **Key security properties:**
 - Vendor SDKs are **not imported at module load time** — `get_normative_provider()` in [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py) resolves vendor packages through lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
@@ -639,13 +637,13 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 **FIPS 140-2/3 Assessment**: HMAC-SHA256 is a FIPS-approved algorithm. Intra-cluster mTLS is now enforced via Linkerd (FIND-011 resolved), satisfying FIPS transport requirements for all service-to-service communication within the `governance-stack` namespace.
 
-### 9.0 Cryptographic Integrity — Routing Seal v2 and Provenance Chain
+### 9.0 Cryptographic Integrity — Routing Seal v3, JWKS Key Rotation, and Provenance Chain
 
-#### HMAC-SHA256 Routing Seal v2 (Evidence Binding)
+#### Cryptographic Routing Seal (v3 JWT with KMS HSM Signing and Evidence Binding)
 
 **Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
-Every governance approval is sealed with an HMAC-SHA256 routing seal before execution is permitted. The v2 seal format binds the durable evidence record directly into the cryptographic payload:
+Every governance approval is sealed with a cryptographic routing seal before execution is permitted. In production (v3), the routing seal is an asymmetric JWT signed by Cloud KMS HSM (`iss="cage-governance-kernel"`, `aud="cage-execution-engine"`, `exp`, `act`, `ehash`) that cryptographically binds the decision to the compliance evidence stream `record_hash`. In local/test environments without KMS, it falls back to a 4-tuple HMAC token:
 
 ```
 <expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
@@ -656,19 +654,33 @@ Every governance approval is sealed with an HMAC-SHA256 routing seal before exec
 | `expire_ts_hex` | Hex-encoded Unix timestamp of seal expiry |
 | `action_slug` | URL-safe slug identifying the governed action |
 | `record_hash_hex` | Hex-encoded SHA-256 hash of the durable evidence record |
-| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug.record_hash_hex` |
+| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug.record_hash_hex` (fallback) |
 
 | Parameter | Value | Security Property |
 | --------- | ----- | ----------------- |
 | TTL | **30 seconds** | Prevents replay attacks; seal expires 30s after issuance |
-| Algorithm | HMAC-SHA256 | FIPS-approved; constant-time `hmac.compare_digest` prevents timing side-channels |
-| Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; custom non-default secret enforced in production |
-| Evidence Binding | `record_hash` folded into HMAC | Actuators enforce `CAGE_REQUIRE_EVIDENCE_BINDING=true` in production |
+| Algorithm | RS256/ES256 (KMS HSM) / HMAC-SHA256 (dev fallback) | FIPS-approved; constant-time comparison prevents timing side-channels |
+| Secret / Key | Cloud KMS HSM key URI / `CAGE_ROUTING_SEAL_SECRET` | Asymmetric KMS key in prod; non-default secret enforced for fallback |
+| Evidence Binding | `record_hash` folded into JWT claim `ehash` | Actuators enforce `CAGE_REQUIRE_EVIDENCE_BINDING=true` in production |
 | Enforcement | [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) | Missing, expired, or un-bound seal → HTTP 401 / `SymbolicGovernorViolation` (fail-closed) |
 
 The routing seal satisfies the `NoDirectBind` formal invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`. This was machine-verified over the full reachable state space in `proof/model.py` (see §3a, Gap 2).
 
 **ISO 42001 mapping:** A.7.5 (Records Integrity). **[US_FED only]** NIST AU-10 (Non-repudiation).
+
+#### JSON Web Key Set (JWKS) Public Key Endpoint & Key Rotation
+
+**Source:** [`src/gateway/governance/jwks.py`](../../src/gateway/governance/jwks.py)
+
+To verify v3 asymmetric routing seals and KMS governance signatures without distributing private keys, the gateway exposes standard RFC 7517 JWKS endpoints:
+- Primary discovery endpoint: `GET /.well-known/jwks.json`
+- Alternative alias: `GET /governance/jwks`
+
+**Key Rotation Architecture**:
+- **Multi-Key Grace Period**: During key rotation, the active JWKSet retains both current and previous public keys (up to `CAGE_JWKS_MAX_KEYS`, default 3) allowing downstream actuators to verify in-flight tokens signed immediately prior to rotation without disruption.
+- **KMS Key Discovery**: Public keys are generated dynamically from Cloud KMS asymmetric key versions (RSA / ECDSA / Ed25519) and converted to RFC 7517 JWK format with deterministic `kid` (Key ID) hashing.
+- **In-Memory Caching**: Public keys and JWKS sets are cached in-memory with a configurable TTL (`CAGE_JWKS_CACHE_TTL_S`, default 300 s) to eliminate per-request KMS network roundtrips while bounding key staleness.
+- **Header Routing**: Downstream actuators inspect the JWT `kid` header parameter to selectively look up the exact signing key from the JWKSet before cryptographic verification.
 
 #### SHA-256 Provenance Hash Chain
 
@@ -726,7 +738,7 @@ This section documents the mathematical safety controls that enforce financial i
 
 ### Control Barrier Function (CBF)
 
-**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)
 
 The Control Barrier Function enforces the core financial safety invariant using control theory formalism. The safe set and barrier function are:
 
@@ -747,7 +759,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
 | `γ` (decay rate) | `0.5` | US_FED, APAC_MAS |
 | `γ` (decay rate) | `0.6` | EU_ECB (stricter CRD VI buffer) |
 
-**Enforcement mechanism:** Redis `WATCH/MULTI/EXEC` atomic transaction (5 retries on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent price-drift races.
+**Enforcement mechanism:** Single-round-trip Redis Lua script (`atomic_verify_and_commit()`, with Redis `WATCH/MULTI/EXEC` fallback on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent price-drift races.
 
 **Security significance:** The CBF is the primary financial safety gate. Setting `CBF_FAIL_OPEN=true` in production raises a `RuntimeError` at startup (Gap 3 remediation — see §3a), preventing any degraded-gate configuration from reaching production.
 
@@ -755,7 +767,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
 
 ### Fiscal Limit Guard
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+**Source:** [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py)
 
 The `FiscalLimitGuard` prevents race conditions where parallel agent threads collectively exceed the authorized daily spending limit:
 

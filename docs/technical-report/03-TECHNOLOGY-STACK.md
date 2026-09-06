@@ -6,7 +6,7 @@
 | **Date**             | 2026-08-22                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
 
 ---
@@ -21,7 +21,7 @@
 | **Colang 2.x**                | NeMo Guardrails 2.x | Dialog-flow safety rails and guardrail definitions                             | `config/rails/definitions.co`, `config/rails/main_logic.co`                        |
 | **HCL (Terraform)**           | ≥ 1.5               | Infrastructure-as-code; GKE, IAM, secrets, storage provisioning                | `infra/modules/`, `infra/targets/`                                                 |
 | **YAML**                      | —                   | Kubernetes manifests, OSCAL artifacts, Lula validations, Cloud Build pipelines | `deployment/k8s/`, `compliance/`                                                   |
-| **Protocol Buffers (proto3)** | proto3              | gRPC interface definitions for gateway and NeMo communication                  | `src/agentsight-ui/gateway_protos/gateway.proto`, `src/gateway/protos/nemo.proto`                     |
+| **Protocol Buffers (proto3)** | proto3              | gRPC interface definitions for gateway and NeMo communication                  | [`src/gateway/protos/gateway.proto`](../../src/gateway/protos/gateway.proto), [`src/gateway/protos/nemo.proto`](../../src/gateway/protos/nemo.proto)                     |
 
 ---
 
@@ -32,7 +32,7 @@
 | **LangGraph**               | Multi-agent `StateGraph` orchestration | 10-node pipeline (including mandatory NeMo input/output rails); `interrupt_before=["governed_trader"]`; `AsyncRedisSaver` checkpointing |
 | **FastAPI**                 | HTTP API server                        | Agent server `:8081 (local) / :80 (K8s)`; Compliance Bridge internal `:3001`, local port-forward `:3002` |
 | **FastMCP**                 | MCP tool server over SSE               | 6 registered tools; `patch_mcp_tools()` injects W3C `traceparent` headers                         |
-| **NeMo Guardrails**         | AI safety rails                        | Colang 2.x dialect; 15 Presidio PII entity types (input + output rails); model configurable via `GUARDRAILS_MODEL_NAME` |
+| **NeMo Guardrails**         | AI safety rails                        | Colang 2.x dialect; 10 Presidio PII entity types (input + output rails per [`config/rails/config.yml`](../../config/rails/config.yml)); model configurable via `GUARDRAILS_MODEL_NAME` |
 | **Open Policy Agent (OPA)** | Rego policy enforcement                | `trade.governance` package; fail-closed posture; `CircuitBreaker` (5 failures, 30 s recovery)     |
 | **LangChain**               | Agent tool-calling framework           | `create_tool_calling_agent`; LangChain OpenAI integration for model binding                       |
 
@@ -166,11 +166,55 @@ Third-party compliance and attestation provider adapters are architecturally iso
 | **Provider 01**      | `src/integrations/provider_01/`  | Production normative provider; `Provider01NormativeProvider` implements 3-endpoint external validation API; activated via `CAGE_NORMATIVE_PROVIDER=provider_01` | Implemented (POAM-022 In Progress — awaiting API credentials) |
 | **Provider 02**      | `src/integrations/provider_02/`  | CER (Compliance Evidence Record) attestation provider; `Provider02Client` + `Provider02AttestationCallback` (LangGraph callback handler) in `adapter.py`; `Provider02AttestationProvider` in `provider.py` | Implemented             |
 | **Provider 03**      | `src/integrations/provider_03/`  | JCS (JSON Canonicalization Scheme) RFC-8785 evidence normalization and decision governance adapter        | Implemented             |
-| **Provider 04**      | `src/integrations/provider_04/`  | Socket-level execution guillotine and envelope mapper integration                                         | Implemented             |
 | **Provider 05**      | `src/integrations/provider_05/`  | Verifiable Execution Evidence Pack; generates RFC-3161 cryptographic evidence packages with 3 axioms (Blueprint, Key, Physics) | Implemented             |
 | **Provider 06**      | `src/integrations/provider_06/`  | Tri-state deterministic verifier adapter (PASS/REVIEW/BLOCKED) with DeferQueue parking integration        | Implemented             |
+| **Actuator 01**      | `src/integrations/actuator_01/`  | Actuator-side vendor adapter; envelope builder and signature verification for sealed execution                                         | Implemented             |
+| **Storage GCS**      | `src/integrations/storage_gcs/`  | Google Cloud Storage cold-store backend for evidence archive                                         | Implemented             |
+| **Storage S3**       | `src/integrations/storage_s3/`   | S3/MinIO cold-store backend for evidence archive                                         | Implemented             |
 
 > **Vendor Isolation Design:** Infrastructure invariants (Cloud KMS, Redis, OPA) remain in `src/gateway/governance/`. Vendor adapters are lazy-loaded and never imported by the governance kernel directly — they are registered via the provider factories at startup.
+
+### 5.1 Vendor Adapter Architecture Standards
+
+All external vendor adapters and partner integrations (`src/integrations/provider_*`) **must strictly follow** the design principles, isolation boundaries, and latency budgets specified in the authoritative **Secure Plugin & Adapter Architecture Specification** ([`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](../../local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md)).
+
+**Core architectural principles:**
+
+1. **Vendor Isolation**: Vendor packages live exclusively under `src/integrations/{provider_id}/` and must never introduce direct dependencies or imports into the core CAGE kernel ([`src/gateway/`](../../src/gateway/)).
+
+2. **Seam Implementation**: Synchronous gate adapters implement the canonical [`NormativeProvider`](../../src/gateway/governance/contracts.py:145) protocol (`fetch_baseline`, `validate_fria`, `submit_evidence`) and return CAGE dataclasses ([`NormativeBaseline`](../../src/gateway/governance/contracts.py), [`ValidationResult`](../../src/gateway/governance/contracts.py), [`EvidenceSeal`](../../src/gateway/governance/contracts.py)). Asynchronous evidence and attestation providers implement the [`AttestationProvider`](../../src/gateway/governance/contracts.py) or [`EnvelopeMapper`](../../src/gateway/governance/contracts.py) protocols.
+
+3. **Universal Protocol Conformance**: Every new partner adapter is registered and validated in the parameterized **Universal Protocol Conformance Suite** ([`tests/test_normative_provider_conformance.py`](../../tests/test_normative_provider_conformance.py)). This guarantees interface compliance across all regions in CI.
+
+4. **Tri-State / Review Mapping**: Upstream non-binary verdicts (`REVIEW`, `ESCALATE`) are mapped to `ValidationResult(admitted=False, findings=[{"needs_human_review": True, ...}])` to enable native parking in CAGE's [`DeferQueue`](../../src/gateway/governance/defer_queue.py) rather than raising custom exceptions.
+
+5. **Fail-Closed Semantics**: Network timeouts, HTTP status errors, and parse failures fail-closed (`admitted=False`) and populate structured findings with `code="ENDPOINT_ERROR"` or `code="cage.endpoint_error"`.
+
+6. **Sidecar & UDS Architecture**: In production deployments, external vendor SDKs (e.g. Node.js engines) run as sidecar containers communicating via Unix Domain Sockets (UDS) to meet sub-millisecond hot-path latency requirements.
+
+7. **Hermetic Testing & Schema Validation**: Vendor mocks validate payloads against vendored JSON schemas and provide 100% hermetic unit tests with mock clients (e.g. `respx`). Live API calls must never run in PR CI.
+
+**Example: NormativeProvider Protocol Implementation**
+
+```python
+class Provider01NormativeProvider:
+    async def fetch_baseline(self, control_id: str) -> NormativeBaseline:
+        """Fetch external baseline for a control."""
+        # HTTP call to external API, validate against vendored schema
+        pass
+    
+    async def validate_fria(self, request: dict) -> ValidationResult:
+        """Validate FRIA against external normative rules."""
+        # Tri-state mapping: REVIEW → admitted=False, needs_human_review=True
+        pass
+    
+    async def submit_evidence(self, evidence: dict) -> EvidenceSeal:
+        """Submit evidence to external attestation endpoint."""
+        # Fail-closed: network errors → raise with structured findings
+        pass
+```
+
+For complete adapter design patterns, latency budgets, sidecar architecture, and test requirements, see the authoritative specification: [`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](../../local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md).
 
 ---
 
@@ -196,7 +240,7 @@ Third-party compliance and attestation provider adapters are architecturally iso
 | **Google Kubernetes Engine (GKE)**  | Runtime platform       | `governance-stack` namespace; 9 `NetworkPolicy` objects; default-deny posture                         |
 | **Terraform**                       | Infrastructure-as-code | `infra/modules/` (16 shared modules) + `infra/targets/` (`agnostic/`, `gcp-gke/`)                     |
 | **Docker**                          | Containerization       | Multi-stage builds; `Dockerfile`, `Dockerfile.vllm`, `Dockerfile.lula-*`                              |
-| **Google Cloud Build**              | CI/CD                  | `cloudbuild_gateway.yaml`, `cloudbuild.vllm.yaml`, `cloudbuild.lula.yaml`                             |
+| **Google Cloud Build**              | CI/CD                  | Dot notation: `cloudbuild.gateway.yaml`, `cloudbuild.vllm.yaml`, `cloudbuild.lula.yaml`, etc.          |
 | **uv / uv_build**                   | Build system           | `uv_build>=0.8.14`; fast Python package installer and build backend                                   |
 | **Kubernetes Secrets**              | Secret storage         | Kubernetes-native `Secret` objects provisioned via Terraform (`infra/modules/app_secrets/`); no runtime GCP Secret Manager dependency |
 | **Google Cloud Storage (GCS)**      | Artifact storage       | **Primary** storage SDK (`google-cloud-storage>=2.0.0`); OSCAL assessment results; model artifacts; configurable via `STORAGE_BACKEND` |
@@ -211,7 +255,7 @@ Third-party compliance and attestation provider adapters are architecturally iso
 | Store                   | Technology                     | Purpose                                                                    |
 | ----------------------- | ------------------------------ | -------------------------------------------------------------------------- |
 | **State / Checkpoints** | Redis (`AsyncRedisSaver`)      | LangGraph graph checkpoints; HITL interrupt state persistence              |
-| **CBF Cash Balance**    | Redis (`WATCH`/`MULTI`/`EXEC`) | Atomic Control Barrier Function enforcement; prevents balance overrun      |
+| **CBF Cash Balance**    | Redis (Lua script check+commit)| Atomic Control Barrier Function enforcement (`atomic_verify_and_commit.lua`) |
 | **Compliance Cache**    | `TTLCache` (in-memory)         | 5-minute TTL per compliance control metric; reduces OPA round-trips        |
 | **Audit Logs**          | Langfuse (self-hosted v3, ClickHouse + MinIO) | 7-year retention policy; OTLP gRPC ingestion; dual-project configuration; standalone OTel Collector deprecated 2026-05-31 |
 | **OSCAL Results**       | GCS / local / S3               | OSCAL Assessment Results artifacts; backend selected via `STORAGE_BACKEND` |
@@ -248,7 +292,7 @@ Third-party compliance and attestation provider adapters are architecturally iso
 
 | Protocol / Standard            | Usage                                                                             |
 | ------------------------------ | --------------------------------------------------------------------------------- |
-| **gRPC (proto3)**              | Gateway ↔ AgentSight UI; `Chat` and `ExecuteTool` RPCs defined in `src/gateway/protos/gateway.proto` |
+| **gRPC (proto3)**              | Gateway ↔ AgentSight UI; `Chat` and `ExecuteTool` RPCs defined in [`src/gateway/protos/gateway.proto`](../../src/gateway/protos/gateway.proto) |
 | **OpenAI-compatible REST API** | vLLM endpoint; `POST /v1/chat/completions` used by all model consumers            |
 | **Server-Sent Events (SSE)**   | MCP transport (`FastMCP`); compliance event streaming from `GovernanceEventBus`   |
 | **W3C Traceparent**            | Distributed trace propagation across the MCP SSE boundary via `patch_mcp_tools()` |

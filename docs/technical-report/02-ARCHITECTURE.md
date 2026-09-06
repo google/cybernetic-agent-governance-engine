@@ -6,14 +6,14 @@
 | **Date**             | 2026-08-22                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
 
 ## 1. Architectural Overview
 
-> **v3.0.0 additions**: 6 Governance Decision Primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`record_hash` Binding), Lua-Atomic CBF Check & Commit, Synchronous Replica Barrier with Monotonic Fence Epoch, Provider 05 3-Axiom External Evidence Attestation (`src/integrations/provider_05/`), FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`), Phase A Ingress Adapters (`src/gateway/governance/ingress/`), Phase B AGW Absorption (`agw_adapter.py`), CAGE-003 Agent Registry (`agent_registry_adapter.py`), LangGraph Harness (`src/gateway/governance/langgraph_harness/`), AgentSight UI (`src/agentsight-ui/`), and Langfuse Native OTLP.
+> **v3.0.0 additions**: 6 Governance Decision Primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), Routing Seal v3 (JWT format with `record_hash` Binding and KMS HSM signing; dev/test fallback HMAC), Lua-Atomic CBF Check & Commit, Synchronous Replica Barrier with Monotonic Fence Epoch, Provider 05 3-Axiom External Evidence Attestation (`src/integrations/provider_05/`), FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`), Phase A Ingress Adapters (`src/gateway/governance/ingress/`), Phase B AGW Absorption (`agw_adapter.py`), CAGE-003 Agent Registry (`agent_registry_adapter.py`), LangGraph Harness (`src/gateway/governance/langgraph_harness/`), AgentSight UI (`src/agentsight-ui/`), and Langfuse Native OTLP.
 
 
 The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime system composed of five major subsystems that operate cooperatively to enforce real-time AI governance over a LangGraph-based financial advisory pipeline. Each subsystem has a discrete runtime boundary, a defined communication protocol, and a specific governance responsibility.
@@ -41,27 +41,26 @@ The diagram below captures the primary runtime request path from a user API call
 flowchart TD
     User([User / Client]) -->|POST /v1/chat/completions| FastAPI[FastAPI Agent Server\nport 8081 (local) / 80 (K8s)]
 
-    FastAPI -->|invoke graph| LangGraph[LangGraph StateGraph\n10 nodes]
+    FastAPI -->|invoke graph| LangGraph[LangGraph StateGraph\n12 nodes]
 
     LangGraph -->|MCP tool calls| HybridGW[Hybrid Inference Gateway]
     LangGraph -->|AsyncRedisSaver checkpoint| Redis[(Redis\nCheckpoint + HITL State)]
     LangGraph -->|OSCAL audit events| CompBridge[Compliance Bridge\nport 3001 (internal) / 3002 (local)]
 
-    HybridGW -->|mount /| MCPApp[FastMCP Tool Server\n7 tools]
+    HybridGW -->|mount /| MCPApp[FastMCP Tool Server\nDomain-registered tools]
     HybridGW -->|mount /inference| InfProxy[Inference Proxy\n5-tier pipeline]
     HybridGW -->|mount /governance| GovApp[Governance App]
-    HybridGW -->|X-CAGE-Routing-Seal HMAC| GovMiddleware[Governance Middleware]
+    HybridGW -->|X-CAGE-Routing-Seal JWT/HMAC| GovMiddleware[Governance Middleware]
 
     InfProxy -->|deepseek model route| vLLM_R[vLLM Reasoning\nDeepSeek-R1-Distill-Llama-8B]
-    InfProxy -->|default model route| vLLM_F[vLLM Fast\nQwen/Qwen2.5-1.5B-Instruct]
+    InfProxy -->|default model route| vLLM_F[vLLM Fast\nMeta-Llama-3.1-8B-Instruct]
 
-    GovApp --> SymGov[SymbolicGovernor\n8-tier pipeline]
-    SymGov --> OPA[OPA Rego Engine\ntrade.governance]
-    SymGov --> NeMo[NeMo Guardrails\nColang Rails]
-    SymGov --> CBF[ControlBarrierFunction\nRedis WATCH/MULTI/EXEC]
-    SymGov --> Consensus[ConsensusEngine\nasyncio critics]
+    GovApp --> SymGov[SymbolicGovernor\nKernel Gates + Plugin Tiers]
+    GovApp --> OPA[OPA Rego Engine\nKernel & Domain Policies]
+    GovApp --> NeMo[NeMo Guardrails\nColang Rails]
+    SymGov --> PluginTiers[GovernanceTierPlugin Registry\nBounding, CBF, Fiscal, Consensus, Causal]
 
-    CompBridge -->|OTLP export| Langfuse[Langfuse SaaS\nDual-project OTLP]
+    CompBridge -->|OTLP export| Langfuse[Langfuse (self-hosted v3)\nClickHouse + MinIO]
     CompBridge -->|SSE fan-out| AgentSightUI[AgentSight UI\nport 5173]
     CompBridge -->|CronJob 6h| OSCAL[OSCAL Lula CronJob]
 
@@ -71,10 +70,10 @@ flowchart TD
 ### Component Interaction & Post-HITL Feedback Loop
 
 The runtime lifecycle consists of a primary check path and an execution-time revalidation feedback loop:
-1. **Pre-Execution FTRA Gate**: Before any LLM inference, the FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) verifies that the compiled LangGraph graph contains a reachable path to a `HUMAN_APPROVED` terminal node. Graphs that fail this structural check are rejected before any agent runs.
-2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing its 8-tier pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers: STPA, confidence, CBF + OPA concurrent, Fiscal Limit Pre-Reservation, Consensus, and Causal Gatekeeper, plus the adaptive Tier 6b FRIA gate; the legacy SLM tier slot has been fully retired).
+1. **Pre-Execution FTRA Gate**: Before any LLM inference, the FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) verifies that the compiled LangGraph graph contains a reachable path to a `HUMAN_APPROVED` terminal node. Graphs that fail this structural check are rejected before any agent runs. Direct HTTP hits are caught by the kernel's mandatory `_ftra_boundary_check()`.
+2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing its two-phase pipeline: kernel boundary gates (FTRA 0.5, STPA 1, Confidence 2) → Phase 1 read-only domain tiers (Bounding order 2, Consensus order 5, Causal order 6) → OPA policy (3b) → Phase 2 mutating domain tiers (CBF order 3, Fiscal order 4) with LIFO rollback on failure → adaptive Tier 7 FRIA gate.
 3. **HITL Interruption**: If the trade passes the pre-trade check but requires human verification, execution is suspended and state is persisted in Redis.
-4. **Execution-Time Feedback Loop**: Once the human reviewer submits approval via `/resume`, the `governed_trader` subgraph re-hydration node retrieves a fresh pricing sample and loops back to the `SymbolicGovernor` to re-run only the deterministic, continuous tiers (Tier 2 Control Barrier Function, and Tier 4 OPA Policy Engine).
+4. **Execution-Time Feedback Loop**: Once the human reviewer submits approval via `/resume`, the `governed_trader` subgraph re-hydration node retrieves a fresh pricing sample and loops back to the `SymbolicGovernor` to re-run only the deterministic, continuous tiers (CBF and OPA Policy Engine).
 5. **Final Actuation**: If both revalidation checks pass successfully, the transaction is committed via the trade execution actuator; otherwise, it is blocked, and a compensator rollback is initiated.
 
 ### v2.1.0 Ingress Adapter Layer
@@ -100,7 +99,7 @@ The Phase B AGW adapter pairs with `src/gateway/server/agent_gateway_adapter.py`
 
 ### 3.1 Graph Assembly
 
-The stateful agent graph is assembled by `create_graph(redis_url)` in `src/governed_financial_advisor/graph/graph.py`. The function constructs a `StateGraph` over the `AgentState` TypedDict, registers ten nodes, and wires conditional routing edges. The graph compiles with `interrupt_before=["governed_trader"]` to enable the HITL approval workflow described in Section 4.
+The stateful agent graph is assembled by `create_graph(redis_url)` in `src/governed_financial_advisor/graph/graph.py`. The function constructs a `StateGraph` over the `AgentState` TypedDict, registers **twelve named nodes**, and wires conditional routing edges. The graph compiles with `interrupt_before=["governed_trader"]` to enable the HITL approval workflow described in Section 4.
 
 ### 3.2 Node Inventory
 
@@ -112,7 +111,9 @@ The stateful agent graph is assembled by `create_graph(redis_url)` in `src/gover
 | `data_analyst`      | `src/governed_financial_advisor/agents/data_analyst/agent.py`      | Live market data fetch via `yfinance`; writes `data_analyst_ticker`                               |
 | `execution_analyst` | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | Structured `ExecutionPlan` synthesis; writes `execution_plan_output` (list of `PlanStep`)         |
 | `evaluator`         | `src/governed_financial_advisor/agents/evaluator/agent.py`         | Audit verification; OPA policy check; NeMo output scan; writes `evaluation_result`, `opa_results` |
-| `safety_check`      | `src/governed_financial_advisor/graph/nodes/safety_node.py`        | HMAC-SHA256 governance signature validation; writes `safety_status`. **Fix (2026-06-03):** `_extract_trade_payload()` now passes optional STPA-required fields (`drawdown`, `order_size`, `daily_vol`) through to the trade payload — required for UCA-5 check. |
+| `ftra_node`         | `src/gateway/governance/ftra/node_factory.py`                      | **Mandatory FTRA reachability analysis**; classifies irreversibility (R-03); routes to `safety_check`, `defer_node`, or blocks |
+| `defer_node`        | `src/gateway/governance/defer_queue.py`                            | **DEFER queue parking**; parks mid-confidence requests (`FRIA_ZONE_DEFER`) with signed tokens    |
+| `safety_check`      | `src/governed_financial_advisor/graph/nodes/safety_node.py`        | HMAC-SHA256 governance signature validation; writes `safety_status`. Passes STPA-required fields (`drawdown`, `order_size`, `daily_vol`) to the trade payload. |
 | `governed_trader`   | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | Final trade execution; HITL interrupt point; writes `execution_result`                            |
 | `explainer`         | `src/governed_financial_advisor/agents/explainer/agent.py`         | Compliance narrative generation; produces human-readable audit summary                            |
 | `nemo_output_rail`  | `src/governed_financial_advisor/graph/nodes/guardrail_node.py`    | **Mandatory output rail (ADR 2026-03-09b)**; NeMo PII masking + content safety; fail-closed; sets `output_rail_applied` |
@@ -146,8 +147,9 @@ Routing decisions are implemented as inline closures inside `create_graph()` in 
 
 - **`route_after_guardrail(state)`** — (line 63) Reads `state["guardrail_blocked"]`. If True, routes to `END` immediately (blocked input never reaches any agent). Otherwise proceeds to `thinker_node`.
 - **`route_supervisor(state)`** — (line 86) Reads `state["next_step"]` (a `Literal` enum) and dispatches to the appropriate specialist node. If `next_step` is `"FINISH"` or `None`, routes through `nemo_output_rail` to `END`.
-- **`check_safety_signature(state)`** — (line 98) Validates the HMAC-SHA256 governance signature stored in `state["governance_signature"]`. Routes `APPROVED` plans to `safety_check`, re-routes to `execution_analyst` if rejected, and enforces a hard loop cap (`loop_count >= 3` → `explainer`).
-- **`route_after_safety(state)`** — (line 125) Terminal routing decision after the OPA pre-trade safety gate:
+- **`check_safety_signature(state)`** — (line 98) Validates the HMAC-SHA256 governance signature stored in `state["governance_signature"]`. Routes `APPROVED` plans to `ftra_node`, re-routes to `execution_analyst` if rejected, and enforces a hard loop cap (`loop_count >= 3` → `explainer`).
+- **`route_after_ftra(state)`** — Evaluates the `ftra_status` classification. `CLEAR` proceeds to `safety_check`; `DEFER` routes to `defer_node`; `BLOCKED` routes to `explainer`.
+- **`route_after_safety(state)`** — Terminal routing decision after the OPA pre-trade safety gate:
   - `APPROVED` or `SKIPPED` → routes to `governed_trader` subgraph (subject to HITL interrupt). On human approval, the execution path first enters `post_hitl_revalidate_node` for continuous state revalidation against Tier 2 and Tier 4 of the Symbolic Governor, before routing to the final executor node.
   - `BLOCKED` or `ESCALATED` → routes to `explainer` (trade is rejected; audit narrative is generated)
 
@@ -164,9 +166,13 @@ flowchart LR
     doer_node -->|FINISH| nemo_output_rail
     data_analyst --> nemo_output_rail
     execution_analyst --> evaluator
-    evaluator -->|APPROVED + sig| safety_check
+    evaluator -->|APPROVED + sig| ftra_node
     evaluator -->|loop_count >= 3| explainer
     evaluator -->|rejected / no sig| execution_analyst
+    ftra_node -->|CLEAR| safety_check
+    ftra_node -->|DEFER| defer_node
+    ftra_node -->|BLOCKED| explainer
+    defer_node --> explainer
     safety_check -->|APPROVED / SKIPPED| governed_trader
     safety_check -->|BLOCKED / ESCALATED| explainer
     governed_trader --> explainer
@@ -176,6 +182,8 @@ flowchart LR
     style governed_trader fill:#f9a825,stroke:#e65100
     style nemo_guardrail fill:#42a5f5,stroke:#1565c0
     style nemo_output_rail fill:#42a5f5,stroke:#1565c0
+    style ftra_node fill:#81c784,stroke:#2e7d32
+    style defer_node fill:#ffb74d,stroke:#ef6c00
 ```
 
 > **Mandatory Rails:** `nemo_guardrail` (blue, ADR 2026-03-09) is the mandatory first node — blocked input routes directly to `END` without any agent processing. `nemo_output_rail` (blue, ADR 2026-03-09b) is the mandatory final node — every non-blocked path routes through it before `END` for PII masking and content safety.
@@ -184,7 +192,7 @@ flowchart LR
 
 ### 3.4 AgentState Schema
 
-All inter-node communication is carried by a single `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py`. The full field inventory (25 fields):
+All inter-node communication is carried by a single `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py`. The full field inventory (33 fields):
 
 | Field                      | Type                             | Description                                |
 | -------------------------- | -------------------------------- | ------------------------------------------ |
@@ -213,6 +221,14 @@ All inter-node communication is carried by a single `AgentState` TypedDict defin
 | `guardrail_blocked`        | `bool`                           | NeMo input rail gate (ADR 2026-03-09)      |
 | `guardrail_reason`         | `str`                            | Reason for guardrail block                 |
 | `output_rail_applied`      | `bool`                           | NeMo output rail tracking (ADR 2026-03-09b)|
+| `ftra_status`              | `Literal[...]`                   | FTRA verdict: CLEAR / HITL_REQUIRED / BLOCKED |
+| `ftra_result`              | `dict \| None`                   | Serialized `FtraBoundaryResult` structure  |
+| `ftra_defer_id`            | `str \| None`                    | Correlation UUID for parked DEFER requests |
+| `narrow_status`            | `Literal[...]`                   | Clamping status: NONE / APPLIED / REJECTED |
+| `narrowed_params`          | `dict \| None`                   | Clamped parameters from NARROW primitive   |
+| `pause_resume_token`       | `str \| None`                    | Cryptographic token for PAUSE resumption   |
+| `pause_reason`             | `str \| None`                    | Reason code for transient PAUSE delay      |
+| `confidence`               | `float`                          | Calibrated model confidence score (0.0–1.0)|
 
 ### 3.5 Checkpointing Strategy
 
@@ -267,33 +283,43 @@ The Hybrid Inference Gateway is CAGE's central enforcement plane. It is structur
 
 | Mount Path    | Sub-Application  | Primary Role                                       |
 | ------------- | ---------------- | -------------------------------------------------- |
-| `/`           | `mcp_app`        | FastMCP tool server; 7 governance-aware tools      |
+| `/`           | `mcp_app`        | FastMCP tool server; domain-registered tools       |
 | `/inference`  | `inference_app`  | OpenAI-compatible inference proxy; 5-tier pipeline |
 | `/governance` | `governance_app` | SymbolicGovernor endpoint                          |
 
 ### 5.2 Governance Middleware
 
-`src/gateway/server/governance_middleware.py` wraps every `/tools/execute` call. It enforces the **X-CAGE-Routing-Seal** HMAC header: any tool invocation whose request does not carry a valid HMAC-SHA256 seal — signed with the shared governance key — is rejected before reaching the tool handler. This prevents tool calls from bypassing the governance pipeline by direct HTTP access.
+`src/gateway/server/governance_middleware.py` wraps every `/tools/execute` call. It enforces the **X-CAGE-Routing-Seal** HMAC/JWT header: any tool invocation whose request does not carry a valid routing seal — signed with the KMS HSM key (or shared secret fallback) — is rejected before reaching the tool handler. This prevents tool calls from bypassing the governance pipeline by direct HTTP access.
 
 The middleware exposes two governance endpoints under the `/governance` mount path:
 
 | Endpoint | Method | Description |
 | -------- | ------ | ----------- |
-| `POST /governance/check` | POST | Internal dry-run governance check against a proposed tool call. Requires a valid `X-CAGE-Routing-Seal`. Body: `{"tool_name": str, "params": dict}`. Returns `APPROVED` or `REJECTED` with violations list. |
-| `POST /governance/validate-action` | POST | **Unified governance validation for structured tool execution payloads.** Called by the GFA service instead of invoking OPA directly — the Single Choke Point for all tool-level governance decisions. Executes Tier 2 (CBF) and Tier 4 (OPA) re-validation. Propagates W3C `traceparent` context to link GFA spans to gateway child spans in Langfuse. Returns `verdict` (APPROVED\|DENIED), `violations`, `seal`, and `latency_ms`. |
+| `POST /governance/check` | POST | Internal dry-run governance check against a proposed tool call. Requires a valid routing seal. Body: `{"tool_name": str, "params": dict}`. Returns `APPROVED` or `REJECTED` with violations list. |
+| `POST /governance/validate-action` | POST | **Unified governance validation for structured tool execution payloads.** Called by the GFA service instead of invoking OPA directly — the Single Choke Point for all tool-level governance decisions. Executes kernel boundary gates (FTRA), domain tiers (CBF, Bounding, Fiscal), and OPA policy. Returns `verdict` (ALLOW\|DENY\|PAUSE\|NARROW\|REQUIRE_APPROVAL\|DEFER), `violations`, `seal`, and `latency_ms`. |
 
 ### 5.3 MCP Tool Server
 
-`src/gateway/server/mcp_tool_server.py` exposes six tools via the FastMCP protocol:
+`src/gateway/server/mcp_tool_server.py` exposes core kernel tools via FastMCP, while domain plugins register domain-specific execution tools dynamically at startup:
 
+**Kernel Tools (`src/gateway/server/mcp_tool_server.py`):**
 | Tool                          | Function                                              |
 | ----------------------------- | ----------------------------------------------------- |
 | `simulate_governance_check`   | Dry-run SymbolicGovernor verify (sim_mode only)       |
-| `execute_trade_action`        | Execute financial trade under full governance         |
 | `trigger_safety_intervention` | Lock system via Redis safety_violation flag           |
+| `verify_content_safety`       | NeMo Guardrails text safety check                     |
+
+**Finance Domain Plugin Tools (`src/cage_finance/tools/tool_provider.py`):**
+| Tool                          | Function                                              |
+| ----------------------------- | ----------------------------------------------------- |
+| `execute_trade_action`        | Execute financial trade under full governance         |
 | `check_market_status`         | Check market symbol status                            |
 | `get_market_sentiment`        | Retrieve market sentiment                             |
-| `verify_content_safety`       | NeMo Guardrails text safety check                     |
+
+**Healthcare Domain Plugin Tools (`src/cage_healthcare/tools/tool_provider.py`):**
+| Tool                          | Function                                              |
+| ----------------------------- | ----------------------------------------------------- |
+| `dose_order`                  | Clinical dose order under serum barrier governance    |
 
 ### 5.4 Inference Proxy Pipeline
 
@@ -312,7 +338,7 @@ flowchart LR
 - **Tier 1** — Aho-Corasick automaton scanning for 14 prohibited keywords; O(n) scan regardless of keyword count.
 - **Tier 2** — NeMo Guardrails input verification via the `NeMoGuardrails` gRPC service.
 - **Tier 3** — vLLM forward using a pooled `httpx` client (`max_connections=50`, `max_keepalive=20`).
-- **Tier 4** — Response output filtering and PII masking via Microsoft Presidio (executed in-process as a custom action within NeMo Guardrails output rails).
+- **Tier 4** — Response output filtering and PII masking via Microsoft Presidio (10 entity types configured in `config/rails/config.yml`).
 - **Tier 5** — Server-Sent Events (SSE) streaming proxy for token-by-token client delivery.
 
 **Model routing:** The proxy inspects the `model` field of the request body. Requests specifying a `deepseek` model variant are routed to `VLLM_REASONING_API_BASE`; all other requests are routed to `VLLM_FAST_API_BASE`.
@@ -320,66 +346,72 @@ flowchart LR
 | Model Variant | Backend                                                  | Use Case                                      |
 | ------------- | -------------------------------------------------------- | --------------------------------------------- |
 | `deepseek-*`  | `VLLM_REASONING_API_BASE` — DeepSeek-R1-Distill-Llama-8B | Chain-of-thought reasoning (thinker node)     |
-| Default       | `VLLM_FAST_API_BASE` — Qwen/Qwen2.5-1.5B-Instruct        | Instruction following (doer, explainer nodes) |
+| Default       | `VLLM_FAST_API_BASE` — Meta-Llama-3.1-8B-Instruct        | Instruction following (doer, explainer nodes) |
 
 ---
 
-## 6. Symbolic Governor 8-Tier Pipeline
+## 6. Symbolic Governor — Plugin-Registered Tier Architecture
 
-The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. Its `_run_checks()` method executes the governance tiers in **strict sequential order**, with the exception of Tiers 2 and 4 (CBF and OPA) which are fired **concurrently** via `asyncio.gather`. The pipeline is **fail-closed**: any active tier raising a validation error produces a `GovernanceError` and halts the pipeline. No partial approval is possible. The legacy SLM sidecar tier slot has been fully retired; `slm_available=false` is a permanent sentinel injected into the OPA payload.
+The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. In v3.0.0, the governor executes **kernel-owned gates** combined with **plugin-registered domain tiers** via [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944). The canonical tier sequence is defined by [`proof/model.py:128`](../../proof/model.py#L128) `TIERS = ("ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria")`.
+
+The pipeline executes in two decoupled phases:
+- **Phase 1 (Read-Only Validation)**: Executes kernel boundary checks and read-only domain tiers. If any check fails, the pipeline halts immediately without state mutation.
+- **Phase 2 (Atomic Mutation & LIFO Rollback)**: Executes mutating domain tiers (e.g. CBF cash deductions, fiscal limits). If any Phase 2 tier fails, all previously committed Phase 2 tiers are rolled back in strict LIFO order via [`rollback()`](../../src/gateway/governance/contracts.py:271).
 
 ```mermaid
 flowchart TD
     subgraph P1["Phase 1: Read-Only Validation Gates"]
-        T0[Tier 0\nSTPA UCA Validation\nSTPAValidator.validate]
-        T1["Tier 1\nSR 26-2 §IV.B Agentic Confidence\nconfidence ≥ 0.95"]
-        T2b["Tier 2b\nOPA Rego Evaluation\ntrade.governance"]
-        T5[Tier 5\nMulti-Agent Consensus\nasyncio critics]
-        T6[Tier 6\nCausal Gatekeeper\nDoWhy β>0 + Placebo Refuter]
-        T6b[Tier 6b\nFRIA Adaptive Boundary]
+        T_FTRA["Tier 0.5: FTRA Boundary Gate\nKernel: _ftra_boundary_check"]
+        T_STPA["Tier 1: STPA UCA Validation\nKernel: GeneratedSTPAValidator.validate"]
+        T_CONF["Tier 2: Agentic Confidence\nKernel: Inline check ≥ 0.95"]
+        T_D1["Domain Tiers (Phase 1, sorted by order)\nBounding (order 2), Consensus (order 5), Causal (order 6)"]
+        T_OPA["Tier 3b: OPA Policy Evaluation\nKernel: OPAClient with CircuitBreaker"]
 
-        T0 --> T1 --> T2b --> T5 --> T6 --> T6b
+        T_FTRA --> T_STPA --> T_CONF --> T_D1 --> T_OPA
     end
 
-    subgraph P2["Phase 2: Atomic State Mutations"]
-        T2a["Tier 2a\nControl Barrier Function\nLua atomic_verify_and_commit"]
-        T3[Tier 3\nFiscal Limit Pre-Reservation\nRedis WATCH/MULTI/EXEC]
-
-        T2a --> T3
+    subgraph P2["Phase 2: Atomic State Mutations (LIFO Rollback on Failure)"]
+        T_D2["Domain Tiers (Phase 2, sorted by order)\nCBF (order 3, Lua atomic) --> Fiscal (order 4, Redis reservation)"]
     end
 
-    Input([Governance Request]) --> T0
-    T6b -->|Phase 1 ALLOW| T2a
-    T3 --> Approved([APPROVED / SEAL_ISSUED])
+    subgraph P3["Post-Commit Gate"]
+        T_FRIA["Tier 7: Adaptive FRIA Gate\nKernel: enforce_fria_boundary"]
+    end
 
-    T0 -->|GovernanceError| Blocked([BLOCKED])
-    T1 -->|GovernanceError| Blocked
-    T2b -->|GovernanceError| Blocked
-    T5 -->|GovernanceError| Blocked
-    T6 -->|GovernanceError| Blocked
-    T6b -->|GovernanceError| Blocked
-    T2a -->|GovernanceError| Blocked
-    T3 -->|GovernanceError| Blocked
+    Input([Governance Request]) --> T_FTRA
+    T_OPA -->|Phase 1 Passed| T_D2
+    T_D2 -->|Phase 2 Committed| T_FRIA
+    T_FRIA --> Approved([APPROVED / SEAL_ISSUED])
+
+    T_FTRA -->|Violation| Blocked([BLOCKED / DENIED])
+    T_STPA -->|Violation| Blocked
+    T_CONF -->|Violation| Blocked
+    T_D1 -->|Violation| Blocked
+    T_OPA -->|Violation| Blocked
+    T_D2 -->|Violation / Rollback| Blocked
+    T_FRIA -->|Violation| Blocked
 ```
 
 ### 6.1 Tier Specifications
 
-| Tier | Phase | Name | Implementation | Key Threshold |
-| ---- | ----- | ---- | -------------- | ------------- |
-| 0 | Phase 1 | STPA UCA Validation | `GeneratedSTPAValidator.validate()` in `src/gateway/governance/generated_stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json` |
-| 1 | Phase 1 | SR 26-2 §IV.B Agentic Confidence | Inline fast-fail check in `_run_checks()` | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
-| 2b | Phase 1 | OPA Policy | `OPAClient` with `CircuitBreaker` evaluating `trade.governance` Rego bundle | 5 consecutive failures → 30s open-circuit recovery; 3000ms hard latency budget |
-| 5 | Phase 1 | Multi-Agent Consensus | `ConsensusEngine` — parallel `asyncio` critic tasks | `consensus.threshold_usd=10000.0` |
-| 6 | Phase 1 | Causal Gatekeeper | `causal_safety_check()` in `src/gateway/governance/causal_gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; placebo p-value < 0.05 or placebo effect > 0.2; bounded risk $\le 0.95$ |
-| 6b | Phase 1 | FRIA Adaptive Boundary | `enforce_fria_boundary()` in `symbolic_governor.py` | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` |
-| 2a | Phase 2 | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` — Lua-atomic Redis check+debit | `min_cash_balance=1000.0`, `gamma=0.5` |
-| 3 | Phase 2 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — Redis `WATCH`/`MULTI`/`EXEC` | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL |
+| Tier | Category | Phase | Order | Name | Implementation | Key Threshold |
+| ---- | -------- | ----- | ----- | ---- | -------------- | ------------- |
+| **0.5** | Kernel Gate | 1 | 0 | FTRA Boundary Check | `_ftra_boundary_check()` in `symbolic_governor.py` | 4 irreversibility classes; bypass detection (R-03) |
+| **1** | Kernel Gate | 1 | 1 | STPA UCA Validation | `GeneratedSTPAValidator.validate()` in `generated_stpa_validator.py` | Thresholds from `config/safety_params.json` (UCA-1..9) |
+| **2** | Kernel Gate | 1 | 2 | Agentic Confidence | Inline fast-fail check in `_run_checks()` | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (0.95 US / 0.97 EU) |
+| **—** | Domain Tier | 1 | 2 | Bounding Contracts (Finance) | `BoundingContractTierPlugin` in `cage_finance/tiers/bounding_tier.py` | Hard-block allowlist (instruments, venues, accounts) |
+| **3a** | Domain Tier | 2 | 3 | Control Barrier Function | `CBFTierPlugin` wrapping `cbf_engine.py` | `min_cash_balance=1000.0`, `gamma=0.5` (US) / `0.6` (EU) |
+| **3b** | Kernel Gate | 1 | 4 | OPA Policy Evaluation | `OPAClient` in `core/policy.py` + `CircuitBreaker` | Package `trade.governance`; 5 failures → open circuit |
+| **4** | Domain Tier | 2 | 4 | Fiscal Limit Pre-Reservation | `FiscalTierPlugin` wrapping `safety/resource_guard.py` | `FISCAL_DAILY_CAP_USD` ($500,000); 300s TTL |
+| **5** | Domain Tier | 1 | 5 | Multi-Agent Consensus | `ConsensusTierPlugin` wrapping `consensus/engine.py` | Threshold $10,000; fail-closed `ESCALATE` on error |
+| **6** | Domain Tier | 1 | 6 | Causal Gatekeeper | `CausalTierPlugin` wrapping `causal/gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; Placebo p < 0.05 or \|eff\| > 0.2 |
+| **7** | Kernel Gate | 1 | 7 | Adaptive FRIA Gate | `enforce_fria_boundary()` in `normative_provider.py` | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
 
-> **Two-Phase Decoupling & Zero Budget Leakage:** All Phase 1 validation checks execute before any state mutation occurs. If any validation tier emits a violation, the pipeline terminates in Phase 1 without modifying Redis balances or reserving daily limits, structurally eliminating downstream budget leakage.
+> **Two-Phase Decoupling & Zero Budget Leakage:** All Phase 1 validation checks execute before any state mutation occurs. If any validation tier emits a violation, the pipeline terminates in Phase 1 without modifying Redis balances or reserving daily limits, structurally eliminating downstream budget leakage. If Phase 2 fails downstream, committed Phase 2 tiers are rolled back in LIFO order.
 
-**Tier 2a (Control Barrier Function):** CBF's `atomic_verify_and_commit()` executes a single Redis Lua script (`LUA_ATOMIC_CBF`) that checks $h(S(t+1)) \ge (1-\gamma)h(S(t))$ and commits the cash balance deduction in a single atomic hop, eliminating TOCTOU race conditions.
+**Tier 3a (Control Barrier Function):** CBF's `atomic_verify_and_commit()` executes a single Redis Lua script (`LUA_ATOMIC_CBF`) that checks $h(S(t+1)) \ge (1-\gamma)h(S(t))$ and commits the cash balance deduction in a single atomic hop, eliminating TOCTOU race conditions.
 
-**Tier 2b (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
+**Tier 3b (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
 
 **Tier 6 (Causal Gatekeeper):** Microsoft DoWhy causal inference model validates world-model integrity. The gatekeeper checks if the estimated causal relations match empirical treatment effects via a Placebo Treatment Refuter. If a placebo treatment produces a statistically significant effect (p < 0.05 or placebo effect > 0.2), the model assumptions are deemed poisoned and the trade is blocked.
 
@@ -397,7 +429,7 @@ For the full 14-mechanism latency mitigation analysis and latency budget breakdo
 ### 6.2 Concurrency & Transaction Control (v2.0.0 Add-ons)
 
 #### FiscalLimitGuard
-To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v2.0.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/fiscal_limit_guard.py`).
+To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v2.0.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/safety/resource_guard.py`).
 1. **Pre-Reservation (Tier 3):** After concurrent CBF+OPA (Tiers 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the tier that closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
 2. **TTL Safety:** Returns a `ReservationToken` with a **300s TTL**. If the agent node crashes before execution, the cap is automatically reclaimed. Fail-closed: if Redis is unavailable, the trade is blocked.
 3. **Commit & Rollback:** On success, the spend is confirmed. On failure, the Saga compensating node releases the token back to Redis headroom. `FiscalLimitGuard.rollback_state(amount, audit_id)` is a Saga compensation stub that reverses the Redis debit when a downstream tier fails after Tier 3a commitment; it logs `[SAGA-ROLLBACK]` and re-raises on Redis failure.
@@ -432,7 +464,7 @@ CAGE exposes two gRPC service definitions for inter-service communication within
 
 ### 7.1 Gateway Service
 
-**Proto:** `src/gateway/protos/gateway.proto`
+**Proto:** [`src/gateway/protos/gateway.proto`](../../src/gateway/protos/gateway.proto)
 
 ```
 service Gateway {
@@ -472,7 +504,7 @@ Nine `NetworkPolicy` objects implement a default-deny posture within the namespa
 | ---------------------- | ----------------------------------- | -------------------------------- | ----------------------- |
 | GCS Artifact Bucket    | GCP API (HTTPS)                     | OSCAL / Audit Evidence           | Inherited (GCP FedRAMP) |
 | MinIO (model weights)  | HTTPS/REST                          | Model Binaries                   | Under evaluation        |
-| Langfuse SaaS          | HTTPS/OTLP                          | Inference Traces (potential PII) | **ISA Required**        |
+| Langfuse (self-hosted v3) | HTTPS/OTLP                          | Inference Traces (potential PII) | Self-hosted on GKE (ISA N/A) |
 | yfinance / Market Data | HTTPS/REST                          | Financial Market Data            | **ISA Required**        |
 
 > **Note:** GCP Secret Manager has been **removed** as an external dependency (ADR). Secrets are now delivered exclusively via Kubernetes `Secret` objects provisioned by Terraform; no runtime GCP Secret Manager dependency exists.
@@ -577,13 +609,15 @@ _submit_kfp_run()            ← Kubeflow Pipelines SDK
         │
         ├─ Step 1: evaluate_governance_metrics (Compliance Bridge)
         ├─ Step 2: verdict check (PASS / FAIL)
-        └─ Step 3: trigger_nemo_refinement (POST /v1/nemo/apply-refinement)
+        ├─ Step 3: propose_refinement (POST /v1/nemo/propose-refinement)
+        ├─ Step 4: human approval (POST /v1/nemo/approve-refinement/{proposal_id})
+        └─ Step 5: trigger_nemo_refinement (POST /v1/nemo/apply-refinement)
                         │
                         ▼
                NeMo rails hot-reload (in-process singleton swap)
 ```
 
-The full cybernetic loop is: **Langfuse score event → webhook → KFP pipeline → evaluate metrics → apply hot-reload** — no human in the low-latency path.
+The full cybernetic loop is: **Langfuse score event → webhook → KFP pipeline → evaluate metrics → propose refinement → human approval → apply hot-reload** — eliminating unattended auto-application to prevent recursive self-authentication (AARM-V8).
 
 ### 10.2 Langfuse Webhook Configuration
 
@@ -683,7 +717,7 @@ This section documents the mathematical formalism underlying each component of t
 
 ### 11.1 Control Barrier Function (CBF)
 
-**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)
 
 The CBF layer provides a formal cash-balance safety guarantee. The **safe set** is:
 
@@ -707,7 +741,7 @@ This condition guarantees `h(S(t)) ≥ 0` for all `t` — the cash balance never
 
 ### 11.2 Causal Gatekeeper — SCM with Backdoor Adjustment
 
-**Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
+**Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)
 
 The causal gatekeeper uses a **Structural Causal Model (SCM)** with `backdoor.linear_regression` to estimate the causal effect of a proposed trade on portfolio risk. The gatekeeper enforces three safety checks:
 
@@ -737,9 +771,9 @@ A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confab
 
 ### 11.4 Consensus Boolean Logic
 
-**Source:** [`src/gateway/governance/consensus.py`](../../src/gateway/governance/consensus.py)
+**Source:** [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)
 
-Multi-model consensus is required for trades ≥ **$10,000 USD** (`consensus.threshold_usd` in `governance_thresholds.json`). Two heterogeneous critic personas are queried concurrently via `asyncio.gather()` with a **30-second timeout**:
+Multi-model consensus is required for trades ≥ **$10,000 USD** (`consensus.threshold_usd` in `governance_thresholds.json`). Two heterogeneous critic personas are queried concurrently via `asyncio.gather()` with a **10-second timeout** per critic (`_CRITIC_TIMEOUT_S=10.0`):
 
 | Critic | Model | Role |
 |--------|-------|------|
@@ -760,9 +794,9 @@ Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls.
 
 ### 11.5 Fiscal Limit Guard — $500k Daily Cap
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+**Source:** [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py)
 
-The `FiscalLimitGuard` enforces a **$500,000 USD daily cap** (`FISCAL_DAILY_CAP_USD` env var) stored in **integer cents** for precision. The cap resets on an **86,400-second rolling window**.
+The `ResourceGuard` (`FiscalLimitGuard`) enforces a **$500,000 USD daily cap** (`FISCAL_DAILY_CAP_USD` env var) stored in **integer cents** for precision. The cap resets on an **86,400-second rolling window**.
 
 Atomic pre-reservation uses `WATCH/MULTI/EXEC` optimistic locking. On Redis contention, the guard retries with **exponential backoff**:
 
@@ -831,11 +865,143 @@ These UCAs constrain order size relative to market liquidity:
 
 ### 12.3 STPA Integration in the Pipeline
 
-UCA validation runs at **Tier 0** — before any other governance check — ensuring that structurally unsafe actions are rejected immediately without consuming CBF, OPA, or consensus resources. Thresholds are sourced from `src/gateway/governance/safety_params.json` and `governance_thresholds.json`.
+UCA validation runs at **Tier 0** — before any other governance check — ensuring that structurally unsafe actions are rejected immediately without consuming CBF, OPA, or consensus resources. Thresholds are sourced from [`config/safety_params.json`](../../config/safety_params.json) and [`config/governance_thresholds.json`](../../config/governance_thresholds.json).
 
 The `_extract_trade_payload()` function in `src/governed_financial_advisor/graph/nodes/safety_node.py` passes the optional STPA-required fields (`drawdown`, `order_size`, `daily_vol`) through to the trade payload, enabling UCA-5 and UCA-6 checks to operate on live market data.
 
 UCA violations are logged to the WORM audit trail via `UCALogger` and surfaced as structured OTel span attributes for operator visibility in Langfuse.
 
 ---
+
+## 13. Null Object Components (Bare-Kernel Mode)
+
+**Source:** [`src/gateway/governance/null_components.py`](../../src/gateway/governance/null_components.py)
+
+**New in v3.0.0** — CAGE's kernel can operate with zero domain plugins loaded, a capability essential for testing, graceful degradation, and validating the layer-separation architecture. When `CAGE_ACTIVE_PLUGINS=""`, the kernel uses fail-closed null implementations for all domain-supplied components rather than raising `AttributeError` exceptions or silently failing open.
+
+### 13.1 Fail-Closed Null Semantics
+
+The null components follow a strict fail-closed contract: every method returns an explicit **denial verdict** (`DENY`, `REJECT`, `UNSAFE`), never a no-op or silent success. This ensures that a missing plugin produces structured governance failures that traverse the normal verdict path, rather than exceptions that might be caught by broad error handlers and misinterpreted as transient failures.
+
+| Null Component | Protocol | Fail-Closed Behavior |
+|---|---|---|
+| [`NullSafetyFilter`](../../src/gateway/governance/null_components.py:47) | `SafetyFilter` | `verify_action()` → denial string; `atomic_verify_and_commit()` → `(False, "UNSAFE: no domain safety filter registered")` |
+| [`NullConsensusProvider`](../../src/gateway/governance/null_components.py:81) | `ConsensusProvider` | `check_consensus()` → `{"status": "REJECT", "agreement_level": 0.0}` |
+| [`NullColdStore`](../../src/gateway/governance/evidence/null_cold_store.py) | [`EvidenceColdStore`](../../src/gateway/governance/evidence/cold_store.py:88) | Dev/test: accepts flushes, returns well-formed receipts without durable persistence. Prod (`CAGE_ENV=prod`): raises `RuntimeError` at startup. |
+| [`NullTelemetryProvider`](../../src/gateway/governance/telemetry_provider.py) | `TelemetryProvider` | Returns empty, correctly-typed `DataFrame` (float64 columns) without synthetic data, allowing `CausalGatekeeper` to take its documented insufficient-samples fail-closed path. |
+
+### 13.2 Critical Invariant: Never Fail Open
+
+`NullSafetyFilter.atomic_verify_and_commit()` returns `(False, reason)` rather than raising an exception. If it raised, the exception would be caught by broad exception handlers in the CBF tier, and with `CBF_FAIL_OPEN=true` that could produce a silent fail-open. Returning `False` ensures the denial travels the normal verdict path through [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) and is logged, metered, and blocked correctly.
+
+### 13.3 Architectural Purpose
+
+Bare-kernel mode proves the [**Layer 1 / Layer 2 separation invariant**](../../AGENTS.md) enforced by Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)): the kernel owns mechanism (dispatch, consensus voting, seal issuance), domains own nomenclature (tickers, dosages, trade actions). A kernel that can boot, serve requests, and deny them structurally without any domain loaded is a kernel that has no hardcoded domain coupling.
+
+Test coverage: [`tests/test_null_components.py`](../../tests/test_null_components.py) validates that `SymbolicGovernor` with `CAGE_ACTIVE_PLUGINS=""` produces structured `GovernanceError` refusals rather than crashes. This is the primary regression test for the plugin architecture.
+
+---
+
+## 14. Plugin Architecture and Layer Separation (v3.0.0)
+
+**New in v3.0.0** — CAGE enforces strict architectural separation between the universal governance kernel (Layer 1), domain-specific plugins (Layer 2), and external integrations & rails (Layer 3). This clean architecture principle prioritizes **structural clarity over operational continuity**: the optimization target is a legible, modular codebase, not backward compatibility or operational safety.
+
+### 14.1 The Three-Layer Architecture
+
+CAGE enforces strict separation between the universal governance kernel, domain-specific plugins, and external rails:
+
+| Layer | Path | Role & Responsibilities | Invariants & Boundary Rules |
+|---|---|---|---|
+| **Layer 1: Kernel** | [`src/gateway/`](../../src/gateway/) | Core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, and audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from `src/cage_*` (Layer 2), `src/compliance_bridge/` (Layer 3), or `src/governed_financial_advisor/` (Layer 4). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `azure`, `langfuse`). Enforced in CI by Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)). Must not hardcode domain verbs (e.g. `execute_trade`) or domain data structures. |
+| **Layer 2: Domain Plugins** | `src/cage_{domain}/` (e.g. [`src/cage_finance/`](../../src/cage_finance/), [`src/cage_healthcare/`](../../src/cage_healthcare/)) | Domain-specific tiers ([`GovernanceTierPlugin`](../../src/gateway/governance/contracts.py:218)), domain action registries, ontologies, policies, and causal graphs. | Registers tiers into the kernel via [`SymbolicGovernor.register_tier()`](../../src/gateway/governance/symbolic_governor.py:829). Encapsulates domain vocabulary and semantics without polluting the kernel. |
+| **Layer 3: Integrations & Rails** | [`src/integrations/`](../../src/integrations/), `src/cage_finance/rails/`, [`src/compliance_bridge/`](../../src/compliance_bridge/) | External vendor normative/attestation adapters, durable sinks (ClickHouse, GCS, S3), NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture Specification ([`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](../../local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md)). Communicates via canonical dataclasses. |
+
+**The Three-Layer Split Rule:**
+- **Layer 1 (Kernel)**: Code that can fail closed unsafely lives in the kernel. Code covered by TLA+ proofs, formal CBF math, or core NIST control assertions. Code that holds Redis Lua scripts, KMS envelope signing, or fence epoch tracking.
+- **Layer 2 (Domain Plugin)**: Code that merely names domain concepts (actions, symbols, tickers, dosages), Rego domain packages, domain Pydantic models, or ledger providers.
+- **Config**: Numbers, thresholds, citations, and STPA hazard declarations ([`config/`](../../config/)).
+
+**Decision test for ambiguous code:** *"If two domains had different copies of this, would a security fix have to be applied twice?"* If yes → Layer 1 (Kernel).
+
+### 14.2 Clean Architecture Principle
+
+As stated in [`AGENTS.md`](../../AGENTS.md):
+
+> **Reference Architecture — Clean Architecture Over Operational Continuity.** CAGE demonstrates governance patterns for AI systems. Because CAGE is a reference architecture and not a deployed production service, **breaking changes and operational considerations are far less important than a clean, legible architecture.** The optimization target is clean code structure, modularity, and architectural clarity — not operational safety, uptime, or backward compatibility.
+
+This principle drives three critical design decisions:
+
+1. **Breaking Changes Are Acceptable**: Changes that eliminate legacy coupling or simplify the mental model are preferred over backward-compatible shims.
+2. **No Deprecation Windows**: There is no live production instance to protect. Deprecated patterns are removed immediately when the replacement is available.
+3. **Structural Clarity Over Operational Completeness**: Where a choice exists between operational convenience and architectural legibility, always choose legibility.
+
+### 14.3 Gate G3: Import Boundary Enforcement
+
+[`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py) enforces the **Layer 1 NEVER imports from Layer 2** invariant in CI. The script runs as part of the `lint` job in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) and fails the build on any illegal upward import.
+
+**Illegal import patterns** (Layer 1 → Layer 2/3/4):
+- `src/gateway/` importing from `src/cage_finance/`
+- `src/gateway/` importing from `src/cage_healthcare/`
+- `src/gateway/` importing from `src/compliance_bridge/`
+- `src/gateway/` importing from `src/governed_financial_advisor/`
+
+**Legal import patterns**:
+- `src/cage_finance/` importing from `src/gateway/` (Layer 2 → Layer 1)
+- `src/integrations/provider_01/` importing from `src/gateway/governance/contracts.py` (Layer 3 → Layer 1 protocol)
+- `src/governed_financial_advisor/` importing from `src/gateway/` (Layer 4 → Layer 1)
+
+**Running the check locally:**
+```bash
+uv run python scripts/check_import_boundaries.py --verbose
+```
+
+This check is the primary regression gate for the plugin architecture. A kernel that boots without any domain plugins ([§13 Null Object Components](#13-null-object-components-bare-kernel-mode)) proves Layer 1/2 separation.
+
+### 14.4 Domain Plugin Registration Mechanism
+
+Domain plugins register their governance tiers at startup via the [`GovernanceTierPlugin`](../../src/gateway/governance/contracts.py:218) protocol. The kernel discovers plugins through [`pyproject.toml`](../../pyproject.toml) entry points and loads them via [`plugin_loader.py`](../../src/gateway/governance/plugin_loader.py).
+
+**Entry point registration** ([`pyproject.toml:284`](../../pyproject.toml:284)):
+```toml
+[project.entry-points."cage.domain_plugins"]
+finance = "src.cage_finance.plugin:FinanceCagePlugin"
+healthcare = "src.cage_healthcare.plugin:CageHealthcarePlugin"
+```
+
+**Plugin discovery and tier registration:**
+
+1. **Discovery**: [`load_domain_plugins()`](../../src/gateway/governance/plugin_loader.py) enumerates all entry points in the `cage.domain_plugins` group.
+2. **Initialization**: Each plugin class is instantiated and its [`register_tiers(governor)`](../../src/cage_finance/plugin.py:107) method is called with the `SymbolicGovernor` instance.
+3. **Tier registration**: The plugin calls [`governor.register_domain_tier(phase, order, tier_func)`](../../src/gateway/governance/symbolic_governor.py:829) for each tier it provides.
+4. **Execution**: The kernel executes registered tiers in `(phase, order, tier_name)` sorted order via [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944).
+
+**Example: Finance Plugin Registration** ([`src/cage_finance/plugin.py`](../../src/cage_finance/plugin.py)):
+
+```python
+class FinanceCagePlugin:
+    def register_tiers(self, governor: SymbolicGovernor) -> None:
+        governor.register_domain_tier(phase=1, order=2, tier_func=BoundingContractTierPlugin())
+        governor.register_domain_tier(phase=2, order=3, tier_func=CBFTierPlugin())
+        governor.register_domain_tier(phase=2, order=4, tier_func=FiscalTierPlugin())
+        governor.register_domain_tier(phase=1, order=5, tier_func=ConsensusTierPlugin())
+        governor.register_domain_tier(phase=1, order=6, tier_func=CausalTierPlugin())
+```
+
+**Phase semantics:**
+- **Phase 1** (`phase == 1`): Read-only validation. No state mutation. If Phase 1 fails, Phase 2 never runs.
+- **Phase 2** (`phase == 2`): Atomic state mutation (Redis balance debits, fiscal reservations). On failure, all committed Phase 2 tiers are rolled back in LIFO order via [`rollback()`](../../src/gateway/governance/contracts.py:271).
+
+The kernel provides no domain-specific tier implementations — all domain logic (CBF cash barriers, fiscal limits, consensus critics) lives in domain plugins. The kernel provides only the dispatch loop, the tier protocol, and the rollback mechanism.
+
+### 14.5 Bare-Kernel Mode: Zero-Plugin Operation
+
+Setting `CAGE_ACTIVE_PLUGINS=""` boots the kernel with **zero domain plugins loaded**. All domain-supplied components ([`SafetyFilter`](../../src/gateway/governance/null_components.py:47), [`ConsensusProvider`](../../src/gateway/governance/null_components.py:81)) are replaced with fail-closed null implementations that return explicit denial verdicts (`DENY`, `REJECT`, `UNSAFE`) rather than exceptions.
+
+This capability proves the Layer 1/Layer 2 separation invariant: a kernel that can boot, serve requests, and deny them structurally without any domain loaded is a kernel with zero hardcoded domain coupling.
+
+**Null component fail-closed contract** ([`src/gateway/governance/null_components.py`](../../src/gateway/governance/null_components.py)):
+- [`NullSafetyFilter.atomic_verify_and_commit()`](../../src/gateway/governance/null_components.py:47) → `(False, "UNSAFE: no domain safety filter registered")`
+- [`NullConsensusProvider.check_consensus()`](../../src/gateway/governance/null_components.py:81) → `{"status": "REJECT", "agreement_level": 0.0}`
+
+Test coverage: [`tests/test_null_components.py`](../../tests/test_null_components.py) validates that `SymbolicGovernor` with `CAGE_ACTIVE_PLUGINS=""` produces structured `GovernanceError` refusals rather than crashes.
 
