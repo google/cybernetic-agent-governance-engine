@@ -474,13 +474,27 @@ Each gets `enable_dataplane_v2 = true` — but the flag only takes effect when a
 
 ## Verification Plan
 
-### PR 1 — Pass Criteria (all three required before PR 2 begins)
+### PR 1 Strict Exit Criteria (Gate to PR 2)
+
+PR 2 development, compliance bridge modifications, and production schema changes remain entirely blocked until every item in the PR 1 verification matrix passes successfully on the ephemeral staging cluster.
+
+* **Manifest Cleanliness:** `grep -r "cilium.io/v2" deployment/k8s/ --exclude-dir=cilium` yields zero results, confirming all L7 `CiliumNetworkPolicy` resources are strictly isolated to `deployment/k8s/cilium/`.
+* **Infrastructure Configuration:** `terraform plan -var-file=staging.tfvars` cleanly includes the Dataplane V2 (`datapath_provider = "ADVANCED_DATAPATH"`) block and disables the legacy Calico addon.
+* **Data Plane Liveness:** `kubectl get ds -n kube-system anetd` confirms `DESIRED == READY` across all nodes.
+* **Daemon Coexistence:** `kubectl logs -n agentsight -l app=agentsight-daemon` shows zero BPF map allocation errors, permission failures, or crash loops between AgentSight and `anetd`.
+* **L7 Enforcement Verification:** `cilium monitor --type l7 --from-label app=gateway` actively captures DNS proxy and L7 FQDN validation events during test traffic.
+* **Compliance Baseline Integrity:** The existing suite of 31 Lula gates passes cleanly (`lula validate -f compliance/lula/`) with zero regressions.
+* **Cloud-Agnostic Baseline Safety:** `kubectl apply -f deployment/k8s/ --dry-run=client` succeeds against an uncustomized local cluster (such as Minikube or KinD) without failing on missing Cilium CRDs.
+
+PR 2 modifications—including the `src/compliance_bridge/types.py` control additions, the `/v1/infra/events` endpoint, ClickHouse DDL alterations, and production cluster migrations—will remain untouched until these checks are fully verified and signed off on staging.
+
+### PR 1 — Verification Table
 
 | Check | Command | Expected |
 |---|---|---|
 | No CNPs in base layer | `grep -r "cilium.io/v2" deployment/k8s/ --exclude-dir=cilium` | No output |
 | All CNPs in overlay | `ls deployment/k8s/cilium/` | 4 files (3 yaml + README) |
-| Terraform DPv2 block | `terraform plan -var-file=staging.tfvars \| grep dataplane_v2` | Block present |
+| Terraform DPv2 block | `terraform plan -var-file=staging.tfvars \| grep datapath_provider` | Block present |
 | `anetd` running | `kubectl get ds -n kube-system anetd` | DESIRED == READY |
 | AgentSight clean | `kubectl logs -n agentsight -l app=agentsight-daemon` | No BPF errors |
 | CNPs enforced | `cilium monitor --type l7 --from-label app=gateway` | L7 flows visible |
