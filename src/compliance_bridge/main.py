@@ -79,6 +79,7 @@ from .types import (
     SUPPORTED_CONTROLS,
     ComplianceMetrics,
     get_control_meta,
+    get_iso_control_map,
 )
 
 # ---------------------------------------------------------------------------
@@ -631,6 +632,114 @@ async def get_metrics_summary(
         "critical_fails": sorted(critical_fails),
         "window_hours": window_hours,
         "controls": results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/infra/events  (PR 2 — Infrastructure Telemetry Ingestion)
+# ---------------------------------------------------------------------------
+
+
+class InfraEvent(BaseModel):
+    """Structured infrastructure event from AgentSight or Cilium monitor exporter.
+
+    Fields must be pre-normalized by the emitting agent — no raw kernel structs.
+    event_type must be one of the registered _JURISDICTIONAL_CONTROL_MAP keys.
+    """
+
+    event_type: Literal[
+        "agentsight_syscall",
+        "agentsight_fim",
+        "cilium_l7_flow",
+    ]
+    source: str = Field(..., max_length=128)
+    pod_name: str = Field(..., max_length=128)
+    namespace: str = Field(..., max_length=64)
+    timestamp_utc: str = Field(..., max_length=64)  # ISO 8601
+    summary: str = Field(..., max_length=512)
+    control_hint: str = Field(..., max_length=32)
+
+
+_CREDENTIAL_PATTERN = re.compile(
+    r"(?:pk-lf|sk-lf|hf_|eyJ|Bearer\s+)[A-Za-z0-9_\-\.]{8,}", re.IGNORECASE
+)
+
+
+@app.post(
+    "/v1/infra/events",
+    tags=["telemetry"],
+    summary="Ingest a structured infrastructure telemetry event",
+    dependencies=[Depends(require_internal_token)],
+)
+async def ingest_infra_event(event: InfraEvent) -> dict:
+    """Ingest a structured infrastructure event into ClickHouse (INFRA partition).
+
+    Events are written directly to ClickHouse under evidence_class='INFRA'.
+    They are NOT appended to the OSCAL ContextAccumulator hash chain — the hash
+    chain remains the AI governance evidence chain exclusively.
+    """
+    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    iso_map = get_iso_control_map(active_region)
+
+    if event.event_type not in iso_map:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "UNSUPPORTED_INFRA_EVENT",
+                "message": (
+                    f"event_type '{event.event_type}' is not registered in the control "
+                    f"map for region '{active_region}'"
+                ),
+            },
+        )
+
+    # Scrub potential credential leaks from summary
+    scrubbed_summary = _CREDENTIAL_PATTERN.sub("[REDACTED]", event.summary)[:512]
+
+    # Map control_id
+    control_id = iso_map[event.event_type]
+
+    # Deterministic event hash
+    event_id = hashlib.sha256(
+        f"{event.event_type}:{event.pod_name}:{event.timestamp_utc}:{time.monotonic()}".encode()
+    ).hexdigest()
+
+    payload_dict = {
+        "event_type": event.event_type,
+        "source": event.source,
+        "pod_name": event.pod_name,
+        "namespace": event.namespace,
+        "summary": scrubbed_summary,
+        "control_hint": event.control_hint,
+    }
+
+    record = {
+        "schema": "cage-audit/3.0",
+        "chain_id": "00000000-0000-0000-0000-000000000000",
+        "sequence": 0,
+        "timestamp_utc": event.timestamp_utc,
+        "event_type": event.event_type,
+        "control_id": control_id,
+        "trace_id": f"infra-{event.pod_name}-{event_id[:16]}",
+        "evidence_class": "INFRA",
+        "payload_json": json.dumps(payload_dict),
+        "record_hash": event_id,
+    }
+
+    try:
+        from .clickhouse_sink import get_clickhouse_sink
+
+        sink = get_clickhouse_sink()
+        await sink.ingest(record)
+    except Exception as exc:
+        logger.error("[infra/events] Error queueing event to ClickHouse: %s", exc)
+
+    return {
+        "status": "INGESTED",
+        "event_id": event_id,
+        "event_type": event.event_type,
+        "control_id": control_id,
+        "evidence_class": "INFRA",
     }
 
 

@@ -70,9 +70,9 @@ cage_deployment_region = "APAC_MAS"
 # DEP-20: enable_apac_mas_compliance activates MAS TRM §9.1 encryption at rest
 # and MAS Notice 655 audit logging independently of enable_nist_compliance.
 # DEP-01: enable_nist_compliance must be false for APAC_MAS deployments.
-enable_nist_compliance         = false
-enable_eu_ecb_compliance       = false
-enable_apac_mas_compliance     = true
+enable_nist_compliance     = false
+enable_eu_ecb_compliance   = false
+enable_apac_mas_compliance = true
 # POAM-024: HA decoupled from compliance — set explicitly true for production
 enable_high_availability       = true
 enable_deletion_protection     = true
@@ -82,6 +82,7 @@ enable_cmek                    = false # Enable when KMS key is configured
 enable_private_master_endpoint = false # Enable when VPN is configured
 enable_pod_security_standards  = true
 pod_security_level             = "restricted"
+enable_dataplane_v2            = true
 
 # Prod: Lock down to corporate VPN only (REPLACE with your SG VPN CIDR)
 authorized_networks = [
