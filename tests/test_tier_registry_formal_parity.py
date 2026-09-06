@@ -84,7 +84,7 @@ class TestFormalModelParity:
         """Register tiers matching the formal model's financial-domain tiers.
 
         The formal model in proof/model.py defines:
-            TIERS = ("stpa", "confidence", "cbf", "opa", "fiscal",
+            TIERS = ("ftra", "stpa", "confidence", "cbf", "opa", "fiscal",
                      "consensus", "causal", "fria")
 
         When a domain plugin registers its tiers with the correct order
@@ -151,6 +151,7 @@ class TestFormalModelParity:
         import proof.model as formal_model
 
         expected = (
+            "ftra",
             "stpa",
             "confidence",
             "cbf",
