@@ -110,30 +110,27 @@ resource "google_container_cluster" "primary" {
   # Shielded nodes (always enabled for basic security)
   enable_shielded_nodes = true
 
-  # Network policy support (always enabled)
+  # ─── CNI: Dataplane V2 (Cilium) or Calico ───────────────────────────────────
+  # Dataplane V2 (Cilium/eBPF) — enables CiliumNetworkPolicy L7 enforcement.
+  # Cannot coexist with network_policy (Calico); only one must be active.
+  # Must be set at cluster creation — not hot-upgradeable.
+  datapath_provider = var.enable_dataplane_v2 ? "ADVANCED_DATAPATH" : "DATAPATH_PROVIDER_UNSPECIFIED"
+
+  # Legacy Calico addon — only when Dataplane V2 is disabled.
+  # Disabled automatically when dataplane_v2_enabled=true (GKE removes it).
   network_policy {
-    enabled = true
+    enabled  = !var.enable_dataplane_v2
+    provider = var.enable_dataplane_v2 ? "PROVIDER_UNSPECIFIED" : "CALICO"
   }
 
-  # Addons
   addons_config {
-    http_load_balancing {
-      disabled = false
-    }
-    horizontal_pod_autoscaling {
-      disabled = false
-    }
+    http_load_balancing { disabled = false }
+    horizontal_pod_autoscaling { disabled = false }
     network_policy_config {
-      disabled = false
+      disabled = var.enable_dataplane_v2 # must be disabled when DPv2 is active
     }
-    # GCS Fuse CSI driver for GCS bucket mounting
-    gcs_fuse_csi_driver_config {
-      enabled = var.enable_gcs_fuse_csi
-    }
-    # GCE Persistent Disk CSI driver
-    gce_persistent_disk_csi_driver_config {
-      enabled = true
-    }
+    gcs_fuse_csi_driver_config { enabled = var.enable_gcs_fuse_csi }
+    gce_persistent_disk_csi_driver_config { enabled = true }
   }
 
   # ─── AU-2, AU-3: Logging Configuration ─────────────────────────────────────
@@ -279,8 +276,8 @@ resource "google_container_node_pool" "primary_nodes" {
 resource "google_container_node_pool" "gpu_nodes" {
   count = var.enable_gpu_node_pool ? 1 : 0
 
-  name     = "gpu-node-pool-${var.gpu_type}"
-  cluster  = google_container_cluster.primary.id
+  name           = "gpu-node-pool-${var.gpu_type}"
+  cluster        = google_container_cluster.primary.id
   location       = var.zone
   node_locations = var.gpu_node_locations
 

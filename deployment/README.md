@@ -207,11 +207,10 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `pod-security-admission.yaml` | Namespace PSA labels: `governance-stack` (restricted), `langfuse` (baseline), `vllm` (baseline) |
 | `security-context-patch.yaml` | Pod security context patches |
 | `linkerd-mtls-policy.yaml` | Linkerd mTLS `AuthorizationPolicy` |
-| `cilium-egress-lockdown.yaml` | Cilium egress `NetworkPolicy` |
-| `network-policy.yaml` | Default deny + allow rules |
-| `network-policy-hardening.yaml` | Hardened network policies |
+| `network-policy.yaml` | Default deny + allow rules (standard portable L3/L4 baseline) |
+| `network-policy-hardening.yaml` | Hardened network policies (standard portable L3/L4 baseline) |
 | `lula-network-policy.yaml` | NetworkPolicy for Lula compliance scanner |
-| `trivy-egress-policy.yaml` | Egress policy for Trivy scanner |
+| `cilium/` | Optional GKE Dataplane V2 L7 overlay (`egress-lockdown.yaml`, `trivy-egress-fqdn.yaml`, `reconciliation-worker-egress.yaml`) |
 
 ### Compliance and operations
 

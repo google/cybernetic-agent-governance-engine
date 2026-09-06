@@ -58,9 +58,9 @@
 zone = "us-central1-a"
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
-environment   = "staging"
-cluster_name  = "cage-staging" # Distinct from cage-dev / cage-prod
-namespace     = "governance-stack"
+environment  = "staging"
+cluster_name = "cage-staging" # Distinct from cage-dev / cage-prod
+namespace    = "governance-stack"
 
 # Non-overlapping CIDR ranges — avoid collision with dev/prod clusters
 # Dev:      pod=10.100.0.0/14, service=10.104.0.0/20, master=172.16.0.0/28
@@ -102,6 +102,12 @@ enable_pod_security_standards  = false # Disabled initially (may block pods duri
 enable_private_master_endpoint = false # Keep master endpoint public for easier access
 enable_private_nodes           = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
 
+# Step 1: Enable GKE Dataplane V2 for staging — activates CiliumNetworkPolicy enforcement.
+# Staging is ephemeral, so this is a zero-migration-cost change (new cluster per cycle).
+# Validates DPv2 + Cilium overlay before any prod migration.
+enable_dataplane_v2 = true
+
+
 # Authorized networks: Allow all for initial staging deployment
 # Can be restricted later once cluster is operational
 authorized_networks = [
@@ -129,7 +135,7 @@ gpu_node_pool_machine_type  = "g2-standard-8" # Same as dev (32 GB RAM prevents 
 gpu_node_pool_min_count     = 0               # Cost-opt: scale to zero when idle
 gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
 gpu_node_pool_initial_count = 1
-gpu_node_pool_spot          = false           # On-demand: prevent spot preemptions during validation
+gpu_node_pool_spot          = false # On-demand: prevent spot preemptions during validation
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # ─── Storage (Staging: Dev-Scale, Cheap) ──────────────────────────────────────

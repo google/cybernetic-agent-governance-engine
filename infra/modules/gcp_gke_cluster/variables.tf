@@ -79,6 +79,17 @@ variable "enable_private_nodes" {
   default     = false
 }
 
+variable "enable_dataplane_v2" {
+  description = <<-EOT
+    Enable GKE Dataplane V2 (Cilium/eBPF via anetd). Required for CiliumNetworkPolicy
+    L7 FQDN enforcement. When true, the legacy Calico network_policy addon is removed
+    (they are mutually exclusive). CANNOT be changed on existing clusters — requires
+    cluster replacement.
+  EOT
+  type        = bool
+  default     = false # false = backwards-compatible default; new clusters set true
+}
+
 # ─── Network Configuration ───────────────────────────────────────────────────
 
 variable "network" {
