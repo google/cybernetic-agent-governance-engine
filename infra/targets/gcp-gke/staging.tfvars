@@ -102,9 +102,9 @@ enable_pod_security_standards  = false # Disabled initially (may block pods duri
 enable_private_master_endpoint = false # Keep master endpoint public for easier access
 enable_private_nodes           = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
 
-# Step 1: Enable GKE Dataplane V2 for staging — activates CiliumNetworkPolicy enforcement.
-# Staging is ephemeral, so this is a zero-migration-cost change (new cluster per cycle).
-# Validates DPv2 + Cilium overlay before any prod migration.
+# PR 1: Enable GKE Dataplane V2 for staging validation.
+# Staging is ephemeral — zero migration cost; new cluster per cycle.
+# Validates DPv2 + Cilium overlay + AgentSight coexistence before any prod change.
 enable_dataplane_v2 = true
 
 

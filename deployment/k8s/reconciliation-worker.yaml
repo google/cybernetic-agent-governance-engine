@@ -249,6 +249,6 @@ type: Opaque
 #   # Common:
 #   kms-governance-key: ""              # REQUIRED
 
-# L7 FQDN overlay for this worker is in deployment/k8s/cilium/reconciliation-worker-egress.yaml
+# L7 FQDN overlay for this worker lives in deployment/k8s/cilium/reconciliation-worker-egress.yaml
 # Apply that file separately on GKE Dataplane V2 clusters.
-# On non-Cilium clusters, the networking.k8s.io/v1 NetworkPolicies above provide L3/L4 isolation.
+# On non-Cilium clusters the networking.k8s.io/v1 NetworkPolicies above provide L3/L4 isolation.

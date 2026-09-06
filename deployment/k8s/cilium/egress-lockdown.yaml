@@ -248,7 +248,7 @@ spec:
 # These CiliumNetworkPolicies layer L7 FQDN enforcement on top of the
 # networking.k8s.io/v1 NetworkPolicies in ../network-policy.yaml
 # and ../network-policy-hardening.yaml (which enforce L3/L4 baseline).
-# Both sets of policies are required; this directory is the L7 overlay.
+# Both layers are required; this directory is the L7 overlay.
 # =============================================================================
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
