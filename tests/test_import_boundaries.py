@@ -144,6 +144,7 @@ class TestRepoImportBoundaries:
             text=True,
             check=False,
         )
-        assert result.returncode == 0, f"Gate G3 failed:\n{result.stdout}\n{result.stderr}"
+        assert result.returncode == 0, (
+            f"Gate G3 failed:\n{result.stdout}\n{result.stderr}"
+        )
         assert "All import boundaries respected" in result.stdout
-

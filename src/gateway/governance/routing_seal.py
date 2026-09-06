@@ -60,17 +60,16 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
+import jwt as pyjwt
+from opentelemetry import trace
+
+from src.gateway.governance.constants import GovernanceControl
 from src.gateway.governance.evidence import stream as es
 from src.gateway.governance.evidence.stream import (
     EvidenceChainUnavailableError,
     get_evidence_sink,
     is_evidence_chain_blocking,
 )
-
-import jwt as pyjwt
-from opentelemetry import trace
-
-from src.gateway.governance.constants import GovernanceControl
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.jwks import pem_to_jwk
 from src.gateway.governance.kms_signer import get_governance_signer

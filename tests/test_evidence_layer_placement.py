@@ -85,4 +85,3 @@ class TestEvidenceLayerPlacement:
             # Verify ISO control map works
             control_map = iso_control.get_iso_control_map("US_FED")
             assert "A.6.1.1" in control_map or len(control_map) > 0
-

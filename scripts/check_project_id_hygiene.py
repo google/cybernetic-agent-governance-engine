@@ -39,6 +39,7 @@ PROHIBITED_IDENTIFIERS = [
 EXCLUDED_PATH_PREFIXES = (
     "docs/paper/measurements/2026-",
     "plans/",
+    "scripts/check_project_id_hygiene.py",
 )
 
 
@@ -51,11 +52,17 @@ def get_tracked_files() -> list[str]:
         return [line.strip() for line in out.splitlines() if line.strip()]
     except subprocess.CalledProcessError:
         root = Path(".")
-        return [str(p) for p in root.rglob("*") if p.is_file() and not str(p).startswith(".git")]
+        return [
+            str(p)
+            for p in root.rglob("*")
+            if p.is_file() and not str(p).startswith(".git")
+        ]
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check for maintainer project ID leaks")
+    parser = argparse.ArgumentParser(
+        description="Check for maintainer project ID leaks"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
@@ -81,7 +88,9 @@ def main() -> int:
                     violations.append((rel_path, line_num, line.strip()))
 
     if violations:
-        print(f"❌ Project ID hygiene gate FAILED: {len(violations)} violation(s) found:")
+        print(
+            f"❌ Project ID hygiene gate FAILED: {len(violations)} violation(s) found:"
+        )
         for path, line_num, line in violations:
             print(f"  {path}:{line_num}: {line}")
         return 1
@@ -95,4 +104,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

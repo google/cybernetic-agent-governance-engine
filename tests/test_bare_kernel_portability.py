@@ -51,8 +51,9 @@ def hermetic_network_guard():
             f"Outbound network connection forbidden in bare-kernel mode: {args}"
         )
 
-    with patch.object(socket.socket, "connect", side_effect=forbid_connect), patch(
-        "socket.create_connection", side_effect=forbid_connect
+    with (
+        patch.object(socket.socket, "connect", side_effect=forbid_connect),
+        patch("socket.create_connection", side_effect=forbid_connect),
     ):
         yield
 
@@ -101,7 +102,9 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
             text=True,
             check=False,
         )
-        assert result.returncode == 0, f"Subprocess failed:\n{result.stdout}\n{result.stderr}"
+        assert result.returncode == 0, (
+            f"Subprocess failed:\n{result.stdout}\n{result.stderr}"
+        )
         assert "BARE_KERNEL_PORTABILITY_VERIFIED" in result.stdout
 
     @pytest.mark.asyncio
@@ -155,4 +158,3 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
         assert receipt.backend_id == "null"
         assert receipt.content_sha256 is not None
         assert store.health().available is True
-

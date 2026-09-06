@@ -104,7 +104,9 @@ def check_file_boundaries(
 
     is_layer1 = False
     try:
-        if filepath.is_relative_to(LAYER_1_GATEWAY) or filepath.resolve().is_relative_to(LAYER_1_GATEWAY.resolve()):
+        if filepath.is_relative_to(
+            LAYER_1_GATEWAY
+        ) or filepath.resolve().is_relative_to(LAYER_1_GATEWAY.resolve()):
             is_layer1 = True
     except (ValueError, FileNotFoundError):
         pass
@@ -121,7 +123,9 @@ def check_file_boundaries(
 
     is_evidence_kernel = False
     try:
-        if filepath.is_relative_to(EVIDENCE_DIR) or filepath.resolve().is_relative_to(EVIDENCE_DIR.resolve()):
+        if filepath.is_relative_to(EVIDENCE_DIR) or filepath.resolve().is_relative_to(
+            EVIDENCE_DIR.resolve()
+        ):
             is_evidence_kernel = True
     except (ValueError, FileNotFoundError):
         pass
@@ -182,7 +186,9 @@ def check_file_boundaries(
                     )
                     violations.append(v)
                     if verbose:
-                        print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+                        print(
+                            f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                        )
                     break
 
     return violations
