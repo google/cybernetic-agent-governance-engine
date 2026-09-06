@@ -316,17 +316,19 @@ class InfraEvent(BaseModel):
     Fields must be pre-normalized by the emitting agent — no raw kernel structs.
     event_type must be one of the registered _JURISDICTIONAL_CONTROL_MAP keys.
     """
+
     event_type: Literal[
         "agentsight_syscall",
         "agentsight_fim",
         "cilium_l7_flow",
     ]
-    source: str          # e.g. "agentsight-daemon", "cilium-monitor-exporter"
-    pod_name: str        # already scrubbed of PII by emitter
+    source: str  # e.g. "agentsight-daemon", "cilium-monitor-exporter"
+    pod_name: str  # already scrubbed of PII by emitter
     namespace: str
-    timestamp_utc: str   # ISO 8601
-    summary: str         # human-readable, max 512 chars, no secrets
-    control_hint: str    # expected control ID — validated server-side
+    timestamp_utc: str  # ISO 8601
+    summary: str  # human-readable, max 512 chars, no secrets
+    control_hint: str  # expected control ID — validated server-side
+
 
 @app.post("/v1/infra/events", dependencies=[Depends(require_internal_token)])
 async def ingest_infra_event(event: InfraEvent) -> dict:
