@@ -839,7 +839,8 @@ class TestValidateActionPauseHandler:
         }
 
         with (
-            patch("src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
@@ -885,7 +886,8 @@ class TestValidateActionPauseHandler:
         }
 
         with (
-            patch("src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
@@ -943,6 +945,7 @@ class TestValidateActionPauseHandler:
             patch(
                 "src.gateway.governance.symbolic_governor._classify_violation"
             ) as mock_classify,
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=False),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
@@ -998,7 +1001,8 @@ class TestValidateActionPauseHandler:
         }
 
         with (
-            patch("src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
@@ -1049,6 +1053,7 @@ class TestValidateActionPauseHandler:
             patch(
                 "src.gateway.governance.symbolic_governor._classify_violation"
             ) as mock_classify,
+            patch("src.gateway.governance.symbolic_governor.is_cage_pause_enabled", return_value=True),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
             patch(
                 "src.gateway.infrastructure.redis_client.redis_client",
