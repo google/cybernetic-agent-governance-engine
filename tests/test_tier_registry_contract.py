@@ -57,10 +57,10 @@ def test_symbolic_governor_requires_safety_filter_at_initialization() -> None:
     Rationale: Without a safety filter, irreversible actions could bypass
     quantitative barrier checks, violating OWASP AISVS C9 requirements.
     """
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
-    
     # Verify signature requires safety_filter
     import inspect
+
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
     sig = inspect.signature(SymbolicGovernor.__init__)
     params = sig.parameters
     
@@ -86,9 +86,9 @@ def test_symbolic_governor_requires_consensus_engine_at_initialization() -> None
     Rationale: Without consensus, the standing assembly cannot verify
     quorum-based decisions, enabling rogue agent capability escalation.
     """
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
-    
     import inspect
+
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
     sig = inspect.signature(SymbolicGovernor.__init__)
     params = sig.parameters
     
