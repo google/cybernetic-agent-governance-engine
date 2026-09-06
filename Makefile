@@ -12,6 +12,7 @@ NAMESPACE ?= cage
         test-integration \
         test-r22 \
         test-cybernetic-loop \
+        verify-tla \
         update-nemo-configmap \
         notices \
         recovery \
@@ -136,6 +137,22 @@ test-r22:
 test-cybernetic-loop:
 	@echo "==> Running cybernetic loop regression tests..."
 	@uv run pytest tests/test_cybernetic_loop.py -v --tb=short
+
+# ---------------------------------------------------------------------------
+# TLA+ model checking (formal verification)
+# ---------------------------------------------------------------------------
+
+## Run TLC model checker on TLA+ specs (requires manual TLA+ Toolbox installation)
+verify-tla:
+	@echo "NOTE: TLC model checker requires manual installation of TLA+ Toolbox"
+	@echo "Download from: https://github.com/tlaplus/tlaplus/releases"
+	@echo ""
+	@echo "To run TLC verification:"
+	@echo "  java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla"
+	@echo "  java -cp tla2tools.jar tlc2.TLC -config proof/FtraBoundary.cfg proof/FtraBoundary.tla"
+	@echo "  java -cp tla2tools.jar tlc2.TLC -config proof/LangGraphHarness.cfg proof/LangGraphHarness.tla"
+	@echo ""
+	@echo "See proof/README.md for detailed instructions and expected output."
 
 # ---------------------------------------------------------------------------
 # NeMo ConfigMap sync (R-22 fix)
