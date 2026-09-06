@@ -73,11 +73,18 @@ _spec.loader.exec_module(model)
 #   - Concurrent: 45 (was 44)
 #   - Skipped tier: 39 (was 38)
 # The ungated model remains at 19 (does not use seal consumption semantics).
+#
+# NOTE (ARCH-1, 2026-09-06): State counts increased due to addition of FTRA
+# (Tier 0.5) to close proof/implementation divergence. The new counts are:
+#   - Gated: 44 (was 40)
+#   - Ungated: 21 (was 19)
+#   - Concurrent: 49 (was 45)
+#   - Skipped tier: 43 (was 39)
 
-EXPECTED_GATED_STATES = 40
-EXPECTED_UNGATED_STATES = 19
-EXPECTED_CONCURRENT_STATES = 45
-EXPECTED_SKIPPED_TIER_STATES = 39  # Gap 3 and Gap 4 variants (was 38)
+EXPECTED_GATED_STATES = 44
+EXPECTED_UNGATED_STATES = 21
+EXPECTED_CONCURRENT_STATES = 49
+EXPECTED_SKIPPED_TIER_STATES = 43  # Gap 3 and Gap 4 variants (was 39)
 
 
 # ---------------------------------------------------------------------------
@@ -88,11 +95,13 @@ EXPECTED_SKIPPED_TIER_STATES = 39  # Gap 3 and Gap 4 variants (was 38)
 def test_tier_tuple_matches_run_checks_pipeline() -> None:
     """The modelled tiers mirror SymbolicGovernor._run_checks() in order.
 
-    Tier 0.5 (FTRA) is intentionally excluded: it is a LangGraph-level
-    pre-execution gate over a whole ExecutionPlan, not a step inside
-    ``_run_checks()``.  See the module docstring of ``proof/model.py``.
+    ARCH-1: FTRA (Tier 0.5) is now included to close proof/implementation
+    divergence. While FTRA runs at the LangGraph graph level in production,
+    modeling it provides complete state-space coverage of all governance
+    barriers including action classification and routing seal requirements.
     """
     assert model.TIERS == (
+        "ftra",
         "stpa",
         "confidence",
         "cbf",
@@ -102,7 +111,7 @@ def test_tier_tuple_matches_run_checks_pipeline() -> None:
         "causal",
         "fria",
     )
-    assert "ftra" not in model.TIERS
+    assert "ftra" in model.TIERS
 
 
 def test_concurrent_tiers_are_the_gathered_pair() -> None:
@@ -111,16 +120,16 @@ def test_concurrent_tiers_are_the_gathered_pair() -> None:
     assert model.CONCURRENT_TIERS <= set(model.TIERS)
 
 
-def test_tier_count_is_exactly_8() -> None:
-    """Pin the number of modelled governance tiers to exactly 8.
+def test_tier_count_is_exactly_9() -> None:
+    """Pin the number of modelled governance tiers to exactly 9.
 
-    # Issue #4: 21-state, 8-tier scope is the hand-abstracted automaton, not
-    # full production code or LTL.  This figure is cited in CAGE_ARXIV.MD §4.2
-    # and §7.2 Limitations.  Update this constant AND every location listed in
-    # docs/paper/REVISION_TRACKER.md if the pipeline adds or removes a tier.
+    ARCH-1: Updated from 8 to 9 tiers with the addition of FTRA (Tier 0.5).
+    This figure is cited in CAGE_ARXIV.MD §4.2 and §7.2 Limitations.
+    Update this constant AND every location listed in docs/paper/REVISION_TRACKER.md
+    if the pipeline adds or removes a tier.
     """
-    assert len(model.TIERS) == 8, (
-        f"Expected exactly 8 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
+    assert len(model.TIERS) == 9, (
+        f"Expected exactly 9 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
     )
 
 
@@ -367,6 +376,71 @@ def test_initial_state_has_no_threshold_or_transient_flags() -> None:
     initial = model.initial_state()
     assert initial.soft_threshold_exceeded is False
     assert initial.transient_block is False
+
+
+# ---------------------------------------------------------------------------
+# FTRA tier verification (ARCH-1 — proof/implementation divergence closure)
+# ---------------------------------------------------------------------------
+
+
+def test_ftra_is_first_tier_in_sequence() -> None:
+    """FTRA (Tier 0.5) is the first tier in the modeled governance pipeline."""
+    assert model.TIERS[0] == "ftra"
+
+
+def test_ftra_tier_can_fail_and_block_execution() -> None:
+    """FTRA tier can independently block execution when it fails."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    ftra_failed = [
+        s for s in states
+        if s.tier_result("ftra") == "FAIL"
+    ]
+    # Verify FTRA failures exist and lead to DENIED
+    assert ftra_failed, "expected states where FTRA fails"
+    for state in ftra_failed:
+        assert state.phase == "DENIED", "FTRA failure must lead to DENIED phase"
+        assert not state.seal_present, "FTRA failure must not issue seal"
+        assert not state.resolved_allow, "FTRA failure must not set resolvedAllow"
+
+
+def test_ftra_pass_allows_pipeline_to_continue() -> None:
+    """When FTRA passes, the governance pipeline continues to subsequent tiers."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    ftra_passed = [
+        s for s in states
+        if s.tier_result("ftra") == "PASS" and s.phase == "CHECKING"
+    ]
+    assert ftra_passed, "expected states where FTRA passes and checking continues"
+    
+    # Verify that after FTRA passes, other tiers can be evaluated
+    stpa_after_ftra = [
+        s for s in ftra_passed
+        if s.tier_result("stpa") in ("PASS", "FAIL")
+    ]
+    assert stpa_after_ftra, "STPA tier should be reachable after FTRA passes"
+
+
+def test_all_executed_states_have_ftra_pass() -> None:
+    """Every EXECUTED state must have FTRA tier passed."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    executed = [s for s in states if s.phase == "EXECUTED"]
+    
+    for state in executed:
+        assert state.tier_result("ftra") == "PASS", (
+            "EXECUTED state must have FTRA=PASS"
+        )
+
+
+def test_ftra_in_concurrent_model() -> None:
+    """FTRA behavior is consistent in the concurrent interleaving model."""
+    states = model.enumerate_reachable(model.concurrent_tier_transitions)
+    executed = [s for s in states if s.phase == "EXECUTED"]
+    
+    # All executed states must have FTRA=PASS even in concurrent model
+    for state in executed:
+        assert state.tier_result("ftra") == "PASS", (
+            "EXECUTED state in concurrent model must have FTRA=PASS"
+        )
 
 
 # ---------------------------------------------------------------------------

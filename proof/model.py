@@ -124,7 +124,9 @@ from dataclasses import dataclass
 # concurrently-evaluated components (``cbf`` and ``opa``) because each can
 # independently block the action; see ``concurrent_tier_transitions()`` for
 # the proof that their evaluation order does not affect the invariant.
+# FTRA (Tier 0.5) added to close proof/implementation divergence (ARCH-1).
 TIERS = (
+    "ftra",  # Tier 0.5: FTRA action classification & reachability analysis
     "stpa",  # Tier 1:  STAMP/STPA unsafe control action check
     "confidence",  # Tier 2:  agent confidence threshold
     "cbf",  # Tier 3a: Control Barrier Function (Redis cash barrier)
