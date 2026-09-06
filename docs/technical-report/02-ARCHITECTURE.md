@@ -980,7 +980,9 @@ healthcare = "src.cage_healthcare.plugin:CageHealthcarePlugin"
 ```python
 class FinanceCagePlugin:
     def register_tiers(self, governor: SymbolicGovernor) -> None:
-        governor.register_domain_tier(phase=1, order=2, tier_func=BoundingContractTierPlugin())
+        governor.register_domain_tier(
+            phase=1, order=2, tier_func=BoundingContractTierPlugin()
+        )
         governor.register_domain_tier(phase=2, order=3, tier_func=CBFTierPlugin())
         governor.register_domain_tier(phase=2, order=4, tier_func=FiscalTierPlugin())
         governor.register_domain_tier(phase=1, order=5, tier_func=ConsensusTierPlugin())

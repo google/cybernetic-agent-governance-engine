@@ -264,10 +264,10 @@ Trades referencing instruments, venues, or counterparties outside these allowlis
 ```python
 @dataclass
 class InvariantModel:
-    invariant_id: str          # Unique barrier identifier (e.g. "cash_barrier")
-    state_key: str             # Redis state key (must be namespaced, e.g. "safety:current_cash")
-    threshold_key: str         # Dot-path into governance_thresholds.json
-    gamma: float               # Decay rate on barrier gradient constraint (0 < gamma <= 1)
+    invariant_id: str  # Unique barrier identifier (e.g. "cash_barrier")
+    state_key: str  # Redis state key (must be namespaced, e.g. "safety:current_cash")
+    threshold_key: str  # Dot-path into governance_thresholds.json
+    gamma: float  # Decay rate on barrier gradient constraint (0 < gamma <= 1)
 ```
 
 **Finance domain instantiation (CashBarrier):**
@@ -1548,7 +1548,7 @@ InvariantModel(
     invariant_id="B1_MAX_NOTIONAL",
     state_key="trade_amount_usd",
     threshold_key="bounding.max_single_order_usd",
-    gamma=0.0  # Hard constraint, no safety margin
+    gamma=0.0,  # Hard constraint, no safety margin
 )
 ```
 
@@ -1659,10 +1659,10 @@ The kernel provides no domain-specific tier implementations. All domain logic (C
 ```python
 @dataclass
 class InvariantModel:
-    invariant_id: str          # Unique barrier identifier (e.g. "cash_barrier")
-    state_key: str             # Redis state key (must be namespaced, e.g. "safety:current_cash")
-    threshold_key: str         # Dot-path into governance_thresholds.json
-    gamma: float               # Decay rate on barrier gradient constraint (0 < gamma <= 1)
+    invariant_id: str  # Unique barrier identifier (e.g. "cash_barrier")
+    state_key: str  # Redis state key (must be namespaced, e.g. "safety:current_cash")
+    threshold_key: str  # Dot-path into governance_thresholds.json
+    gamma: float  # Decay rate on barrier gradient constraint (0 < gamma <= 1)
 ```
 
 **Affine barrier constraint:**
@@ -1681,7 +1681,7 @@ CASH_BARRIER = InvariantModel(
     invariant_id="cash_barrier",
     state_key="safety:current_cash",
     threshold_key="cbf.min_cash_balance",  # Resolves to 1000.0 from governance_thresholds.json
-    gamma=0.5
+    gamma=0.5,
 )
 ```
 
@@ -1692,7 +1692,7 @@ SERUM_BARRIER = InvariantModel(
     invariant_id="serum_barrier",
     state_key="safety:serum_concentration",
     threshold_key="dose.max_serum_concentration",
-    gamma=0.3
+    gamma=0.3,
 )
 ```
 
@@ -1749,18 +1749,22 @@ class Provider01NormativeProvider:
             response = await self.client.post("/validate", json=request)
             response.raise_for_status()
             data = response.json()
-            
+
             # Tri-state mapping
             if data["verdict"] == "REVIEW":
                 return ValidationResult(
                     admitted=False,
-                    findings=[{"needs_human_review": True, "reason": data["reason"]}]
+                    findings=[{"needs_human_review": True, "reason": data["reason"]}],
                 )
-            
-            return ValidationResult(admitted=data["verdict"] == "PASS", findings=data.get("findings", []))
+
+            return ValidationResult(
+                admitted=data["verdict"] == "PASS", findings=data.get("findings", [])
+            )
         except httpx.RequestError:
             # Fail-closed on network error
-            return ValidationResult(admitted=False, findings=[{"code": "ENDPOINT_ERROR"}])
+            return ValidationResult(
+                admitted=False, findings=[{"code": "ENDPOINT_ERROR"}]
+            )
 ```
 
 All vendor adapters are validated against the **Universal Protocol Conformance Suite** ([`tests/test_normative_provider_conformance.py`](../../tests/test_normative_provider_conformance.py)) to ensure interface compliance across all regions.
@@ -1773,14 +1777,16 @@ All vendor adapters are validated against the **Universal Protocol Conformance S
 class FinanceCagePlugin:
     def register_tiers(self, governor: SymbolicGovernor) -> None:
         # Phase 1 (read-only) tiers
-        governor.register_domain_tier(phase=1, order=2, tier_func=BoundingContractTierPlugin())
+        governor.register_domain_tier(
+            phase=1, order=2, tier_func=BoundingContractTierPlugin()
+        )
         governor.register_domain_tier(phase=1, order=5, tier_func=ConsensusTierPlugin())
         governor.register_domain_tier(phase=1, order=6, tier_func=CausalTierPlugin())
-        
+
         # Phase 2 (mutating) tiers
         governor.register_domain_tier(phase=2, order=3, tier_func=CBFTierPlugin())
         governor.register_domain_tier(phase=2, order=4, tier_func=FiscalTierPlugin())
-    
+
     def register_invariants(self, cbf_engine: ControlBarrierFunction) -> None:
         # Register affine cash barrier
         cbf_engine.register_invariant(CASH_BARRIER)

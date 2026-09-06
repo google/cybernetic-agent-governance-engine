@@ -879,11 +879,11 @@ All tiers are fail-closed. A violation at any tier raises `GovernanceError` and 
 ```python
 @dataclasses.dataclass(frozen=True)
 class ColdStoreReceipt:
-    uri: str                  # gs://bucket/key or s3://bucket/key
-    key: str                  # Object path within bucket
-    content_sha256: str       # Hex SHA-256 digest over persisted bytes
-    backend_id: str           # 'gcs', 's3', 'null'
-    written_at: datetime      # UTC timestamp of confirmed write
+    uri: str  # gs://bucket/key or s3://bucket/key
+    key: str  # Object path within bucket
+    content_sha256: str  # Hex SHA-256 digest over persisted bytes
+    backend_id: str  # 'gcs', 's3', 'null'
+    written_at: datetime  # UTC timestamp of confirmed write
 ```
 
 The `content_sha256` field enables verification that the stored artifact matches the in-memory evidence batch byte-for-byte, closing the gap between evidence accumulation and durable archival.
