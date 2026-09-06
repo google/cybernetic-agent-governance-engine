@@ -16,11 +16,11 @@
 
 The proof model defines a static TIERS tuple that specifies the formal
 ordering of governance tiers.  This test ensures that when a domain plugin
-registers its tiers via ``register_domain_tier()``, the resulting order
+registers its tiers via ``domain_tiers`` at construction, the resulting order
 matches the tier subsequence declared in the formal model.
 
 Option B (per the plan): The ``TIERS`` tuple in ``proof/model.py`` remains
-static; this parity test asserts that runtime registration matches.
+static; this parity test asserts that construction-time registration matches.
 """
 
 from typing import Any
@@ -96,14 +96,17 @@ class TestFormalModelParity:
 
         expected_tiers = list(formal_model.TIERS)
 
-        governor = _make_governor()
-
-        # Register tiers with order values matching the formal model's
+        # Create tiers with order values matching the formal model's
         # sequence position (0-indexed).
-        for idx, name in enumerate(expected_tiers):
-            # Phase 1 for read-only tiers, Phase 2 for mutating tiers
-            phase = 2 if name in ("cbf", "fiscal") else 1
-            governor.register_domain_tier(_FakeTier(name, phase=phase, order=idx))
+        tiers = tuple(
+            _FakeTier(
+                name,
+                phase=2 if name in ("cbf", "fiscal") else 1,
+                order=idx,
+            )
+            for idx, name in enumerate(expected_tiers)
+        )
+        governor = _make_governor(domain_tiers=tiers)
 
         # Verify the registered tier names, within each phase, preserve
         # the relative order from the formal model.
@@ -135,11 +138,12 @@ class TestFormalModelParity:
         silently invert this to causal, consensus — breaking the proof's
         invariant.
         """
-        governor = _make_governor()
-
         # Register in reverse alphabetic order to ensure sort uses `order` not name
-        governor.register_domain_tier(_FakeTier("causal", phase=1, order=6))
-        governor.register_domain_tier(_FakeTier("consensus", phase=1, order=5))
+        tiers = (
+            _FakeTier("causal", phase=1, order=6),
+            _FakeTier("consensus", phase=1, order=5),
+        )
+        governor = _make_governor(domain_tiers=tiers)
 
         names = governor.registered_tier_names()
         assert names == ["consensus", "causal"], (

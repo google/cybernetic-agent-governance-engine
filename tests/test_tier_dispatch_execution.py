@@ -34,6 +34,11 @@ from src.gateway.governance.symbolic_governor import SymbolicGovernor
 @pytest.fixture
 def mock_governor() -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies."""
+    return make_governor()
+
+
+def make_governor(*tiers: Any) -> SymbolicGovernor:
+    """Create a SymbolicGovernor with mock dependencies and specified tiers."""
     opa_client = MagicMock()
     safety_filter = MagicMock()
     consensus_engine = MagicMock()
@@ -41,6 +46,7 @@ def mock_governor() -> SymbolicGovernor:
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        domain_tiers=tiers,
     )
 
 
@@ -118,16 +124,14 @@ class TestTierDispatchOrdering:
         OrderTrackingTier.execution_log.clear()
 
     @pytest.mark.asyncio
-    async def test_tiers_execute_in_ascending_order_priority(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
+    async def test_tiers_execute_in_ascending_order_priority(self) -> None:
         """Tiers with lower order values execute first."""
-        gov = mock_governor
-
-        # Register tiers in arbitrary order
-        gov.register_domain_tier(OrderTrackingTier("tier_c", phase=1, order=300))
-        gov.register_domain_tier(OrderTrackingTier("tier_a", phase=1, order=100))
-        gov.register_domain_tier(OrderTrackingTier("tier_b", phase=1, order=200))
+        # Create governor with tiers in arbitrary order
+        gov = make_governor(
+            OrderTrackingTier("tier_c", phase=1, order=300),
+            OrderTrackingTier("tier_a", phase=1, order=100),
+            OrderTrackingTier("tier_b", phase=1, order=200),
+        )
 
         await gov._run_domain_tiers("test_action", {}, phase=1)
 
@@ -139,14 +143,12 @@ class TestTierDispatchOrdering:
         ]
 
     @pytest.mark.asyncio
-    async def test_phase_filter_only_executes_matching_phase(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
+    async def test_phase_filter_only_executes_matching_phase(self) -> None:
         """Only tiers matching the requested phase execute."""
-        gov = mock_governor
-
-        gov.register_domain_tier(OrderTrackingTier("phase1_tier", phase=1, order=100))
-        gov.register_domain_tier(OrderTrackingTier("phase2_tier", phase=2, order=100))
+        gov = make_governor(
+            OrderTrackingTier("phase1_tier", phase=1, order=100),
+            OrderTrackingTier("phase2_tier", phase=2, order=100),
+        )
 
         await gov._run_domain_tiers("test_action", {}, phase=1)
 
@@ -155,17 +157,11 @@ class TestTierDispatchOrdering:
         assert executed_tiers == ["phase1_tier"]
 
     @pytest.mark.asyncio
-    async def test_unclaimed_tiers_do_not_execute(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
+    async def test_unclaimed_tiers_do_not_execute(self) -> None:
         """Tiers that do not claim the action are skipped."""
-        gov = mock_governor
-
-        gov.register_domain_tier(
-            OrderTrackingTier("claiming_tier", phase=1, order=100, claims_all=True)
-        )
-        gov.register_domain_tier(
-            OrderTrackingTier("unclaimed_tier", phase=1, order=200, claims_all=False)
+        gov = make_governor(
+            OrderTrackingTier("claiming_tier", phase=1, order=100, claims_all=True),
+            OrderTrackingTier("unclaimed_tier", phase=1, order=200, claims_all=False),
         )
 
         await gov._run_domain_tiers("test_action", {}, phase=1)
@@ -175,21 +171,15 @@ class TestTierDispatchOrdering:
         assert executed_tiers == ["claiming_tier"]
 
     @pytest.mark.asyncio
-    async def test_violations_aggregated_across_tiers(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
+    async def test_violations_aggregated_across_tiers(self) -> None:
         """When a tier returns violations, execution stops and violations are returned.
 
         With the v3.0 architecture, _run_domain_tiers() returns early on first violation
         to enforce fail-fast semantics. This test verifies that behavior.
         """
-        gov = mock_governor
-
-        gov.register_domain_tier(
-            OrderTrackingTier("tier1", phase=1, order=100, violation_rule="RULE_A")
-        )
-        gov.register_domain_tier(
-            OrderTrackingTier("tier2", phase=1, order=200, violation_rule="RULE_B")
+        gov = make_governor(
+            OrderTrackingTier("tier1", phase=1, order=100, violation_rule="RULE_A"),
+            OrderTrackingTier("tier2", phase=1, order=200, violation_rule="RULE_B"),
         )
 
         violations = await gov._run_domain_tiers("test_action", {}, phase=1)
@@ -218,14 +208,12 @@ class TestTierDispatchPhaseIsolation:
         OrderTrackingTier.execution_log.clear()
 
     @pytest.mark.asyncio
-    async def test_phase1_and_phase2_execute_independently(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
+    async def test_phase1_and_phase2_execute_independently(self) -> None:
         """Phase 1 and phase 2 tiers execute in separate calls."""
-        gov = mock_governor
-
-        gov.register_domain_tier(OrderTrackingTier("p1_tier", phase=1, order=100))
-        gov.register_domain_tier(OrderTrackingTier("p2_tier", phase=2, order=100))
+        gov = make_governor(
+            OrderTrackingTier("p1_tier", phase=1, order=100),
+            OrderTrackingTier("p2_tier", phase=2, order=100),
+        )
 
         # Execute phase 1
         OrderTrackingTier.execution_log.clear()
@@ -238,15 +226,13 @@ class TestTierDispatchPhaseIsolation:
         assert OrderTrackingTier.execution_log == [("p2_tier", "test_action")]
 
     @pytest.mark.asyncio
-    async def test_multiple_phase1_tiers_sorted_by_order(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
+    async def test_multiple_phase1_tiers_sorted_by_order(self) -> None:
         """Multiple phase 1 tiers execute in ascending order priority."""
-        gov = mock_governor
-
-        gov.register_domain_tier(OrderTrackingTier("p1_c", phase=1, order=300))
-        gov.register_domain_tier(OrderTrackingTier("p1_a", phase=1, order=100))
-        gov.register_domain_tier(OrderTrackingTier("p1_b", phase=1, order=200))
+        gov = make_governor(
+            OrderTrackingTier("p1_c", phase=1, order=300),
+            OrderTrackingTier("p1_a", phase=1, order=100),
+            OrderTrackingTier("p1_b", phase=1, order=200),
+        )
 
         await gov._run_domain_tiers("test_action", {}, phase=1)
 

@@ -17,6 +17,7 @@ import os
 from typing import Any
 
 from src.gateway.core.policy import OPAClient
+from src.gateway.governance.contracts import GovernanceTierPlugin
 from src.gateway.governance.generated_stpa_validator import (
     GeneratedSTPAValidator as STPAValidator,
 )
@@ -54,6 +55,7 @@ def install_domain_components(
     safety_filter_impl: Any = None,
     consensus_engine_impl: Any = None,
     resource_guard: Any = None,
+    domain_tiers: tuple[GovernanceTierPlugin, ...] | None = None,
 ) -> None:
     """Called by CagePlugin.register() to supply domain implementations.
 
@@ -65,6 +67,7 @@ def install_domain_components(
         safety_filter_impl: SafetyFilter implementation (e.g. ControlBarrierFunction)
         consensus_engine_impl: ConsensusProvider implementation (e.g. ConsensusGate)
         resource_guard: ResourceGuard implementation (e.g. FiscalLimitGuard)
+        domain_tiers: Domain governance tiers for construction-time registration
 
     Raises:
         RuntimeError: If a component is already installed by another plugin.
@@ -90,6 +93,24 @@ def install_domain_components(
         # Note: resource_guard is not currently a SymbolicGovernor dependency,
         # but plugins may register one for future use
         logger.info(f"✅ Registered resource_guard: {type(resource_guard).__name__}")
+
+    # Domain tiers installation (Task 2.1 / ARCH-2)
+    if domain_tiers is not None:
+        if symbolic_governor._domain_tiers:
+            raise RuntimeError("domain_tiers already installed by another plugin")
+        _seen_names: set[str] = set()
+        for tier in domain_tiers:
+            if tier.tier_name in _seen_names:
+                raise ValueError(
+                    f"duplicate tier registration at construction: {tier.tier_name}"
+                )
+            _seen_names.add(tier.tier_name)
+        symbolic_governor._domain_tiers = tuple(
+            sorted(domain_tiers, key=lambda t: (t.phase, t.order, t.tier_name))
+        )
+        logger.info(
+            f"✅ Installed {len(domain_tiers)} domain tiers onto symbolic_governor"
+        )
 
 
 def _has_null_components() -> bool:

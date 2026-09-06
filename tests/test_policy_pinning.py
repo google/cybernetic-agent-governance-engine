@@ -51,12 +51,18 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
     from src.gateway.governance.ftra.models import FtraBoundaryResult
 
     opa_client, safety_filter, consensus_engine = mock_dependencies
-    gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-    gov.register_domain_tier(CBFTierPlugin(safety_filter))
-    gov.register_domain_tier(ConsensusTierPlugin(consensus_engine))
+    gov = SymbolicGovernor(
+        opa_client,
+        safety_filter,
+        consensus_engine,
+        domain_tiers=(
+            CBFTierPlugin(safety_filter),
+            ConsensusTierPlugin(consensus_engine),
+        ),
+    )
 
     # Mock FTRA boundary check to return a safe result
     safe_ftra_result = FtraBoundaryResult(
@@ -106,12 +112,18 @@ async def test_symbolic_governor_version_mismatch_raises_governance_error(
 ):
     """SymbolicGovernor validate_action should raise GovernanceError on mismatched policy_version_id."""
     opa_client, safety_filter, consensus_engine = mock_dependencies
-    gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-    gov.register_domain_tier(CBFTierPlugin(safety_filter))
-    gov.register_domain_tier(ConsensusTierPlugin(consensus_engine))
+    gov = SymbolicGovernor(
+        opa_client,
+        safety_filter,
+        consensus_engine,
+        domain_tiers=(
+            CBFTierPlugin(safety_filter),
+            ConsensusTierPlugin(consensus_engine),
+        ),
+    )
 
     with pytest.raises(GovernanceError) as exc_info:
         await gov.validate_action(
