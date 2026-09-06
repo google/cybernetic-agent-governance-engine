@@ -161,6 +161,14 @@ load_env() {
     [[ -n "$_project" ]]        && export TF_VAR_project_id="$_project"
     [[ -n "$_region" ]]         && export TF_VAR_region="$_region"
 
+    # Propagate service account impersonation if configured in .env or gcloud
+    local _impersonate
+    _impersonate=$(_read_env_var GOOGLE_IMPERSONATE_SERVICE_ACCOUNT)
+    if [[ -z "$_impersonate" ]] && command -v gcloud >/dev/null 2>&1; then
+      _impersonate=$(gcloud config get-value auth/impersonate_service_account 2>/dev/null || true)
+    fi
+    [[ -n "$_impersonate" ]] && export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="$_impersonate"
+
     # ── DEP-02: Propagate CAGE_DEPLOYMENT_REGION to Terraform ─────────────
     # Without this, Terraform defaults cage_deployment_region to "US_FED"
     # silently, causing EU_ECB and APAC_MAS deployments to apply the wrong

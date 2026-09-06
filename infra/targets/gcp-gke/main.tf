@@ -76,6 +76,7 @@ module "gke" {
   enable_cmek                    = var.enable_cmek
   enable_private_master_endpoint = var.enable_private_master_endpoint
   enable_private_nodes           = var.enable_private_nodes
+  enable_dataplane_v2            = var.enable_dataplane_v2
 
   # NIST-specific configuration
   authorized_networks = var.authorized_networks
@@ -235,11 +236,11 @@ locals {
 module "postgres" {
   source = "../../modules/postgres_db"
 
-  namespace                 = module.namespace.name
-  storage_size              = var.postgres_storage_size
-  storage_class             = var.storage_class
-  enable_persistence        = true
-  enable_backup             = false
+  namespace          = module.namespace.name
+  storage_size       = var.postgres_storage_size
+  storage_class      = var.storage_class
+  enable_persistence = true
+  enable_backup      = false
   # DEP-20: Resource limits now activate for any jurisdiction compliance flag,
   # not only enable_nist_compliance. DORA Art. 10 and MAS TRM §9.1 both require
   # resource guarantees for production database workloads.
@@ -256,9 +257,9 @@ module "postgres" {
 module "redis" {
   source = "../../modules/redis_cache"
 
-  namespace                 = module.namespace.name
-  storage_size              = var.redis_storage_size
-  storage_class             = var.storage_class
+  namespace     = module.namespace.name
+  storage_size  = var.redis_storage_size
+  storage_class = var.storage_class
   # DEP-20 + POAM-024: Redis HA now controlled by enable_high_availability (decoupled
   # from compliance flags). Prod tfvars for all regions (US_FED, EU_ECB, APAC_MAS)
   # set enable_high_availability=true to satisfy NIST SC-6, DORA Art. 10, and MAS TRM §9.1.
@@ -281,11 +282,11 @@ module "redis" {
 module "clickhouse" {
   source = "../../modules/clickhouse"
 
-  namespace                 = module.namespace.name
-  storage_size              = var.clickhouse_storage_size
-  storage_class             = var.storage_class
-  replicas                  = 1
-  enable_persistence        = true
+  namespace          = module.namespace.name
+  storage_size       = var.clickhouse_storage_size
+  storage_class      = var.storage_class
+  replicas           = 1
+  enable_persistence = true
   # DEP-20 + POAM-024: PDB and resource limits now controlled by enable_high_availability.
   enable_pdb                = var.enable_high_availability
   enable_nist_compliance    = var.enable_nist_compliance
@@ -360,10 +361,10 @@ module "vllm" {
 
   source = "../../modules/vllm_inference"
 
-  namespace       = module.namespace.name
-  deployment_name = "vllm-inference"
+  namespace            = module.namespace.name
+  deployment_name      = "vllm-inference"
   service_account_name = "financial-advisor-sa"
-  image           = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
+  image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
   # model_path dynamically routes: gs:// to GCS tensor streaming, else HF hub
   model_path     = var.model_fast
   gpu_count      = var.vllm_gpu_count
@@ -429,11 +430,11 @@ module "vllm_reasoning" {
 
   source = "../../modules/vllm_inference"
 
-  namespace       = module.namespace.name
-  deployment_name = "vllm-reasoning"
+  namespace            = module.namespace.name
+  deployment_name      = "vllm-reasoning"
   service_account_name = "financial-advisor-sa"
-  service_name    = "vllm-reasoning"
-  image           = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
+  service_name         = "vllm-reasoning"
+  image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
   # model_path dynamically routes: gs:// to GCS tensor streaming, else HF hub
   model_path     = var.model_reasoning
   gpu_count      = var.vllm_gpu_count
@@ -612,32 +613,32 @@ module "gateway" {
 module "governed_advisor" {
   source = "../../modules/governed_advisor"
 
-  namespace                = module.namespace.name
-  image                    = "gcr.io/${var.project_id}/governed-financial-advisor:latest"
-  replicas                 = var.enable_high_availability ? 2 : 1
-  project_id               = var.project_id
-  region                   = var.region
-  enable_logging           = "true"
-  redis_host               = module.redis.service_name
-  redis_password           = module.redis.password
-  model_fast               = var.model_fast
-  model_reasoning          = var.model_reasoning
-  model_consensus          = var.model_reasoning
-  vllm_base_url            = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base       = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base  = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
-  opa_url                  = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
+  namespace               = module.namespace.name
+  image                   = "gcr.io/${var.project_id}/governed-financial-advisor:latest"
+  replicas                = var.enable_high_availability ? 2 : 1
+  project_id              = var.project_id
+  region                  = var.region
+  enable_logging          = "true"
+  redis_host              = module.redis.service_name
+  redis_password          = module.redis.password
+  model_fast              = var.model_fast
+  model_reasoning         = var.model_reasoning
+  model_consensus         = var.model_reasoning
+  vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
-  langfuse_host            = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
-  governance_salt          = var.governance_salt
-  gateway_url              = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
+  langfuse_host   = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
+  governance_salt = var.governance_salt
+  gateway_url     = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
   # Workload Identity: annotate financial-advisor-sa KSA so it can impersonate
   # the GCP SA and access GCS without a key file (fixes vllm-reasoning 403 on GCS).
   gcp_service_account_name = "financial-advisor-sa"
   # Cloud KMS asymmetric governance signing (CTRL_KMS_001). Empty value falls
   # back to legacy HMAC-SHA256 via governance_salt above.
-  kms_governance_key       = var.kms_governance_key
-  cage_kms_provider        = var.cage_kms_provider
+  kms_governance_key = var.kms_governance_key
+  cage_kms_provider  = var.cage_kms_provider
 
   # K-4: wire OTLP auth header so governed-financial-advisor traces reach
   # Langfuse rather than returning 401 Unauthorized.

@@ -244,10 +244,11 @@ spec:
 # =============================================================================
 # Policy 3: Default-deny external egress for ALL governance-stack pods
 #
-# This Cilium-native default-deny supplements the standard NetworkPolicy
-# default-deny-egress and ensures Cilium's L7 engine is also in deny mode.
-# Cilium processes its own CiliumNetworkPolicies independently from kube-proxy
-# NetworkPolicies; both must be in place for defence-in-depth.
+# GKE Dataplane V2 replaces kube-proxy and Calico entirely.
+# These CiliumNetworkPolicies layer L7 FQDN enforcement on top of the
+# networking.k8s.io/v1 NetworkPolicies in ../network-policy.yaml
+# and ../network-policy-hardening.yaml (which enforce L3/L4 baseline).
+# Both layers are required; this directory is the L7 overlay.
 # =============================================================================
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

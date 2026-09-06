@@ -97,8 +97,9 @@ spec:
 
       containers:
         - name: agentsight-daemon
-          image: ghcr.io/agent-sight/agentsight-daemon:latest
-          imagePullPolicy: Always
+          image: ghcr.io/eunomia-bpf/agentsight:latest
+          imagePullPolicy: IfNotPresent
+          args: ["record", "-c", "python", "--no-server"]
 
           # eBPF requires elevated privileges and specific Linux capabilities
           securityContext:
@@ -131,10 +132,6 @@ spec:
             - name: proc
               mountPath: /proc
               readOnly: true
-            # Kernel headers — required for eBPF CO-RE (Compile Once, Run Everywhere)
-            - name: usr-src
-              mountPath: /usr/src
-              readOnly: true
             # Daemon configuration from ConfigMap
             - name: agentsight-config
               mountPath: /etc/agentsight/config.yaml
@@ -150,10 +147,6 @@ spec:
           hostPath:
             path: /proc
             type: Directory
-        - name: usr-src
-          hostPath:
-            path: /usr/src
-            type: DirectoryOrCreate
         - name: agentsight-config
           configMap:
             name: agentsight-daemon-config

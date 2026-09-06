@@ -83,6 +83,7 @@ The following GCP services are **optional drivers** — the system functions ful
 | Cloud Storage (GCS) | OSCAL evidence storage | AWS S3, MinIO, local filesystem |
 | GKE Workload Identity | Pod-level IAM | AWS IRSA, Azure Workload Identity, static credentials |
 | Cloud Build | CI/CD | GitHub Actions, GitLab CI, any OCI-compatible CI |
+| Cilium L7 FQDN enforcement | GKE Dataplane V2 (`enable_dataplane_v2=true`) | Open-source Cilium on EKS/AKS; or L3/L4 `NetworkPolicy` baseline only |
 
 ---
 
@@ -167,7 +168,7 @@ CAGE v3.0.0 provides a **three-layer governance architecture** for enterprise AI
 
 **Layer 1 (L1) — Domain-Neutral Kernel** provides universal enforcement mechanisms:
 
-1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **pipeline orchestration model** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper, adaptive FRIA gate). Combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). Acts as the "Controller" in our Controller-Plant architecture.
+1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **pipeline orchestration model** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper, adaptive FRIA gate). Combined with network and runtime hardening (Linkerd mTLS, standard Kubernetes NetworkPolicy L3/L4 baseline). **Optional GKE Dataplane V2 overlay** (`deployment/k8s/cilium/`) adds Cilium L7 FQDN enforcement when `enable_dataplane_v2=true`. Acts as the "Controller" in our Controller-Plant architecture.
 2.  **The FTRA Reachability Gate** *(L1)*: Pre-execution Forward-Looking Trajectory Reachability Analyzer ([`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)) that builds a NetworkX directed graph from the agent's `ExecutionPlan`, classifies each step with `IrreversibilityClassifier` against the signed terminal registry, and issues a CLEAR / HITL_REQUIRED / BLOCKED verdict before any tool call is made.
 3.  **The Reusable Agent Harness** *(L1)*: Deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
 4.  **The STPA-to-Policy Compiler** *(L1)*: CLI tool ingesting declarative YAML control structure ([`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml)) and auto-generating OPA Rego policies, NeMo Colang rails, Python `GeneratedSTPAValidator` classes, and LangGraph Saga compensating sub-graphs.
@@ -651,7 +652,7 @@ cybernetic-agent-governance-engine/
 │   └── component-definition.yaml     #      OSCAL component registry
 ├── deployment/k8s/                   # [L3] Kubernetes manifests
 │   ├── linkerd-mtls-policy.yaml      #      Linkerd mTLS enforcement
-│   └── cilium-egress-lockdown.yaml   #      Cilium L7 FQDN egress lockdown
+│   └── cilium/                       #      Optional GKE Dataplane V2 L7 overlay
 ├── tests/                            #      Full test suite (3,446 local unit passing, 3,925 collected)
 │   ├── test_bare_kernel_portability.py #   Proves L1 kernel boots without vendor SDKs or domain coupling
 │   ├── test_cage_plugin_validation.py  #   Validates L2 plugin API contracts and isolation
