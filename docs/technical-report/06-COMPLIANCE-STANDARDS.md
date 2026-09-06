@@ -121,7 +121,7 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 
 | Control Family                       | Coverage | Key Implementations                                                                                                 |
 | ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| AC (Access Control)                  | 19%      | OPA Rego RBAC (`src/governed_financial_advisor/governance/policy/trade_governance.rego`); no MFA deployed                                                            |
+| AC (Access Control)                  | 19%      | OPA Rego RBAC (`src/cage_finance/opa/trade_governance.rego`, `config/opa/trade_policy.rego`); no MFA deployed                                                            |
 | AU (Audit & Accountability)          | 54%      | OTel traces; Langfuse; 7-year retention pipeline                                                                    |
 | CA (Security Assessment)             | 19%      | Lula 6h CronJob; SAR target 2026Q1                                                                                  |
 | CM (Configuration Management)        | 32%      | `config/governance_thresholds.json`; Terraform IaC                                                                         |
@@ -181,7 +181,7 @@ Phase 3  Weeks 16–52  →  +77%  Architectural uplift
 | Clause                     | Title                    | CAGE Implementation                            |
 | -------------------------- | ------------------------ | ---------------------------------------------- |
 | 6 — Planning               | Risk-based AI planning   | `execution_analyst` risk-based plan generation |
-| 8 — Operation              | Runtime AI controls      | `symbolic_governor` 8-tier governance pipeline (FTRA + Tiers 0–6 + Tier 6b adaptive FRIA gate): STPA UCA validation → agentic confidence → CBF → SLM (deprecated) → OPA → consensus → causal gatekeeper → FRIA |
+| 8 — Operation              | Runtime AI controls      | `symbolic_governor` plugin-registered pipeline (Phase 1 domain tiers + Phase 2 post-eval, with Kernel Gates 0.5 FTRA, 1 CBF, 2 OPA, 3b Consensus, 7 Causal Gatekeeper, and FRIA) |
 | 9 — Performance Evaluation | Monitoring & measurement | `EvaluatorAuditor` (`src/governed_financial_advisor/agents/evaluator/`) + Lula 6h CronJob |
 | 10 — Improvement           | Continual improvement    | HITL interrupt + POAM tracking                 |
 
@@ -335,15 +335,15 @@ This tool dynamically compiles STPA hazards (UCAs) and control implementations i
 
 ## 7. Lula Validation Manifests
 
-### Three-Region Compliance Matrix (v2.1.0)
+### Three-Region Compliance Matrix
 
-CAGE v2.1.0 ships separate Lula validation manifests for each of the three regulatory jurisdictions. The manifests are parametrized in CI via a pytest matrix that runs all three regions in parallel:
+CAGE ships validation manifests for all three regulatory jurisdictions located flat within [`compliance/lula/`](../../compliance/lula/). The manifests are parametrized in CI via a pytest matrix that runs all three regions in parallel:
 
-| Jurisdiction | Lula Manifest Directory | Threshold Config | OSCAL Framework |
+| Jurisdiction | Manifest Selector / Pattern | Threshold Config | OSCAL Framework |
 |---|---|---|---|
-| `US_FED` | `compliance/lula/us_fed/` | `config/thresholds/US_FED_BASELINE.json` | NIST SP 800-53 Rev 5 |
-| `EU_ECB` | `compliance/lula/eu_ecb/` | `config/thresholds/EU_ECB_BASELINE.json` | EU AI Act + DORA |
-| `APAC_MAS` | `compliance/lula/apac_mas/` | `config/thresholds/APAC_MAS_BASELINE.json` | MAS FEAT + TRM |
+| `US_FED` | `compliance/lula/lula-validation-{sc4,ac2,ac3,ra5,cm6,ir6,ia3,ia5,sc8,si2}.yaml` | `config/thresholds/US_FED_BASELINE.json` | NIST SP 800-53 Rev 5 |
+| `EU_ECB` | `compliance/lula/lula-validation-{eu-ai-act-art9,eu-fria,gdpr-art22,dora-art10}.yaml` | `config/thresholds/EU_ECB_BASELINE.json` | EU AI Act + DORA |
+| `APAC_MAS` | `compliance/lula/lula-validation-{mas-feat,mas-notice655,mas-trm-s6}.yaml` | `config/thresholds/APAC_MAS_BASELINE.json` | MAS FEAT + TRM |
 
 Each manifest set covers the same control families but with jurisdiction-specific thresholds, telemetry suppression rules (EU_ECB/APAC_MAS suppress SR 26-2 telemetry per the "no legal force" sentinel), and OSCAL framework routing.
 
@@ -352,7 +352,7 @@ Each manifest set covers the same control families but with jurisdiction-specifi
 
 Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule ([`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml)). RBAC permissions are defined in [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml).
 
-**15 manifests listed below (4 Active, 11 Stub)** — this table covers the original US_FED and universal controls. For the complete 21-manifest inventory including EU_ECB, APAC_MAS, and NIST AI 600-1 stubs, see [`compliance/lula/README.md`](../../compliance/lula/README.md).
+**Active manifests listed below (representative excerpt)** — for the complete 31-manifest active inventory (plus draft validations), see [`compliance/lula/README.md`](../../compliance/lula/README.md).
 
 | Manifest                                                                                         | Control         | Kubernetes Check                                                                 |
 | ------------------------------------------------------------------------------------------------ | --------------- | -------------------------------------------------------------------------------- |
@@ -371,6 +371,18 @@ Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (
 | [`compliance/lula/lula-validation-sc8.yaml`](../../compliance/lula/lula-validation-sc8.yaml)     | SP 800-53 SC-8  | Transmission confidentiality / TLS enforcement (`tests/test_tls_enforcement.py`) |
 | [`compliance/lula/lula-validation-si2.yaml`](../../compliance/lula/lula-validation-si2.yaml)     | SP 800-53 SI-2  | Flaw remediation / CVE patching (pinned images, base image upgrades)             |
 | [`compliance/lula/lula-validation-aarm-vectors.yaml`](../../compliance/lula/lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | 11-vector AI agent threat model coverage                              |
+| [`compliance/lula/lula-validation-ftra.yaml`](../../compliance/lula/lula-validation-ftra.yaml)   | OWASP AISVS C9  | FTRA action reachability registry integrity & fail-closed gate                   |
+| [`compliance/lula/lula-validation-tqp007.yaml`](../../compliance/lula/lula-validation-tqp007.yaml) | POAM-007 / IA-3 | Linkerd mTLS strict mode assertion across pods                                   |
+| [`compliance/lula/lula-validation-iso001-token-quota.yaml`](../../compliance/lula/lula-validation-iso001-token-quota.yaml) | ISO 42001 A.8.4 | Gateway token quota limit & rate limiting enforcement                            |
+| [`compliance/lula/lula-validation-flowsignal.yaml`](../../compliance/lula/lula-validation-flowsignal.yaml) | SP 800-53 SI-4 | Signal flow integrity & CBF backpressure queue validation                       |
+
+### 7.1 Lula Stub Manifest Gate & Baseline
+
+To prevent mock or placeholder manifests from quietly passing validation without asserting live Kubernetes resources, CAGE enforces an automated stub manifest gate via [`scripts/check_lula_stub_count.py`](../../scripts/check_lula_stub_count.py):
+
+- **Stub Classification**: A manifest is classified as a stub if its Rego contains `default allow = true` without substantive conditions, its `domain.resources` list is empty, its description contains `TODO`/`STUB`/`placeholder`, or the Rego rule body has fewer than 3 meaningful logic lines.
+- **POAM Linkage**: Every stub manifest must be tracked by an active finding in [`docs/POAM.md`](../POAM.md).
+- **Baseline Ratchet**: The total stub manifest count cannot exceed the baseline recorded in [`compliance/lula/.stub-baseline`](../../compliance/lula/.stub-baseline) (currently 1). If a PR introduces an untracked stub or causes the stub count to exceed the baseline, the CI gate fails.
 
 ---
 
@@ -562,10 +574,10 @@ The AARM Profile Mapper translates CAGE governance decisions into the 11-vector 
 | V3 — Prompt Injection | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` |
 | V4 — PII Leakage | PII sanitizer | `src/gateway/governance/pii_sanitizer.py` |
 | V5 — CBRN Exposure | NeMo CBRN rail | `src/gateway/governance/nemo/colang/cbrn_rails.co` |
-| V6 — Fiscal Limit Breach | FiscalLimitGuard + CBF | `src/gateway/governance/fiscal_limit_guard.py` |
+| V6 — Fiscal Limit Breach | FiscalLimitGuard + CBF | `src/gateway/governance/safety/resource_guard.py` & `src/gateway/governance/safety/cbf_engine.py` |
 | V7 — Confidence Starvation | DEFER state machine | `src/gateway/governance/defer_queue.py` |
-| V8 — Causal Boundary Violation | DoWhy causal gatekeeper | `src/gateway/governance/causal_gatekeeper.py` |
-| V9 — Consensus Failure | ConsensusModelRegistry | `src/gateway/governance/consensus.py` |
+| V8 — Causal Boundary Violation | DoWhy causal gatekeeper | `src/gateway/governance/causal/gatekeeper.py` |
+| V9 — Consensus Failure | ConsensusModelRegistry | `src/gateway/governance/consensus/engine.py` |
 | V10 — HITL SLA Breach | HITL escalator + DeferQueue TTL | `src/gateway/governance/hitl_escalator.py` |
 | V11 — Provenance Chain Break | Provenance chain | `src/gateway/governance/provenance_chain.py` |
 
@@ -674,7 +686,7 @@ The **`ControlRegistry`** class ([`src/gateway/governance/constants.py`](../../s
 
 ### 15.5 SR 26-2 Telemetry Suppression
 
-When CAGE operates under the `EU_ECB` profile, US-specific regulatory citations must not appear in audit telemetry. This is implemented via a **data-driven sentinel mechanism** in the Causal Gatekeeper ([`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)):
+When CAGE operates under the `EU_ECB` profile, US-specific regulatory citations must not appear in audit telemetry. This is implemented via a **data-driven sentinel mechanism** in the Causal Gatekeeper ([`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)):
 
 1. Each regional profile's `CTRL_MRM_004` entry includes a `legacy_citation` field
 2. The EU profile encodes: `"SR 26-2 §IV (US Federal Reserve — no legal force in EU jurisdiction)"`
@@ -741,7 +753,7 @@ This section formalises the mathematical safety invariants that underpin CAGE's 
 
 ### 16.1 Control Barrier Function (CBF) — ISO 42001 A.8.4
 
-**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)
 
 The Control Barrier Function enforces the core financial safety invariant using control theory formalism. The safe set `S` and barrier function `h` are defined as:
 
@@ -761,7 +773,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
 | `min_cash_balance` | `1000.0` | `cbf.min_cash_balance` in `governance_thresholds.json` |
 | `γ` (decay rate) | `0.5` (US_FED/APAC_MAS), `0.6` (EU_ECB) | `cbf.gamma` — region-calibrated |
 
-The CBF is enforced atomically via Redis `WATCH/MULTI/EXEC` (5 retries on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent TOCTOU exploits.
+The CBF is enforced atomically via a single-round-trip Redis Lua script (`atomic_verify_and_commit()`, with fallback to Redis `WATCH/MULTI/EXEC` on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent TOCTOU exploits.
 
 **ISO 42001 mapping:** A.8.4 (AI System Operation Controls — runtime safety invariant enforcement).
 
@@ -777,9 +789,9 @@ The Adaptive FRIA Gate (Tier 6b) maps model confidence to three decision zones. 
 
 ### 16.3 Fiscal Limit Guard — ISO 42001 A.8.4 / SC-4
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+**Source:** [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py)
 
-The `FiscalLimitGuard` enforces a hard daily spending cap to prevent race conditions where parallel agent threads collectively exceed the authorized limit:
+The `FiscalLimitGuard` (and `ResourceGuard.reserve()`) enforces a hard daily spending cap to prevent race conditions where parallel agent threads collectively exceed the authorized limit:
 
 | Parameter | Value | Notes |
 | --------- | ----- | ----- |
@@ -793,27 +805,28 @@ Headroom is pre-reserved in Redis *after* concurrent CBF+OPA validation (closing
 
 **ISO 42001 mapping:** A.8.4 (AI System Operation Controls); **[US_FED only]** NIST SP 800-53 SC-4 (Information in Shared Resources).
 
-### 16.4 HMAC-SHA256 Routing Seal
+### 16.4 Cryptographic Routing Seal (v3 JWT with KMS HSM Signing)
 
 **Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
-Every approved governance decision is sealed with an HMAC-SHA256 routing seal before execution is permitted. The seal format is:
+Every approved governance decision is sealed with a cryptographic routing seal before execution is permitted. In production (v3), the routing seal is an asymmetric JWT signed by Cloud KMS HSM (`iss="cage-governance-kernel"`, `aud="cage-execution-engine"`, `exp`, `act`, `ehash`) that cryptographically binds the decision to the compliance evidence stream `record_hash`. In local/test environments without KMS, it falls back to a 4-tuple HMAC token:
 
 ```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
+<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
 ```
 
 | Field | Description |
 | ----- | ----------- |
 | `expire_ts_hex` | Hex-encoded Unix timestamp of seal expiry |
 | `action_slug` | URL-safe slug identifying the governed action |
-| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug` |
+| `record_hash_hex` | Hex-encoded SHA-256 binding to the compliance evidence record |
+| `hmac_hex` | HMAC-SHA256 hex digest over payload (dev/test fallback) |
 
 | Parameter | Value | Notes |
 | --------- | ----- | ----- |
 | TTL | **30 seconds** | Seals expire 30s after issuance; prevents replay attacks |
-| Algorithm | HMAC-SHA256 | FIPS-approved; constant-time `hmac.compare_digest` for verification |
-| Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; ≥ 64 characters required in production |
+| Algorithm | RS256/ES256 (KMS HSM) / HMAC-SHA256 (dev fallback) | FIPS-approved; constant-time comparison for HMAC verification |
+| Secret / Key | Cloud KMS HSM key URI / `CAGE_ROUTING_SEAL_SECRET` | KMS key in prod; ≥ 64 characters required for HMAC fallback |
 
 The seal is verified by [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) before any trade execution. A missing, expired, or invalid seal returns HTTP 401 (fail-closed). This satisfies the `NoDirectBind` invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
@@ -835,6 +848,91 @@ STPA UCAs (Tier 0)
 ```
 
 All tiers are fail-closed. A violation at any tier raises `GovernanceError` and prevents execution. The routing seal (§16.4) is issued only after all tiers pass, satisfying the `NoDirectBind` formal invariant verified in `proof/model.py`.
+
+---
+
+## 17. Evidence Cold Storage and Regional Residency
+
+**Source:** [`src/gateway/governance/evidence/cold_store.py`](../../src/gateway/governance/evidence/cold_store.py), [`src/gateway/governance/evidence/residency.py`](../../src/gateway/governance/evidence/residency.py)
+
+**New in v3.0.0** — The evidence cold store subsystem provides vendor-agnostic durable evidence archival to cloud object storage (GCS, S3, or adopter-supplied backends) with strict regional data residency enforcement.
+
+### 17.1 Layer 1 Protocol Design
+
+[`EvidenceColdStore`](../../src/gateway/governance/evidence/cold_store.py:88) is a runtime-checkable `Protocol` defining the vendor-neutral seam for async cold storage. The kernel defines **only the abstract contract**; concrete implementations live strictly in Layer 3 integrations ([`src/integrations/storage_gcs/`](../../src/integrations/storage_gcs/), [`src/integrations/storage_s3/`](../../src/integrations/storage_s3/)).
+
+**Layer Invariant:** [`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py) contains **zero vendor imports** (no `google-cloud-storage`, `boto3`, or `azure-storage-blob`). This enforces the kernel/plugin boundary and ensures vendor SDKs cannot leak into the governance kernel.
+
+### 17.2 Protocol Contract
+
+| Method | Purpose | Fail-Closed Behavior |
+|---|---|---|
+| [`put_batch(key, content, metadata)`](../../src/gateway/governance/evidence/cold_store.py:100) | Persist content bytes to cold storage | Raises [`ColdStoreError`](../../src/gateway/governance/evidence/cold_store.py:40) on network/auth/I/O failure |
+| [`exists(key)`](../../src/gateway/governance/evidence/cold_store.py:121) | Check object existence | Raises `ColdStoreError` on connectivity/permission errors |
+| [`put_if_absent(key, content, metadata)`](../../src/gateway/governance/evidence/cold_store.py:135) | Atomic conditional write (only if key does not exist) | GCS: uses `if_generation_match=0`; S3: uses conditional headers |
+| [`health()`](../../src/gateway/governance/evidence/cold_store.py:160) | Synchronous backend health check | Returns [`ColdStoreHealth`](../../src/gateway/governance/evidence/cold_store.py:73) with `available` flag and diagnostic detail |
+
+### 17.3 ColdStoreReceipt — Immutable Persistence Proof
+
+[`ColdStoreReceipt`](../../src/gateway/governance/evidence/cold_store.py:54) is an immutable dataclass returned on successful write, providing cryptographic proof of persistence:
+
+```python
+@dataclasses.dataclass(frozen=True)
+class ColdStoreReceipt:
+    uri: str  # gs://bucket/key or s3://bucket/key
+    key: str  # Object path within bucket
+    content_sha256: str  # Hex SHA-256 digest over persisted bytes
+    backend_id: str  # 'gcs', 's3', 'null'
+    written_at: datetime  # UTC timestamp of confirmed write
+```
+
+The `content_sha256` field enables verification that the stored artifact matches the in-memory evidence batch byte-for-byte, closing the gap between evidence accumulation and durable archival.
+
+### 17.4 Regional Data Residency Enforcement
+
+[`src/gateway/governance/evidence/residency.py`](../../src/gateway/governance/evidence/residency.py) + [`config/compliance/residency.json`](../../config/compliance/residency.json) implement jurisdictional data residency controls mandated by GDPR Article 44, MAS TRM §4.2, and NIST SP 800-53.
+
+**Residency Mapping (per `CAGE_DEPLOYMENT_REGION`):**
+
+| Region | Allowed Storage Locations | Compliance Framework |
+|---|---|---|
+| `US_FED` | `us-central1`, `us-east1`, `us-west1` (GCS); `us-east-1`, `us-west-2` (S3) | NIST SP 800-53 |
+| `EU_ECB` | `europe-west1`, `europe-west4`, `europe-north1` (GCS); `eu-west-1`, `eu-central-1` (S3) | GDPR Art. 44, DORA |
+| `APAC_MAS` | `asia-southeast1`, `asia-southeast2` (GCS); `ap-southeast-1` (S3) | MAS TRM §4.2 |
+
+The residency module validates that the configured `STORAGE_BUCKET` location matches the allowed regions for the active deployment posture. Violations raise `ResidencyViolationError` at startup (fail-closed).
+
+### 17.5 Layer 3 Adapter Implementations
+
+| Adapter | Backend | Path | Key Features |
+|---|---|---|---|
+| GCS Cold Store | Google Cloud Storage | [`src/integrations/storage_gcs/cold_store.py`](../../src/integrations/storage_gcs/cold_store.py) | Atomic `if_generation_match=0`, KMS CMEK encryption, `storage.objects.create` audit logs |
+| S3 Cold Store | AWS S3 / MinIO | [`src/integrations/storage_s3/cold_store.py`](../../src/integrations/storage_s3/cold_store.py) | Conditional PUT headers, SSE-KMS encryption, CloudTrail event logging |
+| Null Cold Store | In-memory (dev/test) | [`src/gateway/governance/evidence/null_cold_store.py`](../../src/gateway/governance/evidence/null_cold_store.py) | Accepts flushes, returns well-formed receipts without durable persistence. Raises `RuntimeError` in production (`CAGE_ENV=prod`). |
+
+### 17.6 Evidence Stream Integration
+
+The evidence cold store is the durable sink for the compliance evidence stream. [`EvidenceStream`](../../src/gateway/governance/evidence/stream.py) accumulates governance decision records in-memory (NDJSON format), then periodically flushes batches to cold storage via [`ColdStoreFactory.get_store()`](../../src/gateway/governance/evidence/factory.py):
+
+**Batch Flush Sequence:**
+1. Accumulate evidence records in [`_buffer`](../../src/gateway/governance/evidence/stream.py) (list of `EvidenceRecord` dicts)
+2. On flush threshold (time-based or count-based), serialize buffer to NDJSON bytes
+3. Call `cold_store.put_batch(key=f"evidence/{timestamp}.ndjson", content=ndjson_bytes)`
+4. Receive `ColdStoreReceipt` with SHA-256 digest and storage URI
+5. Emit receipt to audit log and telemetry span (`cage.evidence.cold_store_receipt`)
+
+**ISO 42001 mapping:** A.7.5 (Records Integrity), A.5.3 (Documentation and Record Keeping) — durable, immutable evidence archival with cryptographic integrity verification.
+
+**NIST SP 800-53 mapping:** AU-9 (Audit Record Protection), AU-11 (Audit Record Retention) — evidence records stored in WORM-equivalent object storage with 7-year retention (FINRA 4511 / SEC 17a-4 compliance for financial domains).
+
+### 17.7 Fail-Closed Posture
+
+All cold store operations fail-closed:
+- Network/auth failures raise `ColdStoreError` (never silently drop evidence)
+- Residency violations block startup (never start with non-compliant storage configuration)
+- `NullColdStore` raises `RuntimeError` in production (never run prod with mock storage)
+
+This ensures that evidence loss or residency violations are **impossible by construction**, not detected after the fact through log analysis.
 
 ---
 

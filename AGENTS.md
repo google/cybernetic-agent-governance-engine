@@ -305,7 +305,7 @@ crashes.
 # APPROVED for GKE
 ./deploy_all.sh --target gcp-gke --env dev
 ./deploy_all.sh --target gcp-gke --env prod
-gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml
+gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 
 # APPROVED for local/agnostic
 ./deploy_all.sh --target agnostic --env dev
@@ -316,11 +316,11 @@ gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml
 - `--platform linux/amd64` local/BuildKit cross-compilation
 - `kubectl apply` without a preceding Cloud Build step
 
-**Cloud Build config files:** `deployment/docker/cloudbuild_gateway.yaml`
+**Cloud Build config files:** `deployment/docker/cloudbuild.gateway.yaml`
 (gateway), `deployment/docker/cloudbuild.vllm.yaml` (vLLM),
 `deployment/docker/cloudbuild.lula.yaml` (Lula).
 
-Terraform state is in a GCS backend (`infra/targets/gcp-gke/backend.tf`).
+Terraform state is in a GCS backend (`infra/targets/gcp-gke/main.tf`).
 Active IaC lives under `infra/`; `deployment/terraform/` is historical
 reference only — never target it for new designs.
 
@@ -349,7 +349,7 @@ Check these jobs in order:
 6. **langfuse-posture-check** — requires mock cloud and Langfuse environment variables in local/offline environments. Fix: supply mock project/keys with derived `GOOGLE_CLOUD_LOCATION` and run `python scripts/verify_langfuse_posture.py --dry-run --posture development` (see [Langfuse Regional & Local Testing Limitations](#langfuse-regional--local-testing-limitations)).
 7. **pytest** — address the failing test before suggesting any workaround. Always verify:
    - **No active port-forward contamination**: ensure `kubectl port-forward` to dev Redis (6379) / OPA (8181) is not polluting local test state.
-   - **Canonical module paths**: verify imports use post-v3 locations (`src.gateway.governance.causal.gatekeeper`, `src.gateway.governance.reconciliation.worker`, `src.gateway.governance.safety.cbf_engine`).
+   - **Canonical module paths**: verify imports use post-v3 locations (`src.gateway.governance.causal.gatekeeper`, `src.gateway.governance.reconciliation.daemon`, `src.gateway.governance.safety.cbf_engine`).
    - **Governor contracts**: verify `SymbolicGovernor` instantiations provide `safety_filter`, `consensus_engine`, and context parameters.
 8. **security-scan** — rotate the credential or address Bandit SAST / dependency CVE findings; never suggest suppressing the scan.
 
@@ -441,7 +441,7 @@ Refactoring across v3.0.0 extracted domain mechanisms into domain plugins and mo
 | Component | Canonical Location | Deprecated / Relocated Path (Do Not Import) |
 |---|---|---|
 | Causal Gatekeeper | `src.gateway.governance.causal.gatekeeper` | `src.gateway.governance.causal_gatekeeper` |
-| Reconciliation Worker | `src.gateway.governance.reconciliation.worker` | `src.cage_finance.compliance.reconciliation_worker` |
+| Reconciliation Daemon | `src.gateway.governance.reconciliation.daemon` | `src.cage_finance.compliance.reconciliation_worker` |
 | FTRA Package | `src.gateway.governance.ftra` | Legacy flat imports in root governance |
 | Financial Tiers | `src.cage_finance.tiers` | Hardcoded blocks in `symbolic_governor.py` |
 | Healthcare Tiers | `src.cage_healthcare.tiers` | N/A (new domain plugin) |

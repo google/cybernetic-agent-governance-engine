@@ -26,7 +26,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | --- | --- | --- | --- | --- |
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/symbolic_governor.py` |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` |
-| **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** | `CTRL_TEL_003` | `src/gateway/governance/causal_gatekeeper.py` |
+| **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** · **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** · **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` |
 | **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `src/compliance_bridge/aarm_mapper.py` |
@@ -39,10 +39,10 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
 | **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` |
-| **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` |
+| **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` |
 | **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** · **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` |
 
-> **Note:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles suppress SR 26-2 telemetry via the `_NO_LEGAL_FORCE_MARKER` sentinel (see `.roo/rules` §12.4).
+> **Note:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles suppress SR 26-2 telemetry via the `_NO_LEGAL_FORCE_MARKER` sentinel (see `AGENTS.md` §8).
 
 ### 1.3 EU_ECB Only Controls (EU AI Act / GDPR / DORA)
 
@@ -52,7 +52,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | --- | --- | --- | --- | --- |
 | **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/symbolic_governor.py` |
 | **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` |
-| **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal_gatekeeper.py` |
+| **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 
 ### 1.4 APAC_MAS Only Controls (MAS FEAT / MAS Notice 655 / MAS TRM)
 
@@ -61,17 +61,17 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
 | **Statistical Code** | Control Barrier Function (MAS FEAT fairness boundary) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` |
-| **Statistical Code** | DoWhy Causal Inference (MAS FEAT accountability) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` |
+| **Statistical Code** | DoWhy Causal Inference (MAS FEAT accountability) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` |
 
 ### 1.5 Summary Mapping for Examiners
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact | Active Regions |
 | --- | --- | --- | --- | --- | --- |
 | **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
-| **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
+| **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/symbolic_governor.py` | *All Regions* |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` | *All Regions* |
-| **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** <br> **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal_gatekeeper.py` | *All Regions* |
+| **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** <br> **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` | *All Regions* |
 | **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/symbolic_governor.py` | `EU_ECB` only |
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** <br> **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` | *All Regions* |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** <br> **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` | *All Regions* |
@@ -106,7 +106,7 @@ The discrete-time CBF condition enforced at every governance tick:
 h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 ```
 
-This guarantees the cash balance never drops below the minimum threshold in a single step. The decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External CBF state reconciliation is implemented via [`src/compliance_bridge/reconciliation_worker.py`](src/compliance_bridge/reconciliation_worker.py) — **POAM-2026-031 closed 2026-07-27**. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry.
+This guarantees the cash balance never drops below the minimum threshold in a single step. The decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External CBF state reconciliation is implemented via [`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py) — **POAM-2026-031 closed 2026-07-27**. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry.
 
 > **CBF intra-window hardening:** `CbfGovernor.verify_action()` now computes `effective_balance = snapshot_balance - self._local_debits`, where `_local_debits` accumulates approved-trade costs within the current 300 s KMS snapshot TTL window. `reset_local_debits()` is called by the reconciliation daemon on each snapshot refresh. This closes the intra-window double-spend gap previously documented as a limitation.
 
@@ -126,7 +126,7 @@ risk_score = 1.0 − confidence
 
 ### 2.3 Causal Marginal Risk Boundary
 
-**Source:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py) · **Control:** `CTRL_TEL_003`
+**Source:** [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py) · **Control:** `CTRL_TEL_003`
 
 A trade action is blocked when:
 
@@ -149,7 +149,7 @@ Scores below `FRIA_ZONE_DEFER` trigger a local hard deny without invoking the ex
 
 ### 2.5 Fiscal Limit Guard Parameters
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py) · **Control:** `CTRL_MRM_004`
+**Source:** [`src/gateway/governance/safety/resource_guard.py`](src/gateway/governance/safety/resource_guard.py) · **Control:** `CTRL_MRM_004`
 
 | Parameter | Value |
 |-----------|-------|
@@ -176,13 +176,13 @@ Any mutation of node `k` invalidates all hashes for nodes `k … n`, making tamp
 
 **Source:** [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py) · **Control:** `CTRL_MRM_004`
 
-HMAC-SHA256 token format:
+In production (v3), the routing seal is an asymmetric JWT signed by Cloud KMS HSM (`iss="cage-governance-kernel"`, `aud="cage-execution-engine"`, `exp`, `act`, `ehash`) that cryptographically binds the decision to the compliance evidence stream `record_hash`. In local/test environments without KMS, it falls back to a 4-tuple HMAC token:
 
 ```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
+<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
 ```
 
-TTL: **30 seconds**. Unsigned or expired requests return HTTP 403.
+TTL: **30 seconds**. Unsigned, invalid, or expired requests return HTTP 401 / 403 (fail-closed).
 
 ### 2.8 FTRA Reachability Verification Gap (Documented)
 
@@ -291,7 +291,7 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     | --- | --- | --- | --- | --- |
     | §2.1 | Confabulation / Hallucination | `confabulation_scorer.py` — confidence gate ≥ 0.95; provenance signing via AgentSight | `lula-validation-ai600-confabulation.yaml` | AI600-001 |
     | §2.2 | Data Privacy / PII | `pii_sanitizer.py` (Presidio) — PII scrubbed before LLM; CMEK-encrypted audit log | `lula-validation-ai600-data-privacy.yaml` | AI600-002 |
-    | §2.3 | Prompt Injection | `prompt_injection_detector.py` + `causal_gatekeeper.py` WAL integrity | `lula-validation-ai600-prompt-injection.yaml` | AI600-003 |
+    | §2.3 | Prompt Injection | `prompt_injection_detector.py` + `causal/gatekeeper.py` WAL integrity | `lula-validation-ai600-prompt-injection.yaml` | AI600-003 |
     | §2.5 | Human-AI Configuration | `hitl_escalator.py` + `defer_queue.py` — DEFER SLA ≤ 4 h; consensus threshold $10,000 | `lula-validation-ai600-human-ai-config.yaml` | AI600-005 |
     | §2.6 / §2.12 | CBRN & Value Chain | NeMo `cbrn_rails.co` — Tier-1 keyword list; NeMo CBRN rail deployed | `lula-validation-ai600-cbrn.yaml` | AI600-007 |
 

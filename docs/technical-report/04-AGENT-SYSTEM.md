@@ -6,14 +6,14 @@
 | **Date**             | 2026-08-22                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---
 
 ## 1. Agent Orchestration Philosophy
 
-> **v2.1.0**: The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It demonstrates the full CAGE governance stack applied to a realistic financial advisory workflow. The LangGraph harness (`src/gateway/governance/langgraph_harness/`) provides the node-factory pattern used to compose governance checks into the graph. NeMo Guardrails (`src/gateway/governance/nemo/`) enforces CBRN and PII rails as typed LangGraph nodes. OPA policy evaluation (`src/governed_financial_advisor/governance/policy/trade_governance.rego`) enforces role-based trade authorization at Tier 4.
+> **v2.1.0**: The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It demonstrates the full CAGE governance stack applied to a realistic financial advisory workflow. The LangGraph harness (`src/gateway/governance/langgraph_harness/`) provides the node-factory pattern used to compose governance checks into the graph. NeMo Guardrails (`src/gateway/governance/nemo/`) enforces CBRN and PII rails as typed LangGraph nodes. OPA policy evaluation (`src/cage_finance/opa/trade_governance.rego` and `config/opa/trade_policy.rego`) enforces role-based trade authorization at Tier 4.
 
 
 CAGE composes its multi-agent pipeline using LangGraph's `StateGraph`, producing a deterministic, fully auditable execution sequence. Every agent carries a single, well-defined responsibility; no agent performs work outside its declared scope. All inter-agent communication occurs through a shared, strongly typed `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py` — agents read fields they need and write only the fields they own.
@@ -63,7 +63,7 @@ The agent system is governed under **SR 26-2** — the Federal Reserve's supervi
 
 ## 3. AgentState TypedDict
 
-All graph nodes share a single state object defined in `src/governed_financial_advisor/graph/state.py`. The TypedDict has **25 fields**:
+All graph nodes share a single state object defined in `src/governed_financial_advisor/graph/state.py`. The TypedDict has **33 fields** (adds `ftra_status`, `ftra_result`, `ftra_defer_id`, `narrow_status`, `narrowed_params`, `pause_resume_token`, `pause_reason`, and `confidence` to the v2.x baseline):
 
 | Field                   | Type / Notes                                       | Owner(s)                      |
 | ----------------------- | -------------------------------------------------- | ----------------------------- |
@@ -92,6 +92,14 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `guardrail_blocked`     | Boolean — NeMo input rail gate (ADR 2026-03-09)    | `nemo_guardrail`              |
 | `guardrail_reason`      | Reason for NeMo input rail block                   | `nemo_guardrail`              |
 | `output_rail_applied`   | Boolean — NeMo output rail tracking (ADR 2026-03-09b) | `nemo_output_rail`         |
+| `ftra_status`           | `Literal[...]` — FTRA verdict (CLEAR / HITL_REQUIRED / BLOCKED) | `ftra_node`        |
+| `ftra_result`           | `dict \| None` — Serialized `FtraBoundaryResult` structure | `ftra_node`           |
+| `ftra_defer_id`         | `str \| None` — Correlation UUID for parked DEFER requests | `defer_node`         |
+| `narrow_status`         | `Literal[...]` — Clamping status (NONE / APPLIED / REJECTED) | `SymbolicGovernor` |
+| `narrowed_params`       | `dict \| None` — Clamped parameters from NARROW primitive | `SymbolicGovernor`    |
+| `pause_resume_token`    | `str \| None` — Cryptographic token for PAUSE resumption | `SymbolicGovernor`      |
+| `pause_reason`          | `str \| None` — Reason code for transient PAUSE delay | `SymbolicGovernor`        |
+| `confidence`            | `float` — Calibrated model confidence score (0.0–1.0) | `evaluator`                |
 
 ### ExecutionPlan Pydantic Schema
 
@@ -106,7 +114,7 @@ While the `ExecutionAnalystAgent` designs the structural steps of the trade, the
 
 ## 4. Graph Topology & Routing
 
-The `StateGraph` is assembled in `src/governed_financial_advisor/graph/graph.py` via the `create_graph(redis_url)` factory function. Ten named nodes are registered; conditional edges route execution based on runtime state values.
+The `StateGraph` is assembled in `src/governed_financial_advisor/graph/graph.py` via the `create_graph(redis_url)` factory function. **Twelve named nodes** are registered; conditional edges route execution based on runtime state values. This includes the mandatory `ftra_node` (FTRA reachability gate between `evaluator` and `safety_check`) and `defer_node` (DEFER queue handling for mid-confidence requests).
 
 ```mermaid
 flowchart TD
@@ -453,24 +461,27 @@ POST /governance/validate-action
         │
         ▼
 SymbolicGovernor._run_checks()
-  [PHASE 1: READ-ONLY VALIDATION GATES]
-  • Tier 0: STPA/STAMP UCA validation — GeneratedSTPAValidator.validate()
-  • Tier 1: Agent confidence pre-check — fast-fail against AGENT_CONFIDENCE_THRESHOLD
-  • Tier 2b: OPA Rego policy evaluation — trade.governance policy checked prior to mutation
-  • Tier 5: Consensus — required if amount ≥ $10,000 USD (_CRITIC_TIMEOUT_S=10.0 per critic)
-  • Tier 6: Causal gatekeeper — SCM β>0 guard + PlaceboTreatmentRefuter (60s Redis cache)
-  • Tier 6b: FRIA zone classification — ALLOW / DEFER / DENY
+  [PHASE 1: KERNEL BOUNDARY GATES & READ-ONLY DOMAIN TIERS]
+  • Tier 0.5: FTRA Commencement Boundary Gate — _ftra_boundary_check() (R-03 bypass detection)
+  • Tier 1: STPA/STAMP UCA validation — GeneratedSTPAValidator.validate()
+  • Tier 2: Agent confidence pre-check — fast-fail against AGENT_CONFIDENCE_THRESHOLD
+  • Domain Tiers Phase 1: Bounding (order 2), Consensus (order 5), Causal (order 6)
+  • Tier 3b: OPA Rego policy evaluation — trade.governance policy checked prior to mutation
         │ (Proceeds ONLY if all Phase 1 gates emit ALLOW)
         ▼
-  [PHASE 2: ATOMIC STATE MUTATIONS & PRE-RESERVATION GATE]
-  • Tier 2a: CBF atomic_verify_and_commit() — Lua-atomic Redis check+debit + replica WAIT
-  • Tier 3: Fiscal Limit Pre-Reservation — FiscalLimitGuard.reserve() (Redis WATCH/MULTI/EXEC)
+  [PHASE 2: ATOMIC STATE MUTATIONS & MUTATING DOMAIN TIERS (LIFO Rollback on Failure)]
+  • Tier 3a: CBF atomic_verify_and_commit() — Lua-atomic Redis check+debit + replica WAIT
+  • Tier 4: Fiscal Limit Pre-Reservation — FiscalLimitGuard.reserve() (Redis WATCH/MULTI/EXEC)
+        │ (Proceeds ONLY if Phase 2 commits successfully)
+        ▼
+  [POST-COMMIT BOUNDARY GATE]
+  • Tier 7: Adaptive FRIA zone classification — ALLOW / DEFER / DENY
         │
         ▼
-Routing seal v2 issued: <expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
+Routing seal v3 issued: Asymmetric JWT signed by Cloud KMS HSM (dev/test fallback HMAC)
         │
         ▼
-Actuator verifies seal and evidence binding before firing
+ExecutionActuator (src/gateway/governance/execution_actuator.py) verifies seal & evidence binding before firing
 ```
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.

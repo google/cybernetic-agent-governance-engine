@@ -1,18 +1,20 @@
 # Cybernetic Agent Governance Engine (CAGE)
 
 
-> **A domain-agnostic AI governance substrate providing runtime safety boundaries, compliance enforcement, and explainable oversight for autonomous AI systems.**
+> **A domain-agnostic, application-free AI governance platform providing runtime safety boundaries, compliance enforcement, and explainable oversight for autonomous AI systems.**
 
-CAGE is a pluggable governance framework that combines:
+CAGE is an application-agnostic governance substrate that contains **zero built-in applications**. It provides pure, domain-neutral governance mechanisms:
 
 - **Universal safety mechanisms** — Control Barrier Functions, consensus arbitration, causal reasoning, FTRA reachability analysis, and pipeline orchestration that operate on abstract action primitives and require no domain knowledge.
 - **Domain plugins** — Extensible safety tiers, barriers, rails, and tools for finance, healthcare, or any custom domain, loaded through the `cage.plugins` entry-point group.
 - **Regional compliance** — Configurable postures for US Federal, EU, APAC, or custom jurisdictions, selected at deploy time with a single environment variable.
 - **Runtime enforcement** — Non-bypassable pipeline orchestration with cryptographic evidence sealing and automated Human-in-the-Loop escalation.
 
+> **CAGE Has No Built-In Applications:** CAGE is a pure governance engine and control middleware, not an application. The **Governed Financial Advisor** (`src/governed_financial_advisor/` / `src/cage_finance/`) and **Healthcare Agent** (`src/cage_healthcare/`) included in this repository are **not part of the CAGE platform core**. They are reference applications and example domain plugins implemented solely to demonstrate CAGE's capabilities and to prove that the identical governance substrate operates seamlessly across radically different operational domains (finance vs. healthcare) without modifying a single line of kernel code.
+
 Domain specificity and jurisdictional compliance are **configuration, not core requirements**. The finance and healthcare packages shipped in this repository are illustrative example domains that exercise the extension contract — neither is privileged by the kernel.
 
-![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![3747 Tests Passing](https://img.shields.io/badge/tests-3747%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
+![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2553 Tests Passing](https://img.shields.io/badge/tests-2553%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -86,9 +88,18 @@ The following GCP services are **optional drivers** — the system functions ful
 
 ## Domain-Agnostic Architecture
 
-CAGE is designed as a **domain-independent governance substrate**. The core enforcement mechanisms — CBF safety filters, consensus arbitration, the causal gatekeeper, FTRA boundary checking, the pipeline orchestrator, and the evidence chain — operate on abstract action primitives and require no domain knowledge. The mathematical invariant `h(x) ≥ 0` does not know what `x` means; it only knows the boundary must not be crossed.
+CAGE is designed as a **domain-independent governance substrate with zero native applications**. The core enforcement mechanisms — CBF safety filters, consensus arbitration, the causal gatekeeper, FTRA boundary checking, the pipeline orchestrator, and the evidence chain — operate on abstract action primitives and require no domain knowledge. The mathematical invariant `h(x) ≥ 0` does not know what `x` means; it only knows the boundary must not be crossed.
 
 Everything under [`src/gateway/`](src/gateway/) owns *mechanism*: the atomic Redis Lua barrier hop, fence-epoch logic, KMS signature verification, the quota reserver, the consensus algorithm, the causal refutation engine, LIFO rollback ordering, and evidence emission. A domain plugin owns only *nomenclature and parameters*: which actions it claims, which scalar the barrier watches, which threshold key holds the floor, which critics vote, and which tools exist.
+
+### A Platform Without Applications: Demonstration Roles of Finance and Healthcare
+
+To prove that CAGE is truly agnostic and that its universal governance engine works across orthogonal, high-stakes problem spaces without altering the kernel, this repository provides two reference implementations:
+
+1. **Governed Financial Advisor** (`src/governed_financial_advisor/` & `src/cage_finance/`): Demonstrates high-stakes quantitative financial advisory, fiscal limit pre-reservations, cash barrier functions (`CashBarrier`), and trading actions (`execute_trade`) under SEC, FINRA, and FedNow compliance constraints.
+2. **Healthcare Clinical Agent** (`src/cage_healthcare/`): Demonstrates clinical decision oversight, pharmacokinetic drug dosing, serum concentration barriers (`SerumConcentrationBarrier`), and medical order actions (`dose_order`) under HIPAA, FDA, and medical safety constraints.
+
+**Neither application is part of the core CAGE platform.** Both are client applications and domain plugins designed to demonstrate the substrate's capabilities and prove that the kernel operates identically regardless of whether an action is `execute_trade` or `dose_order`.
 
 **Deny-by-Default Kernel Property:** The bare Layer 1 kernel with `CAGE_ACTIVE_PLUGINS=""` enforces all universal safety mechanisms (FTRA reachability, pipeline orchestration, consensus, causal checks, evidence sealing) but **denies all domain-specific actions** because no plugin has registered action handlers. This is the intended fail-closed behavior: the kernel cannot govern what it does not understand. Domain semantics arrive exclusively through Layer 2 plugins.
 
@@ -96,8 +107,8 @@ Everything under [`src/gateway/`](src/gateway/) owns *mechanism*: the atomic Red
 
 | Plugin | Package | Contributes | Status |
 | ------ | ------- | ----------- | ------ |
-| **Finance** | [`src/cage_finance/`](src/cage_finance/) | Trading controls, fiscal pre-reservation limits, market-abuse critics, `execute_trade` tooling | Example domain |
-| **Healthcare** | [`src/cage_healthcare/`](src/cage_healthcare/) | Dosing concentration barriers, clinical decision oversight, `dose_order` tooling | Example domain |
+| **Finance** | [`src/cage_finance/`](src/cage_finance/) | Trading controls, fiscal pre-reservation limits, market-abuse critics, `execute_trade` tooling | Example demo domain |
+| **Healthcare** | [`src/cage_healthcare/`](src/cage_healthcare/) | Dosing concentration barriers, clinical decision oversight, `dose_order` tooling | Example demo domain |
 | **Custom** | `src/cage_<domain>/` | Manufacturing, logistics, energy, customer service, critical infrastructure — author your own | Adopter-supplied |
 
 Both shipped plugins are **illustrative example domains of equal standing**. Neither is privileged by the kernel, and neither is required: setting `CAGE_ACTIVE_PLUGINS=""` runs the kernel with zero domain plugins loaded, and the universal safety mechanisms still function.
@@ -109,11 +120,11 @@ export CAGE_ACTIVE_PLUGINS=finance,healthcare
 # Load healthcare only
 export CAGE_ACTIVE_PLUGINS=healthcare
 
-# Run the bare domain-neutral kernel
+# Run the bare domain-neutral kernel (no applications or domain plugins)
 export CAGE_ACTIVE_PLUGINS=""
 ```
 
-[`tests/test_domain_independence.py`](tests/test_domain_independence.py) is the standing proof of this claim: it loads both plugins together and asserts the kernel was not modified to accommodate the second one. Companion tests assert the healthcare package contains **zero** Lua files and **zero** KMS imports — it cannot fork the atomicity or signing paths.
+[`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py) provide the standing proof of this claim: they verify that Layer 1 boots cleanly without loading proprietary cloud vendor SDKs and that plugin contracts enforce domain isolation. Companion tests in [`tests/test_healthcare_plugin.py`](tests/test_healthcare_plugin.py) assert the healthcare package contains **zero** Lua files and **zero** KMS imports — it cannot fork the atomicity or signing paths.
 
 See [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the plugin authoring guide and domain-agnostic kernel thesis.
 
@@ -200,9 +211,9 @@ CAGE is composed of the following runtime subsystems:
 | **Jurisdictional Configuration** *(config layer)* | **L3** | `config/thresholds/`, `config/compliance/`, `config/opa/` | Region-selected thresholds, control profiles, and policy bundles resolved from `CAGE_DEPLOYMENT_REGION`. No Python code is region-specific |
 | **AgentSight UI**                | **L3** | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
 | **AgentSight eBPF DaemonSet**    | **L3** | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
-| **Reference Application** *(example)* | **—** | `src/governed_financial_advisor/` | Example-domain LangGraph multi-agent pipeline and FastAPI server. Demonstrates the harness; **not** part of CAGE and not required to run the kernel |
+| **Reference Application (Finance)** *(demo)* | **Layer 4** | `src/governed_financial_advisor/` | Example-domain LangGraph multi-agent pipeline and FastAPI server. Implemented solely to demo CAGE capabilities in finance; **not** part of the CAGE platform and not required to run the kernel |
 
-The layering below separates the **domain-neutral substrate** (always present), the **optional domain plugins** (dashed — load zero, one, or many), and the **jurisdictional configuration layer** (selected at deploy time):
+The layering below separates the **domain-neutral substrate** (always present, zero native applications), the **optional domain plugins** (dashed — load zero, one, or many), and the **jurisdictional configuration layer** (selected at deploy time):
 
 ```mermaid
 graph TB
@@ -210,13 +221,18 @@ graph TB
         REG[config/thresholds + config/compliance + config/opa<br/>US_FED · EU_ECB · APAC_MAS · LOCAL · custom]
     end
 
-    subgraph PLG[Optional Domain Plugins -- cage.plugins entry points]
-        FIN[cage_finance<br/>example domain]
-        HLTH[cage_healthcare<br/>example domain]
+    subgraph APP[External Reference Applications & Client Agents -- Layer 4]
+        GFA[Governed Financial Advisor<br/>Demo Application -- not part of CAGE]
+        HLTH_APP[Healthcare Clinical Agent<br/>Demo Application -- not part of CAGE]
+    end
+
+    subgraph PLG[Optional Domain Plugins -- cage.plugins entry points -- Layer 2]
+        FIN[cage_finance<br/>finance demo plugin]
+        HLTH[cage_healthcare<br/>healthcare demo plugin]
         CUST[cage_yourdomain<br/>adopter-supplied]
     end
 
-    subgraph CORE[Domain-Neutral Governance Substrate -- src/gateway]
+    subgraph CORE[Domain-Neutral Governance Substrate -- src/gateway -- Layer 1]
         FTRA[FTRA Reachability Gate]
         ORCH[Pipeline Orchestrator<br/>A0-A6 arbitration ladder]
         CBF[Control Barrier Function engine<br/>atomic Lua hop]
@@ -227,22 +243,23 @@ graph TB
 
     REG -.parameterises.-> CORE
     REG -.overlays.-> PLG
+    APP -.calls via Gateway / Harness.-> CORE
     FIN -.registers tiers and barriers.-> CORE
     HLTH -.registers tiers and barriers.-> CORE
     CUST -.registers tiers and barriers.-> CORE
     FTRA --> ORCH --> CBF --> CONS --> CAUS --> EVID
 ```
 
-Solid arrows are always-on kernel flow. Dashed arrows are optional or configuration-time bindings: remove every plugin and the substrate still enforces FTRA, orchestration, barriers, consensus, causal checks, and evidence sealing.
+Solid arrows are always-on kernel flow. Dashed arrows are optional or configuration-time bindings: remove every plugin and application, and the substrate still enforces FTRA, orchestration, barriers, consensus, causal checks, and evidence sealing.
 
-The trace below is the **finance example domain** end-to-end request path — one illustration of the substrate in use, not the canonical CAGE topology:
+The trace below illustrates the **Governed Financial Advisor demo application** end-to-end request path — demonstrating how an external multi-agent application integrates with the CAGE substrate, not a built-in CAGE feature:
 
 ```
 User ──POST /agent/query──► FastAPI Agent Server (:8000)
                                       │
                          [nemo_guardrail] (mandatory input rail - Node 1)
                                       │
-                         LangGraph StateGraph (10 Nodes)
+                         LangGraph StateGraph (12 Nodes)
                          thinker_node (DeepSeek-R1) → doer_node (Llama 3.1)
                             ├─► data_analyst → [nemo_output_rail_da] ──► (short-circuit path)
                             └─► execution_analyst → evaluator 
@@ -255,18 +272,18 @@ User ──POST /agent/query──► FastAPI Agent Server (:8000)
                                       │
                          [nemo_output_rail] (mandatory output rail)
                                       │
-                              ◄── governed response ──
+                               ◄── governed response ──
 ```
 
-An equivalent **healthcare example domain** path traverses the identical substrate, substituting `dose_order` for `execute_trade`, `SerumConcentrationBarrier` for `CashBarrier`, and clinical critics for market critics — with **no kernel change**. Any adopter domain follows the same substitution pattern.
+An equivalent **Healthcare Clinical Agent demo** path traverses the identical substrate, substituting `dose_order` for `execute_trade`, `SerumConcentrationBarrier` for `CashBarrier`, and clinical critics for market critics — with **no kernel change**. Both reference applications demonstrate that CAGE's governance mechanisms are completely domain-agnostic. Any adopter domain follows the same substitution pattern.
 
-For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md), the [Technical Report Series](docs/technical-report/README.md), and the [Extensibility Architecture](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) (domain-agnostic kernel design and multi-domain roadmap). Four subsystem deep-dives cover the enforcement substrate in detail: [Pipeline Orchestration](docs/architecture/PIPELINE_ORCHESTRATION.md), [FTRA Boundary Enforcement](docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md), [Ingress Adapter Architecture](docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md), and [Domain Plugin Architecture](docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md).
+For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md), the [Technical Report Series](docs/technical-report/README.md), and the [Extensibility Architecture](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) (domain-agnostic kernel design and multi-domain roadmap). Four subsystem deep-dives cover the enforcement substrate in detail: [Pipeline Orchestration](docs/architecture/PIPELINE_ORCHESTRATION.md), [FTRA Boundary Enforcement](docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md), [Ingress Adapter Architecture](docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md), and [Extensibility Architecture](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md).
 
 ---
 
 ## Key Features
 
-- **Domain-Agnostic Governance Kernel** — Every enforcement mechanism operates on abstract action primitives. Domain semantics arrive exclusively through optional `cage.plugins` packages ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/), or adopter-authored), gated by `CAGE_ACTIVE_PLUGINS`. Proven by [`tests/test_domain_independence.py`](tests/test_domain_independence.py).
+- **Domain-Agnostic Governance Kernel (No Built-In Applications)** — Every enforcement mechanism operates on abstract action primitives. Domain semantics arrive exclusively through optional `cage.plugins` packages ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/), or adopter-authored), gated by `CAGE_ACTIVE_PLUGINS`. Proven by [`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py).
 - **Multi-Jurisdiction Compliance Profiles** — Dynamic loading of regional control profiles (`config/compliance/`) and thresholds (`config/thresholds/`) via `CAGE_DEPLOYMENT_REGION`. Ships `US_FED`, `EU_ECB` (EU AI Act, GDPR Art. 22, DORA, with Step 7 Fundamental Rights Impact Assessment attestation and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles) baselines; adding a jurisdiction is a config-only operation.
 - **Reusable LangGraph Governance Harness** — `OpaNodeConfig` and `NemoNodeConfig` factories allow any agent to inherit enterprise governance (tracing, metrics, fail-closed mechanisms) with pluggable domain-state extractors.
 - **DoWhy Causal Gatekeeper** — Microsoft DoWhy causal inference validates world-model integrity via placebo refutation before allowing high-stakes actions; fail-safe on error (blocks when causal assumptions cannot be verified). The Causal Gatekeeper's Redis fallback is now fail-closed: connection errors raise `RuntimeError` rather than returning a zero sentinel; absent keys return `None` (first-boot safe).
@@ -555,7 +572,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 1,509 unit tests passing, 0 failed (161 skipped); 1,622 integration passing, 0 failed (48 skipped — v2.1.1 2026-07-30)
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short   # 3,446 unit tests passing, 0 failed (96 skipped, 3,925 collected)
 ```
 
 ---
@@ -613,7 +630,7 @@ cybernetic-agent-governance-engine/
 │   │   ├── tiers/                    #      dose_barrier (2,3) · clinical_consensus (1,5)
 │   │   └── opa/dosing_governance.rego
 │   ├── agentsight-ui/                # [L3] React/TypeScript operator dashboard
-│   └── governed_financial_advisor/   # [Example] Reference application (not part of CAGE)
+│   └── governed_financial_advisor/   # [Demo] Reference application (demonstrates CAGE capabilities in finance; not part of CAGE)
 │       ├── graph/state.py            #         AgentState + LedgerEntry WAL schema
 │       └── utils/langfuse_utils.py   #         SagaCallbackHandler OTel interceptor
 ├── config/                           # [L3] Jurisdictional configuration layer
@@ -635,8 +652,10 @@ cybernetic-agent-governance-engine/
 ├── deployment/k8s/                   # [L3] Kubernetes manifests
 │   ├── linkerd-mtls-policy.yaml      #      Linkerd mTLS enforcement
 │   └── cilium-egress-lockdown.yaml   #      Cilium L7 FQDN egress lockdown
-├── tests/                            #      Full test suite (3,747 passing)
-│   ├── test_domain_independence.py   #      Proves L2 plugins don't modify L1 kernel
+├── tests/                            #      Full test suite (3,446 local unit passing, 3,925 collected)
+│   ├── test_bare_kernel_portability.py #   Proves L1 kernel boots without vendor SDKs or domain coupling
+│   ├── test_cage_plugin_validation.py  #   Validates L2 plugin API contracts and isolation
+│   ├── test_healthcare_plugin.py       #   Proves second domain pluggability without kernel edits
 │   ├── test_causal_gatekeeper.py     #      DoWhy causal inference tests
 │   ├── test_fiscal_limit_guard.py    #      Multi-agent collision tests
 │   └── ...
@@ -666,7 +685,7 @@ cybernetic-agent-governance-engine/
 | [`docs/architecture/PIPELINE_ORCHESTRATION.md`](docs/architecture/PIPELINE_ORCHESTRATION.md)        | Governance pipeline framework — `GovernanceStage` protocol, `StageRegistry`, orchestrator execution semantics, A0–A6 arbitration ladder, defer queue, lease ledger |
 | [`docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md`](docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md)  | Forward-Looking Trajectory Reachability Analyzer — signed terminal registry, reachability analysis, dual enforcement surfaces, bounding contracts B1–B10 |
 | [`docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md`](docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md) | Policy ingress layer — ACS / AAIF / OSCAL / Lula translation, AGW absorption, GEAP agent registry sync, AGP export |
-| [`docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md`](docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md)| Domain plugin extension model — `CagePlugin` contract, `cage.plugins` entry points, tier/barrier/rail/tool seams, finance vs. healthcare |
+| [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md)| Extensibility architecture & domain plugin extension model — `CagePlugin` contract, `cage.plugins` entry points, tier/barrier/rail/tool seams, finance vs. healthcare |
 | [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
 | [`docs/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
 | [`tests/`](tests/)                                                                     | Automated unit, integration, and red-team test suites              |

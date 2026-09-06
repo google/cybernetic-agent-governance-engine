@@ -6,7 +6,7 @@
 | **Date**             | 2026-08-22                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,553 passed, 1 failed, 51 skipped; live GKE integration confirmed per [`AGENTS.md`](../../AGENTS.md)) |
 | **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) |
 
 ---
@@ -38,7 +38,7 @@ The intensity of the regulatory environment varies by domain and jurisdiction, b
 2. **Plugins own nomenclature and parameters.** Which actions a domain claims, which scalar its barrier watches, which threshold key holds the floor, which critics vote, which tools exist.
 3. **Configuration owns jurisdiction.** Regional thresholds (`config/thresholds/`), control profiles (`config/compliance/`), policy bundles (`config/opa/`), and Lula assertions (`compliance/lula/`).
 
-[`tests/test_domain_independence.py`](../../tests/test_domain_independence.py) is the standing proof: it loads both example plugins together and asserts the kernel was not modified to accommodate the second one. Companion tests assert the healthcare package contains zero Lua scripts and zero KMS imports — it cannot fork the atomicity or signing paths. Authoring guide: [`DOMAIN_PLUGIN_ARCHITECTURE.md`](../architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) §10.
+[`tests/test_bare_kernel_portability.py`](../../tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](../../tests/test_cage_plugin_validation.py) provide the standing proof: they verify that Layer 1 boots cleanly without loading proprietary cloud vendor SDKs and that plugin contracts enforce domain isolation. Companion tests in [`tests/test_healthcare_plugin.py`](../../tests/test_healthcare_plugin.py) assert the healthcare package contains zero Lua scripts and zero KMS imports — it cannot fork the atomicity or signing paths. Authoring guide: [`DOMAIN_PLUGIN_ARCHITECTURE.md`](../architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) §10.
 
 ---
 
@@ -116,7 +116,7 @@ CAGE provides eight integrated capabilities. **Capabilities 2 and 4–8 are doma
 
 4. **Continuous Compliance Evidence Generation** — The Compliance Bridge service produces OSCAL component definitions, control implementation statements, and ISO 42001 evidence artifacts as a continuous byproduct of system operation. Evidence is archived to GCS for 7-year audit retention. OSCAL assessment state semantics follow NIST SP 800-53A §3.2 — four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, and `ERROR` (scanner failure — distinct from `NOT_APPLICABLE`).
 
-5. **Privacy-Preserving PII Detection and Masking** — Microsoft Presidio and NVIDIA NeMo Guardrails jointly detect and mask 15 PII entity types in both inbound prompts and outbound model responses. Masked data is subject to the 24-hour session retention limit enforced by Redis TTL policies. NeMo Guardrails (`src/gateway/governance/nemo/`) additionally enforces CBRN keyword rails (`colang/cbrn_rails.co`) under `US_FED` jurisdiction (NIST AI 600-1 §2.6). The LangGraph harness (`src/gateway/governance/langgraph_harness/`) wraps both NeMo and OPA as typed governance nodes composable into any StateGraph pipeline.
+5. **Privacy-Preserving PII Detection and Masking** — Microsoft Presidio and NVIDIA NeMo Guardrails jointly detect and mask 10 PII entity types in both inbound prompts and outbound model responses. Masked data is subject to the 24-hour session retention limit enforced by Redis TTL policies. NeMo Guardrails (`src/gateway/governance/nemo/`) additionally enforces CBRN keyword rails (`colang/cbrn_rails.co`) under `US_FED` jurisdiction (NIST AI 600-1 §2.6). The LangGraph harness (`src/gateway/governance/langgraph_harness/`) wraps both NeMo and OPA as typed governance nodes composable into any StateGraph pipeline.
 
 6. **Red Team Adversarial Testing Harness** — A built-in evaluation harness with 290+ adversarial payloads tests governance robustness against prompt injection, jailbreak attempts, and governance bypass patterns. Red team results feed directly into the POA&M remediation cycle.
 
@@ -130,7 +130,7 @@ CAGE provides eight integrated capabilities. **Capabilities 2 and 4–8 are doma
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-28. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,841 passed, 0 failed, 67 skipped** with **75.40% statement coverage** across all three regional compliance postures.
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-28. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **3,446 passed, 0 failed, 96 skipped** (3,925 collected) with statement coverage across all three regional compliance postures.
 
 ### 5.1 Control Family Readiness
 
@@ -158,7 +158,7 @@ CAGE is in active NIST RMF implementation. As of the assessment date, the system
 | Langfuse compliance credentials fail silently when absent  | **Open** (POAM-018) |
 | Terraform dual-project fallback defeats telemetry isolation | **Open** (POAM-019) |
 
-The most significant systemic gap is the absence of an SSP (POAM-015). No ATO recommendation can be issued until the SSP, FIPS 199 categorization signature, and remaining critical findings are resolved. See [`docs/POAM.md`](../compliance/cross-region/POAM.md) for the full Plan of Action and Milestones.
+The most significant systemic gap is the absence of an SSP (POAM-015). No ATO recommendation can be issued until the SSP, FIPS 199 categorization signature, and remaining critical findings are resolved. See [`docs/POAM.md`](../POAM.md) for the full Plan of Action and Milestones.
 
 ---
 
@@ -222,11 +222,11 @@ The safe set is `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. The CBF condition:
 h(S(t+1)) ≥ (1 − γ) · h(S(t))     γ ∈ (0, 1), γ = 0.5 (default)
 ```
 
-guarantees `h(S(t)) ≥ 0` for all `t` — i.e., the cash balance never falls below `min_cash_balance = $1,000 USD` — provided the invariant holds at `t = 0`. Implemented in [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) using Redis `WATCH/MULTI/EXEC` optimistic locking with `_MAX_RETRIES = 5`.
+guarantees `h(S(t)) ≥ 0` for all `t` — i.e., the cash balance never falls below `min_cash_balance = $1,000 USD` — provided the invariant holds at `t = 0`. Implemented in [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) using Lua-atomic check-and-commit (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification.
 
 ### 8.2 NoDirectBind Invariant
 
-All agent tool calls must pass through `validate_action()` — the single choke point for tool execution — and present a valid HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) verified via `verify_seal()` before the downstream actuator fires. Direct binding from an agent to an actuator — bypassing the governance pipeline — is structurally prohibited. This invariant is enforced at the framework level: no code path exists from agent intent to trade execution that does not traverse `SymbolicGovernor._run_checks()`. There is no `@governed_tool` decorator in the codebase.
+All agent tool calls must pass through `validate_action()` — the single choke point for tool execution — and present a valid v3 routing seal (`X-CAGE-Routing-Seal`) in asymmetric JWT format (signed by Cloud KMS HSM, with dev/test HMAC fallback) verified via `verify_seal()` before the downstream actuator fires. Direct binding from an agent to an actuator — bypassing the governance pipeline — is structurally prohibited. This invariant is enforced at the framework level: no code path exists from agent intent to trade execution that does not traverse `SymbolicGovernor._run_checks()`. There is no `@governed_tool` decorator in the codebase.
 
 ### 8.3 FRIA Zone Classification
 
@@ -238,62 +238,73 @@ Every governed action is classified into one of three Fundamental Rights Impact 
 | `DEFER` | 0.70 ≤ confidence < 0.95 | Synchronous blocking gate; context parked in Redis `db=1` (4-hour TTL) |
 | `DENY` | confidence < 0.70 | Hard denial; confidence-starvation boundary |
 
-The FRIA zone thresholds (`FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`) are sourced from `governance_thresholds.json` and enforced in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+The FRIA zone thresholds (`FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`) are sourced from `config/thresholds/*.json` (and `config/governance_thresholds.json`) and enforced in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
 ### 8.4 Provenance Hash Chain Integrity
 
 Every governance decision is recorded in a SHA-256 hash chain. Each `ProvenanceRecord` carries:
 
 ```
-record_hash_n = SHA-256(parent_hash_{n-1} || sorted_key_json(record_n))
+record_hash_n = SHA-256(parent_hash_{n-1} || jcs_canonicalize_plan(record_n))
 ```
 
-The chain uses **deterministic sorted-key JSON serialization** to ensure reproducibility across Python versions. Construction is O(n) in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. Records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. Implemented in [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py).
+The chain uses **deterministic RFC 8785 JSON Canonicalization Scheme (JCS)** serialization via [`src/gateway/governance/jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py) to guarantee cross-language deterministic byte representation without float serialization drift. Construction is O(n) in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. Records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. Implemented in [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py).
 
 ---
 
 ## 9. Governance Architecture
 
-### 9.1 8-Tier Symbolic Governor Pipeline
+### 9.1 Plugin-Registered Tier Pipeline (v3.0.0 Architecture)
 
-The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces an 8-tier pipeline (`_run_checks()`) on every `execute_trade` action, with Tiers 2 and 4 executing concurrently. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
+> **v3.0.0 architecture note:** The tier model has migrated from a fixed, kernel-owned tier ladder to a **plugin-registered tier system**. Domain plugins (finance, healthcare) register their governance tiers via [`GovernanceTierPlugin`](../../src/gateway/governance/contracts.py:218) protocol at startup. Tier numbering follows [`proof/model.py`](../../proof/model.py:128) `TIERS` tuple: `("ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria")`.
 
-| Tier | Name | Mathematical Invariant |
-|------|------|----------------------|
-### 9.1 Two-Phase Eight-Tier Pipeline Summary
+The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:1217) executes the governance pipeline in two phases. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
 
-| Phase | Tier | Description | Enforcement Mechanism |
-| ----- | ---- | ----------- | --------------------- |
-| **Phase 1** | 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` against the STPA ontology |
-| **Phase 1** | 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
-| **Phase 1** | 2b | OPA policy evaluation | `OPAClient` evaluation of `trade.governance` Rego policy prior to mutation |
-| **Phase 1** | 5 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; `_CRITIC_TIMEOUT_S=10.0` per critic |
-| **Phase 1** | 6 | Causal gatekeeper | SCM backdoor adjustment; $\beta \le 0 \implies \text{BLOCK}$; PlaceboTreatmentRefuter p < 0.05 |
-| **Phase 1** | 6b | FRIA zones | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
-| **Phase 2** | 2a | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` — Lua-atomic Redis check+debit |
-| **Phase 2** | 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC |
+| Tier | Name | Owner | Description | Enforcement Mechanism |
+| ---- | ---- | ----- | ----------- | --------------------- |
+| **0.5** | FTRA Boundary | Kernel | Action irreversibility classification & bypass detection (R-03) | [`_ftra_boundary_check()`](../../src/gateway/governance/symbolic_governor.py:1088) |
+| **1** | STPA UCA Validation | Kernel | Unsafe control action check | [`GeneratedSTPAValidator.validate()`](../../src/gateway/governance/generated_stpa_validator.py) |
+| **2** | Confidence Pre-check | Kernel | Agent confidence threshold | Inline logic in `_run_checks()` |
+| **—** | **Domain Tiers Phase 1 (read-only)** | **Plugin** | Registered tiers with `phase == 1`, sorted by `(phase, order)` | [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) |
+| **3b** | OPA Policy | Kernel | Rego policy evaluation | [`OPAClient.evaluate_policy()`](../../src/gateway/core/policy.py) |
+| **—** | **Domain Tiers Phase 2 (mutating)** | **Plugin** | Registered tiers with `phase == 2`, LIFO rollback on failure | [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) + [`_rollback_committed()`](../../src/gateway/governance/symbolic_governor.py:909) |
+| **7** | FRIA Gate | Kernel | External normative provider (confidence-mapped) | [`enforce_fria_boundary()`](../../src/gateway/governance/normative_provider.py) |
+
+**Finance plugin tiers** (registered by [`FinanceCagePlugin`](../../src/cage_finance/plugin.py:107)):
+- Order 2 (phase 1): Bounding contracts (instrument/venue/counterparty allowlisting)
+- Order 3 (phase 2): CBF (cash barrier via Lua atomic script)
+- Order 4 (phase 2): Fiscal limit pre-reservation
+- Order 5 (phase 1): Multi-agent consensus
+- Order 6 (phase 1): Causal gatekeeper (DoWhy placebo refutation)
+
+**Healthcare plugin tiers** (registered by [`CageHealthcarePlugin`](../../src/cage_healthcare/plugin.py)):
+- Order 3 (phase 2): Dose barrier (serum concentration CBF)
+- Order 5 (phase 1): Clinical consensus
 
 > **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation tiers emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
 ### 9.2 Key Mathematical Invariants
 
-**CBF (Tier 2a):** `h(S(t+1)) ≥ (1−γ)·h(S(t))` ensures cash balance never falls below `min_cash_balance`, executed via single-hop Redis Lua atomic script.
+**FTRA (Tier 0.5):** Kernel-side [`_ftra_boundary_check()`](../../src/gateway/governance/symbolic_governor.py:1088) classifies action irreversibility into four classes (`IRREVERSIBLE_TERMINAL` score 1.0, `EXTERNALLY_REVERSIBLE` score 0.8, `REVERSIBLE` score 0.5, `READ_ONLY` score 0.0) with bypass detection (R-03 mitigation).
+
+**CBF (Tier 3a, domain plugin):** `h(S(t+1)) ≥ (1−γ)·h(S(t))` ensures cash balance never falls below `min_cash_balance`, executed via single-hop Redis Lua atomic script. Registered by finance domain plugin via [`InvariantModel`](../../src/gateway/governance/contracts.py:342) protocol with [`CashBarrier`](../../src/cage_finance/invariants.py) instantiation.
 
 **Confabulation (Langfuse metric, not a tier):** `risk_score = 1.0 − confidence` maps agent confidence directly to a risk score. A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confabulation risk.
 
-**Causal (Tier 6):** Enforces a non-positive slope guard ($\beta \le 0 \implies \text{BLOCK}$) and bounded marginal risk scoring: $\text{risk\_score} = \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$. The PlaceboTreatmentRefuter runs 50 simulations; a statistically significant placebo effect (p < 0.05 or |effect| > 0.2) indicates poisoned model assumptions.
+**Causal (Tier 6, domain plugin):** Enforces a non-positive slope guard ($\beta \le 0 \implies \text{BLOCK}$) and bounded marginal risk scoring: $\text{risk\_score} = \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$. The PlaceboTreatmentRefuter runs 50 simulations; a statistically significant placebo effect (p < 0.05 or |effect| > 0.2) indicates poisoned model assumptions.
 
-**Consensus (Tier 5):** Boolean consensus logic — unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → human escalation; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention).
+**Consensus (Tier 5, domain plugin):** Boolean consensus logic — unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → human escalation; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention).
 
 ### 9.3 Routing Seal
 
-On approval, the governor returns a short-lived HMAC-SHA256 routing seal:
+On approval, the governor returns a short-lived routing seal token. In v3, the routing seal is an **asymmetric JWT with evidence binding** signed by Cloud KMS HSM (with HMAC-SHA256 fallback in local/offline environments):
 
 ```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
+JWT Header:  {"alg": "RS256", "typ": "JWT", "kid": "<kms-key-version>"}
+JWT Payload: {"sub": "<action_slug>", "params_hash": "<sha256>", "record_hash": "<evidence_hash>", "exp": <ts+30s>}
 ```
 
-30-second TTL; constant-time `hmac.compare_digest()` verification. The downstream actuator must verify this seal before firing — ensuring execution cannot proceed by ignoring the HTTP response. See [`src/gateway/governance/routing_seal.py`](../../src/governed_financial_advisor/utils/routing_seal.py).
+30-second TTL; the `record_hash` cryptographically binds the actuation clearance to a specific evidence record in the compliance audit stream. Downstream execution actuators ([`src/gateway/governance/execution_actuator.py`](../../src/gateway/governance/execution_actuator.py)) verify the seal against the JWKS endpoint before firing — ensuring execution cannot proceed by ignoring governance verdicts. See [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py).
 
 ---
 

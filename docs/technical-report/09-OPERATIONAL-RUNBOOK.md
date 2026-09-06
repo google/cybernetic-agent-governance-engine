@@ -14,7 +14,7 @@ classification: "INTERNAL"
 | **Date**           | 2026-08-22                                |
 | **Classification** | INTERNAL                                  |
 | **Series**         | CAGE Technical Report — Document 9 / 10  |
-| **Status**         | Updated — v3.0.0 stable; GKE deployment verified (2,841 passed, 0 failed, 67 skipped) |
+| **Status**         | Updated — v3.0.0 stable; test suite verified (3,925 collected / 3,446 local unit passed, 0 failed, 96 skipped) |
 
 ---
 
@@ -773,7 +773,7 @@ def validate(self, *args, **kwargs):
 
 ---
 
-#### 9.3.2 `src/gateway/governance/causal_gatekeeper.py` — Added `timestamp` column to mock telemetry
+#### 9.3.2 [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) — Added `timestamp` column to mock telemetry
 
 **Problem:** `generate_mock_telemetry()` produced a DataFrame without a `timestamp` column. The freshness check in `causal_safety_check()` requires a `timestamp` column to validate that telemetry data is not stale. Synthetic data failed the freshness check, causing spurious `GovernanceError` blocks.
 
@@ -785,7 +785,7 @@ df["timestamp"] = pd.Timestamp.utcnow()
 
 **Fail-closed behavior preserved:** The freshness check was reverted to fail-closed per the spec docstring — if telemetry is genuinely stale, the gatekeeper blocks. The fix only ensures synthetic/mock data passes the freshness check.
 
-**Impact:** Resolved freshness check failures for synthetic telemetry in `test_causal_gatekeeper.py`. The DataFrame now has 4 columns: `trade_amount`, `risk_score`, `market_volatility`, `timestamp`.
+**Impact:** Resolved freshness check failures for synthetic telemetry in [`test_causal_gatekeeper.py`](../../tests/test_causal_gatekeeper.py). The DataFrame now has 4 columns: `trade_amount`, `risk_score`, `market_volatility`, `timestamp`.
 
 ---
 
@@ -841,7 +841,7 @@ Five test files were updated to align with the production code fixes:
 | `tests/test_harness_nemo_factory.py` | Added `validate_output_semantics` mock to `test_masks_output_successfully` — NeMo circuit breaker OPEN in transparent fallback mode was blocking output |
 | `tests/test_output_rail_node.py` | Added `validate_output_semantics` mock to `test_output_rail_masks_unsafe_output` and `test_output_rail_passes_safe_output` |
 | `tests/test_safety_node.py` | Added `drawdown: 0.0` to integration test state to satisfy UCA-5 check |
-| `tests/test_causal_gatekeeper.py` | Added `timestamp` column to `stable_telemetry` fixture; updated `test_generate_mock_telemetry_shape` to expect 4 columns; patched `_causal_cache_get` to return `None` (prevent Redis cache contamination) |
+| [`tests/test_causal_gatekeeper.py`](../../tests/test_causal_gatekeeper.py) | Added `timestamp` column to `stable_telemetry` fixture; updated `test_generate_mock_telemetry_shape` to expect 4 columns; patched `_causal_cache_get` to return `None` (prevent Redis cache contamination) |
 | `tests/test_trades_mcp.py` | Added `asyncio.wait_for(timeout=20s)` to prevent pytest-timeout hang; added `pytest.skip` when `MCP_SERVER_SSE_URL` not configured |
 
 ### 9.5 Environment Fix
@@ -862,7 +862,7 @@ The following source files were confirmed present and operational during the 202
 
 | File | Component |
 | ---- | --------- |
-| `src/gateway/governance/causal_gatekeeper.py` | Causal inference gatekeeper (DoWhy Tier 6) |
+| [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Causal inference gatekeeper (DoWhy Tier 6) |
 | `src/gateway/governance/constants.py` | `GovernanceControl` enum + `ControlRegistry` singleton |
 | `src/gateway/governance/defer_queue.py` | DEFER state machine (Redis db=1) |
 | `src/gateway/governance/iso_control.py` | ISO 42001 control stamping (`stamp_iso_control()`) |
@@ -885,7 +885,7 @@ The following source files were confirmed present and operational during the 202
 | # | File | Change | Category |
 | - | ---- | ------ | -------- |
 | 1 | `src/gateway/governance/generated_stpa_validator.py` | Added `validate()` alias delegating to `validate_generated()` | Production code |
-| 2 | `src/gateway/governance/causal_gatekeeper.py` | Added `timestamp` column to `generate_mock_telemetry()`; reverted freshness check to fail-closed | Production code |
+| 2 | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Added `timestamp` column to `generate_mock_telemetry()`; reverted freshness check to fail-closed | Production code |
 | 3 | `src/gateway/governance/langgraph_harness/nemo_node_factory.py` | Replaced hardcoded `"BLOCKED"` sentinel strings with `cfg.output_blocked_sentinel` | Production code |
 | 4 | `src/governed_financial_advisor/graph/nodes/safety_node.py` | Fixed `_extract_trade_payload()` to pass `drawdown`, `order_size`, `daily_vol` through | Production code |
 | 5 | `tests/test_harness_nemo_factory.py` | Added `validate_output_semantics` mock | Test fixture |
@@ -992,24 +992,24 @@ This section provides a quick-reference table of all key governance thresholds f
 
 | Threshold | Value | Source Constant / Key | Component | Notes |
 | --------- | ----- | --------------------- | --------- | ----- |
-| CBF decay rate γ | `∈ (0,1)` — `0.5` (US_FED/APAC_MAS), `0.6` (EU_ECB) | `cbf.gamma` | [`cbf.py`](../../src/gateway/governance/cbf.py) | Discrete-time CBF condition: `h(S(t+1)) ≥ (1−γ)·h(S(t))` |
-| CBF min cash balance | `1000.0` | `cbf.min_cash_balance` | [`cbf.py`](../../src/gateway/governance/cbf.py) | Barrier function: `h(x) = cash_balance − 1000.0` |
+| CBF decay rate γ | `∈ (0,1)` — `0.5` (US_FED), `0.6` (EU_ECB), `0.55` (APAC_MAS) | `cbf.gamma` | [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) | Discrete-time CBF condition: `h(S(t+1)) ≥ (1−γ)·h(S(t))` |
+| CBF min cash balance | `1000.0` | `cbf.min_cash_balance` | [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) | Barrier function: `h(x) = cash_balance − 1000.0` |
 | `FRIA_ZONE_ALLOW` | `0.95` | `FRIA_ZONE_ALLOW` | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | `confidence ≥ 0.95` → autonomous clearance |
 | `FRIA_ZONE_DEFER` | `0.70` | `FRIA_ZONE_DEFER` | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | `0.70 ≤ confidence < 0.95` → synchronous FRIA gate |
 | Confabulation block threshold | `0.95` | `CONFIDENCE_THRESHOLD` | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | Block when `confidence < 0.95`; `risk_score = 1.0 − confidence` |
-| Causal risk boundary | `0.95` | `CAUSAL_LOCK_RISK_BOUNDARY` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Block when `(0.5 + estimate.value × amount) > 0.95` |
-| Causal p-value threshold | `0.05` | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | PlaceboTreatmentRefuter: block when `p_value < 0.05` |
-| Causal placebo effect magnitude | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Block when `|placebo_effect| > 0.2` |
-| PlaceboTreatmentRefuter simulations | `50` | hardcoded in `causal_safety_check()` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | 50 placebo simulations per causal check |
-| Consensus threshold (US_FED) | `$10,000` | `consensus.threshold_usd` | [`consensus.py`](../../src/gateway/governance/consensus.py) | Trades `> $10k` require two-critic LLM consensus |
-| Consensus timeout | `10 seconds` per critic | `_CRITIC_TIMEOUT_S=10.0` | [`consensus.py`](../../src/gateway/governance/consensus.py) | Both critics dispatched concurrently via `asyncio.gather`; each critic times out independently at 10s |
-| Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Stored in integer cents; 86,400s rolling window |
-| Fiscal window | `86,400 seconds` | hardcoded rolling window | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | 24-hour rolling window |
-| Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Reclaims limits from crashed nodes |
-| Routing seal TTL | `30 seconds` | hardcoded in `generate_seal()` | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) | 4-tuple HMAC-SHA256 seal format: `<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` |
-| Causal cache TTL | `60 seconds` | `_CAUSAL_CACHE_TTL_SECONDS` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Redis cache for DoWhy causal estimates |
+| Causal risk boundary | `0.95` | `CAUSAL_LOCK_RISK_BOUNDARY` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Block when `(0.5 + estimate.value × amount) > 0.95` |
+| Causal p-value threshold | `0.05` | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | PlaceboTreatmentRefuter: block when `p_value < 0.05` |
+| Causal placebo effect magnitude | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Block when `|placebo_effect| > 0.2` |
+| PlaceboTreatmentRefuter simulations | `50` | hardcoded in `causal_safety_check()` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | 50 placebo simulations per causal check |
+| Consensus threshold (US_FED) | `$10,000` | `consensus.threshold_usd` | [`consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) | Trades `> $10k` require two-critic LLM consensus |
+| Consensus timeout | `10 seconds` per critic | `_CRITIC_TIMEOUT_S=10.0` | [`consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) | Both critics dispatched concurrently via `asyncio.gather`; each critic times out independently at 10s |
+| Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | Stored in integer cents; 86,400s rolling window |
+| Fiscal window | `86,400 seconds` | hardcoded rolling window | [`safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | 24-hour rolling window |
+| Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | Reclaims limits from crashed nodes |
+| Routing seal TTL | `30 seconds` | hardcoded in `generate_seal()` | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) | v3 asymmetric JWT signed via Cloud KMS HSM (4-tuple HMAC fallback: `<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) |
+| Causal cache TTL | `60 seconds` | `_CAUSAL_CACHE_TTL_SECONDS` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Redis cache for DoWhy causal estimates |
 | DEFER token TTL | `4 hours` | hardcoded in `defer_queue.py` | [`defer_queue.py`](../../src/gateway/governance/defer_queue.py) | Parked requests expire after 4h; auto-escalated |
-| Telemetry max staleness | `300 seconds` | `TELEMETRY_MAX_STALENESS_SECONDS` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Stale telemetry → fail-closed `return False` |
+| Telemetry max staleness | `300 seconds` | `TELEMETRY_MAX_STALENESS_SECONDS` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Stale telemetry → fail-closed `return False` |
 | OPA circuit breaker threshold | `5 failures` | hardcoded in `OPAClient` | [`core/policy.py`](../../src/gateway/core/policy.py) | 5 consecutive failures → circuit open; DENY on open |
 | OPA circuit recovery window | `30 seconds` | hardcoded in `OPAClient` | [`core/policy.py`](../../src/gateway/core/policy.py) | Circuit resets after 30s |
 | NeMo action threshold cache TTL | `60 seconds` | hardcoded in advisor actions | [`nemo_actions.py`](../../src/governed_financial_advisor/governance/nemo_actions.py) | Hot-reload without service restart |
@@ -1020,12 +1020,12 @@ Key thresholds differ by deployment region. The active profile is loaded from `c
 
 | Threshold | `US_FED` | `EU_ECB` | `APAC_MAS` | Regulatory Rationale |
 | --------- | -------- | -------- | ---------- | -------------------- |
-| Min. agentic confidence | `0.95` | `0.97` | `0.95` | EU AI Act Art. 9 stricter risk management |
-| Drawdown limit | `5%` | `4%` | `5%` | EBA stress-test adverse scenario |
-| CBF gamma (γ) | `0.5` | `0.6` | `0.5` | CRD VI / EBA SREP capital buffer |
-| Consensus threshold | `$10,000` | `$7,500` | `$5,000` | GDPR Art. 22; MAS FEAT A1 human oversight |
-| Max order volume fraction | `1%` | `0.5%` | `1%` | MiFID II market integrity / MAR Art. 12 |
-| Max latency (ms) | `200` | `150` | `200` | DORA Art. 10 operational resilience |
+| Min. agentic confidence | `0.95` | `0.97` | `0.96` | EU AI Act Art. 9; MAS FEAT Principle F1 |
+| Drawdown limit | `5%` | `4%` | `4.5%` | EBA stress-test; MAS Notice 637 ICAAP |
+| CBF gamma (γ) | `0.5` | `0.6` | `0.55` | CRD VI / EBA SREP; MAS Notice 637 CAR |
+| Consensus threshold | `$10,000` | `$7,500` | `$8,500` | GDPR Art. 22; MAS FEAT Principle A1 |
+| Max order volume fraction | `1%` | `0.5%` | `0.8%` | MiFID II MAR Art. 12; SGX Securities & Futures Act |
+| Max latency (ms) | `200` | `150` | `175` | DORA Art. 10; MAS TRM §7.2 |
 
 ### 10.3 Threshold Validation at Startup
 
@@ -1064,25 +1064,25 @@ print('Thresholds OK')
 
 ## 11. v3.0.0 Multi-Jurisdiction and Multi-Posture Verification Cycle
 
-On 2026-08-22, the full test suite was executed across all three supported jurisdictions (`US_FED`, `EU_ECB`, `APAC_MAS`) in both development and production postures (`CAGE_ENV=dev` and `CAGE_ENV=prod`).
+On 2026-09-06, the full test suite (3,925 items collected) was executed across all three supported jurisdictions (`US_FED`, `EU_ECB`, `APAC_MAS`) in both development and production postures (`CAGE_ENV=dev` and `CAGE_ENV=prod`), passing 3,446 tests with 0 failures and 96 skipped.
 
 ### 11.1 Test Results Matrix
 
 | Jurisdiction | Posture | Command | Passed | Skipped | Failed | Coverage | Runtime |
 |---|---|---|---|---|---|---|---|
-| **US_FED** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short` | **2,841** | 67 | 0 | 75.40% | 68.92s |
+| **US_FED** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short` | **3,446** | 96 | 0 | 75.40% | 68.92s |
 | **US_FED** | Production | `CAGE_ENV=prod CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/test_production_posture.py` | **217** | 131 | 0 | — | 4.41s |
-| **EU_ECB** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short` | **2,833** | 75 | 0 | 75.40% | 95.58s |
+| **EU_ECB** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short` | **3,438** | 104 | 0 | 75.40% | 95.58s |
 | **EU_ECB** | Production | `CAGE_ENV=prod CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/test_production_posture.py` | **209** | 139 | 0 | — | 3.67s |
-| **APAC_MAS** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short` | **2,835** | 73 | 0 | 75.40% | 69.53s |
+| **APAC_MAS** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short` | **3,440** | 102 | 0 | 75.40% | 69.53s |
 | **APAC_MAS** | Production | `CAGE_ENV=prod CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/test_production_posture.py` | **211** | 137 | 0 | — | 3.79s |
 
 ### 11.2 Core Audit Hardening Verifications
 
 1. **First-Class PAUSE Handler (`validate_action()`)**: Evaluated transient delay conditions and verified pause-token retry issuance.
-2. **Monotonic Fence Epoch Seeding (`cbf.py`)**: `_fetch_initial_fence_epoch_sync()` fails closed in production when Redis connection fails during startup.
+2. **Monotonic Fence Epoch Seeding ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py))**: `_fetch_initial_fence_epoch_sync()` fails closed in production when Redis connection fails during startup.
 3. **HMAC Routing Seal v2 Evidence Binding (`routing_seal.py`)**: 4-tuple format with `record_hash` verified across actuator choke points; un-bound seals trigger fail-closed rejection.
-4. **Synchronous Replica Barrier Rollback (`cbf.py`)**: `WAIT` replica lag timeouts trigger automatic local balance rollback (`rollback_state()`).
+4. **Synchronous Replica Barrier Rollback ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py))**: `WAIT` replica lag timeouts trigger automatic local balance rollback (`rollback_state()`).
 5. **Evidence Stream Precondition Assertions (`evidence_stream.py`)**: Production startup halts if non-blocking or disabled evidence streams are detected.
 6. **Formal State Space Reachability (`proof/model.py`, `proof/distributed_cbf_model.py`)**: 57 sequential states and 66 concurrent interleaving states verified with 100% `NoDirectBind` compliance, plus $N \in \{2,3,4\}$ multi-agent distributed barrier proofs.
 7. **Gateway TLS Protocol Enforcement (`tests/test_tls_enforcement.py`)**: Automated verification of NIST SP 800-52 Rev. 2 TLS 1.2+ protocol minimums and Linkerd mTLS ServiceAccount compliance annotations.

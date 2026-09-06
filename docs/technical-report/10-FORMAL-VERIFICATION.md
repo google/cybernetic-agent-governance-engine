@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-08-22                |
 | **Version**        | 3.0                       |
-| **Status**         | Current — v3.0.0 stable; GKE deployment verified; **2,841 passing, 0 failed, 67 skipped** (75.40% statement coverage); NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states; Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
+| **Status**         | Current — v3.0.0 stable; test suite verified; **3,925 collected / 3,446 local unit passed, 0 failed, 96 skipped**; NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states; Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
@@ -99,7 +99,7 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | **AARM-V7** | Context Window Overflow — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} \in [0.70, 0.95) \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
 | **AARM-V8** | Temporal Deception — model engineers its own privilege escalation via time-based manipulation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without `reviewer\_identity \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
 | **AARM-V9** | Privilege Escalation — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`ConsensusModelRegistry`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
-| **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (15 entity types) in NeMo Guardrails output rail + Cilium L7 FQDN egress lockdown (`deployment/k8s/cilium-egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
+| **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (10 entity types) in NeMo Guardrails output rail + Cilium L7 FQDN egress lockdown (`deployment/k8s/cilium-egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
 
 > **FUTURE STATE (POAM-023):** An `AnchorageGrpcLedgerProvider` for externally reconciled CBF balance anchoring was referenced in earlier drafts of this document but has not been implemented. The current implementation uses Presidio PII masking and Cilium L7 network policy for AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py). The "Stale Ground Truth" threat (balance staleness) is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above.
 | **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in 0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
@@ -207,7 +207,7 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 - `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid, unconsumed, and unexpired.
 - `SEAL_ISSUED` → `DENIED` if the seal is invalid, consumed, or expired (e.g., TTL elapsed, HMAC mismatch).
 
-**Proof results (run: `python3 proof/model.py`):**
+**Proof results (run: `uv run python proof/model.py`):**
 
 ```
 [gated]   Reachable states: 57
@@ -314,7 +314,7 @@ Additionally, runtime causal gatekeeper errors (previously silently skipped via 
 
 ## Step 8: Control Barrier Functions — Formal Safety Invariant
 
-**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)
 
 ### Mathematical Formulation
 
@@ -390,47 +390,53 @@ The Lua script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT r
 
 **Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
-The Routing Seal is a short-lived HMAC-SHA256 token issued by the Hybrid Gateway after a successful governance approval. Downstream actuators **must** verify the seal before executing any trade. This closes the direct-bind shortcut: execution cannot proceed by ignoring the HTTP governance response.
+The Routing Seal is a short-lived cryptographic token issued by the Hybrid Gateway after a successful governance approval. Downstream actuators **must** verify the seal before executing any trade. This closes the direct-bind shortcut: execution cannot proceed by ignoring the HTTP governance response.
 
 ### Seal Format
 
+In production (v3), the seal is a standard **asymmetric JWT** signed via Cloud KMS HSM:
+- **Header:** `{"alg": "RS256"|"ES256", "typ": "JWT", "kid": "<kms-key-id>"}`
+- **Payload:** `{"iss": "cage-governance-kernel", "aud": "cage-execution-engine", "exp": <unix_ts>, "act": "<action_slug>", "ehash": "<record_hash_hex>"}`
+
+In development/test environments without KMS, it falls back to a **4-tuple HMAC** token:
+
 ```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
+<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
 ```
 
 | Field | Description |
 |-------|-------------|
 | `expire_ts_hex` | Unix timestamp (seconds) of expiry, hex-encoded |
 | `action_slug` | Action name lowercased, underscores replaced with hyphens, truncated to 32 chars |
-| `hmac_hex` | Lowercase hex-encoded HMAC-SHA256 digest |
+| `record_hash_hex` | Hex-encoded SHA-256 hash of the durable evidence record |
+| `hmac_hex` | Lowercase hex-encoded HMAC-SHA256 digest (dev/test fallback) |
 
 ### Cryptographic Contract
 
-**Key:** `GOVERNANCE_SALT` environment variable (≥ 32 bytes in production; enforced by `assert_custom_salt_in_production()` at import time).
+**Key:** Cloud KMS HSM asymmetric key ring in production; `CAGE_ROUTING_SEAL_SECRET` / `GOVERNANCE_SALT` (≥ 32 bytes in production; enforced by startup assertions) for HMAC fallback.
 
-**Message:** `<expire_hex>.<action_slug>.` + canonical JSON payload, where the payload is `json.dumps({"action": action, **params}, sort_keys=True, separators=(",", ":"))` — sorted keys ensure deterministic serialization regardless of dict insertion order.
+**Evidence Binding:** The seal binds the action to the exact compliance evidence stream record via `record_hash` (`ehash` JWT claim).
 
-**Algorithm:** HMAC-SHA256 (`hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()`).
+**Algorithm:** RS256/ES256 (KMS HSM) in production; HMAC-SHA256 in test/dev environments.
 
-**TTL:** 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). Seals expire after this window; `verify_seal()` checks `time.time() > expire_ts` before HMAC verification.
+**TTL:** 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). Seals expire after this window; `verify_seal()` checks expiry before cryptographic verification.
 
-**Timing-attack resistance:** HMAC comparison uses `hmac.compare_digest(received_sig, expected_sig)` — constant-time comparison that prevents timing-based forgery attacks.
+**Timing-attack resistance:** HMAC fallback comparison uses `hmac.compare_digest(received_sig, expected_sig)` — constant-time comparison that prevents timing-based forgery attacks.
 
-**Fail-raised contract:** `verify_seal()` raises `SymbolicGovernorViolation` on any failure (malformed, expired, action mismatch, HMAC mismatch). This makes it impossible for callers to silently ignore a failed verification — the exception propagates unless explicitly caught.
+**Fail-raised contract:** `verify_seal()` raises `SymbolicGovernorViolation` on any failure (malformed, expired, action mismatch, cryptographic mismatch). This makes it impossible for callers to silently ignore a failed verification — the exception propagates unless explicitly caught.
 
 ### Verification Flow
 
 ```
-generate_seal(action, params)
-  → expire_ts = now + 30s
-  → seal = f"{expire_hex}.{action_slug}.{hmac_hex}"
+generate_seal_with_evidence(action, params, record_hash)
+  → In production: sign JWT via Cloud KMS HSM binding action + ehash
+  → In dev fallback: seal = f"{expire_hex}.{action_slug}.{record_hash_hex}.{hmac_hex}"
 
-verify_seal(seal, action, params)
-  1. Split on "." → 3 parts (malformed → SymbolicGovernorViolation)
-  2. Parse expire_hex → check time.time() > expire_ts (expired → raise)
-  3. Check action_slug matches expected (mismatch → raise)
-  4. Recompute HMAC; hmac.compare_digest(received, expected) (mismatch → raise)
-  5. Return True
+verify_seal(seal, action, params, expected_record_hash)
+  1. Detect format (JWT vs 4-tuple HMAC)
+  2. If JWT: verify KMS HSM signature, claims, expiry, and ehash match
+  3. If HMAC: split 4 parts → verify expiry, action_slug, evidence binding, and HMAC
+  4. Return True on success; raise SymbolicGovernorViolation on any failure
 ```
 
 ---
@@ -476,7 +482,7 @@ In production, each record is signed with the KMS key ring via [`src/gateway/gov
 
 ## Step 11: FiscalLimitGuard — Quantitative Implementation Details
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+**Source:** [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py)
 
 Step 5 above provides the formal race-condition proof for `FiscalLimitGuard`. This step documents the quantitative implementation parameters verified against the source.
 
