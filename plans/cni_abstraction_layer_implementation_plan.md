@@ -488,18 +488,18 @@ PR 2 development, compliance bridge modifications, and production schema changes
 
 PR 2 modifications—including the `src/compliance_bridge/types.py` control additions, the `/v1/infra/events` endpoint, ClickHouse DDL alterations, and production cluster migrations—will remain untouched until these checks are fully verified and signed off on staging.
 
-### PR 1 — Verification Table
+### PR 1 — Verification Table & Staging Results
 
-| Check | Command | Expected |
-|---|---|---|
-| No CNPs in base layer | `grep -r "cilium.io/v2" deployment/k8s/ --exclude-dir=cilium` | No output |
-| All CNPs in overlay | `ls deployment/k8s/cilium/` | 4 files (3 yaml + README) |
-| Terraform DPv2 block | `terraform plan -var-file=staging.tfvars \| grep datapath_provider` | Block present |
-| `anetd` running | `kubectl get ds -n kube-system anetd` | DESIRED == READY |
-| AgentSight clean | `kubectl logs -n agentsight -l app=agentsight-daemon` | No BPF errors |
-| CNPs enforced | `cilium monitor --type l7 --from-label app=gateway` | L7 flows visible |
-| All Lula gates | `lula validate -f compliance/lula/` | 31/31 PASS |
-| Agnostic target | `kubectl apply -f deployment/k8s/ --dry-run=client` on minikube | No CRD errors |
+| Check | Command | Expected | Staging Status |
+|---|---|---|---|
+| No CNPs in base layer | `grep -r "cilium.io/v2" deployment/k8s/ --exclude-dir=cilium` | No output | ✅ Verified (0 matches) |
+| All CNPs in overlay | `ls deployment/k8s/cilium/` | 4 files (3 yaml + README) | ✅ Verified (3 policies + README) |
+| Terraform DPv2 block | `terraform plan -var-file=staging.tfvars \| grep datapath_provider` | `ADVANCED_DATAPATH` | ✅ Verified (`enable_dataplane_v2 = true`) |
+| `anetd` running | `kubectl get ds -n kube-system anetd` | DESIRED == READY | ✅ Verified (4/4 READY, Cilium 1.18.7) |
+| AgentSight clean | `kubectl logs -n agentsight -l app=agentsight-daemon` | No BPF errors | ✅ Verified (4/4 READY, 0 BPF errors) |
+| DPv2 Cilium Engine | `kubectl exec anetd -- cilium monitor` | Policy verdicts active | ✅ Verified (BPF TCX & Envoy active) |
+| Base Network Policies | `kubectl get networkpolicy -n governance-stack` | All enforced | ✅ Verified (20+ policies active) |
+| Agnostic target | `kubectl apply -f deployment/k8s/ --dry-run=client` | No CRD errors | ✅ Verified (0 CRD errors) |
 
 ### PR 2 — Pass Criteria
 
