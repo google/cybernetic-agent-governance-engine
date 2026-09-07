@@ -3,7 +3,7 @@
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
 | **Document Version** | 3.0                                                                      |
-| **Date**             | 2026-08-22                                                               |
+| **Date**             | 2026-09-07                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
 | **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
@@ -238,6 +238,7 @@ For complete adapter design patterns, latency budgets, sidecar architecture, and
 | Technology                          | Role                   | Details                                                                                               |
 | ----------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------- |
 | **Google Kubernetes Engine (GKE)**  | Runtime platform       | `governance-stack` namespace; 9 `NetworkPolicy` objects; default-deny posture                         |
+| **Cilium / GKE Dataplane V2**       | L7 network policy CNI  | `CiliumNetworkPolicy` resources in `deployment/k8s/cilium/`; FQDN allowlist enforcement via eBPF DNS proxy; `anetd` DaemonSet in `kube-system`; activated by `enable_dataplane_v2 = true` in Terraform GKE module |
 | **Terraform**                       | Infrastructure-as-code | `infra/modules/` (16 shared modules) + `infra/targets/` (`agnostic/`, `gcp-gke/`)                     |
 | **Docker**                          | Containerization       | Multi-stage builds; `Dockerfile`, `Dockerfile.vllm`, `Dockerfile.lula-*`                              |
 | **Google Cloud Build**              | CI/CD                  | Dot notation: `cloudbuild.gateway.yaml`, `cloudbuild.vllm.yaml`, `cloudbuild.lula.yaml`, etc.          |

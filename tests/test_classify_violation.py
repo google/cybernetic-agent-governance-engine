@@ -44,11 +44,22 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def reset_feature_flags(monkeypatch):
-    """Reset feature flags to default values before each test."""
+    """Reset feature flags to default values before and after each test."""
     monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
     monkeypatch.setenv("CAGE_NARROW_ENABLED", "false")
     monkeypatch.setenv("CAGE_PAUSE_ENABLED", "false")
     monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
+    import src.gateway.governance.symbolic_governor as sg
+
+    sg.CAGE_DEFER_ENABLED = True
+    sg.CAGE_NARROW_ENABLED = False
+    sg.CAGE_PAUSE_ENABLED = False
+    sg.FRIA_ZONE_DEFER = 0.70
+    yield
+    sg.CAGE_DEFER_ENABLED = True
+    sg.CAGE_NARROW_ENABLED = False
+    sg.CAGE_PAUSE_ENABLED = False
+    sg.FRIA_ZONE_DEFER = 0.70
 
 
 def _classify_violation_wrapper(

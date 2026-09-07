@@ -7,19 +7,52 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased]
+## [3.0.0] - 2026-09-07
 
-> **Reference Architecture Note:** CAGE is an illustrative reference architecture
-> for AI governance patterns. The changes below include breaking API and protocol
-> changes that would typically require a MAJOR version bump under strict SemVer.
-> However, as a reference implementation for adopters to adapt rather than a
-> production deployment, version increments follow an illustrative pattern rather
-> than mandatory SemVer obligations. Breaking changes are documented in full for
-> adopter clarity.
+> **Major Version Release:** Architectural cleanup, formal safety consolidations,
+> governed threshold centralization, RFC 8785 JCS canonicalization, 6-primitive
+> governance runtime (PAUSE/NARROW/DEFER), Lua-atomic CBF, provider integrations,
+> Cilium L7 CNI abstraction layer, and ClickHouse compliance telemetry.
+> See [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full migration guidance.
 
-> **Domain Pipeline Extraction:** Multi-PR refactoring to separate kernel (Layer 1)
-> from domain-specific plugins (Layer 2), establishing capability-driven tier
-> dispatch architecture. Removes legacy inline governance mechanisms.
+### Cilium & Compliance Telemetry (2026-09-07)
+
+#### feat(infra)! — CNI Abstraction Layer for Cilium L7 Overlay
+
+- **Cilium NetworkPolicy Directory** — Added `deployment/k8s/cilium/` containing three `CiliumNetworkPolicy` resources: `egress-lockdown.yaml` (FQDN allowlist for gateway, sovereign-agent, and financial-advisor pods), `reconciliation-worker-egress.yaml` (egress isolation for the reconciliation CronJob), and `trivy-egress-fqdn.yaml` (Trivy scanner allowlist). These extend the portable `networking.k8s.io/v1` baseline with L7 DNS-aware filtering on GKE Dataplane V2 / Cilium-enabled clusters.
+- **AgentSight DaemonSet** — Updated `deployment/k8s/agentsight-daemon.yaml` with updated pod spec.
+- **Terraform GKE Module** — `infra/modules/gcp_gke_cluster/main.tf` and `variables.tf` updated with Cilium/Dataplane V2 configuration variables.
+- **Terraform GKE Target** — `infra/targets/gcp-gke/main.tf` updated to pass CNI configuration through the cluster module.
+- **Staging TFVars** — `infra/targets/gcp-gke/staging.tfvars` updated with CNI-related settings.
+
+#### feat(compliance) — Cilium Telemetry Integration and ClickHouse Evidence Stream
+
+- **`src/compliance_bridge/clickhouse_sink.py`** — New ClickHouse sink for streaming infrastructure telemetry events from the compliance bridge.
+- **`src/compliance_bridge/main.py`** — Added infrastructure event telemetry endpoint and Cilium telemetry pipeline.
+- **`src/compliance_bridge/types.py`** — New types for infrastructure compliance events.
+- **`compliance/lula/lula-validation-cilium-dpv2.yaml`** — New Lula validation asserting that the GKE Dataplane V2 `anetd` DaemonSet is scheduled and ready on all nodes (NIST SP 800-53 SC-7 — Boundary Protection).
+- **`deployment/clickhouse/evidence_stream_schema.sql`** — Added schema for Cilium telemetry evidence stream.
+- **Prod TFVars** — `prod.tfvars`, `eu-prod.tfvars`, `apac-prod.tfvars` updated with Cilium/DPv2 settings for production regions.
+
+#### fix(governance) — Feature-Flag Isolation for xdist Safety
+
+- **`src/gateway/governance/symbolic_governor.py`** — Isolated feature-flag reads to prevent state leakage between parallel test workers when running `pytest -n auto`. Flags are now read per-invocation rather than cached at module import time.
+- **`tests/test_classify_violation.py`** — Added test coverage for feature-flag isolation behavior.
+
+#### fix(nemo) — Correct self_check Import Paths
+
+- **`config/rails/actions.py`** — Fixed `self_check_input` and `self_check_output` import paths to match the installed `nemoguardrails` package structure (`nemoguardrails.library.self_check.input_check.actions` / `nemoguardrails.library.self_check.output_check.actions`).
+- **`src/gateway/governance/nemo/manager.py`** — Removed unsupported `context` keyword argument; fixed `pre_check` method signature.
+- **`src/gateway/server/inference_proxy.py`** — Updated NeMo pre-check call to match corrected signature.
+
+#### fix(compliance) — Lula Validation Schema and Bridge Config
+
+- **`compliance/lula/lula-validation-cilium-dpv2.yaml`** — Updated Lula validation schema to match current Lula version requirements.
+- **`infra/modules/compliance_bridge/main.tf`** — Added compliance bridge Terraform configuration.
+
+#### style(tests) / fix(tests) — Test Hygiene
+
+- **`tests/test_pause_primitive.py`** — Applied ruff formatter; patched dynamic feature flags to prevent cross-worker state pollution in xdist runs.
 
 ### Breaking Changes
 
@@ -85,7 +118,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 #### Legacy Trade Dispatch API Removal
 
-**Before (removed in v4.0.0):**
+**Before (removed in v3.0.0):**
 ```python
 # Legacy direct trade dispatch (removed)
 response = requests.post(
@@ -93,7 +126,7 @@ response = requests.post(
 )
 ```
 
-**After (required in v4.0.0):**
+**After (required in v3.0.0):**
 ```python
 # Use canonical execution actuator protocol
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
@@ -108,7 +141,7 @@ response = requests.post("http://gateway:8080/v1/execute", json=envelope.to_dict
 
 #### Compliance Bridge Escalation Authentication
 
-**Before (removed in v4.0.0):**
+**Before (removed in v3.0.0):**
 ```python
 # Unauthenticated escalation (security vulnerability)
 response = requests.post(
@@ -117,7 +150,7 @@ response = requests.post(
 )
 ```
 
-**After (required in v4.0.0):**
+**After (required in v3.0.0):**
 ```python
 # Authenticated escalation with routing seal
 from src.gateway.governance.routing_seal import generate_seal
@@ -137,14 +170,7 @@ response = requests.post(
 
 ---
 
-## [3.0.0] - 2026-08-28
-
-> **Major Version Release:** Architectural cleanup, formal safety consolidations,
-> governed threshold centralization, RFC 8785 JCS canonicalization, 6-primitive
-> governance runtime (PAUSE/NARROW/DEFER), Lua-atomic CBF, and provider integrations.
-> See [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full migration guidance.
-
-### Breaking Changes
+### Core Architecture & Security Hardening
 
 #### Backward-Compatibility Remediation & JCS Migration (BC-01–BC-08)
 - **Canonicalization (BC-01)** — RFC 8785 JCS migration completed across `src/`: every executable `json.dumps(..., sort_keys=True)` canonicalization site now uses `jcs_canonicalize_plan()`. Affects the `ContextAccumulator` and `EvidenceStreamSink` hash chains (write and verify migrated atomically), the WORM/KMS UCA signing path, ConsequenceToken JWS envelopes, routing seals, OPA/query cache keys, the reconciliation signed balance, the control-registry profile hash, and provider receipt/state digests. Closes POAM-2026-060 (`refactor(compliance)!`)
@@ -703,7 +729,6 @@ First stable reference implementation with full security hardening scope.
 
 ---
 
-[Unreleased]: https://github.com/google/cybernetic-governance-engine/compare/v3.0.0...HEAD
 [3.0.0]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.2...v3.0.0
 [2.1.2]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.1...v2.1.2
 [v2.1.1]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.0...v2.1.1

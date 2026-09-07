@@ -30,6 +30,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | Validation File                                          | Control | Standard             | Region Scope | Status    | Description                                                        |
 | -------------------------------------------------------- | ------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
 | [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | NIST SP 800-53       | US_FED       | ✅ Active | Fiscal Limits and RBAC — OPA ConfigMap label present in `governance-stack` namespace |
+| [`lula-validation-cilium-dpv2.yaml`](lula-validation-cilium-dpv2.yaml) | SC-7 | NIST SP 800-53 | US_FED | ✅ Active | Boundary Protection — GKE Dataplane V2 anetd DaemonSet health in `kube-system` |
 | [`lula-validation-ac2.yaml`](lula-validation-ac2.yaml)   | AC-2    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Account Management — ServiceAccount lifecycle in `governance-stack` |
 | [`lula-validation-ac3.yaml`](lula-validation-ac3.yaml)   | AC-3    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Access Enforcement — OPA Deployment + ConfigMap check              |
 | [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Audit Record Generation — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update) |

@@ -503,6 +503,7 @@ class ClickHouseSink:
             "trace_id": record.get("trace_id", ""),
             "hash_algorithm": record.get("hash_algorithm", "SHA-256"),
             "canonicalization": record.get("canonicalization", "RFC8785"),
+            "evidence_class": record.get("evidence_class", "GOVERNANCE"),
             # Payload as opaque string (NEVER re-serialize)
             "payload": payload_json,
             "classification_reason": classification_reason,
@@ -541,3 +542,14 @@ class ClickHouseSink:
         except Exception as exc:
             logger.error("[ClickHouseSink] Health check failed: %s", exc)
             return False
+
+
+_clickhouse_sink: ClickHouseSink | None = None
+
+
+def get_clickhouse_sink() -> ClickHouseSink:
+    """Return the singleton ClickHouseSink instance."""
+    global _clickhouse_sink
+    if _clickhouse_sink is None:
+        _clickhouse_sink = ClickHouseSink()
+    return _clickhouse_sink

@@ -7,7 +7,7 @@
 | Field              | Value      |
 | ------------------ | ---------- |
 | **Version**        | 3.0        |
-| **Date**           | 2026-08-22 |
+| **Date**           | 2026-09-07 |
 | **Classification** | INTERNAL   |
 | **Document**       | CAGE-TR-06 |
 
@@ -341,7 +341,7 @@ CAGE ships validation manifests for all three regulatory jurisdictions located f
 
 | Jurisdiction | Manifest Selector / Pattern | Threshold Config | OSCAL Framework |
 |---|---|---|---|
-| `US_FED` | `compliance/lula/lula-validation-{sc4,ac2,ac3,ra5,cm6,ir6,ia3,ia5,sc8,si2}.yaml` | `config/thresholds/US_FED_BASELINE.json` | NIST SP 800-53 Rev 5 |
+| `US_FED` | `compliance/lula/lula-validation-{sc4,sc7,ac2,ac3,ra5,cm6,ir6,ia3,ia5,sc8,si2,cilium-dpv2}.yaml` | `config/thresholds/US_FED_BASELINE.json` | NIST SP 800-53 Rev 5 |
 | `EU_ECB` | `compliance/lula/lula-validation-{eu-ai-act-art9,eu-fria,gdpr-art22,dora-art10}.yaml` | `config/thresholds/EU_ECB_BASELINE.json` | EU AI Act + DORA |
 | `APAC_MAS` | `compliance/lula/lula-validation-{mas-feat,mas-notice655,mas-trm-s6}.yaml` | `config/thresholds/APAC_MAS_BASELINE.json` | MAS FEAT + TRM |
 
@@ -375,6 +375,7 @@ Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (
 | [`compliance/lula/lula-validation-tqp007.yaml`](../../compliance/lula/lula-validation-tqp007.yaml) | POAM-007 / IA-3 | Linkerd mTLS strict mode assertion across pods                                   |
 | [`compliance/lula/lula-validation-iso001-token-quota.yaml`](../../compliance/lula/lula-validation-iso001-token-quota.yaml) | ISO 42001 A.8.4 | Gateway token quota limit & rate limiting enforcement                            |
 | [`compliance/lula/lula-validation-flowsignal.yaml`](../../compliance/lula/lula-validation-flowsignal.yaml) | SP 800-53 SI-4 | Signal flow integrity & CBF backpressure queue validation                       |
+| [`compliance/lula/lula-validation-cilium-dpv2.yaml`](../../compliance/lula/lula-validation-cilium-dpv2.yaml) | SP 800-53 SC-7  | GKE Dataplane V2 / Cilium `anetd` DaemonSet readiness — boundary protection via eBPF L7 network policy (`deployment/k8s/cilium/`) |
 
 ### 7.1 Lula Stub Manifest Gate & Baseline
 

@@ -47,9 +47,9 @@ cage_deployment_region = "US_FED"
 # ─── Security Posture (US_FED Prod: NIST SP 800-53 + ISO 42001 baseline) ──────
 # DEP-01: enable_nist_compliance is now only activated for US_FED deployments.
 # EU_ECB and APAC_MAS use enable_eu_ecb_compliance / enable_apac_mas_compliance.
-enable_nist_compliance         = true
-enable_eu_ecb_compliance       = false
-enable_apac_mas_compliance     = false
+enable_nist_compliance     = true
+enable_eu_ecb_compliance   = false
+enable_apac_mas_compliance = false
 # POAM-024: HA decoupled from compliance — set explicitly true for production
 enable_high_availability       = true
 enable_deletion_protection     = true
@@ -59,6 +59,7 @@ enable_cmek                    = false # Enable when KMS key is configured
 enable_private_master_endpoint = false # Enable when VPN is configured
 enable_pod_security_standards  = true
 pod_security_level             = "restricted"
+enable_dataplane_v2            = true
 
 # Prod: Lock down to corporate VPN only (REPLACE with your CIDR)
 authorized_networks = [
@@ -85,7 +86,7 @@ enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4" # Better than T4
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8"
-gpu_node_pool_min_count     = 2   # Always-on for production
+gpu_node_pool_min_count     = 2 # Always-on for production
 gpu_node_pool_max_count     = 5
 gpu_node_pool_initial_count = 2
 gpu_node_pool_spot          = false # on-demand — production workloads must not be preempted

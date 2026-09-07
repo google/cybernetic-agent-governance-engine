@@ -247,6 +247,42 @@ CAGE_NARROW_ENABLED: bool = os.getenv("CAGE_NARROW_ENABLED", "false").lower() ==
 CAGE_PAUSE_ENABLED: bool = os.getenv("CAGE_PAUSE_ENABLED", "false").lower() == "true"
 
 
+def is_cage_defer_enabled() -> bool:
+    """Return whether DEFER decision path is enabled.
+
+    Honors explicit environment variable override if present; otherwise
+    falls back to the module-level CAGE_DEFER_ENABLED flag.
+    """
+    env = os.getenv("CAGE_DEFER_ENABLED")
+    if env is not None:
+        return env.lower() == "true"
+    return CAGE_DEFER_ENABLED
+
+
+def is_cage_narrow_enabled() -> bool:
+    """Return whether NARROW decision path is enabled.
+
+    Honors explicit environment variable override if present; otherwise
+    falls back to the module-level CAGE_NARROW_ENABLED flag.
+    """
+    env = os.getenv("CAGE_NARROW_ENABLED")
+    if env is not None:
+        return env.lower() == "true"
+    return CAGE_NARROW_ENABLED
+
+
+def is_cage_pause_enabled() -> bool:
+    """Return whether PAUSE decision path is enabled.
+
+    Honors explicit environment variable override if present; otherwise
+    falls back to the module-level CAGE_PAUSE_ENABLED flag.
+    """
+    env = os.getenv("CAGE_PAUSE_ENABLED")
+    if env is not None:
+        return env.lower() == "true"
+    return CAGE_PAUSE_ENABLED
+
+
 # ---------------------------------------------------------------------------
 # Violation Classification (§2.1 CAGE Implementation Specs)
 # ---------------------------------------------------------------------------
@@ -460,7 +496,7 @@ def _classify_violation(
     has_soft_violations = len(soft_violations) > 0
     has_narrowable_violations = len(narrowable_violations) > 0
     has_pausable_violations = len(pausable_violations) > 0
-    confidence_starved = confidence < FRIA_ZONE_DEFER
+    confidence_starved = confidence < get_fria_zone_defer()
 
     # Priority 0: FTRA Boundary HITL (Phase 3.3) — irreversible action caught at boundary
     # This takes highest priority because it represents a direct HTTP bypass of the
@@ -528,7 +564,7 @@ def _classify_violation(
         and not has_narrowable_violations
     ):
         # Check feature flag — if disabled, fall back to DENY
-        if not CAGE_PAUSE_ENABLED:
+        if not is_cage_pause_enabled():
             return GovernanceDecision.DENY, {
                 "classification_reason": (
                     "PAUSE candidate but CAGE_PAUSE_ENABLED=false — "
@@ -575,9 +611,9 @@ def _classify_violation(
     # Priority 4: Narrowable violations → NARROW candidate (if enabled and no soft/hard)
     if has_narrowable_violations and not has_soft_violations:
         # Check feature flag — if disabled, fall back to DEFER or DENY
-        if not CAGE_NARROW_ENABLED:
+        if not is_cage_narrow_enabled():
             # Fall back to DEFER if enabled, otherwise DENY
-            if CAGE_DEFER_ENABLED and confidence_starved:
+            if is_cage_defer_enabled() and confidence_starved:
                 return GovernanceDecision.DEFER, {
                     "classification_reason": (
                         "NARROW candidate but CAGE_NARROW_ENABLED=false — "
@@ -636,7 +672,7 @@ def _classify_violation(
     # Priority 5: Soft violations with confidence starvation → DEFER candidate
     if has_soft_violations and confidence_starved:
         # Check feature flag — if disabled, fall back to DENY
-        if not CAGE_DEFER_ENABLED:
+        if not is_cage_defer_enabled():
             return GovernanceDecision.DENY, {
                 "classification_reason": (
                     "DEFER candidate but CAGE_DEFER_ENABLED=false — falling back to DENY"
@@ -652,7 +688,7 @@ def _classify_violation(
         defer_reasons = []
         if confidence_starved:
             defer_reasons.append(
-                f"confidence {confidence:.2f} < FRIA_ZONE_DEFER {FRIA_ZONE_DEFER}"
+                f"confidence {confidence:.2f} < FRIA_ZONE_DEFER {get_fria_zone_defer()}"
             )
         if "CONFIDENCE_STARVATION" in violation_types:
             defer_reasons.append("confidence threshold violation")
@@ -2427,7 +2463,6 @@ class SymbolicGovernor:
 
                         from src.gateway.governance.contracts import PauseReceipt
                         from src.gateway.governance.pause_primitive import (
-                            CAGE_PAUSE_ENABLED,
                             PauseManager,
                             build_resume_endpoint,
                         )
@@ -2449,7 +2484,7 @@ class SymbolicGovernor:
                         # Defense-in-depth: verify PAUSE is enabled at validate_action boundary
                         # (This check is redundant with _classify_violation but provides a
                         # safety net if the flag is toggled between classification and here)
-                        if not CAGE_PAUSE_ENABLED:
+                        if not is_cage_pause_enabled():
                             span.set_attribute("cage.verdict", GovernanceDecision.DENY)
                             span.set_attribute("cage.pause_fallback", True)
                             span.set_status(Status(StatusCode.ERROR))

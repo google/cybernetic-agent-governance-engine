@@ -71,9 +71,9 @@ cage_deployment_region = "EU_ECB"
 # DEP-20: enable_eu_ecb_compliance activates DORA Art. 10 HA and GDPR Art. 32
 # encryption at rest independently of enable_nist_compliance.
 # DEP-01: enable_nist_compliance must be false for EU_ECB deployments.
-enable_nist_compliance         = false
-enable_eu_ecb_compliance       = true
-enable_apac_mas_compliance     = false
+enable_nist_compliance     = false
+enable_eu_ecb_compliance   = true
+enable_apac_mas_compliance = false
 # POAM-024: HA decoupled from compliance — set explicitly true for production
 enable_high_availability       = true
 enable_deletion_protection     = true
@@ -83,6 +83,7 @@ enable_cmek                    = false # Enable when KMS key is configured
 enable_private_master_endpoint = false # Enable when VPN is configured
 enable_pod_security_standards  = true
 pod_security_level             = "restricted"
+enable_dataplane_v2            = true
 
 # Prod: Lock down to corporate VPN only (REPLACE with your EU VPN CIDR)
 authorized_networks = [

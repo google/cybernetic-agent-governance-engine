@@ -1,6 +1,6 @@
 # CAGE v3.0.0 Breaking Changes
 
-> **Status:** Released. CAGE v3.0.0 release date: 2026-08-28.
+> **Status:** Released. CAGE v3.0.0 release date: 2026-09-07.
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
 > describes the breaking changes included in this release. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
