@@ -602,7 +602,7 @@ class TestSchemaLoading:
     @pytest.mark.local
     def test_envelope_schema_loaded(self) -> None:
         """ENVELOPE_SCHEMA must be a non-None dict after module import.
- 
+
         Regression: SCHEMA_PATH previously resolved to a non-existent path,
         and the except-block silently set ENVELOPE_SCHEMA = None, disabling
         all JSON Schema validation. This test would have caught that bug.
@@ -626,8 +626,18 @@ class TestSchemaLoading:
         """Loaded schema must contain at least one of the standard JSON Schema root keys."""
         from src.integrations.provider_06.mock_endpoint import ENVELOPE_SCHEMA
 
-        assert ENVELOPE_SCHEMA is not None  # already covered above; guard for type checker
-        schema_root_keys = {"$schema", "type", "properties", "$defs", "definitions", "anyOf", "oneOf"}
+        assert (
+            ENVELOPE_SCHEMA is not None
+        )  # already covered above; guard for type checker
+        schema_root_keys = {
+            "$schema",
+            "type",
+            "properties",
+            "$defs",
+            "definitions",
+            "anyOf",
+            "oneOf",
+        }
         assert schema_root_keys & ENVELOPE_SCHEMA.keys(), (
             f"ENVELOPE_SCHEMA does not look like a JSON Schema. Keys found: {set(ENVELOPE_SCHEMA.keys())}"
         )

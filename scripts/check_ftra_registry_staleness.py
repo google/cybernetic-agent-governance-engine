@@ -91,7 +91,9 @@ def main() -> int:
     try:
         domain_module = importlib.import_module(args.domain)
     except ModuleNotFoundError as exc:
-        print(f"[FTRA staleness] ERROR: cannot import domain module {args.domain!r}: {exc}")
+        print(
+            f"[FTRA staleness] ERROR: cannot import domain module {args.domain!r}: {exc}"
+        )
         return 1
 
     live_actions = getattr(domain_module, "REGISTERED_ACTIONS", None)
@@ -149,4 +151,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

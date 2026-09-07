@@ -689,17 +689,20 @@ def test_registry_without_manifest_sha256_logs_warning(
         },
     }
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False
-    ) as fh:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
         json.dump(no_digest, fh)
         tmp_name = pathlib.Path(fh.name)
 
     try:
         import logging
-        with caplog.at_level(logging.WARNING, logger="Gateway.Governance.FTRA.Classifier"):
+
+        with caplog.at_level(
+            logging.WARNING, logger="Gateway.Governance.FTRA.Classifier"
+        ):
             terminals = _load_registry(tmp_name)
-        assert "no manifest_sha256" in caplog.text or terminals == {"execute_trade": "IRREVERSIBLE_TERMINAL"}
+        assert "no manifest_sha256" in caplog.text or terminals == {
+            "execute_trade": "IRREVERSIBLE_TERMINAL"
+        }
     finally:
         tmp_name.unlink(missing_ok=True)
 

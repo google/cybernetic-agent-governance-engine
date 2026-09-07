@@ -58,21 +58,29 @@ async def test_cer_resolver_exact_hash_constraint():
 
     resolver_url = os.environ.get("NEXART_RESOLVER_URL", "")
     if not resolver_url:
-        pytest.skip("NEXART_RESOLVER_URL not set — integration test requires live resolver")
+        pytest.skip(
+            "NEXART_RESOLVER_URL not set — integration test requires live resolver"
+        )
 
     known_hash = os.environ.get("NEXART_TEST_CER_HASH", "")
     if not known_hash:
-        pytest.skip("NEXART_TEST_CER_HASH not set — provide a known CER hash for the staging resolver")
+        pytest.skip(
+            "NEXART_TEST_CER_HASH not set — provide a known CER hash for the staging resolver"
+        )
 
     url = f"{resolver_url}/v1/resolve/cer/sha256:{known_hash}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
 
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+    assert resp.status_code == 200, (
+        f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+    )
     assert "ETag" in resp.headers, "Immutable CER response must include ETag header"
-    assert resp.headers.get("Cache-Control", "").startswith("immutable") or \
-           "max-age=31536000" in resp.headers.get("Cache-Control", ""), \
-           "Immutable CER should set long-lived Cache-Control"
+    assert resp.headers.get("Cache-Control", "").startswith(
+        "immutable"
+    ) or "max-age=31536000" in resp.headers.get("Cache-Control", ""), (
+        "Immutable CER should set long-lived Cache-Control"
+    )
 ```
 
 ### TC-02: Hash mismatch returns 404
@@ -92,7 +100,9 @@ async def test_cer_resolver_unknown_hash_returns_404():
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
 
-    assert resp.status_code == 404, f"Expected 404 for unknown hash, got {resp.status_code}"
+    assert resp.status_code == 404, (
+        f"Expected 404 for unknown hash, got {resp.status_code}"
+    )
 ```
 
 ### TC-03: CAGE adapter normalizes CER into ExternalAttestation

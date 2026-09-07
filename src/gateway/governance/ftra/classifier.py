@@ -134,7 +134,6 @@ def _load_registry(path: Path) -> dict[str, str]:
     return terminals
 
 
-
 def _get_registry(path: Path | None = None) -> dict[str, str]:
     """Return the cached registry, loading it on first call.
 
@@ -256,7 +255,9 @@ def check_registry_staleness(
             sorted(phantom),
         )
     if not unclassified and not phantom:
-        logger.info("✅ FTRA staleness check passed: registry covers live action surface.")
+        logger.info(
+            "✅ FTRA staleness check passed: registry covers live action surface."
+        )
 
     return StalenessReport(unclassified=unclassified, phantom=phantom)
 
