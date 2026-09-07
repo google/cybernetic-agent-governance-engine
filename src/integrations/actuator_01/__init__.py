@@ -22,6 +22,22 @@ This adapter implements the ExecutionActuator protocol for secure execution
 authorization with dual-control quorum signatures.
 """
 
+from .adapter import Actuator01Adapter
+from .assertion import AssertionBuildError, build_assertion, decode_assertion
+from .client import ActuatorHttpClient
+from .envelope_builder import (
+    EnvelopeTooLargeError,
+    InvalidClearanceError,
+    build_and_canonicalize,
+)
+from .response_classifier import (
+    ClassifiedResponse,
+    ResponseCategory,
+    classify_network_error,
+    classify_response,
+)
+from .signatures import sign_for_quorum
+
 __all__ = [
     # Adapter (concrete ExecutionActuator implementation)
     "Actuator01Adapter",
@@ -43,19 +59,3 @@ __all__ = [
     "ClassifiedResponse",
     "ResponseCategory",
 ]
-
-from .adapter import Actuator01Adapter
-from .assertion import AssertionBuildError, build_assertion, decode_assertion
-from .client import ActuatorHttpClient
-from .envelope_builder import (
-    EnvelopeTooLargeError,
-    InvalidClearanceError,
-    build_and_canonicalize,
-)
-from .response_classifier import (
-    ClassifiedResponse,
-    ResponseCategory,
-    classify_network_error,
-    classify_response,
-)
-from .signatures import sign_for_quorum
