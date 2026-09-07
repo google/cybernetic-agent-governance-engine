@@ -93,12 +93,46 @@ def _load_registry(path: Path) -> dict[str, str]:
             f"FTRA terminal registry at {path} is missing the 'terminals' key "
             "or it is not a dict."
         )
+
+    # Manifest integrity check (Issue #107 — Mayur Agnihotri)
+    # Verifies SHA-256 of the JCS-canonicalized terminals dict to detect
+    # staleness or tampering. The digest covers only the terminals block
+    # (self-referential exclusion pattern — the manifest_sha256 field is
+    # NOT included in its own hash).
+    expected_digest = raw.get("manifest_sha256")
+    if expected_digest:
+        import hashlib
+
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+        actual_digest = hashlib.sha256(jcs_canonicalize_plan(terminals)).hexdigest()
+        if actual_digest != expected_digest:
+            raise ValueError(
+                f"FTRA terminal registry integrity check FAILED at {path}. "
+                f"Expected SHA-256: {expected_digest!r} "
+                f"Actual SHA-256:   {actual_digest!r} "
+                "The registry terminals block may be stale or tampered. "
+                "Regenerate manifest_sha256 with: "
+                "python -m src.gateway.governance.ftra.classifier --rehash"
+            )
+        logger.info(
+            "✅ FTRA registry manifest digest verified: %s...",
+            actual_digest[:16],
+        )
+    else:
+        logger.warning(
+            "FTRA terminal registry at %s has no manifest_sha256 field — "
+            "staleness detection is disabled (Issue #107).",
+            path,
+        )
+
     logger.info(
         "✅ FTRA terminal registry loaded: %d actions from %s",
         len(terminals),
         path,
     )
     return terminals
+
 
 
 def _get_registry(path: Path | None = None) -> dict[str, str]:

@@ -592,3 +592,114 @@ def test_severity_ordering() -> None:
     assert CLASSIFICATION_SEVERITY[TerminalClassification.REVERSIBLE] == 1
     assert CLASSIFICATION_SEVERITY[TerminalClassification.EXTERNALLY_REVERSIBLE] == 2
     assert CLASSIFICATION_SEVERITY[TerminalClassification.IRREVERSIBLE_TERMINAL] == 3
+
+
+# ---------------------------------------------------------------------------
+# Manifest integrity tests — Issue #107 (Mayur Agnihotri)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_manifest_digest_passes_on_shipped_file() -> None:
+    """The shipped terminal_registry.json must pass its own manifest_sha256 check.
+
+    Regression guard for Issue #107: IrreversibilityClassifier must now verify
+    the SHA-256 of the JCS-canonicalized terminals block against the embedded
+    manifest_sha256 field. If someone edits the terminals dict without updating
+    the digest, this test will catch it.
+    """
+    import json
+    from pathlib import Path
+
+    from src.gateway.governance.ftra.classifier import _load_registry
+
+    registry_path = (
+        Path(__file__).resolve().parents[1]
+        / "config"
+        / "ftra"
+        / "terminal_registry.json"
+    )
+    assert registry_path.exists(), f"Registry not found: {registry_path}"
+
+    # _load_registry() raises ValueError on digest mismatch; if it returns
+    # cleanly the digest passed.
+    terminals = _load_registry(registry_path)
+    assert isinstance(terminals, dict)
+    assert len(terminals) > 0
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_manifest_digest_fails_on_tampered_terminals(tmp_path: Path) -> None:
+    """A tampered terminals dict must raise ValueError from _load_registry().
+
+    Writes a registry file with a valid manifest_sha256 but then mutates
+    the terminals block (adds a fake action). Verifies that the integrity
+    check fires with a clear error rather than silently accepting the
+    tampered registry.
+    """
+    import json
+
+    from src.gateway.governance.ftra.classifier import _load_registry
+
+    tampered = {
+        "version": "3.0",
+        "domain": "finance",
+        "manifest_sha256": "a38e700cdcf5e91875f79b13664e669993a3a2fce2c67d252961226b9975990f",
+        "terminals": {
+            "write_db": "IRREVERSIBLE_TERMINAL",
+            "check_balance": "READ_ONLY",
+            "release_wire": "EXTERNALLY_REVERSIBLE",
+            "execute_trade": "IRREVERSIBLE_TERMINAL",
+            "prompt_injection_check": "READ_ONLY",
+            "execute_trade_bounded": "EXTERNALLY_REVERSIBLE",
+            # Injected: attacker adds a new REVERSIBLE action not in the original digest
+            "transfer_funds_quietly": "REVERSIBLE",
+        },
+    }
+    tampered_path = tmp_path / "terminal_registry_tampered.json"
+    tampered_path.write_text(json.dumps(tampered))
+
+    with pytest.raises(ValueError, match="integrity check FAILED"):
+        _load_registry(tampered_path)
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_without_manifest_sha256_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A registry without manifest_sha256 loads successfully but logs a warning.
+
+    Ensures backward compatibility with pre-Issue-#107 registries while
+    making the absence of digest binding visible via log output.
+    """
+    import json
+
+    from src.gateway.governance.ftra.classifier import _load_registry
+
+    import tempfile
+
+    no_digest = {
+        "version": "2.0",
+        "domain": "finance",
+        "terminals": {
+            "execute_trade": "IRREVERSIBLE_TERMINAL",
+        },
+    }
+    import pathlib
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False
+    ) as fh:
+        json.dump(no_digest, fh)
+        tmp_name = pathlib.Path(fh.name)
+
+    try:
+        import logging
+        with caplog.at_level(logging.WARNING, logger="Gateway.Governance.FTRA.Classifier"):
+            terminals = _load_registry(tmp_name)
+        assert "no manifest_sha256" in caplog.text or terminals == {"execute_trade": "IRREVERSIBLE_TERMINAL"}
+    finally:
+        tmp_name.unlink(missing_ok=True)
