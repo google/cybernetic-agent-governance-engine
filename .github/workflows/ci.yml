@@ -206,7 +206,7 @@ jobs:
         run: uv run ruff format --check .
       - name: Mypy type check
         run: uv run mypy src/
-      - name: Import boundary check (G3 - Layer 1 → Layer 2/4)
+      - name: Import boundary check (G3 - Layer 1 → Layer 2/3/4)
         # PR B (domain extraction) established clean layer isolation.
         # This gate blocks any Layer 1 (gateway) → Layer 2 (cage_*) imports.
         # Violations indicate a regression in the plugin seam architecture.
