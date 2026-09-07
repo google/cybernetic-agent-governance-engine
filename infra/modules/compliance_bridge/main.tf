@@ -69,6 +69,12 @@ resource "kubernetes_deployment" "compliance_bridge" {
             name           = "http"
           }
 
+          env_from {
+            secret_ref {
+              name = "advisor-secrets"
+            }
+          }
+
           env {
             name  = "PORT"
             value = "3001"

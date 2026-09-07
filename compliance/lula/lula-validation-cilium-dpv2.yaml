@@ -73,37 +73,30 @@ component-definition:
           kubernetes-spec:
             resources:
             - name: anetd-daemonset
-              resource: daemonsets
-              namespace: kube-system
+              resource-rule:
+                group: apps
+                version: v1
+                resource: daemonsets
+
         provider:
           type: opa
           opa-spec:
             rego: |
               package lula
-
               import future.keywords.if
-
+              import future.keywords.in
+              
               # SC-7: Boundary Protection — GKE Dataplane V2 (anetd) Active Enforcement
               #
               # Check 1: anetd daemonset exists in kube-system.
               # Check 2: desiredNumberScheduled is greater than 0.
               # Check 3: numberReady equals desiredNumberScheduled.
 
-              anetd_healthy if {
+              
+              validate {
                 ds_list := [d | d := input["anetd-daemonset"][_]; d.metadata.name == "anetd"]
                 count(ds_list) >= 1
-                some ds in ds_list
+                ds := ds_list[0]
                 ds.status.desiredNumberScheduled > 0
                 ds.status.numberReady == ds.status.desiredNumberScheduled
-              }
-
-              anetd_healthy if {
-                ds := input["anetd-daemonset"]
-                ds.metadata.name == "anetd"
-                ds.status.desiredNumberScheduled > 0
-                ds.status.numberReady == ds.status.desiredNumberScheduled
-              }
-
-              validate if {
-                anetd_healthy
               }
