@@ -74,16 +74,50 @@ component-definition:
                 seal verification before processing any request, rejecting requests with
                 invalid or missing HMAC seals. OPA allow/deny decisions are recorded in
                 structured audit logs with full request context and user identity.
+
+                Dual-control authentication enforcement (Work Item 2, 2026-09-07): All defer
+                escalation endpoints now require cryptographically-verified operator identity.
+                The /v1/defer/escalate endpoint (src/compliance_bridge/main.py:1527) enforces
+                Depends(require_internal_token) to prevent unauthenticated access. The
+                /v1/defer/inject endpoint (src/compliance_bridge/main.py:1326) also requires
+                internal token authentication. No /v1/defer/ route is reachable without
+                authentication in production (CAGE_ENV=prod/staging).
+
+                Quorum enforcement mechanism: DeferQueue.approve() (src/gateway/governance/defer_queue.py:447)
+                enforces distinctness of approver_urn values via WATCH/MULTI/EXEC atomic
+                transaction (lines 510-518). The approver_urn is provably derived from
+                transport-layer verified SPIFFE SVID (primary) or OIDC JWT subject (gated
+                fallback). Single authenticated principal cannot reach quorum - duplicate
+                approvals are rejected with ALREADY_APPROVED status (line 511-518). Required
+                quorum is auto-computed from defer_reason: quorum-3 for FTRA_IRREVERSIBLE_TERMINAL,
+                EXTERNAL_VALIDATION, and FLOWSIGNAL_ESCALATION defer reasons; quorum-2 for
+                all others (src/gateway/governance/defer_queue.py:66-80).
+
+                Protection against single-principal quorum bypass: The defer_inject endpoint
+                rejects injection attempts for quorum-3 defer reasons (line 1377-1392) and
+                rejects injection if token has partial approvals (line 1394-1405), preventing
+                circumvention of the dual-control requirement via automated data injection.
               props:
                 - name: implementation-status
                   value: implemented
                 - name: control-origination
                   value: system-specific
+                - name: dual-control-implementation-date
+                  value: "2026-09-07"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
                 - href: "#9fbe4cdd-f9b0-4635-bc7d-6a3a3beae05a"
                   rel: lula
+                - href: "../../src/compliance_bridge/main.py"
+                  rel: implementation
+                  text: "defer_escalate() and defer_inject() authentication enforcement"
+                - href: "../../src/gateway/governance/defer_queue.py"
+                  rel: implementation
+                  text: "DeferQueue.approve() quorum enforcement"
+                - href: "../../tests/test_defer_dual_control_auth.py"
+                  rel: test
+                  text: "Adversarial dual-control authentication test coverage"
 
             - uuid: "4ccc6861-3f69-476a-9ff2-cbd215b18d46"
               control-id: au-12
@@ -206,7 +240,7 @@ component-definition:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-13"
                   rel: reference
 
-            - uuid: "3a85d9c6-8e4b-5d72-c0a5-9f6b0e7d4a3b"
+            - uuid: "3a85d9c6-8e4b-5d72-a0a5-9f6b0e7d4a3b"
               control-id: si-7
               description: |
                 Software, firmware, and information integrity is implemented via
@@ -382,14 +416,42 @@ component-definition:
                 client systems (devices) can submit governance requests, providing
                 cryptographic device identity verification without relying solely on
                 network-layer controls.
+
+                SPIFFE workload identity (Work Item 2, 2026-09-07): Extends existing
+                SVID-based workload identity to the operator approval path. Linkerd
+                service mesh (deployment/k8s/linkerd-mtls-policy.yaml) provides mTLS
+                with SPIFFE SVID peer certificates for all pod-to-pod communication.
+                Each workload receives a SPIFFE ID in the format
+                spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
+
+                Workload SVID authenticates the channel (pod-to-pod mTLS); OIDC sub
+                identifies the human operator in shared-console scenarios. This dual-layer
+                identity model (device via SVID, operator via OIDC) enables cryptographically
+                verifiable device authentication independent of operator identity, satisfying
+                IA-3 (device authentication) in conjunction with IA-2 (operator authentication).
+
+                The require_operator_identity() function (src/compliance_bridge/auth.py:88)
+                extracts SVID from request.attributes.source.principal (populated by
+                Linkerd) or x-cage-source-principal header (Envoy ext_authz integration).
+                This extends the workload identity assertion already documented in
+                src/gateway/governance/oscal_ssp_exporter.py:319 to cover the defer
+                escalation approval path, not just general governance requests.
               props:
                 - name: implementation-status
                   value: implemented
                 - name: control-origination
                   value: system-specific
+                - name: operator-path-extension-date
+                  value: "2026-09-07"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-3"
                   rel: reference
+                - href: "../../deployment/k8s/linkerd-mtls-policy.yaml"
+                  rel: configuration
+                  text: "Linkerd SPIFFE trust domain and mTLS policy"
+                - href: "../../src/compliance_bridge/auth.py"
+                  rel: implementation
+                  text: "require_operator_identity() SVID extraction for approval path"
 
     # -----------------------------------------------------------------------
     # Component 4: Compliance Bridge (src/compliance_bridge/)
@@ -615,16 +677,64 @@ component-definition:
                 cluster requires GCP IAM authentication with MFA enforced at the
                 organizational policy level. GCP Identity-Aware Proxy (IAP) protects
                 any externally accessible management endpoints.
+
+                Application-level operator identification (Work Item 2, 2026-09-07): Human
+                operator identity for defer escalation approval path is extracted via
+                require_operator_identity() (src/compliance_bridge/auth.py:88). Identity
+                precedence is fail-closed and evaluated (not negotiated):
+
+                1. SPIFFE SVID (primary): Extracted from mTLS client certificate SAN via
+                   Linkerd service mesh. SVID format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
+                   The SVID is populated by Linkerd into request.attributes.source.principal
+                   or x-cage-source-principal header. Principal hash derived via SHA-256
+                   of complete SVID URI (line 118).
+
+                2. OIDC JWT (gated fallback): Only accepted when CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true.
+                   Identity extracted from JWT 'sub' claim pre-validated by upstream middleware.
+                   Principal hash derived via SHA-256 of sub claim value (line 140).
+
+                3. Dev-mode synthetic: Requires dual-condition opt-in (CAGE_ENV=dev AND
+                   CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true). All synthetic principals
+                   carry auth_method="DEV_SYNTHETIC" and reserved urn:cage:dev: prefix
+                   enforcement (line 157-161). Production (CAGE_ENV=prod) never yields
+                   synthetic principals.
+
+                Identity rejection rules: Request-body identity assertion is forbidden
+                (breaking change from prior self-asserted operator_urn/session_id fields
+                removed from DeferEscalateRequest, line 1542). If no valid identity source
+                exists, require_operator_identity() fails closed with HTTP 401 (line 171-175).
+                Identity conflicts (SVID present but parse failure) degrade to next channel
+                with warning logs (line 125-126).
+
+                Principal hash binding: The auth_principal_hash field in ApprovalRecord
+                (src/gateway/governance/defer_queue.py:447, line 1580) is derived from the
+                verified credential subject, not caller-supplied session_id. This hash
+                provides tamper-evident binding between the approval record and the
+                transport-layer authentication substrate.
+
+                Alignment with IA-3 workload identity: This extends the existing SVID-based
+                workload identity (IA-3 control, already asserted in src/gateway/governance/oscal_ssp_exporter.py:319)
+                to the operator approval path. Workload SVID authenticates the channel
+                (pod-to-pod mTLS via Linkerd); OIDC sub identifies the human operator in
+                shared-console scenarios where multiple operators use the same service account.
               props:
                 - name: implementation-status
-                  value: inherited
+                  value: implemented
                 - name: control-origination
-                  value: inherited
+                  value: hybrid
                 - name: inherited-from
-                  value: "GCP/GKE Platform — Google Cloud Common Controls Package"
+                  value: "GCP/GKE Platform — Google Cloud Common Controls Package (workload/cluster identity)"
+                - name: application-level-implementation-date
+                  value: "2026-09-07"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-2"
                   rel: reference
+                - href: "../../src/compliance_bridge/auth.py"
+                  rel: implementation
+                  text: "require_operator_identity() SPIFFE/OIDC extraction"
+                - href: "../../deployment/k8s/linkerd-mtls-policy.yaml"
+                  rel: configuration
+                  text: "Linkerd mTLS SPIFFE trust domain configuration"
 
             - uuid: "230de322-4b76-4a0d-b07d-267f4fa23769"
               control-id: sc-8
