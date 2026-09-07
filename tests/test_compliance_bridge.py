@@ -358,7 +358,7 @@ class TestAuditIngestAuth:
     # Env vars shared across all auth tests — staging enforces auth without
     # triggering the KMS production assertion added by C-08.
     _AUTH_ENV = {
-        "COMPLIANCE_BRIDGE_INTERNAL_TOKEN": "secret-token",
+        "CAGE_INTERNAL_TOKEN": "secret-token",
         "CAGE_ENV": "staging",
     }
 
@@ -402,7 +402,7 @@ class TestAuditIngestAuth:
                     # Empty oscal_yaml → 400 from business logic, NOT 401 from auth.
                     response = c.post(
                         "/v1/audit/ingest",
-                        headers={"Authorization": "Bearer secret-token"},
+                        headers={"X-Cage-Internal-Token": "secret-token"},
                         json={"oscal_yaml": "  ", "audit_id": "auth-test"},
                     )
                 assert response.status_code == 400

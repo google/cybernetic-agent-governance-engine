@@ -92,11 +92,13 @@ class TestOperatorIdentityProvenance:
     @pytest.mark.asyncio
     async def test_dev_synthetic_dual_condition_gate(self, monkeypatch):
         """Verify dev-mode synthetic requires both CAGE_ENV=dev AND explicit flag."""
-        monkeypatch.setenv("CAGE_ENV", "dev")
+        # Monkeypatch the module-level _CAGE_ENV variable
+        from src.compliance_bridge import auth
+        monkeypatch.setattr(auth, "_CAGE_ENV", "dev")
         monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "true")
         
         mock_request = MagicMock()
-        mock_request.headers = {"x-cage-dev-operator-urn": "urn:cage:dev:test-operator-1"}
+        mock_request.headers.get = MagicMock(side_effect=lambda k, d=None: {"x-cage-dev-operator-urn": "urn:cage:dev:test-operator-1"}.get(k, d))
         mock_request.attributes = None  # No gRPC attributes
         
         principal = await require_operator_identity(mock_request)
@@ -107,11 +109,13 @@ class TestOperatorIdentityProvenance:
     @pytest.mark.asyncio
     async def test_dev_synthetic_enforces_reserved_prefix(self, monkeypatch):
         """Verify dev-mode rejects URNs without urn:cage:dev: prefix."""
-        monkeypatch.setenv("CAGE_ENV", "dev")
+        # Monkeypatch the module-level _CAGE_ENV variable
+        from src.compliance_bridge import auth
+        monkeypatch.setattr(auth, "_CAGE_ENV", "dev")
         monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "true")
         
         mock_request = MagicMock()
-        mock_request.headers = {"x-cage-dev-operator-urn": "urn:cage:prod:malicious"}
+        mock_request.headers.get = MagicMock(side_effect=lambda k, d=None: {"x-cage-dev-operator-urn": "urn:cage:prod:malicious"}.get(k, d))
         mock_request.attributes = None  # No gRPC attributes
         
         with pytest.raises(HTTPException) as exc_info:
@@ -164,9 +168,14 @@ class TestDualControlQuorumIntegrity:
         """Verify DeferQueue.approve() rejects duplicate operator approvals."""
         from src.gateway.governance.defer_queue import ApprovalStatus, DeferQueue
         
-        # Mock Redis client with complete token JSON
+        # Mock Redis client with different returns for "token" and "status" fields
+        token_json = '{"thread_id": "test-thread-3", "correlation_id": "test-corr-id", "defer_reason": "EXTERNAL_VALIDATION", "approvals": [{"approver_urn": "spiffe://cage.example/operator/alice", "approved_at_utc": "2026-09-07T12:00:00Z", "auth_method": "SVID", "auth_principal_hash": "' + ("a" * 64) + '"}], "required_quorum": 3, "deferred_at_utc": "2026-09-07T12:00:00Z"}'
+        
         mock_redis = AsyncMock()
-        mock_redis.hget = AsyncMock(return_value='{"thread_id": "test-thread-3", "defer_reason": "EXTERNAL_VALIDATION", "approvals": [{"approver_urn": "spiffe://cage.example/operator/alice", "approved_at_utc": "2026-09-07T12:00:00Z", "auth_method": "SVID", "auth_principal_hash": "' + ("a" * 64) + '"}], "required_quorum": 3, "deferred_at_utc": "2026-09-07T12:00:00Z"}')
+        # hget is called with different field names: first "token", then "status"
+        # Return status as string (not bytes) to match code expectations
+        mock_redis.hget = AsyncMock(side_effect=[token_json, "PARKED"])
+        mock_redis.unwatch = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=AsyncMock())
         
         queue = DeferQueue(mock_redis)
