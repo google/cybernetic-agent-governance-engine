@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Provider 05 (Verifiable Execution Evidence Pack) Integration.
+Provider 05 (Veraxis Execution Integrity Protocol — VEIP) Integration.
 
 Implements the Three Uncomputable Axioms integration:
   - Axiom 1 (Policy Legitimacy / Blueprint) — Provider05BlueprintProvider

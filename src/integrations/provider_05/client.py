@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Provider 05 (Verifiable Execution Evidence Pack) Client Interface.
+Provider 05 (Veraxis Execution Integrity Protocol — VEIP) Client Interface.
 
 Provides structured access to Provider 05 attestation endpoints for the Three Axioms:
   1. Policy Legitimacy (Blueprint) — RiskAcceptanceRecord
