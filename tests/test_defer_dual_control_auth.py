@@ -199,8 +199,6 @@ class TestDeferInjectBypassProtection:
     @pytest.mark.asyncio
     async def test_inject_rejects_quorum_3_defer_reasons(self):
         """Verify defer_inject rejects tokens with quorum-3 defer_reason."""
-        from unittest.mock import patch
-        
         # This test would require mocking the full FastAPI request flow
         # Placeholder for integration test that validates the reason-gate
         # Expected: 403 INJECTION_FORBIDDEN for FTRA_IRREVERSIBLE_TERMINAL
