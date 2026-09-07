@@ -106,7 +106,7 @@ class MockActuatorKernel:
         # Extract headers for verification
         tenant_id = headers.get("x-secure-tenant-id")
         operator_urns = headers.get("x-operator-urns", "").split(",")
-        signatures = headers.get("x-archytan-signatures", "").split(",")
+        signatures = headers.get("x-quorum-signatures", "").split(",")
         assertion_b64 = headers.get("x-execution-assertion", "")
         timestamp_str = headers.get("x-timestamp", "0")
 
