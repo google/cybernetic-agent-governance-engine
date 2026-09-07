@@ -74,14 +74,14 @@ def test_jcs_canonicalize_negative_zero():
     assert canonical == b'{"val":0}'
 
 
-def test_jcs_provider_04_reference_vector_1():
-    """Verify exact byte and SHA-256 parity for Provider 04 reference Vector 1."""
+def test_jcs_actuator_01_reference_vector_1():
+    """Verify exact byte and SHA-256 parity for actuator_01 reference Vector 1."""
     import hashlib
 
     vector_1_input = {
-        "envelope_version": "provider_04.envelope/v1",
+        "envelope_version": "actuator_01.envelope/v1",
         "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
-        "operator_urn": "urn:provider_04:op:test_vector_1",
+        "operator_urn": "urn:actuator_01:op:test_vector_1",
         "action": "payment.wire.execute",
         "target": {
             "account_hash": "3333333333333333333333333333333333333333333333333333333333333333"
@@ -105,17 +105,16 @@ def test_jcs_provider_04_reference_vector_1():
         "nonce": "0102030405060708090a0b0c0d0e0f10",
     }
 
-    expected_canonical_bytes = b'{"action":"payment.wire.execute","authority_ref":{"graph_hash":"1111111111111111111111111111111111111111111111111111111111111111","graph_version":"ag-2026-08-01T00:00:00Z"},"correlation_id":"550e8400-e29b-41d4-a716-446655440000","envelope_version":"provider_04.envelope/v1","governance":{"decision":"ALLOW","decision_path":"DIRECT","evaluated_at":1785012000,"policy_version":"cage-policy-2.1.1","receipt_hash":"2222222222222222222222222222222222222222222222222222222222222222","receipt_id":"cage-seal-test-0001","required_quorum":2},"issued_at":1785012000,"nonce":"0102030405060708090a0b0c0d0e0f10","operator_urn":"urn:provider_04:op:test_vector_1","parameters":{"amount_minor":12345,"currency":"USD"},"target":{"account_hash":"3333333333333333333333333333333333333333333333333333333333333333"},"ttl_seconds":30}'
-    # Note: SHA-256 of the exact canonical bytes printed in §11 of the Provider 04 spec
-    expected_sha256 = "90de7ead1529e977c9ba9d84cb7e743c73996168843bcb2e928eef0427980d32"
+    expected_canonical_bytes = b'{"action":"payment.wire.execute","authority_ref":{"graph_hash":"1111111111111111111111111111111111111111111111111111111111111111","graph_version":"ag-2026-08-01T00:00:00Z"},"correlation_id":"550e8400-e29b-41d4-a716-446655440000","envelope_version":"actuator_01.envelope/v1","governance":{"decision":"ALLOW","decision_path":"DIRECT","evaluated_at":1785012000,"policy_version":"cage-policy-2.1.1","receipt_hash":"2222222222222222222222222222222222222222222222222222222222222222","receipt_id":"cage-seal-test-0001","required_quorum":2},"issued_at":1785012000,"nonce":"0102030405060708090a0b0c0d0e0f10","operator_urn":"urn:actuator_01:op:test_vector_1","parameters":{"amount_minor":12345,"currency":"USD"},"target":{"account_hash":"3333333333333333333333333333333333333333333333333333333333333333"},"ttl_seconds":30}'
+    expected_sha256 = "5e277d3d8110006e1b3975c2a68eb89e32c823f8a8107b82e6875c6c5d21f327"
 
     actual_canonical_bytes = jcs_canonicalize_plan(vector_1_input)
     assert actual_canonical_bytes == expected_canonical_bytes
     assert hashlib.sha256(actual_canonical_bytes).hexdigest() == expected_sha256
 
 
-def test_jcs_provider_04_reference_vector_2():
-    """Verify exact byte and SHA-256 parity for Provider 04 reference Vector 2 (adversarial formatting)."""
+def test_jcs_actuator_01_reference_vector_2():
+    """Verify exact byte and SHA-256 parity for actuator_01 reference Vector 2 (adversarial formatting)."""
     import hashlib
 
     vector_2_input = {

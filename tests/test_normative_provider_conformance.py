@@ -46,7 +46,7 @@ from src.gateway.governance.normative_provider import (
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 NORMATIVE_PROVIDERS = ["static", "provider_01", "provider_03", "provider_06"]
-ATTESTATION_PROVIDERS = ["provider_02", "provider_04"]
+ATTESTATION_PROVIDERS = ["provider_02"]
 
 
 @pytest.mark.parametrize("provider_name", NORMATIVE_PROVIDERS)
