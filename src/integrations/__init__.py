@@ -24,8 +24,8 @@ is a complete vendor integration boundary:
   ├── provider_01/  — Normative compliance provider
   ├── provider_02/  — CER attestation + LangGraph adapter
   ├── provider_03/  — Decision governance provider
-  ├── provider_04/  — Attestation provider + envelope mapper
-  └── provider_05/  — Veraxis Execution Integrity Protocol (VEIP)
+  ├── provider_06/  — Agent integrity verification provider
+  └── actuator_01/  — Execution actuator with KMS-signed envelope protocol
 
 Vendor packages MUST NOT introduce imports into the CAGE kernel.
 All vendor code is loaded lazily via the provider factory in

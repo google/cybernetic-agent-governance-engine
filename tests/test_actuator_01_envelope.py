@@ -45,7 +45,7 @@ def valid_clearance() -> ExecutionClearance:
         decision_path="DIRECT",
         action="payment.wire.execute",
         target="account:1234567890",
-        operator_urn="urn:actuator01:op:test-operator-a",
+        operator_urn="urn:actuator_01:op:test-operator-a",
         issued_at=1785012000,
         issued_at_provenance="CONSTRUCTION_TIME",
         correlation_id="550e8400-e29b-41d4-a716-446655440000",
@@ -56,13 +56,13 @@ def valid_clearance() -> ExecutionClearance:
         confidence_score=0.92,
         approvals=[
             {
-                "approver_urn": "urn:actuator01:op:test-operator-a",
+                "approver_urn": "urn:actuator_01:op:test-operator-a",
                 "approved_at_utc": "2026-08-01T12:00:00Z",
                 "auth_method": "OIDC",
                 "auth_principal_hash": "c" * 64,
             },
             {
-                "approver_urn": "urn:actuator01:op:test-operator-b",
+                "approver_urn": "urn:actuator_01:op:test-operator-b",
                 "approved_at_utc": "2026-08-01T12:00:05Z",
                 "auth_method": "OIDC",
                 "auth_principal_hash": "d" * 64,
@@ -379,7 +379,7 @@ class TestVectorParity:
 
     def test_vector_1_canonical_bytes_and_digest(self):
         """Verify Vector 1 canonical bytes and SHA-256 parity."""
-        # This is adapted from test_jcs_canonicalizer.py::test_jcs_provider_04_reference_vector_1
+        # This is adapted from test_jcs_canonicalizer.py::test_jcs_actuator_01_reference_vector_1
         # The clearance-to-envelope mapping produces the same underlying structure
 
         clearance = ExecutionClearance(
@@ -388,7 +388,7 @@ class TestVectorParity:
             decision_path="DIRECT",
             action="payment.wire.execute",
             target="account:test-vector-1",
-            operator_urn="urn:actuator01:op:test_vector_1",
+            operator_urn="urn:actuator_01:op:test_vector_1",
             issued_at=1785012000,
             issued_at_provenance="CONSTRUCTION_TIME",
             correlation_id="550e8400-e29b-41d4-a716-446655440000",
@@ -397,13 +397,13 @@ class TestVectorParity:
             opa_input_digest="b" * 64,
             approvals=[
                 {
-                    "approver_urn": "urn:actuator01:op:op-a",
+                    "approver_urn": "urn:actuator_01:op:op-a",
                     "approved_at_utc": "2026-08-01T12:00:00Z",
                     "auth_method": "OIDC",
                     "auth_principal_hash": "c" * 64,
                 },
                 {
-                    "approver_urn": "urn:actuator01:op:op-b",
+                    "approver_urn": "urn:actuator_01:op:op-b",
                     "approved_at_utc": "2026-08-01T12:00:05Z",
                     "auth_method": "OIDC",
                     "auth_principal_hash": "d" * 64,
@@ -436,7 +436,7 @@ class TestVectorParity:
             decision_path="DIRECT",
             action="test.float.action",
             target="test-target",
-            operator_urn="urn:actuator01:op:test",
+            operator_urn="urn:actuator_01:op:test",
             issued_at=1785012000,
             issued_at_provenance="CONSTRUCTION_TIME",
             correlation_id=str(uuid.uuid4()),
@@ -447,13 +447,13 @@ class TestVectorParity:
             confidence_score=5.0,  # Should canonicalize to 5
             approvals=[
                 {
-                    "approver_urn": "urn:actuator01:op:op-a",
+                    "approver_urn": "urn:actuator_01:op:op-a",
                     "approved_at_utc": "2026-08-01T12:00:00Z",
                     "auth_method": "OIDC",
                     "auth_principal_hash": "g" * 64,
                 },
                 {
-                    "approver_urn": "urn:actuator01:op:op-b",
+                    "approver_urn": "urn:actuator_01:op:op-b",
                     "approved_at_utc": "2026-08-01T12:00:05Z",
                     "auth_method": "OIDC",
                     "auth_principal_hash": "h" * 64,

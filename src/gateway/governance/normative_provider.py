@@ -899,8 +899,8 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
 
-    Note: provider_04 and provider_05 are part of the ecosystem but implement
-    AttestationProvider and EnvelopeMapper, not NormativeProvider directly.
+    Note: actuator_01 implements AttestationProvider and EnvelopeMapper,
+    not NormativeProvider directly.
 
     Returns:
         An instantiated NormativeProvider.
@@ -918,8 +918,6 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         "p01": "provider_01",
         "p02": "provider_02",
         "p03": "provider_03",
-        "p04": "provider_04",
-        "p05": "provider_05",
         "p06": "provider_06",
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",

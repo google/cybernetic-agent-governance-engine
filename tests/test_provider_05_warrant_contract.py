@@ -96,7 +96,7 @@ def test_warrant_standing_verification_valid(sample_warrant: Warrant) -> None:
     """Verify active warrant passes standing check within valid window and scope."""
     context = {
         "action": "execute_trade",
-        "actor": "urn:provider_04:op:test_operator",
+        "actor": "urn:actuator_01:op:test_operator",
         "system": "cage-gateway",
         "jurisdiction": "EU_ECB",
         "governing_version": "cage-policy-2.1.0",
