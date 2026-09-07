@@ -122,7 +122,7 @@ def _load_registry(path: Path) -> dict[str, str]:
     else:
         logger.warning(
             "FTRA terminal registry at %s has no manifest_sha256 field — "
-            "staleness detection is disabled (Issue #107).",
+            "staleness detection is disabled (Issue #107 — Mayur Agnihotri).",
             path,
         )
 
@@ -173,6 +173,92 @@ try:
     signal.signal(signal.SIGUSR1, _bust_cache)
 except (OSError, AttributeError):
     pass  # Windows or restricted environment — hot-reload via env flag only
+
+
+# ---------------------------------------------------------------------------
+# Staleness gate (Issue #107 — Mayur Agnihotri follow-up)
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class StalenessReport:
+    """Result of a registry staleness check.
+
+    Attributes:
+        unclassified: Actions present in ``live_actions`` but absent from the
+            registry.  These will silently receive IRREVERSIBLE_TERMINAL at
+            runtime via the fail-closed contract.  May indicate that the
+            registry was not regenerated after a new action was added to the
+            domain plugin.
+        phantom: Actions present in the registry but absent from
+            ``live_actions``.  The registry describes actions that no longer
+            exist in the domain plugin — these entries are dead and create
+            false confidence in coverage.
+        is_clean: True only when both sets are empty.
+    """
+
+    unclassified: frozenset[str] = field(default_factory=frozenset)
+    phantom: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def is_clean(self) -> bool:
+        return not self.unclassified and not self.phantom
+
+
+def check_registry_staleness(
+    live_actions: frozenset[str],
+    registry_path: Path | None = None,
+) -> StalenessReport:
+    """Compare a domain plugin's live action surface against the terminal registry.
+
+    This is the *staleness* half of Issue #107.  The manifest digest (also in
+    this module) proves nobody edited the registry file; this function proves
+    the registry still describes the system.
+
+    Completely domain-agnostic: the caller supplies ``live_actions`` (the
+    frozenset of action names the domain plugin actually presents to the FTRA
+    classifier).  This module never imports domain code.
+
+    Args:
+        live_actions: The canonical set of action names declared by a domain
+            plugin (e.g. ``src.cage_finance.REGISTERED_ACTIONS``).
+        registry_path: Optional override for the registry JSON path.
+            Defaults to ``config/ftra/terminal_registry.json``.
+
+    Returns:
+        :class:`StalenessReport` with two symmetric difference sets.
+
+    Raises:
+        FileNotFoundError: If the registry file does not exist.
+        ValueError: If the registry JSON is malformed.
+    """
+    registry = _get_registry(registry_path)
+    registry_actions = frozenset(registry.keys())
+
+    unclassified = live_actions - registry_actions
+    phantom = registry_actions - live_actions
+
+    if unclassified:
+        logger.warning(
+            "FTRA staleness check: %d action(s) in live domain surface but ABSENT "
+            "from registry — will default to IRREVERSIBLE_TERMINAL at runtime: %s",
+            len(unclassified),
+            sorted(unclassified),
+        )
+    if phantom:
+        logger.warning(
+            "FTRA staleness check: %d action(s) in registry but ABSENT from live "
+            "domain surface — registry has phantom entries: %s",
+            len(phantom),
+            sorted(phantom),
+        )
+    if not unclassified and not phantom:
+        logger.info("✅ FTRA staleness check passed: registry covers live action surface.")
+
+    return StalenessReport(unclassified=unclassified, phantom=phantom)
 
 
 # ---------------------------------------------------------------------------
