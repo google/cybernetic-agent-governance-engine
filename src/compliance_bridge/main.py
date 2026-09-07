@@ -67,7 +67,7 @@ def _ensure_langfuse_imported() -> None:
 
 
 from .audit_workflow import run_audit_workflow
-from .auth import require_internal_token
+from .auth import OperatorPrincipal, require_internal_token, require_operator_identity
 from .cmek_guard import validate_cmek_configuration
 from .lula_scheduler import run_lula_scheduler
 from .metrics import get_compliance_metrics
@@ -1323,11 +1323,17 @@ def _get_replay_evaluate() -> tuple[Any, Any]:
 async def defer_inject(
     defer_id: str,
     body: DeferResolveRequest,
+    _token: str = Depends(require_internal_token),
 ) -> JSONResponse:
     """Resolve a parked DEFER token via automated data injection sweep.
 
     The resolved token's thread will be eligible for re-evaluation by
     the governing agent with the injected data appended to its context.
+
+    Security gates (Stream B residual closure):
+    - Internal token required (prevents unauthenticated injection)
+    - Reason-gate: Rejects injection if defer_reason requires dual-control quorum
+    - Status-gate: Rejects injection if token is PARTIALLY_APPROVED (incomplete quorum)
 
     Phase-3 confidence recheck: This endpoint now invokes replay_evaluate()
     to enforce DEFER_CONFIDENCE_THRESHOLD (0.70) before resolution. If the
@@ -1355,6 +1361,48 @@ async def defer_inject(
     try:
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue = defer_queue_cls(client)
+
+        # Stream B security gates: prevent bypassing dual-control via injection
+        from src.gateway.governance.defer_queue import DeferReason, get_required_quorum
+        
+        # Fetch token to check defer_reason and approval status
+        token = await queue.get(defer_id)
+        if token is None:
+            await client.aclose()
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+            )
+        
+        # Reason-gate: Reject injection for quorum-3 defer reasons
+        quorum_3_reasons = {
+            DeferReason.FTRA_IRREVERSIBLE_TERMINAL,
+            DeferReason.EXTERNAL_VALIDATION,
+            DeferReason.FLOWSIGNAL_ESCALATION,
+        }
+        if token.defer_reason in quorum_3_reasons:
+            await client.aclose()
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "INJECTION_FORBIDDEN",
+                    "message": f"Defer reason {token.defer_reason.value} requires dual-control quorum; use /escalate endpoint",
+                    "required_quorum": get_required_quorum(token.defer_reason),
+                },
+            )
+        
+        # Status-gate: Reject injection if token has partial approvals (incomplete quorum)
+        if token.approvals and len(token.approvals) < token.required_quorum:
+            await client.aclose()
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "PARTIAL_APPROVALS_EXIST",
+                    "message": f"Token has {len(token.approvals)}/{token.required_quorum} approvals; injection bypasses quorum",
+                    "approvals_count": len(token.approvals),
+                    "required_quorum": token.required_quorum,
+                },
+            )
 
         # Phase-3 confidence recheck before resolution (fixes CAGE-SEC-003)
         result = await replay_evaluate(queue, defer_id, enriched_context)
@@ -1458,18 +1506,14 @@ async def defer_inject(
 
 
 class DeferEscalateRequest(BaseModel):
-    operator_urn: str = Field(
-        ...,
-        description="Durable operator URN (e.g., urn:cage:operator:treasury-approver-a)",
-    )
-    session_id: str = Field(
-        default_factory=lambda: str(__import__("uuid").uuid4()),
-        description="Session identifier for audit trail",
-    )
-    auth_method: str = Field(
-        default="OIDC",
-        description="Authentication method: OIDC | MTLS | WEBAUTHN",
-    )
+    """Request body for operator approval of a deferred execution.
+    
+    BREAKING CHANGE: operator_urn, session_id, and auth_method fields removed.
+    Identity is now extracted from verified transport substrate (SPIFFE SVID)
+    or OIDC claims via require_operator_identity dependency. Self-asserted
+    identity parameters are rejected to prevent spoofing attacks.
+    """
+    pass  # All fields removed; identity comes from dependency injection
 
 
 @app.post(
@@ -1480,18 +1524,24 @@ class DeferEscalateRequest(BaseModel):
 async def defer_escalate(
     defer_id: str,
     body: DeferEscalateRequest,
+    _token: str = Depends(require_internal_token),
+    operator: OperatorPrincipal = Depends(require_operator_identity),
 ) -> JSONResponse:
     """Escalate a DEFER-parked token with operator approval.
 
-    BREAKING CHANGE (Phase 2, Stream B): This endpoint now requires operator
-    identity in the request body and implements dual-control quorum checking.
-
-    A token requires multiple distinct operator approvals (quorum threshold
-    determined by defer_reason) before transitioning to ESCALATED state.
+    BREAKING CHANGE (Stream B residual gap closure): Operator identity is now
+    extracted from verified SPIFFE SVID (primary) or OIDC JWT (gated fallback).
+    Self-asserted operator_urn/session_id/auth_method body parameters rejected.
+    
+    The endpoint enforces dual-control quorum: a token requires multiple distinct
+    operator approvals (threshold determined by defer_reason) before transitioning
+    to ESCALATED state.
 
     Args:
         defer_id: The token's defer_id.
-        body: Request containing operator_urn, session_id, and auth_method.
+        body: Empty request body (identity fields removed in breaking change)
+        _token: Internal service token (required, injected)
+        operator: Verified operator identity from SVID/OIDC (injected)
 
     Returns:
         JSON response with status:
@@ -1499,6 +1549,7 @@ async def defer_escalate(
         - "escalated" — quorum threshold met, token resolved
 
     Raises:
+        401 Unauthorized: Missing or invalid authentication.
         409 Conflict: Operator has already approved this token.
         404 Not Found: Token does not exist or already resolved.
         503 Service Unavailable: Redis connection failed.
@@ -1521,15 +1572,12 @@ async def defer_escalate(
             detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
         )
 
-    # Create approval record
-    # Hash the session_id as the principal (in Phase 5, this will be the real principal)
-    auth_principal_hash = hashlib.sha256(body.session_id.encode()).hexdigest()
-
+    # Create approval record from verified operator identity
     approval_record = ApprovalRecord(
-        approver_urn=body.operator_urn,
+        approver_urn=operator.operator_urn,
         approved_at_utc=datetime.utcnow().isoformat() + "Z",
-        auth_method=body.auth_method,
-        auth_principal_hash=auth_principal_hash,
+        auth_method=operator.channel_provenance,
+        auth_principal_hash=operator.auth_principal_hash,
     )
 
     try:
@@ -1550,7 +1598,7 @@ async def defer_escalate(
                 status_code=409,
                 detail={
                     "error": "ALREADY_APPROVED",
-                    "message": f"Operator {body.operator_urn} has already approved this token",
+                    "message": f"Operator {operator.operator_urn} has already approved this token",
                     "defer_id": defer_id,
                 },
             )
