@@ -887,7 +887,6 @@ async def verify_input(
             res = await rails.generate_async(
                 messages=[{"role": "user", "content": text}],
                 options={"rails": ["input"]},
-                context=nemo_context if nemo_context else None,
             )
             bot_response = _extract_bot_response(res)
 

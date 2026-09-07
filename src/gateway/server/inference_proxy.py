@@ -349,7 +349,9 @@ async def chat_completions(
                     if k in body
                 }
                 try:
-                    pre_check_results = await governor.pre_check(governance_params)
+                    pre_check_results = await governor.pre_check(
+                        "inference", governance_params
+                    )
                     logger.debug(
                         "🔍 InferenceProxy: pre_check complete "
                         "(stpa_allowed=%s, cbf_allowed=%s)",
