@@ -21,7 +21,46 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > from domain-specific plugins (Layer 2), establishing capability-driven tier
 > dispatch architecture. Removes legacy inline governance mechanisms.
 
-### Breaking Changes
+### Post-v3.0.0 Changes (feat/cilium-telemetry-prod)
+
+#### feat(infra)! — CNI Abstraction Layer for Cilium L7 Overlay
+
+- **Cilium NetworkPolicy Directory** — Added `deployment/k8s/cilium/` containing three `CiliumNetworkPolicy` resources: `egress-lockdown.yaml` (FQDN allowlist for gateway, sovereign-agent, and financial-advisor pods), `reconciliation-worker-egress.yaml` (egress isolation for the reconciliation CronJob), and `trivy-egress-fqdn.yaml` (Trivy scanner allowlist). These extend the portable `networking.k8s.io/v1` baseline with L7 DNS-aware filtering on GKE Dataplane V2 / Cilium-enabled clusters.
+- **AgentSight DaemonSet** — Updated `deployment/k8s/agentsight-daemon.yaml` with updated pod spec.
+- **Terraform GKE Module** — `infra/modules/gcp_gke_cluster/main.tf` and `variables.tf` updated with Cilium/Dataplane V2 configuration variables.
+- **Terraform GKE Target** — `infra/targets/gcp-gke/main.tf` updated to pass CNI configuration through the cluster module.
+- **Staging TFVars** — `infra/targets/gcp-gke/staging.tfvars` updated with CNI-related settings.
+- **`deploy_all.sh`** — Updated with Cilium CNI overlay support.
+
+#### feat(compliance) — Cilium Telemetry Integration and ClickHouse Evidence Stream
+
+- **`src/compliance_bridge/clickhouse_sink.py`** — New ClickHouse sink for streaming infrastructure telemetry events from the compliance bridge.
+- **`src/compliance_bridge/main.py`** — Added infrastructure event telemetry endpoint and Cilium telemetry pipeline.
+- **`src/compliance_bridge/types.py`** — New types for infrastructure compliance events.
+- **`compliance/lula/lula-validation-cilium-dpv2.yaml`** — New Lula validation asserting that the GKE Dataplane V2 `anetd` DaemonSet is scheduled and ready on all nodes (NIST SP 800-53 SC-7 — Boundary Protection).
+- **`deployment/clickhouse/evidence_stream_schema.sql`** — Added schema for Cilium telemetry evidence stream.
+- **Prod TFVars** — `prod.tfvars`, `eu-prod.tfvars`, `apac-prod.tfvars` updated with Cilium/DPv2 settings for production regions.
+
+#### fix(governance) — Feature-Flag Isolation for xdist Safety
+
+- **`src/gateway/governance/symbolic_governor.py`** — Isolated feature-flag reads to prevent state leakage between parallel test workers when running `pytest -n auto`. Flags are now read per-invocation rather than cached at module import time.
+- **`tests/test_classify_violation.py`** — Added test coverage for feature-flag isolation behavior.
+
+#### fix(nemo) — Correct self_check Import Paths
+
+- **`config/rails/actions.py`** — Fixed `self_check_input` and `self_check_output` import paths to match the installed `nemoguardrails` package structure (`nemoguardrails.library.self_check.input_check.actions` / `nemoguardrails.library.self_check.output_check.actions`).
+- **`src/gateway/governance/nemo/manager.py`** — Removed unsupported `context` keyword argument; fixed `pre_check` method signature.
+- **`src/gateway/server/inference_proxy.py`** — Updated NeMo pre-check call to match corrected signature.
+
+#### fix(compliance) — Lula Validation Schema and Bridge Config
+
+- **`compliance/lula/lula-validation-cilium-dpv2.yaml`** — Updated Lula validation schema to match current Lula version requirements.
+- **`infra/modules/compliance_bridge/main.tf`** — Added compliance bridge Terraform configuration.
+
+#### style(tests) / fix(tests) — Test Hygiene
+
+- **`tests/test_pause_primitive.py`** — Applied ruff formatter; patched dynamic feature flags to prevent cross-worker state pollution in xdist runs.
+
 
 #### PR A — Capability-Driven Tier Dispatch
 

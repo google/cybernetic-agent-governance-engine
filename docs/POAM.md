@@ -228,6 +228,8 @@ CAGE uses [Lula](https://github.com/defenseunicorns/lula) for compliance-as-code
 | `lula-validation-mas-feat.yaml` | MAS FEAT | Fairness/Ethics/Accountability/Transparency | APAC_MAS |
 | `lula-validation-mas-notice655.yaml` | MAS Notice 655 | Technology Risk Management | APAC_MAS |
 | `lula-validation-mas-trm-s6.yaml` | MAS TRM | §6.3 AI/ML Controls | APAC_MAS |
+| `lula-validation-ftra.yaml` | OWASP AISVS | C9 FTRA Reachability Registry Integrity | Universal |
+| `lula-validation-cilium-dpv2.yaml` | NIST SP 800-53 | SC-7 Boundary Protection (GKE Dataplane V2) | US_FED |
 
 ---
 

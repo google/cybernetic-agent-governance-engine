@@ -238,6 +238,7 @@ For complete adapter design patterns, latency budgets, sidecar architecture, and
 | Technology                          | Role                   | Details                                                                                               |
 | ----------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------- |
 | **Google Kubernetes Engine (GKE)**  | Runtime platform       | `governance-stack` namespace; 9 `NetworkPolicy` objects; default-deny posture                         |
+| **Cilium / GKE Dataplane V2**       | L7 network policy CNI  | `CiliumNetworkPolicy` resources in `deployment/k8s/cilium/`; FQDN allowlist enforcement via eBPF DNS proxy; `anetd` DaemonSet in `kube-system`; activated by `enable_dataplane_v2 = true` in Terraform GKE module |
 | **Terraform**                       | Infrastructure-as-code | `infra/modules/` (16 shared modules) + `infra/targets/` (`agnostic/`, `gcp-gke/`)                     |
 | **Docker**                          | Containerization       | Multi-stage builds; `Dockerfile`, `Dockerfile.vllm`, `Dockerfile.lula-*`                              |
 | **Google Cloud Build**              | CI/CD                  | Dot notation: `cloudbuild.gateway.yaml`, `cloudbuild.vllm.yaml`, `cloudbuild.lula.yaml`, etc.          |

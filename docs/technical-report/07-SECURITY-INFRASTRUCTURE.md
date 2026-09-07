@@ -393,15 +393,16 @@ Verification: `linkerd viz authz deployment/opa-service -n governance-stack`
 
 #### Layer 2 — Cilium L7 Egress Lockdown (Outbound FQDN Filtering)
 
-Source: [`deployment/k8s/cilium-egress-lockdown.yaml`](../../deployment/k8s/cilium-egress-lockdown.yaml)
+Source: [`deployment/k8s/cilium/`](../../deployment/k8s/cilium/) — see [`deployment/k8s/cilium/README.md`](../../deployment/k8s/cilium/README.md) for apply order and verification commands.
 
-Three `CiliumNetworkPolicy` resources extend the standard L3/L4 NetworkPolicies with L7 DNS-aware filtering:
+Four `CiliumNetworkPolicy` resources extend the standard L3/L4 NetworkPolicies with L7 DNS-aware filtering:
 
 | Policy | Target | Allowed FQDNs | Purpose |
 | ------ | ------ | -------------- | ------- |
 | `cage-egress-inference` | `role: inference-node` | `generativelanguage.googleapis.com`, `oauth2.googleapis.com` | LLM API access only |
 | `cage-egress-sovereign-agent` | `role: sovereign-agent` | `query1.finance.yahoo.com`, `storage.googleapis.com`, `generativelanguage.googleapis.com` | Market data + cloud storage + LLM |
 | `cage-default-deny-egress` | All pods | None | Cilium-layer default-deny for all non-allowlisted external egress |
+| `reconciliation-worker-egress` | `app: reconciliation-worker` | Cloud KMS, GCS/S3, Redis, internal DNS | Egress isolation for the external ledger reconciliation CronJob |
 
 **Full approved FQDN egress allowlist** (all roles combined):
 

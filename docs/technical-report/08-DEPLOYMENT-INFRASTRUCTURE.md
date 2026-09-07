@@ -61,6 +61,18 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 - `deployment/k8s/redis-config.yaml` — Redis ConfigMap enforcing `maxmemory-policy noeviction` for db=1 DEFER state safety
 - `deployment/k8s/redis-master-service.yaml` — ClusterIP Service pinned to the Sentinel primary pod (`redis-node-1`) for write traffic isolation
 
+**Cilium L7 Network Policy Overlay** (`deployment/k8s/cilium/`)
+
+An optional L7 security overlay for GKE Dataplane V2 / Cilium-enabled clusters. Applied **after** the portable `networking.k8s.io/v1` baseline — see [`deployment/k8s/cilium/README.md`](../../deployment/k8s/cilium/README.md) for requirements and apply order.
+
+| Manifest | Kind | Description |
+|---|---|---|
+| `deployment/k8s/cilium/egress-lockdown.yaml` | `CiliumNetworkPolicy` | FQDN allowlist for gateway, financial-advisor, and sovereign-agent pods; cluster-wide external egress default-deny |
+| `deployment/k8s/cilium/reconciliation-worker-egress.yaml` | `CiliumNetworkPolicy` | Egress isolation for the external ledger reconciliation CronJob (Cloud KMS, GCS/S3, Redis, internal DNS) |
+| `deployment/k8s/cilium/trivy-egress-fqdn.yaml` | `CiliumNetworkPolicy` | FQDN allowlist for Trivy scanner (`ghcr.io`, `pkg.dev`) via DNS proxy |
+
+> **Activation:** Requires `enable_dataplane_v2 = true` in `infra/modules/gcp_gke_cluster/variables.tf` (set in `prod.tfvars`, `eu-prod.tfvars`, `apac-prod.tfvars`). On standard K8s without Cilium, **do not apply** this directory — the base NetworkPolicy layer provides full L3/L4 isolation.
+
 **Vendor Integration Package (`src/integrations/`)**
 
 Third-party compliance and attestation adapters are deployed as part of the Hybrid Gateway image but are isolated in their own package tree. They are **not** separate Kubernetes services — they run in-process within the gateway pod and are activated only when the corresponding environment variables are set:
