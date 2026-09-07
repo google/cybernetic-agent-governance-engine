@@ -602,12 +602,15 @@ class TestSchemaLoading:
     @pytest.mark.local
     def test_envelope_schema_loaded(self) -> None:
         """ENVELOPE_SCHEMA must be a non-None dict after module import.
-
+ 
         Regression: SCHEMA_PATH previously resolved to a non-existent path,
         and the except-block silently set ENVELOPE_SCHEMA = None, disabling
         all JSON Schema validation. This test would have caught that bug.
         """
-        from src.integrations.provider_06.mock_endpoint import ENVELOPE_SCHEMA, SCHEMA_PATH
+        from src.integrations.provider_06.mock_endpoint import (
+            ENVELOPE_SCHEMA,
+            SCHEMA_PATH,
+        )
 
         assert ENVELOPE_SCHEMA is not None, (
             f"ENVELOPE_SCHEMA is None — SCHEMA_PATH resolution is broken.\n"

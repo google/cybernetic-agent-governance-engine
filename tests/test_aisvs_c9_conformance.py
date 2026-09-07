@@ -676,10 +676,10 @@ def test_registry_without_manifest_sha256_logs_warning(
     making the absence of digest binding visible via log output.
     """
     import json
+    import pathlib
+    import tempfile
 
     from src.gateway.governance.ftra.classifier import _load_registry
-
-    import tempfile
 
     no_digest = {
         "version": "2.0",
@@ -688,7 +688,6 @@ def test_registry_without_manifest_sha256_logs_warning(
             "execute_trade": "IRREVERSIBLE_TERMINAL",
         },
     }
-    import pathlib
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", delete=False

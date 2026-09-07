@@ -56,7 +56,9 @@ logger = logging.getLogger("cage.integrations.storage_s3")
 #
 # This mirrors the pattern used in GcsColdStore for google.api_core.exceptions.
 try:
-    from botocore.exceptions import ClientError as _BotocoreClientError  # type: ignore[import-untyped]
+    from botocore.exceptions import (
+        ClientError as _BotocoreClientError,  # type: ignore[import-untyped]
+    )
 except ImportError:
     _BotocoreClientError = Exception  # type: ignore[misc, assignment]  # sentinel only
 

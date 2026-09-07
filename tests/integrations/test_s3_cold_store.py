@@ -42,7 +42,7 @@ from src.gateway.governance.evidence.cold_store import (
 )
 from src.integrations.storage_s3 import S3ColdStore
 
-pytestmark = [pytest.mark.unit, pytest.mark.s3]
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 def _make_client_error(code: str, message: str = "Error"):
