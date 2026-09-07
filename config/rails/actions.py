@@ -613,7 +613,7 @@ async def custom_self_check_input(
 
         # Use NeMo's built-in self-check with financial-domain-aware prompt
         try:
-            from nemoguardrails.library.self_check.input_check import (
+            from nemoguardrails.library.self_check.input_check.actions import (
                 self_check_input as nemo_self_check,
             )
 
@@ -744,7 +744,7 @@ async def custom_self_check_output(
         span.set_attribute("nemo.action.stage", "LLM_JUDGE")
 
         try:
-            from nemoguardrails.library.self_check.output_check import (
+            from nemoguardrails.library.self_check.output_check.actions import (
                 self_check_output as nemo_self_check,
             )
 
