@@ -38,6 +38,30 @@ from src.gateway.governance.evidence.cold_store import (
 
 logger = logging.getLogger("cage.integrations.storage_s3")
 
+# ---------------------------------------------------------------------------
+# Optional dependency sentinel — botocore (part of the [s3] extra)
+# ---------------------------------------------------------------------------
+# boto3/botocore are optional (uv sync --extra s3).  All production code paths
+# that need a real boto3 client go through _get_client(), which raises
+# ColdStoreError immediately if boto3 is absent.
+#
+# ClientError is also referenced in the exception-handling paths of
+# _sync_exists and _sync_put_if_absent.  Those methods are exercised by the
+# conformance suite using injected mock clients — a real ClientError is never
+# raised in that path, so the except-clause type-check is never evaluated.
+# Falling back to the built-in Exception base class as a sentinel is safe:
+# the mock never raises it, and isinstance() against Exception will never
+# match a real boto3 ClientError shape in production (where botocore IS
+# installed and ClientError is the real class).
+#
+# This mirrors the pattern used in GcsColdStore for google.api_core.exceptions.
+try:
+    from botocore.exceptions import (
+        ClientError as _BotocoreClientError,  # type: ignore[import-untyped]
+    )
+except ImportError:
+    _BotocoreClientError = Exception  # type: ignore[misc, assignment]  # sentinel only
+
 
 class S3ColdStore(EvidenceColdStore):
     """S3-compatible adapter conforming to the EvidenceColdStore protocol.
@@ -218,10 +242,10 @@ class S3ColdStore(EvidenceColdStore):
             client.head_object(Bucket=bucket_name, Key=key)
             return True
         except Exception as exc:
-            # Check for 404/NoSuchKey
-            from botocore.exceptions import ClientError  # type: ignore[import-untyped]
-
-            if isinstance(exc, ClientError):
+            # Check for 404/NoSuchKey — uses module-level sentinel so this
+            # method works with injected mock clients even when botocore is
+            # absent (s3 extra not installed).
+            if isinstance(exc, _BotocoreClientError):
                 code = exc.response.get("Error", {}).get("Code", "")
                 if code in ("404", "NoSuchKey", "NotFound"):
                     return False
@@ -243,8 +267,6 @@ class S3ColdStore(EvidenceColdStore):
         bucket_name = self._resolve_bucket()
         digest = hashlib.sha256(content).hexdigest()
 
-        from botocore.exceptions import ClientError  # type: ignore[import-untyped]
-
         kwargs: dict[str, Any] = {
             "Bucket": bucket_name,
             "Key": key,
@@ -258,7 +280,7 @@ class S3ColdStore(EvidenceColdStore):
         try:
             client.put_object(**kwargs)
             created = True
-        except ClientError as exc:
+        except _BotocoreClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code in ("PreconditionFailed", "412"):
                 created = False

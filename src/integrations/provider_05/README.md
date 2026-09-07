@@ -1,9 +1,14 @@
-# Provider 05 — Verifiable Execution Evidence Pack (Seeded / Synthetic)
+# Provider 05 — Veraxis Execution Integrity Protocol (VEIP)
 
 > **Reference architecture note:** CAGE is an illustrative reference
 > architecture. Providers are numbered and anonymized, and this integration has
 > **no configured live endpoint**. Adopters should treat this as an integration
 > pattern to adapt, not a hosted service.
+>
+> **Naming note:** The vendor name for this integration is **Veraxis Execution
+> Integrity Protocol (VEIP)**. The package path `provider_05` is retained for
+> import stability across branches and test fixtures.
+
 
 | Property | Value |
 |---|---|

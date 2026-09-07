@@ -25,7 +25,7 @@ is a complete vendor integration boundary:
   ├── provider_02/  — CER attestation + LangGraph adapter
   ├── provider_03/  — Decision governance provider
   ├── provider_04/  — Attestation provider + envelope mapper
-  └── provider_05/  — Verifiable Execution Evidence Pack
+  └── provider_05/  — Veraxis Execution Integrity Protocol (VEIP)
 
 Vendor packages MUST NOT introduce imports into the CAGE kernel.
 All vendor code is loaded lazily via the provider factory in

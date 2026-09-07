@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-test_provider_01.py — Provider 01 Adapter Tests
+test_provider_01.py — FlowSignal Adapter Tests
 ===============================================
 
-Tests for the Provider 01 NormativeProvider adapter including:
+Tests for the FlowSignal NormativeProvider adapter including:
 - Protocol compliance (correct method signatures and return types)
 - HTTP error handling (HTTPStatusError, RequestError)
 - Rich findings generation on failure
@@ -30,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.integrations.provider_01.provider import Provider01NormativeProvider
+from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -38,9 +38,9 @@ from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 
 @pytest.fixture
-def adapter() -> Provider01NormativeProvider:
+def adapter() -> FlowSignalNormativeProvider:
     """Create an adapter with a mock endpoint."""
-    return Provider01NormativeProvider(
+    return FlowSignalNormativeProvider(
         endpoint="http://localhost:8080",
         api_key="test-api-key",
         timeout=5.0,
@@ -48,9 +48,9 @@ def adapter() -> Provider01NormativeProvider:
 
 
 @pytest.fixture
-def adapter_no_endpoint() -> Provider01NormativeProvider:
+def adapter_no_endpoint() -> FlowSignalNormativeProvider:
     """Create an adapter without an endpoint configured."""
-    return Provider01NormativeProvider(
+    return FlowSignalNormativeProvider(
         endpoint="",
         api_key="",
         timeout=5.0,
@@ -79,7 +79,7 @@ class TestProtocolCompliance:
     @pytest.mark.local
     async def test_fetch_baseline_returns_normative_baseline(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """fetch_baseline returns NormativeBaseline dataclass."""
         mock_response = _mock_response(
@@ -107,7 +107,7 @@ class TestProtocolCompliance:
     @pytest.mark.local
     async def test_validate_fria_returns_validation_result(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """validate_fria returns ValidationResult dataclass."""
         mock_response = _mock_response(
@@ -136,7 +136,7 @@ class TestProtocolCompliance:
     @pytest.mark.local
     async def test_submit_evidence_returns_evidence_seal(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """submit_evidence returns EvidenceSeal dataclass."""
         mock_response = _mock_response(
@@ -172,7 +172,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_http_status_error_on_validate_fria_returns_rich_findings(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """HTTPStatusError returns admitted=False with ENDPOINT_ERROR finding."""
         import httpx
@@ -203,7 +203,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_request_error_on_validate_fria_returns_rich_findings(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """RequestError returns admitted=False with ENDPOINT_ERROR finding."""
         import httpx
@@ -226,7 +226,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_http_status_error_on_fetch_baseline_returns_error(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """HTTPStatusError on fetch_baseline returns NormativeBaseline with error."""
         import httpx
@@ -253,7 +253,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_request_error_on_submit_evidence_returns_error(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """RequestError on submit_evidence returns EvidenceSeal with error."""
         import httpx
@@ -294,7 +294,7 @@ class TestFactoryRegistration:
         from src.gateway.governance.normative_provider import get_normative_provider
 
         provider = get_normative_provider("provider_01")
-        assert isinstance(provider, Provider01NormativeProvider)
+        assert isinstance(provider, FlowSignalNormativeProvider)
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +369,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_allow_mints_consequence_token(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """FlowSignal ALLOW mints a ConsequenceToken and attaches it as a finding."""
         from unittest.mock import patch
@@ -429,7 +429,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_minted_token_round_trips_verification(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """The minted ConsequenceToken can be verified and claims match inputs."""
         from unittest.mock import patch
@@ -497,7 +497,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_minted_token_integrates_with_consequence_gateway(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """Cross-module integration: minted token produces EXECUTE from ConsequenceGateway."""
         pytest.importorskip("fakeredis", reason="fakeredis required")
@@ -568,7 +568,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_mint_failure_fails_closed(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """If ConsequenceToken minting fails, validate_fria returns admitted=False."""
         from unittest.mock import MagicMock, patch
@@ -618,7 +618,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_refuse_does_not_mint_token(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """FlowSignal REFUSE does not mint a token."""
         from unittest.mock import patch
@@ -659,7 +659,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_escalate_does_not_mint_token(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """FlowSignal ESCALATE does not mint a token."""
         from unittest.mock import patch
@@ -700,7 +700,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_flowsignal_allow_without_authority_record_fails_closed(
         self,
-        adapter: Provider01NormativeProvider,
+        adapter: FlowSignalNormativeProvider,
     ) -> None:
         """FlowSignal ALLOW without authority_record_id fails closed (Phase 2 ST-4).
 

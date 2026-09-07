@@ -120,8 +120,8 @@ async def test_attestation_providers_exist() -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestProvider01FlowSignalDecisionMapping:
-    """Verify Provider01 correctly maps FlowSignal tri-state decision to CAGE primitives.
+class TestFlowSignalDecisionMapping:
+    """Verify FlowSignal correctly maps FlowSignal tri-state decision to CAGE primitives.
 
     These tests cover the ESCALATE contract mapping per §3.1 of the FlowSignal
     integration plan, ensuring:
@@ -134,10 +134,10 @@ class TestProvider01FlowSignalDecisionMapping:
 
     @pytest.fixture
     def provider(self):
-        """Instantiate Provider01 with mock endpoint."""
-        from src.integrations.provider_01.provider import Provider01NormativeProvider
+        """Instantiate FlowSignal with mock endpoint."""
+        from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
-        return Provider01NormativeProvider(
+        return FlowSignalNormativeProvider(
             endpoint="https://mock.flowsignal.example.com",
             api_key="test-key",
             timeout=5.0,

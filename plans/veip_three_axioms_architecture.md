@@ -3,8 +3,8 @@
 > **Document Type:** Architecture Design Document
 > **Status:** Draft for review
 > **Scope:** Maps the "Three Uncomputable Axioms" framework onto CAGE's existing
-> governance substrate and specifies how a **VEIP (Verifiable Execution Evidence
-> Pack)** adapter docks into the `NormativeProvider` integration seam
+> governance substrate and specifies how a **VEIP (Veraxis Execution Integrity
+> Protocol)** adapter docks into the `NormativeProvider` integration seam
 > ([`normative_provider.py`](../src/gateway/governance/normative_provider.py))
 > to close each gap.
 > **Prior work:** This document builds on the prior analysis that identified 8
@@ -39,8 +39,8 @@ Each axiom is **uncomputable from inside CAGE's own trust boundary** — no
 amount of internal Rego policy or in-process cryptography can self-certify
 its own legitimacy, its issuer's authority, or its silicon's integrity. This
 is not a CAGE defect; it is a category boundary common to every governance
-substrate. It is precisely the boundary a **VEIP (Verifiable Execution
-Evidence Pack)** is designed to close: VEIP does not replace CAGE's runtime
+substrate. It is precisely the boundary a **VEIP (Veraxis Execution Integrity
+Protocol)** is designed to close: VEIP does not replace CAGE's runtime
 enforcement, it **externally attests to the three preconditions** CAGE must
 assume, and binds that attestation cryptographically into the same evidence
 chain CAGE already produces.

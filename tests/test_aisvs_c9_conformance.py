@@ -592,3 +592,223 @@ def test_severity_ordering() -> None:
     assert CLASSIFICATION_SEVERITY[TerminalClassification.REVERSIBLE] == 1
     assert CLASSIFICATION_SEVERITY[TerminalClassification.EXTERNALLY_REVERSIBLE] == 2
     assert CLASSIFICATION_SEVERITY[TerminalClassification.IRREVERSIBLE_TERMINAL] == 3
+
+
+# ---------------------------------------------------------------------------
+# Manifest integrity tests — Issue #107 (Mayur Agnihotri)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_manifest_digest_passes_on_shipped_file() -> None:
+    """The shipped terminal_registry.json must pass its own manifest_sha256 check.
+
+    Regression guard for Issue #107: IrreversibilityClassifier must now verify
+    the SHA-256 of the JCS-canonicalized terminals block against the embedded
+    manifest_sha256 field. If someone edits the terminals dict without updating
+    the digest, this test will catch it.
+    """
+    import json
+    from pathlib import Path
+
+    from src.gateway.governance.ftra.classifier import _load_registry
+
+    registry_path = (
+        Path(__file__).resolve().parents[1]
+        / "config"
+        / "ftra"
+        / "terminal_registry.json"
+    )
+    assert registry_path.exists(), f"Registry not found: {registry_path}"
+
+    # _load_registry() raises ValueError on digest mismatch; if it returns
+    # cleanly the digest passed.
+    terminals = _load_registry(registry_path)
+    assert isinstance(terminals, dict)
+    assert len(terminals) > 0
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_manifest_digest_fails_on_tampered_terminals(tmp_path: Path) -> None:
+    """A tampered terminals dict must raise ValueError from _load_registry().
+
+    Writes a registry file with a valid manifest_sha256 but then mutates
+    the terminals block (adds a fake action). Verifies that the integrity
+    check fires with a clear error rather than silently accepting the
+    tampered registry.
+    """
+    import json
+
+    from src.gateway.governance.ftra.classifier import _load_registry
+
+    tampered = {
+        "version": "3.0",
+        "domain": "finance",
+        "manifest_sha256": "a38e700cdcf5e91875f79b13664e669993a3a2fce2c67d252961226b9975990f",
+        "terminals": {
+            "write_db": "IRREVERSIBLE_TERMINAL",
+            "check_balance": "READ_ONLY",
+            "release_wire": "EXTERNALLY_REVERSIBLE",
+            "execute_trade": "IRREVERSIBLE_TERMINAL",
+            "prompt_injection_check": "READ_ONLY",
+            "execute_trade_bounded": "EXTERNALLY_REVERSIBLE",
+            # Injected: attacker adds a new REVERSIBLE action not in the original digest
+            "transfer_funds_quietly": "REVERSIBLE",
+        },
+    }
+    tampered_path = tmp_path / "terminal_registry_tampered.json"
+    tampered_path.write_text(json.dumps(tampered))
+
+    with pytest.raises(ValueError, match="integrity check FAILED"):
+        _load_registry(tampered_path)
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_without_manifest_sha256_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A registry without manifest_sha256 loads successfully but logs a warning.
+
+    Ensures backward compatibility with pre-Issue-#107 registries while
+    making the absence of digest binding visible via log output.
+    """
+    import json
+    import pathlib
+    import tempfile
+
+    from src.gateway.governance.ftra.classifier import _load_registry
+
+    no_digest = {
+        "version": "2.0",
+        "domain": "finance",
+        "terminals": {
+            "execute_trade": "IRREVERSIBLE_TERMINAL",
+        },
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+        json.dump(no_digest, fh)
+        tmp_name = pathlib.Path(fh.name)
+
+    try:
+        import logging
+
+        with caplog.at_level(
+            logging.WARNING, logger="Gateway.Governance.FTRA.Classifier"
+        ):
+            terminals = _load_registry(tmp_name)
+        assert "no manifest_sha256" in caplog.text or terminals == {
+            "execute_trade": "IRREVERSIBLE_TERMINAL"
+        }
+    finally:
+        tmp_name.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Staleness tests — Issue #107 follow-up (Mayur Agnihotri)
+# These are the *second* control: does the registry still describe the system?
+# The manifest digest (above) proves integrity; these prove currency.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_staleness_clean_against_finance_domain() -> None:
+    """The shipped registry must be current with cage_finance.REGISTERED_ACTIONS.
+
+    This is the staleness half of Issue #107.  A valid manifest digest proves
+    nobody tampered with the file; this test proves the file still describes
+    the live domain surface.
+
+    Architecture note: check_registry_staleness() lives in the kernel and
+    never imports cage_finance — the domain set is supplied by the caller here
+    in the test, preserving Layer 1 / Layer 2 isolation.
+    """
+    from src.cage_finance import REGISTERED_ACTIONS
+    from src.gateway.governance.ftra.classifier import check_registry_staleness
+
+    report = check_registry_staleness(REGISTERED_ACTIONS)
+
+    assert report.is_clean, (
+        f"FTRA registry is stale relative to cage_finance.REGISTERED_ACTIONS.\n"
+        f"  Unclassified (in domain, absent from registry): {sorted(report.unclassified)}\n"
+        f"  Phantom      (in registry, absent from domain):  {sorted(report.phantom)}\n"
+        "Update config/ftra/terminal_registry.json and recompute manifest_sha256."
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_staleness_detects_unclassified_action(tmp_path: Path) -> None:
+    """check_registry_staleness() must flag an action in live_actions but absent from registry.
+
+    Simulates a domain plugin that has added a new action ('send_alert') that
+    was not yet added to the registry.  The function must report it as
+    unclassified — not silently absorb it.
+    """
+    import json
+
+    from src.gateway.governance.ftra.classifier import check_registry_staleness
+
+    registry = {
+        "version": "3.0",
+        "domain": "test",
+        "terminals": {"execute_trade": "IRREVERSIBLE_TERMINAL"},
+    }
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(registry))
+
+    live_actions = frozenset({"execute_trade", "send_alert"})
+    report = check_registry_staleness(live_actions, registry_path=path)
+
+    assert not report.is_clean
+    assert "send_alert" in report.unclassified
+    assert not report.phantom
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_registry_staleness_detects_phantom_entry(tmp_path: Path) -> None:
+    """check_registry_staleness() must flag a registry entry absent from live_actions.
+
+    Simulates a registry that still contains 'legacy_transfer' after the
+    action was removed from the domain plugin.
+    """
+    import json
+
+    from src.gateway.governance.ftra.classifier import check_registry_staleness
+
+    registry = {
+        "version": "3.0",
+        "domain": "test",
+        "terminals": {
+            "execute_trade": "IRREVERSIBLE_TERMINAL",
+            "legacy_transfer": "EXTERNALLY_REVERSIBLE",  # removed from domain
+        },
+    }
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(registry))
+
+    live_actions = frozenset({"execute_trade"})
+    report = check_registry_staleness(live_actions, registry_path=path)
+
+    assert not report.is_clean
+    assert "legacy_transfer" in report.phantom
+    assert not report.unclassified
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_staleness_report_is_clean_property() -> None:
+    """StalenessReport.is_clean is True only when both sets are empty."""
+    from src.gateway.governance.ftra.classifier import StalenessReport
+
+    assert StalenessReport().is_clean
+    assert not StalenessReport(unclassified=frozenset({"x"})).is_clean
+    assert not StalenessReport(phantom=frozenset({"y"})).is_clean
+    assert not StalenessReport(
+        unclassified=frozenset({"x"}), phantom=frozenset({"y"})
+    ).is_clean

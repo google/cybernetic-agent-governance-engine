@@ -17,7 +17,7 @@ normative_provider.py — External Normative Provider Interface (CAGE v0.1.0)
 ===========================================================================
 
 Implements §2.5 of EXTENSIBILITY_ARCHITECTURE.md: the 3-endpoint integration
-surface for external normative providers (e.g. Provider 01), combined with an
+surface for external normative providers (e.g. FlowSignal), combined with an
 **Adaptive Gating Primitive** that maps the blocking semantic directly to
 CAGE's existing confidence boundary thresholds.
 
@@ -894,7 +894,7 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
-        - "provider_01"  — Provider 01 legal baseline & FRIA API
+        - "flowsignal"   — FlowSignal legal baseline & FRIA API (alias: "provider_01")
         - "provider_02"  — Provider 02 attestation API (AttestationProvider fallback)
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
@@ -913,6 +913,8 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
     # Provider alias normalization
     alias_map = {
+        "flowsignal": "provider_01",
+        "flow_signal": "provider_01",
         "p01": "provider_01",
         "p02": "provider_02",
         "p03": "provider_03",
@@ -930,9 +932,9 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
     # Vendor providers — lazy-loaded from src/integrations/{provider}/
     if provider_name == "provider_01":
-        from src.integrations.provider_01 import Provider01NormativeProvider
+        from src.integrations.provider_01 import FlowSignalNormativeProvider
 
-        return Provider01NormativeProvider()
+        return FlowSignalNormativeProvider()
 
     if provider_name == "provider_02":
         from src.integrations.provider_02 import Provider02AttestationProvider

@@ -674,6 +674,18 @@ async def get_jwks_endpoint() -> JSONResponse:
     )
 
 
+@governance_app.get("/.well-known/jwks.json")
+async def get_jwks_well_known() -> JSONResponse:
+    """RFC 8615 well-known alias for the JWKS endpoint.
+
+    Henrik Ibsen contract: clients must be able to fetch public keys at the
+    standard well-known location in addition to the /jwks shorthand.
+    Delegates to get_jwks_endpoint() so all caching and key-rotation
+    behaviour is identical between the two paths.
+    """
+    return await get_jwks_endpoint()
+
+
 @governance_app.post("/validate-action")
 async def validate_action_endpoint(
     request: Request,

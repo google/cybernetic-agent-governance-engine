@@ -13,16 +13,16 @@
 # limitations under the License.
 
 """
-Provider 01 Integration Package
-=================================
+FlowSignal Integration Package
+================================
 
 Production normative provider backed by cloud API.
 
 Usage::
 
-    from src.integrations.provider_01 import Provider01NormativeProvider
+    from src.integrations.provider_01 import FlowSignalNormativeProvider
 """
 
-from .provider import Provider01NormativeProvider
+from .provider import FlowSignalNormativeProvider
 
-__all__ = ["Provider01NormativeProvider"]
+__all__ = ["FlowSignalNormativeProvider"]

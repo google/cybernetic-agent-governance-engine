@@ -27,7 +27,14 @@ import hashlib
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError
+
+# Skip the entire module if botocore is not installed (s3 extra not in env).
+# Run with: uv sync --extra s3 && uv run pytest tests/integrations/test_s3_cold_store.py
+botocore_exceptions = pytest.importorskip(
+    "botocore.exceptions",
+    reason="botocore not installed — run: uv sync --extra s3",
+)
+ClientError = botocore_exceptions.ClientError
 
 from src.gateway.governance.evidence.cold_store import (
     ColdStoreError,
@@ -35,7 +42,7 @@ from src.gateway.governance.evidence.cold_store import (
 )
 from src.integrations.storage_s3 import S3ColdStore
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 def _make_client_error(code: str, message: str = "Error"):
