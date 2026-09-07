@@ -181,6 +181,26 @@ class Provider03NormativeProvider:
 
         url = f"{self._endpoint}/validate"
         try:
+            # Canonical v3 action_context key normalization (Issue #126).
+            # CAGE internal params use 'amount' and 'symbol' (domain vocabulary).
+            # Provider 03 (Veritas) upstream expects v3 wire keys: 'magnitude'
+            # and 'context'. Normalize before sending; never mutate the caller's
+            # dict so upstream retries and logging see consistent data.
+            action_context = payload.get("action_context")
+            if isinstance(action_context, dict) and (
+                "amount" in action_context or "symbol" in action_context
+            ):
+                normalized_context = dict(action_context)
+                if "amount" in normalized_context:
+                    normalized_context["magnitude"] = normalized_context.pop("amount")
+                if "symbol" in normalized_context:
+                    normalized_context["context"] = normalized_context.pop("symbol")
+                payload = {**payload, "action_context": normalized_context}
+                logger.debug(
+                    "[Provider03] Normalized action_context keys to v3 wire format "
+                    "(amount→magnitude, symbol→context)"
+                )
+
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
