@@ -2,7 +2,7 @@
 title: "Cybernetic Governance Engine (CAGE) — Deployment & Infrastructure"
 document: "08-DEPLOYMENT-INFRASTRUCTURE"
 version: "3.0"
-date: "2026-08-22"
+date: "2026-09-07"
 classification: "INTERNAL"
 ---
 

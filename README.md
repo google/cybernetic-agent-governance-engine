@@ -24,10 +24,10 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 ## What's New in v3.0.0
 
-> **Release date:** 2026-08-28 — Major Version Release: Domain-agnostic kernel extraction, Layer 1/Layer 2 separation, architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
-> See [CHANGELOG.md](CHANGELOG.md#300---2026-08-28) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
+> **Release date:** 2026-09-07 — Major Version Release: Domain-agnostic kernel extraction, Layer 1/Layer 2 separation, architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
+> See [CHANGELOG.md](CHANGELOG.md#300---2026-09-07) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
 
-**Post-v3.0.0 Consolidation (September 2026):** Following the v3.0.0 release, a comprehensive Phase 1–3 consolidation effort spanning 6 PRs and 20 feature branches completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation initiated in v3.0.0. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Domain-specific semantics (trading controls, dosing barriers, fiscal limits) moved to optional [`cage.plugins`](src/cage_finance/) packages loaded via `CAGE_ACTIVE_PLUGINS`. This architectural shift resolves Issue #107 (FTRA registry signing) and establishes the foundation for third-party domain adoption. See [`plans/post_consolidation_roadmap.md`](plans/post_consolidation_roadmap.md) for the full consolidation roadmap and [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the domain-agnostic kernel thesis.
+**v3.0.0 Architectural Consolidation (September 2026):** CAGE v3.0.0 includes a comprehensive Phase 1–3 consolidation effort spanning 6 PRs and 20 feature branches that completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Domain-specific semantics (trading controls, dosing barriers, fiscal limits) moved to optional [`cage.plugins`](src/cage_finance/) packages loaded via `CAGE_ACTIVE_PLUGINS`. This architectural shift resolves Issue #107 (FTRA registry signing) and establishes the foundation for third-party domain adoption. See [`plans/post_consolidation_roadmap.md`](plans/post_consolidation_roadmap.md) for the full consolidation roadmap and [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the domain-agnostic kernel thesis.
 
 ### Major Capabilities & Enhancements
 
@@ -793,4 +793,4 @@ This is not an officially supported Google product. This project is not eligible
 
 By participating in this project, you agree to abide by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-_CAGE v3.0.0 — 2026-08-28 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_
+_CAGE v3.0.0 — 2026-09-07 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_

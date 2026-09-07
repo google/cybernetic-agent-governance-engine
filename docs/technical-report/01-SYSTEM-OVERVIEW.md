@@ -3,7 +3,7 @@
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **Document Version** | 3.0                                                                                                           |
-| **Date**             | 2026-08-22                                                                                                    |
+| **Date**             | 2026-09-07                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
 | **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,553 passed, 1 failed, 51 skipped; live GKE integration confirmed per [`AGENTS.md`](../../AGENTS.md)) |
@@ -130,7 +130,7 @@ CAGE provides eight integrated capabilities. **Capabilities 2 and 4–8 are doma
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-28. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **3,446 passed, 0 failed, 96 skipped** (3,925 collected) with statement coverage across all three regional compliance postures.
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-09-07. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **3,446 passed, 0 failed, 96 skipped** (3,925 collected) with statement coverage across all three regional compliance postures.
 
 ### 5.1 Control Family Readiness
 

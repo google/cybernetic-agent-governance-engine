@@ -3,7 +3,7 @@
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-08-22                |
+| **Date**           | 2026-09-07                |
 | **Version**        | 3.0                       |
 | **Status**         | Current — v3.0.0 stable; test suite verified; **3,925 collected / 3,446 local unit passed, 0 failed, 96 skipped**; NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states; Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |

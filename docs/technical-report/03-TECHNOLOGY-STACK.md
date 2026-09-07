@@ -3,7 +3,7 @@
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
 | **Document Version** | 3.0                                                                      |
-| **Date**             | 2026-08-22                                                               |
+| **Date**             | 2026-09-07                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
 | **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
