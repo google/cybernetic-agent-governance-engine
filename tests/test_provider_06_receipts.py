@@ -589,3 +589,58 @@ class TestConformanceFixtures:
             result = await adapter.validate_fria(VALID_ENVELOPE)
 
         assert result.admitted is expected_admitted
+
+
+class TestSchemaLoading:
+    """Regression tests for SCHEMA_PATH resolution (fix/provider-06-schema-path).
+
+    Prior to this fix, SCHEMA_PATH pointed at local/integrations/singh/ which
+    never existed. The silent ENVELOPE_SCHEMA = None fallback meant JSON Schema
+    validation was completely disabled for all Agent Integrity receipts.
+    """
+
+    @pytest.mark.local
+    def test_envelope_schema_loaded(self) -> None:
+        """ENVELOPE_SCHEMA must be a non-None dict after module import.
+
+        Regression: SCHEMA_PATH previously resolved to a non-existent path,
+        and the except-block silently set ENVELOPE_SCHEMA = None, disabling
+        all JSON Schema validation. This test would have caught that bug.
+        """
+        from src.integrations.provider_06.mock_endpoint import ENVELOPE_SCHEMA, SCHEMA_PATH
+
+        assert ENVELOPE_SCHEMA is not None, (
+            f"ENVELOPE_SCHEMA is None — SCHEMA_PATH resolution is broken.\n"
+            f"Resolved path: {SCHEMA_PATH}\n"
+            "Expected: third_party/agent-integrity/schemas/integrity-envelope.schema.json"
+        )
+        assert isinstance(ENVELOPE_SCHEMA, dict), (
+            f"ENVELOPE_SCHEMA must be a dict, got {type(ENVELOPE_SCHEMA)}"
+        )
+
+    @pytest.mark.local
+    def test_envelope_schema_has_required_keys(self) -> None:
+        """Loaded schema must contain at least one of the standard JSON Schema root keys."""
+        from src.integrations.provider_06.mock_endpoint import ENVELOPE_SCHEMA
+
+        assert ENVELOPE_SCHEMA is not None  # already covered above; guard for type checker
+        schema_root_keys = {"$schema", "type", "properties", "$defs", "definitions", "anyOf", "oneOf"}
+        assert schema_root_keys & ENVELOPE_SCHEMA.keys(), (
+            f"ENVELOPE_SCHEMA does not look like a JSON Schema. Keys found: {set(ENVELOPE_SCHEMA.keys())}"
+        )
+
+    @pytest.mark.local
+    def test_schema_path_points_to_third_party(self) -> None:
+        """SCHEMA_PATH must resolve inside third_party/agent-integrity/schemas/, not local/."""
+        from src.integrations.provider_06.mock_endpoint import SCHEMA_PATH
+
+        path_str = str(SCHEMA_PATH)
+        assert "third_party" in path_str and "agent-integrity" in path_str, (
+            f"SCHEMA_PATH is not inside third_party/agent-integrity/: {path_str}"
+        )
+        assert "local" not in path_str.split("third_party")[0].split("/")[-3:], (
+            f"SCHEMA_PATH appears to still use the old local/ prefix: {path_str}"
+        )
+        assert SCHEMA_PATH.exists(), (
+            f"SCHEMA_PATH does not exist on disk: {SCHEMA_PATH}"
+        )

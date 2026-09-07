@@ -16,9 +16,10 @@
 mock_endpoint.py — Agent Integrity Mock Endpoint for Spike Testing
 ===================================================================
 
-A lightweight mock HTTP server that simulates Agent Integrity's verification
-endpoint. Returns pre-canned responses based on conformance fixtures from
-the Agent Integrity repository.
+A lightweight mock HTTP server that simulates the verification endpoint for
+**Agent Integrity by Simran Pabla** (https://github.com/SimranPabla/agent-integrity).
+Returns pre-canned responses based on conformance fixtures vendored at
+``third_party/agent-integrity/tests/conformance/``.
 
 Usage
 -----
@@ -60,19 +61,27 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("cage.integrations.provider_06.mock")
 
+# Schema vendored from Agent Integrity by Simran Pabla.
+# Path: third_party/agent-integrity/schemas/integrity-envelope.schema.json
+# Fail-closed: raises RuntimeError at module import time if the schema cannot be
+# loaded. A missing or unreadable schema means every receipt would bypass
+# validation — that violates CAGE's core fail-closed design invariant.
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[3]
-    / "local"
-    / "integrations"
-    / "singh"
+    / "third_party"
+    / "agent-integrity"
+    / "schemas"
     / "integrity-envelope.schema.json"
 )
 try:
-    with open(SCHEMA_PATH) as f:
-        ENVELOPE_SCHEMA = json.load(f)
-except Exception as e:
-    ENVELOPE_SCHEMA = None
-    logger.warning(f"Could not load schema: {e}")
+    with open(SCHEMA_PATH) as _f:
+        ENVELOPE_SCHEMA = json.load(_f)
+except Exception as _e:
+    raise RuntimeError(
+        f"[provider_06] Cannot load Agent Integrity envelope schema from {SCHEMA_PATH}. "
+        "Ensure third_party/agent-integrity/ is present (run: git submodule update --init). "
+        f"Original error: {_e}"
+    ) from _e
 
 # Protocol version from Agent Integrity (packages/protocol/src/types.ts)
 PROTOCOL_VERSION = "1-alpha"
