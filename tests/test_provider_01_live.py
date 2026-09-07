@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live integration tests for Provider 01.
+"""Live integration tests for FlowSignal (provider_01).
 
-Executes live HTTP requests against the Provider 01 sandbox endpoint
+Executes live HTTP requests against the FlowSignal sandbox endpoint
 when configured via environment variables or local test credentials.
 """
 
@@ -31,7 +31,7 @@ from src.gateway.governance.normative_provider import (
     NormativeBaseline,
     ValidationResult,
 )
-from src.integrations.provider_01.provider import Provider01NormativeProvider
+from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 pytestmark = [pytest.mark.eu_ecb, pytest.mark.integration, pytest.mark.live_external]
 
@@ -62,11 +62,11 @@ def _get_live_credentials() -> tuple[str, str]:
 
 
 @pytest.fixture
-def live_provider() -> Provider01NormativeProvider:
+def live_provider() -> FlowSignalNormativeProvider:
     endpoint, api_key = _get_live_credentials()
     if not api_key:
-        pytest.skip("Provider 01 API key not configured")
-    return Provider01NormativeProvider(
+        pytest.skip("FlowSignal API key not configured")
+    return FlowSignalNormativeProvider(
         endpoint=endpoint,
         api_key=api_key,
         timeout=10.0,
@@ -75,7 +75,7 @@ def live_provider() -> Provider01NormativeProvider:
 
 @pytest.mark.asyncio
 async def test_live_health_and_baseline_fetch(
-    live_provider: Provider01NormativeProvider,
+    live_provider: FlowSignalNormativeProvider,
 ) -> None:
     """Verify live legal-baseline endpoint for EU_ECB."""
     baseline = await live_provider.fetch_baseline("EU_ECB")
@@ -87,7 +87,7 @@ async def test_live_health_and_baseline_fetch(
 
 
 @pytest.mark.asyncio
-async def test_live_validate_fria(live_provider: Provider01NormativeProvider) -> None:
+async def test_live_validate_fria(live_provider: FlowSignalNormativeProvider) -> None:
     """Verify live FRIA validation endpoint."""
     payload: dict[str, Any] = {
         "thread_id": "thread-cage-live-test-01",
@@ -103,7 +103,7 @@ async def test_live_validate_fria(live_provider: Provider01NormativeProvider) ->
 
 @pytest.mark.asyncio
 async def test_live_submit_evidence(
-    live_provider: Provider01NormativeProvider,
+    live_provider: FlowSignalNormativeProvider,
 ) -> None:
     """Verify live evidence-chain logging endpoint."""
     thread_id = "thread-cage-live-test-01"

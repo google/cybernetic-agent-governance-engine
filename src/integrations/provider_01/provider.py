@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """
-provider.py — Provider 01 Normative Compliance Provider
-=======================================================
+provider.py — FlowSignal Normative Compliance Provider
+======================================================
 
 Production normative provider backed by external cloud API.
 Extracted from ``src/gateway/governance/normative_provider.py`` for
@@ -164,7 +164,7 @@ def _mint_consequence_token(
     except Exception as exc:
         # Mint failure: fail-closed (return a blocking finding, not a silent admit)
         logger.error(
-            "[Provider01] ConsequenceToken minting failed: %s — fail-closed, blocking execution",
+            "[FlowSignal] ConsequenceToken minting failed: %s — fail-closed, blocking execution",
             exc,
         )
         return {
@@ -240,11 +240,11 @@ def _map_flowsignal_decision(
 
 
 # ---------------------------------------------------------------------------
-# Provider 01
+# FlowSignal
 # ---------------------------------------------------------------------------
 
 
-class Provider01NormativeProvider:
+class FlowSignalNormativeProvider:
     """Production normative provider backed by external cloud API.
 
     Implements the 3-endpoint HTTP contract defined in §2.5.2 of
@@ -266,12 +266,12 @@ class Provider01NormativeProvider:
 
         if not self._endpoint:
             logger.error(
-                "[Provider01] CAGE_NORMATIVE_ENDPOINT is required. "
+                "[FlowSignal] CAGE_NORMATIVE_ENDPOINT is required. "
                 "Set CAGE_NORMATIVE_PROVIDER=static for dev/test."
             )
 
         logger.info(
-            "[Provider01] Initialised: endpoint=%s timeout=%.1fs",
+            "[FlowSignal] Initialised: endpoint=%s timeout=%.1fs",
             self._endpoint or "(not set)",
             self._timeout,
         )
@@ -302,7 +302,7 @@ class Provider01NormativeProvider:
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "[Provider01] fetch_baseline HTTP error: %s status=%d",
+                "[FlowSignal] fetch_baseline HTTP error: %s status=%d",
                 url,
                 exc.response.status_code,
             )
@@ -312,11 +312,11 @@ class Provider01NormativeProvider:
                 error=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
             )
         except httpx.RequestError as exc:
-            logger.error("[Provider01] fetch_baseline request error: %s %s", url, exc)
+            logger.error("[FlowSignal] fetch_baseline request error: %s %s", url, exc)
             return NormativeBaseline(region=region, profile={}, error=str(exc))
         except Exception as exc:
             logger.error(
-                "[Provider01] fetch_baseline unexpected error: %s %s", url, exc
+                "[FlowSignal] fetch_baseline unexpected error: %s %s", url, exc
             )
             return NormativeBaseline(region=region, profile={}, error=str(exc))
 
@@ -361,7 +361,7 @@ class Provider01NormativeProvider:
                     except ValueError as exc:
                         # Unrecognized decision value: fail-closed
                         logger.warning(
-                            "[Provider01] FlowSignal decision parse error: %s",
+                            "[FlowSignal] FlowSignal decision parse error: %s",
                             exc,
                         )
                         return ValidationResult(
@@ -378,7 +378,7 @@ class Provider01NormativeProvider:
 
                 # Missing decision field: fail closed (BC-03 remediation)
                 logger.warning(
-                    "[Provider01] FlowSignal response missing 'decision' field — failing closed"
+                    "[FlowSignal] FlowSignal response missing 'decision' field — failing closed"
                 )
                 return ValidationResult(
                     admitted=False,
@@ -393,7 +393,7 @@ class Provider01NormativeProvider:
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "[Provider01] validate_fria HTTP error: %s status=%d",
+                "[FlowSignal] validate_fria HTTP error: %s status=%d",
                 url,
                 exc.response.status_code,
             )
@@ -404,12 +404,12 @@ class Provider01NormativeProvider:
                     {
                         "code": "ENDPOINT_ERROR",
                         "severity": "blocked",
-                        "message": f"Provider 01 HTTP error: {exc.response.status_code}",
+                        "message": f"FlowSignal HTTP error: {exc.response.status_code}",
                     }
                 ],
             )
         except httpx.RequestError as exc:
-            logger.error("[Provider01] validate_fria request error: %s %s", url, exc)
+            logger.error("[FlowSignal] validate_fria request error: %s %s", url, exc)
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
@@ -417,12 +417,12 @@ class Provider01NormativeProvider:
                     {
                         "code": "ENDPOINT_ERROR",
                         "severity": "blocked",
-                        "message": f"Provider 01 request failed: {exc}",
+                        "message": f"FlowSignal request failed: {exc}",
                     }
                 ],
             )
         except Exception as exc:
-            logger.error("[Provider01] validate_fria unexpected error: %s %s", url, exc)
+            logger.error("[FlowSignal] validate_fria unexpected error: %s %s", url, exc)
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
@@ -430,7 +430,7 @@ class Provider01NormativeProvider:
                     {
                         "code": "ENDPOINT_ERROR",
                         "severity": "blocked",
-                        "message": f"Provider 01 unexpected error: {exc}",
+                        "message": f"FlowSignal unexpected error: {exc}",
                     }
                 ],
             )
@@ -457,7 +457,7 @@ class Provider01NormativeProvider:
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "[Provider01] submit_evidence HTTP error: %s status=%d",
+                "[FlowSignal] submit_evidence HTTP error: %s status=%d",
                 url,
                 exc.response.status_code,
             )
@@ -466,10 +466,10 @@ class Provider01NormativeProvider:
                 error=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
             )
         except httpx.RequestError as exc:
-            logger.error("[Provider01] submit_evidence request error: %s %s", url, exc)
+            logger.error("[FlowSignal] submit_evidence request error: %s %s", url, exc)
             return EvidenceSeal(thread_id=thread_id, error=str(exc))
         except Exception as exc:
             logger.error(
-                "[Provider01] submit_evidence unexpected error: %s %s", url, exc
+                "[FlowSignal] submit_evidence unexpected error: %s %s", url, exc
             )
             return EvidenceSeal(thread_id=thread_id, error=str(exc))

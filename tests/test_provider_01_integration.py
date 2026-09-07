@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for Provider01NormativeProvider adapter."""
+"""Unit tests for FlowSignal NormativeProvider adapter."""
 
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ import httpx
 import pytest
 import respx
 
-from src.integrations.provider_01.provider import Provider01NormativeProvider
+from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
-def provider() -> Provider01NormativeProvider:
-    return Provider01NormativeProvider(
+def provider() -> FlowSignalNormativeProvider:
+    return FlowSignalNormativeProvider(
         endpoint="https://provider01.example.com",
         api_key="test-api-key",
         timeout=2.0,
@@ -36,7 +36,7 @@ def provider() -> Provider01NormativeProvider:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_baseline_success(provider: Provider01NormativeProvider) -> None:
+async def test_fetch_baseline_success(provider: FlowSignalNormativeProvider) -> None:
     respx.get("https://provider01.example.com/legal-baseline/US_FED").mock(
         return_value=httpx.Response(
             200,
@@ -53,7 +53,7 @@ async def test_fetch_baseline_success(provider: Provider01NormativeProvider) -> 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_baseline_error(provider: Provider01NormativeProvider) -> None:
+async def test_fetch_baseline_error(provider: FlowSignalNormativeProvider) -> None:
     respx.get("https://provider01.example.com/legal-baseline/US_FED").mock(
         return_value=httpx.Response(500)
     )
@@ -114,7 +114,7 @@ def _make_mock_signer():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_fria_success(provider: Provider01NormativeProvider) -> None:
+async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> None:
     from unittest.mock import patch
 
     respx.post("https://provider01.example.com/validate/fria").mock(
@@ -142,7 +142,7 @@ async def test_validate_fria_success(provider: Provider01NormativeProvider) -> N
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_fria_error(provider: Provider01NormativeProvider) -> None:
+async def test_validate_fria_error(provider: FlowSignalNormativeProvider) -> None:
     respx.post("https://provider01.example.com/validate/fria").mock(
         return_value=httpx.Response(502)
     )
@@ -153,7 +153,7 @@ async def test_validate_fria_error(provider: Provider01NormativeProvider) -> Non
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_submit_evidence_success(provider: Provider01NormativeProvider) -> None:
+async def test_submit_evidence_success(provider: FlowSignalNormativeProvider) -> None:
     respx.get("https://provider01.example.com/evidence-chain/thread-1").mock(
         return_value=httpx.Response(
             200,
@@ -168,7 +168,7 @@ async def test_submit_evidence_success(provider: Provider01NormativeProvider) ->
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_submit_evidence_error(provider: Provider01NormativeProvider) -> None:
+async def test_submit_evidence_error(provider: FlowSignalNormativeProvider) -> None:
     respx.get("https://provider01.example.com/evidence-chain/thread-1").mock(
         return_value=httpx.Response(500)
     )
