@@ -23,9 +23,39 @@ authorization with dual-control quorum signatures.
 """
 
 __all__ = [
-    "ActuatorHttpClient",
+    # Adapter (concrete ExecutionActuator implementation)
+    "Actuator01Adapter",
+    # Envelope construction
+    "build_and_canonicalize",
+    "EnvelopeTooLargeError",
+    "InvalidClearanceError",
+    # Assertion building
+    "build_assertion",
+    "decode_assertion",
+    "AssertionBuildError",
+    # Quorum signing
     "sign_for_quorum",
+    # Transport
+    "ActuatorHttpClient",
+    # Response classification
+    "classify_response",
+    "classify_network_error",
+    "ClassifiedResponse",
+    "ResponseCategory",
 ]
 
+from .adapter import Actuator01Adapter
+from .assertion import AssertionBuildError, build_assertion, decode_assertion
 from .client import ActuatorHttpClient
+from .envelope_builder import (
+    EnvelopeTooLargeError,
+    InvalidClearanceError,
+    build_and_canonicalize,
+)
+from .response_classifier import (
+    ClassifiedResponse,
+    ResponseCategory,
+    classify_network_error,
+    classify_response,
+)
 from .signatures import sign_for_quorum
