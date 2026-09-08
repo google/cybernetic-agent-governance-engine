@@ -287,6 +287,111 @@ class TestPerOperatorSigning:
         assert captured_forward["sigs"][0] == captured_reversed["sigs"][1]
         assert captured_forward["sigs"][1] == captured_reversed["sigs"][0]
 
+    async def test_duplicate_urns_rejected_end_to_end(self, monkeypatch):
+        """G3: Duplicate operator URNs fail with QUORUM_DUPLICATE_OPERATORS."""
+        # Create clearance with duplicate approver URNs
+        duplicate_urns = [
+            "urn:actuator_01:op:alice",
+            "urn:actuator_01:op:bob",
+            "urn:actuator_01:op:alice",  # Duplicate
+        ]
+        clearance = make_valid_clearance(duplicate_urns)
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=mock_signer,  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.findings[0]["code"] == "cage.quorum.duplicate_operators"
+        assert receipt.findings[0]["severity"] == "TERMINAL"
+        assert "Duplicate operator URNs" in receipt.findings[0]["detail"]
+        assert not receipt.retryable
+        # Client should never be called (fails before submission)
+        mock_client.submit_envelope.assert_not_called()
+
+    async def test_resolver_raises_on_unknown_urn(self, monkeypatch):
+        """G4: Resolver failure on unknown URN is caught and fails closed."""
+        urns = ["urn:actuator_01:op:alice", "urn:actuator_01:op:unknown"]
+        clearance = make_valid_clearance(urns)
+
+        # Resolver that raises KeyError for unknown URNs
+        def failing_resolver(urn: str) -> KMSGovernanceSigner:
+            if urn == "urn:actuator_01:op:alice":
+                return MockPerOperatorSigner(urn)  # type: ignore[return-value]
+            raise KeyError(f"Unknown operator URN: {urn}")
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        base_signer = MockPerOperatorSigner("urn:actuator_01:op:base")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=base_signer,  # type: ignore[arg-type]
+            signer_resolver=failing_resolver,
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.findings[0]["code"] == "QUORUM_SIGNING_FAILED"
+        assert receipt.findings[0]["severity"] == "TERMINAL"
+        assert "Unknown operator URN" in receipt.findings[0]["detail"]
+        assert not receipt.retryable
+        # Client should never be called
+        mock_client.submit_envelope.assert_not_called()
+
+    async def test_resolver_call_sequence(self, monkeypatch):
+        """G5: Resolver is called exactly once per approval in correct order."""
+        urns = [
+            "urn:actuator_01:op:alice",
+            "urn:actuator_01:op:bob",
+            "urn:actuator_01:op:charlie",
+        ]
+        clearance = make_valid_clearance(urns)
+
+        # Track resolver calls
+        resolver_calls = []
+
+        def tracking_resolver(urn: str) -> KMSGovernanceSigner:
+            resolver_calls.append(urn)
+            return MockPerOperatorSigner(urn)  # type: ignore[return-value]
+
+        async def mock_submit(*args, **kwargs):
+            return httpx.Response(
+                200,
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
+            )
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.submit_envelope = mock_submit
+        base_signer = MockPerOperatorSigner("urn:actuator_01:op:base")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=base_signer,  # type: ignore[arg-type]
+            signer_resolver=tracking_resolver,
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert receipt.accepted
+        # Verify resolver called exactly once per URN in order
+        assert len(resolver_calls) == 3
+        assert resolver_calls == urns
+        # Verify order preservation
+        assert resolver_calls[0] == "urn:actuator_01:op:alice"
+        assert resolver_calls[1] == "urn:actuator_01:op:bob"
+        assert resolver_calls[2] == "urn:actuator_01:op:charlie"
+
 
 class TestFailClosedBranches:
     """Test all six fail-closed error branches in actuate()."""
