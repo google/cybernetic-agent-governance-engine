@@ -594,7 +594,7 @@ that only read today's envelope structure.
   "expires_at": "2026-08-21T12:00:30.000Z",
   "issuer": {
     "service": "cage-gateway",
-    "instance_id": "gke-governance-cluster-2-abc123",
+    "instance_id": "gke-<cluster-name>-abc123",
     "region": "us-central1",
     "trust_domain_attestation": {
       "ca_fingerprint": "sha256:...",

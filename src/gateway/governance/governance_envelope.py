@@ -30,7 +30,7 @@ Envelope Structure (RFC 8785 JCS-canonicalized):
         "expires_at": "2026-08-21T12:00:30.000Z", # ISO 8601 UTC
         "issuer": {
             "service": "cage-gateway",
-            "instance_id": "gke-governance-cluster-2-abc123",
+            "instance_id": "gke-<cluster-name>-abc123",
             "region": "us-central1"
         },
         "subject": {

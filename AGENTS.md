@@ -285,9 +285,9 @@ This applies to all agents, contributors, and CI documentation examples.
 When running `uv run ...` as an AI agent inside a restricted terminal sandbox, the command may fail due to sandbox path boundaries (e.g. `zsh:1: operation not permitted: uv`, exit code 127) or socket connectivity resets (`connecting to sandbox server: read unix @->@: recvmsg: connection reset by peer`). When encountering this, do not switch to a different test runner like bare `python` or `pytest`; instead, configure the tool call to bypass the sandbox (e.g. `BypassSandbox: true`) so that the command executes natively in the host environment and accesses `uv`. When retrying with `BypassSandbox: true`, keep `toolAction` and `toolSummary` strictly identical.
 
 **Hermetic Local Test Execution vs. Active Port-Forwards:**
-When background port-forwards are running (such as those started via `scripts/port_forward_dev.sh`), localhost ports (Redis `6379`, OPA `8181`, Langfuse `3000`/`3001`, Gateway `8080`) are actively bridged to the live GKE development cluster. Local unit tests (`pytest tests/ -m "local or unit"`) that do not strictly isolate network sockets can inadvertently connect to the live GKE cluster and encounter live state (e.g., existing fence epochs, active cache keys), causing unexpected assertions like `assert cbf._last_seen_epoch == 42` reading live Redis epoch `17`.
+When background port-forwards are running (such as those started via `scripts/port_forward_staging.sh` or `scripts/port_forward.sh`), localhost ports (Redis `6379`, OPA `8181`, Langfuse `3000`/`3001`, Gateway `8080`) are actively bridged to the live GKE cluster. Local unit tests (`pytest tests/ -m "local or unit"`) that do not strictly isolate network sockets can inadvertently connect to the live GKE cluster and encounter live state (e.g., existing fence epochs, active cache keys), causing unexpected assertions like `assert cbf._last_seen_epoch == 42` reading live Redis epoch `17`.
 - **Before running pure local/unit tests**: Verify no background tunnels are running (`ps aux | grep port-forward`), or terminate them if isolated offline execution is desired (`pkill -f "kubectl port-forward"`).
-- **For integration testing against live GKE**: Launch `scripts/port_forward_dev.sh` and run with `tests/ --run-integration`.
+- **For integration testing against live GKE**: Launch `scripts/port_forward_staging.sh` and run with `tests/ --run-integration`.
 
 ---
 
@@ -599,14 +599,14 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
    - `EU_ECB` → `europe-west1`
    - `APAC_MAS` → `asia-southeast1`
 3. **Live GKE Testing**:
-   Live dual-pipeline attestation, trace verification, and SLA timing are validated exclusively against live GKE clusters via port-forwarding (`scripts/port_forward_dev.sh`, forwarding ports `3000` and `3001`) with `uv run pytest tests/ --run-integration`. Local offline tests must keep telemetry tracing disabled (`-p no:langsmith -p no:langsmith_plugin`, `LANGCHAIN_TRACING_V2=false`, `LANGSMITH_TRACING=false`).
+   Live dual-pipeline attestation, trace verification, and SLA timing are validated exclusively against live GKE clusters via port-forwarding (`scripts/port_forward_staging.sh`, forwarding ports `3000` and `3001`) with `uv run pytest tests/ --run-integration`. Local offline tests must keep telemetry tracing disabled (`-p no:langsmith -p no:langsmith_plugin`, `LANGCHAIN_TRACING_V2=false`, `LANGSMITH_TRACING=false`).
 
 ### Full Integration Suite Against Live GKE
 
 The canonical way to run the full integration test suite against the live GKE staging cluster:
 
 ```bash
-# 1. Establish port-forwards to cage-staging cluster (keep running in background)
+# 1. Establish port-forwards to the staging GKE cluster (keep running in background)
 bash scripts/port_forward_staging.sh
 
 # 2. In a separate terminal, load env and run full suite
@@ -621,9 +621,9 @@ uv run pytest tests/ --run-integration -v --tb=short
 
 Key facts:
 - `scripts/port_forward_staging.sh` establishes auto-reconnecting `kubectl port-forward` tunnels: OPA (8181), Langfuse API/UI (3001/3000), vLLM fast (8001/18081), vLLM reasoning (8000/18082), Gateway (8080), backend (8081), Redis (6379), Compliance Bridge (3002).
-- Requires a valid `kubectl` context pointing to `cage-staging` cluster in `us-central1-a`.
+- Requires a valid `kubectl` context pointing to the staging GKE cluster (e.g. `<cluster-name>` in `us-central1-a`).
 - `.env` at the repo root is loaded automatically by `port_forward_staging.sh` and `tests/conftest.py`.
-- The `cage-staging` cluster serves as the integration testing environment (no separate dev cluster exists).
+- The staging cluster serves as the integration testing environment (no separate dev cluster exists).
 - Last known result (2026-08-10): **2553 passed, 51 skipped, 1 failed** in ~9m25s. The 51 skips are region/OPA-gated integration tests; the 1 failure was a test-isolation bug (cache leak in `tests/test_red_teaming.py::mock_thresholds` fixture), not a GKE connectivity issue.
 - Always use `uv run pytest`, never bare `pytest`.
 
@@ -675,4 +675,4 @@ See [`infra/targets/gcp-gke/staging.tfvars`](infra/targets/gcp-gke/staging.tfvar
 - The `local`/`unit` marker subset (~90%+ of the 2553 passing tests) already runs on every push/PR via the existing `pytest-logic` job in all three region postures (`.github/workflows/ci.yml` lines 87–134). A dedicated nightly run of the same markers adds negligible incremental regression-detection value over what is already gated on `main` before merge.
 - Tests that genuinely require live GKE (live OPA policy evaluation, Langfuse SLA timing, CMEK/pod-restart checks, real backend accuracy) **cannot be replaced** by a mock-only nightly — these are the `integration`-marked corpus and the 51 skips in the full run.
 - Existing CI already covers what a nightly would target: `pytest-logic` (mock/unit, every push), `ai600-unit-tests` (red-team mock, every push), `locust-load-test` (nightly load test).
-- **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job, manual full-suite runs (`port_forward_dev.sh` + `uv run pytest tests/ --run-integration`), and **staging lifecycle validation** (`./scripts/staging_lifecycle.sh`) for periodic live-service validation.
+- **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job, manual full-suite runs (`scripts/port_forward_staging.sh` + `uv run pytest tests/ --run-integration`), and **staging lifecycle validation** (`./scripts/staging_lifecycle.sh`) for periodic live-service validation.
