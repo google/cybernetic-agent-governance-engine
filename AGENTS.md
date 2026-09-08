@@ -603,16 +603,16 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 
 ### Full Integration Suite Against Live GKE
 
-The canonical way to run the full integration test suite against the live GKE dev cluster:
+The canonical way to run the full integration test suite against the live GKE staging cluster:
 
 ```bash
-# 1. Establish port-forwards to live GKE dev cluster (keep running in background)
-bash scripts/port_forward_dev.sh
+# 1. Establish port-forwards to cage-staging cluster (keep running in background)
+bash scripts/port_forward_staging.sh
 
 # 2. In a separate terminal, load env and run full suite
 source .env
-export CAGE_ENV=dev
-export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-LOCAL}"
+export CAGE_ENV=staging
+export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}"
 export CAGE_ROUTING_SEAL_SECRET="${CAGE_ROUTING_SEAL_SECRET:-dev-only-insecure-placeholder-not-for-production-use}"
 export GOVERNANCE_SALT="${GOVERNANCE_SALT:-dev-only-insecure-placeholder-not-for-production-use}"
 export LANGFUSE_POSTURE_DRY_RUN=true
@@ -620,9 +620,10 @@ uv run pytest tests/ --run-integration -v --tb=short
 ```
 
 Key facts:
-- `scripts/port_forward_dev.sh` establishes auto-reconnecting `kubectl port-forward` tunnels: OPA (8181), Langfuse API/UI (3001/3000), vLLM fast (8001/18081), vLLM reasoning (8000/18082), Gateway (8080), backend (18080), Redis (6379), Compliance Bridge (3002).
-- Requires a valid `kubectl` context pointing to `governance-cluster-2` in `us-central1-a`.
-- `.env` at the repo root is loaded automatically by `port_forward_dev.sh` and `tests/conftest.py`.
+- `scripts/port_forward_staging.sh` establishes auto-reconnecting `kubectl port-forward` tunnels: OPA (8181), Langfuse API/UI (3001/3000), vLLM fast (8001/18081), vLLM reasoning (8000/18082), Gateway (8080), backend (8081), Redis (6379), Compliance Bridge (3002).
+- Requires a valid `kubectl` context pointing to `cage-staging` cluster in `us-central1-a`.
+- `.env` at the repo root is loaded automatically by `port_forward_staging.sh` and `tests/conftest.py`.
+- The `cage-staging` cluster serves as the integration testing environment (no separate dev cluster exists).
 - Last known result (2026-08-10): **2553 passed, 51 skipped, 1 failed** in ~9m25s. The 51 skips are region/OPA-gated integration tests; the 1 failure was a test-isolation bug (cache leak in `tests/test_red_teaming.py::mock_thresholds` fixture), not a GKE connectivity issue.
 - Always use `uv run pytest`, never bare `pytest`.
 
