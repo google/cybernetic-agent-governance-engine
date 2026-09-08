@@ -210,7 +210,7 @@ class Actuator01Adapter:
         """
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
-        # ── Step 1–2: Build, canonicalize, digest ─────────────────────────
+        # ── Step 1-2: Build, canonicalize, digest ─────────────────────────
         try:
             canonical_bytes, envelope_digest = build_and_canonicalize(clearance)
         except InvalidClearanceError as exc:
