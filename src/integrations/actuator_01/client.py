@@ -102,7 +102,7 @@ class ActuatorHttpClient:
         Headers constructed per wire contract:
         - X-Secure-Tenant-ID: tenant identifier (exactly one occurrence)
         - X-Operator-URNs: comma-separated operator URNs (positionally aligned)
-        - X-Quorum-Signatures: comma-separated hex signatures (positionally aligned)
+        - X-Archytan-Signatures: comma-separated hex signatures (positionally aligned)
         - X-Execution-Assertion: base64-encoded 120-byte assertion
         - X-Timestamp: unix seconds (equals issued_at)
         - Content-Type: application/json
@@ -138,7 +138,7 @@ class ActuatorHttpClient:
             "Content-Type": "application/json",
             "X-Secure-Tenant-ID": self.tenant_id,
             "X-Operator-URNs": ",".join(operator_urns),
-            "X-Quorum-Signatures": ",".join(signatures),
+            "X-Archytan-Signatures": ",".join(signatures),
             "X-Execution-Assertion": assertion,
             "X-Timestamp": str(issued_at),
         }

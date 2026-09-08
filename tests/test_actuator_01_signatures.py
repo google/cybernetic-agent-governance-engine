@@ -97,8 +97,9 @@ class TestQuorumSignatures:
         """ACTUATOR_01_DOMAIN_TAG_QUORUM is distinct and prevents cross-context replay."""
         tag = ACTUATOR_01_DOMAIN_TAG_QUORUM
 
-        # Verify it's the expected value
-        assert tag == b"ACTUATOR_01_QUORUM_V1:"
+        # Verify it's the wire-protocol value (ARCHYTAN_QUORUM_V1:)
+        # The constant name is anonymized; the runtime value matches Archytan kernel contract.
+        assert tag == b"ARCHYTAN_QUORUM_V1:"
 
         # Verify it's bytes (not string)
         assert isinstance(tag, bytes)
