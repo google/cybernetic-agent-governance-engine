@@ -130,8 +130,17 @@ class Actuator01Adapter:
         self._resolve_signer = signer_resolver or (lambda _urn: signer)
 
     @classmethod
-    def from_env(cls, signer: KMSGovernanceSigner) -> Actuator01Adapter:
+    def from_env(
+        cls,
+        signer: KMSGovernanceSigner,
+        signer_resolver: SignerResolver | None = None,
+    ) -> Actuator01Adapter:
         """Construct adapter from environment variables.
+
+        Args:
+            signer: Base KMS signer for assertions and default quorum signing.
+            signer_resolver: Optional callable ``(operator_urn: str) -> KMSGovernanceSigner``
+                for per-operator signing keys. If ``None``, defaults to ``signer`` for all.
 
         Raises:
             RuntimeError: If any required environment variable is missing.
@@ -168,7 +177,7 @@ class Actuator01Adapter:
             tenant_id=tenant_id,
         )
 
-        return cls(client=client, signer=signer)
+        return cls(client=client, signer=signer, signer_resolver=signer_resolver)
 
     # ── ExecutionActuator Protocol Implementation ─────────────────────────
 
@@ -295,15 +304,41 @@ class Actuator01Adapter:
         quorum_signatures: list[str] = []
 
         try:
+            # Collect URNs and check for duplicates before signing
             for approval in clearance.approvals:
                 urn = approval.get("approver_urn", "")
                 if not urn:
                     raise RuntimeError("Approval record missing approver_urn")
                 operator_urns.append(urn)
+
+            # Detect duplicate operator URNs (fail-closed)
+            if len(operator_urns) != len(set(operator_urns)):
+                logger.error(
+                    "[actuator_01/adapter] Duplicate operator URNs detected in approvals"
+                )
+                return ActuationReceipt(
+                    accepted=False,
+                    receipt_id=None,
+                    session_uuid=None,
+                    raw_receipt=None,
+                    findings=[
+                        {
+                            "code": "cage.quorum.duplicate_operators",
+                            "severity": "TERMINAL",
+                            "detail": "Duplicate operator URNs detected in approval set",
+                        }
+                    ],
+                    retryable=False,
+                    envelope_digest=envelope_digest,
+                    timestamp_utc=timestamp_utc,
+                )
+
+            # Sign with per-operator signers
+            for urn in operator_urns:
                 operator_signer = self._resolve_signer(urn)
                 sig = sign_for_quorum(operator_signer, canonical_bytes)
                 quorum_signatures.append(sig)
-        except RuntimeError as exc:
+        except (RuntimeError, KeyError, Exception) as exc:
             logger.error("[actuator_01/adapter] Quorum signing failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
