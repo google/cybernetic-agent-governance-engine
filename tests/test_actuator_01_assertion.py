@@ -34,7 +34,6 @@ from src.integrations.actuator_01.assertion import (
 )
 from src.integrations.actuator_01.signatures import ACTUATOR_01_DOMAIN_TAG_QUORUM
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 
@@ -144,18 +143,14 @@ class TestDomainTagIsolation:
     def test_signer_receives_assertion_domain_tag(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        build_assertion(
-            valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
-        )
+        build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer)
         call_args = mock_signer.sign_raw.call_args[0][0]
         assert call_args.startswith(ACTUATOR_01_DOMAIN_TAG_ASSERTION)
 
     def test_signer_does_not_receive_quorum_tag(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        build_assertion(
-            valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
-        )
+        build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer)
         call_args = mock_signer.sign_raw.call_args[0][0]
         assert not call_args.startswith(ACTUATOR_01_DOMAIN_TAG_QUORUM)
 
@@ -213,9 +208,7 @@ class TestAssertionValidation:
         with pytest.raises(AssertionBuildError, match="not valid hex"):
             build_assertion(bad_hex, valid_nonce_hex, valid_issued_at, mock_signer)
 
-    def test_rejects_short_nonce(
-        self, mock_signer, valid_digest_hex, valid_issued_at
-    ):
+    def test_rejects_short_nonce(self, mock_signer, valid_digest_hex, valid_issued_at):
         with pytest.raises(AssertionBuildError, match="32 hex chars"):
             build_assertion(valid_digest_hex, "abcd", valid_issued_at, mock_signer)
 
@@ -237,9 +230,7 @@ class TestAssertionValidation:
         signer = MagicMock()
         signer.is_kms_active = False
         with pytest.raises(RuntimeError, match="KMS is not active"):
-            build_assertion(
-                valid_digest_hex, valid_nonce_hex, valid_issued_at, signer
-            )
+            build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, signer)
 
     def test_rejects_wrong_signature_length(
         self, valid_digest_hex, valid_nonce_hex, valid_issued_at
@@ -248,9 +239,7 @@ class TestAssertionValidation:
         signer.is_kms_active = True
         signer.sign_raw.return_value = b"\x00" * 48  # Wrong length
         with pytest.raises(AssertionBuildError, match="48 bytes, expected 64"):
-            build_assertion(
-                valid_digest_hex, valid_nonce_hex, valid_issued_at, signer
-            )
+            build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, signer)
 
 
 # ── Test: Decode ──────────────────────────────────────────────────────────

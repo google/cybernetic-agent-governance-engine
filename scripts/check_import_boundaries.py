@@ -60,10 +60,12 @@ FORBIDDEN_VENDOR_SDKS = ("google.cloud", "boto3", "botocore", "azure", "langfuse
 # Allowlist for function-scope lazy imports of src.integrations in Layer 1
 # These factory modules may lazy-load vendor adapters at instantiation time.
 # Adding an entry requires deliberate architectural review — keep this small.
-INTEGRATIONS_FACTORY_ALLOWLIST = frozenset([
-    "src/gateway/governance/normative_provider.py",  # lazy-loads provider_01/02/03/06
-    "src/gateway/governance/evidence/factory.py",    # lazy-loads storage_gcs/storage_s3
-])
+INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
+    [
+        "src/gateway/governance/normative_provider.py",  # lazy-loads provider_01/02/03/06
+        "src/gateway/governance/evidence/factory.py",  # lazy-loads storage_gcs/storage_s3
+    ]
+)
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,7 @@ class BoundaryViolation:
 
 class ImportVisitor(ast.NodeVisitor):
     """AST visitor to extract all import statements with scope information.
-    
+
     Emits (module_name, line_number, is_module_scope) triples.
     Class-body imports are treated as module-scope for this rule.
     """
@@ -113,7 +115,7 @@ class ImportVisitor(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Track entry/exit of class scope.
-        
+
         Note: class-body imports are NOT considered function-scope for this rule.
         """
         # Do NOT increment scope_depth — class-body imports are module-scope
@@ -222,7 +224,9 @@ def check_file_boundaries(
                 )
                 violations.append(v)
                 if verbose:
-                    print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                    )
             elif not is_in_factory_allowlist:
                 # Function-scope import but file not in allowlist
                 v = BoundaryViolation(
@@ -233,7 +237,9 @@ def check_file_boundaries(
                 )
                 violations.append(v)
                 if verbose:
-                    print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                    )
             # else: function-scope AND in allowlist → permitted (no violation)
 
         # Check Layer 1 -> Layer 4
@@ -300,13 +306,17 @@ def main() -> int:
 
         print("🚨 Layer 1 (gateway) must NOT import from Layer 2, Layer 3, or Layer 4.")
         print("🚨 Layer 1 module-scope imports of src.integrations are FORBIDDEN.")
-        print("🚨 Function-scope lazy imports of src.integrations require explicit allowlist entry.")
+        print(
+            "🚨 Function-scope lazy imports of src.integrations require explicit allowlist entry."
+        )
         print("🚨 Evidence kernel must NOT import proprietary vendor SDKs.")
         print()
         print("   Remediation:")
         print("   • Use dependency injection or canonical interfaces (Layer 2/4)")
         print("   • For vendor adapters: use function-scope lazy factory imports")
-        print("   • Adding to INTEGRATIONS_FACTORY_ALLOWLIST requires architectural review")
+        print(
+            "   • Adding to INTEGRATIONS_FACTORY_ALLOWLIST requires architectural review"
+        )
         return 1
 
     print("✅ All import boundaries respected.")

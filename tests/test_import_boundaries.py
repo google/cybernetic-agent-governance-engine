@@ -152,7 +152,10 @@ class TestLayer1IntegrationsRule:
 
         violations = check_file_boundaries(test_file)
         assert len(violations) == 1
-        assert "module-scope src.integrations import forbidden" in violations[0].rule_violated
+        assert (
+            "module-scope src.integrations import forbidden"
+            in violations[0].rule_violated
+        )
         assert violations[0].line_number == 1
 
     def test_module_scope_import_forbidden_even_in_allowlisted_file(
@@ -170,7 +173,10 @@ class TestLayer1IntegrationsRule:
 
         violations = check_file_boundaries(test_file)
         assert len(violations) == 1
-        assert "module-scope src.integrations import forbidden" in violations[0].rule_violated
+        assert (
+            "module-scope src.integrations import forbidden"
+            in violations[0].rule_violated
+        )
 
     def test_function_scope_import_permitted_in_allowlisted_file(
         self, tmp_path: Path
@@ -234,7 +240,10 @@ class ColdStoreFactory:
 
         violations = check_file_boundaries(test_file)
         assert len(violations) == 1
-        assert "module-scope src.integrations import forbidden" in violations[0].rule_violated
+        assert (
+            "module-scope src.integrations import forbidden"
+            in violations[0].rule_violated
+        )
 
     def test_integrations_import_outside_gateway_ignored(self, tmp_path: Path) -> None:
         """Integrations imports outside src/gateway/ are not checked."""
@@ -278,7 +287,7 @@ class TestRepoImportBoundaries:
 
     def test_check_import_boundaries_script_passes(self) -> None:
         """Run scripts/check_import_boundaries.py against repository and assert exit code 0.
-        
+
         This is the regression guard: ensures the allowlist and live tree stay in sync.
         The six legitimate lazy imports in normative_provider.py and evidence/factory.py
         must be permitted.
@@ -297,7 +306,7 @@ class TestRepoImportBoundaries:
     def test_six_legitimate_lazy_imports_pass(self) -> None:
         """Verify the six real lazy imports in the live tree generate zero violations."""
         from pathlib import Path
-        
+
         from scripts.check_import_boundaries import check_file_boundaries
 
         # Test normative_provider.py (4 lazy imports)

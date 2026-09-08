@@ -33,13 +33,13 @@ _CAGE_ENV = os.environ.get("CAGE_ENV", "dev")
 @dataclass(frozen=True)
 class OperatorPrincipal:
     """Verified operator identity from substrate-level transport or OIDC claims.
-    
+
     Attributes:
         operator_urn: Canonical operator identity (SPIFFE ID or OIDC sub claim)
         channel_provenance: Source of identity verification
         auth_principal_hash: SHA-256 hash of the raw principal for audit correlation
     """
-    
+
     operator_urn: str
     channel_provenance: Literal["SVID", "OIDC", "DEV_SYNTHETIC"]
     auth_principal_hash: str
@@ -68,15 +68,21 @@ async def require_internal_token(
 
     # Dev-mode degradation: allow requests without token
     if _CAGE_ENV == "dev" and not x_cage_internal_token:
-        logger.warning("⚠️  Internal token missing in dev mode; allowing unauthenticated access")
+        logger.warning(
+            "⚠️  Internal token missing in dev mode; allowing unauthenticated access"
+        )
         return "dev-unauthenticated"
 
     # Prod/staging: token is mandatory
     if not x_cage_internal_token:
-        raise HTTPException(status_code=401, detail="Missing X-Cage-Internal-Token header")
+        raise HTTPException(
+            status_code=401, detail="Missing X-Cage-Internal-Token header"
+        )
 
     if not expected_token:
-        raise HTTPException(status_code=500, detail="CAGE_INTERNAL_TOKEN not configured")
+        raise HTTPException(
+            status_code=500, detail="CAGE_INTERNAL_TOKEN not configured"
+        )
 
     # Constant-time comparison to prevent timing attacks
     if not hmac.compare_digest(x_cage_internal_token, expected_token):
@@ -87,19 +93,19 @@ async def require_internal_token(
 
 async def require_operator_identity(request: Request) -> OperatorPrincipal:
     """Extract verified operator identity from SPIFFE SVID or OIDC claims.
-    
+
     Identity precedence (fail-closed, evaluated not negotiated):
     1. **SPIFFE SVID** (primary): Extracted from mTLS client cert SAN via Linkerd mesh
     2. **OIDC JWT** (fallback): Only if CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true
     3. **Dev synthetic** (dev-only): If CAGE_ENV=dev AND CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true
-    
+
     Args:
         request: FastAPI request with potential .attributes.source.principal (SVID)
                  or .headers.authorization (OIDC)
-    
+
     Returns:
         OperatorPrincipal with verified identity and provenance channel
-    
+
     Raises:
         HTTPException: 401 if no valid identity source exists, or 400 if dev-prefix
                        used outside dev mode
@@ -113,7 +119,7 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
         svid = request.headers.get("x-cage-source-principal") or getattr(
             getattr(request, "attributes", None), "source", {}
         ).get("principal")
-        
+
         if svid and svid.startswith("spiffe://"):
             principal_hash = hashlib.sha256(svid.encode()).hexdigest()
             logger.info(f"✅ Operator identity verified via SVID: {svid[:30]}...")
@@ -124,9 +130,11 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
             )
     except Exception as e:
         logger.warning(f"⚠️  SVID extraction failed: {e}")
-    
+
     # Channel 2: OIDC JWT sub claim (gated fallback)
-    allow_oidc = os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "false").lower() == "true"
+    allow_oidc = (
+        os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "false").lower() == "true"
+    )
     if allow_oidc:
         auth_header = request.headers.get("authorization")
         if auth_header and auth_header.startswith("Bearer "):
@@ -135,10 +143,16 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
             # The actual JWT validation should happen in a separate middleware
             try:
                 # Placeholder: In real implementation, decode and verify JWT
-                jwt_sub = request.state.jwt_claims.get("sub") if hasattr(request.state, "jwt_claims") else None
+                jwt_sub = (
+                    request.state.jwt_claims.get("sub")
+                    if hasattr(request.state, "jwt_claims")
+                    else None
+                )
                 if jwt_sub:
                     principal_hash = hashlib.sha256(jwt_sub.encode()).hexdigest()
-                    logger.info(f"✅ Operator identity verified via OIDC: {jwt_sub[:30]}...")
+                    logger.info(
+                        f"✅ Operator identity verified via OIDC: {jwt_sub[:30]}..."
+                    )
                     return OperatorPrincipal(
                         operator_urn=jwt_sub,
                         channel_provenance="OIDC",
@@ -146,9 +160,12 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
                     )
             except Exception as e:
                 logger.warning(f"⚠️  OIDC JWT extraction failed: {e}")
-    
+
     # Channel 3: Dev-mode synthetic principal (dual-condition guard)
-    allow_dev_synthetic = os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false").lower() == "true"
+    allow_dev_synthetic = (
+        os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false").lower()
+        == "true"
+    )
     if _CAGE_ENV == "dev" and allow_dev_synthetic:
         # Extract from custom dev header
         dev_principal = request.headers.get("x-cage-dev-operator-urn")
@@ -157,7 +174,7 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
             if not dev_principal.startswith("urn:cage:dev:"):
                 raise HTTPException(
                     status_code=400,
-                    detail="Dev-mode operator URN must start with 'urn:cage:dev:' prefix"
+                    detail="Dev-mode operator URN must start with 'urn:cage:dev:' prefix",
                 )
             principal_hash = hashlib.sha256(dev_principal.encode()).hexdigest()
             logger.warning(f"⚠️  DEV-MODE: Synthetic operator identity: {dev_principal}")
@@ -166,7 +183,7 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
                 channel_provenance="DEV_SYNTHETIC",
                 auth_principal_hash=principal_hash,
             )
-    
+
     # No valid identity source found - fail closed
     logger.error("❌ No valid operator identity found in request")
     raise HTTPException(
