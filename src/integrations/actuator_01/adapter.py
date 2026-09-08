@@ -338,11 +338,7 @@ class Actuator01Adapter:
                 operator_signer = self._resolve_signer(urn)
                 sig = sign_for_quorum(operator_signer, canonical_bytes)
                 quorum_signatures.append(sig)
-<<<<<<< HEAD
-        except RuntimeError as exc:
-=======
         except (RuntimeError, KeyError, Exception) as exc:
->>>>>>> origin/main
             logger.error("[actuator_01/adapter] Quorum signing failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
