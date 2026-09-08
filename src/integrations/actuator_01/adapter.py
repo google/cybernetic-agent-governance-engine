@@ -45,6 +45,7 @@ import os
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
+from types import TracebackType
 
 import httpx
 
@@ -412,5 +413,10 @@ class Actuator01Adapter:
     async def __aenter__(self) -> Actuator01Adapter:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()
