@@ -127,7 +127,8 @@ class TestActuatorHttpClient:
             headers["x-operator-urns"]
             == "urn:cage:operator:alice,urn:cage:operator:bob"
         )
-        assert headers["x-quorum-signatures"] == f"sig1{'0' * 124},sig2{'0' * 124}"
+        # Wire-protocol header name matches Archytan kernel contract
+        assert headers["x-archytan-signatures"] == f"sig1{'0' * 124},sig2{'0' * 124}"
 
     @pytest.mark.asyncio
     async def test_submit_envelope_validates_quorum(self, mock_client):

@@ -29,7 +29,9 @@ from src.gateway.governance.kms_signer import KMSGovernanceSigner
 logger = logging.getLogger(__name__)
 
 # Domain tag for quorum signatures (prevents replay as assertion signatures)
-ACTUATOR_01_DOMAIN_TAG_QUORUM = b"ACTUATOR_01_QUORUM_V1:"
+# NOTE: This is the wire-load-bearing value required by Archytan kernel verification.
+# The constant name is anonymized; the runtime value must match the kernel contract.
+ACTUATOR_01_DOMAIN_TAG_QUORUM = b"ARCHYTAN_QUORUM_V1:"
 
 
 def sign_for_quorum(
