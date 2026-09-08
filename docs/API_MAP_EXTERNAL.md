@@ -950,7 +950,7 @@ adapter directory.
 | `provider_03` | `NormativeProvider` | Synchronous FRIA gate (HTTP) |
 | `provider_06` | `NormativeProvider` | Synchronous integrity verifier (HTTP) |
 | `provider_02` | Attestation surface | Out-of-band receipt certification |
-| `provider_04` | `AttestationProvider` + envelope mapper | Out-of-band (stub) |
+| `actuator_01` | `ExecutionActuator` + envelope mapper | Downstream execution actuator |
 | `provider_05` | `AttestationProvider` ×3 | Out-of-band, seeded/synthetic |
 
 ---

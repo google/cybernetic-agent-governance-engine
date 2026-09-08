@@ -43,7 +43,9 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
+from types import TracebackType
 
 import httpx
 
@@ -72,6 +74,9 @@ from src.integrations.actuator_01.response_classifier import (
 from src.integrations.actuator_01.signatures import sign_for_quorum
 
 logger = logging.getLogger(__name__)
+
+# Type alias for per-operator signer resolution
+SignerResolver = Callable[[str], KMSGovernanceSigner]
 
 # Environment variable keys for adapter configuration.
 _ENV_ENDPOINT = "ACTUATOR_01_ENDPOINT"
@@ -110,19 +115,32 @@ class Actuator01Adapter:
         client: Pre-configured ``ActuatorHttpClient``.  If ``None``,
             constructed from environment variables via ``from_env()``.
         signer: ``KMSGovernanceSigner`` for quorum and assertion signing.
+        signer_resolver: Optional callable ``(operator_urn: str) -> KMSGovernanceSigner``
+            for per-operator signing keys. If ``None``, defaults to ``signer`` for all operators.
     """
 
     def __init__(
         self,
         client: ActuatorHttpClient,
         signer: KMSGovernanceSigner,
+        signer_resolver: SignerResolver | None = None,
     ) -> None:
         self._client = client
         self._signer = signer
+        self._resolve_signer = signer_resolver or (lambda _urn: signer)
 
     @classmethod
-    def from_env(cls, signer: KMSGovernanceSigner) -> Actuator01Adapter:
+    def from_env(
+        cls,
+        signer: KMSGovernanceSigner,
+        signer_resolver: SignerResolver | None = None,
+    ) -> Actuator01Adapter:
         """Construct adapter from environment variables.
+
+        Args:
+            signer: Base KMS signer for assertions and default quorum signing.
+            signer_resolver: Optional callable ``(operator_urn: str) -> KMSGovernanceSigner``
+                for per-operator signing keys. If ``None``, defaults to ``signer`` for all.
 
         Raises:
             RuntimeError: If any required environment variable is missing.
@@ -159,7 +177,7 @@ class Actuator01Adapter:
             tenant_id=tenant_id,
         )
 
-        return cls(client=client, signer=signer)
+        return cls(client=client, signer=signer, signer_resolver=signer_resolver)
 
     # ── ExecutionActuator Protocol Implementation ─────────────────────────
 
@@ -279,22 +297,52 @@ class Actuator01Adapter:
 
         # ── Step 4: Sign for quorum ───────────────────────────────────────
         #
-        # In the current reference implementation, a single KMS key is used
-        # for all operators (per docs/architecture/actuator_01_kms_iam_model.md).
-        # Production adopters should supply per-operator signers via
-        # per-ceremony OIDC downscoping (Option B).
+        # Per-operator signing is supported via the signer_resolver callback.
+        # If no resolver is provided, defaults to using the same signer for all
+        # operators (reference implementation mode).
         operator_urns: list[str] = []
         quorum_signatures: list[str] = []
 
         try:
+            # Collect URNs and check for duplicates before signing
             for approval in clearance.approvals:
                 urn = approval.get("approver_urn", "")
                 if not urn:
                     raise RuntimeError("Approval record missing approver_urn")
                 operator_urns.append(urn)
-                sig = sign_for_quorum(self._signer, canonical_bytes)
+
+            # Detect duplicate operator URNs (fail-closed)
+            if len(operator_urns) != len(set(operator_urns)):
+                logger.error(
+                    "[actuator_01/adapter] Duplicate operator URNs detected in approvals"
+                )
+                return ActuationReceipt(
+                    accepted=False,
+                    receipt_id=None,
+                    session_uuid=None,
+                    raw_receipt=None,
+                    findings=[
+                        {
+                            "code": "cage.quorum.duplicate_operators",
+                            "severity": "TERMINAL",
+                            "detail": "Duplicate operator URNs detected in approval set",
+                        }
+                    ],
+                    retryable=False,
+                    envelope_digest=envelope_digest,
+                    timestamp_utc=timestamp_utc,
+                )
+
+            # Sign with per-operator signers
+            for urn in operator_urns:
+                operator_signer = self._resolve_signer(urn)
+                sig = sign_for_quorum(operator_signer, canonical_bytes)
                 quorum_signatures.append(sig)
+<<<<<<< HEAD
         except RuntimeError as exc:
+=======
+        except (RuntimeError, KeyError, Exception) as exc:
+>>>>>>> origin/main
             logger.error("[actuator_01/adapter] Quorum signing failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
@@ -404,5 +452,10 @@ class Actuator01Adapter:
     async def __aenter__(self) -> Actuator01Adapter:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()

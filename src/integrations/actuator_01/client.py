@@ -102,7 +102,7 @@ class ActuatorHttpClient:
         Headers constructed per wire contract:
         - X-Secure-Tenant-ID: tenant identifier (exactly one occurrence)
         - X-Operator-URNs: comma-separated operator URNs (positionally aligned)
-        - X-Quorum-Signatures: comma-separated hex signatures (positionally aligned)
+        - X-Archytan-Signatures: comma-separated hex signatures (positionally aligned)
         - X-Execution-Assertion: base64-encoded 120-byte assertion
         - X-Timestamp: unix seconds (equals issued_at)
         - Content-Type: application/json
@@ -133,12 +133,19 @@ class ActuatorHttpClient:
                 "(minimum 2 required)"
             )
 
+        # Enforce "≥2 distinct" per docstring line 113
+        if len(set(operator_urns)) < 2:
+            raise RuntimeError(
+                f"[actuator_01/client] Quorum requires ≥2 distinct operator URNs, "
+                f"got {len(set(operator_urns))} distinct"
+            )
+
         # Build headers (positional alignment enforced by constructing from same lists)
         headers = {
             "Content-Type": "application/json",
             "X-Secure-Tenant-ID": self.tenant_id,
             "X-Operator-URNs": ",".join(operator_urns),
-            "X-Quorum-Signatures": ",".join(signatures),
+            "X-Archytan-Signatures": ",".join(signatures),
             "X-Execution-Assertion": assertion,
             "X-Timestamp": str(issued_at),
         }

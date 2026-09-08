@@ -28,7 +28,7 @@ nonce, timestamp, and a domain-tagged KMS signature into exactly 120 bytes:
 
 Domain tag:  ``ACTUATOR_01_ASSERTION_V1:``
     Isolates assertion signatures from quorum signatures (which use
-    ``ACTUATOR_01_QUORUM_V1:``), preventing cross-context replay.
+    ``ARCHYTAN_QUORUM_V1:``), preventing cross-context replay.
 
 Wire encoding: base64url (RFC 4648 §5, no padding) per wire contract §7.3.
 """
@@ -57,7 +57,7 @@ _TIMESTAMP_SIZE = 8
 _SIGNATURE_OFFSET = 56
 _SIGNATURE_SIZE = 64
 
-# Domain tag — distinct from ACTUATOR_01_QUORUM_V1: used in signatures.py.
+# Domain tag — distinct from ARCHYTAN_QUORUM_V1: (quorum tag) used in signatures.py.
 ACTUATOR_01_DOMAIN_TAG_ASSERTION = b"ACTUATOR_01_ASSERTION_V1:"
 
 
