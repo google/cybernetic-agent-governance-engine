@@ -34,7 +34,6 @@ from src.integrations.actuator_01.assertion import (
 )
 from src.integrations.actuator_01.signatures import ACTUATOR_01_DOMAIN_TAG_QUORUM
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 
