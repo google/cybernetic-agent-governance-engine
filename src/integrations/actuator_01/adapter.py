@@ -43,7 +43,9 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
+from types import TracebackType
 
 import httpx
 
@@ -72,6 +74,9 @@ from src.integrations.actuator_01.response_classifier import (
 from src.integrations.actuator_01.signatures import sign_for_quorum
 
 logger = logging.getLogger(__name__)
+
+# Type alias for per-operator signer resolution
+SignerResolver = Callable[[str], KMSGovernanceSigner]
 
 # Environment variable keys for adapter configuration.
 _ENV_ENDPOINT = "ACTUATOR_01_ENDPOINT"
@@ -110,15 +115,19 @@ class Actuator01Adapter:
         client: Pre-configured ``ActuatorHttpClient``.  If ``None``,
             constructed from environment variables via ``from_env()``.
         signer: ``KMSGovernanceSigner`` for quorum and assertion signing.
+        signer_resolver: Optional callable ``(operator_urn: str) -> KMSGovernanceSigner``
+            for per-operator signing keys. If ``None``, defaults to ``signer`` for all operators.
     """
 
     def __init__(
         self,
         client: ActuatorHttpClient,
         signer: KMSGovernanceSigner,
+        signer_resolver: SignerResolver | None = None,
     ) -> None:
         self._client = client
         self._signer = signer
+        self._resolve_signer = signer_resolver or (lambda _urn: signer)
 
     @classmethod
     def from_env(cls, signer: KMSGovernanceSigner) -> Actuator01Adapter:
@@ -175,9 +184,7 @@ class Actuator01Adapter:
         the endpoint is unreachable, or KMS is not active.
         """
         if not self._signer.is_kms_active:
-            logger.warning(
-                "[actuator_01/adapter] health_check: KMS not active"
-            )
+            logger.warning("[actuator_01/adapter] health_check: KMS not active")
             return False
 
         return await self._client.health_check()
@@ -210,23 +217,23 @@ class Actuator01Adapter:
         """
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
-        # ── Step 1–2: Build, canonicalize, digest ─────────────────────────
+        # ── Step 1-2: Build, canonicalize, digest ─────────────────────────
         try:
             canonical_bytes, envelope_digest = build_and_canonicalize(clearance)
         except InvalidClearanceError as exc:
-            logger.warning(
-                "[actuator_01/adapter] Clearance validation failed: %s", exc
-            )
+            logger.warning("[actuator_01/adapter] Clearance validation failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "INVALID_CLEARANCE",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "INVALID_CLEARANCE",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
@@ -240,11 +247,13 @@ class Actuator01Adapter:
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "ENVELOPE_TOO_LARGE",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "ENVELOPE_TOO_LARGE",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
@@ -259,19 +268,19 @@ class Actuator01Adapter:
                 signer=self._signer,
             )
         except (AssertionBuildError, RuntimeError) as exc:
-            logger.error(
-                "[actuator_01/adapter] Assertion build failed: %s", exc
-            )
+            logger.error("[actuator_01/adapter] Assertion build failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "ASSERTION_BUILD_FAILED",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "ASSERTION_BUILD_FAILED",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
@@ -279,10 +288,9 @@ class Actuator01Adapter:
 
         # ── Step 4: Sign for quorum ───────────────────────────────────────
         #
-        # In the current reference implementation, a single KMS key is used
-        # for all operators (per docs/architecture/actuator_01_kms_iam_model.md).
-        # Production adopters should supply per-operator signers via
-        # per-ceremony OIDC downscoping (Option B).
+        # Per-operator signing is supported via the signer_resolver callback.
+        # If no resolver is provided, defaults to using the same signer for all
+        # operators (reference implementation mode).
         operator_urns: list[str] = []
         quorum_signatures: list[str] = []
 
@@ -290,26 +298,25 @@ class Actuator01Adapter:
             for approval in clearance.approvals:
                 urn = approval.get("approver_urn", "")
                 if not urn:
-                    raise RuntimeError(
-                        "Approval record missing approver_urn"
-                    )
+                    raise RuntimeError("Approval record missing approver_urn")
                 operator_urns.append(urn)
-                sig = sign_for_quorum(self._signer, canonical_bytes)
+                operator_signer = self._resolve_signer(urn)
+                sig = sign_for_quorum(operator_signer, canonical_bytes)
                 quorum_signatures.append(sig)
         except RuntimeError as exc:
-            logger.error(
-                "[actuator_01/adapter] Quorum signing failed: %s", exc
-            )
+            logger.error("[actuator_01/adapter] Quorum signing failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "QUORUM_SIGNING_FAILED",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "QUORUM_SIGNING_FAILED",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
@@ -351,11 +358,13 @@ class Actuator01Adapter:
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "UNEXPECTED_ERROR",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "UNEXPECTED_ERROR",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
@@ -404,5 +413,10 @@ class Actuator01Adapter:
     async def __aenter__(self) -> Actuator01Adapter:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()

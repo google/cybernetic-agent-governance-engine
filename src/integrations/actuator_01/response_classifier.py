@@ -147,11 +147,13 @@ def _classify_403(body: dict | None) -> ClassifiedResponse:
             error_code=error_code,
             error_message=message or "Partner capacity-limited (load shed)",
             retryable=True,
-            findings=[{
-                "code": error_code,
-                "severity": "TRANSIENT",
-                "detail": "Partner is load-shedding; retry with backoff",
-            }],
+            findings=[
+                {
+                    "code": error_code,
+                    "severity": "TRANSIENT",
+                    "detail": "Partner is load-shedding; retry with backoff",
+                }
+            ],
         )
 
     # REPLAY_DETECTED, QUORUM_FAILURE, or any unrecognised → terminal.
@@ -162,11 +164,13 @@ def _classify_403(body: dict | None) -> ClassifiedResponse:
         error_code=error_code,
         error_message=message or f"403 Forbidden: {error_code or 'unknown'}",
         retryable=False,
-        findings=[{
-            "code": error_code or "FORBIDDEN_UNSPECIFIED",
-            "severity": "TERMINAL",
-            "detail": message or "Request rejected by partner (fail-closed on 403)",
-        }],
+        findings=[
+            {
+                "code": error_code or "FORBIDDEN_UNSPECIFIED",
+                "severity": "TERMINAL",
+                "detail": message or "Request rejected by partner (fail-closed on 403)",
+            }
+        ],
     )
 
 
@@ -194,11 +198,13 @@ def _classify_200(body: dict | None) -> ClassifiedResponse:
             error_code="UNPARSEABLE_RECEIPT",
             error_message="200 OK but response body is not valid JSON",
             retryable=False,
-            findings=[{
-                "code": "UNPARSEABLE_RECEIPT",
-                "severity": "TERMINAL",
-                "detail": "200 OK with unparseable body — fail-closed",
-            }],
+            findings=[
+                {
+                    "code": "UNPARSEABLE_RECEIPT",
+                    "severity": "TERMINAL",
+                    "detail": "200 OK with unparseable body — fail-closed",
+                }
+            ],
         )
 
     receipt_id = body.get("receipt_id")
@@ -212,11 +218,13 @@ def _classify_200(body: dict | None) -> ClassifiedResponse:
             error_code="MISSING_RECEIPT_ID",
             error_message="200 OK but response body missing receipt_id",
             retryable=False,
-            findings=[{
-                "code": "MISSING_RECEIPT_ID",
-                "severity": "TERMINAL",
-                "detail": "200 OK with no receipt_id — fail-closed",
-            }],
+            findings=[
+                {
+                    "code": "MISSING_RECEIPT_ID",
+                    "severity": "TERMINAL",
+                    "detail": "200 OK with no receipt_id — fail-closed",
+                }
+            ],
         )
 
     return ClassifiedResponse(
@@ -277,11 +285,13 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
             error_code=error_code,
             error_message=message or f"Retryable HTTP {status}",
             retryable=True,
-            findings=[{
-                "code": error_code or f"HTTP_{status}",
-                "severity": "TRANSIENT",
-                "detail": message or f"HTTP {status} — retryable with backoff",
-            }],
+            findings=[
+                {
+                    "code": error_code or f"HTTP_{status}",
+                    "severity": "TRANSIENT",
+                    "detail": message or f"HTTP {status} — retryable with backoff",
+                }
+            ],
         )
         logger.warning(
             "[actuator_01/response] HTTP %d → RETRYABLE error_code=%s",
@@ -299,11 +309,13 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
             error_code=error_code,
             error_message=message or f"Terminal HTTP {status}",
             retryable=False,
-            findings=[{
-                "code": error_code or f"HTTP_{status}",
-                "severity": "TERMINAL",
-                "detail": message or f"HTTP {status} — not retryable",
-            }],
+            findings=[
+                {
+                    "code": error_code or f"HTTP_{status}",
+                    "severity": "TERMINAL",
+                    "detail": message or f"HTTP {status} — not retryable",
+                }
+            ],
         )
         logger.warning(
             "[actuator_01/response] HTTP %d → TERMINAL error_code=%s",
@@ -320,11 +332,13 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
         error_code=error_code or f"UNRECOGNISED_{status}",
         error_message=message or f"Unrecognised HTTP {status} — fail-closed",
         retryable=False,
-        findings=[{
-            "code": f"UNRECOGNISED_{status}",
-            "severity": "TERMINAL",
-            "detail": f"Unrecognised HTTP {status} — treated as terminal (fail-closed)",
-        }],
+        findings=[
+            {
+                "code": f"UNRECOGNISED_{status}",
+                "severity": "TERMINAL",
+                "detail": f"Unrecognised HTTP {status} — treated as terminal (fail-closed)",
+            }
+        ],
     )
     logger.warning(
         "[actuator_01/response] HTTP %d → TERMINAL (unrecognised, fail-closed)",
@@ -359,11 +373,13 @@ def classify_network_error(exc: Exception) -> ClassifiedResponse:
         error_code=error_code,
         error_message=f"Transport error: {exc_str}",
         retryable=True,
-        findings=[{
-            "code": error_code,
-            "severity": "TRANSIENT",
-            "detail": f"Transport-level failure: {exc_str}",
-        }],
+        findings=[
+            {
+                "code": error_code,
+                "severity": "TRANSIENT",
+                "detail": f"Transport-level failure: {exc_str}",
+            }
+        ],
     )
     logger.error(
         "[actuator_01/response] Network error → %s: %s",

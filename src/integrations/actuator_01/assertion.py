@@ -171,7 +171,9 @@ def build_assertion(
     assert len(assertion_bytes) == ASSERTION_TOTAL_BYTES  # 120 bytes
 
     # ── Step 4: Encode as base64url (no padding) ──────────────────────────
-    assertion_b64 = base64.urlsafe_b64encode(assertion_bytes).rstrip(b"=").decode("ascii")
+    assertion_b64 = (
+        base64.urlsafe_b64encode(assertion_bytes).rstrip(b"=").decode("ascii")
+    )
 
     logger.info(
         "[actuator_01/assertion] Assertion built: digest=%s... nonce=%s... "
