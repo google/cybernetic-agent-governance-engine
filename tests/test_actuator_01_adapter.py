@@ -57,7 +57,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 class MockPerOperatorSigner:
     """Mock signer that produces distinct signatures keyed by operator URN.
-    
+
     This is the critical test infrastructure piece: signatures are keyed off
     operator identity, so duplicate URNs produce duplicate signatures, and
     reordering URNs reorders signatures. A constant mock (b"a" * 64) cannot
@@ -122,13 +122,19 @@ class TestPerOperatorSigning:
         # Mock client that captures the submitted signatures
         captured_signatures = []
 
-        async def mock_submit(canonical_bytes, operator_urns, signatures, assertion, issued_at):
+        async def mock_submit(
+            canonical_bytes, operator_urns, signatures, assertion, issued_at
+        ):
             nonlocal captured_signatures
             captured_signatures = signatures
             # Create a real Response object
             return httpx.Response(
                 200,
-                json={"receipt_id": "r-123", "session_uuid": "s-456", "status": "ACCEPTED"},
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
             )
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
@@ -161,12 +167,18 @@ class TestPerOperatorSigning:
 
         captured_signatures = []
 
-        async def mock_submit(canonical_bytes, operator_urns, signatures, assertion, issued_at):
+        async def mock_submit(
+            canonical_bytes, operator_urns, signatures, assertion, issued_at
+        ):
             nonlocal captured_signatures
             captured_signatures = signatures
             return httpx.Response(
                 200,
-                json={"receipt_id": "r-123", "session_uuid": "s-456", "status": "ACCEPTED"},
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
             )
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
@@ -192,7 +204,7 @@ class TestPerOperatorSigning:
         # To test positional alignment, we use a deterministic mock signer that keys
         # off URN only (not message content), so signatures are URN-specific but
         # stable across different canonical bytes.
-        
+
         urns_forward = ["urn:actuator_01:op:alice", "urn:actuator_01:op:bob"]
         clearance_forward = make_valid_clearance(urns_forward)
 
@@ -202,25 +214,41 @@ class TestPerOperatorSigning:
         captured_forward = {}
         captured_reversed = {}
 
-        async def mock_submit_forward(canonical_bytes, operator_urns, signatures, assertion, issued_at):
+        async def mock_submit_forward(
+            canonical_bytes, operator_urns, signatures, assertion, issued_at
+        ):
             nonlocal captured_forward
             captured_forward = {"urns": operator_urns, "sigs": signatures}
             return httpx.Response(
-                200, json={"receipt_id": "r-123", "session_uuid": "s-456", "status": "ACCEPTED"}
+                200,
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
             )
 
-        async def mock_submit_reversed(canonical_bytes, operator_urns, signatures, assertion, issued_at):
+        async def mock_submit_reversed(
+            canonical_bytes, operator_urns, signatures, assertion, issued_at
+        ):
             nonlocal captured_reversed
             captured_reversed = {"urns": operator_urns, "sigs": signatures}
             return httpx.Response(
-                200, json={"receipt_id": "r-123", "session_uuid": "s-456", "status": "ACCEPTED"}
+                200,
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
             )
 
         # Deterministic signer that returns URN-keyed signature (ignores message)
         class SimpleMockSigner:
             is_kms_active = True
+
             def __init__(self, urn: str) -> None:
                 self._urn = urn
+
             def sign_raw(self, message: bytes) -> bytes:
                 # Signature is deterministic based on URN alone
                 return hashlib.sha256(self._urn.encode()).digest() + b"\x00" * 32
@@ -242,7 +270,9 @@ class TestPerOperatorSigning:
 
         # Reversed run
         mock_client_reversed = MagicMock(spec=ActuatorHttpClient)
-        mock_client_reversed.submit_envelope = AsyncMock(side_effect=mock_submit_reversed)
+        mock_client_reversed.submit_envelope = AsyncMock(
+            side_effect=mock_submit_reversed
+        )
         adapter_reversed = Actuator01Adapter(
             client=mock_client_reversed,
             signer=base_signer,  # type: ignore[arg-type]
@@ -293,7 +323,7 @@ class TestFailClosedBranches:
 
         monkeypatch.setattr(
             "src.integrations.actuator_01.adapter.build_and_canonicalize",
-            mock_build_and_canonicalize
+            mock_build_and_canonicalize,
         )
 
         # Client won't be called
@@ -321,8 +351,7 @@ class TestFailClosedBranches:
             raise RuntimeError("KMS unavailable")
 
         monkeypatch.setattr(
-            "src.integrations.actuator_01.adapter.build_assertion",
-            mock_build_assertion
+            "src.integrations.actuator_01.adapter.build_assertion", mock_build_assertion
         )
 
         # Client won't be called

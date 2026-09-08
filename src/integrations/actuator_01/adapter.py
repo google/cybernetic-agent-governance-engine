@@ -183,9 +183,7 @@ class Actuator01Adapter:
         the endpoint is unreachable, or KMS is not active.
         """
         if not self._signer.is_kms_active:
-            logger.warning(
-                "[actuator_01/adapter] health_check: KMS not active"
-            )
+            logger.warning("[actuator_01/adapter] health_check: KMS not active")
             return False
 
         return await self._client.health_check()
@@ -222,19 +220,19 @@ class Actuator01Adapter:
         try:
             canonical_bytes, envelope_digest = build_and_canonicalize(clearance)
         except InvalidClearanceError as exc:
-            logger.warning(
-                "[actuator_01/adapter] Clearance validation failed: %s", exc
-            )
+            logger.warning("[actuator_01/adapter] Clearance validation failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "INVALID_CLEARANCE",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "INVALID_CLEARANCE",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
@@ -248,11 +246,13 @@ class Actuator01Adapter:
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "ENVELOPE_TOO_LARGE",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "ENVELOPE_TOO_LARGE",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
@@ -267,19 +267,19 @@ class Actuator01Adapter:
                 signer=self._signer,
             )
         except (AssertionBuildError, RuntimeError) as exc:
-            logger.error(
-                "[actuator_01/adapter] Assertion build failed: %s", exc
-            )
+            logger.error("[actuator_01/adapter] Assertion build failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "ASSERTION_BUILD_FAILED",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "ASSERTION_BUILD_FAILED",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
@@ -297,27 +297,25 @@ class Actuator01Adapter:
             for approval in clearance.approvals:
                 urn = approval.get("approver_urn", "")
                 if not urn:
-                    raise RuntimeError(
-                        "Approval record missing approver_urn"
-                    )
+                    raise RuntimeError("Approval record missing approver_urn")
                 operator_urns.append(urn)
                 operator_signer = self._resolve_signer(urn)
                 sig = sign_for_quorum(operator_signer, canonical_bytes)
                 quorum_signatures.append(sig)
         except RuntimeError as exc:
-            logger.error(
-                "[actuator_01/adapter] Quorum signing failed: %s", exc
-            )
+            logger.error("[actuator_01/adapter] Quorum signing failed: %s", exc)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "QUORUM_SIGNING_FAILED",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "QUORUM_SIGNING_FAILED",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
@@ -359,11 +357,13 @@ class Actuator01Adapter:
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[{
-                    "code": "UNEXPECTED_ERROR",
-                    "severity": "TERMINAL",
-                    "detail": str(exc),
-                }],
+                findings=[
+                    {
+                        "code": "UNEXPECTED_ERROR",
+                        "severity": "TERMINAL",
+                        "detail": str(exc),
+                    }
+                ],
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
