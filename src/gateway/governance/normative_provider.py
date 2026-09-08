@@ -899,8 +899,8 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
 
-    Note: actuator_01 implements AttestationProvider and EnvelopeMapper,
-    not NormativeProvider directly.
+    Note: actuator_01 (see src/integrations/actuator_01/) implements the
+    ExecutionActuator seam (KMS-signed envelope protocol), not NormativeProvider.
 
     Returns:
         An instantiated NormativeProvider.
