@@ -161,6 +161,21 @@ class TestActuatorHttpClient:
                 )
 
     @pytest.mark.asyncio
+    async def test_submit_envelope_rejects_duplicate_urns(self, mock_client):
+        """Client rejects duplicate operator URNs (≥2 distinct required)."""
+        canonical_bytes = b'{"test":"data"}'
+        operator_urns = ["urn:cage:operator:alice", "urn:cage:operator:alice"]  # Duplicate
+        signatures = ["sig1" + "0" * 124, "sig2" + "0" * 124]
+        assertion = base64.b64encode(b"w" * 120).decode()
+        issued_at = int(time.time())
+
+        async with mock_client:
+            with pytest.raises(RuntimeError, match="≥2 distinct operator URNs"):
+                await mock_client.submit_envelope(
+                    canonical_bytes, operator_urns, signatures, assertion, issued_at
+                )
+
+    @pytest.mark.asyncio
     async def test_health_check_returns_true_on_200(
         self, mock_client, respx_mock: MockRouter
     ):

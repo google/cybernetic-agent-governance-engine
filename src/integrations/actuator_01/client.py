@@ -133,6 +133,13 @@ class ActuatorHttpClient:
                 "(minimum 2 required)"
             )
 
+        # Enforce "≥2 distinct" per docstring line 113
+        if len(set(operator_urns)) < 2:
+            raise RuntimeError(
+                f"[actuator_01/client] Quorum requires ≥2 distinct operator URNs, "
+                f"got {len(set(operator_urns))} distinct"
+            )
+
         # Build headers (positional alignment enforced by constructing from same lists)
         headers = {
             "Content-Type": "application/json",
