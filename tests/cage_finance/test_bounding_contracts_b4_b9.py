@@ -33,6 +33,9 @@ from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractEnforcer,
 )
 
+# Hermetic: validates bounding contracts B4, B9 in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ───────────────────────────────────────────────────────────────────────────────
 # B4 — Counterparty Risk Concentration Tests
 # ───────────────────────────────────────────────────────────────────────────────

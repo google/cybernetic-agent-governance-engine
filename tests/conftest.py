@@ -386,13 +386,80 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-# ── Auto-skip integration tests unless opted in ───────────────────────────────
+# ── Selection-marker contract ─────────────────────────────────────────────────
+# Every collected test MUST carry at least one of these markers.  CI selects tests
+# by marker expression (`-m "local or unit"`, `-m integration`, ...), so a test
+# without one of these is collected locally but silently excluded from every gate.
+#
+# This mirrors CAGE's fail-closed posture (AGENTS.md § FTRA): an unclassified
+# *action* is rejected rather than admitted, and likewise an unclassified *test*
+# aborts collection rather than disappearing from the gate.
+#
+# Additive facet markers (`slow`, `regression`, `red_team`, `layer_isolation`,
+# `financial`, `healthcare`, `us_fed`, `eu_ecb`, `apac_mas`) deliberately do NOT
+# appear here: they qualify a test, they do not make it selectable by a CI gate.
+SELECTION_MARKERS: frozenset[str] = frozenset(
+    {"unit", "local", "integration", "load", "chaos", "live_external"}
+)
+
+# Modules exempted from the selection-marker contract.  Ships EMPTY by design.
+# Prefer excluding a non-test helper from collection over adding it here; every
+# entry must carry an inline comment naming the reason it cannot be marked.
+MARKER_GUARD_EXEMPT_MODULES: frozenset[str] = frozenset()
+
+
+def _assert_selection_markers(items: list[pytest.Item]) -> None:
+    """Abort the run if any collected test lacks a selection marker (fail-closed)."""
+    offenders: dict[str, list[str]] = {}
+    for item in items:
+        module_path = str(item.nodeid).split("::", 1)[0]
+        if module_path in MARKER_GUARD_EXEMPT_MODULES:
+            continue
+        if SELECTION_MARKERS & set(item.keywords):
+            continue
+        offenders.setdefault(module_path, []).append(item.name)
+
+    if not offenders:
+        return
+
+    total = sum(len(names) for names in offenders.values())
+    lines = [
+        "",
+        "=" * 78,
+        "PYTEST MARKER CONTRACT VIOLATION (fail-closed)",
+        "=" * 78,
+        f"{total} test(s) across {len(offenders)} module(s) carry no selection marker.",
+        "",
+        "CI selects tests by marker expression, so these tests would be collected",
+        "locally but silently EXCLUDED from every CI gate.",
+        "",
+        "Offending modules:",
+    ]
+    for module_path in sorted(offenders):
+        names = offenders[module_path]
+        preview = ", ".join(names[:3]) + (" ..." if len(names) > 3 else "")
+        lines.append(f"  - {module_path}  ({len(names)} test(s): {preview})")
+    lines += [
+        "",
+        "Fix: add a module-level marker after the import block, e.g.",
+        "",
+        "    pytestmark = [pytest.mark.unit, pytest.mark.local]",
+        "",
+        f"Valid selection markers: {', '.join(sorted(SELECTION_MARKERS))}",
+        "See tests/README.md § Pytest Markers for the unit-vs-local distinction.",
+        "=" * 78,
+    ]
+    raise pytest.UsageError("\n".join(lines))
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Auto-skip @pytest.mark.integration and @pytest.mark.chaos tests unless opted in."""
+    """Enforce the selection-marker contract, then auto-skip opt-in test classes."""
+    # Fail-closed guard runs FIRST: an unmarked item must not be maskable by a
+    # skip marker applied later in this same hook.
+    _assert_selection_markers(items)
+
     run_integration = config.getoption("--run-integration")
     run_live_external = config.getoption("--run-live-external")
     run_chaos = config.getoption("--run-chaos")

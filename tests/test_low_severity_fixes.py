@@ -34,6 +34,9 @@ import pytest
 
 from src.gateway.governance.defer_queue import ApprovalRecord, DeferReason, DeferToken
 
+# Hermetic: unit tests for security fixes L-2 through L-7, fully mocked.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestL2_MCPRateLimitMetrics:
     """Test L-2: MCP rate limit metrics emission."""

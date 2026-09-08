@@ -24,6 +24,9 @@ import pytest
 
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
+# Hermetic: validates finance domain invariants and cost resolver in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestCashBarrierDeclaration:
     """Tests for the CashBarrier declarative invariant model."""

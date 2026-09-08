@@ -331,11 +331,12 @@ class DeferQueue:
     # park — add a deferred token to the queue
     # ------------------------------------------------------------------
 
-    async def park(self, token: DeferToken) -> str:
+    async def park(self, token: DeferToken, correlation_id: str | None = None) -> str:
         """Park a DeferToken in Redis.
 
         Args:
             token: The fully constructed DeferToken.
+            correlation_id: Optional correlation ID to associate with the token.
 
         Returns:
             The ``defer_id`` of the parked token.
@@ -345,6 +346,9 @@ class DeferQueue:
                 aborted because a concurrent writer modified a watched key.  The
                 caller should treat this as a retriable condition.
         """
+        if correlation_id is not None:
+            token.correlation_id = correlation_id
+
         key = f"{_KEY_PREFIX}{token.defer_id}"
         expiry_ts = time.time() + token.ttl_seconds
         token_json = token.model_dump_json()
@@ -365,10 +369,11 @@ class DeferQueue:
             raise
 
         logger.info(
-            "[defer_queue] Parked token defer_id=%s thread_id=%s reason=%s "
+            "[defer_queue] Parked token defer_id=%s thread_id=%s correlation_id=%s reason=%s "
             "confidence=%.3f ttl=%ds",
             token.defer_id,
             token.thread_id,
+            token.correlation_id,
             token.defer_reason.value,
             token.confidence_score or -1.0,
             token.ttl_seconds,
@@ -433,10 +438,11 @@ class DeferQueue:
             raise
 
         logger.info(
-            "[defer_queue] Resolved defer_id=%s resolution=%s thread_id=%s",
+            "[defer_queue] Resolved defer_id=%s resolution=%s thread_id=%s correlation_id=%s",
             defer_id,
             resolution,
             token.thread_id,
+            token.correlation_id,
         )
         return token
 
@@ -547,12 +553,13 @@ class DeferQueue:
 
             logger.info(
                 "[defer_queue] Approval recorded: defer_id=%s approver=%s "
-                "distinct_approvers=%d/%d status=%s",
+                "distinct_approvers=%d/%d status=%s correlation_id=%s",
                 defer_id,
                 record.approver_urn,
                 distinct_approvers,
                 token.required_quorum,
                 new_status,
+                token.correlation_id,
             )
             return (approval_status, token)
 

@@ -48,18 +48,43 @@ from src.gateway.governance.langgraph_harness import (
     create_opa_safety_node,
 )
 
-pytestmark = pytest.mark.unit
+# Wall-clock budget assertions.  Marked `slow` so it can be excluded with
+# `-m "not slow"` during fast local iteration; still runs in the default CI gate.
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.slow]
+
+
+# ---------------------------------------------------------------------------
+# Jitter tolerance
+#
+# Under `-n auto` (pytest-xdist) N worker processes contend for the same cores,
+# and GitHub-hosted runners are noisy neighbours.  Wall-clock budgets measured
+# on an idle machine are not meaningful in either environment, so scale them.
+# Override explicitly with CAGE_LATENCY_BUDGET_MULTIPLIER for bare-metal runs.
+# ---------------------------------------------------------------------------
+def _budget_multiplier() -> float:
+    explicit = os.environ.get("CAGE_LATENCY_BUDGET_MULTIPLIER")
+    if explicit:
+        return float(explicit)
+    multiplier = 1.0
+    if os.environ.get("PYTEST_XDIST_WORKER"):  # set by xdist in each worker
+        multiplier *= 3.0
+    if os.environ.get("CI"):  # GitHub Actions sets CI=true
+        multiplier *= 2.0
+    return multiplier
+
+
+_M: float = _budget_multiplier()
 
 # ---------------------------------------------------------------------------
 # Latency budgets (milliseconds) — tune here without touching test logic
 # ---------------------------------------------------------------------------
 
-TIER1_NEMO_INPUT_BUDGET_MS: float = 50.0  # NeMo input guardrail
-TIER2_OPA_BUDGET_MS: float = 30.0  # OPA policy check
-TIER3_SAFETY_BUDGET_MS: float = 20.0  # Safety/STPA validation (pure Python)
-TIER4_AGENT_BUDGET_MS: float = 2000.0  # LLM call (network-bound, generous budget)
-TIER5_NEMO_OUTPUT_BUDGET_MS: float = 50.0  # NeMo output rail
-PIPELINE_TOTAL_BUDGET_MS: float = 2200.0  # End-to-end budget (ex. Tier 4 LLM)
+TIER1_NEMO_INPUT_BUDGET_MS: float = 50.0 * _M  # NeMo input guardrail
+TIER2_OPA_BUDGET_MS: float = 30.0 * _M  # OPA policy check
+TIER3_SAFETY_BUDGET_MS: float = 20.0 * _M  # Safety/STPA validation (pure Python)
+TIER4_AGENT_BUDGET_MS: float = 2000.0 * _M  # LLM call (network-bound, generous budget)
+TIER5_NEMO_OUTPUT_BUDGET_MS: float = 50.0 * _M  # NeMo output rail
+PIPELINE_TOTAL_BUDGET_MS: float = 2200.0 * _M  # End-to-end budget (ex. Tier 4 LLM)
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,9 @@ from src.cage_finance.safety.bounding.models import (
     ContractSeverity,
 )
 
+# Hermetic: validates bounding contracts B1, B2, B6 in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestContractB1MaxNotional:
     """Tests for B1 — Maximum single-order notional value."""

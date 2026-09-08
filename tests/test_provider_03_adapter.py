@@ -24,6 +24,9 @@ import respx
 
 from src.integrations.provider_03 import Provider03NormativeProvider
 
+# Hermetic: uses respx mocked transport, no live services.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 @pytest.mark.asyncio
 @respx.mock
@@ -87,6 +90,3 @@ def test_provider_03_bind_receipt_ingestion():
     digest = provider.ingest_bind_receipt(receipt)
     assert isinstance(digest, str)
     assert len(digest) == 64
-
-
-pytestmark = [pytest.mark.unit, pytest.mark.local]

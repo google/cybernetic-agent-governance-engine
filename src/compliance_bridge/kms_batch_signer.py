@@ -244,6 +244,17 @@ class AsyncBatchSigner:
             payload:      The canonical JSON payload.
             callback:     Optional callback(record_hash, signature_hex) on completion.
         """
+        if not payload:
+            raise ValueError("payload cannot be empty")
+
+        try:
+            serialized = json.dumps(payload)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"payload is not JSON-serializable: {exc}") from exc
+
+        if len(serialized.encode("utf-8")) > 4096:
+            raise ValueError("payload exceeds 4KB limit")
+
         self._queue.append(
             PendingSignatureRecord(
                 record_hash=record_hash,

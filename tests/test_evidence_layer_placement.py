@@ -26,6 +26,9 @@ from unittest.mock import patch
 
 import pytest
 
+# Hermetic: tests Layer 1 kernel independence from Layer 3 compliance_bridge.
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.layer_isolation]
+
 
 class TestEvidenceLayerPlacement:
     """Verifies that Layer 1 kernel has no dependency on Layer 3 compliance_bridge."""

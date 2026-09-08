@@ -77,6 +77,9 @@ from src.integrations.provider_06.adapter import (
 )
 from src.integrations.provider_06.mock_endpoint import FIXTURES
 
+# Hermetic: tests Provider 06 adapter with mock fixtures, no live services.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

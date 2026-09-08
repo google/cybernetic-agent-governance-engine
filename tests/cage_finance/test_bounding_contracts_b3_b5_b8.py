@@ -34,6 +34,9 @@ from src.cage_finance.safety.bounding.models import (
 )
 from src.cage_finance.safety.bounding.providers import StubMarketDataProvider
 
+# Hermetic: validates bounding contracts B3, B5, B8 in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 @pytest.fixture(autouse=True)
 def _force_dev_env(monkeypatch):

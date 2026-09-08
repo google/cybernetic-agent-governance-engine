@@ -28,6 +28,9 @@ from src.cage_finance.safety.bounding.models import (
     ContractSeverity,
 )
 
+# Hermetic: validates bounding contract data models in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestContractSeverity:
     """Tests for ContractSeverity enum."""

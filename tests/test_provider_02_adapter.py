@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """
-tests/test_provider_02_integration.py
-=====================================
+tests/test_provider_02_adapter.py
+=================================
 Hermetic unit tests for src/integrations/provider_02/adapter.py and
 src/integrations/provider_02/provider.py.
 

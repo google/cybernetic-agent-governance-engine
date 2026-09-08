@@ -23,10 +23,12 @@ mocked here. The primary method is check_consensus(action, context, magnitude)
 which returns a dict with keys: status, reason, votes.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-pytestmark = pytest.mark.unit
-from unittest.mock import AsyncMock, MagicMock, patch
+# Hermetic: validates ConsensusGate with mocked THRESHOLDS and GatewayClient.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture

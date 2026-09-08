@@ -30,14 +30,23 @@ import pytest
 from src.gateway.governance.contracts import Violation
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
+# Hermetic: uses mock governor with mock tiers, no live services.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 @pytest.fixture
 def mock_governor_with_tiers():
     """Create a governor with mock domain tiers for rollback testing."""
     mock_opa = Mock()
     mock_opa.evaluate_policy = AsyncMock(return_value={"allow": True})
+    mock_safety = AsyncMock()
+    mock_consensus = AsyncMock()
 
-    gov = SymbolicGovernor(opa_client=mock_opa)
+    gov = SymbolicGovernor(
+        opa_client=mock_opa,
+        safety_filter=mock_safety,
+        consensus_engine=mock_consensus,
+    )
 
     tier_a = Mock()
     tier_a.tier_name = "tier_a"

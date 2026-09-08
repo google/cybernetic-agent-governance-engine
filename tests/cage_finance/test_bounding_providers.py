@@ -29,6 +29,9 @@ from src.cage_finance.safety.bounding.providers import (
     StubRollbackCapabilityProvider,
 )
 
+# Hermetic: validates provider protocols and stubs in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestMarketDataProviderProtocol:
     """Tests for MarketDataProvider protocol structure."""
