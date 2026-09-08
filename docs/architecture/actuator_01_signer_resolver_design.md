@@ -24,7 +24,7 @@
 for approval in clearance.approvals:
     urn = approval.get("approver_urn", "")
     operator_urns.append(urn)
-    sig = sign_for_quorum(self._signer, canonical_bytes)   # ← same key every time
+    sig = sign_for_quorum(self._signer, canonical_bytes)  # ← same key every time
     quorum_signatures.append(sig)
 ```
 
@@ -118,13 +118,16 @@ resolver = lambda _urn: shared_signer
 # Adopter Option A — per-operator Workload Identity key rings
 _SIGNERS = {
     "urn:actuator_01:op:alice": KMSGovernanceSigner(key_id=ALICE_KEY),
-    "urn:actuator_01:op:bob":   KMSGovernanceSigner(key_id=BOB_KEY),
+    "urn:actuator_01:op:bob": KMSGovernanceSigner(key_id=BOB_KEY),
 }
+
+
 def resolver(urn: str) -> KMSGovernanceSigner:
     try:
         return _SIGNERS[urn]
     except KeyError:
         raise RuntimeError(f"No registered signing key for operator {urn}")
+
 
 # Adopter Option B — per-ceremony OIDC downscoping (recommended)
 def resolver(urn: str) -> KMSGovernanceSigner:
@@ -241,7 +244,9 @@ if len(operator_urns) != len(signatures):
 
 # Guard 2 — cardinality
 if len(operator_urns) < 2:
-    raise RuntimeError(f"Insufficient quorum: {len(operator_urns)} URNs (minimum 2 required)")
+    raise RuntimeError(
+        f"Insufficient quorum: {len(operator_urns)} URNs (minimum 2 required)"
+    )
 
 # Guard 3 — distinctness
 if len(set(operator_urns)) < 2:
