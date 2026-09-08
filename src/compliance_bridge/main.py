@@ -1364,7 +1364,7 @@ async def defer_inject(
 
         # Stream B security gates: prevent bypassing dual-control via injection
         from src.gateway.governance.defer_queue import DeferReason, get_required_quorum
-        
+
         # Fetch token to check defer_reason and approval status
         token = await queue.get(defer_id)
         if token is None:
@@ -1373,7 +1373,7 @@ async def defer_inject(
                 status_code=404,
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
             )
-        
+
         # Reason-gate: Reject injection for quorum-3 defer reasons
         quorum_3_reasons = {
             DeferReason.FTRA_IRREVERSIBLE_TERMINAL,
@@ -1390,7 +1390,7 @@ async def defer_inject(
                     "required_quorum": get_required_quorum(token.defer_reason),
                 },
             )
-        
+
         # Status-gate: Reject injection if token has partial approvals (incomplete quorum)
         if token.approvals and len(token.approvals) < token.required_quorum:
             await client.aclose()
@@ -1507,12 +1507,13 @@ async def defer_inject(
 
 class DeferEscalateRequest(BaseModel):
     """Request body for operator approval of a deferred execution.
-    
+
     BREAKING CHANGE: operator_urn, session_id, and auth_method fields removed.
     Identity is now extracted from verified transport substrate (SPIFFE SVID)
     or OIDC claims via require_operator_identity dependency. Self-asserted
     identity parameters are rejected to prevent spoofing attacks.
     """
+
     pass  # All fields removed; identity comes from dependency injection
 
 
@@ -1532,7 +1533,7 @@ async def defer_escalate(
     BREAKING CHANGE (Stream B residual gap closure): Operator identity is now
     extracted from verified SPIFFE SVID (primary) or OIDC JWT (gated fallback).
     Self-asserted operator_urn/session_id/auth_method body parameters rejected.
-    
+
     The endpoint enforces dual-control quorum: a token requires multiple distinct
     operator approvals (threshold determined by defer_reason) before transitioning
     to ESCALATED state.

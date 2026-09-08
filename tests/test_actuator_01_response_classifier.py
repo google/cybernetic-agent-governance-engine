@@ -52,11 +52,14 @@ class TestClassify200:
     """200 OK with valid receipt → ACCEPTED; malformed → REJECTED_TERMINAL."""
 
     def test_valid_receipt(self):
-        resp = _make_response(200, {
-            "receipt_id": "rcpt-001",
-            "session_uuid": "sess-001",
-            "status": "ACCEPTED",
-        })
+        resp = _make_response(
+            200,
+            {
+                "receipt_id": "rcpt-001",
+                "session_uuid": "sess-001",
+                "status": "ACCEPTED",
+            },
+        )
         result = classify_response(resp)
         assert result.category == ResponseCategory.ACCEPTED
         assert result.receipt_id == "rcpt-001"
@@ -78,11 +81,14 @@ class TestClassify200:
         assert result.error_code == "UNPARSEABLE_RECEIPT"
 
     def test_receipt_with_extra_fields(self):
-        resp = _make_response(200, {
-            "receipt_id": "rcpt-002",
-            "session_uuid": "sess-002",
-            "extra_field": "ignored",
-        })
+        resp = _make_response(
+            200,
+            {
+                "receipt_id": "rcpt-002",
+                "session_uuid": "sess-002",
+                "extra_field": "ignored",
+            },
+        )
         result = classify_response(resp)
         assert result.category == ResponseCategory.ACCEPTED
         assert result.receipt_id == "rcpt-002"
@@ -95,10 +101,13 @@ class TestClassify403:
     """403 Forbidden requires body inspection to distinguish sub-types."""
 
     def test_load_shed_is_retryable(self):
-        resp = _make_response(403, {
-            "error": "LOAD_SHED",
-            "message": "Too many concurrent requests",
-        })
+        resp = _make_response(
+            403,
+            {
+                "error": "LOAD_SHED",
+                "message": "Too many concurrent requests",
+            },
+        )
         result = classify_response(resp)
         assert result.category == ResponseCategory.REJECTED_RETRYABLE
         assert result.retryable is True
@@ -111,10 +120,13 @@ class TestClassify403:
         assert result.retryable is True
 
     def test_replay_detected_is_terminal(self):
-        resp = _make_response(403, {
-            "error": "REPLAY_DETECTED",
-            "message": "Nonce reuse",
-        })
+        resp = _make_response(
+            403,
+            {
+                "error": "REPLAY_DETECTED",
+                "message": "Nonce reuse",
+            },
+        )
         result = classify_response(resp)
         assert result.category == ResponseCategory.REJECTED_TERMINAL
         assert result.retryable is False
@@ -229,9 +241,7 @@ class TestClassifiedResponseDefaults:
     """Verify ClassifiedResponse field defaults."""
 
     def test_findings_defaults_to_empty_list(self):
-        cr = ClassifiedResponse(
-            category=ResponseCategory.ACCEPTED, status_code=200
-        )
+        cr = ClassifiedResponse(category=ResponseCategory.ACCEPTED, status_code=200)
         assert cr.findings == []
         assert cr.retryable is False
         assert cr.receipt_id is None

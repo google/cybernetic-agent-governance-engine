@@ -219,14 +219,14 @@ class DeferToken(BaseModel):
         if self.correlation_id is None:
             namespace_cage = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
             self.correlation_id = str(uuid.uuid5(namespace_cage, self.thread_id))
-        
+
         # B-2.4: Wire required_quorum from defer_reason for quorum-3 reasons
         # (FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, FLOWSIGNAL_ESCALATION)
         if self.defer_reason and self.required_quorum == 2:  # default value check
             try:
                 computed_quorum = get_required_quorum(self.defer_reason)
                 if computed_quorum != 2:  # Only override if different from default
-                    object.__setattr__(self, 'required_quorum', computed_quorum)
+                    object.__setattr__(self, "required_quorum", computed_quorum)
             except (KeyError, ValueError):
                 # Unknown defer_reason; leave required_quorum at default
                 pass
