@@ -68,12 +68,20 @@ class ExternalAttestation:
     the standard fields so that provider-specific keys (e.g.
     ``threshold_id``, ``ca_fingerprint``, ``node_id``) appear at the top
     level of each attestation entry in the envelope JSON.
+
+    Phase 5b Change (C3):
+        Added first-class ``provider_name`` field to make attestation fetch
+        failures attributable without string-prefix matching on
+        ``attestation_type``. Error entries previously smuggled identity via
+        ``attestation_type="PROVIDER_ERROR:{name}"``; now they use
+        ``provider_name`` with a canonical ``attestation_type``.
     """
 
-    attestation_type: str  # e.g. "BLUEPRINT", "KEY", "PHYSICS"
+    attestation_type: str  # e.g. "BLUEPRINT", "KEY", "PHYSICS", "ERROR"
     status: str  # AttestationStatus value
     receipt_id: str  # Provider-issued receipt ID
     attested_at: str  # ISO 8601 UTC timestamp
+    provider_name: str  # Unique provider identifier (e.g. "provider_05_blueprint")
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +91,7 @@ class ExternalAttestation:
             "status": self.status,
             "receipt_id": self.receipt_id,
             "attested_at": self.attested_at,
+            "provider_name": self.provider_name,
         }
         result.update(self.metadata)
         return result

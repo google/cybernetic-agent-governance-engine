@@ -602,7 +602,7 @@ class GovernanceEnvelopeBuilder:
         external_attestations: list[ExternalAttestation] = []
         for att in attestations_data:
             # Standard fields are extracted; everything else goes into metadata
-            standard_keys = {"type", "status", "receipt_id", "attested_at"}
+            standard_keys = {"type", "status", "receipt_id", "attested_at", "provider_name"}
             metadata = {k: v for k, v in att.items() if k not in standard_keys}
             external_attestations.append(
                 ExternalAttestation(
@@ -610,6 +610,7 @@ class GovernanceEnvelopeBuilder:
                     status=att.get("status", ""),
                     receipt_id=att.get("receipt_id", ""),
                     attested_at=att.get("attested_at", ""),
+                    provider_name=att.get("provider_name", "unknown"),
                     metadata=metadata,
                 )
             )

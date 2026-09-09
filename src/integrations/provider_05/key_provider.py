@@ -81,6 +81,7 @@ class Provider05KeyProvider(AttestationProvider):
                     status=AttestationStatus.STALE.value,
                     receipt_id="",
                     attested_at="",
+                    provider_name=self.provider_name,
                     metadata={
                         "spiffe_id": spiffe_id,
                         "consequence_class": consequence_class,

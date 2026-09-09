@@ -717,6 +717,7 @@ class TestExternalAttestations:
             status=AttestationStatus.VERIFIED.value,
             receipt_id="provider-05-receipt-001",
             attested_at="2026-08-21T12:00:00.000Z",
+            provider_name="test-provider",
             metadata={
                 "threshold_id": "THR-FIN-006",
                 "ao_signature_hash": "sha256:fedcba",
@@ -762,6 +763,7 @@ class TestExternalAttestations:
             status=AttestationStatus.VERIFIED.value,
             receipt_id="provider-05-key-123",
             attested_at="2026-08-21T12:00:00.000Z",
+            provider_name="test-provider",
             metadata={"ca_fingerprint": "sha256:abcd"},
         )
 
@@ -796,6 +798,7 @@ class TestExternalAttestations:
             status=AttestationStatus.VERIFIED.value,
             receipt_id="receipt-1",
             attested_at="2026-08-21T12:00:00.000Z",
+            provider_name="test-provider",
         )
         env1 = builder.build_unsigned(
             action="test",
@@ -824,6 +827,7 @@ class TestExternalAttestations:
             status=AttestationStatus.VERIFIED.value,
             receipt_id="receipt-TAMPERED",
             attested_at="2026-08-21T12:00:00.000Z",
+            provider_name="test-provider",
         )
         env2 = builder.build_unsigned(
             action="test",
@@ -851,6 +855,7 @@ class TestExternalAttestations:
             status=AttestationStatus.VERIFIED.value,
             receipt_id="receipt-phys-99",
             attested_at="2026-08-21T12:00:00.000Z",
+            provider_name="test-provider",
             metadata={"node_id": "gke-node-1", "freshness_seconds": 15},
         )
 

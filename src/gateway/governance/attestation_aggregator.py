@@ -32,7 +32,7 @@ import time
 from typing import Any
 
 from src.gateway.governance.attestation_provider import AttestationProvider
-from src.gateway.governance.governance_envelope import (
+from src.gateway.governance.seams.attestation import (
     AttestationStatus,
     ExternalAttestation,
 )
@@ -75,6 +75,7 @@ class AttestationAggregator:
         self._poll_interval_s = poll_interval_s
         self._cache: list[ExternalAttestation] = []
         self._last_fetch_at: float = 0.0
+        self._last_fetch_succeeded: bool = False  # Staleness signal
         self._poll_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
@@ -110,14 +111,20 @@ class AttestationAggregator:
     async def boot_fetch(self) -> None:
         """Fetch attestations from all providers at startup.
 
-        Errors from individual providers are logged but do not prevent
-        other providers from being fetched (fail-open per §7.3).
+        Individual provider failures are recorded as ERROR-status attestation
+        entries in the cache, preserving attributability. The aggregator
+        continues fetching from remaining providers to maximize coverage.
+
+        A total failure (all providers fail) retains the prior cache and does
+        not advance ``_last_fetch_at``, preventing stale attestations from
+        masquerading as fresh. Partial failures update the cache normally.
         """
         await self._do_fetch()
         logger.info(
-            "Boot-fetched %d attestation(s) from %d provider(s)",
+            "Boot-fetched %d attestation(s) from %d provider(s) (success=%s)",
             len(self._cache),
             len(self._providers),
+            self._last_fetch_succeeded,
         )
 
     async def poll(self) -> None:
@@ -128,38 +135,93 @@ class AttestationAggregator:
         await self._do_fetch()
 
     async def _do_fetch(self) -> None:
-        """Internal fetch implementation."""
+        """Internal fetch implementation.
+
+        Phase 5b Changes (C3):
+            - Capture provider_name before the try block to prevent a raising
+              property from aborting the loop (defect b).
+            - Use first-class provider_name field instead of encoding identity
+              into attestation_type (defect a).
+            - Distinguish total from partial failure: on total failure, retain
+              the prior cache and leave _last_fetch_at unchanged (defects c, d).
+        """
         all_attestations: list[ExternalAttestation] = []
+        success_count = 0
 
         for provider in self._providers:
+            # Capture provider_name BEFORE the try block so a raising property
+            # cannot abort the loop (defect b). If provider_name itself raises,
+            # we handle it and continue with a placeholder identity rather than
+            # losing the remaining providers.
+            try:
+                provider_name = provider.provider_name
+            except Exception as exc:
+                provider_name = f"<unknown-provider-{id(provider)}>"
+                logger.error(
+                    "Provider.provider_name property raised: %s. "
+                    "Continuing with placeholder identity.",
+                    exc,
+                )
+
             try:
                 attestations = await provider.fetch_attestations({})
                 all_attestations.extend(attestations)
+                success_count += 1
                 logger.debug(
                     "Fetched %d attestation(s) from %s",
                     len(attestations),
-                    provider.provider_name,
+                    provider_name,
                 )
             except Exception as exc:
                 logger.warning(
-                    "⚠️ Attestation provider %s failed (fail-open): %s",
-                    provider.provider_name,
+                    "⚠️ Attestation provider %s failed: %s",
+                    provider_name,
                     exc,
                 )
-                # Emit a STALE attestation entry so the envelope records
-                # that a provider was registered but could not be reached.
+                # Emit an ERROR-status attestation entry with first-class
+                # provider_name field (defect a fix).
                 all_attestations.append(
                     ExternalAttestation(
-                        attestation_type=f"PROVIDER_ERROR:{provider.provider_name}",
+                        attestation_type="ERROR",
                         status=AttestationStatus.ERROR.value,
                         receipt_id="",
                         attested_at="",
+                        provider_name=provider_name,
                         metadata={"error": str(exc)},
                     )
                 )
 
-        self._cache = all_attestations
-        self._last_fetch_at = time.monotonic()
+        # Distinguish total from partial failure (defects c, d):
+        # On total failure with existing good cache: retain prior cache and
+        # leave _last_fetch_at unchanged to prevent stale data from masquerading as fresh.
+        # On total failure with empty cache: record ERROR entries for attributability.
+        # On partial or full success: update cache and timestamp normally.
+        if success_count > 0:
+            self._cache = all_attestations
+            self._last_fetch_at = time.monotonic()
+            self._last_fetch_succeeded = True
+        else:
+            # Total failure
+            self._last_fetch_succeeded = False
+            if self._cache:
+                # Prior good cache exists: retain it, do not advance timestamp
+                logger.error(
+                    "⚠️ Total attestation fetch failure: all %d provider(s) failed. "
+                    "Retaining prior cache (%d attestation(s)).",
+                    len(self._providers),
+                    len(self._cache),
+                )
+                # Do NOT update self._cache or self._last_fetch_at
+            else:
+                # No prior cache: record ERROR entries for attributability
+                logger.error(
+                    "⚠️ Total attestation fetch failure: all %d provider(s) failed. "
+                    "Recording %d ERROR attestation(s) for audit trail.",
+                    len(self._providers),
+                    len(all_attestations),
+                )
+                self._cache = all_attestations
+                # Do NOT update self._last_fetch_at (remains 0.0)
 
     def get_cached_attestations(
         self, context: dict[str, Any] | None = None
@@ -178,8 +240,31 @@ class AttestationAggregator:
 
     @property
     def last_fetch_at(self) -> float:
-        """Monotonic timestamp of the last successful fetch."""
+        """Monotonic timestamp of the last successful fetch.
+
+        Use in conjunction with ``last_fetch_succeeded`` to distinguish
+        between "no fetch has ever run" (timestamp=0.0) and "last fetch
+        failed" (timestamp>0.0 but last_fetch_succeeded=False).
+        """
         return self._last_fetch_at
+
+    @property
+    def last_fetch_succeeded(self) -> bool:
+        """Staleness signal: True if the last fetch had at least one success.
+
+        A False value indicates total failure — all providers failed on the
+        most recent poll. Staleness monitors should alert when this is False,
+        even if ``last_fetch_at`` is recent, as it indicates the cache may
+        be stale despite a healthy-looking timestamp.
+
+        Usage::
+
+            if not aggregator.last_fetch_succeeded:
+                logger.error("Attestation cache is stale (total fetch failure)")
+            elif time.monotonic() - aggregator.last_fetch_at > threshold:
+                logger.warning("Attestation cache is stale (poll interval exceeded)")
+        """
+        return self._last_fetch_succeeded
 
     # ------------------------------------------------------------------
     # Periodic poll loop

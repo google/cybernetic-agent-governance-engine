@@ -84,6 +84,7 @@ class Provider05BlueprintProvider(AttestationProvider):
                     status=AttestationStatus.STALE.value,
                     receipt_id="",
                     attested_at="",
+                    provider_name=self.provider_name,
                     metadata={
                         "threshold_id": threshold_id,
                         "error": "Record not found",
