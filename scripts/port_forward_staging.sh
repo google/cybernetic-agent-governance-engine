@@ -15,8 +15,6 @@
 
 set -euo pipefail
 
-# Wrapper for port_forward.sh targeting the development environment.
-# Note: In environments without a dedicated dev cluster, integration tests run
-# against the staging cluster via scripts/port_forward_staging.sh.
+# Wrapper for port_forward.sh explicitly targeting the staging environment.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/port_forward.sh" --env dev "$@"
+exec "$SCRIPT_DIR/port_forward.sh" --env staging "$@"

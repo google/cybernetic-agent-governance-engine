@@ -17,7 +17,7 @@ project:
   zone: us-central1-a # Updated to match .env
 
 cluster:
-  name: governance-cluster
+  name: cage-staging
   network: default
   machine_type: g2-standard-16
   disk_size_gb: 100

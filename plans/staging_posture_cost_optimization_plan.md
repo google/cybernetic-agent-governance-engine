@@ -41,7 +41,7 @@ re-validates it empirically rather than trusting it on faith.
 ### Finding 3 — prod is a template, not a running cluster
 
 [`prod.tfvars`](../infra/targets/gcp-gke/prod.tfvars) targets `cage-prod` in a
-placeholder project. The live cluster is `governance-cluster-2` in
+placeholder project. The live cluster is the GKE target cluster (`<cluster-name>`) in
 `us-central1-a`. All current spend is dev-side.
 
 ## Design Constraints

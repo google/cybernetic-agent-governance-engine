@@ -35,7 +35,7 @@ def main():
     parser.add_argument("--region", default="us-central1", help="GCP Region")
     parser.add_argument("--zone", help="GCP Zone (optional, overrides region for GKE)")
     parser.add_argument(
-        "--cluster-name", default="governance-cluster", help="GKE Cluster Name"
+        "--cluster-name", default="cage-staging", help="GKE Cluster Name"
     )
     parser.add_argument(
         "--service-name",

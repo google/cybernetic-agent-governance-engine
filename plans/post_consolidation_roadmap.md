@@ -708,7 +708,7 @@ A useful framing: A proves the *gates* work; C proves the *system* works.
 **Prerequisites**
 
 - A1 complete (do not debug integration failures on top of known unit failures)
-- `kubectl` context on `governance-cluster-2` in `us-central1-a`
+- `kubectl` context pointing to target GKE cluster (e.g. `<cluster-name>` in `us-central1-a`)
 - Populated `.env` at repository root
 - Cluster provisioned and reachable
 
@@ -1320,7 +1320,7 @@ only thing standing between an adopter and understanding what was just built.
 
 | Dependency | Needed for | Notes |
 |---|---|---|
-| GKE dev cluster (`governance-cluster-2`, `us-central1-a`) | C1 | Verify it still exists before scheduling |
+| GKE cluster (`<cluster-name>`, `us-central1-a`) | C1 | Verify it still exists before scheduling |
 | `kubectl` context + cluster credentials | C1, C3 | |
 | Populated `.env` at repo root | C1 | Auto-loaded by [`port_forward_dev.sh`](../scripts/port_forward_dev.sh) and [`tests/conftest.py`](../tests/conftest.py) |
 | GCP project + KMS keyring | D1 | Only if D1 proceeds |

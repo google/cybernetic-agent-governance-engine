@@ -56,8 +56,8 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 | **APAC_MAS** (MAS TRM / FEAT) | `dev` / `test` | ✅ **3,747 passed** / 0 failed / 73 skipped (75.40% cov) | 2026-09-03 |
 | **APAC_MAS** (MAS TRM / FEAT) | `prod` | ✅ **211 passed** / 0 failed / 137 skipped | 2026-09-03 |
 
-Tests pass cleanly across all three regulatory postures on macOS and Linux GKE targets (`governance-cluster-2`, project `<your-gcp-project>`).
-Skipped tests represent live GKE cluster integration endpoints (evaluated via `scripts/port_forward_dev.sh` + `uv run pytest tests/ --run-integration`).
+Tests pass cleanly across all three regulatory postures on macOS and Linux GKE targets (`<cluster-name>`, project `<your-gcp-project>`).
+Skipped tests represent live GKE cluster integration endpoints (evaluated via `scripts/port_forward_staging.sh` + `uv run pytest tests/ --run-integration`).
 
 ---
 
