@@ -50,13 +50,23 @@ References:
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import cast
 
+from src.compliance_bridge.cer_index import CERIndex
+from src.compliance_bridge.disclosure import Disclosure
+from src.gateway.governance.content_address import (
+    ContentAddress,
+    MalformedContentAddress,
+)
+
 from .aarm_mapper import AARM_THREAT_VECTORS
 from .types import FRAMEWORK_CONTROLS, OscalFinding, OscalResult, get_control_meta
+
+logger = logging.getLogger("cage.oscal_exporter")
 
 # ---------------------------------------------------------------------------
 # GCP Adaptation: Agent Registry audit reference for AC-3 evidence
@@ -121,6 +131,7 @@ def build_oscal_assessment_results(
     chain_root: str | None = None,
     chain_sealed_utc: str | None = None,
     cer_uris: dict[str, str] | None = None,
+    cer_index: CERIndex | None = None,
 ) -> dict:
     """
     Build an OSCAL Assessment Results document from a list of OscalFindings.
@@ -137,6 +148,11 @@ def build_oscal_assessment_results(
         cer_uris:         Optional mapping of control_id → Provider 02 CER URI for external
                           attestation links.  When present, each finding entry gets an
                           OSCAL ``links[]`` array with ``rel: evidence`` entries.
+                          DEPRECATED: Use cer_index instead. Retained for backward compatibility
+                          with existing tests.
+        cer_index:        Optional CERIndex for URI and disclosure policy lookups.
+                          When provided, controls receive links[] and props according to
+                          their disclosure policy (PUBLIC, REDACTED, PRIVATE, UNKNOWN).
 
     Returns:
         A dict representing the OSCAL Assessment Results document.
@@ -205,20 +221,69 @@ def build_oscal_assessment_results(
             entry["description"] = f.remarks
 
         # Provider 02 CER attestation link (Feature 2 — OSCAL CER Links)
-        if cer_uris and f.control_id in cer_uris:
-            cer_uri = cer_uris[f.control_id]
-            entry["links"] = [
-                {
-                    "href": cer_uri,
-                    "rel": "evidence",
-                    "text": f"Provider 02 CER attestation receipt for {f.control_id}",
-                }
-            ]
-            # Extract certificate hash from URI (last path segment)
-            cer_hash = (
-                cer_uri.rstrip("/").rsplit("/", 1)[-1] if "/" in cer_uri else cer_uri
+        # B6 + B7: Wire CER evidence links with disclosure policy and structured hash props
+        _cer_uri: str | None = None
+        _disclosure: Disclosure = Disclosure.UNKNOWN
+
+        # CERIndex takes precedence over legacy cer_uris dict
+        if cer_index:
+            _cer_uri = cer_index.uri_for_control(f.control_id)
+            _disclosure = cer_index.disclosure_for_control(f.control_id)
+        elif cer_uris and f.control_id in cer_uris:
+            # Legacy path: cer_uris dict without disclosure policy
+            _cer_uri = cer_uris[f.control_id]
+            _disclosure = Disclosure.PUBLIC  # Assume PUBLIC for backward compat
+
+        if _cer_uri:
+            # Extract the hash portion (last path segment)
+            hash_segment = (
+                _cer_uri.rstrip("/").rsplit("/", 1)[-1]
+                if "/" in _cer_uri
+                else _cer_uri
             )
-            props.append({"name": "cer-hash", "value": cer_hash})
+
+            # B7: Try to parse as ContentAddress first (handles sha256:abc... or sha256%3Aabc...)
+            # Fall back to simple hex extraction for backward compat with existing tests
+            try:
+                addr = ContentAddress.parse(hash_segment)
+                # Emit structured props: bare hex digest + algorithm
+                props.append({"name": "cer-hash", "value": addr.hex_digest})
+                props.append({"name": "cer-digest-alg", "value": addr.algorithm})
+            except MalformedContentAddress:
+                # Legacy format: simple hex hash without algorithm prefix
+                # Emit as-is for backward compatibility with existing tests
+                props.append({"name": "cer-hash", "value": hash_segment})
+
+            # Disclosure policy: PUBLIC and REDACTED get dereferenceable links
+            if _disclosure in (Disclosure.PUBLIC, Disclosure.REDACTED):
+                entry["links"] = [
+                    {
+                        "href": _cer_uri,
+                        "rel": "evidence",
+                        "text": f"Provider 02 CER attestation receipt for {f.control_id}",
+                    }
+                ]
+
+                # REDACTED: Add commitment-scheme metadata (Decision #2 line 951)
+                if _disclosure == Disclosure.REDACTED:
+                    props.append(
+                        {
+                            "name": "cer-commitment-scheme",
+                            "value": "confidential-field-hmac-sha256",
+                        }
+                    )
+                    props.append(
+                        {
+                            "name": "cer-redacted-fields",
+                            "value": "payload",  # Provider 02's standard redaction
+                        }
+                    )
+
+            # PRIVATE and UNKNOWN: props only, no dereferenceable link
+            # This fail-closed default ensures an auditor dereferencing a link[rel="evidence"]
+            # that 404s cannot distinguish fabricated evidence from evidence they lack
+            # visibility into. Emitting no link, plus a cer-hash prop, states honestly that
+            # evidence exists but is not publicly dereferenceable.
 
         # GCP Adaptation: include GEAP Agent Registry resource name in AC-3 evidence.
         # AC-3 (Access Enforcement) — the registry is the authoritative source of
