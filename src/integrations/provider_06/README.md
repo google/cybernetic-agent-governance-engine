@@ -4,6 +4,10 @@
 > architecture. Providers are numbered and anonymized, and this integration has
 > **no configured live endpoint**. Adopters should treat this as an integration
 > pattern to adapt, not a hosted service.
+>
+> **Naming note:** The vendor name for this integration is **Guardian Cyber
+> Agent Integrity**. The package path `provider_06` is retained for import
+> stability across branches and test fixtures.
 
 | Property | Value |
 |---|---|
