@@ -36,6 +36,10 @@ import respx
 
 from src.gateway.governance.attestation_provider import AttestationProvider
 from src.gateway.governance.normative_provider import get_normative_provider
+from src.gateway.governance.seams.attestation import (
+    AttestationStatus,
+    ExternalAttestation,
+)
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
     NormativeBaseline,
@@ -46,7 +50,12 @@ from src.gateway.governance.seams.normative import (
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 NORMATIVE_PROVIDERS = ["static", "provider_01", "provider_03", "provider_06"]
-ATTESTATION_PROVIDERS = ["provider_02"]
+ATTESTATION_PROVIDERS = [
+    "provider_02",
+    "provider_05-blueprint",
+    "provider_05-key",
+    "provider_05-physics",
+]
 
 
 @pytest.mark.parametrize("provider_name", NORMATIVE_PROVIDERS)
@@ -100,8 +109,83 @@ async def test_normative_provider_interface(provider_name: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_attestation_providers_satisfy_protocol() -> None:
-    """Verify that attestation providers satisfy the AttestationProvider protocol."""
+@pytest.mark.parametrize("provider_identifier", ATTESTATION_PROVIDERS)
+async def test_attestation_provider_conformance(provider_identifier: str) -> None:
+    """Verify that attestation providers satisfy the AttestationProvider protocol.
+
+    Core requirements (Phase 10, C8):
+    - provider_name is non-empty and matches the expected identifier
+    - fetch_attestations({}) returns list[ExternalAttestation]
+    - every entry carries a valid AttestationStatus
+    - failures fail closed (network errors, parse failures, etc.)
+    """
+    from src.integrations.provider_02 import Provider02AttestationProvider
+    from src.integrations.provider_05.blueprint_provider import (
+        Provider05BlueprintProvider,
+    )
+    from src.integrations.provider_05.key_provider import Provider05KeyProvider
+    from src.integrations.provider_05.physics_provider import Provider05PhysicsProvider
+
+    # Map provider_identifier to the actual provider class
+    provider_map = {
+        "provider_02": Provider02AttestationProvider(),
+        "provider_05-blueprint": Provider05BlueprintProvider(),
+        "provider_05-key": Provider05KeyProvider(),
+        "provider_05-physics": Provider05PhysicsProvider(),
+    }
+
+    provider = provider_map[provider_identifier]
+
+    # Verify AttestationProvider protocol compliance
+    assert isinstance(provider, AttestationProvider)
+    assert hasattr(provider, "fetch_attestations")
+    assert hasattr(provider, "provider_name")
+
+    # Verify provider_name is non-empty and matches expected identifier
+    assert isinstance(provider.provider_name, str)
+    assert provider.provider_name, "provider_name must be non-empty"
+    assert provider.provider_name == provider_identifier, (
+        f"provider_name '{provider.provider_name}' does not match "
+        f"expected identifier '{provider_identifier}'"
+    )
+
+    # Fetch attestations with empty context
+    attestations = await provider.fetch_attestations({})
+
+    # Verify return type is list[ExternalAttestation]
+    assert isinstance(attestations, list)
+    assert all(isinstance(a, ExternalAttestation) for a in attestations)
+
+    # Verify every entry carries a valid AttestationStatus and provider_name
+    for attestation in attestations:
+        assert attestation.status in [s.value for s in AttestationStatus], (
+            f"Invalid AttestationStatus: {attestation.status}"
+        )
+        assert attestation.provider_name, (
+            f"ExternalAttestation missing provider_name: {attestation}"
+        )
+        assert attestation.provider_name == provider_identifier, (
+            f"ExternalAttestation provider_name '{attestation.provider_name}' "
+            f"does not match provider '{provider_identifier}'"
+        )
+        assert attestation.attestation_type, (
+            f"ExternalAttestation missing attestation_type: {attestation}"
+        )
+        # receipt_id may be empty for STALE/ERROR/DENIED cases (fail-closed behavior)
+        # Only VERIFIED attestations must carry a non-empty receipt_id
+        if attestation.status == AttestationStatus.VERIFIED.value:
+            assert attestation.receipt_id, (
+                f"VERIFIED attestation missing receipt_id: {attestation}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_attestation_providers_legacy_protocol_check() -> None:
+    """Legacy test retained for backwards compatibility check only.
+
+    The authoritative conformance test is test_attestation_provider_conformance
+    above, which exercises the full protocol contract.
+    """
     from src.integrations.provider_02 import Provider02AttestationProvider
     from src.integrations.provider_05.blueprint_provider import (
         Provider05BlueprintProvider,
