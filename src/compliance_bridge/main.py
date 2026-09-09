@@ -68,6 +68,7 @@ def _ensure_langfuse_imported() -> None:
 
 from .audit_workflow import run_audit_workflow
 from .auth import OperatorPrincipal, require_internal_token, require_operator_identity
+from .cer_index import CERIndex
 from .cmek_guard import validate_cmek_configuration
 from .lula_scheduler import run_lula_scheduler
 from .metrics import get_compliance_metrics
@@ -744,6 +745,51 @@ async def ingest_infra_event(event: InfraEvent) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# CER Index Factory — Function-scope lazy import
+# ---------------------------------------------------------------------------
+
+
+def _build_cer_index() -> CERIndex | None:
+    """Build a Provider02CERIndex if PROVIDER_02_RESOLVER_URL is configured.
+
+    Returns None if the resolver is not configured, or if construction fails
+    (with a warning logged). This fail-safe pattern ensures OSCAL export never
+    breaks due to CER index unavailability.
+
+    This function uses function-scope lazy import to avoid Gate G3 violation
+    (compliance_bridge importing from integrations.provider_02 at module scope).
+    """
+    resolver_url = os.environ.get("PROVIDER_02_RESOLVER_URL", "").strip()
+    if not resolver_url:
+        logger.debug(
+            "[cer-index] PROVIDER_02_RESOLVER_URL not configured — CER links disabled"
+        )
+        return None
+
+    try:
+        # Function-scope lazy import (Gate G3 allowlisted pattern)
+        from src.integrations.provider_02.cer_index import Provider02CERIndex
+
+        # For now, construct with empty mappings — B2 resolver integration
+        # will populate these dynamically. This wiring proves the plumbing works.
+        index = Provider02CERIndex(
+            cer_uris={},
+            disclosure_policies={},
+        )
+        logger.info(
+            "[cer-index] Provider02CERIndex constructed (resolver: %s)", resolver_url
+        )
+        return index
+    except Exception as exc:
+        logger.warning(
+            "[cer-index] Failed to construct Provider02CERIndex: %s — "
+            "OSCAL export will proceed without CER links",
+            exc,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/oscal/assessment-results  (Tier 2.3)
 #
 # Generates a standards-compliant OSCAL 1.1.2 Assessment Results document
@@ -822,10 +868,15 @@ async def export_oscal_assessment_results(
         )
 
     findings = findings_from_metrics_dict(controls_data, _audit_id)
+
+    # B6: Inject CER index if provider_02 resolver is configured
+    cer_index = _build_cer_index()
+
     doc = build_oscal_assessment_results(
         findings=findings,
         audit_id=_audit_id,
         window_hours=window_hours,
+        cer_index=cer_index,
     )
 
     if format == "yaml":
