@@ -480,8 +480,8 @@ class TestProvider02AttestationProvider:
             "jwk_cache_age_seconds must be inf before sync"
         )
 
-    def test_verify_local_fails_with_wrong_hash_length(self) -> None:
-        """_verify_local must return invalid when certificate_hash length != 64."""
+    def test_inspect_local_fails_with_wrong_hash_length(self) -> None:
+        """_inspect_local must return invalid when certificate_hash length != 64."""
         from src.integrations.provider_02.provider import (
             JWKCache,
             Provider02AttestationProvider,
@@ -496,12 +496,20 @@ class TestProvider02AttestationProvider:
             last_synced=time.time(),
         )
 
-        result = provider._verify_local("short-hash")
-        assert result.valid is False, "Verification must fail for wrong hash length"
+        result = provider._inspect_local("short-hash")
+        assert result.valid is False, "Inspection must fail for wrong hash length"
+        assert result.signature_checked is False, "No signature check performed"
         assert result.error is not None, "Error message must be set"
 
-    def test_verify_local_returns_valid_for_correct_hash_length(self) -> None:
-        """_verify_local must return valid when certificate_hash is 64 chars."""
+    def test_inspect_local_fails_closed_without_signature_verification(self) -> None:
+        """_inspect_local must return valid=False until Phase 2b implements signature verification.
+
+        This is the Phase 0 fail-closed contract: a 64-char hash with a populated
+        JWK cache passes well-formedness checks but yields valid=False because
+        signature verification is not yet implemented.
+
+        This test is the regression guard for the Phase 0 fix.
+        """
         from src.integrations.provider_02.provider import (
             JWKCache,
             Provider02AttestationProvider,
@@ -515,9 +523,19 @@ class TestProvider02AttestationProvider:
             last_synced=time.time(),
         )
 
-        result = provider._verify_local("a" * 64)
-        assert result.valid is True, (
-            "Verification must succeed for a 64-char hash with populated JWK cache"
+        result = provider._inspect_local("a" * 64)
+        assert result.valid is False, (
+            "Inspection must fail closed: valid=False until signature verification "
+            "is implemented in Phase 2b"
+        )
+        assert result.signature_checked is False, (
+            "signature_checked must be False when signature verification is unimplemented"
+        )
+        assert result.error is not None, (
+            "Error must indicate signature verification pending"
+        )
+        assert "Phase 2b" in result.error or "not yet implemented" in result.error, (
+            "Error message must clarify that signature verification is pending"
         )
 
     @pytest.mark.asyncio

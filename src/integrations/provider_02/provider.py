@@ -98,13 +98,28 @@ class CERReceipt:
 
 @dataclass
 class CERVerification:
-    """Result of verifying a CER against Provider 02's public JWKs."""
+    """Result of verifying a CER against Provider 02's public JWKs.
+
+    Invariant: `valid` must never be `True` while `signature_checked` is `False`.
+    This is enforced structurally in __post_init__ to prevent accidentally
+    returning verified=True without performing signature verification.
+    """
 
     valid: bool = False
     signer: str = ""
     timestamp: str = ""
     key_id: str = ""
     error: str | None = None
+    signature_checked: bool = False
+
+    def __post_init__(self) -> None:
+        """Enforce the invariant: valid=True requires signature_checked=True."""
+        if self.valid and not self.signature_checked:
+            raise ValueError(
+                "CERVerification invariant violated: "
+                "valid=True requires signature_checked=True. "
+                "This indicates a fail-open code path that must be corrected."
+            )
 
 
 @dataclass
@@ -266,53 +281,62 @@ class Provider02AttestationProvider:
         Falls back to a remote verification call if JWK cache is empty.
         """
         if self._jwk_cache.has_keys:
-            return self._verify_local(certificate_hash)
+            return self._inspect_local(certificate_hash)
 
         # Fallback: remote verification
         return await self._verify_remote(certificate_hash)
 
-    def _verify_local(self, certificate_hash: str) -> CERVerification:
-        """Verify a CER against the locally-cached JWK set.
+    def _inspect_local(self, certificate_hash: str) -> CERVerification:
+        """Inspect a CER for well-formedness against the locally-cached JWK set.
 
-        Uses Ed25519 verification (Provider 02's attestation node signing algorithm).
+        IMPORTANT: This method does NOT perform signature verification.
+        It only validates well-formedness (hash length, JWK cache presence).
+        Real Ed25519 signature verification is deferred to Phase 2b.
+
+        Returns valid=False with signature_checked=False to indicate that
+        the CER is structurally valid but cryptographically unverified.
         """
         if not self._jwk_cache.has_keys:
             return CERVerification(
                 valid=False,
-                error="JWK cache is empty — cannot verify locally.",
+                signature_checked=False,
+                error="JWK cache is empty — cannot inspect locally.",
             )
 
-        # NOTE: Full Ed25519 JWK verification requires the actual CER
-        # payload (not just the hash). In production, the CER receipt
-        # includes the signed payload which is verified against the JWK.
-        # For now, we validate that the JWK cache is populated and the
-        # hash format is valid.
         if len(certificate_hash) != 64:  # SHA-256 hex length
             return CERVerification(
                 valid=False,
+                signature_checked=False,
                 error=f"Invalid certificate hash length: {len(certificate_hash)}",
             )
 
-        # Placeholder for full Ed25519 verification implementation.
-        # The actual verification requires:
-        #   1. Fetching the CER payload from Provider 02
-        #   2. Extracting the Ed25519 signature
-        #   3. Verifying against the cached JWK public key
-        # This will be completed when the API contract is finalised.
+        # Well-formedness checks passed, but signature verification is not
+        # yet implemented. Fail closed: return valid=False until Phase 2b
+        # implements real Ed25519 verification.
         logger.debug(
-            "[Provider02] Local JWK verification: hash=%s… keys=%d",
+            "[Provider02] Local inspection (no signature check): hash=%s… keys=%d",
             certificate_hash[:16],
             len(self._jwk_cache.jwk_set.get("keys", [])),
         )
 
         return CERVerification(
-            valid=True,
-            signer="provider-02-attestation-node",
-            key_id=self._jwk_cache.jwk_set.get("keys", [{}])[0].get("kid", ""),
+            valid=False,
+            signature_checked=False,
+            signer="",
+            key_id="",
+            error="Signature verification not yet implemented (Phase 2b pending)",
         )
 
     async def _verify_remote(self, certificate_hash: str) -> CERVerification:
-        """Fallback: verify a CER via Provider 02's remote verification endpoint."""
+        """Fallback: query Provider 02's remote verification endpoint.
+
+        Phase 0 fail-closed: Even if the remote endpoint returns valid=True,
+        CAGE itself did not check the signature, so we return valid=False
+        until Phase 2b implements real Ed25519 verification.
+
+        The remote response is captured for diagnostics but does not override
+        the fail-closed contract.
+        """
         import httpx
 
         url = f"{self._endpoint}/verify/{certificate_hash}"
@@ -321,15 +345,26 @@ class Provider02AttestationProvider:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
+                # Phase 0 fail-closed: CAGE did not verify the signature itself,
+                # so valid=False regardless of what the remote endpoint reports.
                 return CERVerification(
-                    valid=data.get("valid", False),
+                    valid=False,  # Fail closed until Phase 2b
+                    signature_checked=False,  # CAGE did not check the signature
                     signer=data.get("signer", ""),
                     timestamp=data.get("timestamp", ""),
                     key_id=data.get("keyId", ""),
+                    error=(
+                        "Remote endpoint queried but signature verification "
+                        "not yet implemented (Phase 2b pending)"
+                    ),
                 )
         except Exception as exc:
             logger.error("[Provider02] Remote verification failed: %s %s", url, exc)
-            return CERVerification(valid=False, error=str(exc))
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                error=str(exc),
+            )
 
     # ------------------------------------------------------------------
     # Project Bundle registration

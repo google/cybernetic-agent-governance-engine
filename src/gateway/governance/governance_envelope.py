@@ -115,6 +115,11 @@ class AttestationStatus(str, Enum):
 
     Mirrors the OSCAL four-state finding vocabulary to prevent
     vocabulary drift across attestation providers (c.f. decisions.py).
+
+    Extended with UNVERIFIED to represent "resolved and well-formed,
+    but signature not yet checked" — a state the OSCAL vocabulary
+    does not express. This is a deliberate extension for fail-closed
+    attestation handling.
     """
 
     VERIFIED = "VERIFIED"
@@ -122,6 +127,7 @@ class AttestationStatus(str, Enum):
     STALE = "STALE"
     DRIFT_DETECTED = "DRIFT_DETECTED"
     ERROR = "ERROR"
+    UNVERIFIED = "UNVERIFIED"
 
 
 @dataclass

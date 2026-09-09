@@ -165,8 +165,12 @@ class TestCERVerification:
     """Tests for CER verification."""
 
     @pytest.mark.asyncio
-    async def test_local_verification_with_cached_keys(self):  # type: ignore[no-untyped-def]
-        """With cached JWKs, verify_cer uses local verification."""
+    async def test_local_inspection_fails_closed_without_signature_check(self):  # type: ignore[no-untyped-def]
+        """With cached JWKs, verify_cer uses local inspection but fails closed.
+
+        Phase 0 correction: until Phase 2b implements Ed25519 signature verification,
+        local inspection returns valid=False even for well-formed hashes.
+        """
         provider = Provider02AttestationProvider(
             endpoint="https://api.provider02.example.com/v1"
         )
@@ -175,14 +179,19 @@ class TestCERVerification:
             last_synced=time.time(),
         )
 
-        # Valid SHA-256 hash (64 hex chars)
+        # Valid SHA-256 hash (64 hex chars) — well-formed but unverified
         valid_hash = "a" * 64
         result = await provider.verify_cer(valid_hash)
-        assert result.valid is True
+        assert result.valid is False, (
+            "Must fail closed: valid=False until signature verification is implemented"
+        )
+        assert result.signature_checked is False, (
+            "signature_checked=False indicates no cryptographic verification occurred"
+        )
 
     @pytest.mark.asyncio
-    async def test_local_verification_rejects_invalid_hash(self):  # type: ignore[no-untyped-def]
-        """Local verification rejects hash with wrong length."""
+    async def test_local_inspection_rejects_invalid_hash(self):  # type: ignore[no-untyped-def]
+        """Local inspection rejects hash with wrong length."""
         provider = Provider02AttestationProvider(
             endpoint="https://api.provider02.example.com/v1"
         )
@@ -193,11 +202,16 @@ class TestCERVerification:
 
         result = await provider.verify_cer("too_short")
         assert result.valid is False
+        assert result.signature_checked is False
         assert "length" in result.error  # type: ignore[operator]  # result.error is str when valid=False; None only on success path
 
     @pytest.mark.asyncio
-    async def test_remote_fallback_when_cache_empty(self):  # type: ignore[no-untyped-def]
-        """When JWK cache is empty, falls back to remote verification."""
+    async def test_remote_fallback_fails_closed(self):  # type: ignore[no-untyped-def]
+        """When JWK cache is empty, falls back to remote query but fails closed.
+
+        Phase 0 correction: Even when the remote endpoint returns valid=True,
+        CAGE fails closed (valid=False) because it did not verify the signature itself.
+        """
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "valid": True,
@@ -220,8 +234,16 @@ class TestCERVerification:
             # No JWK cache — should fall back to remote
             result = await provider.verify_cer("a" * 64)
 
-            assert result.valid is True
-            assert result.signer == "provider02-node"
+            assert result.valid is False, (
+                "Must fail closed even when remote endpoint returns valid=True"
+            )
+            assert result.signature_checked is False, (
+                "CAGE did not check the signature itself"
+            )
+            assert result.signer == "provider02-node", (
+                "Remote response metadata is captured for diagnostics"
+            )
+            assert "Phase 2b" in result.error or "not yet implemented" in result.error
             mock_instance.get.assert_called_once()
 
 
