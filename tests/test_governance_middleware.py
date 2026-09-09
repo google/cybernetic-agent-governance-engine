@@ -1161,14 +1161,14 @@ class TestFlowSignalHttp202Receipt:
     def test_flowsignal_escalation_via_is_flowsignal_hold_marker(
         self, client_for_flowsignal, mock_kms_signer
     ):
-        """is_flowsignal_hold=True also triggers HTTP 202 (alternative detection)."""
+        """is_external_hold=True also triggers HTTP 202 (alternative detection)."""
         # This covers the case where defer_reason might be different but the
         # explicit marker is set
         result_with_marker = {
             "verdict": "DEFER",
-            "is_flowsignal_hold": True,
+            "is_external_hold": True,
             "defer_id": "fs-defer-003",
-            "violations": ["FlowSignal hold"],
+            "violations": ["External hold"],
             "seal": "",
             "latency_ms": 2.0,
         }
@@ -1215,10 +1215,46 @@ class TestFlowSignalHttp202Receipt:
         data = resp.json()
         assert data["verdict"] == "DEFER"
 
+    def test_external_hold_without_marker_returns_202(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """EXTERNAL_HOLD defer_reason without is_external_hold marker still returns HTTP 202.
+        
+        Regression test for Defect 1: Previously the middleware only checked
+        defer_reason == "FLOWSIGNAL_ESCALATION" (dead code after rename) OR
+        is_flowsignal_hold == True. An EXTERNAL_HOLD with no marker would
+        silently fall through to HTTP 200, failing to signal the client to poll.
+        """
+        external_hold_no_marker = {
+            "verdict": "DEFER",
+            "defer_reason": "EXTERNAL_HOLD",
+            "defer_id": "external-defer-regression",
+            "violations": ["External provider escalation"],
+            "seal": "",
+            "latency_ms": 3.5,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=external_hold_no_marker)
+
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+        ):
+            resp = client_for_flowsignal.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 30000}},
+            )
+
+        # Must return 202, not 200 — this is a human-in-the-loop escalation
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["defer_id"] == "external-defer-regression"
+        assert data["status"] == "pending_review"
+        assert data["defer_reason"] == "EXTERNAL_HOLD"
+
     def test_approved_verdict_still_returns_200(
         self, client_for_flowsignal, mock_kms_signer
     ):
-        """APPROVED verdict returns HTTP 200 (not affected by FlowSignal changes)."""
+        """APPROVED verdict returns HTTP 200 (not affected by external-hold changes)."""
         approved_result = {
             "verdict": "APPROVED",
             "violations": [],

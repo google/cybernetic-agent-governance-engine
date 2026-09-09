@@ -140,12 +140,10 @@ async def test_external_hold_dlq_routing_fires_on_expiry():
     This verifies that the DLQ callback is invoked exactly once when an
     EXTERNAL_HOLD token expires.
     """
-    from unittest.mock import AsyncMock
+    import time
+    from unittest.mock import AsyncMock, MagicMock
 
     from src.gateway.governance.defer_queue import DeferQueue
-
-    from unittest.mock import MagicMock
-    import time
 
     dlq_publisher = AsyncMock()
 

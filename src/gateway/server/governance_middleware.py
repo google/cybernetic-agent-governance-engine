@@ -912,15 +912,15 @@ async def validate_action_endpoint(
                 )
 
         # Phase 1, §3.2: HTTP 202 Accepted for FlowSignal ESCALATE decisions
-        # When the verdict is DEFER and it's a FlowSignal escalation, return
+        # When the verdict is DEFER and it's an external provider escalation, return
         # HTTP 202 with an async receipt body so clients know to poll for resolution.
-        # Detection: defer_reason == "FLOWSIGNAL_ESCALATION" OR
-        #            is_flowsignal_hold == True (explicit marker from FRIA tier)
+        # Detection: defer_reason == "EXTERNAL_HOLD" OR
+        #            is_external_hold == True (explicit marker from FRIA tier)
         defer_reason = result.get("defer_reason", "")
-        is_flowsignal_hold = result.get("is_flowsignal_hold", False)
+        is_external_hold = result.get("is_external_hold", False)
 
         if verdict == "DEFER" and (
-            defer_reason == "FLOWSIGNAL_ESCALATION" or is_flowsignal_hold is True
+            defer_reason == "EXTERNAL_HOLD" or is_external_hold is True
         ):
             defer_id = result.get("defer_id", "")
             receipt_payload = {
@@ -929,8 +929,8 @@ async def validate_action_endpoint(
                 "status": "pending_review",
                 "poll_url": f"/v1/defer/{defer_id}",
                 "verdict": "DEFER",
-                "defer_reason": "FLOWSIGNAL_ESCALATION",
-                "ttl_seconds": 300,  # FlowSignal escalations use 5-minute TTL
+                "defer_reason": "EXTERNAL_HOLD",
+                "ttl_seconds": 300,  # External provider escalations use 5-minute TTL (configurable per-provider)
                 "latency_ms": result.get("latency_ms", 0),
             }
             logger.info(

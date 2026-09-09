@@ -1378,7 +1378,7 @@ async def defer_inject(
         quorum_3_reasons = {
             DeferReason.FTRA_IRREVERSIBLE_TERMINAL,
             DeferReason.EXTERNAL_VALIDATION,
-            DeferReason.FLOWSIGNAL_ESCALATION,
+            DeferReason.EXTERNAL_HOLD,
         }
         if token.defer_reason in quorum_3_reasons:
             await client.aclose()

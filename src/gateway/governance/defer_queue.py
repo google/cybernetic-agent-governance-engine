@@ -218,7 +218,7 @@ class DeferToken(BaseModel):
             self.correlation_id = str(uuid.uuid5(namespace_cage, self.thread_id))
 
         # B-2.4: Wire required_quorum from defer_reason for quorum-3 reasons
-        # (FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, FLOWSIGNAL_ESCALATION)
+        # (FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, EXTERNAL_HOLD)
         if self.defer_reason and self.required_quorum == 2:  # default value check
             try:
                 computed_quorum = get_required_quorum(self.defer_reason)
@@ -308,7 +308,7 @@ class DeferQueue:
         redis_client: An aioredis or redis-py async client connected to ``db=1``.
                       Callers are responsible for connection lifecycle.
         dlq_publisher: Optional async callback invoked when a
-                       ``DeferReason.FLOWSIGNAL_ESCALATION`` token expires.
+                       ``DeferReason.EXTERNAL_HOLD`` token expires.
                        The callback should publish the token to the
                        ``governance-hitl-dlq`` Pub/Sub topic. If ``None``
                        (default), expired tokens are logged but not published.
