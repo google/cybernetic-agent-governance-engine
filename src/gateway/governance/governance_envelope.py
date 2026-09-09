@@ -82,6 +82,10 @@ from enum import Enum
 from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.attestation import (
+    AttestationStatus,
+    ExternalAttestation,
+)
 
 logger = logging.getLogger("Gateway.Governance.GovernanceEnvelope")
 
@@ -110,24 +114,7 @@ class EnvelopeType(str, Enum):
     AUDIT_CHECKPOINT = "cage_audit_checkpoint"
 
 
-class AttestationStatus(str, Enum):
-    """Status of an external attestation entry.
-
-    Mirrors the OSCAL four-state finding vocabulary to prevent
-    vocabulary drift across attestation providers (c.f. decisions.py).
-
-    Extended with UNVERIFIED to represent "resolved and well-formed,
-    but signature not yet checked" — a state the OSCAL vocabulary
-    does not express. This is a deliberate extension for fail-closed
-    attestation handling.
-    """
-
-    VERIFIED = "VERIFIED"
-    DENIED = "DENIED"
-    STALE = "STALE"
-    DRIFT_DETECTED = "DRIFT_DETECTED"
-    ERROR = "ERROR"
-    UNVERIFIED = "UNVERIFIED"
+# AttestationStatus is now imported from seams.attestation
 
 
 @dataclass
@@ -201,37 +188,7 @@ class SignatureBlock:
         }
 
 
-@dataclass
-class ExternalAttestation:
-    """An external attestation entry embedded in a governance envelope.
-
-    Generic container for third-party attestation data (e.g.,
-    risk-acceptance proofs, identity admissibility grants, substrate
-    integrity checks). The ``attestation_type`` and ``metadata`` fields
-    are provider-defined; the remaining fields are standardized.
-
-    The ``metadata`` dict is flattened into the serialized output alongside
-    the standard fields so that provider-specific keys (e.g.
-    ``threshold_id``, ``ca_fingerprint``, ``node_id``) appear at the top
-    level of each attestation entry in the envelope JSON.
-    """
-
-    attestation_type: str  # e.g. "BLUEPRINT", "KEY", "PHYSICS"
-    status: str  # AttestationStatus value
-    receipt_id: str  # Provider-issued receipt ID
-    attested_at: str  # ISO 8601 UTC timestamp
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict.  Provider metadata is flattened to top level."""
-        result: dict[str, Any] = {
-            "type": self.attestation_type,
-            "status": self.status,
-            "receipt_id": self.receipt_id,
-            "attested_at": self.attested_at,
-        }
-        result.update(self.metadata)
-        return result
+# ExternalAttestation is now imported from seams.attestation
 
 
 @dataclass

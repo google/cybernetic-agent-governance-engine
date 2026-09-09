@@ -40,7 +40,7 @@ from src.gateway.governance.governance_envelope import (
     IssuerMetadata,
 )
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-from src.gateway.governance.normative_provider import (
+from src.gateway.governance.seams.normative import (
     FindingStatus,
     NormativeBaseline,
     ValidationResult,

@@ -47,7 +47,9 @@ _env_file = pathlib.Path(__file__).parent.parent / ".env"
 if _env_file.exists() and not os.environ.get("KMS_GOVERNANCE_KEY"):
     try:
         for _line in _env_file.read_text().splitlines():
-            if _line.startswith("KMS_GOVERNANCE_KEY=") and not _line.strip().startswith("#"):
+            if _line.startswith("KMS_GOVERNANCE_KEY=") and not _line.strip().startswith(
+                "#"
+            ):
                 _kms_key = _line.split("=", 1)[1].strip()
                 if _kms_key:
                     os.environ["KMS_GOVERNANCE_KEY"] = _kms_key
@@ -94,11 +96,17 @@ except ImportError:
 # If CAGE_ENV is staging/production and KMS_GOVERNANCE_KEY is not set, load it
 # from .env or fail with a clear message. This prevents module-import-time
 # failures in symbolic_governor.py when running integration tests.
-if os.environ.get("CAGE_ENV", "test").lower() not in ("development", "test", "dev", "ci"):
+if os.environ.get("CAGE_ENV", "test").lower() not in (
+    "development",
+    "test",
+    "dev",
+    "ci",
+):
     if not os.environ.get("KMS_GOVERNANCE_KEY"):
         # Try to load from .env file explicitly
         try:
             import pathlib
+
             env_file = pathlib.Path(__file__).parent.parent / ".env"
             if env_file.exists():
                 for line in env_file.read_text().splitlines():
@@ -199,7 +207,7 @@ def pytest_configure(config: pytest.Config) -> None:
     """Set environment variable defaults that tests expect."""
     # Ensure auth tokens are loaded from .env for integration tests
     _ensure_env_loaded()
-    
+
     _setdefault("BACKEND_URL", "http://localhost:18080")
     _setdefault("GATEWAY_URL", "http://localhost:8080")
     _setdefault("LANGFUSE_HOST", "http://localhost:3001")
@@ -253,13 +261,18 @@ def pytest_configure(config: pytest.Config) -> None:
     # CAGE_ENV must be set to "test" to enable HMAC fallback in routing_seal
     # and kms_signer when KMS_GOVERNANCE_KEY is not configured.
     _setdefault("CAGE_ENV", "test")
-    
+
     # For integration tests against staging/production with real KMS, preserve KMS credentials
     # Only remove KMS credentials for unit tests (when CAGE_ENV=test and not running integration tests)
     _is_integration_run = config.getoption("--run-integration", default=False)
     _cage_env = os.environ.get("CAGE_ENV", "test").lower()
-    _needs_real_kms = _is_integration_run and _cage_env not in ("test", "dev", "development", "ci")
-    
+    _needs_real_kms = _is_integration_run and _cage_env not in (
+        "test",
+        "dev",
+        "development",
+        "ci",
+    )
+
     if not _needs_real_kms:
         # Remove KMS credentials to force HMAC fallback mode for unit tests
         os.environ.pop("KMS_GOVERNANCE_KEY", None)
@@ -267,23 +280,27 @@ def pytest_configure(config: pytest.Config) -> None:
         # Reset KMS signer singleton to ensure HMAC fallback mode is used
         try:
             from src.gateway.governance.kms_signer import reset_governance_signer
+
             reset_governance_signer()
         except ImportError:
             pass  # Module not yet importable during early configuration
-    
+
     # EVIDENCE_STREAM_ENABLED default true to satisfy EVIDENCE_CHAIN_BLOCKING precondition in tests
     _setdefault("EVIDENCE_STREAM_ENABLED", "true")
 
 
 def _ensure_env_loaded() -> None:
     """Ensure .env file is loaded for auth tokens and other config.
-    
+
     This is called early in pytest_configure to ensure worker processes
     have access to CAGE_API_KEY, COMPLIANCE_BRIDGE_INTERNAL_TOKEN, etc.
     """
-    if not os.environ.get("CAGE_API_KEY") or not os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN"):
+    if not os.environ.get("CAGE_API_KEY") or not os.environ.get(
+        "COMPLIANCE_BRIDGE_INTERNAL_TOKEN"
+    ):
         try:
             from dotenv import load_dotenv
+
             _env_file = pathlib.Path(__file__).parent.parent / ".env"
             if _env_file.exists():
                 load_dotenv(_env_file, override=False)

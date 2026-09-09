@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from src.gateway.governance.normative_provider import (
+from src.gateway.governance.seams.normative import (
     EvidenceSeal,
     NormativeBaseline,
     ValidationResult,

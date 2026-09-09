@@ -460,8 +460,14 @@ class TestProductionKmsSigningCheck:
             error_msg = str(exc_info.value)
             # Should show current config values
             assert "CAGE_ENV=prod" in error_msg
-            assert "EVIDENCE_STREAM_ENABLED=true" in error_msg or "EVIDENCE_STREAM_ENABLED=True" in error_msg
-            assert "EVIDENCE_STREAM_KMS_SIGN=false" in error_msg or "EVIDENCE_STREAM_KMS_SIGN=False" in error_msg
+            assert (
+                "EVIDENCE_STREAM_ENABLED=true" in error_msg
+                or "EVIDENCE_STREAM_ENABLED=True" in error_msg
+            )
+            assert (
+                "EVIDENCE_STREAM_KMS_SIGN=false" in error_msg
+                or "EVIDENCE_STREAM_KMS_SIGN=False" in error_msg
+            )
 
     def test_error_message_explains_remedy(self) -> None:
         """Error message should explain how to fix the issue."""

@@ -52,6 +52,12 @@ import os
 from typing import Any
 from urllib.parse import quote
 
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    NormativeBaseline,
+    ValidationResult,
+)
+
 logger = logging.getLogger("cage.integrations.provider_01")
 
 # ---------------------------------------------------------------------------
@@ -203,7 +209,6 @@ def _map_flowsignal_decision(
     Raises:
         ValueError: If decision is unrecognized (fail-closed).
     """
-    from src.gateway.governance.normative_provider import ValidationResult
 
     decision_upper = decision.upper().strip()
 
@@ -287,8 +292,6 @@ class FlowSignalNormativeProvider:
         """Fetch the active legal baseline from provider."""
         import httpx
 
-        from src.gateway.governance.normative_provider import NormativeBaseline
-
         url = f"{self._endpoint}/legal-baseline/{quote(region, safe='')}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -332,8 +335,6 @@ class FlowSignalNormativeProvider:
         it as a CONSEQUENCE_TOKEN finding in the returned ValidationResult.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import ValidationResult
 
         url = f"{self._endpoint}/validate/fria"
         try:
@@ -438,8 +439,6 @@ class FlowSignalNormativeProvider:
     async def submit_evidence(self, thread_id: str, evidence_hash: str):  # type: ignore[no-untyped-def]
         """Submit governance evidence hash for external sealing."""
         import httpx
-
-        from src.gateway.governance.normative_provider import EvidenceSeal
 
         url = f"{self._endpoint}/evidence-chain/{quote(thread_id, safe='')}"
         try:

@@ -46,6 +46,11 @@ from typing import Any
 from urllib.parse import quote
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    NormativeBaseline,
+    ValidationResult,
+)
 
 logger = logging.getLogger("cage.integrations.provider_03")
 
@@ -106,8 +111,6 @@ class Provider03NormativeProvider:
         """
         import httpx
 
-        from src.gateway.governance.normative_provider import NormativeBaseline
-
         if not self._endpoint:
             return NormativeBaseline(
                 region=region,
@@ -163,8 +166,6 @@ class Provider03NormativeProvider:
             ValidationResult with admitted flag and findings.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import ValidationResult
 
         if not self._endpoint:
             return ValidationResult(
@@ -279,8 +280,6 @@ class Provider03NormativeProvider:
             EvidenceSeal with the sealed attestation hash.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import EvidenceSeal
 
         if not self._endpoint:
             return EvidenceSeal(

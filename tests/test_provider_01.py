@@ -98,7 +98,7 @@ class TestProtocolCompliance:
 
             result = await adapter.fetch_baseline("US_FED")
 
-        from src.gateway.governance.normative_provider import NormativeBaseline
+        from src.gateway.governance.seams.normative import NormativeBaseline
 
         assert isinstance(result, NormativeBaseline)
         assert result.region == "US_FED"
@@ -127,7 +127,7 @@ class TestProtocolCompliance:
 
             result = await adapter.validate_fria({"action": "test"})
 
-        from src.gateway.governance.normative_provider import ValidationResult
+        from src.gateway.governance.seams.normative import ValidationResult
 
         assert isinstance(result, ValidationResult)
         assert result.admitted is False
@@ -155,7 +155,7 @@ class TestProtocolCompliance:
 
             result = await adapter.submit_evidence("thread-123", "evidence-hash")
 
-        from src.gateway.governance.normative_provider import EvidenceSeal
+        from src.gateway.governance.seams.normative import EvidenceSeal
 
         assert isinstance(result, EvidenceSeal)
         assert result.thread_id == "thread-123"

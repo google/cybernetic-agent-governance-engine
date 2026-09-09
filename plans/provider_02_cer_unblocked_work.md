@@ -399,17 +399,18 @@ Layer 1 and must contain no vendor vocabulary — no `CER`, no `nexart`, no
 ```python
 @dataclass(frozen=True)
 class ContentAddress:
-    algorithm: str        # "sha256"
-    hex_digest: str       # lowercase hex, no prefix
+    algorithm: str  # "sha256"
+    hex_digest: str  # lowercase hex, no prefix
 
     @classmethod
     def parse(cls, raw: str) -> ContentAddress: ...
+
     # accepts "sha256:<hex>", "sha256%3A<hex>", case-insensitive hex
 
     @property
-    def canonical(self) -> str: ...      # "sha256:<hex>"  — emission form
+    def canonical(self) -> str: ...  # "sha256:<hex>"  — emission form
     @property
-    def url_encoded(self) -> str: ...    # "sha256%3A<hex>"
+    def url_encoded(self) -> str: ...  # "sha256%3A<hex>"
 ```
 
 Supported algorithms and their expected hex lengths live in one table:
@@ -453,9 +454,9 @@ codebase constructs a `/v1/resolve/cer/...` URL today.
 class Provider02CERResolver:
     def __init__(
         self,
-        base_url: str = "",          # PROVIDER_02_RESOLVER_URL
-        timeout: float = 5.0,        # PROVIDER_02_RESOLVER_TIMEOUT
-        verify: str | bool = True,   # PROVIDER_02_CA_BUNDLE, else system trust
+        base_url: str = "",  # PROVIDER_02_RESOLVER_URL
+        timeout: float = 5.0,  # PROVIDER_02_RESOLVER_TIMEOUT
+        verify: str | bool = True,  # PROVIDER_02_CA_BUNDLE, else system trust
     ) -> None: ...
 
     async def resolve(self, address: ContentAddress | str) -> CERResolution: ...
@@ -477,15 +478,21 @@ choice in favour of consistency. One module constant governs it.
 @dataclass(frozen=True)
 class CERResolution:
     address: ContentAddress
-    status: str                     # AttestationStatus value
+    status: str  # AttestationStatus value
     resolved: bool
-    signature_checked: bool = False # set only by Phase 2b
+    signature_checked: bool = False  # set only by Phase 2b
     etag: str = ""
     from_cache: bool = False
     evidence: dict[str, Any] = field(default_factory=dict)
-    links: dict[str, str] = field(default_factory=dict)   # self, keyManifest, verify, humanVerifier
-    anchors: list[dict[str, Any]] = field(default_factory=list)   # transparency log (§2.6)
-    timestamps: list[dict[str, Any]] = field(default_factory=list) # RFC 3161, opaque (§2.6)
+    links: dict[str, str] = field(
+        default_factory=dict
+    )  # self, keyManifest, verify, humanVerifier
+    anchors: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # transparency log (§2.6)
+    timestamps: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # RFC 3161, opaque (§2.6)
     findings: list[dict[str, Any]] = field(default_factory=list)
 ```
 
@@ -799,9 +806,9 @@ option (a) behind an enum so the decision becomes configuration:
 
 ```python
 class Disclosure(Enum):
-    PUBLIC = "public"      # emit link[rel=evidence] + props
-    PRIVATE = "private"    # emit props only, no dereferenceable link
-    UNKNOWN = "unknown"    # treat as PRIVATE — fail-closed
+    PUBLIC = "public"  # emit link[rel=evidence] + props
+    PRIVATE = "private"  # emit props only, no dereferenceable link
+    UNKNOWN = "unknown"  # treat as PRIVATE — fail-closed
 ```
 
 Default `PRIVATE` for anything not explicitly marked public. The compliance

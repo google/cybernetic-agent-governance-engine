@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+from src.cage_finance import create_finance_tiers
 from src.cage_finance.safety.bounding.providers import (
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
 )
-from src.cage_finance import create_finance_tiers
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin

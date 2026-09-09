@@ -35,12 +35,12 @@ import pytest
 import respx
 
 from src.gateway.governance.attestation_provider import AttestationProvider
-from src.gateway.governance.normative_provider import (
+from src.gateway.governance.normative_provider import get_normative_provider
+from src.gateway.governance.seams.normative import (
     EvidenceSeal,
     NormativeBaseline,
     NormativeProvider,
     ValidationResult,
-    get_normative_provider,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

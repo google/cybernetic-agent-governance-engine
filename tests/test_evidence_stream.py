@@ -265,7 +265,7 @@ class TestIngestHashChain:
     @pytest.mark.asyncio
     async def test_ingest_entry_schema_fields_present(self):
         """Every ingested entry must contain all required wire-format fields.
-        
+
         A4: kms_signature is only present when KMS signing is enabled.
         """
         sink = _make_sink(kms_sign=False)  # Signing disabled by default
@@ -294,7 +294,7 @@ class TestIngestHashChain:
         assert required_fields.issubset(captured.keys()), (
             f"Missing fields: {required_fields - set(captured.keys())}"
         )
-        
+
         # kms_signature should NOT be present when signing is disabled
         assert "kms_signature" not in captured
 
