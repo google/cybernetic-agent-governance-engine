@@ -1216,7 +1216,7 @@ class EvidenceStreamSink:
                     f"batch-{last_id.replace(':', '-')}.ndjson"
                 )
 
-                receipt = await self._cold_store.put_batch(
+                receipt, created = await self._cold_store.put_if_absent(
                     key=batch_key,
                     content=ndjson_bytes,
                     metadata={
@@ -1232,14 +1232,22 @@ class EvidenceStreamSink:
                         outcome="success",
                     ).inc()
 
-                logger.info(
-                    "[EvidenceStream] Cold store flush: %d entries → %s (backend=%s, last_id=%s, sha256=%s…)",
-                    len(entries),
-                    receipt.uri,
-                    receipt.backend_id,
-                    last_id,
-                    receipt.content_sha256[:12],
-                )
+                if created:
+                    logger.info(
+                        "[EvidenceStream] Cold store flush: %d entries → %s (backend=%s, last_id=%s, sha256=%s…)",
+                        len(entries),
+                        receipt.uri,
+                        receipt.backend_id,
+                        last_id,
+                        receipt.content_sha256[:12],
+                    )
+                else:
+                    logger.debug(
+                        "[EvidenceStream] Cold store batch already exists (idempotent skip): %s (sha256=%s…, last_id=%s)",
+                        receipt.uri,
+                        receipt.content_sha256[:12],
+                        last_id,
+                    )
 
             except asyncio.CancelledError:
                 break

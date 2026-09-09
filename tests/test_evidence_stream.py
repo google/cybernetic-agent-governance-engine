@@ -536,6 +536,44 @@ class TestColdFlushLoop:
         with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
             await sink._cold_flush_loop()
 
+    @pytest.mark.asyncio
+    async def test_cold_flush_loop_idempotent_on_replay(self):
+        """Replayed flush of the same batch must not duplicate (put_if_absent atomic guarantee)."""
+        fake_store = FakeColdStore()
+        sink = _make_sink(cold_store=fake_store)
+        sink._running = True
+
+        redis_mock = _make_redis_mock()
+        redis_mock.xrange.return_value = [
+            ("200-0", {"event_type": "GOVERNANCE_DECISION", "rule": "ISO_42001"}),
+            ("201-0", {"event_type": "AUDIT_TRAIL", "status": "LOGGED"}),
+        ]
+        sink._redis = redis_mock
+
+        # First flush pass
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+            await sink._cold_flush_loop()
+
+        assert len(fake_store.batches) == 1
+        first_key, first_content, first_metadata = fake_store.batches[0]
+
+        # Reset sink state and replay flush with identical entries
+        sink2 = _make_sink(cold_store=fake_store)
+        sink2._running = True
+        sink2._redis = redis_mock
+
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+            await sink2._cold_flush_loop()
+
+        # Assert exactly one batch exists (no duplication)
+        assert len(fake_store.batches) == 1
+        second_key, second_content, second_metadata = fake_store.batches[0]
+
+        # Assert the batch is byte-identical
+        assert second_key == first_key
+        assert second_content == first_content
+        assert second_metadata == first_metadata
+
     def test_sink_imports_no_vendor_module(self):
         """AST check: evidence_stream.py must not import vendor storage SDKs."""
         import inspect
