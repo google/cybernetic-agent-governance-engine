@@ -238,17 +238,30 @@ jobs:
         run: uv run ruff format --check .
       - name: Mypy type check
         run: uv run mypy src/
-      - name: Import boundary check (G3 - Layer 1 → Layer 2/3/4)
+      - name: Import boundary check (G3 - Layer 1 → Layer 2/3/4 + reverse scan)
         # PR B (domain extraction) established clean layer isolation.
         # This gate blocks any Layer 1 (gateway) → Layer 2 (cage_*) imports.
+        # C7 added reverse scan: Layer 3 (integrations) must not import Layer 2 or Layer 4.
         # Violations indicate a regression in the plugin seam architecture.
         run: |
           uv run python scripts/check_import_boundaries.py --verbose
+      - name: Domain literal check (G6 - No domain action names in kernel/integrations)
+        # C7: kernel and integrations must be domain-agnostic.
+        # Domain action names (execute_trade, reverse_trade) belong in domain plugins.
+        # Violations indicate hardcoded domain coupling in vendor-neutral layers.
+        run: |
+          uv run python scripts/check_domain_literals.py --verbose
       - name: Telemetry literal check (G7 - No raw vendor literals in executable code)
         # AW-6: Gate G7 blocks any raw telemetry vendor string literals in executable code.
         # All telemetry attributes must be imported from src.gateway.observability.attributes.
         run: |
           uv run python scripts/check_telemetry_literals.py --verbose
+      - name: Vendor brand check (G8 - No vendor brands in kernel executable code)
+        # C7: kernel must be vendor-neutral. Vendor names in prose/docs are legitimate,
+        # but executable literals (enum members, Redis keys, env vars) must use abstractions.
+        # Empty brand list means gate is wired but not currently restrictive.
+        run: |
+          uv run python scripts/check_vendor_brands.py --verbose
       - name: Project-ID hygiene check
         # W1.8: Ensure no maintainer-specific cloud project identifiers are leaked in tracked files.
         run: |

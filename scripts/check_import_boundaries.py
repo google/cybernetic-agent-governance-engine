@@ -46,6 +46,7 @@ from pathlib import Path
 
 # Layer definitions
 LAYER_1_GATEWAY = Path("src/gateway")
+LAYER_3_INTEGRATIONS = Path("src/integrations")
 EVIDENCE_DIR = Path("src/gateway/governance/evidence")
 
 # Forbidden import patterns for Layer 1
@@ -275,6 +276,92 @@ def check_file_boundaries(
     return violations
 
 
+# Allowlist for specific Layer 3 integrations files that have justified cross-layer dependencies.
+# Each entry requires explicit architectural justification — keep this minimal.
+INTEGRATIONS_BOUNDARY_ALLOWLIST = frozenset(
+    [
+        # provider_02/cer_index.py implements the CERIndex Protocol defined in compliance_bridge
+        # and is dependency-injected into compliance_bridge at FastAPI startup (B6 integration).
+        # Importing Disclosure enum from the protocol it implements is legitimate coupling.
+        "src/integrations/provider_02/cer_index.py",
+    ]
+)
+
+
+def check_integrations_boundaries(
+    filepath: Path, verbose: bool = False
+) -> list[BoundaryViolation]:
+    """Check if a Layer 3 integrations file imports from Layer 2/4.
+
+    Layer 3 (src/integrations/) must NOT import from:
+    - Layer 2 (src/cage_*) — except test files importing domain test fixtures
+    - Layer 3 compliance_bridge (src/compliance_bridge/) — except allowlisted protocol implementations
+    - Layer 4 (src/governed_financial_advisor/)
+
+    Returns:
+        List of BoundaryViolation instances.
+    """
+    violations: list[BoundaryViolation] = []
+    imports = extract_imports(filepath)
+    filepath_str = str(filepath)
+
+    # Check if file is in the integrations boundary allowlist
+    is_in_boundary_allowlist = any(
+        filepath_str.endswith(allowed_path) or allowed_path in filepath_str
+        for allowed_path in INTEGRATIONS_BOUNDARY_ALLOWLIST
+    )
+
+    # Check if this is a test file (tests may import domain fixtures)
+    is_test_file = "/tests/" in filepath_str or filepath_str.endswith("_test.py")
+
+    for imp, lineno, _is_module_scope in imports:
+        # Check Layer 3 integrations -> Layer 2 cage_*
+        if LAYER_2_CAGE_PATTERN.match(imp):
+            # Test files may import domain fixtures
+            if not is_test_file:
+                v = BoundaryViolation(
+                    file_path=filepath_str,
+                    line_number=lineno,
+                    imported_module=imp,
+                    rule_violated="Layer 3 integrations → Layer 2 (integrations must not import cage_*)",
+                )
+                violations.append(v)
+                if verbose:
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                    )
+
+        # Check Layer 3 integrations -> Layer 3 compliance_bridge
+        if LAYER_3_BRIDGE_PATTERN.match(imp):
+            # Allowlisted protocol implementations may import from compliance_bridge
+            if not is_in_boundary_allowlist:
+                v = BoundaryViolation(
+                    file_path=filepath_str,
+                    line_number=lineno,
+                    imported_module=imp,
+                    rule_violated="Layer 3 integrations → Layer 3 compliance_bridge (cross-Layer-3 coupling forbidden)",
+                )
+                violations.append(v)
+                if verbose:
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                    )
+
+        # Check Layer 3 integrations -> Layer 4
+        if LAYER_4_GFA_PATTERN.match(imp):
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=imp,
+                rule_violated="Layer 3 integrations → Layer 4 (integrations must not import governed_financial_advisor)",
+            )
+            violations.append(v)
+            if verbose:
+                print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+
+    return violations
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check layer import boundaries")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
@@ -290,6 +377,7 @@ def main() -> int:
     all_violations: list[BoundaryViolation] = []
     scanned_count = 0
 
+    # Forward scan: Layer 1 (gateway) must not import from Layer 2/3/4
     for py_file in gateway_root.rglob("*.py"):
         if "__pycache__" in str(py_file):
             continue
@@ -297,7 +385,19 @@ def main() -> int:
         violations = check_file_boundaries(py_file, verbose=args.verbose)
         all_violations.extend(violations)
 
-    print(f"📊 Scanned {scanned_count} files in {LAYER_1_GATEWAY}/")
+    print(f"📊 Forward scan: {scanned_count} files in {LAYER_1_GATEWAY}/")
+
+    # Reverse scan: Layer 3 (integrations) must not import from Layer 2/4
+    integrations_root = Path(LAYER_3_INTEGRATIONS)
+    if integrations_root.exists():
+        integrations_count = 0
+        for py_file in integrations_root.rglob("*.py"):
+            if "__pycache__" in str(py_file):
+                continue
+            integrations_count += 1
+            violations = check_integrations_boundaries(py_file, verbose=args.verbose)
+            all_violations.extend(violations)
+        print(f"📊 Reverse scan: {integrations_count} files in {LAYER_3_INTEGRATIONS}/")
 
     if all_violations:
         print(f"\n❌ BOUNDARY VIOLATIONS DETECTED ({len(all_violations)}):\n")
@@ -310,6 +410,12 @@ def main() -> int:
         print(
             "🚨 Function-scope lazy imports of src.integrations require explicit allowlist entry."
         )
+        print(
+            "🚨 Layer 3 (integrations) must NOT import from Layer 2 (cage_*) or Layer 4."
+        )
+        print(
+            "🚨 Layer 3 cross-coupling (integrations ↔ compliance_bridge) is forbidden."
+        )
         print("🚨 Evidence kernel must NOT import proprietary vendor SDKs.")
         print()
         print("   Remediation:")
@@ -317,6 +423,9 @@ def main() -> int:
         print("   • For vendor adapters: use function-scope lazy factory imports")
         print(
             "   • Adding to INTEGRATIONS_FACTORY_ALLOWLIST requires architectural review"
+        )
+        print(
+            "   • Integrations must use kernel seams (NormativeProvider, AttestationProvider)"
         )
         return 1
 
