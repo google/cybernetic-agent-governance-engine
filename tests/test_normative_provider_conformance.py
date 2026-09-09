@@ -113,13 +113,13 @@ async def test_attestation_providers_satisfy_protocol() -> None:
     # Verify AttestationProvider protocol compliance
     assert isinstance(p02, AttestationProvider)
     assert isinstance(p05, AttestationProvider)
-    
+
     # Verify protocol methods exist
     assert hasattr(p02, "fetch_attestations")
     assert hasattr(p02, "provider_name")
     assert hasattr(p05, "fetch_attestations")
     assert hasattr(p05, "provider_name")
-    
+
     # Verify provider_name returns a string
     assert isinstance(p02.provider_name, str)
     assert p02.provider_name == "provider_02"

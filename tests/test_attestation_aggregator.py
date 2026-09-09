@@ -139,3 +139,55 @@ async def test_aggregator_poll_refreshes_cache():
 
     await aggregator.poll()
     assert provider.fetch_count == 2
+
+
+def test_aggregator_register_validates_protocol():
+    """Verify register() enforces AttestationProvider protocol with isinstance check."""
+    att = ExternalAttestation(
+        attestation_type="TEST",
+        status=AttestationStatus.VERIFIED.value,
+        receipt_id="rec-1",
+        attested_at="2026-09-09T17:00:00Z",
+    )
+    conforming_provider = MockAttestationProvider("test-provider", [att])
+    aggregator = AttestationAggregator()
+
+    # Conforming provider succeeds
+    aggregator.register(conforming_provider)
+    assert aggregator.provider_count == 1
+
+
+def test_aggregator_register_rejects_non_conforming_object():
+    """Verify register() raises TypeError for non-conforming objects."""
+    aggregator = AttestationAggregator()
+
+    # Non-conforming object (plain dict) should raise TypeError
+    with pytest.raises(
+        TypeError,
+        match=r"Provider must implement AttestationProvider protocol, got <class 'dict'>",
+    ):
+        aggregator.register({"provider_name": "fake"})  # type: ignore[arg-type]
+
+
+def test_aggregator_register_no_partial_mutation_on_rejection():
+    """Verify rejected registration leaves provider list unchanged."""
+    att = ExternalAttestation(
+        attestation_type="TEST",
+        status=AttestationStatus.VERIFIED.value,
+        receipt_id="rec-1",
+        attested_at="2026-09-09T17:00:00Z",
+    )
+    valid_provider = MockAttestationProvider("valid", [att])
+    aggregator = AttestationAggregator()
+
+    # Register valid provider first
+    aggregator.register(valid_provider)
+    assert aggregator.provider_count == 1
+
+    # Attempt to register invalid object
+    with pytest.raises(TypeError, match="AttestationProvider protocol"):
+        aggregator.register("not-a-provider")  # type: ignore[arg-type]
+
+    # Provider list should remain unchanged (no partial mutation)
+    assert aggregator.provider_count == 1
+    assert aggregator._providers[0] is valid_provider

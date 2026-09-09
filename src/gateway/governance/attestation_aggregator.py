@@ -86,7 +86,15 @@ class AttestationAggregator:
 
         Args:
             provider: The attestation provider to register.
+
+        Raises:
+            TypeError: If provider does not implement AttestationProvider protocol.
         """
+        if not isinstance(provider, AttestationProvider):
+            raise TypeError(
+                f"Provider must implement AttestationProvider protocol, got {type(provider)}"
+            )
+
         self._providers.append(provider)
         logger.info("Registered attestation provider: %s", provider.provider_name)
 

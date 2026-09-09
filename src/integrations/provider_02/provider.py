@@ -266,11 +266,15 @@ class Provider02AttestationProvider(AttestationProvider):
         #   - valid=False, signature_checked=False, error contains "Phase 2b" → UNVERIFIED
         #   - valid=False, signature_checked=False, error is real failure → ERROR
         status = AttestationStatus.UNVERIFIED
-        
+
         if result.valid and result.signature_checked:
             # Wave 3 (B3) path: real Ed25519 verification passed
             status = AttestationStatus.VERIFIED
-        elif result.error and "Phase 2b" not in result.error and "not yet implemented" not in result.error:
+        elif (
+            result.error
+            and "Phase 2b" not in result.error
+            and "not yet implemented" not in result.error
+        ):
             # Real errors (network failures, parse errors, etc.) → ERROR
             # But "Phase 2b pending" messages → UNVERIFIED
             status = AttestationStatus.ERROR
