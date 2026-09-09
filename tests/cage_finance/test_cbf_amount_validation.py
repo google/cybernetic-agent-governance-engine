@@ -36,6 +36,9 @@ import fakeredis.aioredis  # type: ignore[import]
 
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
+# Hermetic: tests CBF amount validation using fakeredis, no live services.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 _INVALID_AMOUNTS = [-1_000_000.0, float("nan"), float("inf"), float("-inf")]
 
 

@@ -33,6 +33,9 @@ from src.gateway.governance.http_client_factory import (
     create_sync_client,
 )
 
+# Hermetic: uses respx mocked transport, no live services.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestHttpClientFactoryTimeouts:
     """Test timeout configuration in HTTP client factory."""

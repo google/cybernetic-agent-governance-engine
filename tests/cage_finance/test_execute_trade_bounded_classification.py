@@ -30,6 +30,9 @@ import pytest
 from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
 from src.gateway.governance.ftra.models import TerminalClassification
 
+# Hermetic: validates execute_trade_bounded classification in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestExecuteTradeBoundedClassification:
     """Phase 5 Step 11 validation: execute_trade_bounded terminal classification."""

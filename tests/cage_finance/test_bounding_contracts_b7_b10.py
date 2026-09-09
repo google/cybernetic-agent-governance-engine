@@ -32,6 +32,9 @@ from src.cage_finance.safety.bounding.models import (
     ContractSeverity,
 )
 
+# Hermetic: validates bounding contracts B7, B10 in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ───────────────────────────────────────────────────────────────────────────────
 # B7 — Audit Trail Cryptographic Hash Chain Sealing Tests
 # ───────────────────────────────────────────────────────────────────────────────

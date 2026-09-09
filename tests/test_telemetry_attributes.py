@@ -28,7 +28,12 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from src.gateway.observability import attributes, span_attributes
+
+# Hermetic: validates telemetry attributes and AST checks in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 class TestTelemetryAttributesGoldenTable:

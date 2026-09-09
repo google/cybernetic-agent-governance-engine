@@ -47,6 +47,9 @@ from src.gateway.governance.reconciliation.daemon import (
     read_verified_balance,
 )
 
+# Hermetic: tests CBF reconciliation using fakeredis, no live Redis.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

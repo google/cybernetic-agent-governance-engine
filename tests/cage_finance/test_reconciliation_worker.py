@@ -30,7 +30,7 @@ from unittest.mock import MagicMock, patch
 import fakeredis
 import pytest
 
-pytestmark = pytest.mark.local
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 # ---------------------------------------------------------------------------
 # The reconciliation_worker module-level guard blocks import when

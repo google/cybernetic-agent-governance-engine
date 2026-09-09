@@ -343,15 +343,16 @@ Check these jobs in order:
 
 1. **squash-merge-guard** — non-squash merge commit detected on `main`. Fix: ensure GitHub PR uses "Squash and merge" (never merge commits or rebase).
 2. **license-check** — missing Apache 2.0 header in a new `src/` file. Fix: prepend the Apache 2.0 license header.
-3. **import-boundary-check (Gate G3 in `lint`)** — Layer 1 (`src/gateway/`) imported from Layer 2 (`src/cage_*`), Layer 3 (`src/compliance_bridge/`, or module-scope `src.integrations`), or Layer 4 (`src/governed_financial_advisor/`). Module-scope `src.integrations` imports in the kernel are forbidden; function-scope lazy factory imports are permitted only in allowlisted files (`normative_provider.py`, `evidence/factory.py`). Fix: run `uv run python scripts/check_import_boundaries.py --verbose` and sever illegal upward imports to maintain kernel/plugin isolation, or convert to function-scope lazy import in an allowlisted factory.
-4. **nemo-freshness-check** — `deployment/k8s/nemo-rails-configmap.yaml` is out of sync with `config/rails/actions.py`. Fix: run `make update-nemo-configmap`.
-5. **stpa-freshness-check** — STPA source changed without regenerating artifacts. Fix: run `scripts/check_stpa_freshness.py`.
-6. **langfuse-posture-check** — requires mock cloud and Langfuse environment variables in local/offline environments. Fix: supply mock project/keys with derived `GOOGLE_CLOUD_LOCATION` and run `python scripts/verify_langfuse_posture.py --dry-run --posture development` (see [Langfuse Regional & Local Testing Limitations](#langfuse-regional--local-testing-limitations)).
-7. **pytest** — address the failing test before suggesting any workaround. Always verify:
+3. **marker-contract-check** — a collected test carries no selection marker and would be invisible to every CI gate. Fix: add `pytestmark = [pytest.mark.unit, pytest.mark.local]` (or the appropriate selection marker) after the module's import block. Never exclude the file from collection to silence this.
+4. **import-boundary-check (Gate G3 in `lint`)** — Layer 1 (`src/gateway/`) imported from Layer 2 (`src/cage_*`), Layer 3 (`src/compliance_bridge/`, or module-scope `src.integrations`), or Layer 4 (`src/governed_financial_advisor/`). Module-scope `src.integrations` imports in the kernel are forbidden; function-scope lazy factory imports are permitted only in allowlisted files (`normative_provider.py`, `evidence/factory.py`). Fix: run `uv run python scripts/check_import_boundaries.py --verbose` and sever illegal upward imports to maintain kernel/plugin isolation, or convert to function-scope lazy import in an allowlisted factory.
+5. **nemo-freshness-check** — `deployment/k8s/nemo-rails-configmap.yaml` is out of sync with `config/rails/actions.py`. Fix: run `make update-nemo-configmap`.
+6. **stpa-freshness-check** — STPA source changed without regenerating artifacts. Fix: run `scripts/check_stpa_freshness.py`.
+7. **langfuse-posture-check** — requires mock cloud and Langfuse environment variables in local/offline environments. Fix: supply mock project/keys with derived `GOOGLE_CLOUD_LOCATION` and run `python scripts/verify_langfuse_posture.py --dry-run --posture development` (see [Langfuse Regional & Local Testing Limitations](#langfuse-regional--local-testing-limitations)).
+8. **pytest** — address the failing test before suggesting any workaround. Always verify:
    - **No active port-forward contamination**: ensure `kubectl port-forward` to dev Redis (6379) / OPA (8181) is not polluting local test state.
    - **Canonical module paths**: verify imports use post-v3 locations (`src.gateway.governance.causal.gatekeeper`, `src.gateway.governance.reconciliation.daemon`, `src.gateway.governance.safety.cbf_engine`).
    - **Governor contracts**: verify `SymbolicGovernor` instantiations provide `safety_filter`, `consensus_engine`, and context parameters.
-8. **security-scan** — rotate the credential or address Bandit SAST / dependency CVE findings; never suggest suppressing the scan.
+9. **security-scan** — rotate the credential or address Bandit SAST / dependency CVE findings; never suggest suppressing the scan.
 
 **Never suggest disabling or skipping a CI check as a fix.**
 
@@ -539,6 +540,27 @@ make test-fast
 ```
 Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to ensure proper test file and fixture isolation across workers.
 
+### Pytest Marker Contract (fail-closed)
+
+Every collected test must carry at least one **selection marker**:
+`local`, `unit`, `integration`, `live_external`, `chaos`, or `load`.
+A collection-time guard in `tests/conftest.py` raises `pytest.UsageError` and
+aborts the run if any test is unmarked — an unmarked test is collected locally
+but silently excluded from every CI gate, which is a fail-open posture the
+project does not accept.
+
+Facet markers (`slow`, `regression`, `red_team`, `layer_isolation`, `financial`,
+`healthcare`, `us_fed`, `eu_ecb`, `apac_mas`) are **additive** and never satisfy
+the contract on their own.
+
+Default for a new hermetic test module:
+
+    pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+`local` = runs with no network or live service. `unit` = narrow scope.
+They are orthogonal, not synonyms. See `tests/README.md § Pytest Markers`.
+Never disable the `marker-contract-check` CI job to make a build pass.
+
 ### Fast Local Development & Profiling Reference
 
 | Goal / Workflow | Canonical Command |
@@ -554,7 +576,9 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 |---|---|
 | **Single test file** | `uv run pytest tests/test_tls_enforcement.py -v` |
 | **Specific test method** | `uv run pytest tests/test_tls_enforcement.py::TestTlsProtocolStandards::test_default_client_context_minimum_version -v` |
+| **Marker contract check (all tests marked)** | `uv run pytest tests/ --collect-only -q --no-cov -n0 -p no:langsmith -p no:langsmith_plugin` |
 | **Finance domain plugin tests** | `uv run pytest tests/cage_finance/ -v` |
+| **Finance domain plugin tests (by marker)** | `uv run pytest tests/ -m financial -v` |
 | **Healthcare domain plugin tests** | `uv run pytest tests/cage_healthcare/ -v` |
 | **FTRA & AISVS C9 action classification** | `uv run pytest tests/test_ftra*.py -v` |
 | **Import boundary check (Gate G3)** | `uv run python scripts/check_import_boundaries.py --verbose` |

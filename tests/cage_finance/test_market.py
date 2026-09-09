@@ -25,6 +25,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Hermetic: tests MarketService using mocks, no real network calls.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -69,16 +69,64 @@ uv run pytest tests/ -v -s
 
 ## Pytest Markers
 
-| Marker        | Description                                                                                                     |
-| ------------- | --------------------------------------------------------------------------------------------------------------- |
-| `unit`        | Pure logic tests — no I/O, no network, no external services. Alias for `local`.                                 |
-| `local`       | Same as `unit`. Legacy name kept for backwards compatibility.                                                   |
-| `integration` | Requires live external services (backend, vLLM, Langfuse). Skipped by default — pass `--run-integration`. |
-| `regression`  | "Golden Questions" that verify model behaviour after updates.                                                   |
-| `slow`        | Tests that take >30 s. May be excluded with `-m "not slow"`.                                                    |
-| `red_team`    | Adversarial / prompt-injection tests for the governance layer.                                                  |
-| `load`        | Load and stress tests — run in CI with dedicated infrastructure.                                                |
-| `causal`      | Tests requiring `dowhy` — causal inference gatekeeper validation.                                               |
+Markers fall into two classes. **Every test must carry at least one _selection_
+marker** — this is enforced at collection time by a fail-closed guard in
+`tests/conftest.py`, which aborts the run if any collected test is unmarked.
+
+### Selection markers (mandatory — pick at least one)
+
+| Marker | Meaning | Enabled by |
+|---|---|---|
+| `local` | Runs with **no network and no live service**. All I/O is faked (`fakeredis`, `respx`, `TestClient`, `monkeypatch`). | Default |
+| `unit` | Scope is a single module/class in isolation. Additive to `local`. | Default |
+| `integration` | Requires a live service (GKE, OPA, Langfuse, Redis, vLLM). | `--run-integration` |
+| `live_external` | Hits a third-party partner API. Always combined with `integration`. | `--run-live-external` |
+| `chaos` | Fault injection / failover (e.g. Redis primary loss). | `--run-chaos` |
+| `load` | Locust load tests on dedicated infrastructure. | Dedicated CI job |
+
+**`local` vs `unit` — the distinction:**
+
+- `local` answers **"can this run on a plane?"** — it describes the *execution
+  environment*. It is the marker CI uses to build the offline gate.
+- `unit` answers **"how much of the system does this touch?"** — it describes *test
+  scope*. A test can be `local` but not `unit` (e.g. an in-process multi-subsystem
+  wiring test with everything faked).
+- The two are **orthogonal, not synonyms.** The default for a new hermetic test is
+  both: `pytestmark = [pytest.mark.unit, pytest.mark.local]`
+- A test may never be both `local` and `integration`. If a module contains both kinds,
+  split it into two modules (see `test_gateway_connectivity.py` /
+  `test_gateway_connectivity_live.py` for the reference pattern).
+
+### Facet markers (additive — never sufficient on their own)
+
+| Marker | Meaning |
+|---|---|
+| `slow` | Takes >10 s, or asserts wall-clock budgets. Exclude with `-m "not slow"`. |
+| `regression` | Golden-question behavioural check after a model or policy update. |
+| `red_team` | Adversarial / prompt-injection test. |
+| `layer_isolation` | Asserts the three-layer import boundary (Gate G3). |
+| `financial` | Finance domain plugin (`tests/cage_finance/`). |
+| `healthcare` | Healthcare domain plugin (`tests/cage_healthcare/`). |
+| `us_fed`, `eu_ecb`, `apac_mas` | Regional compliance posture. |
+
+A facet marker **does not** make a test selectable by any CI gate. A test marked only
+`financial` or only `regression` will be rejected by the collection guard.
+
+### Adding a new test module
+
+Place the module marker immediately after the import block:
+
+```python
+import pytest
+
+from src.gateway.governance.something import Something
+
+# Hermetic: fakeredis + monkeypatch, no live services.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+```
+
+If the guard rejects your module, it will print the offending node IDs and the list of
+valid selection markers. Do not work around it by excluding the file from collection.
 
 ---
 
@@ -208,7 +256,9 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `test_optimistic_execution.py`        | `unit`                     | Optimistic concurrency: Redis hazard flag interrupt                |
 | `test_evaluator_mcp.py`               | `integration`              | Evaluator → gateway MCP round-trip                                 |
 | `test_trades_mcp.py`                  | `integration`              | `execute_trade_action` MCP tool full governance pipeline           |
-| `test_gateway_connectivity.py`        | `integration`              | Gateway endpoint availability and health checks                    |
+| `test_gateway_connectivity.py`        | `unit` / `local` / `regression` | Mocked golden-question regression check — no gateway required      |
+| `test_gateway_connectivity_live.py`   | `integration`              | Live gateway MCP/chat-proxy reachability and TLS 1.2+ enforcement (POAM-011 / SC-8) |
+| `test_compliance_bridge_infra_events.py` | `unit` / `local`         | `POST /v1/infra/events` — Bearer auth, secret scrubbing, 422 on unregistered event type or cross-jurisdiction mismatch, `evidence_class='INFRA'` persistence |
 | `test_agent_accuracy.py`              | `integration`              | End-to-end agent response accuracy                                 |
 | `test_agent_performance.py`           | `integration` / `slow`     | Latency and throughput benchmarks                                  |
 | `test_gateway_client_perf.py`         | `integration` / `slow`     | `GatewayClient` performance under concurrent load                  |

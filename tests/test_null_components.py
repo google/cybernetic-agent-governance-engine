@@ -36,6 +36,9 @@ from src.gateway.governance.null_components import (
     NullTelemetryProvider,
 )
 
+# Hermetic: validates in-memory null components and mock fallbacks.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestNullTelemetryProvider:
     """Contract tests for NullTelemetryProvider (W1.6)."""

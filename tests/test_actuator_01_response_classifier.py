@@ -31,6 +31,9 @@ from src.integrations.actuator_01.response_classifier import (
     classify_response,
 )
 
+# Hermetic: tests HTTP response classification logic in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 

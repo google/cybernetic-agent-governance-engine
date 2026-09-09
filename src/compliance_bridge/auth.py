@@ -49,13 +49,15 @@ async def require_internal_token(
     request: Request,
     x_cage_internal_token: str | None = Header(None, alias="X-Cage-Internal-Token"),
 ) -> str:
-    """Verify the X-Cage-Internal-Token header for internal-only endpoints.
+    """Verify the X-Cage-Internal-Token or Authorization header for internal-only endpoints.
 
     In dev mode (CAGE_ENV=dev), this degrades open to allow unauthenticated
-    access for local testing. In staging/prod, it requires a valid token.
+    access for local testing. In staging/prod/test, it requires a valid token.
+    Accepts token from X-Cage-Internal-Token or Authorization: Bearer.
+    Matches against CAGE_INTERNAL_TOKEN or COMPLIANCE_BRIDGE_INTERNAL_TOKEN.
 
     Args:
-        request: The FastAPI request object (unused, required for dependency signature)
+        request: The FastAPI request object
         x_cage_internal_token: The internal auth token from request headers
 
     Returns:
@@ -64,31 +66,44 @@ async def require_internal_token(
     Raises:
         HTTPException: 401 if token is missing or invalid in non-dev environments
     """
-    expected_token = os.environ.get("CAGE_INTERNAL_TOKEN")
+    expected_token = os.environ.get("CAGE_INTERNAL_TOKEN") or os.environ.get(
+        "COMPLIANCE_BRIDGE_INTERNAL_TOKEN"
+    )
 
+    token_val = x_cage_internal_token
+    if not token_val:
+        auth_header = request.headers.get("authorization") or request.headers.get(
+            "Authorization"
+        )
+        if auth_header and auth_header.startswith("Bearer "):
+            token_val = auth_header[7:].strip()
+
+    cage_env = os.environ.get("CAGE_ENV", _CAGE_ENV)
     # Dev-mode degradation: allow requests without token
-    if _CAGE_ENV == "dev" and not x_cage_internal_token:
+    if cage_env in ("dev", "development") and not token_val:
         logger.warning(
             "⚠️  Internal token missing in dev mode; allowing unauthenticated access"
         )
         return "dev-unauthenticated"
 
-    # Prod/staging: token is mandatory
-    if not x_cage_internal_token:
+    # Prod/staging/test: token is mandatory
+    if not token_val:
         raise HTTPException(
-            status_code=401, detail="Missing X-Cage-Internal-Token header"
+            status_code=401,
+            detail="Missing X-Cage-Internal-Token or Authorization header",
         )
 
     if not expected_token:
         raise HTTPException(
-            status_code=500, detail="CAGE_INTERNAL_TOKEN not configured"
+            status_code=500,
+            detail="CAGE_INTERNAL_TOKEN or COMPLIANCE_BRIDGE_INTERNAL_TOKEN not configured",
         )
 
     # Constant-time comparison to prevent timing attacks
-    if not hmac.compare_digest(x_cage_internal_token, expected_token):
-        raise HTTPException(status_code=401, detail="Invalid X-Cage-Internal-Token")
+    if not hmac.compare_digest(token_val, expected_token):
+        raise HTTPException(status_code=401, detail="Invalid internal token")
 
-    return x_cage_internal_token
+    return token_val
 
 
 async def require_operator_identity(request: Request) -> OperatorPrincipal:

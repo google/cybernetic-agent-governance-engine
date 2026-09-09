@@ -75,7 +75,7 @@ logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
 
 # ---------------------------------------------------------------------------
-# M-20: Per-client sliding-window rate limiter
+# M-20 & L-2: Per-client sliding-window rate limiter with Prometheus metrics
 # Limits each client IP to _RATE_LIMIT_MAX_CALLS tool calls per
 # _RATE_LIMIT_WINDOW_SECONDS. Uses an in-process deque; no Redis dependency.
 # ---------------------------------------------------------------------------
@@ -86,6 +86,38 @@ _RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS",
 # client_ip → deque of call timestamps (monotonic)
 _rate_limit_buckets: dict[str, collections.deque] = {}
 _rate_limit_lock = asyncio.Lock()
+
+# Prometheus metrics (optional — degrades gracefully if prometheus_client unavailable)
+_METRICS_AVAILABLE = False
+_rate_limit_hits_total: Any = None
+_rate_limit_active_buckets: Any = None
+
+try:
+    from prometheus_client import REGISTRY, Counter, Gauge
+
+    _METRICS_AVAILABLE = True
+    try:
+        _rate_limit_hits_total = Counter(
+            "mcp_rate_limit_hits_total",
+            "Total number of rate limit rejections",
+            ["client_ip"],
+        )
+    except ValueError:
+        _rate_limit_hits_total = REGISTRY._names_to_collectors.get(
+            "mcp_rate_limit_hits_total"
+        )
+
+    try:
+        _rate_limit_active_buckets = Gauge(
+            "mcp_rate_limit_active_buckets",
+            "Current number of active client rate limit tracking buckets",
+        )
+    except ValueError:
+        _rate_limit_active_buckets = REGISTRY._names_to_collectors.get(
+            "mcp_rate_limit_active_buckets"
+        )
+except ImportError:
+    pass
 
 
 async def _check_rate_limit(client_ip: str) -> bool:
@@ -101,7 +133,11 @@ async def _check_rate_limit(client_ip: str) -> bool:
         # Evict expired timestamps
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
+        if _METRICS_AVAILABLE and _rate_limit_active_buckets is not None:
+            _rate_limit_active_buckets.set(len(_rate_limit_buckets))
         if len(bucket) >= _RATE_LIMIT_MAX_CALLS:
+            if _METRICS_AVAILABLE and _rate_limit_hits_total is not None:
+                _rate_limit_hits_total.labels(client_ip=client_ip).inc()
             return False
         bucket.append(now)
         return True

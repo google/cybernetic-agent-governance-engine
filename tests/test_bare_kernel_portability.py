@@ -29,6 +29,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+# Hermetic: validates zero outbound network sockets and pure in-memory isolation.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 FORBIDDEN_VENDOR_PREFIXES = (
     "google.cloud",
     "boto3",

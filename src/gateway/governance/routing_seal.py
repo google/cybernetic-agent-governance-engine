@@ -639,18 +639,22 @@ def verify_seal(
             else:
                 algs = ["RS256", "PS256"]
 
+            def _reject_seal(fail_reason: str, fail_action: str) -> None:
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    fail_action,
+                    fail_reason,
+                )
+                raise SymbolicGovernorViolation(fail_reason, fail_action)
+
             try:
                 claims = pyjwt.decode(
                     seal, pem, algorithms=algs, options={"verify_exp": True}
                 )
             except pyjwt.ExpiredSignatureError:
-                reason = "expired"
-                logger.warning("🔒 Routing seal rejected: %s", reason)
-                raise SymbolicGovernorViolation(reason, action)
+                _reject_seal("expired", action)
             except pyjwt.InvalidTokenError as exc:
-                reason = f"malformed seal or invalid signature: {exc}"
-                logger.warning("🔒 Routing seal rejected: %s", reason)
-                raise SymbolicGovernorViolation(reason, action)
+                _reject_seal(f"malformed seal or invalid signature: {exc}", action)
 
             # Check action hash
             safe_params = {
@@ -661,9 +665,10 @@ def verify_seal(
             expected_action_hash = hashlib.sha256(canon).hexdigest()
 
             if claims.get("action_hash") != expected_action_hash:
-                reason = "action mismatch — action_hash does not match execution params"
-                logger.warning("🔒 Routing seal rejected: %s", reason)
-                raise SymbolicGovernorViolation(reason, action)
+                _reject_seal(
+                    "action mismatch — action_hash does not match execution params",
+                    action,
+                )
 
             record_hash_val = claims.get("record_hash")
             _NO_EVIDENCE_SENTINELS = ("no-evidence-binding", "", "none")
@@ -671,19 +676,14 @@ def verify_seal(
                 not record_hash_val
                 or str(record_hash_val).lower() in _NO_EVIDENCE_SENTINELS
             ):
-                reason = "Evidence sufficiency violation: seal lacks a cryptographically bound evidence record_hash"
-                logger.error(
-                    "⛔ [EVIDENCE_BINDING] Routing seal rejected: action=%s reason=%s",
+                _reject_seal(
+                    "Evidence sufficiency violation: seal lacks a cryptographically bound evidence record_hash",
                     action,
-                    reason,
                 )
-                raise SymbolicGovernorViolation(reason, action)
 
             if expected_record_hash is not None:
                 if not hmac.compare_digest(str(record_hash_val), expected_record_hash):
-                    reason = "record_hash mismatch"
-                    logger.warning("🔒 Routing seal rejected: %s", reason)
-                    raise SymbolicGovernorViolation(reason, action)
+                    _reject_seal("record_hash mismatch", action)
 
             logger.debug(
                 "✅ Routing seal verified: action=%s nonce=%s",
@@ -713,6 +713,11 @@ def verify_seal(
                     strict_mode,
                     is_production,
                 )
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    action,
+                    reason,
+                )
                 raise SymbolicGovernorViolation(reason, action)
 
             # v2 HMAC format verification (only allowed in non-strict development mode)
@@ -723,6 +728,11 @@ def verify_seal(
             )
             parts = seal.split(".", 3)
             if len(parts) != 4:
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    action,
+                    "malformed seal (expected 4 parts)",
+                )
                 raise SymbolicGovernorViolation(
                     "malformed seal (expected 4 parts)", action
                 )
@@ -733,10 +743,20 @@ def verify_seal(
             try:
                 expire_ts = int(expire_hex, 16)
             except ValueError:
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    action,
+                    "malformed expiry timestamp",
+                )
                 raise SymbolicGovernorViolation("malformed expiry timestamp", action)
 
             now = int(time.time())
             if now > expire_ts:
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    action,
+                    "expired",
+                )
                 raise SymbolicGovernorViolation("expired", action)
 
             # Verify HMAC signature
@@ -747,6 +767,11 @@ def verify_seal(
             expected_sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
 
             if not hmac.compare_digest(sig, expected_sig):
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    action,
+                    "HMAC mismatch",
+                )
                 raise SymbolicGovernorViolation("HMAC mismatch", action)
 
             # Evidence binding check
@@ -761,10 +786,20 @@ def verify_seal(
                     action,
                     reason,
                 )
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                    action,
+                    reason,
+                )
                 raise SymbolicGovernorViolation(reason, action)
 
             if expected_record_hash is not None:
                 if not hmac.compare_digest(record_hash_val, expected_record_hash):
+                    logger.warning(
+                        "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
+                        action,
+                        "record_hash mismatch",
+                    )
                     raise SymbolicGovernorViolation("record_hash mismatch", action)
 
             logger.debug(

@@ -135,6 +135,38 @@ jobs:
           fi
           echo "All source files have the required Apache 2.0 licensing headers."
 
+  marker-contract-check:
+    name: "Pytest Marker Contract"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install Dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Verify every collected test carries a selection marker
+        env:
+          CAGE_DEPLOYMENT_REGION: "US_FED"
+          CAGE_ENV: "test"
+          OPENAI_API_KEY: "sk-dummy"
+          REDIS_URL: "redis://localhost:6379/0"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        # No -m filter: the guard must see EVERY collected item.
+        # -p no:xdist / -n0 keeps the failure message single-copy and readable.
+        run: |
+          uv run pytest tests/ --collect-only -q --no-cov -n0 \
+            -p no:langsmith -p no:langsmith_plugin
+
   pytest-logic:
     name: "Pytest Logic Tests (${{ matrix.region }})"
     runs-on: ubuntu-latest

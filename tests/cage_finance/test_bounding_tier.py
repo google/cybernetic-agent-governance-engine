@@ -20,6 +20,9 @@ from src.cage_finance.safety.bounding.models import ContractSeverity
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 
+# Hermetic: validates bounding tier integration in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestBoundingContractTierPlugin:
     """Tests for bounding tier integration."""

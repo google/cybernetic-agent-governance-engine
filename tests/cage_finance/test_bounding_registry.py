@@ -28,6 +28,9 @@ from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractEnforcer,
 )
 
+# Hermetic: validates bounding contract registry orchestration in-memory.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class TestBoundingContractRegistry:
     """Tests for BoundingContractRegistry orchestration."""

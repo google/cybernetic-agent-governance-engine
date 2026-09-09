@@ -33,6 +33,10 @@ from fastapi.testclient import TestClient
 
 from src.compliance_bridge.main import app
 
+# Hermetic: FastAPI TestClient + AsyncMock ClickHouseSink, no live services.
+# Covers auth (Bearer), secret scrubbing, 422 rejection, INFRA persistence.
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 AUTH_TOKEN = "test-internal-token-secret"
 
 
