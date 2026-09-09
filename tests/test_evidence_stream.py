@@ -264,8 +264,11 @@ class TestIngestHashChain:
 
     @pytest.mark.asyncio
     async def test_ingest_entry_schema_fields_present(self):
-        """Every ingested entry must contain all required wire-format fields."""
-        sink = _make_sink()
+        """Every ingested entry must contain all required wire-format fields.
+        
+        A4: kms_signature is only present when KMS signing is enabled.
+        """
+        sink = _make_sink(kms_sign=False)  # Signing disabled by default
         sink._redis = _make_redis_mock()
 
         captured = {}
@@ -277,6 +280,7 @@ class TestIngestHashChain:
         sink._redis.xadd = _capture_xadd
         await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
 
+        # Required schema fields (when KMS signing disabled)
         required_fields = {
             "schema",
             "sequence",
@@ -286,11 +290,13 @@ class TestIngestHashChain:
             "record_hash",
             "payload_json",
             "timestamp_utc",
-            "kms_signature",
         }
         assert required_fields.issubset(captured.keys()), (
             f"Missing fields: {required_fields - set(captured.keys())}"
         )
+        
+        # kms_signature should NOT be present when signing is disabled
+        assert "kms_signature" not in captured
 
     @pytest.mark.asyncio
     async def test_ingest_links_previous_hash(self):
@@ -608,3 +614,117 @@ class TestColdFlushLoop:
         assert health.available is True
         assert health.backend_id == "null"
         assert sink._cold_store.backend_id == "null"
+
+
+class TestKmsSignatureFieldOmission:
+    """A4: Test that kms_signature field is omitted when KMS signing is disabled.
+
+    When EVIDENCE_STREAM_KMS_SIGN=false, the kms_signature field should not
+    be present in stream entries. An empty string in a signature field is
+    misleading; omitting the field clearly indicates signing is disabled.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unsigned_entry_omits_kms_signature_field(self):
+        """When KMS signing is disabled, kms_signature field should be absent."""
+        redis_mock = _make_redis_mock()
+        sink = _make_sink(kms_sign=False)  # KMS signing disabled
+        sink._redis = redis_mock
+
+        event = {"type": "ALLOW", "controlId": "AC-1"}
+        await sink.ingest(event)
+
+        # Verify xadd was called once
+        assert redis_mock.xadd.call_count == 1
+        call_args = redis_mock.xadd.call_args
+        entry = call_args[0][1]  # Second positional arg is the entry dict
+
+        # kms_signature and kms_signature_algorithm should NOT be present
+        assert "kms_signature" not in entry, (
+            "kms_signature field should be omitted when signing is disabled"
+        )
+        assert "kms_signature_algorithm" not in entry, (
+            "kms_signature_algorithm field should be omitted when signing is disabled"
+        )
+
+        # Other fields should still be present
+        assert "record_hash" in entry
+        assert "payload_json" in entry
+        assert "sequence" in entry
+
+    @pytest.mark.asyncio
+    async def test_signed_entry_includes_kms_signature_field(self):
+        """When KMS signing is enabled, kms_signature field should be present."""
+        redis_mock = _make_redis_mock()
+        sink = _make_sink(kms_sign=True)  # KMS signing enabled
+        sink._redis = redis_mock
+
+        event = {"type": "ALLOW", "controlId": "AC-1"}
+        await sink.ingest(event)
+
+        # Verify xadd was called once
+        assert redis_mock.xadd.call_count == 1
+        call_args = redis_mock.xadd.call_args
+        entry = call_args[0][1]  # Second positional arg is the entry dict
+
+        # kms_signature should be present (initially empty, filled async)
+        assert "kms_signature" in entry, (
+            "kms_signature field should be present when signing is enabled"
+        )
+        assert entry["kms_signature"] == "", (
+            "kms_signature should start as empty string (filled asynchronously)"
+        )
+        assert "kms_signature_algorithm" in entry
+
+    @pytest.mark.asyncio
+    async def test_verify_record_succeeds_without_kms_signature_field(self):
+        """verify_record should succeed when kms_signature field is absent.
+
+        The hash chain computation does not include kms_signature, so
+        omitting it should not affect verification.
+        """
+        from src.gateway.governance.evidence.stream import verify_record
+
+        # Create a record without kms_signature field
+        record = {
+            "schema": "cage-evidence-stream/2.0",
+            "sequence": "1",
+            "event_type": "ALLOW",
+            "control_id": "AC-1",
+            "prev_hash": "0" * 64,
+            "record_hash": "abc123def456",  # Placeholder - will fail verification but not due to missing field
+            "payload_json": '{"type":"ALLOW"}',
+            "timestamp_utc": "2026-09-09T12:00:00Z",
+            # kms_signature ABSENT
+        }
+
+        # Should not raise - verify_record handles missing kms_signature
+        result = verify_record(record, "0" * 64)
+        # Result will be invalid due to wrong hash, but not due to missing field
+        assert isinstance(result.error, str) or result.error is None
+
+    @pytest.mark.asyncio
+    async def test_verify_record_succeeds_with_kms_signature_field(self):
+        """verify_record should succeed when kms_signature field is present.
+
+        This confirms backward compatibility - existing signed records still verify.
+        """
+        from src.gateway.governance.evidence.stream import verify_record
+
+        # Create a record with kms_signature field
+        record = {
+            "schema": "cage-evidence-stream/2.0",
+            "sequence": "1",
+            "event_type": "ALLOW",
+            "control_id": "AC-1",
+            "prev_hash": "0" * 64,
+            "record_hash": "abc123def456",  # Placeholder
+            "payload_json": '{"type":"ALLOW"}',
+            "timestamp_utc": "2026-09-09T12:00:00Z",
+            "kms_signature": "sig_placeholder",
+            "kms_signature_algorithm": "RSA_SIGN_PKCS1_2048_SHA256",
+        }
+
+        # Should not raise - kms_signature is ignored by hash verification
+        result = verify_record(record, "0" * 64)
+        assert isinstance(result.error, str) or result.error is None

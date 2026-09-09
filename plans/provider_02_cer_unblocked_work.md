@@ -154,7 +154,99 @@ the sensitive payload, then selectively open individual fields if authorized.
 a row. Note the commitment digests are **not** content addresses of the plaintext;
 they are keyed HMACs. `ContentAddress` must not imply they are dereferenceable.
 
-### 2.5 Bundle shape mismatch — flagged, deliberately not solved here
+### 2.5 Bundle shape mismatch and adapter domain leakage
+
+**Two problems, one root.**
+
+#### The adapter encodes Layer 4 demo vocabulary
+
+[`adapter.py`](../src/integrations/provider_02/adapter.py:98) hardcodes the finance
+demo's graph:
+
+- `_ATTESTATION_NODES` — a frozenset literally naming `nemo_guardrail`,
+  `evaluator`, `safety_check`, `governed_trader`, `explainer`, `nemo_output_rail`
+- `_GRAPH_PARENTS` — a hand-written topology map of the demo's edges
+- [`_classify_terminal_path()`](../src/integrations/provider_02/adapter.py:319) —
+  branches on `"governed_trader" in node_names`
+
+CAGE ships **zero built-in applications**. The Governed Financial Advisor is a
+Layer 4 demo proving the substrate works; it does not define the substrate. A
+Layer 3 integration hardcoding Layer 4 node names means **the adapter functions for
+exactly one application** — any other adopter gets an empty bundle, silently,
+because their node names never match the frozenset.
+
+Gate G3 does not catch this: it scans `src/gateway/` for illegal imports, and this
+is Layer 3 holding Layer 4 *string literals*, not imports. A real coupling the
+boundary checker cannot see.
+
+The fix is injection — the callback takes a topology and a node-significance
+predicate at construction:
+
+```python
+Provider02AttestationCallback(
+    topology=GraphTopology(parents={...}),
+    is_significant=lambda node: ...,
+    classify_terminal=...,
+)
+```
+
+The demo then supplies its own graph from Layer 4, where that vocabulary belongs.
+
+#### The bundle shape mismatch
+
+The vendor's bundle is `cer.ai.execution.v1`: a **single** model execution with
+`inputHash`/`outputHash`/`parameters`/`prompt`. CAGE's
+[`AttestationBundle`](../src/integrations/provider_02/adapter.py:161) is a
+**multi-step DAG** with `parentStepIds`, terminal-path classification and per-node
+`stateHash` values.
+
+Two properties hold for *any* adopter, not just the finance demo:
+
+1. **Governance events may involve no model call.** A fail-closed barrier block is
+   among the most evidentially significant outcomes and has no
+   `inputHash`/`outputHash`.
+2. **Causal structure is the evidence.** Which checks ran, in what order, and which
+   path was taken is what a regulator asks about. Flattening the DAG discards it.
+
+#### Sequencing
+
+Both are **out of scope for this plan** — resolution and verification (read path)
+are independent of bundle registration (write path), so every phase below proceeds
+regardless.
+
+They are also coupled to each other: there is no point generalizing the bundle
+assembler before the vendor discussion settles what shape it assembles into (see
+§5 of the meeting brief). Do the de-hardcoding and the bundle-shape work together,
+in a follow-on plan.
+
+#### Recommended target shape (from the §5 analysis)
+
+**(a) + hash chaining now; converge on (c) bundle-of-bundles later.**
+
+Plain per-boundary receipts (option (a)) have a disqualifying flaw: the causal DAG
+becomes CAGE's *unsigned assertion*. Each receipt is individually signed, but the
+edges between them are not, so an auditor gets N trustworthy facts and one
+untrustworthy story connecting them. Worse, **omission is undetectable** — a
+deployment can simply not emit an inconvenient boundary and nothing in the
+remaining set reveals the gap.
+
+A workflow bundle type (option (b)) fixes that by putting the DAG inside the
+signature, but it blocks CAGE on vendor schema work, produces unbounded payloads,
+and fits long-running or HITL-interrupted agents poorly — a bundle implies a
+completion point that some adopters never reach.
+
+The resolution: have each child receipt commit to its predecessors'
+certificate hashes. CAGE already owns the primitive —
+[`ProvenanceRecord.parent_hash`](../src/gateway/governance/provenance_chain.py:94)
+with [`verify_chain_integrity()`](../src/gateway/governance/provenance_chain.py:220),
+RFC 8785 canonicalized, the same JCS the vendor uses. Carrying
+`parentCertificateHashes[]` in the child snapshot makes edges signed and omission
+detectable **with no vendor schema change**, since it is opaque snapshot data.
+
+This is also a strict subset of option (c): chained children are exactly the
+children a parent bundle would later seal. Nothing is discarded if (c) lands.
+Failure mode is the right one too — a crashed run leaves valid attested children
+rather than (b)'s nothing at all.
 
 The vendor's bundle is `cer.ai.execution.v1`: a **single** model execution with
 `inputHash`/`outputHash`/`parameters`/`prompt`. CAGE's
@@ -227,7 +319,16 @@ rather than a CI-enforced one — hold it anyway.
 
 ---
 
-## 4. Phase 0 — Fail-closed correction (do this first)
+## 4. Phase 0 — Fail-closed correction ✅ COMPLETE
+
+> **Landed 2026-09-09** on `fix/provider-02-verify-failclosed`.
+> Commit: `fix(security): fail closed when CER signature is unverified`.
+> The invariant is enforced in `CERVerification.__post_init__`, so
+> `valid=True, signature_checked=False` now raises `ValueError` — the fail-open
+> is unrepresentable rather than merely absent. `_verify_remote()` also fails
+> closed, since a remote endpoint asserting `valid=True` is not CAGE having
+> checked a signature. Phase 2b is the only path that may set
+> `signature_checked=True`.
 
 **Branch:** `fix/provider-02-verify-failclosed`
 
@@ -563,6 +664,26 @@ that only ever sees valid inputs is not known to reject invalid ones.
 
 ## 8. Phase 3 — `external_attestations[]` seam
 
+> **⚠️ MERGED — do not execute independently.** This phase and
+> **Phase 4 of [`layer_inversion_remediation_plan.md`](layer_inversion_remediation_plan.md)**
+> rewrite the same class. Executing both produces a merge conflict.
+>
+> **Resolution** (see [`consolidated_implementation_plan_2026-09-09.md`](consolidated_implementation_plan_2026-09-09.md) §3):
+> do it **once, at Layer-Inversion Phase 4 timing (now), emitting `UNVERIFIED`**
+> rather than waiting for Phase 2b.
+>
+> Two reasons this reverses the sequencing below. First, the contract is broken
+> *today* — `get_normative_provider()` returns `provider_02` as a
+> `NormativeProvider` behind a `type: ignore`, so any caller treating it as one
+> raises `AttributeError`. That is a live defect and should not wait on Ed25519
+> work. Second, `UNVERIFIED` is *honest* after Phase 0: `_inspect_local()`
+> genuinely performs no signature check.
+>
+> The concern below — that permanently-`UNVERIFIED` entries train people to ignore
+> the distinction — is addressed by an **assertion instead of a sequencing
+> constraint**: add a test that fails when Phase 2b lands if the status does not
+> become `VERIFIED`. The transition then becomes a visible, enforced event.
+
 **Branch:** `feat/provider-02-attestation-seam`
 
 The highest-value gap. CER receipts exist but never reach a governance envelope,
@@ -841,8 +962,10 @@ rather than asked:
 
 Three items are **new** and worth the reclaimed time:
 
-1. **Bundle shape mismatch (§2.5)** — `cer.ai.execution.v1` is single-execution;
-   CAGE's `AttestationBundle` is a multi-step DAG. Is there a
+1. **Bundle shape mismatch and adapter domain leakage (§2.5)** — the adapter
+   hardcodes Layer 4 demo node names, so it works for one application only; and
+   `cer.ai.execution.v1` is single-execution while CAGE attests a multi-step DAG
+   of arbitrary adopter topology. Is there a
    `cer.ai.workflow.*` bundle type, or should CAGE emit one CER per governance
    node and link them via the transparency log?
 2. **Confidential-field commitments (§2.4)** — how is the HMAC key managed, and
