@@ -144,7 +144,7 @@ class TestDualControlStateMachine:
         # Test mapping for all defer reasons
         assert get_required_quorum(DeferReason.FTRA_IRREVERSIBLE_TERMINAL) == 3
         assert get_required_quorum(DeferReason.EXTERNAL_VALIDATION) == 3
-        assert get_required_quorum(DeferReason.FLOWSIGNAL_ESCALATION) == 3
+        assert get_required_quorum(DeferReason.EXTERNAL_HOLD) == 3
         assert get_required_quorum(DeferReason.CONFIDENCE_BELOW_THRESHOLD) == 2
         assert get_required_quorum(DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE) == 2
         assert get_required_quorum(DeferReason.INSUFFICIENT_CONTEXT) == 2

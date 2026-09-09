@@ -148,7 +148,7 @@ class TestFlowSignalDecisionMapping:
     integration plan, ensuring:
       - ALLOW → admitted=True, no blocking findings
       - REFUSE → admitted=False, FLOWSIGNAL_REFUSE finding
-      - ESCALATE → admitted=False, FLOWSIGNAL_HOLD finding with needs_human_review
+      - ESCALATE → admitted=False, EXTERNAL_HOLD finding with needs_human_review
       - Malformed decision → fail-closed with PARSE_ERROR
       - Missing decision → backward-compat with admitted/findings shape
     """
@@ -234,7 +234,7 @@ class TestFlowSignalDecisionMapping:
 
     @pytest.mark.asyncio
     async def test_flowsignal_decision_escalate(self, provider) -> None:
-        """ESCALATE decision → admitted=False, FLOWSIGNAL_HOLD finding with needs_human_review=True."""
+        """ESCALATE decision → admitted=False, EXTERNAL_HOLD finding with needs_human_review=True."""
         with respx.mock:
             respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
                 return_value=httpx.Response(
@@ -251,7 +251,7 @@ class TestFlowSignalDecisionMapping:
             assert isinstance(result, ValidationResult)
             assert result.admitted is False
             assert len(result.findings) == 1
-            assert result.findings[0]["code"] == "FLOWSIGNAL_HOLD"
+            assert result.findings[0]["code"] == "EXTERNAL_HOLD"
             assert result.findings[0]["severity"] == "review"
             assert result.findings[0]["needs_human_review"] is True
 

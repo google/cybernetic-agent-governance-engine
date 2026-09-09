@@ -1078,9 +1078,8 @@ class TestGovernanceAppRoutes:
 class TestFlowSignalHttp202Receipt:
     """Tests for HTTP 202 Accepted receipt on FlowSignal ESCALATE decisions.
 
-    Phase 1, §3.2 of the FlowSignal integration plan requires that
-    FLOWSIGNAL_ESCALATION verdicts return HTTP 202 with an async receipt body
-    containing defer_id, status, and poll_url.
+    External provider escalation decisions (EXTERNAL_HOLD) return HTTP 202 with
+    an async receipt body containing defer_id, status, and poll_url.
     """
 
     @pytest.fixture()
@@ -1109,7 +1108,7 @@ class TestFlowSignalHttp202Receipt:
         """FlowSignal ESCALATE decision returns HTTP 202 Accepted (not 200)."""
         flowsignal_result = {
             "verdict": "DEFER",
-            "defer_reason": "FLOWSIGNAL_ESCALATION",
+            "defer_reason": "EXTERNAL_HOLD",
             "defer_id": "fs-defer-001",
             "violations": ["FlowSignal: requires human approval"],
             "seal": "",
@@ -1134,7 +1133,7 @@ class TestFlowSignalHttp202Receipt:
         """HTTP 202 body contains defer_id, status: pending_review, poll_url."""
         flowsignal_result = {
             "verdict": "DEFER",
-            "defer_reason": "FLOWSIGNAL_ESCALATION",
+            "defer_reason": "EXTERNAL_HOLD",
             "defer_id": "fs-defer-002",
             "violations": ["FlowSignal: requires human approval"],
             "seal": "",
@@ -1156,7 +1155,7 @@ class TestFlowSignalHttp202Receipt:
         assert data["status"] == "pending_review"
         assert data["poll_url"] == "/v1/defer/fs-defer-002"
         assert data["verdict"] == "DEFER"
-        assert data["defer_reason"] == "FLOWSIGNAL_ESCALATION"
+        assert data["defer_reason"] == "EXTERNAL_HOLD"
         assert data["ttl_seconds"] == 300
 
     def test_flowsignal_escalation_via_is_flowsignal_hold_marker(

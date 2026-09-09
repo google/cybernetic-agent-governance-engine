@@ -695,7 +695,7 @@ class TestConsequenceTokenMinting:
         # Assertions: no token minted
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "FLOWSIGNAL_HOLD"
+        assert result.findings[0]["code"] == "EXTERNAL_HOLD"
         assert "token" not in result.findings[0]
         mock_signer.sign_raw.assert_not_called()
 

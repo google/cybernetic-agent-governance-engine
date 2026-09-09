@@ -83,7 +83,7 @@ _FLOWSIGNAL_ESCALATE = "ESCALATE"
 
 # Finding codes for FlowSignal decision mapping
 FINDING_CODE_FLOWSIGNAL_REFUSE = "FLOWSIGNAL_REFUSE"
-FINDING_CODE_FLOWSIGNAL_HOLD = "FLOWSIGNAL_HOLD"
+FINDING_CODE_EXTERNAL_HOLD = "EXTERNAL_HOLD"
 FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
 FINDING_CODE_CONSEQUENCE_TOKEN = "CONSEQUENCE_TOKEN"
 FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED = "CONSEQUENCE_TOKEN_MINT_FAILED"
@@ -194,7 +194,7 @@ def _map_flowsignal_decision(
     Mapping logic:
       - ALLOW    → admitted=True, findings=[CONSEQUENCE_TOKEN] (ConsequenceToken JWS)
       - REFUSE   → admitted=False, findings with code=FLOWSIGNAL_REFUSE
-      - ESCALATE → admitted=False, findings with code=FLOWSIGNAL_HOLD,
+      - ESCALATE → admitted=False, findings with code=EXTERNAL_HOLD,
                    needs_human_review=True for DeferQueue parking
 
     Args:
@@ -233,10 +233,11 @@ def _map_flowsignal_decision(
         message = data.get("message", "FlowSignal escalated — requires human approval")
         return False, [
             {
-                "code": FINDING_CODE_FLOWSIGNAL_HOLD,
+                "code": FINDING_CODE_EXTERNAL_HOLD,
                 "severity": "review",
                 "message": message,
                 "needs_human_review": True,  # CAGE-specific extension for DeferQueue
+                "hold_ttl_seconds": 300,  # 5-minute hold for FlowSignal escalations
             }
         ]
 

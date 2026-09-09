@@ -73,9 +73,7 @@ logger = logging.getLogger(__name__)
 _KEY_PREFIX = "DEFER:"
 _EXPIRY_ZSET = "DEFER:expiry_index"
 _DEFAULT_TTL = 3600 * 4  # 4-hour park window before stale escalation
-_FLOWSIGNAL_ESCALATION_TTL = (
-    300  # 5-minute TTL for FlowSignal escalations (Phase 1, §3.2)
-)
+_DEFAULT_HOLD_TTL = 300  # 5-minute default TTL for external hold escalations
 
 # ---------------------------------------------------------------------------
 # DeferReason — why the execution graph was halted
@@ -109,11 +107,10 @@ class DeferReason(str, Enum):
     (0.70).  The plan is parked pending synchronous human-in-the-loop clearance.
     Control ID: CTRL_FTRA_001."""
 
-    FLOWSIGNAL_ESCALATION = "FLOWSIGNAL_ESCALATION"
-    """FlowSignal provider returned ESCALATE decision (FLOWSIGNAL_HOLD finding).
-    Transaction requires human-in-the-loop approval. Uses shorter 300s TTL
-    per Phase 1, §3.2 FlowSignal integration plan. On expiry, routes to
-    governance-hitl-dlq topic for operator review."""
+    EXTERNAL_HOLD = "EXTERNAL_HOLD"
+    """External normative provider returned an escalation decision requiring
+    human-in-the-loop approval. Transaction is parked with provider-specified TTL
+    (default: 300s). On expiry, routes to governance-hitl-dlq topic for operator review."""
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +259,7 @@ class ApprovalStatus(str, Enum):
 _DEFER_REASON_QUORUM: dict[DeferReason, int] = {
     DeferReason.FTRA_IRREVERSIBLE_TERMINAL: 3,
     DeferReason.EXTERNAL_VALIDATION: 3,
-    DeferReason.FLOWSIGNAL_ESCALATION: 3,
+    DeferReason.EXTERNAL_HOLD: 3,
     DeferReason.CONFIDENCE_BELOW_THRESHOLD: 2,
     DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE: 2,
     DeferReason.INSUFFICIENT_CONTEXT: 2,
@@ -629,7 +626,7 @@ class DeferQueue:
 
         Called periodically by the SLA monitor background task.
 
-        For tokens with ``DeferReason.FLOWSIGNAL_ESCALATION``, the optional
+        For tokens with ``DeferReason.EXTERNAL_HOLD``, the optional
         ``dlq_publisher`` callback (set via constructor) is invoked to route
         the expired token to the ``governance-hitl-dlq`` Pub/Sub topic. Errors
         in the publisher callback are caught and logged but do not crash the
@@ -657,17 +654,17 @@ class DeferQueue:
                     resolved.defer_reason.value,
                 )
 
-                # Route FLOWSIGNAL_ESCALATION tokens to DLQ if publisher is configured
+                # Route EXTERNAL_HOLD tokens to DLQ if publisher is configured
                 if (
                     token_before is not None
-                    and token_before.defer_reason == DeferReason.FLOWSIGNAL_ESCALATION
+                    and token_before.defer_reason == DeferReason.EXTERNAL_HOLD
                     and self._dlq_publisher is not None
                 ):
                     try:
                         await self._dlq_publisher(resolved)
                         dlq_count += 1
                         logger.info(
-                            "[defer_queue] FLOWSIGNAL_ESCALATION token routed to DLQ: "
+                            "[defer_queue] EXTERNAL_HOLD token routed to DLQ: "
                             "defer_id=%s thread_id=%s",
                             defer_id,
                             resolved.thread_id,
@@ -707,23 +704,24 @@ DEFER_CONFIDENCE_THRESHOLD: float = 0.70
 # ---------------------------------------------------------------------------
 
 
-def create_flowsignal_escalation_token(
+def create_external_hold_token(
     thread_id: str,
     confidence_score: float,
     opa_input_snapshot: dict[str, Any],
     finding_message: str | None = None,
+    ttl_seconds: int | None = None,
 ) -> DeferToken:
-    """Create a DeferToken for FlowSignal ESCALATE decisions.
+    """Create a DeferToken for external provider escalation decisions.
 
-    This factory ensures the correct ``DeferReason.FLOWSIGNAL_ESCALATION`` reason
-    and the shorter 300-second TTL are applied, per Phase 1 §3.2 of the
-    FlowSignal integration plan.
+    This factory ensures the correct ``DeferReason.EXTERNAL_HOLD`` reason
+    and applies the provider-specified TTL (or the 300-second default).
 
     Args:
         thread_id:           LangGraph thread ID for checkpoint correlation.
         confidence_score:    Model/consensus confidence at decision time.
         opa_input_snapshot:  Sanitized OPA input dict (PII stripped).
-        finding_message:     Optional message from the FLOWSIGNAL_HOLD finding.
+        finding_message:     Optional message from the EXTERNAL_HOLD finding.
+        ttl_seconds:         Optional provider-specified TTL (default: 300s).
 
     Returns:
         A fully constructed DeferToken ready for ``DeferQueue.park()``.
@@ -731,48 +729,49 @@ def create_flowsignal_escalation_token(
     Example::
 
         from src.gateway.governance.defer_queue import (
-            create_flowsignal_escalation_token, DeferQueue
+            create_external_hold_token, DeferQueue
         )
 
-        token = create_flowsignal_escalation_token(
+        token = create_external_hold_token(
             thread_id="thread-123",
             confidence_score=0.82,
             opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
+            ttl_seconds=600,
         )
         await queue.park(token)
     """
     return DeferToken(
         thread_id=thread_id,
-        defer_reason=DeferReason.FLOWSIGNAL_ESCALATION,
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=confidence_score,
         opa_input_snapshot={
             **opa_input_snapshot,
             # Embed the finding message for audit purposes (non-sensitive)
-            "_flowsignal_finding_message": finding_message or "",
+            "_external_hold_finding_message": finding_message or "",
         },
-        ttl_seconds=_FLOWSIGNAL_ESCALATION_TTL,  # 300s, not 4h
-        aarm_vector="AARM-V8",  # FlowSignal External Hold
+        ttl_seconds=ttl_seconds if ttl_seconds is not None else _DEFAULT_HOLD_TTL,
+        aarm_vector="AARM-V8",  # CSA AARM External Hold (tri-state provider escalation)
     )
 
 
-def is_flowsignal_hold_finding(finding: dict[str, Any]) -> bool:
-    """Check if a validation finding is a FlowSignal HOLD (ESCALATE) finding.
+def is_external_hold_finding(finding: dict[str, Any]) -> bool:
+    """Check if a validation finding is an external provider HOLD finding.
 
-    A finding is a FlowSignal HOLD if it has:
-      - ``code`` == "FLOWSIGNAL_HOLD"
+    A finding is an external hold if it has:
+      - ``code`` == "EXTERNAL_HOLD"
       - ``needs_human_review`` == True
 
     This helper is used by ``enforce_fria_boundary()`` to detect when to use
-    the FlowSignal-specific TTL and DeferReason.
+    the external hold escalation path.
 
     Args:
         finding: A single finding dict from ``ValidationResult.findings``.
 
     Returns:
-        True if the finding is a FLOWSIGNAL_HOLD, False otherwise.
+        True if the finding is an EXTERNAL_HOLD, False otherwise.
     """
     return (
-        finding.get("code") == "FLOWSIGNAL_HOLD"
+        finding.get("code") == "EXTERNAL_HOLD"
         and finding.get("needs_human_review", False) is True
     )
 

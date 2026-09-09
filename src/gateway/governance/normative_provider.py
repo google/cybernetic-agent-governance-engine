@@ -435,66 +435,48 @@ async def enforce_fria_boundary(
                     validation=result,
                 )
             else:
-                needs_human_review = any(
-                    f.get("needs_human_review", False) for f in result.findings
+                # Check if any finding requires human review
+                finding = next(
+                    (f for f in result.findings if f.get("needs_human_review")),
+                    None,
                 )
-                if needs_human_review:
-                    # Check if this is a FlowSignal ESCALATE decision
-                    # (FLOWSIGNAL_HOLD finding with needs_human_review=True)
+                if finding is not None:
+                    # External provider escalation — resolve the original
+                    # EXTERNAL_VALIDATION token and park a new EXTERNAL_HOLD token
                     from src.gateway.governance.defer_queue import (
-                        create_flowsignal_escalation_token,
-                        is_flowsignal_hold_finding,
+                        create_external_hold_token,
                     )
 
-                    flowsignal_finding = next(
-                        (f for f in result.findings if is_flowsignal_hold_finding(f)),
-                        None,
+                    if defer_queue is not None:
+                        await defer_queue.resolve(token.defer_id, "ESCALATED")
+
+                    # Drive TTL from finding fields; use default if not specified
+                    ttl = finding.get("hold_ttl_seconds")
+
+                    hold_token = create_external_hold_token(
+                        thread_id=thread_id or "unknown",
+                        confidence_score=consensus_score,
+                        opa_input_snapshot=action_context,
+                        finding_message=finding.get("message"),
+                        ttl_seconds=ttl,
                     )
+                    if defer_queue is not None:
+                        await defer_queue.park(hold_token)
 
-                    if flowsignal_finding is not None:
-                        # FlowSignal escalation — resolve the original
-                        # EXTERNAL_VALIDATION token and park a new
-                        # FLOWSIGNAL_ESCALATION token with 300s TTL
-                        if defer_queue is not None:
-                            await defer_queue.resolve(token.defer_id, "ESCALATED")
-
-                        flowsignal_token = create_flowsignal_escalation_token(
-                            thread_id=thread_id or "unknown",
-                            confidence_score=consensus_score,
-                            opa_input_snapshot=action_context,
-                            finding_message=flowsignal_finding.get("message"),
-                        )
-                        if defer_queue is not None:
-                            await defer_queue.park(flowsignal_token)
-
-                        logger.warning(
-                            "[FRIA] FlowSignal ESCALATE → FLOWSIGNAL_HOLD for "
-                            "defer_id=%s thread=%s (original_defer_id=%s, ttl=300s)",
-                            flowsignal_token.defer_id,
-                            thread_id,
-                            token.defer_id,
-                        )
-                        return FRIAEnforcementResult(
-                            status=ExecutionStatus.DEFER,
-                            path="SYNC_GATE_REVIEW",
-                            consensus_score=consensus_score,
-                            validation=result,
-                            defer_id=flowsignal_token.defer_id,
-                        )
-
-                    # Non-FlowSignal human review request — use original token
                     logger.warning(
-                        "[FRIA] Sync gate REVIEW requested for defer_id=%s thread=%s findings=%s",
-                        token.defer_id,
+                        "[FRIA] External provider ESCALATE → EXTERNAL_HOLD for "
+                        "defer_id=%s thread=%s (original_defer_id=%s, ttl=%ds)",
+                        hold_token.defer_id,
                         thread_id,
-                        result.findings,
+                        token.defer_id,
+                        hold_token.ttl_seconds,
                     )
                     return FRIAEnforcementResult(
                         status=ExecutionStatus.DEFER,
                         path="SYNC_GATE_REVIEW",
                         consensus_score=consensus_score,
                         validation=result,
-                        defer_id=token.defer_id,
+                        defer_id=hold_token.defer_id,
                     )
 
                 if defer_queue is not None:
