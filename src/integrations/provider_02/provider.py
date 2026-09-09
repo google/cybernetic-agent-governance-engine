@@ -53,17 +53,26 @@ Architecture precedent: follows the Provider 01 pattern in
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from src.gateway.governance.content_address import ContentAddress, ContentAddressKind
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import (
     AttestationProvider,
     AttestationStatus,
     ExternalAttestation,
 )
+from src.integrations.provider_02.resolver import Provider02CERResolver
 
 logger = logging.getLogger("cage.provider_02")
 
@@ -73,7 +82,10 @@ logger = logging.getLogger("cage.provider_02")
 
 _ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("PROVIDER_02_API_KEY_SECRET", "")
-_JWK_ENDPOINT: str = os.environ.get("PROVIDER_02_JWK_ENDPOINT", "")
+# Default to well-known path; env var overrides for non-standard deployments
+_JWK_ENDPOINT: str = os.environ.get(
+    "PROVIDER_02_JWK_ENDPOINT", "/.well-known/nexart-node.json"
+)
 _JWK_CACHE_TTL_HOURS: float = float(
     os.environ.get("PROVIDER_02_JWK_CACHE_TTL_HOURS", "24")
 )
@@ -200,6 +212,14 @@ class Provider02AttestationProvider(AttestationProvider):
         self._jwk_cache = JWKCache()
         self._sync_task: asyncio.Task | None = None
         self._running = False
+        
+        # CER resolver for fetching receipts during verification
+        # Extract base URL without the /v1 suffix if present
+        resolver_base_url = self._endpoint.rsplit("/v1", 1)[0] if self._endpoint.endswith("/v1") else self._endpoint
+        self._resolver = Provider02CERResolver(
+            base_url=resolver_base_url,
+            timeout=self._timeout,
+        )
 
         if not self._endpoint:
             logger.warning(
@@ -220,6 +240,68 @@ class Provider02AttestationProvider(AttestationProvider):
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
+
+    # ------------------------------------------------------------------
+    # Verification helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _b64url_decode_unpadded(s: str) -> bytes:
+        """Decode base64url without padding.
+
+        Ed25519 signatures are 64 bytes, encoded as 86-character base64url
+        strings with no padding. Python's base64.urlsafe_b64decode requires
+        padding, so we add it back before decoding.
+        """
+        # Add padding if needed (base64 requires length to be multiple of 4)
+        padding = (4 - len(s) % 4) % 4
+        return base64.urlsafe_b64decode(s + "=" * padding)
+
+    def _resolve_public_key(self, kid: str) -> Ed25519PublicKey | None:
+        """Resolve an Ed25519 public key from the JWK cache by kid.
+
+        This is the ONLY function that can produce an Ed25519PublicKey for
+        verification. Accepting the key as a parameter would allow the embedded
+        key from the response to reach the verifier, which would be security
+        theatre.
+
+        Args:
+            kid: Key ID to resolve
+
+        Returns:
+            Ed25519PublicKey if found in cache, None otherwise
+        """
+        if not self._jwk_cache.has_keys:
+            return None
+
+        for jwk in self._jwk_cache.jwk_set.get("keys", []):
+            if jwk.get("kid") != kid:
+                continue
+            if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
+                logger.warning(
+                    "[Provider02] Key %s is not OKP/Ed25519 (kty=%s, crv=%s)",
+                    kid,
+                    jwk.get("kty"),
+                    jwk.get("crv"),
+                )
+                continue
+
+            # Decode the public key bytes from base64url
+            x_b64url = jwk.get("x", "")
+            if not x_b64url:
+                logger.warning("[Provider02] Key %s missing 'x' parameter", kid)
+                continue
+
+            try:
+                key_bytes = self._b64url_decode_unpadded(x_b64url)
+                return Ed25519PublicKey.from_public_bytes(key_bytes)
+            except Exception as exc:
+                logger.warning(
+                    "[Provider02] Failed to load key %s: %s", kid, exc
+                )
+                return None
+
+        return None
 
     # ------------------------------------------------------------------
     # AttestationProvider Protocol
@@ -360,59 +442,205 @@ class Provider02AttestationProvider(AttestationProvider):
     # CER verification (local — uses cached JWKs)
     # ------------------------------------------------------------------
 
-    async def verify_cer(self, certificate_hash: str) -> CERVerification:
-        """Verify a CER against locally-cached Provider 02 JWKs.
+    async def verify_cer(
+        self, certificate_hash: str, cer_body: dict[str, Any] | None = None
+    ) -> CERVerification:
+        """Verify a CER with two-stage Ed25519 signature verification.
 
-        This method does NOT make a network call during verification.
-        JWKs are synced out-of-band by the background daemon.
+        Stage 1: Certificate-hash binding (SHA-256 recomputation)
+        Stage 2: Envelope signature (Ed25519 verification)
 
-        Falls back to a remote verification call if JWK cache is empty.
+        Both stages must pass before valid=True and signature_checked=True are set.
+
+        Args:
+            certificate_hash: SHA-256 hex digest of the certificate payload
+            cer_body: Optional CER body (for testing). If None, resolves via content address.
+
+        Returns:
+            CERVerification with valid=True only if both stages pass
         """
-        if self._jwk_cache.has_keys:
-            return self._inspect_local(certificate_hash)
-
-        # Fallback: remote verification
-        return await self._verify_remote(certificate_hash)
-
-    def _inspect_local(self, certificate_hash: str) -> CERVerification:
-        """Inspect a CER for well-formedness against the locally-cached JWK set.
-
-        IMPORTANT: This method does NOT perform signature verification.
-        It only validates well-formedness (hash length, JWK cache presence).
-        Real Ed25519 signature verification is deferred to Phase 2b.
-
-        Returns valid=False with signature_checked=False to indicate that
-        the CER is structurally valid but cryptographically unverified.
-        """
+        # Early validation: SHA-256 hex length
+        if len(certificate_hash) != 64:
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                error=f"Invalid certificate hash length: {len(certificate_hash)} (expected 64)",
+            )
+        
+        # Fallback to remote verification if JWK cache is empty
         if not self._jwk_cache.has_keys:
+            return await self._verify_remote(certificate_hash)
+
+        # If CER body not provided, resolve it
+        if cer_body is None:
+            try:
+                address = ContentAddress(
+                    algorithm="sha256",
+                    hex_digest=certificate_hash,
+                    kind=ContentAddressKind.DIGEST,  # type: ignore
+                )
+            except Exception as exc:
+                return CERVerification(
+                    valid=False,
+                    signature_checked=False,
+                    error=f"Invalid content address: {exc}",
+                )
+
+            resolution = await self._resolver.resolve(address)
+            if not resolution.resolved:
+                return CERVerification(
+                    valid=False,
+                    signature_checked=False,
+                    error=f"CER resolution failed: {resolution.findings}",
+                )
+
+            cer_body = resolution.evidence
+
+        return await self._verify_two_stage(certificate_hash, cer_body)
+
+    async def _verify_two_stage(
+        self, certificate_hash: str, cer_body: dict[str, Any]
+    ) -> CERVerification:
+        """Perform two-stage verification: hash binding + signature.
+
+        Stage 1: Verify SHA-256(canonical.certificate.payload) == certificate_hash
+        Stage 2: Verify Ed25519 signature over canonical.envelope.payload
+
+        Args:
+            certificate_hash: Expected SHA-256 hex digest
+            cer_body: Full CER JSON structure
+
+        Returns:
+            CERVerification with valid=True only if BOTH stages pass
+        """
+        canonical = cer_body.get("canonical", {})
+        certificate = canonical.get("certificate", {})
+        envelope = canonical.get("envelope", {})
+        verification_envelope = cer_body.get("verification", {})
+
+        # --- Stage 1: Certificate-hash binding ---
+        
+        # Check matchesCertificateHash self-attestation
+        if not certificate.get("matchesCertificateHash"):
             return CERVerification(
                 valid=False,
                 signature_checked=False,
-                error="JWK cache is empty — cannot inspect locally.",
+                error="CER self-attestation failed: matchesCertificateHash is false",
             )
 
-        if len(certificate_hash) != 64:  # SHA-256 hex length
+        # Recompute the certificate hash
+        cert_payload = certificate.get("payload", "")
+        if not cert_payload:
             return CERVerification(
                 valid=False,
                 signature_checked=False,
-                error=f"Invalid certificate hash length: {len(certificate_hash)}",
+                error="CER_DIGEST_MISMATCH: canonical.certificate.payload is missing",
             )
 
-        # Well-formedness checks passed, but signature verification is not
-        # yet implemented. Fail closed: return valid=False until Phase 2b
-        # implements real Ed25519 verification.
-        logger.debug(
-            "[Provider02] Local inspection (no signature check): hash=%s… keys=%d",
+        computed_hash = hashlib.sha256(cert_payload.encode("utf-8")).hexdigest()
+        if computed_hash != certificate_hash:
+            logger.error(
+                "[Provider02] Certificate hash mismatch: expected %s, got %s",
+                certificate_hash,
+                computed_hash,
+            )
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                error=f"CER_DIGEST_MISMATCH: expected {certificate_hash}, got {computed_hash}",
+            )
+
+        # --- Stage 2: Envelope signature verification ---
+
+        kid = envelope.get("kid", "")
+        if not kid:
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                error="CER_SIGNATURE_INVALID: envelope.kid is missing",
+            )
+
+        # Resolve the public key from the JWK cache (ONLY source of keys)
+        public_key = self._resolve_public_key(kid)
+        if public_key is None:
+            # Unknown kid: try one refresh, then fail closed
+            logger.info("[Provider02] Unknown kid %s — refreshing JWK cache", kid)
+            await self._sync_jwks()
+            public_key = self._resolve_public_key(kid)
+            if public_key is None:
+                return CERVerification(
+                    valid=False,
+                    signature_checked=False,
+                    key_id=kid,
+                    error=f"CER_UNKNOWN_KEY: kid '{kid}' not found in key manifest",
+                )
+
+        # Extract signature and payload
+        signature_b64url = verification_envelope.get("verificationEnvelopeSignature", "")
+        if not signature_b64url:
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error="CER_SIGNATURE_INVALID: verificationEnvelopeSignature is missing",
+            )
+
+        envelope_payload = envelope.get("payload", "")
+        if not envelope_payload:
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error="CER_SIGNATURE_INVALID: canonical.envelope.payload is missing",
+            )
+
+        # Decode the signature (base64url, unpadded)
+        try:
+            signature_bytes = self._b64url_decode_unpadded(signature_b64url)
+        except Exception as exc:
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error=f"CER_SIGNATURE_INVALID: failed to decode signature: {exc}",
+            )
+
+        # Verify the Ed25519 signature
+        try:
+            public_key.verify(signature_bytes, envelope_payload.encode("utf-8"))
+        except InvalidSignature:
+            logger.error(
+                "[Provider02] Ed25519 signature verification failed for kid=%s", kid
+            )
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error="CER_SIGNATURE_INVALID: Ed25519 verification failed",
+            )
+        except Exception as exc:
+            logger.error(
+                "[Provider02] Signature verification error for kid=%s: %s", kid, exc
+            )
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error=f"CER_SIGNATURE_INVALID: {exc}",
+            )
+
+        # Both stages passed — return verified
+        logger.info(
+            "[Provider02] CER verified: hash=%s… kid=%s",
             certificate_hash[:16],
-            len(self._jwk_cache.jwk_set.get("keys", [])),
+            kid,
         )
-
         return CERVerification(
-            valid=False,
-            signature_checked=False,
-            signer="",
-            key_id="",
-            error="Signature verification not yet implemented (Phase 2b pending)",
+            valid=True,
+            signature_checked=True,
+            key_id=kid,
+            signer=envelope.get("signer", ""),
+            timestamp=cer_body.get("timestamp", {}).get("attestedAt", ""),
         )
 
     async def _verify_remote(self, certificate_hash: str) -> CERVerification:
@@ -496,7 +724,15 @@ class Provider02AttestationProvider(AttestationProvider):
                 if self._jwk_cache.etag:
                     headers["If-None-Match"] = self._jwk_cache.etag
 
-                resp = await client.get(self._jwk_endpoint, headers=headers)
+                # Construct full URL: if jwk_endpoint is relative, prepend base endpoint
+                jwk_url = self._jwk_endpoint
+                if self._jwk_endpoint.startswith("/"):
+                    # Relative path - construct full URL from base endpoint
+                    # Extract base from _endpoint (without /v1 suffix if present)
+                    base = self._endpoint.rsplit("/v1", 1)[0] if self._endpoint.endswith("/v1") else self._endpoint
+                    jwk_url = f"{base}{self._jwk_endpoint}"
+
+                resp = await client.get(jwk_url, headers=headers)
 
                 if resp.status_code == 304:
                     # Not modified — cache is still valid

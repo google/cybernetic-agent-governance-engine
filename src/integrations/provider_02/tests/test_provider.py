@@ -327,31 +327,41 @@ class TestAttestationStatusTransition:
     """
 
     @pytest.mark.asyncio
-    async def test_fetch_attestations_emits_unverified_until_wave3(self):  # type: ignore[no-untyped-def]
-        """Attestations are UNVERIFIED until Ed25519 signature verification (Wave 3 / B3) lands.
+    async def test_fetch_attestations_emits_verified_after_wave3(self):  # type: ignore[no-untyped-def]
+        """Attestations transition to VERIFIED after Ed25519 signature verification (Wave 3 / B3).
 
-        **This test is a deliberate tripwire, not a bug.**
+        **This test was the C1 tripwire, now inverted to assert the VERIFIED transition.**
 
-        When Wave 3 (B3) implements Ed25519 signature verification, this test will FAIL
-        because attestations will transition from UNVERIFIED to VERIFIED.
-
-        At that point:
-        1. Update `fetch_attestations()` to map `valid=True, signature_checked=True` → VERIFIED.
-        2. Rename this test to `test_fetch_attestations_emits_verified_after_wave3`.
-        3. Invert the assertion to `assert attestations[0].status == AttestationStatus.VERIFIED.value`.
-
-        Until then, this test documents the intended future state and makes the
-        transition observable.
+        Originally designed to fail when B3 landed, this test now guards that the
+        promotion actually happened. If this test fails, B3's signature verification
+        is not properly wired into fetch_attestations().
         """
+        # Note: This test uses a mock that returns UNVERIFIED because we don't
+        # have a full signed CER fixture here. The real verification tests are in
+        # test_verification.py. This test only verifies the status mapping logic
+        # in fetch_attestations().
+        
+        # For this test to properly verify VERIFIED status, we'd need to mock
+        # verify_cer to return valid=True, signature_checked=True
+        from unittest.mock import AsyncMock
+        
         provider = Provider02AttestationProvider(
             endpoint="https://api.provider02.example.com/v1"
         )
-        provider._jwk_cache = JWKCache(
-            jwk_set={"keys": [{"kid": "key-001", "kty": "OKP", "crv": "Ed25519"}]},
-            last_synced=time.time(),
+        
+        # Mock verify_cer to return a successful verification result
+        from src.integrations.provider_02.provider import CERVerification
+        
+        provider.verify_cer = AsyncMock(  # type: ignore[method-assign]
+            return_value=CERVerification(
+                valid=True,
+                signature_checked=True,
+                key_id="test-key",
+                signer="test-signer",
+                timestamp="2026-09-09T18:00:00Z",
+            )
         )
 
-        # Valid SHA-256 hash
         valid_hash = "a" * 64
         attestations = await provider.fetch_attestations(
             {"certificate_hash": valid_hash}
@@ -360,18 +370,16 @@ class TestAttestationStatusTransition:
         assert len(attestations) == 1
         assert attestations[0].attestation_type == "CER"
 
-        # Phase 0 fail-closed: status is UNVERIFIED until signature verification is implemented
+        # Wave 3 (B3) landed: status MUST be VERIFIED when signature verification passes
         from src.gateway.governance.seams.attestation import AttestationStatus
 
-        assert attestations[0].status == AttestationStatus.UNVERIFIED.value, (
-            "Attestations must be UNVERIFIED until Wave 3 (B3) implements Ed25519 "
-            "signature verification. When B3 lands, this assertion will fail — "
-            "that is the intended tripwire behavior. Update fetch_attestations() "
-            "to emit VERIFIED when result.valid=True and result.signature_checked=True."
+        assert attestations[0].status == AttestationStatus.VERIFIED.value, (
+            "Attestations must be VERIFIED when Ed25519 signature verification passes "
+            "(valid=True, signature_checked=True). If this fails, the B3 wiring is incomplete."
         )
 
-        # Metadata should indicate signature was not checked
-        assert attestations[0].metadata["signature_checked"] is False
+        # Metadata should indicate signature was checked
+        assert attestations[0].metadata["signature_checked"] is True
 
 
 # ---------------------------------------------------------------------------
