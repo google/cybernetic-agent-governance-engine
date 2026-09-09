@@ -16,8 +16,8 @@
 provider.py — Provider 02 Attestation Provider (Feature 5)
 ==========================================================
 
-Integrates Provider 02 as an attestation provider following the existing
-``NormativeProvider`` Protocol pattern from ``normative_provider.py``.
+Integrates Provider 02 as an attestation provider following the ``AttestationProvider``
+protocol from ``src.gateway.governance.seams.attestation``.
 
 Provider 02 adds a capability: **public JWK-verifiable receipts**
 (Ed25519 signed CERs).  This module provides:
@@ -25,6 +25,8 @@ Provider 02 adds a capability: **public JWK-verifiable receipts**
   1. CER creation via ``certifyDecision`` — wraps the raw HTTP API
   2. CER verification via locally-cached Ed25519 JWKs — no hot-path network call
   3. Project Bundle registration via ``registerProjectBundle``
+  4. Attestation fetch via ``fetch_attestations`` — returns UNVERIFIED status
+     until Wave 3 (Ed25519 signature verification) lands
 
 JWK Caching Strategy
 --------------------
@@ -56,6 +58,12 @@ import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
+
+from src.gateway.governance.seams.attestation import (
+    AttestationProvider,
+    AttestationStatus,
+    ExternalAttestation,
+)
 
 logger = logging.getLogger("cage.provider_02")
 
@@ -149,25 +157,32 @@ class JWKCache:
 # ---------------------------------------------------------------------------
 
 
-class Provider02AttestationProvider:
+class Provider02AttestationProvider(AttestationProvider):
     """Provider 02 attestation provider for CER creation and verification.
 
-    Implements the attestation surface as a peer to the existing
-    ``NormativeProvider`` protocol.  Not directly implementing the 3-method
-    protocol because Provider 02's surface is richer (CERs + JWKs + bundles).
+    Implements the ``AttestationProvider`` protocol from
+    ``src.gateway.governance.seams.attestation``.
+
+    Provider 02 fetches CER attestations and returns them with
+    ``AttestationStatus.UNVERIFIED`` until Wave 3 (Ed25519 signature verification)
+    lands. At that point, the status will transition to ``AttestationStatus.VERIFIED``
+    when signature checks pass.
 
     Usage::
 
         provider = Provider02AttestationProvider()
         await provider.start()  # starts JWK sync daemon
 
-        # Create a CER
+        # Fetch attestations (AttestationProvider protocol)
+        attestations = await provider.fetch_attestations({"action": "execute_trade"})
+
+        # Create a CER (provider-specific)
         cer = await provider.certify_decision(evidence_payload)
 
         # Verify a CER (local — uses cached JWKs)
         result = await provider.verify_cer(cer.certificate_hash)
 
-        # Register a bundle
+        # Register a bundle (provider-specific)
         await provider.register_project_bundle(bundle_dict)
     """
 
@@ -205,6 +220,75 @@ class Provider02AttestationProvider:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
+
+    # ------------------------------------------------------------------
+    # AttestationProvider Protocol
+    # ------------------------------------------------------------------
+
+    @property
+    def provider_name(self) -> str:
+        """Unique provider identifier for telemetry and logging."""
+        return "provider_02"
+
+    async def fetch_attestations(
+        self, context: dict[str, Any]
+    ) -> list[ExternalAttestation]:
+        """Fetch current attestations for the given governance context.
+
+        Wraps ``verify_cer`` and returns attestations with
+        ``AttestationStatus.UNVERIFIED`` until Wave 3 (B3) implements
+        real Ed25519 signature verification.
+
+        Args:
+            context: Governance context dict. Expected keys:
+                - certificate_hash: str (required for CER verification)
+
+        Returns:
+            List of ExternalAttestation entries with UNVERIFIED status.
+        """
+        certificate_hash = context.get("certificate_hash", "")
+        if not certificate_hash:
+            logger.warning(
+                "[Provider02] fetch_attestations called without certificate_hash — "
+                "returning empty attestation list."
+            )
+            return []
+
+        # Verify the CER (currently returns valid=False, signature_checked=False)
+        result = await self.verify_cer(certificate_hash)
+
+        # Map CERVerification to ExternalAttestation
+        # Phase 0 fail-closed: status is UNVERIFIED until signature verification
+        # is implemented in Wave 3 (B3).
+        #
+        # Status mapping:
+        #   - valid=True, signature_checked=True  → VERIFIED (Wave 3 / B3)
+        #   - valid=False, signature_checked=False, error contains "Phase 2b" → UNVERIFIED
+        #   - valid=False, signature_checked=False, error is real failure → ERROR
+        status = AttestationStatus.UNVERIFIED
+        
+        if result.valid and result.signature_checked:
+            # Wave 3 (B3) path: real Ed25519 verification passed
+            status = AttestationStatus.VERIFIED
+        elif result.error and "Phase 2b" not in result.error and "not yet implemented" not in result.error:
+            # Real errors (network failures, parse errors, etc.) → ERROR
+            # But "Phase 2b pending" messages → UNVERIFIED
+            status = AttestationStatus.ERROR
+
+        attestation = ExternalAttestation(
+            attestation_type="CER",
+            status=status.value,
+            receipt_id=certificate_hash[:16],  # First 16 chars as receipt ID
+            attested_at=result.timestamp or "",
+            metadata={
+                "signer": result.signer,
+                "key_id": result.key_id,
+                "signature_checked": result.signature_checked,
+                "error": result.error,
+            },
+        )
+
+        return [attestation]
 
     # ------------------------------------------------------------------
     # Lifecycle

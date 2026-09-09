@@ -243,7 +243,9 @@ class TestCERVerification:
             assert result.signer == "provider02-node", (
                 "Remote response metadata is captured for diagnostics"
             )
-            assert "Phase 2b" in result.error or "not yet implemented" in result.error
+            assert result.error is not None and (
+                "Phase 2b" in result.error or "not yet implemented" in result.error
+            )
             mock_instance.get.assert_called_once()
 
 
@@ -255,18 +257,21 @@ class TestCERVerification:
 class TestProviderFactory:
     """Tests for normative_provider factory registration."""
 
-    def test_provider_02_resolves(self):  # type: ignore[no-untyped-def]
-        """get_normative_provider('provider_02') returns Provider02AttestationProvider."""
+    def test_provider_02_raises_with_helpful_error(self):  # type: ignore[no-untyped-def]
+        """get_normative_provider('provider_02') raises ValueError directing to AttestationAggregator."""
         from src.gateway.governance.normative_provider import get_normative_provider
 
-        provider = get_normative_provider("provider_02")
-        assert isinstance(provider, Provider02AttestationProvider)
+        with pytest.raises(
+            ValueError,
+            match="AttestationProvider.*AttestationAggregator",
+        ):
+            get_normative_provider("provider_02")
 
-    def test_invalid_provider_raises_with_provider_02_in_list(self):  # type: ignore[no-untyped-def]
-        """Invalid provider name includes 'provider_02' in the error message."""
+    def test_invalid_provider_mentions_attestation_aggregator(self):  # type: ignore[no-untyped-def]
+        """Invalid provider name mentions AttestationAggregator for provider_02."""
         from src.gateway.governance.normative_provider import get_normative_provider
 
-        with pytest.raises(ValueError, match="provider_02"):
+        with pytest.raises(ValueError, match="AttestationAggregator"):
             get_normative_provider("nonexistent")
 
 
@@ -292,7 +297,85 @@ class TestCERReceipt:
 
 
 # ---------------------------------------------------------------------------
-# Test 6: Provider lifecycle
+# Test 6: UNVERIFIED → VERIFIED transition tripwire (Wave 3 / B3 enforcement)
+# ---------------------------------------------------------------------------
+
+
+class TestAttestationStatusTransition:
+    """Tripwire test to enforce UNVERIFIED → VERIFIED transition when Wave 3 lands.
+
+    **DO NOT REMOVE OR WEAKEN THIS TEST.**
+
+    This test exists to ensure that when Wave 3 (B3 — Ed25519 signature verification)
+    is implemented, the attestation status transitions from UNVERIFIED to VERIFIED.
+    Without this test, UNVERIFIED could become permanent background noise that
+    reviewers learn to ignore.
+
+    **What makes this test fail-before and pass-after:**
+    - **Before Wave 3:** `_inspect_local()` returns `valid=False, signature_checked=False`,
+      causing `fetch_attestations()` to emit `AttestationStatus.UNVERIFIED`.
+      This test will FAIL because it asserts VERIFIED.
+    - **After Wave 3:** `_inspect_local()` performs real Ed25519 verification and returns
+      `valid=True, signature_checked=True`, causing `fetch_attestations()` to emit
+      `AttestationStatus.VERIFIED`. This test will PASS.
+
+    **When this test fails during Wave 3 integration, the fix is:**
+    1. Implement real Ed25519 signature verification in `_inspect_local()`.
+    2. Update the status mapping in `fetch_attestations()` to return VERIFIED when
+       `result.valid=True and result.signature_checked=True`.
+    3. This test will then pass, proving the transition occurred.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fetch_attestations_emits_unverified_until_wave3(self):  # type: ignore[no-untyped-def]
+        """Attestations are UNVERIFIED until Ed25519 signature verification (Wave 3 / B3) lands.
+
+        **This test is a deliberate tripwire, not a bug.**
+
+        When Wave 3 (B3) implements Ed25519 signature verification, this test will FAIL
+        because attestations will transition from UNVERIFIED to VERIFIED.
+
+        At that point:
+        1. Update `fetch_attestations()` to map `valid=True, signature_checked=True` → VERIFIED.
+        2. Rename this test to `test_fetch_attestations_emits_verified_after_wave3`.
+        3. Invert the assertion to `assert attestations[0].status == AttestationStatus.VERIFIED.value`.
+
+        Until then, this test documents the intended future state and makes the
+        transition observable.
+        """
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [{"kid": "key-001", "kty": "OKP", "crv": "Ed25519"}]},
+            last_synced=time.time(),
+        )
+
+        # Valid SHA-256 hash
+        valid_hash = "a" * 64
+        attestations = await provider.fetch_attestations(
+            {"certificate_hash": valid_hash}
+        )
+
+        assert len(attestations) == 1
+        assert attestations[0].attestation_type == "CER"
+
+        # Phase 0 fail-closed: status is UNVERIFIED until signature verification is implemented
+        from src.gateway.governance.seams.attestation import AttestationStatus
+
+        assert attestations[0].status == AttestationStatus.UNVERIFIED.value, (
+            "Attestations must be UNVERIFIED until Wave 3 (B3) implements Ed25519 "
+            "signature verification. When B3 lands, this assertion will fail — "
+            "that is the intended tripwire behavior. Update fetch_attestations() "
+            "to emit VERIFIED when result.valid=True and result.signature_checked=True."
+        )
+
+        # Metadata should indicate signature was not checked
+        assert attestations[0].metadata["signature_checked"] is False
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Provider lifecycle
 # ---------------------------------------------------------------------------
 
 

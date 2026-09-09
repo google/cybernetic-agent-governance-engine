@@ -788,7 +788,6 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
         - "flowsignal"   — FlowSignal legal baseline & FRIA API (alias: "provider_01")
-        - "provider_02"  — Provider 02 attestation API (AttestationProvider fallback)
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
 
@@ -809,13 +808,20 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         "flowsignal": "provider_01",
         "flow_signal": "provider_01",
         "p01": "provider_01",
-        "p02": "provider_02",
         "p03": "provider_03",
         "p06": "provider_06",
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",
     }
     provider_name = alias_map.get(provider_name, provider_name)
+
+    # Provider 02 implements AttestationProvider, not NormativeProvider
+    if provider_name == "provider_02":
+        raise ValueError(
+            "Provider 02 implements the AttestationProvider protocol, not NormativeProvider. "
+            "Use AttestationAggregator.register(Provider02AttestationProvider()) instead. "
+            "See src/gateway/governance/attestation_aggregator.py for usage."
+        )
 
     # Kernel-resident providers
     if provider_name in _PROVIDERS:
@@ -826,11 +832,6 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         from src.integrations.provider_01 import FlowSignalNormativeProvider
 
         return FlowSignalNormativeProvider()
-
-    if provider_name == "provider_02":
-        from src.integrations.provider_02 import Provider02AttestationProvider
-
-        return Provider02AttestationProvider()  # type: ignore[return-value]
 
     if provider_name == "provider_03":
         from src.integrations.provider_03 import Provider03NormativeProvider
@@ -845,10 +846,10 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     valid = [
         *_PROVIDERS.keys(),
         "provider_01",
-        "provider_02",
         "provider_03",
         "provider_06",
     ]
     raise ValueError(
-        f"Unknown normative provider: {provider_name!r}. Available providers: {valid}."
+        f"Unknown normative provider: {provider_name!r}. Available providers: {valid}. "
+        f"Note: provider_02 implements AttestationProvider — use AttestationAggregator instead."
     )

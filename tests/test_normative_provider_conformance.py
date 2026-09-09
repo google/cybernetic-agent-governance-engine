@@ -100,9 +100,8 @@ async def test_normative_provider_interface(provider_name: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_attestation_providers_exist() -> None:
-    """Verify that attestation providers are loadable (providers 02, 04, 05)."""
-    # Just import and instantiate to prove they exist and satisfy basic structural checks
+async def test_attestation_providers_satisfy_protocol() -> None:
+    """Verify that attestation providers satisfy the AttestationProvider protocol."""
     from src.integrations.provider_02 import Provider02AttestationProvider
     from src.integrations.provider_05.blueprint_provider import (
         Provider05BlueprintProvider,
@@ -111,8 +110,30 @@ async def test_attestation_providers_exist() -> None:
     p02 = Provider02AttestationProvider()
     p05 = Provider05BlueprintProvider()
 
-    assert hasattr(p02, "certify_decision")
+    # Verify AttestationProvider protocol compliance
+    assert isinstance(p02, AttestationProvider)
+    assert isinstance(p05, AttestationProvider)
+    
+    # Verify protocol methods exist
+    assert hasattr(p02, "fetch_attestations")
+    assert hasattr(p02, "provider_name")
     assert hasattr(p05, "fetch_attestations")
+    assert hasattr(p05, "provider_name")
+    
+    # Verify provider_name returns a string
+    assert isinstance(p02.provider_name, str)
+    assert p02.provider_name == "provider_02"
+    assert isinstance(p05.provider_name, str)
+
+
+@pytest.mark.asyncio
+async def test_provider_02_rejected_from_normative_factory() -> None:
+    """Verify that requesting provider_02 from get_normative_provider raises helpful error."""
+    with pytest.raises(
+        ValueError,
+        match=r"AttestationProvider.*AttestationAggregator",
+    ):
+        get_normative_provider("provider_02")
 
 
 # ---------------------------------------------------------------------------

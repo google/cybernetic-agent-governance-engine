@@ -62,7 +62,7 @@ FORBIDDEN_VENDOR_SDKS = ("google.cloud", "boto3", "botocore", "azure", "langfuse
 # Adding an entry requires deliberate architectural review — keep this small.
 INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
     [
-        "src/gateway/governance/normative_provider.py",  # lazy-loads provider_01/02/03/06
+        "src/gateway/governance/normative_provider.py",  # lazy-loads provider_01/03/06
         "src/gateway/governance/evidence/factory.py",  # lazy-loads storage_gcs/storage_s3
     ]
 )
