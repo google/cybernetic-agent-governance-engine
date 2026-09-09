@@ -469,6 +469,9 @@ All external vendor adapters and integrations (`src/integrations/provider_*`) **
 - **Fail-Closed Semantics**: Network timeouts, HTTP status errors, and parse failures must fail-closed (`admitted=False`) and populate structured findings with `code="ENDPOINT_ERROR"` or `code="cage.endpoint_error"`.
 - **Sidecar & UDS Architecture**: In production deployments, external vendor SDKs (e.g. Node.js engines) run as sidecar containers communicating via Unix Domain Sockets (UDS) to meet sub-millisecond hot-path latency requirements.
 - **Hermetic Testing & Schema Validation**: Vendor mocks must validate payloads against vendored JSON schemas and provide 100% hermetic unit tests with mock clients (e.g. `respx`). Live API calls must never run in PR CI.
+- **Trust Anchors — Never Verify Against an Embedded Key**: A signature must never be verified against a public key supplied by the document being verified. A forged receipt controls its entire body, including any embedded key, so verifying against it proves nothing. Resolve keys by `kid` from an independently-fetched key manifest, cached out-of-band. **Enforce this in the type system, not in review comments**: the verification function accepts a resolved key object, and only the cache lookup may produce one. An embedded key may be compared for diagnostics and logged on mismatch, but must never reach the verifier. On unknown `kid`, refresh the manifest **once**, then fail closed — never fall back to the embedded key, never downgrade to a warning.
+- **Resolution Status Is Not Verification Status**: A successful fetch proves a receipt exists and is well-formed; it does not prove the signature. Adapters return `UNVERIFIED` on successful resolution and promote to `VERIFIED` only after cryptographic verification succeeds. Where verification is unimplemented, return `UNVERIFIED` — never `VERIFIED` with a comment promising a later fix.
+- **Refusals Are Primary Evidence**: A governance engine's refusals are the proof it intervened. If only `ALLOW` decisions reliably enter the tamper-evident chain, the audit record systematically over-represents permitted actions and an auditor must take the operator's unsigned word on every block. DENY and PAUSE receipts must enter the evidence chain with the same completeness as approvals — the full proof object, not a lossy summary — serialized from one path rather than rebuilt at each call site. **Ordering constraint**: wire evidence *citations* only after the chain they cite is complete. Emitting `link[rel="evidence"]` into a chain missing every DENY produces references to an incomplete record, which is worse than emitting none because it looks complete.
 
 ### Partner Adapter Branding & Trademark Policy ("Generic in Code, Specific in Prose")
 
@@ -556,6 +559,27 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:
 make test-fast
 ```
 Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to ensure proper test file and fixture isolation across workers.
+
+### Verification Rules (fail-closed)
+
+**Full-gate before green.** A change is not complete until the whole `make test-fast`
+suite passes — not merely the tests in the touched package. Running only the
+package you edited is how contract drift reaches a branch head: a required-field
+addition or a changed constructor signature breaks construction sites in
+*other* packages, and no scope-local run will show it.
+
+**Attribute failures to the merge base.** Before characterising a failure as
+pre-existing, run the affected files on the merge base and quote the result.
+"Pre-existing on my branch" and "pre-existing on `main`" are different claims,
+and only the second one excuses the failure.
+
+**Grep after renaming.** After renaming any symbol that crosses a module
+boundary, run `rg -n '<old_symbol>' src/` and require **zero** results before
+declaring done. A comparison against a string literal is invisible to `mypy`
+and to the test suite of the package that owns the symbol — a half-applied
+rename compiles, passes its own tests, and silently becomes dead code. Both
+sides of an emitter/matcher contract must change in the **same commit**, or the
+path fails open into a generic branch.
 
 ### Pytest Marker Contract (fail-closed)
 
