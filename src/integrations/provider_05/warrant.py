@@ -366,6 +366,7 @@ def bind_warrant_to_attestation(
         status=status_str,
         receipt_id=warrant.warrant_id,
         attested_at=warrant.valid_from,
+        provider_name="provider_05_warrant",
         metadata={
             "warrant_id": warrant.warrant_id,
             "warrant_digest": warrant.digest,

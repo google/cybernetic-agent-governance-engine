@@ -96,7 +96,6 @@ def seeded_provider_05_client():
             ca_fingerprint="sha256:a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0",
             receipt_id="provider05-key-grant-4412",
             attested_at="2026-08-21T11:58:00.000Z",
-        provider_name="test-provider",
             admitted=True,
         )
     )
@@ -109,7 +108,6 @@ def seeded_provider_05_client():
             ebpf_anomaly_count=0,
             receipt_id="provider05-physics-att-7789",
             attested_at="2026-08-21T11:59:48.000Z",
-        provider_name="test-provider",
             freshness_seconds=12,
         )
     )
@@ -331,7 +329,6 @@ async def test_criterion_4_trust_domain_admissibility_negative_test(
             ca_fingerprint="sha256:0000000000000000000000000000000000000000000000000000000000000000",
             receipt_id="provider05-key-grant-denied-001",
             attested_at="2026-08-21T12:00:00.000Z",
-        provider_name="test-provider",
             admitted=False,
         )
     )

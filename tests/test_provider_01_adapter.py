@@ -117,6 +117,8 @@ def _make_mock_signer():
 async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> None:
     from unittest.mock import patch
 
+    from src.gateway.governance.kms_signer import reset_governance_signer
+
     respx.post("https://provider01.example.com/validate/fria").mock(
         return_value=httpx.Response(
             200,
@@ -128,16 +130,19 @@ async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> N
         )
     )
     mock_signer = _make_mock_signer()
-    with patch(
-        "src.gateway.governance.kms_signer.get_governance_signer",
-        return_value=mock_signer,
-    ):
-        result = await provider.validate_fria(
-            {"action": "trade", "actor_id": "user-123", "thread_id": "thread-abc"}
-        )
-    assert result.admitted is True
-    assert len(result.findings) == 1
-    assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN"
+    try:
+        with patch(
+            "src.gateway.governance.consequence_token_service.get_governance_signer",
+            return_value=mock_signer,
+        ):
+            result = await provider.validate_fria(
+                {"action": "trade", "actor_id": "user-123", "thread_id": "thread-abc"}
+            )
+        assert result.admitted is True
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN"
+    finally:
+        reset_governance_signer()
 
 
 @pytest.mark.asyncio

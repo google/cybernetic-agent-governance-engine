@@ -111,6 +111,7 @@ class Provider05PhysicsProvider(AttestationProvider):
                 status=status,
                 receipt_id=attestation.receipt_id,
                 attested_at=attestation.attested_at,
+                provider_name=self.provider_name,
                 metadata={
                     "node_id": attestation.node_id,
                     "vtpm_status": attestation.vtpm_status,

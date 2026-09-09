@@ -111,6 +111,7 @@ class Provider05BlueprintProvider(AttestationProvider):
                 status=status,
                 receipt_id=record.receipt_id,
                 attested_at=record.attested_at,
+                provider_name=self.provider_name,
                 metadata={
                     "threshold_id": record.threshold_id,
                     "ao_signature_hash": record.ao_signature_hash,

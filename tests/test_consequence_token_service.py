@@ -91,7 +91,7 @@ class TestConsequenceTokenService:
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"
-        assert "authority_record_id is required" in finding["message"]
+        assert "authority_record_id missing from FlowSignal response" in finding["message"]
 
     def test_mint_without_actor_id_fails_closed(self) -> None:
         """Missing actor_id fails closed with MINT_FAILED finding."""
@@ -106,7 +106,7 @@ class TestConsequenceTokenService:
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"
-        assert "actor_id is required" in finding["message"]
+        assert "actor_id missing from action_payload" in finding["message"]
 
     def test_byte_identical_tokens_across_relocation(self) -> None:
         """Tokens minted by kernel service match old adapter-side minting.

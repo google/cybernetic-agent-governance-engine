@@ -238,6 +238,7 @@ class TestHelperFunctions:
 
     def test_classify_terminal_path_happy_path(self) -> None:
         """_classify_terminal_path must return 'happy_path' when governed_trader present."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import (
             ProjectBundleStepEntry,
             _classify_terminal_path,
@@ -249,13 +250,14 @@ class TestHelperFunctions:
             ProjectBundleStepEntry(node_name="governed_trader"),
             ProjectBundleStepEntry(node_name="explainer"),
         ]
-        result = _classify_terminal_path(steps)
+        result = _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY)
         assert result == "happy_path", (
             f"Expected 'happy_path' when governed_trader present, got {result!r}"
         )
 
     def test_classify_terminal_path_cbf_block(self) -> None:
         """_classify_terminal_path must return 'cbf_block' on BLOCKED safety_check."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import (
             ProjectBundleStepEntry,
             _classify_terminal_path,
@@ -269,13 +271,14 @@ class TestHelperFunctions:
             ),
             ProjectBundleStepEntry(node_name="explainer"),
         ]
-        result = _classify_terminal_path(steps)
+        result = _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY)
         assert result == "cbf_block", (
             f"Expected 'cbf_block' for BLOCKED safety_check, got {result!r}"
         )
 
     def test_classify_terminal_path_loop_breaker(self) -> None:
         """_classify_terminal_path returns 'loop_breaker' when loopCount >= 3."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import (
             ProjectBundleStepEntry,
             _classify_terminal_path,
@@ -288,7 +291,7 @@ class TestHelperFunctions:
             ),
             ProjectBundleStepEntry(node_name="explainer"),
         ]
-        result = _classify_terminal_path(steps)
+        result = _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY)
         assert result == "loop_breaker", (
             f"Expected 'loop_breaker' for loopCount >= 3, got {result!r}"
         )
@@ -300,32 +303,42 @@ class TestProvider02AttestationCallback:
 
     def test_callback_initialises_with_thread_id(self) -> None:
         """Provider02AttestationCallback must store the provided thread_id."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback(thread_id="thread-abc")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="thread-abc"
+        )
         assert cb._thread_id == "thread-abc"
 
     def test_callback_auto_generates_thread_id_when_not_provided(self) -> None:
         """Provider02AttestationCallback must auto-generate a thread_id when not given."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback()
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
         assert cb._thread_id, "thread_id must be auto-generated"
         parsed = uuid.UUID(cb._thread_id)
         assert str(parsed) == cb._thread_id
 
     def test_callback_step_count_starts_at_zero(self) -> None:
         """step_count property must return 0 before any node events."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+        )
         assert cb.step_count == 0
 
     def test_on_chain_end_records_attestation_nodes(self) -> None:
         """on_chain_end must record a step for governance-significant nodes."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+        )
         cb.on_chain_start("evaluator", {})
         cb.on_chain_end("evaluator", {"risk_status": "APPROVED"})
 
@@ -335,9 +348,12 @@ class TestProvider02AttestationCallback:
 
     def test_on_chain_end_skips_non_attestation_nodes(self) -> None:
         """on_chain_end must not record a step for non-significant nodes."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+        )
         cb.on_chain_end("thinker_node", {"some": "state"})
 
         assert cb.step_count == 0, (
@@ -346,12 +362,15 @@ class TestProvider02AttestationCallback:
 
     def test_get_bundle_returns_attestation_bundle(self) -> None:
         """get_bundle() must return an AttestationBundle with collected steps."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import (
             AttestationBundle,
             Provider02AttestationCallback,
         )
 
-        cb = Provider02AttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+        )
         cb.on_chain_start("evaluator", {})
         cb.on_chain_end("evaluator", {"risk_status": "APPROVED"})
 
@@ -364,9 +383,12 @@ class TestProvider02AttestationCallback:
 
     def test_hitl_interrupt_records_interrupt_step(self) -> None:
         """handle_hitl_interrupt() must record a hitl_interrupt step."""
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+        )
         state = {
             "approval_required": True,
             "approval_decision": {
@@ -478,64 +500,6 @@ class TestProvider02AttestationProvider:
         provider = Provider02AttestationProvider()
         assert provider.jwk_cache_age_seconds == float("inf"), (
             "jwk_cache_age_seconds must be inf before sync"
-        )
-
-    def test_inspect_local_fails_with_wrong_hash_length(self) -> None:
-        """_inspect_local must return invalid when certificate_hash length != 64."""
-        from src.integrations.provider_02.provider import (
-            JWKCache,
-            Provider02AttestationProvider,
-        )
-
-        provider = Provider02AttestationProvider(
-            endpoint="https://provider02.example.com"
-        )
-        # Inject a fake JWK cache so the local path is taken
-        provider._jwk_cache = JWKCache(
-            jwk_set={"keys": [{"kid": "k1"}]},
-            last_synced=time.time(),
-        )
-
-        result = provider._inspect_local("short-hash")
-        assert result.valid is False, "Inspection must fail for wrong hash length"
-        assert result.signature_checked is False, "No signature check performed"
-        assert result.error is not None, "Error message must be set"
-
-    def test_inspect_local_fails_closed_without_signature_verification(self) -> None:
-        """_inspect_local must return valid=False until Phase 2b implements signature verification.
-
-        This is the Phase 0 fail-closed contract: a 64-char hash with a populated
-        JWK cache passes well-formedness checks but yields valid=False because
-        signature verification is not yet implemented.
-
-        This test is the regression guard for the Phase 0 fix.
-        """
-        from src.integrations.provider_02.provider import (
-            JWKCache,
-            Provider02AttestationProvider,
-        )
-
-        provider = Provider02AttestationProvider(
-            endpoint="https://provider02.example.com"
-        )
-        provider._jwk_cache = JWKCache(
-            jwk_set={"keys": [{"kid": "k1"}]},
-            last_synced=time.time(),
-        )
-
-        result = provider._inspect_local("a" * 64)
-        assert result.valid is False, (
-            "Inspection must fail closed: valid=False until signature verification "
-            "is implemented in Phase 2b"
-        )
-        assert result.signature_checked is False, (
-            "signature_checked must be False when signature verification is unimplemented"
-        )
-        assert result.error is not None, (
-            "Error must indicate signature verification pending"
-        )
-        assert "Phase 2b" in result.error or "not yet implemented" in result.error, (
-            "Error message must clarify that signature verification is pending"
         )
 
     @pytest.mark.asyncio

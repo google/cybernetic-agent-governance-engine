@@ -401,7 +401,7 @@ class TestConsequenceTokenMinting:
         with (
             patch("httpx.AsyncClient") as MockClient,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
                 return_value=mock_signer,
             ),
         ):
@@ -460,7 +460,7 @@ class TestConsequenceTokenMinting:
         with (
             patch("httpx.AsyncClient") as MockClient,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
                 return_value=mock_signer,
             ),
         ):
@@ -537,7 +537,7 @@ class TestConsequenceTokenMinting:
         with (
             patch("httpx.AsyncClient") as MockClient,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
                 return_value=mock_signer,
             ),
         ):

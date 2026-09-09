@@ -366,6 +366,7 @@ class Provider02AttestationProvider(AttestationProvider):
             status=status.value,
             receipt_id=certificate_hash[:16],  # First 16 chars as receipt ID
             attested_at=result.timestamp or "",
+            provider_name="provider_02",
             metadata={
                 "signer": result.signer,
                 "key_id": result.key_id,

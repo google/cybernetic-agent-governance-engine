@@ -321,19 +321,18 @@ def _classify_terminal_path(
     if topology.terminal_node in node_names:
         return "happy_path"
 
-    # Early block: short traversal indicates guardrail rejection
-    # (NeMo block for finance; analogous early exit for other domains)
-    first_node = node_names[0] if node_names else None
-    if len(node_names) <= 2 and first_node in topology.nodes:
-        return "nemo_block"
-
     # Safety fail-closed: check for explicit BLOCKED signal
     # (Generic pattern — not finance-specific; safety_check may exist in any domain)
     for step in steps:
         if step.signals.get("safetyStatus") == "BLOCKED":
             return "cbf_block"
 
-    # Loop breaker: check for pattern or loop count
+    # Loop breaker: check for explicit loop count signal first (highest priority)
+    for step in steps:
+        if step.signals.get("loopCount", 0) >= 3:
+            return "loop_breaker"
+
+    # Loop breaker: check for pattern (evaluator → explainer without terminal)
     # Pattern: evaluator → explainer path without reaching safety/terminal (iteration limit)
     # This is domain-neutral: any graph with these node names in topology
     if "evaluator" in topology.nodes and "explainer" in topology.nodes:
@@ -343,10 +342,12 @@ def _classify_terminal_path(
             # This pattern indicates loop limit reached without safety check
             return "loop_breaker"
 
-    # Or explicit loop count signal
-    for step in steps:
-        if step.signals.get("loopCount", 0) >= 3:
-            return "loop_breaker"
+    # Early block: short traversal indicates guardrail rejection
+    # (NeMo block for finance; analogous early exit for other domains)
+    # Check this AFTER loop_breaker to avoid false positives
+    first_node = node_names[0] if node_names else None
+    if len(node_names) <= 2 and first_node in topology.nodes:
+        return "nemo_block"
 
     # If we reach here with a non-empty traversal, it's an unclassifiable path
     # (neither happy nor a recognized failure mode — integrity signal)

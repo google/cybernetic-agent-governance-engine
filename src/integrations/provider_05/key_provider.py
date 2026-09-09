@@ -102,6 +102,7 @@ class Provider05KeyProvider(AttestationProvider):
                 status=status,
                 receipt_id=grant.receipt_id,
                 attested_at=grant.attested_at,
+                provider_name=self.provider_name,
                 metadata={
                     "spiffe_id": grant.spiffe_id,
                     "consequence_class": grant.consequence_class,

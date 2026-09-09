@@ -248,9 +248,12 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     provider_02_callback = None
     if os.environ.get("PROVIDER_02_ATTESTATION_ENABLED", "").lower() == "true":
         try:
+            from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
             from src.integrations.provider_02 import Provider02AttestationCallback
 
-            provider_02_callback = Provider02AttestationCallback()
+            provider_02_callback = Provider02AttestationCallback(
+                topology=FINANCIAL_ADVISOR_TOPOLOGY
+            )
         except ImportError:
             pass  # provider_02 adapter not available — skip silently
 

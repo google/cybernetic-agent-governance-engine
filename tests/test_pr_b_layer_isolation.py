@@ -52,7 +52,7 @@ def test_g3_import_boundary_enforcement():
     )
 
     # Verify the script scanned files and found no violations
-    assert "Scanned" in result.stdout
+    assert "Forward scan:" in result.stdout
     assert "All import boundaries respected" in result.stdout
 
 
