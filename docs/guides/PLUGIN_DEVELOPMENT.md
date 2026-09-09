@@ -179,8 +179,10 @@ Tiers are registered in the kernel's [`SymbolicGovernor`](../../src/gateway/gove
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 from src.cage_{domain}.tiers.example_tier import ExampleTierPlugin
 
-governor = SymbolicGovernor(...)
-governor.register_domain_tier(ExampleTierPlugin())
+governor = SymbolicGovernor(
+    ...,
+    domain_tiers=(ExampleTierPlugin(),),
+)
 ```
 
 ---
@@ -470,11 +472,12 @@ from src.cage_finance.ontology import TRADING_ACTIONS  # ❌ VIOLATES G3
 
 **Correct:**
 ```python
-# src/cage_finance/__init__.py
-def register_finance_plugin(governor):
-    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+# src/cage_finance/plugin.py
+from src.cage_finance.plugin import create_finance_tiers
+from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
-    governor.register_domain_tier(CBFTierPlugin())
+tiers = create_finance_tiers(safety_filter=..., consensus_engine=...)
+governor = SymbolicGovernor(..., domain_tiers=tiers)
 ```
 
 ### ❌ Anti-Pattern: Hardcoded Domain Logic in Kernel

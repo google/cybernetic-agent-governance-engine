@@ -58,22 +58,26 @@ def _make_governor(fiscal_limit_guard=None):
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
+    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+
+    tiers = [
+        CBFTierPlugin(safety_filter),
+        ConsensusTierPlugin(consensus_engine),
+    ]
+    if fiscal_limit_guard:
+        from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+
+        tiers.append(FiscalTierPlugin(fiscal_limit_guard))
+
     governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
         stpa_validator=None,
         telemetry_provider=None,
+        domain_tiers=tuple(tiers),
     )
-    from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
-    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-
-    governor.register_domain_tier(CBFTierPlugin(safety_filter))
-    governor.register_domain_tier(ConsensusTierPlugin(consensus_engine))
-    if fiscal_limit_guard:
-        from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
-
-        governor.register_domain_tier(FiscalTierPlugin(fiscal_limit_guard))
 
     # Mock FTRA boundary check to return a safe result (no HITL required).
     # This allows tests to pass through the FTRA boundary gate without being

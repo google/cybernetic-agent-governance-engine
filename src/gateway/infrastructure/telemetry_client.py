@@ -50,11 +50,15 @@ class TraceIdFilter(logging.Filter):
             span = trace.get_current_span()
             if span:
                 ctx = span.get_span_context()
-                if ctx.is_valid:
+                if (
+                    getattr(ctx, "is_valid", False) is True
+                    and isinstance(getattr(ctx, "trace_id", None), int)
+                    and isinstance(getattr(ctx, "span_id", None), int)
+                ):
                     record.trace_id = format(ctx.trace_id, "032x")
                     record.span_id = format(ctx.span_id, "016x")
-                    record.trace_sampled = ctx.trace_flags.sampled
-        except ImportError:
+                    record.trace_sampled = getattr(ctx.trace_flags, "sampled", False)
+        except Exception:
             pass
         return True
 

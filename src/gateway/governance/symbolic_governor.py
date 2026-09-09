@@ -831,6 +831,8 @@ class SymbolicGovernor:
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
+        core_tiers: tuple[GovernanceTierPlugin, ...] = (),
+        domain_tiers: tuple[GovernanceTierPlugin, ...] = (),
     ):
         self.opa_client = opa_client
         # retained for direct-invocation callers; not part of the governance hot path
@@ -845,11 +847,27 @@ class SymbolicGovernor:
         # retained for direct-invocation callers; not part of the governance hot path
         self.fiscal_limit_guard = fiscal_limit_guard
 
-        # D5 fix: pluggable domain tier registry.  Tiers are registered via
-        # register_domain_tier() at startup and sorted by (phase, order, tier_name)
-        # where `order` is an explicit integer matching the formal model, not
-        # an alphabetic tier_name sort (which would invert Consensus→Causal).
-        self._domain_tiers: list[GovernanceTierPlugin] = []
+        # Task 2.1 (ARCH-2): Immutable tier registration at construction time.
+        # Tiers are provided as tuples (core_tiers, domain_tiers) and validated
+        # for duplicate tier_name collisions at construction. The combined registry
+        # is immutable after construction — no runtime register_domain_tier() allowed.
+        # This enforces architectural clarity: the tier topology is fixed at startup,
+        # not modified dynamically during request handling.
+        _all_tiers = tuple(core_tiers) + tuple(domain_tiers)
+        
+        # Validate: no duplicate tier names across core_tiers and domain_tiers
+        _seen_names: set[str] = set()
+        for tier in _all_tiers:
+            if tier.tier_name in _seen_names:
+                raise ValueError(
+                    f"duplicate tier registration at construction: {tier.tier_name}"
+                )
+            _seen_names.add(tier.tier_name)
+        
+        # Sort by (phase, order, tier_name) to match formal model ordering
+        self._domain_tiers: tuple[GovernanceTierPlugin, ...] = tuple(
+            sorted(_all_tiers, key=lambda t: (t.phase, t.order, t.tier_name))
+        )
 
         # PR C: pluggable invariant registry.  Barriers are registered via
         # register_invariant() at startup and compiled into Lua KEYS/ARGV
@@ -862,20 +880,6 @@ class SymbolicGovernor:
         # to ensure consistent classification semantics.
         self._ftra_classifier: Any | None = None  # IrreversibilityClassifier
 
-    def register_domain_tier(self, tier: GovernanceTierPlugin) -> None:
-        """Register a domain governance tier, preserving formal tier order.
-
-        D5 fix: explicit integer ``order`` is authoritative; ``tier_name`` is
-        used only as a deterministic tie-break.
-
-        Raises:
-            ValueError: If a tier with the same ``tier_name`` is already registered.
-        """
-        if any(t.tier_name == tier.tier_name for t in self._domain_tiers):
-            raise ValueError(f"duplicate tier registration: {tier.tier_name}")
-        self._domain_tiers.append(tier)
-        # D5: explicit integer `order` is authoritative; name is tie-break only.
-        self._domain_tiers.sort(key=lambda t: (t.phase, t.order, t.tier_name))
 
     def registered_tier_names(self) -> list[str]:
         """Ordered tier names — consumed by the formal-model parity test."""

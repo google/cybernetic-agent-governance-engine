@@ -28,14 +28,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+from src.cage_healthcare import create_healthcare_tiers
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
-from src.cage_healthcare.tiers.clinical_consensus_tier import ClinicalConsensusTier
-from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
 from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
-from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 
@@ -56,14 +54,10 @@ class HealthcareCagePlugin(CagePlugin):
         barrier = SerumConcentrationBarrier()
         governor.register_invariant(barrier)
 
-        # Register tiers (phase 2 order 3, phase 1 order 5)
-        governor.register_domain_tier(DoseBarrierTier(ControlBarrierFunction(barrier)))
-        # Note: ConsensusGate delegates to the kernel's shared consensus instance.
-        # Healthcare could configure domain-specific critics via a YAML file, but for
-        # simplicity in this proof-of-concept, we use the default ConsensusGate.
-        from src.gateway.governance.consensus.engine import ConsensusGate
-
-        governor.register_domain_tier(ClinicalConsensusTier(ConsensusGate()))
+        # Task 2.1 (ARCH-2): Create domain tiers via factory for immutable registration
+        tiers = create_healthcare_tiers()
+        if not governor._domain_tiers:
+            governor._domain_tiers = tiers
 
         # Register rail provider (contributes CheckContraindicationAction)
         from src.gateway.governance.nemo.action_registry import register_rail_provider

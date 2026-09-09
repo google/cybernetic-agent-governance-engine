@@ -23,6 +23,7 @@ from src.cage_finance.safety.bounding.providers import (
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
 )
+from src.cage_finance import create_finance_tiers
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
@@ -44,7 +45,10 @@ from src.gateway.governance.ftra.bounding_contract import (
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-from src.gateway.governance.singletons import install_domain_components
+from src.gateway.governance.singletons import (
+    install_domain_components,
+    symbolic_governor,
+)
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
@@ -74,13 +78,6 @@ class FinanceCagePlugin(CagePlugin):
         overlay_dir = Path(__file__).parent / "config" / "compliance"
         register_overlay_dir(overlay_dir)
 
-        # Install domain components into the kernel singletons (PR B, T-B2)
-        install_domain_components(
-            safety_filter_impl=cbf,
-            consensus_engine_impl=consensus_gate,
-            resource_guard=fiscal_guard,
-        )
-
         # Register background task (PR B, T-B6)
         register_background_task("consensus_audit_worker", _background_audit_worker)
 
@@ -103,12 +100,25 @@ class FinanceCagePlugin(CagePlugin):
             enforcer=bounding_enforcer,
         )
 
-        # Register tiers (Phase 5: bounding tier runs at order 2, before CBF at order 3)
-        governor.register_domain_tier(BoundingContractTierPlugin(bounding_registry))
-        governor.register_domain_tier(CBFTierPlugin(cbf))
-        governor.register_domain_tier(FiscalTierPlugin(fiscal_guard))
-        governor.register_domain_tier(ConsensusTierPlugin(consensus_gate))
-        governor.register_domain_tier(CausalTierPlugin())
+        # Task 2.1 (ARCH-2): Create domain tiers via factory for immutable registration
+        tiers = create_finance_tiers(
+            cbf=cbf,
+            fiscal_guard=fiscal_guard,
+            consensus_gate=consensus_gate,
+            bounding_registry=bounding_registry,
+        )
+
+        # Install domain components and tiers into kernel singletons (PR B, T-B2)
+        install_domain_components(
+            safety_filter_impl=cbf,
+            consensus_engine_impl=consensus_gate,
+            resource_guard=fiscal_guard,
+            domain_tiers=tiers,
+        )
+
+        # For non-singleton governors passed directly to register (e.g. in unit tests)
+        if governor is not symbolic_governor and not governor._domain_tiers:
+            governor._domain_tiers = tiers
 
         # Register tools
         if tool_server:

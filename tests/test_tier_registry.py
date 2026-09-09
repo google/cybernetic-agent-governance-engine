@@ -50,75 +50,70 @@ class MockTier:
         pass
 
 
-@pytest.fixture
-def governor():
+def make_governor(*tiers) -> SymbolicGovernor:
     return SymbolicGovernor(
-        opa_client=MagicMock(), safety_filter=MagicMock(), consensus_engine=MagicMock()
+        opa_client=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus_engine=MagicMock(),
+        domain_tiers=tiers,
     )
 
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_tier_registry_ordering(governor):
+def test_tier_registry_ordering():
     # Tests registering tiers with explicit order values sorts them by (phase, order, tier_name)
     t1 = MockTier("C", 1, 2)
     t2 = MockTier("B", 1, 1)
     t3 = MockTier("A", 1, 2)
 
-    governor.register_domain_tier(t1)
-    governor.register_domain_tier(t2)
-    governor.register_domain_tier(t3)
+    governor = make_governor(t1, t2, t3)
 
     assert governor.registered_tier_names() == ["B", "A", "C"]
 
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_tier_registry_phase_1_ordering(governor):
+def test_tier_registry_phase_1_ordering():
     # Consensus (phase=1, order=5) sorts before Causal (phase=1, order=6)
     t_consensus = MockTier("Consensus", 1, 5)
     t_causal = MockTier("Causal", 1, 6)
 
-    governor.register_domain_tier(t_causal)
-    governor.register_domain_tier(t_consensus)
+    governor = make_governor(t_causal, t_consensus)
 
     assert governor.registered_tier_names() == ["Consensus", "Causal"]
 
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_tier_registry_phase_2_ordering(governor):
+def test_tier_registry_phase_2_ordering():
     # CBF (phase=2, order=3) sorts before Fiscal (phase=2, order=4)
     t_cbf = MockTier("CBF", 2, 3)
     t_fiscal = MockTier("Fiscal", 2, 4)
 
-    governor.register_domain_tier(t_fiscal)
-    governor.register_domain_tier(t_cbf)
+    governor = make_governor(t_fiscal, t_cbf)
 
     assert governor.registered_tier_names() == ["CBF", "Fiscal"]
 
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_tier_registry_phase_precedence(governor):
+def test_tier_registry_phase_precedence():
     # Phase 1 tiers sort before Phase 2 tiers with equal order values
     t_p2 = MockTier("Phase2", 2, 1)
     t_p1 = MockTier("Phase1", 1, 1)
 
-    governor.register_domain_tier(t_p2)
-    governor.register_domain_tier(t_p1)
+    governor = make_governor(t_p2, t_p1)
 
     assert governor.registered_tier_names() == ["Phase1", "Phase2"]
 
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_tier_registry_duplicate_rejection(governor):
-    # Duplicate tier_name raises ValueError
+def test_tier_registry_duplicate_rejection():
+    # Duplicate tier_name raises ValueError at construction time
     t1 = MockTier("Duplicate", 1, 1)
     t2 = MockTier("Duplicate", 1, 2)
 
-    governor.register_domain_tier(t1)
-
     with pytest.raises(ValueError, match="duplicate tier registration"):
-        governor.register_domain_tier(t2)
+        make_governor(t1, t2)

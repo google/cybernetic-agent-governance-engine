@@ -65,13 +65,12 @@ def mock_governor() -> SymbolicGovernor:
     opa_client = MagicMock()
     safety_filter = MagicMock()
     consensus_engine = MagicMock()
-    gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-
-    # Register a mock tier that claims all actions
-    # This simulates the behavior after domain plugin registration
-    gov.register_domain_tier(MockTier())
-
-    return gov
+    return SymbolicGovernor(
+        opa_client,
+        safety_filter,
+        consensus_engine,
+        domain_tiers=(MockTier(),),
+    )
 
 
 @pytest.mark.local
