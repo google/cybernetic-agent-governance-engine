@@ -25,6 +25,7 @@ Modules:
     normative: Normative provider seam (baseline supply, FRIA validation, evidence sealing)
     attestation: Attestation provider seam (external trust service integration)
     actuation: Execution actuator seam (downstream clearance transmission)
+    graph_topology: Domain-agnostic graph structure for attestation adapters
 
 Architecture Principle:
     Seam modules must NEVER import from the rest of the kernel. They define
@@ -37,5 +38,6 @@ from __future__ import annotations
 __all__ = [
     "actuation",
     "attestation",
+    "graph_topology",
     "normative",
 ]

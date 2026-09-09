@@ -66,6 +66,7 @@ from decimal import Decimal
 from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.graph_topology import GraphTopology
 
 logger = logging.getLogger("cage.provider_02_adapter")
 
@@ -93,33 +94,6 @@ _ENABLED: bool = (
 _API_ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("PROVIDER_02_API_KEY", "")
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_ATTESTATION_TIMEOUT", "5.0"))
-
-# Governance-significant nodes that trigger CER emission
-_ATTESTATION_NODES = frozenset(
-    {
-        "nemo_guardrail",
-        "evaluator",
-        "safety_check",
-        "governed_trader",
-        "explainer",
-        "nemo_output_rail",
-    }
-)
-
-# Graph topology — maps each node to its possible parent nodes
-# Derived from graph.py conditional edges
-_GRAPH_PARENTS: dict[str, list[str]] = {
-    "nemo_guardrail": [],  # entry point
-    "thinker_node": ["nemo_guardrail"],
-    "doer_node": ["thinker_node"],
-    "data_analyst": ["doer_node"],
-    "execution_analyst": ["doer_node", "evaluator"],  # loop source
-    "evaluator": ["execution_analyst"],
-    "safety_check": ["evaluator"],
-    "governed_trader": ["safety_check"],
-    "explainer": ["governed_trader", "evaluator", "safety_check"],
-    "nemo_output_rail": ["data_analyst", "explainer"],
-}
 
 
 # ---------------------------------------------------------------------------
@@ -316,39 +290,72 @@ def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     return signals
 
 
-def _classify_terminal_path(steps: list[ProjectBundleStepEntry]) -> str:
+def _classify_terminal_path(
+    steps: list[ProjectBundleStepEntry], topology: GraphTopology
+) -> str:
     """Classify the terminal path from the collected steps.
 
-    Returns one of: "happy_path", "nemo_block", "cbf_block", "loop_breaker"
+    Args:
+        steps: Collected graph execution steps
+        topology: Graph topology defining terminal/interrupt nodes
+
+    Returns:
+        One of: "happy_path", "nemo_block", "cbf_block", "loop_breaker"
+
+    Raises:
+        ValueError: If the traversal contains nodes not in the topology
+            (integrity signal — an unrecognized graph structure cannot be
+            safely classified)
     """
     node_names = [s.node_name for s in steps]
 
-    if "governed_trader" in node_names:
+    # Fail closed: verify all traversed nodes are recognized
+    unrecognized = set(node_names) - topology.nodes
+    if unrecognized:
+        raise ValueError(
+            f"Unrecognized nodes in traversal (cannot classify path): {unrecognized}. "
+            f"Known nodes: {sorted(topology.nodes)}"
+        )
+
+    # Happy path: terminal node was reached
+    if topology.terminal_node in node_names:
         return "happy_path"
 
-    if len(node_names) <= 2 and "nemo_guardrail" in node_names:
+    # Early block: short traversal indicates guardrail rejection
+    # (NeMo block for finance; analogous early exit for other domains)
+    first_node = node_names[0] if node_names else None
+    if len(node_names) <= 2 and first_node in topology.nodes:
         return "nemo_block"
 
-    # Check for safety_check BLOCKED signal
+    # Safety fail-closed: check for explicit BLOCKED signal
+    # (Generic pattern — not finance-specific; safety_check may exist in any domain)
     for step in steps:
-        if (
-            step.node_name == "safety_check"
-            and step.signals.get("safetyStatus") == "BLOCKED"
-        ):
+        if step.signals.get("safetyStatus") == "BLOCKED":
             return "cbf_block"
 
-    # Check for loop breaker (evaluator → explainer without safety_check)
-    if (
-        "evaluator" in node_names
-        and "explainer" in node_names
-        and "safety_check" not in node_names
-    ):
-        return "loop_breaker"
+    # Loop breaker: check for pattern or loop count
+    # Pattern: evaluator → explainer path without reaching safety/terminal (iteration limit)
+    # This is domain-neutral: any graph with these node names in topology
+    if "evaluator" in topology.nodes and "explainer" in topology.nodes:
+        has_evaluator = "evaluator" in node_names
+        has_explainer = "explainer" in node_names
+        if has_evaluator and has_explainer:
+            # This pattern indicates loop limit reached without safety check
+            return "loop_breaker"
 
-    # Check loop count
+    # Or explicit loop count signal
     for step in steps:
         if step.signals.get("loopCount", 0) >= 3:
             return "loop_breaker"
+
+    # If we reach here with a non-empty traversal, it's an unclassifiable path
+    # (neither happy nor a recognized failure mode — integrity signal)
+    if node_names:
+        raise ValueError(
+            f"Unable to classify terminal path for nodes {node_names}. "
+            f"Terminal node '{topology.terminal_node}' was not reached, and no "
+            f"recognized failure pattern (early block, CBF block, loop breaker) matched."
+        )
 
     return "unknown"
 
@@ -364,9 +371,21 @@ class Provider02AttestationCallback:
     Subscribes to node lifecycle events and captures immutable state snapshots
     at governance-significant node boundaries.
 
+    Args:
+        topology: Graph topology defining nodes, edges, terminal/interrupt nodes
+        thread_id: Unique thread identifier (generated if not provided)
+
+    Raises:
+        TypeError: If topology is not provided (required parameter)
+
     Usage::
 
-        callback = Provider02AttestationCallback(thread_id="thread-123")
+        from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
+
+        callback = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="thread-123"
+        )
         # Pass to LangGraph invoke/stream as a callback
         graph.invoke(input, config={"callbacks": [callback]})
 
@@ -374,7 +393,8 @@ class Provider02AttestationCallback:
         bundle = callback.get_bundle()
     """
 
-    def __init__(self, thread_id: str = "") -> None:
+    def __init__(self, topology: GraphTopology, thread_id: str = "") -> None:
+        self._topology = topology
         self._thread_id = thread_id or str(uuid.uuid4())
         self._steps: list[ProjectBundleStepEntry] = []
         self._step_id_by_node: dict[str, str] = {}  # node_name → last step_id
@@ -409,7 +429,7 @@ class Provider02AttestationCallback:
         For governance-significant nodes, captures an immutable state snapshot
         and creates a ProjectBundleStepEntry.
         """
-        if node_name not in _ATTESTATION_NODES:
+        if node_name not in self._topology.attestation_nodes:
             # Still track step IDs for parent resolution
             step_id = str(uuid.uuid4())
             self._step_id_by_node[node_name] = step_id
@@ -457,10 +477,10 @@ class Provider02AttestationCallback:
     def _build_parent_step_ids(self, node_name: str) -> list[str]:
         """Resolve parent step IDs from the graph topology.
 
-        Looks up the possible parents for this node in _GRAPH_PARENTS and
+        Looks up the possible parents for this node in the topology and
         returns the step IDs of parents that were actually executed in this run.
         """
-        possible_parents = _GRAPH_PARENTS.get(node_name, [])
+        possible_parents = self._topology.parent_edges.get(node_name, [])
         parent_ids = []
         for parent in possible_parents:
             if parent in self._step_id_by_node:
@@ -470,7 +490,7 @@ class Provider02AttestationCallback:
     def handle_hitl_interrupt(self, state: dict[str, Any]) -> None:
         """Explicitly record the HITL interrupt as a paused DAG step.
 
-        Called when the graph is interrupted before governed_trader.
+        Called when the graph is interrupted at the configured interrupt node.
         The approval_decision field captures the reviewer's identity,
         rationale, and timestamp per ISO 42001 A.7.2.
         """
@@ -487,14 +507,15 @@ class Provider02AttestationCallback:
         signals["interruptType"] = "HITL_MANUAL_REVIEW"  # type: ignore[assignment]
         signals["approvalRequired"] = state.get("approval_required", False)
 
+        interrupt_node = self._topology.interrupt_node or self._topology.terminal_node
         step = ProjectBundleStepEntry(
             node_name="hitl_interrupt",
-            parent_step_ids=self._build_parent_step_ids("governed_trader"),
+            parent_step_ids=self._build_parent_step_ids(interrupt_node),
             timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
             signals=signals,
             metadata={
                 "threadId": self._thread_id,
-                "interruptNode": "governed_trader",
+                "interruptNode": interrupt_node,
             },
         )
 
@@ -512,7 +533,7 @@ class Provider02AttestationCallback:
         """
         from datetime import datetime, timezone
 
-        terminal_path = _classify_terminal_path(self._steps)
+        terminal_path = _classify_terminal_path(self._steps, self._topology)
 
         return AttestationBundle(
             thread_id=self._thread_id,

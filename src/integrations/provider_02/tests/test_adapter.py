@@ -33,6 +33,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
 from src.integrations.provider_02.adapter import (
     AttestationBundle,
     ProjectBundleStepEntry,
@@ -43,6 +44,9 @@ from src.integrations.provider_02.adapter import (
     _hash_state,
     _serialize_state_snapshot,
 )
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — simulated AgentState dicts
@@ -245,7 +249,7 @@ class TestCallbackHandler:
 
     def test_records_attestation_node(self):  # type: ignore[no-untyped-def]
         """Governance-significant nodes produce step entries."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread")
         state = _approved_state()
 
         cb.on_chain_start("evaluator", state)
@@ -255,7 +259,9 @@ class TestCallbackHandler:
 
     def test_skips_non_attestation_node(self):  # type: ignore[no-untyped-def]
         """Non-governance nodes don't produce step entries but track IDs."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+        )
         state = _base_state()
 
         cb.on_chain_start("thinker_node", state)
@@ -265,7 +271,9 @@ class TestCallbackHandler:
 
     def test_parent_step_ids_resolve(self):  # type: ignore[no-untyped-def]
         """Parent step IDs are correctly resolved from graph topology."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(
+            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+        )
         state = _base_state()
 
         # Simulate: nemo_guardrail → thinker → doer → execution_analyst → evaluator
@@ -288,7 +296,7 @@ class TestCallbackHandler:
 
     def test_hitl_interrupt_recorded(self):  # type: ignore[no-untyped-def]
         """HITL interrupt produces a step with approval signals."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread")
         state = _base_state()
 
         # Simulate path up to safety_check
@@ -322,7 +330,7 @@ class TestLoopUnrolling:
 
     def test_single_iteration(self):  # type: ignore[no-untyped-def]
         """Single loop iteration produces correct parentStepIds."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread")
         state = _base_state(loop_count=1)
 
         # First pass
@@ -335,7 +343,7 @@ class TestLoopUnrolling:
 
     def test_multi_iteration_produces_sequential_parents(self):  # type: ignore[no-untyped-def]
         """Multiple loop iterations produce sequential parent chains."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread")
 
         for iteration in range(3):
             state = _base_state(loop_count=iteration + 1)
@@ -353,7 +361,7 @@ class TestLoopUnrolling:
 
     def test_loop_breaker_at_count_3(self):  # type: ignore[no-untyped-def]
         """After 3 iterations, the path should classify as loop_breaker."""
-        cb = Provider02AttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread")
 
         for iteration in range(3):
             state = _base_state(loop_count=iteration + 1)
@@ -389,14 +397,14 @@ class TestTerminalPathClassification:
             ProjectBundleStepEntry(node_name="explainer"),
             ProjectBundleStepEntry(node_name="nemo_output_rail"),
         ]
-        assert _classify_terminal_path(steps) == "happy_path"
+        assert _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY) == "happy_path"
 
     def test_nemo_block(self):  # type: ignore[no-untyped-def]
         """NeMo guardrail block path is classified correctly."""
         steps = [
             ProjectBundleStepEntry(node_name="nemo_guardrail"),
         ]
-        assert _classify_terminal_path(steps) == "nemo_block"
+        assert _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY) == "nemo_block"
 
     def test_cbf_block(self):  # type: ignore[no-untyped-def]
         """Safety check BLOCKED path is classified correctly."""
@@ -409,7 +417,7 @@ class TestTerminalPathClassification:
             ),
             ProjectBundleStepEntry(node_name="explainer"),
         ]
-        assert _classify_terminal_path(steps) == "cbf_block"
+        assert _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY) == "cbf_block"
 
     def test_loop_breaker(self):  # type: ignore[no-untyped-def]
         """Loop breaker path (evaluator → explainer, no safety_check) is classified."""
@@ -418,7 +426,7 @@ class TestTerminalPathClassification:
             ProjectBundleStepEntry(node_name="evaluator"),
             ProjectBundleStepEntry(node_name="explainer"),
         ]
-        assert _classify_terminal_path(steps) == "loop_breaker"
+        assert _classify_terminal_path(steps, FINANCIAL_ADVISOR_TOPOLOGY) == "loop_breaker"
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +456,7 @@ class TestBundleAssembly:
 
     def test_bundle_from_callback(self):  # type: ignore[no-untyped-def]
         """Full callback flow produces a valid bundle."""
-        cb = Provider02AttestationCallback(thread_id="e2e-thread")
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="e2e-thread")
         state = _base_state()
 
         cb.on_chain_start("nemo_guardrail", state)
