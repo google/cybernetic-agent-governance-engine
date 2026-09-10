@@ -1,5 +1,5 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** v3.0.0
+**CAGE Version:** v3.0.1
 **Last Evaluated:** 2026-08-28
 
 ---
@@ -13,6 +13,8 @@
 > **Deployment Targets:** The `gcp-gke` deployment target (`infra/targets/gcp-gke/`) is an optional GCP-specific configuration. The `agnostic` deployment target (`infra/targets/agnostic/`) deploys to any Kubernetes 1.24+ cluster without GCP dependencies.
 
 ---
+
+> **v3.0.1 Update (2026-09-09):** Compliance reporting now includes Attestation Failure Attributability (POAM-2026-072), Ed25519 CER signature verification for fail-closed security, Full `RefusalReceipt` v3 evidence serialization, and mandatory KMS staging/production signing requirements.
 
 ## 1. Regulatory Perimeter & Framework Mapping
 

@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Document Version** | 3.0                                                                                                           |
-| **Date**             | 2026-09-07                                                                                                    |
+| **Document Version** | 3.0.1                                                                                                           |
+| **Date**             | 2026-09-09                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,553 passed, 1 failed, 51 skipped; live GKE integration confirmed per [`AGENTS.md`](../../AGENTS.md)) |
+| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
 | **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) |
 
 ---

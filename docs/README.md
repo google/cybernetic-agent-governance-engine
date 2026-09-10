@@ -9,6 +9,9 @@
 > **Jurisdictional compliance is likewise configuration.** `US_FED`, `EU_ECB`, and `APAC_MAS` are configurable postures selected with `CAGE_DEPLOYMENT_REGION`, layered over the universal ISO 42001 baseline. Adding a jurisdiction is a config-only operation — see the Jurisdiction Key below.
 **Last updated:** 2026-09-09
 
+> **v3.0.1 Update (2026-09-09):** The documentation reflects the latest architectural refactorings including `src/gateway/governance/seams/` zero-kernel-import extraction, `DeferReason.EXTERNAL_HOLD` generalization, Full `RefusalReceipt` v3 evidence serialization, Attestation Failure Attributability (Ed25519 CER signature verification), and In-Kernel `ConsequenceToken` & `ContentAddress` primitives.
+
+
 This directory is organised using a **hybrid layout**: function-based top-level sections, with compliance artefacts further sub-divided by jurisdiction. This mirrors the system's own architectural principle: ISO 42001 as the universal baseline, with jurisdiction-specific addenda for US_FED, EU_ECB, and APAC_MAS.
 
 ```

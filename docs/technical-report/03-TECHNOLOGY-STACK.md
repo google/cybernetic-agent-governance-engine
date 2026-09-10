@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
-| **Document Version** | 3.0                                                                      |
-| **Date**             | 2026-09-07                                                               |
+| **Document Version** | 3.0.1                                                                      |
+| **Date**             | 2026-09-09                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
+| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
 
 ---

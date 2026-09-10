@@ -435,9 +435,9 @@ Action reachability analysis and registry integrity controls live in `src/gatewa
 - **Fail-Closed Boundary**: Any unknown or unclassified action must fail closed. Read-only actions bypass heavy barrier verification only when explicitly verified as read-only.
 - **Registry Integrity**: Registries must be signed using KMS/JCS canonicalization, preventing untracked runtime capability escalation.
 
-### Canonical Module Namespaces (v3.0.0 Architecture)
+### Canonical Module Namespaces (v3.0.1 Architecture)
 
-Refactoring across v3.0.0 extracted domain mechanisms into domain plugins and modularized gateway subpackages. All imports and test mocks must use these canonical locations:
+Refactoring across v3.0.1 extracted domain mechanisms into domain plugins and modularized gateway subpackages. All imports and test mocks must use these canonical locations:
 
 | Component | Canonical Location | Deprecated / Relocated Path (Do Not Import) |
 |---|---|---|

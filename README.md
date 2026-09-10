@@ -14,7 +14,7 @@ CAGE is an application-agnostic governance substrate that contains **zero built-
 
 Domain specificity and jurisdictional compliance are **configuration, not core requirements**. The finance and healthcare packages shipped in this repository are illustrative example domains that exercise the extension contract — neither is privileged by the kernel.
 
-![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![3921 Tests Passing](https://img.shields.io/badge/tests-3921%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
+![v3.0.1](https://img.shields.io/badge/version-3.0.1-brightgreen) ![3921 Tests Passing](https://img.shields.io/badge/tests-3921%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -22,13 +22,13 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 ---
 
-## What's New in v3.0.0
+## What's New in v3.0.1
 
 > **Release date:** 2026-09-07 — Major Version Release: Domain-agnostic kernel extraction, Layer 1/Layer 2 separation, architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
 > **Remediation & Hardening:** 2026-09-09 — 19 feature branches, 26 distinct architectural enhancements, 5 defect fixes, and test suite stabilization (3839 → 3921 passing, 4148 total collected tests).
 > See [CHANGELOG.md](CHANGELOG.md#300---2026-09-07) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
 
-**v3.0.0 Architectural Consolidation & Hardening:** CAGE v3.0.0 completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Following the major release, a comprehensive September 9, 2026 implementation session remediated contract drift across 19 feature branches, stabilizing the test suite from 3,839 to 3,921 unit/local tests (4,148 total collected tests) and resolving 25 test issues (21 failures + 4 errors) and 5 defects.
+**v3.0.1 Architectural Consolidation & Hardening:** CAGE v3.0.1 completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Following the major release, a comprehensive September 9, 2026 implementation session remediated contract drift across 19 feature branches, stabilizing the test suite from 3,839 to 3,921 unit/local tests (4,148 total collected tests) and resolving 25 test issues (21 failures + 4 errors) and 5 defects.
 
 ### Major Capabilities & Enhancements
 
@@ -171,7 +171,7 @@ Domain plugins and jurisdictional postures compose independently — any plugin 
 
 ## The CAGE Product Offering
 
-CAGE v3.0.0 provides a **three-layer governance architecture** for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
+CAGE v3.0.1 provides a **three-layer governance architecture** for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
 
 **Layer 1 (L1) — Domain-Neutral Kernel** provides universal enforcement mechanisms:
 
@@ -463,7 +463,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 ## Security & Compliance Status
 
 > [!IMPORTANT]
-> **CAGE v3.0.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
+> **CAGE v3.0.1 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
 
 ### Compliance Framework Scope
 
@@ -800,4 +800,4 @@ This is not an officially supported Google product. This project is not eligible
 
 By participating in this project, you agree to abide by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-_CAGE v3.0.0 — 2026-09-07 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_
+_CAGE v3.0.1 — 2026-09-07 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_

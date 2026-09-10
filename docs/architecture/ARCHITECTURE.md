@@ -44,6 +44,23 @@ Solid edges are always-on substrate flow. Dashed edges are optional or configura
 
 ---
 
+## Post-v3.0.1 Core Architectural Refactorings (2026-09-09)
+
+Following the major release, a comprehensive implementation session stabilized the architecture and introduced the following features:
+
+1. **Seam Contracts Extraction (`src/gateway/governance/seams/`)**: Zero-kernel-import boundaries isolating `NormativeProvider`, `AttestationProvider`, and `ExecutionActuator`.
+
+2. **External Hold Generalization**: `DeferReason.EXTERNAL_HOLD` replaces legacy vendor-specific `FLOWSIGNAL_ESCALATION` routing with dynamic TTLs.
+
+3. **Full Refusal & Pause Receipt Ingestion**: Complete `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream.
+
+4. **Attestation Failure Attributability**: First-class `provider_name` logging and `fetch_error` attribution, along with Ed25519 CER signature verification.
+
+5. **In-Kernel ConsequenceToken & ContentAddress**: Cryptographically secure references decoupled from storage mechanisms.
+
+
+---
+
 ## System Overview
 
 > **Reading note:** the narrative and component map below trace the **finance example domain** reference application end to end, because a concrete trace is more legible than an abstract one. Every finance term is plugin-supplied, not kernel-supplied: `execute_trade` is a claimed action, `FiscalLimitGuard` reserves abstract budget tokens, `safety:current_cash` is one plugin's watched scalar, and `trade_governance.rego` is one plugin's policy bundle. The healthcare example plugin substitutes `dose_order`, `SerumConcentrationBarrier`, `dosing_governance.rego`, and clinical critics through the identical seams **with no kernel change** — as do adopter plugins for manufacturing, logistics, energy, or any other vertical.
@@ -224,7 +241,7 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 - **OTel-traced** — every `get`/`set`/`delete` creates a span with `redis.key` attribute
 - **Fail-fast** — raises `ConnectionError` on connect failure (no silent memory fallback)
 - **Kubernetes-aware** — strips `tcp://host:port` prefix from `REDIS_PORT` env var (GKE auto-injection)
-- **v3.0.0:** The `RedisClient = AsyncRedisClient` alias was removed. Use `AsyncRedisClient` directly.
+- **v3.0.1:** The `RedisClient = AsyncRedisClient` alias was removed. Use `AsyncRedisClient` directly.
 - Global singleton `redis_client` exported from [`safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) (the P0 import target)
 
 ### NeMo Telemetry Exporter (`telemetry/nemo_exporter.py`)
@@ -461,4 +478,4 @@ Full engineering and compliance documentation for CAGE is maintained in the [Tec
 
 ---
 
-_Architecture current as of v3.0.0 stable. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: Two-Phase Eight-Tier SymbolicGovernor (Phase 1 read-only validation: STPA, Confidence, OPA, Consensus, Causal with $\beta>0$ guard, FRIA; Phase 2 atomic mutation: CBF Lua atomic check+commit + FiscalLimitGuard pre-reservation) + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target active. Z3N: Linkerd + Cilium deployed. POAM-023 (Anchorage ledger reconciliation worker & GCS WORM) closed. NoDirectBind safety invariant machine-verified over 57 sequential reachable states (66 under CBF-OPA interleaving). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](../operations/DEPLOYMENT_DECISION_RECORD.md)._
+_Architecture current as of v3.0.1 stable. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: Two-Phase Eight-Tier SymbolicGovernor (Phase 1 read-only validation: STPA, Confidence, OPA, Consensus, Causal with $\beta>0$ guard, FRIA; Phase 2 atomic mutation: CBF Lua atomic check+commit + FiscalLimitGuard pre-reservation) + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target active. Z3N: Linkerd + Cilium deployed. POAM-023 (Anchorage ledger reconciliation worker & GCS WORM) closed. NoDirectBind safety invariant machine-verified over 57 sequential reachable states (66 under CBF-OPA interleaving). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](../operations/DEPLOYMENT_DECISION_RECORD.md)._

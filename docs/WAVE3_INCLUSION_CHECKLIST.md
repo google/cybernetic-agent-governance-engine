@@ -4,12 +4,12 @@
 > outcome for CR-1, CR-2, and CR-3 documented in
 > [`docs/MAJOR_VERSION_CLEANUP_PLAN.md`](MAJOR_VERSION_CLEANUP_PLAN.md) §2.3,
 > §3 (Wave 3), and §6 (Wave 3 Implementation Checklist), and in
-> [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.0]` entry ("Deprecated" section,
+> [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.1]` entry ("Deprecated" section,
 > which currently lists all three items as deferred). It documents the
 > reference-implementation rationale for including all three items in
-> `v3.0.0` and provides an executable checklist for doing so.
+> `v3.0.1` and provides an executable checklist for doing so.
 >
-> **Status:** Completed & Verified — All three Wave 3 items (CR-1, CR-2, and CR-3) have been fully implemented, tested, and shipped in `v3.0.0`. This document serves as the historical record and verification artifact.
+> **Status:** Completed & Verified — All three Wave 3 items (CR-1, CR-2, and CR-3) have been fully implemented, tested, and shipped in `v3.0.1`. This document serves as the historical record and verification artifact.
 
 ---
 
@@ -76,7 +76,7 @@ satisfied — there is nothing to migrate. This is confirmed by:
 **Net effect:** all three items move from "High Risk, gate on external
 sign-off + data migration" to "Medium-or-lower risk, gate on Technical Lead
 review + full regression suite passing." This justifies collapsing Wave 3
-into the main `v3.0.0` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
+into the main `v3.0.1` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
 
 ---
 
@@ -154,7 +154,7 @@ path as the sole live-write mechanism:
 - [x] Update [`docs/BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md) — add a
       new entry under "Removed Classes/Functions" for the v1.0 live-write
       path, cross-referencing this checklist
-- [x] Update [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.0]` entry — move "Evidence
+- [x] Update [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.1]` entry — move "Evidence
       Stream v1.0 schema support marked for removal in v4.0.0 (CR-1
       deferred)" from **Deprecated** to **Breaking Changes**, since it is now
       shipping in this release
@@ -203,7 +203,7 @@ path as the sole live-write mechanism:
 
 ### Recommendation
 
-**Adopt Option B (Restrict API), executed in `v3.0.0`.**
+**Adopt Option B (Restrict API), executed in `v3.0.1`.**
 
 ### Code Changes Completed (Option B)
 
@@ -285,7 +285,7 @@ flowchart TD
    likely to surface an unexpected live-reference-chain edge case during the
    "verify no production evidence chains exist" prerequisite check. Landing
    it last means any surprise found there does not block the other two,
-   lower-risk items from shipping in `v3.0.0`.
+   lower-risk items from shipping in `v3.0.1`.
 4. **Gate:** after all three land, run the full
    `uv run pytest tests/ --run-integration -v --tb=short` suite once more
    (per [`AGENTS.md`](../AGENTS.md) Test Execution) before this becomes part
@@ -296,10 +296,10 @@ flowchart TD
    is otherwise unaffected by this checklist's scope.
 
 **Note on versioning:** [`pyproject.toml:3`](../pyproject.toml:3) and
-[`CHANGELOG.md`](../CHANGELOG.md) already show `v3.0.0` as **released**
+[`CHANGELOG.md`](../CHANGELOG.md) already show `v3.0.1` as **released**
 (2026-08-15) with CR-1/CR-2/CR-3 listed under "Deprecated" (deferred). If
 this checklist's items are implemented after that release date, they
-constitute an amendment to the already-shipped `v3.0.0` changelog/breaking-changes
+constitute an amendment to the already-shipped `v3.0.1` changelog/breaking-changes
 docs (updating "Deprecated" entries to "Breaking Changes" entries as
 each item's Documentation Updates section specifies) rather than a new
 version bump, unless the maintainers prefer to cut a `v3.0.1`/`v3.1.0` to

@@ -119,7 +119,7 @@ reach for, and I would rather our verification model be explicit in the record.
 |---|---|
 | Node-boundary callback (6 governance nodes) | ✅ Built, tested |
 | `certifyDecision` / `registerProjectBundle` wrappers | ✅ Built, fail-closed |
-| RFC 8785 JCS state hashing | ✅ v3.0.0 |
+| RFC 8785 JCS state hashing | ✅ v3.0.1 |
 | JWK cache with ETag/`304`, 24h TTL, out-of-band | ✅ Built |
 | OSCAL `rel="evidence"` emission | ⚠️ Built, **not wired** |
 | Verification fail-open | ✅ **Closed** — invariant-enforced |

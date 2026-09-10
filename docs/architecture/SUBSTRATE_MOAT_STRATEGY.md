@@ -1,4 +1,4 @@
-# CAGE v3.0.0 — Substrate Moat Strategy
+# CAGE v3.0.1 — Substrate Moat Strategy
 ## Competitive Positioning Against Microsoft MXC/ACS, Red Hat/AAIF, and Google Agent Gateway
 
 **Document type:** Architectural Strategy & Gap Analysis
@@ -34,7 +34,7 @@ The comparative matrix claims CAGE enforces at the **container network interface
 [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py:406) collapses the CBF check and state commit into a single Redis Lua script execution. The Lua script (`LUA_ATOMIC_CBF`) evaluates `h(S(t+1)) >= (1-γ)*h(S(t))` and writes `safety:current_cash` atomically — no Python round-trip between check and write. This is the database commit tier enforcement described in the matrix. In the financial reference deployment `safety:current_cash` tracks cash balance; in other high-reliability deployments the same key tracks the domain-specific resource invariant (e.g. API call budget, actuator torque envelope, drug-dosage ceiling).
 
 **WATCH/MULTI/EXEC optimistic locking & Rollback:**  
-[`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/cbf.py) and [`rollback_state()`](../../src/gateway/governance/cbf.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.0, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
+[`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/cbf.py) and [`rollback_state()`](../../src/gateway/governance/cbf.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.1, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
 
 **No-Direct-Bind startup assertions:**  
 [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:64) raises `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production, and if `dowhy` is absent. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.

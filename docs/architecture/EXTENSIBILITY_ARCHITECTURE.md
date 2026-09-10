@@ -4,7 +4,7 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
-| **Version**        | v3.0.0                    |
+| **Version**        | v3.0.1                    |
 | **Status**         | Current State + Roadmap (GKE deployment verified 2026-06-03; see `CHANGELOG.md` for v2.1.0 additions) |
 
 ---
@@ -37,7 +37,7 @@ h(x) = cash_balance - min_cash_balance
 
 where `min_cash_balance = 1000.0` (sourced from `THRESHOLDS.cbf.min_cash_balance` in `config/governance_thresholds.json`).
 
-**v3.0.0:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
+**v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
 
 The enforcement boundary:
 
@@ -244,7 +244,7 @@ All external provider interactions fall into three categories, each with a disti
 | **Attestation Logging**   | None (async fire-and-forget)              | CAGE → Provider           | Background; no acknowledgment wait                  |
 | **External Validation**   | **Adaptive** (confidence-dependent)       | CAGE ↔ Provider           | Async at ≥0.95; sync gate at [0.70, 0.95); deny <0.70 |
 
-**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf.py`](../../src/gateway/governance/cbf.py)) executes in sub-microseconds (**v3.0.0:** `safety.py` removed). The full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) includes the OPA query (~10-50ms); the legacy SLM sidecar tier slot has been fully retired (`slm_available=false` permanent sentinel, 0ms overhead). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
+**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf.py`](../../src/gateway/governance/cbf.py)) executes in sub-microseconds (**v3.0.1:** `safety.py` removed). The full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) includes the OPA query (~10-50ms); the legacy SLM sidecar tier slot has been fully retired (`slm_available=false` permanent sentinel, 0ms overhead). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
 
 #### 2.5.2 Reference Handshake: 3-Endpoint External Provider
 
@@ -520,7 +520,7 @@ The `nemo_node_factory.py` in the LangGraph harness bridges §4.1 and §4.3: it 
 
 ### 4.4 Seams Contracts Layer — Kernel & Vendor Decoupling (`src/gateway/governance/seams/`)
 
-Added in the post-v3.0.0 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, execution actuation, and graph topologies:
+Added in the post-v3.0.1 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, execution actuation, and graph topologies:
 
 | Seam Module | Protocol / Dataclass | Role |
 |---|---|---|

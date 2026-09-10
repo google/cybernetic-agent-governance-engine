@@ -1,7 +1,7 @@
 # Response to Luis — actuator_01 Wire Protocol Fixes
 
 **Date:** 2026-09-08  
-**Thread:** v3.0.0 actuator_01 contract review  
+**Thread:** v3.0.1 actuator_01 contract review  
 **Status:** Both bugs fixed, all tests passing
 
 ---
