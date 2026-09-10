@@ -27,7 +27,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from src.compliance_bridge.disclosure import Disclosure
+try:
+    from .disclosure import Disclosure
+except (ImportError, ValueError):
+    from src.compliance_bridge.disclosure import Disclosure
 
 
 class CERIndex(Protocol):

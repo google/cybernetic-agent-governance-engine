@@ -56,8 +56,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import cast
 
-from src.compliance_bridge.cer_index import CERIndex
-from src.compliance_bridge.disclosure import Disclosure
+try:
+    from .cer_index import CERIndex
+    from .disclosure import Disclosure
+except (ImportError, ValueError):
+    from src.compliance_bridge.cer_index import CERIndex
+    from src.compliance_bridge.disclosure import Disclosure
 from src.gateway.governance.content_address import (
     ContentAddress,
     MalformedContentAddress,
