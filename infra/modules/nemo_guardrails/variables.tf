@@ -41,6 +41,12 @@ variable "image_pull_policy" {
   default     = "IfNotPresent"
 }
 
+variable "environment" {
+  description = "Runtime environment (e.g. development, staging, production)"
+  type        = string
+  default     = "staging"
+}
+
 # ─── NeMo Guardrails ──────────────────────────────────────────────────────────
 
 variable "nemo_image" {

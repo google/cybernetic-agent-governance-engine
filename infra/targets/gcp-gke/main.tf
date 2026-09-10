@@ -310,6 +310,7 @@ module "nemo_guardrails" {
   service_name    = "nemo-guardrails"
   replicas        = var.enable_high_availability ? 2 : 1
   enable_pdb      = var.enable_high_availability
+  environment     = var.environment
 
   # NeMo container image (custom-built via Cloud Build or upstream NVIDIA)
   nemo_image = var.nemo_image != "" ? var.nemo_image : "gcr.io/${var.project_id}/nemo-guardrails:latest"
@@ -604,6 +605,9 @@ module "gateway" {
   otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
   )
+  reconciliation_provider = "gcs"
+  kms_governance_key      = var.kms_governance_key
+  cage_kms_provider       = "gcp"
 
   depends_on = [module.app_secrets, module.opa, module.vllm, module.redis]
 }

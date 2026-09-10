@@ -216,6 +216,18 @@ resource "kubernetes_deployment" "gateway" {
             name  = "CAGE_ROUTING_SEAL_SECRET"
             value = var.routing_seal_secret
           }
+          env {
+            name  = "RECONCILIATION_PROVIDER"
+            value = var.reconciliation_provider
+          }
+          env {
+            name  = "KMS_GOVERNANCE_KEY"
+            value = var.kms_governance_key
+          }
+          env {
+            name  = "CAGE_KMS_PROVIDER"
+            value = var.cage_kms_provider
+          }
           resources {
             requests = {
               cpu    = "1000m"

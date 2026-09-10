@@ -123,3 +123,21 @@ variable "routing_seal_secret" {
   default     = ""
   sensitive   = true
 }
+
+variable "reconciliation_provider" {
+  description = "Reconciliation ledger provider (gcs, anchorage, etc.)"
+  type        = string
+  default     = "gcs"
+}
+
+variable "kms_governance_key" {
+  description = "Cloud KMS governance key version resource name"
+  type        = string
+  default     = ""
+}
+
+variable "cage_kms_provider" {
+  description = "KMS provider implementation (gcp, aws, stub)"
+  type        = string
+  default     = "gcp"
+}
