@@ -545,7 +545,7 @@ module "compliance_bridge" {
   alert_channel          = "console"
   oscal_s3_bucket        = google_storage_bucket.langfuse_events.name
   oscal_s3_region        = var.region
-  cage_env               = "development"
+  cage_env               = var.environment
   cage_deployment_region = var.cage_deployment_region
 
   # K-3: wire KMS_GOVERNANCE_KEY so KMSBatchSigner loads at startup.
@@ -584,7 +584,7 @@ module "gateway" {
   project_id              = var.project_id
   region                  = var.region
   enable_logging          = "true"
-  cage_env                = "development"
+  cage_env                = var.environment
   redis_host              = module.redis.service_name
   redis_password          = module.redis.password
   vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
@@ -639,6 +639,7 @@ module "governed_advisor" {
   # back to legacy HMAC-SHA256 via governance_salt above.
   kms_governance_key = var.kms_governance_key
   cage_kms_provider  = var.cage_kms_provider
+  cage_env           = var.environment
 
   # K-4: wire OTLP auth header so governed-financial-advisor traces reach
   # Langfuse rather than returning 401 Unauthorized.
