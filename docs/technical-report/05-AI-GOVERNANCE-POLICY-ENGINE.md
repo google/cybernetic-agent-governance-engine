@@ -12,6 +12,8 @@ project: "Cybernetic Governance Engine (CAGE)"
 ## Overview
 
 > **v3.0.0**: 6 first-class runtime governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), Lua-atomic CBF check-and-commit (`ControlBarrierFunction.atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed automatic rollback, monotonic fence epoch (`safety:fence_epoch`), strictly human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`), Routing Seal v3 JWT format binding SHA-256 evidence record hashes with fail-closed actuator verification (dev/test fallback HMAC), and operational external balance reconciliation worker (POAM-023 / POAM-2026-038 closed).
+>
+> **v3.0.1 (2026-09-09)**: Seams Contracts Extraction (`src/gateway/governance/seams/`) with zero-kernel-import boundary, In-kernel `ConsequenceToken` and `ContentAddress` primitives, `DeferReason.EXTERNAL_HOLD` replacing legacy vendor routing, Full `RefusalReceipt` v3 evidence serialization with KMS staging/production requirements, and Ed25519 CER signature verification for attestation failure attributability.
 
 
 The AI Governance & Policy Engine is the most complex and safety-critical component of the Cybernetic Governance Engine (CAGE). It enforces a layered, **neuro-symbolic hybrid governance** model over every agent action, combining deterministic symbolic constraints with LLM-based semantic judgment. No action reaches execution unless it passes all governance tiers. All governance is **fail-closed**: any tier failure raises `GovernanceError` and blocks the action.
@@ -601,6 +603,7 @@ The DEFER state machine implements a **three-zone confidence model**:
 | `CONFIDENCE_BELOW_THRESHOLD` | AARM-V7 | Model confidence < 0.70 |
 | `EXTERNAL_VALIDATION` | SA-9 | Consensus score in ambiguous zone (0.70–0.95); awaiting external FRIA gate from normative provider (v2.1.0, §2.5) |
 | `FTRA_IRREVERSIBLE_TERMINAL` | STPA UCA-9 | FTRA classifier flagged trade as irreversible and terminal; requires human review before commencement |
+| `EXTERNAL_HOLD` | SA-9 | Replaces legacy `FLOWSIGNAL_ESCALATION` vendor routing; parks action with dynamic TTL driven from external findings |
 
 ### Resolution Paths
 

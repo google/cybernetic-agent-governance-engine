@@ -1,11 +1,11 @@
-# Formal Verification and Completeness Proof (CAGE v3.0.0)
+# Formal Verification and Completeness Proof (CAGE v3.0.1)
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-09-07                |
-| **Version**        | 3.0                       |
-| **Status**         | Current — v3.0.0 stable; test suite verified; **3,925 collected / 3,446 local unit passed, 0 failed, 96 skipped**; NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states; Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
+| **Date**           | 2026-09-09                |
+| **Version**        | 3.0.1                     |
+| **Status**         | Current — v3.0.1 stable; test suite verified; **4,148 collected / 3,921 local unit passed, 0 failed**; NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states; Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
@@ -102,7 +102,7 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (10 entity types) in NeMo Guardrails output rail + Cilium L7 FQDN egress lockdown (`deployment/k8s/cilium-egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
 
 > **FUTURE STATE (POAM-023):** An `AnchorageGrpcLedgerProvider` for externally reconciled CBF balance anchoring was referenced in earlier drafts of this document but has not been implemented. The current implementation uses Presidio PII masking and Cilium L7 network policy for AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py). The "Stale Ground Truth" threat (balance staleness) is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above.
-| **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in 0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
+| **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`seams/normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in 0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
 
 **AARM Conformance Summary:** 10 of 11 vectors are fully neutralized. AARM-V11 is PARTIAL pending Provider 01 API credential provisioning (POAM-022). The live conformance report is available at `GET /v1/aarm/conformance-report`.
 
@@ -574,5 +574,25 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` verifies 
 | 10 | Provenance hash chain — SHA-256, O(n) tamper detection, deterministic serialization | **PASS** |
 | 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86400s window, exponential backoff | **PASS** |
 | 12 | Distributed CBF multi-agent formal verification — SP-1 through SP-4 across $N \in \{2, 3, 4\}$ agents | **PASS** |
+| 13 | Attestation failure attributability — Ed25519 CER signature verification with fail-closed security enforcement | **PASS** |
+| 14 | Evidence serialization and KMS staging/production requirements — strict validation requiring KMS signing in production/staging evidence streams, with full `RefusalReceipt` v3 evidence serialization preserving `tier_failures`, 5-part proof chain, and byte-identical `proof_hash` | **PASS** |
 
-**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`. Steps 8–12 document the formal mathematical properties of the CBF barrier certificate, routing seal cryptographic contract, provenance hash chain, FiscalLimitGuard quantitative parameters, and multi-agent distributed barrier proofs as verified against the production source code.
+**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`. Steps 8–14 document the formal mathematical properties of the CBF barrier certificate, routing seal cryptographic contract, provenance hash chain, FiscalLimitGuard quantitative parameters, multi-agent distributed barrier proofs, Ed25519 CER signature verification, and evidence KMS requirements as verified against the production source code.
+
+---
+
+## Step 13: Attestation Failure Attributability & Ed25519 CER Signature Verification
+
+**Claim:** Attestation failures from external providers are structurally attributable, preventing misbehaving providers from crashing the attestation loop silently. Furthermore, Causal Evidence Records (CERs) from Provider 02 must carry mathematically verifiable Ed25519 signatures enforcing fail-closed security.
+
+**Proof / Remediation (POAM-2026-072):**
+1. Added `ExternalAttestation.provider_name` and `fetch_error` attribution to explicitly log and isolate failures.
+2. The `verify_cer_signature()` routine strictly parses and verifies Ed25519 signatures on CERs. Malformed or invalid signatures result in a fast, fail-closed rejection.
+
+## Step 14: Evidence Serialization and KMS Staging/Production Requirements
+
+**Claim:** Full `RefusalReceipt` v3 and `PauseReceipt` serialization correctly preserve all components of the proof chain and maintain identical `proof_hash` properties during re-hydration. Moreover, production and staging environments strictly require KMS-backed signing for evidence streams.
+
+**Proof:**
+1. Serialization mechanisms now capture `tier_failures`, ensuring the 5-part proof chain is maintained intact upon ingestion.
+2. Environment checks ensure that `CAGE_ENV` set to `staging` or `production` mandates KMS signing. Fallbacks (e.g. HMAC) are structurally disabled in these environments, enforcing non-repudiation as detailed in Step 6.

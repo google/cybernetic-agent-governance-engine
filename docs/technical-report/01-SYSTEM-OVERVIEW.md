@@ -100,6 +100,8 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 ## 4. Primary Capabilities
 
 > **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, 57/66-state formal reachability models, Distributed CBF formal verification ($N \in \{2, 3, 4\}$ agents), and external attestation layers (Provider 05 3-axiom, Provider 04, Provider 03).
+> 
+> **v3.0.1 additions (2026-09-09):** Seams Contracts Extraction (`src/gateway/governance/seams/`) with zero-kernel-import boundary, In-kernel `ConsequenceToken` and `ContentAddress` primitives, `DeferReason.EXTERNAL_HOLD` replacing legacy vendor routing, Full `RefusalReceipt` v3 evidence serialization with KMS staging/production requirements, and Ed25519 CER signature verification for attestation failure attributability.
 
 
 CAGE provides eight integrated capabilities. **Capabilities 2 and 4–8 are domain-neutral substrate functions** available regardless of which plugin — if any — is loaded. Capability 1 is a reference application belonging to the finance example domain, and capability 3 is the domain-neutral escalation primitive it exercises.
@@ -268,7 +270,7 @@ The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../
 | **—** | **Domain Tiers Phase 1 (read-only)** | **Plugin** | Registered tiers with `phase == 1`, sorted by `(phase, order)` | [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) |
 | **3b** | OPA Policy | Kernel | Rego policy evaluation | [`OPAClient.evaluate_policy()`](../../src/gateway/core/policy.py) |
 | **—** | **Domain Tiers Phase 2 (mutating)** | **Plugin** | Registered tiers with `phase == 2`, LIFO rollback on failure | [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) + [`_rollback_committed()`](../../src/gateway/governance/symbolic_governor.py:909) |
-| **7** | FRIA Gate | Kernel | External normative provider (confidence-mapped) | [`enforce_fria_boundary()`](../../src/gateway/governance/normative_provider.py) |
+| **7** | FRIA Gate | Kernel | External normative provider (confidence-mapped) | [`enforce_fria_boundary()`](../../src/gateway/governance/seams/normative_provider.py) |
 
 **Finance plugin tiers** (registered by [`FinanceCagePlugin`](../../src/cage_finance/plugin.py:107)):
 - Order 2 (phase 1): Bounding contracts (instrument/venue/counterparty allowlisting)
@@ -304,7 +306,7 @@ JWT Header:  {"alg": "RS256", "typ": "JWT", "kid": "<kms-key-version>"}
 JWT Payload: {"sub": "<action_slug>", "params_hash": "<sha256>", "record_hash": "<evidence_hash>", "exp": <ts+30s>}
 ```
 
-30-second TTL; the `record_hash` cryptographically binds the actuation clearance to a specific evidence record in the compliance audit stream. Downstream execution actuators ([`src/gateway/governance/execution_actuator.py`](../../src/gateway/governance/execution_actuator.py)) verify the seal against the JWKS endpoint before firing — ensuring execution cannot proceed by ignoring governance verdicts. See [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py).
+30-second TTL; the `record_hash` cryptographically binds the actuation clearance to a specific evidence record in the compliance audit stream. Downstream execution actuators ([`src/gateway/governance/seams/execution_actuator.py`](../../src/gateway/governance/seams/execution_actuator.py)) verify the seal against the JWKS endpoint before firing — ensuring execution cannot proceed by ignoring governance verdicts. See [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py).
 
 ---
 

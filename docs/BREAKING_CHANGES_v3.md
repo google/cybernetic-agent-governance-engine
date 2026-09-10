@@ -709,5 +709,21 @@ Per the Core Architectural Principle in [`AGENTS.md`](../AGENTS.md), CAGE is a r
 
 ---
 
-**Last updated:** 2026-09-05 (Vendor Decoupling Program AW-1–AW-8 + Gate G3 & G7 hardening)
+## Post-v3.0.0 Seam Contracts & Provider Conformance Clean Breaks (2026-09-09)
+
+Following the v3.0.0 major release, 19 feature branches were implemented to complete seam decoupling, remediate contract drift, and stabilize the test suite across 3,921 passing tests (4,148 collected tests):
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **SC-1** | Seams | Seam contracts extracted into `src/gateway/governance/seams/{normative,attestation,actuation,graph_topology}.py` with **ZERO imports from the kernel**. | Eliminates circular dependencies between the kernel and vendor integration packages. | `ImportError` on importing seam contracts from old module locations (`normative_provider`, `attestation_provider`, `execution_actuator`). |
+| **SC-2** | Hold | `DeferReason.FLOWSIGNAL_ESCALATION` renamed to `DeferReason.EXTERNAL_HOLD`. Vendor-specific branch in `enforce_fria_boundary()` removed. | Generalizes external hold mechanism across all providers; drives TTL dynamically from finding fields (`hold_ttl_seconds`). | `AttributeError` on `DeferReason.FLOWSIGNAL_ESCALATION`. |
+| **SC-3** | Attestation | `provider_name` added as first-class field on `ExternalAttestation`. Error smuggling via `attestation_type="PROVIDER_ERROR:{name}"` eliminated (POAM-2026-072). | Prevents single-provider exceptions from aborting the entire fetch loop; ensures full non-repudiation (AU-10/AU-12). | Callers filtering by `PROVIDER_ERROR` prefix will miss errors; inspect `fetch_error` and `provider_name` instead. |
+| **SC-4** | Evidence | Complete `RefusalReceipt` v3 and `PauseReceipt` objects serialized into evidence stream via `dataclasses.asdict()`. | Preserves 5-part proof chain, `tier_failures`, and byte-identical `proof_hash` in audit trail. | Stale consumers expecting flat refusal summaries must parse v3 nested receipt structure. |
+| **SC-5** | Tokens | Consequence token minting moved exclusively to kernel (`src/gateway/governance/consequence_token_service.py`). | Prevents external adapters from minting consequence authorizations outside kernel governance. | Direct calls to external adapter token generators fail or lack kernel signature validation. |
+| **SC-6** | Provider 02 | Provider 02 adheres to `AttestationProvider` protocol; verifies Ed25519 CER signatures against key manifest. | Fails closed on unverified CER signatures to prevent forged causal evidence. | Unsigned or unverified CER payloads trigger immediate fail-closed rejection. |
+| **SC-7** | Evidence KMS | Strict validation requiring KMS signing in `production` and `staging` postures. | Prevents running production evidence chains without cryptographic non-repudiation. | Fails fast with `ConfigurationError` on startup if KMS key is not configured in production. |
+
+---
+
+**Last updated:** 2026-09-09 (Post-v3.0.0 Seam Contracts SC-1–SC-7 + POAM-2026-072 Remediation)
 

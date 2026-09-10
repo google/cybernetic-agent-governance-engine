@@ -29,7 +29,7 @@ The following capabilities are implemented, tested, and operational in the CAGE 
 
 ### 1.1 The Domain-Agnostic Kernel
 
-The CBF engine ([`cbf.py`](../../src/gateway/governance/cbf.py)) implements a pure mathematical invariant with no domain-specific logic. The barrier function is:
+The CBF engine ([`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) implements a pure mathematical invariant with no domain-specific logic. The barrier function is:
 
 ```
 h(x) = cash_balance - min_cash_balance
@@ -37,7 +37,7 @@ h(x) = cash_balance - min_cash_balance
 
 where `min_cash_balance = 1000.0` (sourced from `THRESHOLDS.cbf.min_cash_balance` in `config/governance_thresholds.json`).
 
-**v3.0.0:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`cbf.py`](../../src/gateway/governance/cbf.py).
+**v3.0.0:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
 
 The enforcement boundary:
 
@@ -517,6 +517,19 @@ NeMo Guardrails (`src/gateway/governance/nemo/`) is the neural component of the 
 **Extension pattern**: A new safety rail is added by authoring a Colang 2.x flow file and registering it in `config/rails/config.yml`. The `NeMoNodeFactory` in the LangGraph harness (§4.1) automatically wraps the updated rail set as a typed governance node. No kernel changes are required.
 
 The `nemo_node_factory.py` in the LangGraph harness bridges §4.1 and §4.3: it converts the NeMo manager's synchronous rail evaluation into a typed LangGraph node, making NeMo a first-class participant in any StateGraph-based governance pipeline.
+
+### 4.4 Seams Contracts Layer — Kernel & Vendor Decoupling (`src/gateway/governance/seams/`)
+
+Added in the post-v3.0.0 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, execution actuation, and graph topologies:
+
+| Seam Module | Protocol / Dataclass | Role |
+|---|---|---|
+| [`normative.py`](../../src/gateway/governance/seams/normative.py) | `NormativeProvider`, `NormativeBaseline`, `ValidationResult` | Defines normative constraint contracts without importing kernel or vendor modules |
+| [`attestation.py`](../../src/gateway/governance/seams/attestation.py) | `AttestationProvider`, `ExternalAttestation`, `AttestationStatus` | Standardizes external evidence attestation with attributable `provider_name` |
+| [`actuation.py`](../../src/gateway/governance/seams/actuation.py) | `ExecutionActuator`, `ExecutionClearance`, `ActuationReceipt` | Decouples execution actuation and signing contracts from specific transport layers |
+| [`graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | `GraphTopologyProtocol`, `GraphNode`, `GraphEdge` | Standardizes structural graph inspection across domain agent workflows |
+
+**Architectural Invariant:** Seam modules maintain **ZERO imports from the kernel** (`src/gateway/governance/*` outside `seams/`). This invariant completely severs circular dependencies between the governance kernel and external vendor integration adapters.
 
 ---
 

@@ -204,6 +204,8 @@ The agent system extends the governance tri-state decision (`ALLOW | DENY | MANU
 
 DEFER tokens are stored in **Redis `db=1`** with `noeviction` policy — the system blocks on OOM rather than silently dropping execution contexts. Default TTL: 4 hours before stale escalation. Source: [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py).
 
+> **v3.0.1 Update:** `DeferReason.EXTERNAL_HOLD` replaces the legacy vendor-specific `FLOWSIGNAL_ESCALATION` routing. It provides a generalized `DEFER` reason where TTLs are driven dynamically from the structural findings of external normative providers rather than hardcoded heuristics.
+
 ### Context Accumulator (AARM-V1)
 
 The **SHA-256 hash-chained Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) seals audit evidence against retroactive tampering or Memory Poisoning attacks. Every emitted `OscalFinding` is chained cryptographically to its predecessor:
@@ -481,7 +483,7 @@ SymbolicGovernor._run_checks()
 Routing seal v3 issued: Asymmetric JWT signed by Cloud KMS HSM (dev/test fallback HMAC)
         │
         ▼
-ExecutionActuator (src/gateway/governance/execution_actuator.py) verifies seal & evidence binding before firing
+ExecutionActuator (src/gateway/governance/seams/execution_actuator.py) verifies seal & evidence binding before firing
 ```
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.

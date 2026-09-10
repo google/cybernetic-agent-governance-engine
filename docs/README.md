@@ -7,7 +7,7 @@
 > Some domain-flavoured identifiers appear in older documents and in the finance reference application (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`). These belong to the **finance example domain**, not to the kernel. See [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md).
 >
 > **Jurisdictional compliance is likewise configuration.** `US_FED`, `EU_ECB`, and `APAC_MAS` are configurable postures selected with `CAGE_DEPLOYMENT_REGION`, layered over the universal ISO 42001 baseline. Adding a jurisdiction is a config-only operation — see the Jurisdiction Key below.
-**Last updated:** 2026-08-28
+**Last updated:** 2026-09-09
 
 This directory is organised using a **hybrid layout**: function-based top-level sections, with compliance artefacts further sub-divided by jurisdiction. This mirrors the system's own architectural principle: ISO 42001 as the universal baseline, with jurisdiction-specific addenda for US_FED, EU_ECB, and APAC_MAS.
 
@@ -115,11 +115,11 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 
 | Document | Mathematical Formalism | Source Code Reference |
 |---|---|---|
-| [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal asymmetric proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
-| [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
+| [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal asymmetric proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
+| [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
 | [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 8-tier symbolic governor pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
 | [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`get_fria_zone_allow()=0.95`, `get_fria_zone_defer()=0.70`), regional compliance invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
-| [architecture/GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | CBF layer integration, routing seal enforcement, governance pipeline data-flow | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
+| [architecture/GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | CBF layer integration, routing seal enforcement, governance pipeline data-flow | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 
 ### Key Named Constants & Thresholds (source: [`config/thresholds/`](../config/thresholds/), [`src/gateway/governance/schemas/thresholds.py`](../src/gateway/governance/schemas/thresholds.py))
 
