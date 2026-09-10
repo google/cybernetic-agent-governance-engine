@@ -625,31 +625,98 @@ Never disable the `marker-contract-check` CI job to make a build pass.
 3. **Live GKE Testing**:
    Live dual-pipeline attestation, trace verification, and SLA timing are validated exclusively against live GKE clusters via port-forwarding (`scripts/port_forward_staging.sh`, forwarding ports `3000` and `3001`) with `uv run pytest tests/ --run-integration`. Local offline tests must keep telemetry tracing disabled (`-p no:langsmith -p no:langsmith_plugin`, `LANGCHAIN_TRACING_V2=false`, `LANGSMITH_TRACING=false`).
 
-### Full Integration Suite Against Live GKE
+### Running Live Integration Tests in Staging Posture
 
-The canonical way to run the full integration test suite against the live GKE staging cluster:
+Running integration tests against a live GKE cluster deployed in **staging posture** (`CAGE_ENV=staging`) verifies real service contracts (Gateway, OPA, Redis, Compliance Bridge, Langfuse, ClickHouse, MCP tools) across live network boundaries.
+
+#### 1. Cluster Prerequisites & Port-Forward Daemon
+
+Before launching integration tests, verify the `kubectl` context points to the staging cluster (e.g. `cage-staging` in `us-central1-a`) and all non-GPU services are Running:
 
 ```bash
-# 1. Establish port-forwards to the staging GKE cluster (keep running in background)
-bash scripts/port_forward_staging.sh
-
-# 2. In a separate terminal, load env and run full suite
-source .env
-export CAGE_ENV=staging
-export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}"
-export CAGE_ROUTING_SEAL_SECRET="${CAGE_ROUTING_SEAL_SECRET:-dev-only-insecure-placeholder-not-for-production-use}"
-export GOVERNANCE_SALT="${GOVERNANCE_SALT:-dev-only-insecure-placeholder-not-for-production-use}"
-export LANGFUSE_POSTURE_DRY_RUN=true
-uv run pytest tests/ --run-integration -v --tb=short
+kubectl get pods -n governance-stack
 ```
 
-Key facts:
-- `scripts/port_forward_staging.sh` establishes auto-reconnecting `kubectl port-forward` tunnels: OPA (8181), Langfuse API/UI (3001/3000), vLLM fast (8001/18081), vLLM reasoning (8000/18082), Gateway (8080), backend (8081), Redis (6379), Compliance Bridge (3002).
-- Requires a valid `kubectl` context pointing to the staging GKE cluster (e.g. `<cluster-name>` in `us-central1-a`).
-- `.env` at the repo root is loaded automatically by `port_forward_staging.sh` and `tests/conftest.py`.
-- The staging cluster serves as the integration testing environment (no separate dev cluster exists).
-- Last known result (2026-08-10): **2553 passed, 51 skipped, 1 failed** in ~9m25s. The 51 skips are region/OPA-gated integration tests; the 1 failure was a test-isolation bug (cache leak in `tests/test_red_teaming.py::mock_thresholds` fixture), not a GKE connectivity issue.
-- Always use `uv run pytest`, never bare `pytest`.
+Start the port-forward daemon in the background:
+
+```bash
+bash scripts/port_forward_staging.sh --daemon
+# Or run in foreground:
+bash scripts/port_forward_staging.sh
+```
+
+**Port-Forward Features & Inactive GPU Handling:**
+- The script automatically checks `kubectl get endpointslice` (`has_endpoints`) and detects whether services have ready endpoints before opening ports.
+- **GPU Scaling Invariant**: In staging clusters, the GPU node pool (`gke-gpu-pool`) is typically scaled to 0 replicas to conserve compute costs. The script automatically detects 0 endpoints for `vllm-service` (port `8001`) and `vllm-reasoning` (port `8000`) and skips them, preventing tight reconnect loops from overwhelming the Kubernetes API server.
+- Supported active ports: OPA (`8181`), Langfuse UI/API (`3000`/`3001`), Gateway (`8080`), Backend/GFA (`8081`), Compliance Bridge (`3002`), Redis (`6379`).
+
+#### 2. Test Harness Configuration & KMS Signing in Staging
+
+In staging mode, `SymbolicGovernor` enforces asymmetric Cloud KMS signature verification (`KMS_GOVERNANCE_KEY`). Local workstations running pytest do not possess GKE Workload Identity IAM permissions to sign with Cloud KMS:
+- **Client Test Posture**: In `tests/conftest.py`, running client test commands with `CAGE_ENV=test` allows the test harness to use software-backed HMAC/SHA256 signing for local assertions while directing all network requests to live cluster endpoints via localhost tunnels (`BACKEND_URL=http://localhost:8081`, `GATEWAY_URL=http://localhost:8080`, `OPA_URL=http://localhost:8181`, `REDIS_URL=redis://localhost:6379/0`).
+- **KMS Public Key Verification**: If verifying Gateway responses signed with the staging KMS key, extract the public key PEM from the running gateway pod:
+  ```bash
+  kubectl exec -n governance-stack deploy/gateway -c gateway -- cat /tmp/kms_governance_public.pem > /tmp/kms_governance_public.pem
+  export KMS_GOVERNANCE_PUBLIC_PEM=/tmp/kms_governance_public.pem
+  ```
+
+#### 3. Worker Concurrency Limits on Port-Forward Tunnels
+
+**CRITICAL RULE: Never use `-n auto` against port-forwarded tunnels.**
+On multi-core developer workstations, `-n auto` spawns 16+ parallel pytest workers. Hammering localhost port-forward tunnels with 16 concurrent workers floods TCP connection pools, causing connection resets, Redis timeouts, and spurious `503 Service Unavailable` errors from Compliance Bridge.
+- Always constrain concurrency to **`-n 2` or `-n 4`** with `--dist loadscope`:
+  ```bash
+  uv run pytest tests/ -m integration --run-integration -n 2 --dist loadscope
+  ```
+
+#### 4. Partner Integration Tests Isolation
+
+External partner integration tests hitting third-party vendor APIs (such as `tests/test_provider_01_live.py`) are tagged with the **`partner_integration`** selection marker (and `live_external`), **NOT** the default `integration` marker:
+- Running `uv run pytest tests/ --run-integration` or `-m integration` **excludes** partner tests by default.
+- To execute partner integration tests when external sandbox credentials are configured:
+  ```bash
+  uv run pytest -m partner_integration --run-partner-integration
+  # Or with live external flag:
+  uv run pytest tests/test_provider_01_live.py --run-live-external
+  ```
+
+#### 5. Expected Outcomes for GPU-Dependent Tests
+
+When the staging cluster's GPU node pool is scaled down to 0 replicas:
+- **`tests/test_langfuse_evaluation.py`**: Cleanly auto-skips with `vLLM judge endpoint is not reachable — GPU pod likely Pending in dev/staging posture`.
+- **`tests/test_gateway_connectivity_live.py::test_chat_proxy`**: Cleanly auto-skips when vLLM backend is unreachable.
+- **`tests/test_agent_accuracy.py`**: Will fail or return `401 Unauthorized` / connection error because the full financial advisor graph requires live vLLM inference and cluster-configured `CAGE_API_KEY`.
+- **Decision Rule**: Do **not** treat GPU-disabled skips or inference failures as software regressions when running against clusters with scaled-down GPU pools.
+
+#### 6. Canonical Staging Integration Test Workflow
+
+Follow this step-by-step workflow for comprehensive staging validation:
+
+```bash
+# Step 1: Health smoke test across all port-forwarded cluster endpoints
+uv run python scripts/test_live_gke_services.py
+
+# Step 2: Live end-to-end governance flow & Langfuse trace ingestion
+uv run python scripts/test_gke_e2e_flow.py
+
+# Step 3: OPA Rego governance policies against live cluster OPA (20/20 checks)
+uv run pytest tests/test_trade_governance_rego.py --run-integration -v
+
+# Step 4: Redis durability, maxmemory, and DB0/DB1 namespace isolation
+uv run pytest tests/test_redis_eviction_envelope.py --run-integration -v
+
+# Step 5: Compliance Bridge & MCP live tool execution (constrained concurrency)
+uv run pytest tests/test_compliance_bridge_smoke.py tests/test_trades_mcp.py tests/test_evaluator_mcp.py --run-integration -v
+uv run pytest tests/test_compliance_bridge_integration.py --run-integration -n 2 --dist loadscope -v
+
+# Step 6: Gateway TLS enforcement and connectivity
+uv run pytest tests/test_gateway_connectivity_live.py --run-integration -v
+
+# Step 7: Teardown port-forward daemon after testing
+bash scripts/port_forward_staging.sh --stop
+# Or kill background daemon:
+pkill -f "kubectl port-forward"
+```
 
 ### Staging Lifecycle Validation (POAM-024 Closure)
 
