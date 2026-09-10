@@ -36,7 +36,7 @@ from src.integrations.provider_02.adapter import (
     _classify_terminal_path,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 class TestTopologyInjection:

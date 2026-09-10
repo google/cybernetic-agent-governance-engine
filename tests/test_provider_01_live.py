@@ -33,7 +33,12 @@ from src.gateway.governance.seams.normative import (
 )
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
-pytestmark = [pytest.mark.eu_ecb, pytest.mark.integration, pytest.mark.live_external]
+pytestmark = [
+    pytest.mark.eu_ecb,
+    pytest.mark.partner,
+    pytest.mark.partner_integration,
+    pytest.mark.live_external,
+]
 
 
 def _get_live_credentials() -> tuple[str, str]:

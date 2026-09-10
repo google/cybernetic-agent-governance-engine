@@ -466,6 +466,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Run tests marked with @pytest.mark.live_external (hit live partner APIs).",
     )
     parser.addoption(
+        "--run-partner-integration",
+        action="store_true",
+        default=False,
+        help="Run partner integration tests marked with @pytest.mark.partner_integration (hit external partner APIs).",
+    )
+    parser.addoption(
         "--run-chaos",
         action="store_true",
         default=False,
@@ -486,7 +492,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # `financial`, `healthcare`, `us_fed`, `eu_ecb`, `apac_mas`) deliberately do NOT
 # appear here: they qualify a test, they do not make it selectable by a CI gate.
 SELECTION_MARKERS: frozenset[str] = frozenset(
-    {"unit", "local", "integration", "load", "chaos", "live_external"}
+    {
+        "unit",
+        "local",
+        "integration",
+        "load",
+        "chaos",
+        "live_external",
+        "partner_integration",
+    }
 )
 
 # Modules exempted from the selection-marker contract.  Ships EMPTY by design.
@@ -549,6 +563,7 @@ def pytest_collection_modifyitems(
 
     run_integration = config.getoption("--run-integration")
     run_live_external = config.getoption("--run-live-external")
+    run_partner_integration = config.getoption("--run-partner-integration")
     run_chaos = config.getoption("--run-chaos")
 
     skip_integration = pytest.mark.skip(
@@ -563,6 +578,12 @@ def pytest_collection_modifyitems(
             "Pass --run-live-external to enable."
         )
     )
+    skip_partner_integration = pytest.mark.skip(
+        reason=(
+            "Partner integration test — hits third-party partner APIs. "
+            "Pass --run-partner-integration or --run-live-external to enable."
+        )
+    )
     skip_chaos = pytest.mark.skip(
         reason=("Chaos test — Redis failover scenarios. Pass --run-chaos to enable.")
     )
@@ -572,6 +593,10 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_integration)
         if "live_external" in item.keywords and not run_live_external:
             item.add_marker(skip_live_external)
+        if "partner_integration" in item.keywords and not (
+            run_partner_integration or run_live_external
+        ):
+            item.add_marker(skip_partner_integration)
         if "chaos" in item.keywords and not run_chaos:
             item.add_marker(skip_chaos)
 

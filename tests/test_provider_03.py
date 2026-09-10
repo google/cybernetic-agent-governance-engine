@@ -36,7 +36,7 @@ from src.integrations.provider_03.provider import (
 )
 
 # Hermetic: tests Provider 03 adapter with mocks, no live services.
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 # ---------------------------------------------------------------------------
 # Fixtures

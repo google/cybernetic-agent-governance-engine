@@ -22,7 +22,7 @@ import respx
 
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.fixture

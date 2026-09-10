@@ -543,13 +543,13 @@ Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to e
 ### Pytest Marker Contract (fail-closed)
 
 Every collected test must carry at least one **selection marker**:
-`local`, `unit`, `integration`, `live_external`, `chaos`, or `load`.
+`local`, `unit`, `integration`, `live_external`, `partner_integration`, `chaos`, or `load`.
 A collection-time guard in `tests/conftest.py` raises `pytest.UsageError` and
 aborts the run if any test is unmarked — an unmarked test is collected locally
 but silently excluded from every CI gate, which is a fail-open posture the
 project does not accept.
 
-Facet markers (`slow`, `regression`, `red_team`, `layer_isolation`, `financial`,
+Facet markers (`partner`, `slow`, `regression`, `red_team`, `layer_isolation`, `financial`,
 `healthcare`, `us_fed`, `eu_ecb`, `apac_mas`) are **additive** and never satisfy
 the contract on their own.
 

@@ -45,7 +45,7 @@ from src.integrations.provider_05 import (
     bind_warrant_to_attestation,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.fixture

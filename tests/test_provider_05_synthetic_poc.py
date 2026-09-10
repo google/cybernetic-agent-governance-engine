@@ -55,7 +55,7 @@ from src.integrations.provider_05 import (
     SubstrateAttestation,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.fixture

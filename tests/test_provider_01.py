@@ -33,7 +33,7 @@ import pytest
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 # Hermetic: tests FlowSignal adapter with mocks, no live services.
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 # ---------------------------------------------------------------------------
 # Fixtures

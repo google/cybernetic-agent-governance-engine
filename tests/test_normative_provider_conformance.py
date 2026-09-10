@@ -47,7 +47,7 @@ from src.gateway.governance.seams.normative import (
     ValidationResult,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 NORMATIVE_PROVIDERS = ["static", "provider_01", "provider_03", "provider_06"]
 ATTESTATION_PROVIDERS = [

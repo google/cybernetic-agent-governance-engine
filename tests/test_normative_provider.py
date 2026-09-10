@@ -660,7 +660,7 @@ class TestDataContracts:
         assert result.validation is None
 
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.mark.asyncio

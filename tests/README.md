@@ -80,7 +80,8 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `local` | Runs with **no network and no live service**. All I/O is faked (`fakeredis`, `respx`, `TestClient`, `monkeypatch`). | Default |
 | `unit` | Scope is a single module/class in isolation. Additive to `local`. | Default |
 | `integration` | Requires a live service (GKE, OPA, Langfuse, Redis, vLLM). | `--run-integration` |
-| `live_external` | Hits a third-party partner API. Always combined with `integration`. | `--run-live-external` |
+| `partner_integration` | Hits external partner APIs. Isolated from default integration tests. | `--run-partner-integration` / `--run-live-external` |
+| `live_external` | Hits a third-party partner API. Never combined with `integration`. | `--run-live-external` |
 | `chaos` | Fault injection / failover (e.g. Redis primary loss). | `--run-chaos` |
 | `load` | Locust load tests on dedicated infrastructure. | Dedicated CI job |
 
@@ -101,6 +102,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 
 | Marker | Meaning |
 |---|---|
+| `partner` | External partner adapter and integration tests. |
 | `slow` | Takes >10 s, or asserts wall-clock budgets. Exclude with `-m "not slow"`. |
 | `regression` | Golden-question behavioural check after a model or policy update. |
 | `red_team` | Adversarial / prompt-injection test. |
