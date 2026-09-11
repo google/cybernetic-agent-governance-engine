@@ -285,9 +285,9 @@ This applies to all agents, contributors, and CI documentation examples.
 When running `uv run ...` as an AI agent inside a restricted terminal sandbox, the command may fail due to sandbox path boundaries (e.g. `zsh:1: operation not permitted: uv`, exit code 127) or socket connectivity resets (`connecting to sandbox server: read unix @->@: recvmsg: connection reset by peer`). When encountering this, do not switch to a different test runner like bare `python` or `pytest`; instead, configure the tool call to bypass the sandbox (e.g. `BypassSandbox: true`) so that the command executes natively in the host environment and accesses `uv`. When retrying with `BypassSandbox: true`, keep `toolAction` and `toolSummary` strictly identical.
 
 **Hermetic Local Test Execution vs. Active Port-Forwards:**
-When background port-forwards are running (such as those started via `scripts/port_forward_staging.sh` or `scripts/port_forward.sh`), localhost ports (Redis `6379`, OPA `8181`, Langfuse `3000`/`3001`, Gateway `8080`) are actively bridged to the live GKE cluster. Local unit tests (`pytest tests/ -m "local or unit"`) that do not strictly isolate network sockets can inadvertently connect to the live GKE cluster and encounter live state (e.g., existing fence epochs, active cache keys), causing unexpected assertions like `assert cbf._last_seen_epoch == 42` reading live Redis epoch `17`.
+When background port-forwards are running (such as those started via `scripts/port_forward_staging.sh` or `scripts/port_forward.sh`), localhost ports (Redis `6379`, OPA `8181`, Langfuse `3000`/`3001`, Gateway `8080`, Compliance Bridge `3002`, Advisor `8081`, vLLM `8000`/`8001`) are actively bridged to the live GKE cluster. Local unit tests (`pytest tests/ -m "local or unit"`) that do not strictly isolate network sockets can inadvertently connect to the live GKE cluster and encounter live state (e.g., existing fence epochs, active cache keys), causing unexpected assertions like `assert cbf._last_seen_epoch == 42` reading live Redis epoch `17`.
 - **Before running pure local/unit tests**: Verify no background tunnels are running (`ps aux | grep port-forward`), or terminate them if isolated offline execution is desired (`pkill -f "kubectl port-forward"`).
-- **For integration testing against live GKE**: Launch `scripts/port_forward_staging.sh` and run with `tests/ --run-integration`.
+- **For integration testing against live GKE**: Launch persistent tunnels with `./scripts/port_forward_staging.sh --daemon` and run the suite with `--run-integration`. Set `CAGE_ENV=test` (enables local HMAC fallback mode so tests do not halt on local Cloud KMS IAM permission checks while accessing live GKE services) and export `CAGE_API_KEY=cage-staging-test-key` matching the cluster secret. See [§ Live GKE Cluster Integration Suite](#live-gke-cluster-integration-suite).
 
 ---
 
@@ -560,6 +560,67 @@ make test-fast
 ```
 Always launch the test suite with `--dist loadscope` (or `--dist=loadfile`) to ensure proper test file and fixture isolation across workers.
 
+### Live GKE Cluster Integration Suite
+
+To execute the test suite against the live GKE cluster (staging environment):
+
+1. **Verify Kubectl Context**:
+   Ensure `kubectl` is pointed at the staging cluster:
+   ```bash
+   kubectl config current-context  # e.g., gke_laah-cybernetics_us-central1-a_cage-staging
+   ```
+
+2. **Start Daemon Port-Forwards**:
+   Launch auto-reconnecting tunnels in daemon mode to keep persistent background loops across all services:
+   ```bash
+   ./scripts/port_forward_staging.sh --daemon
+   ```
+   Verify port reachability via:
+   ```bash
+   ./scripts/port_forward_staging.sh --status
+   ```
+   *Forwarded Endpoints*:
+   - Gateway: `http://localhost:8080` (HTTP/gRPC)
+   - Governed Financial Advisor backend: `http://localhost:8081` (service port 80)
+   - Compliance Bridge: `http://localhost:3002` (service port 80, container port 3001)
+   - Langfuse UI & API: `http://localhost:3000` / `http://localhost:3001` (service port 3000)
+   - OPA Policy Engine: `http://localhost:8181`
+   - Redis: `localhost:6379`
+   - vLLM Fast (Qwen2.5-7B): `http://localhost:8001` (and `http://localhost:18081/v1`)
+   - vLLM Reasoning (DeepSeek R1): `http://localhost:8000` (and `http://localhost:18082/v1`)
+
+3. **Cluster Invariant Requirements**:
+   - **Compliance Bridge `LANGFUSE_HOST`**: In the GKE deployment, `LANGFUSE_HOST` must explicitly declare port `3000` (`http://langfuse-web.governance-stack.svc.cluster.local:3000`), as the `langfuse-web` service listens on 3000 (not 80). Without `:3000`, metrics and SLA queries time out.
+   - **Advisor Auth Token**: `CAGE_API_KEY` must match the cluster secret (`cage-staging-test-key` in staging).
+   - **Local Workstation KMS Mode**: Set `CAGE_ENV=test` on developer workstations when invoking pytest. This allows tests to exercise live GKE services (Redis, OPA, Compliance Bridge, Gateway, Advisor, vLLM) without requiring `cloudkms.cryptoKeyVersions.viewPublicKey` IAM permissions on the local developer's GCP credentials.
+
+4. **Canonical Invocations**:
+   - **Full test suite (unit + live integration)**:
+     ```bash
+     source .env && \
+     export COMPLIANCE_BRIDGE_URL=http://localhost:3002 \
+            BACKEND_URL=http://localhost:8081 \
+            LANGFUSE_HOST=http://localhost:3001 \
+            CAGE_API_KEY=cage-staging-test-key \
+            CAGE_ENV=test && \
+     uv run pytest tests/ --run-integration -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
+     ```
+   - **Integration-marked tests only**:
+     ```bash
+     source .env && \
+     export COMPLIANCE_BRIDGE_URL=http://localhost:3002 \
+            BACKEND_URL=http://localhost:8081 \
+            LANGFUSE_HOST=http://localhost:3001 \
+            CAGE_API_KEY=cage-staging-test-key \
+            CAGE_ENV=test && \
+     uv run pytest tests/ -m integration --run-integration -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
+     ```
+   - **Single integration suite**:
+     ```bash
+     ENVIRONMENT=integration COMPLIANCE_BRIDGE_URL=http://localhost:3002 \
+     uv run pytest tests/test_compliance_bridge_integration.py --run-integration -v --tb=short
+     ```
+
 ### Verification Rules (fail-closed)
 
 **Full-gate before green.** A change is not complete until the whole `make test-fast`
@@ -635,6 +696,9 @@ Never disable the `marker-contract-check` CI job to make a build pass.
 | **Bandit SAST security scan** | `uv run bandit -r src/ -c pyproject.toml -ll` |
 | **STPA artifact freshness** | `uv run python scripts/check_stpa_freshness.py --verbose` |
 | **Langfuse posture validation** | `uv run python scripts/verify_langfuse_posture.py --dry-run --posture development` (requires mock env vars; see below) |
+| **Live GKE full integration suite** | `source .env && export COMPLIANCE_BRIDGE_URL=http://localhost:3002 BACKEND_URL=http://localhost:8081 LANGFUSE_HOST=http://localhost:3001 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=test && uv run pytest tests/ --run-integration -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short` |
+| **Live GKE integration-only tests** | `source .env && export COMPLIANCE_BRIDGE_URL=http://localhost:3002 BACKEND_URL=http://localhost:8081 LANGFUSE_HOST=http://localhost:3001 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=test && uv run pytest tests/ -m integration --run-integration -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short` |
+| **GKE port-forward daemon** | `./scripts/port_forward_staging.sh --daemon` |
 
 ### Langfuse Regional & Local Testing Limitations
 
