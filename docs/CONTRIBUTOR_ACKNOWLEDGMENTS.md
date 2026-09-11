@@ -56,16 +56,49 @@ Discovered that `LUA_ATOMIC_CBF` read `safety:current_cash` directly instead of 
 
 ---
 
+## Foundational Reference Architecture & Architectural Review
+
+### Krti Tallam
+
+**Contributions:** August 2026
+
+#### Foundational Architecture: The Five-Plane Reference Model
+Author of the foundational paper:
+> Tallam, K. (2026). *A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents*. arXiv:2606.12320.
+
+CAGE was created as a concrete open-source implementation of the architecture invited by this paper, adopting its five-plane taxonomy, four formal correctness invariants (*Composed Authority, Mediation Coverage, Bounded Composite Authority, Evidence Sufficiency*), and six-primitive interruption framework.
+
+#### Architectural Code Review & Safety Boundary Audit
+**Severity:** CRITICAL architectural & correctness findings across distributed concurrency, durability, and formal verification:
+
+1. **Redis Failover Double-Spend TOCTOU (Bounded Composite Authority):**
+   Discovered that Lua `evalsha` atomicity only holds intra-primary. Without synchronous replication or fencing, managed Redis primary failover allowed a promoted replica to serve stale balances within the reconciliation window, allowing concurrent agents to re-spend headroom.
+   - **Remediation:** Enforced synchronous replication quorum (`CAGE_REDIS_WAIT_REPLICAS >= 1`), monotonic fence-epoch rejection of regressed replicas (`safety:fence_epoch`), and multi-agent model checking in [`proof/distributed_cbf_model.py`](../proof/distributed_cbf_model.py).
+
+2. **Fail-Open Evidence Decoupling (Evidence Sufficiency):**
+   Discovered that the audit sink was fail-open and uncoupled from routing seal issuance, meaning in-memory HMAC seals allowed tool actuation to proceed without durable evidence writes to the hash-chain.
+   - **Remediation:** Defaulted `EVIDENCE_CHAIN_BLOCKING=true`, updated [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) to block seal release on chain commit (`generate_seal_with_evidence()`), and added fast-fail startup preconditions in [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py).
+
+3. **Governor Automaton Proof Scoping (Mediation Coverage):**
+   Identified that `model.py` verified single-request slot commutativity without modeling distributed cross-agent Redis contention or live actuator refinement.
+   - **Remediation:** Reframed §4.4 and Appendix A of the CAGE paper to explicitly scope automaton proofs to the governor model, adding `distributed_cbf_model.py` and marking live execution refinement as an open research boundary.
+
+4. **Six-Primitive Interruption Taxonomy Alignment:**
+   Caught that the runtime vocabulary had collapsed toward binary allow/deny, with `DEFER` falling back to `DENY` and `PAUSE`/`NARROW` lacking execution branches.
+   - **Remediation:** Implemented HTTP 202 parking for `DEFER` and added dedicated execution branches for `PAUSE` and `NARROW` in [`src/gateway/governance/pause_primitive.py`](../src/gateway/governance/pause_primitive.py) and [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py).
+
+---
+
 ## Impact Summary
 
 | Contributor | PRs/Findings | Severity Distribution | Test Coverage Added |
 |-------------|--------------|----------------------|---------------------|
+| Krti Tallam | Foundational Architecture + 4 Critical Architectural Audit Findings | Foundational Architecture, 4 CRITICAL Architectural Defects | Formal verification models (`proof/distributed_cbf_model.py`), failover & evidence test suites |
 | Nussaibah Shaikh | 2 PRs | 1 CRITICAL, 1 HIGH | 84 tests |
 | Miracle Owolabi | 1 finding (POAM-2026-023) | 1 CRITICAL | 5 tests |
 
-**Total Security/Correctness Issues Identified:** 3  
-**Total Tests Added:** 89  
-**Controls Strengthened:** AC-2, SC-4, SI-2, AU-12
+**Total Security/Correctness Issues Identified:** 7  
+**Controls Strengthened:** AC-2, SC-4, SI-2, AU-12, SC-12, IA-3, CM-6
 
 ---
 

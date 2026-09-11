@@ -15,6 +15,19 @@
 """
 Symbolic Governor (Neuro-Symbolic Governance Layer).
 
+Architecture & Interruption Taxonomy:
+    Implements the Governance/Reasoning Plane and first-class interruption primitives
+    from Tallam's Five-Plane Reference Architecture (arXiv:2606.12320):
+
+    - BLOCK: Direct pipeline halt with GovernanceError.
+    - DEFER: Async parking in DeferQueue with HTTP 202 acceptance.
+    - REDACT: Pre-execution token and PII scrubbing.
+    - TERMINATE: Workflow termination with Saga LIFO compensation rollback.
+    - AUDIT: Invariant-checked synchronous NDJSON hash-chain logging.
+    - ESCALATE: Quorum human-in-the-loop (HITL) routing.
+    - PAUSE / NARROW: Dedicated execution branches retaining task liveness while
+      constraining authorization scope (introduced in v3.1 per design review recommendations).
+
 Phase 4.3: If the external SLM sidecar times out or is unreachable, an
 explicit ``"slm_available": false`` sentinel is injected into the OPA
 payload instead of passing an undefined or zero score.  The Rego policy

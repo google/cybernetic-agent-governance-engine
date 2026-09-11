@@ -29,6 +29,11 @@ This model addresses Risk R-15 by proving that the CBF fence epoch mechanism
 prevents race conditions and double-spend attacks when N agents operate
 concurrently on a shared balance pool.
 
+Theoretical Lineage & Audit Rationale:
+    Directly models the 'Bounded Composite Authority' invariant across distributed
+    failover boundaries, addressing the multi-agent Redis failover race condition
+    identified during architectural review by Krti Tallam (arXiv:2606.12320).
+
 Usage:
     python proof/distributed_cbf_model.py
 

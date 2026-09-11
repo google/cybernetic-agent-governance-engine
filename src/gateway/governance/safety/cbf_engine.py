@@ -20,6 +20,24 @@ h(S(t+1)) >= (1 - gamma) * h(S(t)) >= 0 for all t >= 0, gamma in (0, 1).
 Uses Redis for state persistence so that distributed gateway instances share a
 consistent cash-balance view within a single-primary epoch.
 
+Theoretical Foundation:
+    Implements the 'Bounded Composite Authority' invariant defined in Tallam (2026),
+    "A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents"
+    (arXiv:2606.12320).
+
+Architectural Hardening & Failover Safety:
+    Following architectural code review by Krti Tallam, this module guards against
+    Time-of-Check to Time-of-Use (TOCTOU) headroom exhaustion during managed Redis
+    primary failovers:
+
+    1. Synchronous Replication Quorum: Mutations enforce `WAIT` acknowledgments across
+       replicas (`CAGE_REDIS_WAIT_REPLICAS >= 1`) before returning evaluation success.
+    2. Monotonic Fence-Epoch Validation: Reads and debits verify `safety:fence_epoch`
+       to reject stale balance reads from promoted out-of-sync replicas.
+
+    See `proof/distributed_cbf_model.py` for formal verification of no-double-spend
+    under N concurrent agents during primary failover.
+
 Phase 1 fix: imports now resolve against the canonical gateway-internal
 infrastructure package (``src.gateway.infrastructure.*``) instead of the
 cross-package ``src.governed_financial_advisor.*`` path.
