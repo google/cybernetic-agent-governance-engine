@@ -6,8 +6,8 @@
 
 | Field              | Value      |
 | ------------------ | ---------- |
-| **Version**        | 3.0        |
-| **Date**           | 2026-09-07 |
+| **Version**        | 3.0.1        |
+| **Date**           | 2026-09-09 |
 | **Classification** | INTERNAL   |
 | **Document**       | CAGE-TR-06 |
 

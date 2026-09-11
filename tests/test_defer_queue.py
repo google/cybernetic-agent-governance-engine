@@ -27,13 +27,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.defer_queue import (
-    _FLOWSIGNAL_ESCALATION_TTL,
+    _DEFAULT_HOLD_TTL,
     DEFER_CONFIDENCE_THRESHOLD,
     DeferQueue,
     DeferReason,
     DeferToken,
-    create_flowsignal_escalation_token,
-    is_flowsignal_hold_finding,
+    create_external_hold_token,
+    is_external_hold_finding,
 )
 
 # ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ async def test_expire_stale_returns_count(fake_redis):
 
 
 def test_defer_reason_enum_values():
-    """Confirm all DeferReason values exist, including FLOWSIGNAL_ESCALATION."""
+    """Confirm all DeferReason values exist, including EXTERNAL_HOLD."""
     reasons = {r.value for r in DeferReason}
     assert "INSUFFICIENT_CONTEXT" in reasons
     assert "AMBIGUOUS_SEMANTIC_DISTANCE" in reasons
@@ -272,8 +272,8 @@ def test_defer_reason_enum_values():
     assert "CONFIDENCE_BELOW_THRESHOLD" in reasons
     assert "EXTERNAL_VALIDATION" in reasons
     assert "FTRA_IRREVERSIBLE_TERMINAL" in reasons
-    # Phase 1, §3.2: FlowSignal escalation
-    assert "FLOWSIGNAL_ESCALATION" in reasons
+    # External provider escalation (generalized from FlowSignal)
+    assert "EXTERNAL_HOLD" in reasons
 
 
 # ---------------------------------------------------------------------------
@@ -304,24 +304,24 @@ def test_defer_token_serialization_round_trip():
 # ---------------------------------------------------------------------------
 
 
-def test_flowsignal_escalation_ttl_constant():
-    """FLOWSIGNAL_ESCALATION_TTL must be exactly 300 seconds (5 minutes)."""
-    assert _FLOWSIGNAL_ESCALATION_TTL == 300
+def test_external_hold_default_ttl_constant():
+    """_DEFAULT_HOLD_TTL must be exactly 300 seconds (5 minutes)."""
+    assert _DEFAULT_HOLD_TTL == 300
 
 
-def test_create_flowsignal_escalation_token_sets_correct_reason():
-    """create_flowsignal_escalation_token() must set FLOWSIGNAL_ESCALATION reason."""
-    token = create_flowsignal_escalation_token(
+def test_create_external_hold_token_sets_correct_reason():
+    """create_external_hold_token() must set EXTERNAL_HOLD reason."""
+    token = create_external_hold_token(
         thread_id="thread-fs-001",
         confidence_score=0.82,
         opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
     )
-    assert token.defer_reason == DeferReason.FLOWSIGNAL_ESCALATION
+    assert token.defer_reason == DeferReason.EXTERNAL_HOLD
 
 
-def test_create_flowsignal_escalation_token_sets_300s_ttl():
-    """create_flowsignal_escalation_token() must use 300s TTL, not 4h default."""
-    token = create_flowsignal_escalation_token(
+def test_create_external_hold_token_sets_300s_ttl():
+    """create_external_hold_token() must use 300s default TTL when not specified."""
+    token = create_external_hold_token(
         thread_id="thread-fs-002",
         confidence_score=0.85,
         opa_input_snapshot={"action": "execute_trade"},
@@ -329,23 +329,23 @@ def test_create_flowsignal_escalation_token_sets_300s_ttl():
     assert token.ttl_seconds == 300
 
 
-def test_create_flowsignal_escalation_token_embeds_finding_message():
-    """FlowSignal finding message is embedded in opa_input_snapshot for audit."""
-    token = create_flowsignal_escalation_token(
+def test_create_external_hold_token_embeds_finding_message():
+    """External hold finding message is embedded in opa_input_snapshot for audit."""
+    token = create_external_hold_token(
         thread_id="thread-fs-003",
         confidence_score=0.75,
         opa_input_snapshot={"action": "execute_trade"},
         finding_message="FlowSignal: requires senior approval",
     )
     assert (
-        token.opa_input_snapshot.get("_flowsignal_finding_message")
+        token.opa_input_snapshot.get("_external_hold_finding_message")
         == "FlowSignal: requires senior approval"
     )
 
 
-def test_create_flowsignal_escalation_token_aarm_vector():
-    """FlowSignal escalation tokens use AARM-V8 (External Hold) vector."""
-    token = create_flowsignal_escalation_token(
+def test_create_external_hold_token_aarm_vector():
+    """External hold tokens use AARM-V8 (External Hold) vector."""
+    token = create_external_hold_token(
         thread_id="thread-fs-004",
         confidence_score=0.80,
         opa_input_snapshot={},
@@ -353,47 +353,47 @@ def test_create_flowsignal_escalation_token_aarm_vector():
     assert token.aarm_vector == "AARM-V8"
 
 
-def test_is_flowsignal_hold_finding_true_positive():
-    """is_flowsignal_hold_finding() returns True for valid FLOWSIGNAL_HOLD findings."""
+def test_is_external_hold_finding_true_positive():
+    """is_external_hold_finding() returns True for valid EXTERNAL_HOLD findings."""
     finding = {
-        "code": "FLOWSIGNAL_HOLD",
+        "code": "EXTERNAL_HOLD",
         "severity": "review",
         "message": "Requires human approval",
         "needs_human_review": True,
     }
-    assert is_flowsignal_hold_finding(finding) is True
+    assert is_external_hold_finding(finding) is True
 
 
-def test_is_flowsignal_hold_finding_missing_needs_human_review():
-    """is_flowsignal_hold_finding() returns False if needs_human_review is missing."""
+def test_is_external_hold_finding_missing_needs_human_review():
+    """is_external_hold_finding() returns False if needs_human_review is missing."""
     finding = {
-        "code": "FLOWSIGNAL_HOLD",
+        "code": "EXTERNAL_HOLD",
         "severity": "review",
         "message": "Requires human approval",
     }
-    assert is_flowsignal_hold_finding(finding) is False
+    assert is_external_hold_finding(finding) is False
 
 
-def test_is_flowsignal_hold_finding_wrong_code():
-    """is_flowsignal_hold_finding() returns False for non-FLOWSIGNAL_HOLD codes."""
+def test_is_external_hold_finding_wrong_code():
+    """is_external_hold_finding() returns False for non-EXTERNAL_HOLD codes."""
     finding = {
         "code": "FLOWSIGNAL_REFUSE",
         "severity": "blocked",
         "message": "Hard deny",
         "needs_human_review": True,  # Even with this, wrong code
     }
-    assert is_flowsignal_hold_finding(finding) is False
+    assert is_external_hold_finding(finding) is False
 
 
-def test_is_flowsignal_hold_finding_needs_human_review_false():
-    """is_flowsignal_hold_finding() returns False if needs_human_review is False."""
+def test_is_external_hold_finding_needs_human_review_false():
+    """is_external_hold_finding() returns False if needs_human_review is False."""
     finding = {
-        "code": "FLOWSIGNAL_HOLD",
+        "code": "EXTERNAL_HOLD",
         "severity": "review",
         "message": "...",
         "needs_human_review": False,
     }
-    assert is_flowsignal_hold_finding(finding) is False
+    assert is_external_hold_finding(finding) is False
 
 
 # ---------------------------------------------------------------------------
@@ -484,13 +484,13 @@ def fake_redis_with_past_expiry():
 async def test_expire_stale_calls_dlq_publisher_for_flowsignal_escalation(
     fake_redis_with_past_expiry,
 ):
-    """DLQ publisher is called exactly once for expired FLOWSIGNAL_ESCALATION tokens."""
+    """DLQ publisher is called exactly once for expired EXTERNAL_HOLD tokens."""
     dlq_publisher = AsyncMock()
 
     queue = DeferQueue(fake_redis_with_past_expiry, dlq_publisher=dlq_publisher)
 
-    # Park a FLOWSIGNAL_ESCALATION token that's already expired
-    token = create_flowsignal_escalation_token(
+    # Park an EXTERNAL_HOLD token that's already expired
+    token = create_external_hold_token(
         thread_id="thread-dlq-001",
         confidence_score=0.82,
         opa_input_snapshot={"action": "execute_trade"},
@@ -504,14 +504,14 @@ async def test_expire_stale_calls_dlq_publisher_for_flowsignal_escalation(
     # Verify the token passed to publisher has the correct defer_id
     published_token = dlq_publisher.call_args[0][0]
     assert published_token.defer_id == token.defer_id
-    assert published_token.defer_reason == DeferReason.FLOWSIGNAL_ESCALATION
+    assert published_token.defer_reason == DeferReason.EXTERNAL_HOLD
 
 
 @pytest.mark.asyncio
 async def test_expire_stale_does_not_call_dlq_for_non_flowsignal_reasons(
     fake_redis_with_past_expiry,
 ):
-    """DLQ publisher is NOT called for non-FLOWSIGNAL_ESCALATION tokens."""
+    """DLQ publisher is NOT called for non-EXTERNAL_HOLD tokens."""
     dlq_publisher = AsyncMock()
 
     queue = DeferQueue(fake_redis_with_past_expiry, dlq_publisher=dlq_publisher)
@@ -537,11 +537,11 @@ async def test_expire_stale_without_dlq_publisher_logs_warning_only(
     fake_redis_with_past_expiry,
     caplog,
 ):
-    """Without dlq_publisher, expired FLOWSIGNAL_ESCALATION tokens just log a warning."""
+    """Without dlq_publisher, expired EXTERNAL_HOLD tokens just log a warning."""
     # No dlq_publisher configured (default behavior)
     queue = DeferQueue(fake_redis_with_past_expiry)
 
-    token = create_flowsignal_escalation_token(
+    token = create_external_hold_token(
         thread_id="thread-no-dlq-001",
         confidence_score=0.80,
         opa_input_snapshot={},
@@ -564,13 +564,13 @@ async def test_expire_stale_dlq_publisher_error_does_not_crash_sweep(
 
     queue = DeferQueue(fake_redis_with_past_expiry, dlq_publisher=dlq_publisher)
 
-    # Park two FLOWSIGNAL_ESCALATION tokens
-    token1 = create_flowsignal_escalation_token(
+    # Park two EXTERNAL_HOLD tokens
+    token1 = create_external_hold_token(
         thread_id="thread-err-001",
         confidence_score=0.80,
         opa_input_snapshot={},
     )
-    token2 = create_flowsignal_escalation_token(
+    token2 = create_external_hold_token(
         thread_id="thread-err-002",
         confidence_score=0.80,
         opa_input_snapshot={},

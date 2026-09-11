@@ -40,7 +40,7 @@ from src.gateway.governance.governance_envelope import (
     IssuerMetadata,
 )
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-from src.gateway.governance.normative_provider import (
+from src.gateway.governance.seams.normative import (
     FindingStatus,
     NormativeBaseline,
     ValidationResult,
@@ -55,7 +55,7 @@ from src.integrations.provider_05 import (
     SubstrateAttestation,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.fixture
@@ -245,6 +245,7 @@ def test_criterion_3_signature_tamper_evidence(seeded_provider_05_client, ec_key
         status=AttestationStatus.VERIFIED.value,
         receipt_id="provider05-blueprint-rec-9821",
         attested_at="2026-08-21T06:00:00.000Z",
+        provider_name="test-provider",
         metadata={"threshold_id": "THR-FIN-006"},
     )
 

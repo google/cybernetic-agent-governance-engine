@@ -176,7 +176,7 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 
 > **Tier 2/4 — CBF effective-balance note:** The CBF (`cbf.py`) tracks `_local_debits` intra-window. `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` for all threshold checks; `reset_local_debits()` is called by the reconciliation daemon on each KMS snapshot refresh. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
 
-> **Two-Phase Pipeline & Saga Rollback Semantics:** In CAGE v3.0.0, `SymbolicGovernor._run_checks()` decouples into Phase 1 (read-only validation) and Phase 2 (atomic state mutations). All validation checks run in Phase 1 before balance debits or daily limit reservations occur, eliminating downstream budget leakage. On compensating rollbacks, `FiscalLimitGuard.rollback_state()` and `release()` validate window-key existence to prevent negative counter underflow across TTL boundaries.
+> **Two-Phase Pipeline & Saga Rollback Semantics:** In CAGE v3.0.1, `SymbolicGovernor._run_checks()` decouples into Phase 1 (read-only validation) and Phase 2 (atomic state mutations). All validation checks run in Phase 1 before balance debits or daily limit reservations occur, eliminating downstream budget leakage. On compensating rollbacks, `FiscalLimitGuard.rollback_state()` and `release()` validate window-key existence to prevent negative counter underflow across TTL boundaries.
 
 > **Tier 5 — Consensus degraded-quorum routing:** The `ERROR + APPROVE` verdict combination is explicitly routed to `ESCALATE` (HITL) before the catch-all case in `consensus.py`.
 

@@ -46,6 +46,11 @@ from typing import Any
 from urllib.parse import quote
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    NormativeBaseline,
+    ValidationResult,
+)
 
 logger = logging.getLogger("cage.integrations.provider_03")
 
@@ -74,10 +79,12 @@ class Provider03NormativeProvider:
         endpoint: str = "",
         api_key: str = "",
         timeout: float = _TIMEOUT_SECONDS,
+        action_context_field_map: dict[str, str] | None = None,
     ) -> None:
         self._endpoint = (endpoint or _ENDPOINT).rstrip("/")
         self._api_key = api_key or _API_KEY_SECRET
         self._timeout = timeout
+        self._field_map = action_context_field_map or {}
 
         if not self._endpoint:
             logger.warning(
@@ -105,8 +112,6 @@ class Provider03NormativeProvider:
             NormativeBaseline with the regional compliance profile.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import NormativeBaseline
 
         if not self._endpoint:
             return NormativeBaseline(
@@ -164,8 +169,6 @@ class Provider03NormativeProvider:
         """
         import httpx
 
-        from src.gateway.governance.normative_provider import ValidationResult
-
         if not self._endpoint:
             return ValidationResult(
                 admitted=False,
@@ -181,24 +184,18 @@ class Provider03NormativeProvider:
 
         url = f"{self._endpoint}/validate"
         try:
-            # Canonical v3 action_context key normalization (Issue #126).
-            # CAGE internal params use 'amount' and 'symbol' (domain vocabulary).
-            # Provider 03 (Veritas) upstream expects v3 wire keys: 'magnitude'
-            # and 'context'. Normalize before sending; never mutate the caller's
-            # dict so upstream retries and logging see consistent data.
+            # Apply caller-declared field mapping if provided
+            # (e.g., finance domain maps 'amount' → 'magnitude', 'symbol' → 'context')
             action_context = payload.get("action_context")
-            if isinstance(action_context, dict) and (
-                "amount" in action_context or "symbol" in action_context
-            ):
+            if self._field_map and isinstance(action_context, dict):
                 normalized_context = dict(action_context)
-                if "amount" in normalized_context:
-                    normalized_context["magnitude"] = normalized_context.pop("amount")
-                if "symbol" in normalized_context:
-                    normalized_context["context"] = normalized_context.pop("symbol")
+                for src_key, dest_key in self._field_map.items():
+                    if src_key in normalized_context:
+                        normalized_context[dest_key] = normalized_context.pop(src_key)
                 payload = {**payload, "action_context": normalized_context}
                 logger.debug(
-                    "[Provider03] Normalized action_context keys to v3 wire format "
-                    "(amount→magnitude, symbol→context)"
+                    "[Provider03] Applied field mapping: %s",
+                    ", ".join(f"{k}→{v}" for k, v in self._field_map.items()),
                 )
 
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -279,8 +276,6 @@ class Provider03NormativeProvider:
             EvidenceSeal with the sealed attestation hash.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import EvidenceSeal
 
         if not self._endpoint:
             return EvidenceSeal(

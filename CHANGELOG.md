@@ -7,6 +7,33 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [3.0.1] - 2026-09-09
+
+> **Remediation & Hardening Release:** Post-v3.0.0 comprehensive test suite remediation,
+> seam contract extraction, external hold generalization, full refusal/pause receipt ingestion,
+> and provider conformance stabilization across 19 feature branches.
+
+### Summary
+Following the v3.0.0 major release, a comprehensive stabilization and hardening cycle was executed on 2026-09-09 spanning **19 feature branches** implementing **26 distinct architectural enhancements**, discovering and fixing **5 defects**, and resolving **25 test issues (21 failures + 4 errors)**. Test coverage expanded from 3,839 tests to 3,921 passing unit/local tests (+82 tests, +2.1%), with 4,148 total tests collected across the full repository.
+
+### Added
+- **`src/gateway/governance/seams/` Seam Protocols** — Extracted `NormativeProvider`, `AttestationProvider`, `ExecutionActuator`, and `graph_topology` contracts into a dedicated package with ZERO imports from the kernel, severing circular dependencies with vendor adapters (`refactor(governance)!`).
+- **Full Refusal & Pause Receipt Ingestion** — Serialized complete `RefusalReceipt` v3 and `PauseReceipt` objects into the durable evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculations (`fix(governance)`).
+- **In-Kernel ConsequenceToken Minting** — Added `src/gateway/governance/consequence_token_service.py` to mint and sign `ConsequenceToken` instances inside the governance kernel (`refactor(governance)!`).
+- **ContentAddress Kernel Primitive** — Added `src/gateway/governance/content_address.py` for immutable content-addressed storage and evidence referencing (`feat(governance)`).
+- **OSCAL CER Disclosure Links** — Added `src/compliance_bridge/cer_index.py` and wired Causal Evidence Record (CER) indices directly into OSCAL SSP components (`feat(compliance)`).
+- **Provider 02 CER Verification & Topology** — Added Ed25519 CER signature verification against key manifests with fail-closed security enforcement, and injected graph topology into Provider 02 (`feat(imports)`, `fix(security)`).
+- **CI Layer Boundary Gates** — Added `scripts/check_vendor_brands.py` and updated `scripts/check_import_boundaries.py` to enforce reverse boundary isolation (Gate G3) and vendor branding compliance (Gate G7) (`ci(governance)`).
+
+### Changed
+- **Generalized External Hold Escalation** — Replaced vendor-specific `DeferReason.FLOWSIGNAL_ESCALATION` with generic `DeferReason.EXTERNAL_HOLD`, driving hold TTL dynamically from finding fields rather than hardcoded kernel branches (`refactor(governance)!`).
+- **Attestation Attribution (POAM-2026-072)** — Added first-class `provider_name` field to `ExternalAttestation`, preventing provider errors from aborting fetch loops and preserving cache integrity on total failure (`fix(governance)!`).
+- **Mandatory KMS Signing in Production/Staging** — Enforced fail-closed validation requiring KMS signing in production and staging evidence streams (`fix(governance)`).
+- **Idempotent Cold Flush** — Converted cold flush loop to use `put_if_absent` to eliminate duplicate key writes during evidence persistence (`fix(governance)`).
+- **Partner Test Isolation** — Tagged live vendor tests with `partner_integration` and `live_external` selection markers, isolating them from the standard CI integration suite (`test(tests)`).
+
+---
+
 ## [3.0.0] - 2026-09-07
 
 > **Major Version Release:** Architectural cleanup, formal safety consolidations,

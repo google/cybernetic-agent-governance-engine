@@ -67,13 +67,18 @@ import hashlib
 import json
 import logging
 import os
-import time
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    ExecutionStatus,
+    FindingStatus,
+    NormativeBaseline,
+    NormativeProvider,
+    ValidationResult,
+)
 
 logger = logging.getLogger("cage.normative_provider")
 
@@ -154,96 +159,13 @@ def _verify_policy_integrity(policy_path: Path, raw_bytes: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# §1 — Data Contracts
+# §1 — Data Contracts (now imported from seams.normative)
 # ---------------------------------------------------------------------------
 
+# Seam contracts are imported from src.gateway.governance.seams.normative
+# to eliminate circular dependencies with vendor adapters.
 
-class ExecutionStatus(str, Enum):
-    """Tri-state execution decision from the adaptive gating primitive."""
-
-    ALLOW = "ALLOW"
-    DENY = "DENY"
-    DEFER = "DEFER"
-
-
-class FindingStatus(str, Enum):
-    """OSCAL four-state assessment result vocabulary.
-
-    Standardized vocabulary for NormativeProvider.validate_fria() findings,
-    matching NIST OSCAL Assessment Results finding states and preventing
-    vocabulary drift across external compliance providers.
-    """
-
-    PASS = "pass"
-    FAIL = "fail"
-    NOT_APPLICABLE = "not_applicable"
-    ERROR = "error"
-
-
-@dataclass
-class NormativeBaseline:
-    """Fetched legal/regulatory baseline from an external provider.
-
-    Attributes:
-        region:      Deployment region (e.g. "US_FED", "EU_ECB").
-        profile:     Raw JSON profile payload (same schema as {REGION}_BASELINE.json).
-        fetched_at:  Unix timestamp when the baseline was fetched.
-        signature:   KMS signature of the profile payload (hex-encoded).
-        etag:        Change detection tag from the provider.
-        error:       Error message if fetch failed; None on success.
-    """
-
-    region: str
-    profile: dict[str, Any]
-    fetched_at: float = field(default_factory=time.time)
-    signature: str = ""
-    etag: str = ""
-    error: str | None = None
-
-    @property
-    def is_valid(self) -> bool:
-        """True if the fetch succeeded and the profile is non-empty."""
-        return self.error is None and bool(self.profile)
-
-    @property
-    def profile_hash(self) -> str:
-        """RFC 8785 JCS SHA-256 hash of the profile for deterministic change detection."""
-        canonical = jcs_canonicalize_plan(self.profile)
-        return hashlib.sha256(canonical).hexdigest()
-
-
-@dataclass
-class ValidationResult:
-    """FRIA validation response from external provider.
-
-    Attributes:
-        admitted:   True if the provider admits the transaction.
-        findings:   List of compliance findings from the provider.
-        sealed_at:  Unix timestamp when the validation was sealed.
-        error:      Error message if validation failed; None on success.
-    """
-
-    admitted: bool
-    findings: list[dict[str, Any]] = field(default_factory=list)
-    sealed_at: float = field(default_factory=time.time)
-    error: str | None = None
-
-
-@dataclass
-class EvidenceSeal:
-    """External attestation seal for the governance evidence chain.
-
-    Attributes:
-        thread_id:  LangGraph thread ID for the governed transaction.
-        seal_hash:  Provider-generated seal hash for the evidence chain.
-        sealed_at:  Unix timestamp when the seal was generated.
-        error:      Error message if sealing failed; None on success.
-    """
-
-    thread_id: str
-    seal_hash: str = ""
-    sealed_at: float = field(default_factory=time.time)
-    error: str | None = None
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -266,39 +188,10 @@ class FRIAEnforcementResult:
 
 
 # ---------------------------------------------------------------------------
-# §2 — Provider Protocol + Implementations
+# §2 — Provider Protocol (now imported from seams.normative)
 # ---------------------------------------------------------------------------
 
-
-class NormativeProvider(Protocol):
-    """3-endpoint contract matching §2.5.2 of EXTENSIBILITY_ARCHITECTURE.md.
-
-    Any compliance SaaS, internal policy engine, or regulatory data feed
-    that implements these three methods can integrate with CAGE without
-    kernel modification.
-    """
-
-    async def fetch_baseline(self, region: str) -> NormativeBaseline:
-        """GET /legal-baseline/{region} — Normative Data Supply.
-
-        Fetch the active legal/regulatory baseline for a deployment region.
-        """
-        ...  # pragma: no cover
-
-    async def validate_fria(self, payload: dict[str, Any]) -> ValidationResult:
-        """POST /validate/fria — External Validation.
-
-        Submit a governance decision payload for external FRIA validation.
-        """
-        ...  # pragma: no cover
-
-    async def submit_evidence(self, thread_id: str, evidence_hash: str) -> EvidenceSeal:
-        """GET /evidence-chain/{thread_id} — Attestation Logging.
-
-        Submit the local governance evidence hash and retrieve an externally
-        sealed attestation for the audit trail.
-        """
-        ...  # pragma: no cover
+# NormativeProvider protocol is imported from src.gateway.governance.seams.normative
 
 
 class StubNormativeProvider:
@@ -542,66 +435,48 @@ async def enforce_fria_boundary(
                     validation=result,
                 )
             else:
-                needs_human_review = any(
-                    f.get("needs_human_review", False) for f in result.findings
+                # Check if any finding requires human review
+                finding = next(
+                    (f for f in result.findings if f.get("needs_human_review")),
+                    None,
                 )
-                if needs_human_review:
-                    # Check if this is a FlowSignal ESCALATE decision
-                    # (FLOWSIGNAL_HOLD finding with needs_human_review=True)
+                if finding is not None:
+                    # External provider escalation — resolve the original
+                    # EXTERNAL_VALIDATION token and park a new EXTERNAL_HOLD token
                     from src.gateway.governance.defer_queue import (
-                        create_flowsignal_escalation_token,
-                        is_flowsignal_hold_finding,
+                        create_external_hold_token,
                     )
 
-                    flowsignal_finding = next(
-                        (f for f in result.findings if is_flowsignal_hold_finding(f)),
-                        None,
+                    if defer_queue is not None:
+                        await defer_queue.resolve(token.defer_id, "ESCALATED")
+
+                    # Drive TTL from finding fields; use default if not specified
+                    ttl = finding.get("hold_ttl_seconds")
+
+                    hold_token = create_external_hold_token(
+                        thread_id=thread_id or "unknown",
+                        confidence_score=consensus_score,
+                        opa_input_snapshot=action_context,
+                        finding_message=finding.get("message"),
+                        ttl_seconds=ttl,
                     )
+                    if defer_queue is not None:
+                        await defer_queue.park(hold_token)
 
-                    if flowsignal_finding is not None:
-                        # FlowSignal escalation — resolve the original
-                        # EXTERNAL_VALIDATION token and park a new
-                        # FLOWSIGNAL_ESCALATION token with 300s TTL
-                        if defer_queue is not None:
-                            await defer_queue.resolve(token.defer_id, "ESCALATED")
-
-                        flowsignal_token = create_flowsignal_escalation_token(
-                            thread_id=thread_id or "unknown",
-                            confidence_score=consensus_score,
-                            opa_input_snapshot=action_context,
-                            finding_message=flowsignal_finding.get("message"),
-                        )
-                        if defer_queue is not None:
-                            await defer_queue.park(flowsignal_token)
-
-                        logger.warning(
-                            "[FRIA] FlowSignal ESCALATE → FLOWSIGNAL_HOLD for "
-                            "defer_id=%s thread=%s (original_defer_id=%s, ttl=300s)",
-                            flowsignal_token.defer_id,
-                            thread_id,
-                            token.defer_id,
-                        )
-                        return FRIAEnforcementResult(
-                            status=ExecutionStatus.DEFER,
-                            path="SYNC_GATE_REVIEW",
-                            consensus_score=consensus_score,
-                            validation=result,
-                            defer_id=flowsignal_token.defer_id,
-                        )
-
-                    # Non-FlowSignal human review request — use original token
                     logger.warning(
-                        "[FRIA] Sync gate REVIEW requested for defer_id=%s thread=%s findings=%s",
-                        token.defer_id,
+                        "[FRIA] External provider ESCALATE → EXTERNAL_HOLD for "
+                        "defer_id=%s thread=%s (original_defer_id=%s, ttl=%ds)",
+                        hold_token.defer_id,
                         thread_id,
-                        result.findings,
+                        token.defer_id,
+                        hold_token.ttl_seconds,
                     )
                     return FRIAEnforcementResult(
                         status=ExecutionStatus.DEFER,
                         path="SYNC_GATE_REVIEW",
                         consensus_score=consensus_score,
                         validation=result,
-                        defer_id=token.defer_id,
+                        defer_id=hold_token.defer_id,
                     )
 
                 if defer_queue is not None:
@@ -895,7 +770,6 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
         - "flowsignal"   — FlowSignal legal baseline & FRIA API (alias: "provider_01")
-        - "provider_02"  — Provider 02 attestation API (AttestationProvider fallback)
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
 
@@ -916,13 +790,20 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         "flowsignal": "provider_01",
         "flow_signal": "provider_01",
         "p01": "provider_01",
-        "p02": "provider_02",
         "p03": "provider_03",
         "p06": "provider_06",
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",
     }
     provider_name = alias_map.get(provider_name, provider_name)
+
+    # Provider 02 implements AttestationProvider, not NormativeProvider
+    if provider_name == "provider_02":
+        raise ValueError(
+            "Provider 02 implements the AttestationProvider protocol, not NormativeProvider. "
+            "Use AttestationAggregator.register(Provider02AttestationProvider()) instead. "
+            "See src/gateway/governance/attestation_aggregator.py for usage."
+        )
 
     # Kernel-resident providers
     if provider_name in _PROVIDERS:
@@ -933,11 +814,6 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         from src.integrations.provider_01 import FlowSignalNormativeProvider
 
         return FlowSignalNormativeProvider()
-
-    if provider_name == "provider_02":
-        from src.integrations.provider_02 import Provider02AttestationProvider
-
-        return Provider02AttestationProvider()  # type: ignore[return-value]
 
     if provider_name == "provider_03":
         from src.integrations.provider_03 import Provider03NormativeProvider
@@ -952,10 +828,10 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     valid = [
         *_PROVIDERS.keys(),
         "provider_01",
-        "provider_02",
         "provider_03",
         "provider_06",
     ]
     raise ValueError(
-        f"Unknown normative provider: {provider_name!r}. Available providers: {valid}."
+        f"Unknown normative provider: {provider_name!r}. Available providers: {valid}. "
+        f"Note: provider_02 implements AttestationProvider — use AttestationAggregator instead."
     )

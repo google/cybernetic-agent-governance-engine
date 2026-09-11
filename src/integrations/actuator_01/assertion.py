@@ -41,6 +41,7 @@ import logging
 import struct
 
 from src.gateway.governance.kms_signer import KMSGovernanceSigner
+from src.gateway.governance.raw_signer_protocol import RawMessageSigner
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ def build_assertion(
     envelope_digest_hex: str,
     nonce_hex: str,
     issued_at: int,
-    signer: KMSGovernanceSigner,
+    signer: RawMessageSigner,
 ) -> str:
     """Build the 120-byte execution assertion and return base64url encoding.
 
@@ -126,7 +127,7 @@ def build_assertion(
             envelope bytes (from ``envelope_builder.body_digest``).
         nonce_hex: 32-char lowercase hex nonce (from ``ExecutionClearance.nonce``).
         issued_at: Unix timestamp in seconds (from ``ExecutionClearance.issued_at``).
-        signer: ``KMSGovernanceSigner`` instance for assertion signing.
+        signer: ``RawMessageSigner`` protocol instance for assertion signing.
 
     Returns:
         Base64url-encoded (no padding) string of exactly 120 raw bytes.

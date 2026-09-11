@@ -55,7 +55,7 @@ from src.gateway.governance.execution_actuator import (
     ExecutionActuator,
     ExecutionClearance,
 )
-from src.gateway.governance.kms_signer import KMSGovernanceSigner
+from src.gateway.governance.raw_signer_protocol import RawMessageSigner
 from src.integrations.actuator_01.assertion import (
     AssertionBuildError,
     build_assertion,
@@ -76,7 +76,7 @@ from src.integrations.actuator_01.signatures import sign_for_quorum
 logger = logging.getLogger(__name__)
 
 # Type alias for per-operator signer resolution
-SignerResolver = Callable[[str], KMSGovernanceSigner]
+SignerResolver = Callable[[str], RawMessageSigner]
 
 # Environment variable keys for adapter configuration.
 _ENV_ENDPOINT = "ACTUATOR_01_ENDPOINT"
@@ -112,17 +112,16 @@ class Actuator01Adapter:
     - ``ACTUATOR_01_TENANT_ID``: Secure tenant identifier (required)
 
     Args:
-        client: Pre-configured ``ActuatorHttpClient``.  If ``None``,
-            constructed from environment variables via ``from_env()``.
-        signer: ``KMSGovernanceSigner`` for quorum and assertion signing.
-        signer_resolver: Optional callable ``(operator_urn: str) -> KMSGovernanceSigner``
+        client: Pre-configured ``ActuatorHttpClient``.
+        signer: ``RawMessageSigner`` protocol instance for quorum and assertion signing.
+        signer_resolver: Optional callable ``(operator_urn: str) -> RawMessageSigner``
             for per-operator signing keys. If ``None``, defaults to ``signer`` for all operators.
     """
 
     def __init__(
         self,
         client: ActuatorHttpClient,
-        signer: KMSGovernanceSigner,
+        signer: RawMessageSigner,
         signer_resolver: SignerResolver | None = None,
     ) -> None:
         self._client = client
@@ -132,14 +131,14 @@ class Actuator01Adapter:
     @classmethod
     def from_env(
         cls,
-        signer: KMSGovernanceSigner,
+        signer: RawMessageSigner,
         signer_resolver: SignerResolver | None = None,
     ) -> Actuator01Adapter:
         """Construct adapter from environment variables.
 
         Args:
-            signer: Base KMS signer for assertions and default quorum signing.
-            signer_resolver: Optional callable ``(operator_urn: str) -> KMSGovernanceSigner``
+            signer: Base signer (RawMessageSigner) for assertions and default quorum signing.
+            signer_resolver: Optional callable ``(operator_urn: str) -> RawMessageSigner``
                 for per-operator signing keys. If ``None``, defaults to ``signer`` for all.
 
         Raises:

@@ -33,7 +33,7 @@ import pytest
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 # Hermetic: tests FlowSignal adapter with mocks, no live services.
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -98,7 +98,7 @@ class TestProtocolCompliance:
 
             result = await adapter.fetch_baseline("US_FED")
 
-        from src.gateway.governance.normative_provider import NormativeBaseline
+        from src.gateway.governance.seams.normative import NormativeBaseline
 
         assert isinstance(result, NormativeBaseline)
         assert result.region == "US_FED"
@@ -127,7 +127,7 @@ class TestProtocolCompliance:
 
             result = await adapter.validate_fria({"action": "test"})
 
-        from src.gateway.governance.normative_provider import ValidationResult
+        from src.gateway.governance.seams.normative import ValidationResult
 
         assert isinstance(result, ValidationResult)
         assert result.admitted is False
@@ -155,7 +155,7 @@ class TestProtocolCompliance:
 
             result = await adapter.submit_evidence("thread-123", "evidence-hash")
 
-        from src.gateway.governance.normative_provider import EvidenceSeal
+        from src.gateway.governance.seams.normative import EvidenceSeal
 
         assert isinstance(result, EvidenceSeal)
         assert result.thread_id == "thread-123"
@@ -401,7 +401,7 @@ class TestConsequenceTokenMinting:
         with (
             patch("httpx.AsyncClient") as MockClient,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
                 return_value=mock_signer,
             ),
         ):
@@ -460,7 +460,7 @@ class TestConsequenceTokenMinting:
         with (
             patch("httpx.AsyncClient") as MockClient,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
                 return_value=mock_signer,
             ),
         ):
@@ -537,7 +537,7 @@ class TestConsequenceTokenMinting:
         with (
             patch("httpx.AsyncClient") as MockClient,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
                 return_value=mock_signer,
             ),
         ):
@@ -695,7 +695,7 @@ class TestConsequenceTokenMinting:
         # Assertions: no token minted
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "FLOWSIGNAL_HOLD"
+        assert result.findings[0]["code"] == "EXTERNAL_HOLD"
         assert "token" not in result.findings[0]
         mock_signer.sign_raw.assert_not_called()
 

@@ -2,8 +2,8 @@
 
 | Field              | Value                                           |
 | ------------------ | ----------------------------------------------- |
-| **Version**        | 3.0                                             |
-| **Date**           | 2026-09-07                                      |
+| **Version**        | 3.0.1                                             |
+| **Date**           | 2026-09-09                                      |
 | **Classification** | INTERNAL                                        |
 | **Document**       | CAGE Technical Report — Security Infrastructure |
 
@@ -18,7 +18,9 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 | Cryptographic Integrity   | Cloud KMS HSM (primary) + HMAC-SHA256 (fallback) | KMS RSA-4096 governance signing + HMAC routing seal |
 | Policy Authorization      | OPA Rego RBAC                        | `trade.governance` package, fail-closed      |
 | Network Isolation         | Kubernetes NetworkPolicy             | 9 objects, default-deny ingress/egress       |
-| External Normative Gate   | Adaptive FRIA enforcement (v2.1.0)   | `normative_provider.py`: confidence-mapped sync/async external validation (SA-9) |
+| Causal Gatekeeper         | Microsoft DoWhy refutation (v2.0.0)  | `causal/gatekeeper.py`: halts on Placebo p < 0.05 or \|eff\| > 0.2 |
+| External Normative Gate   | Adaptive FRIA enforcement (v2.1.0)   | `seams/normative_provider.py`: confidence-mapped sync/async external validation (SA-9) |
+| Routing Seal              | Cryptographic execution gating       | `routing_seal.py`: 30s TTL asymmetric JWT (KMS HSM signed) binding action to evidence hash |
 | PII Protection            | NeMo Guardrails + Microsoft Presidio | Input/output scanning + anonymization        |
 | Audit Logging             | OpenTelemetry + Langfuse             | 7-year retention, ISO 42001 control stamping; direct OTLP ingestion (OTel Collector deprecated 2026-05-31) |
 | Continuous Monitoring     | AgentSight eBPF DaemonSet            | Kernel-level process audit trail             |
@@ -265,7 +267,8 @@ Prior to this hardening, `StubNormativeProvider` could be instantiated in any en
 
 ### Remediation
 
-[`StubNormativeProvider.__init__()`](../../src/gateway/governance/normative_provider.py) now raises `RuntimeError` at construction time if instantiated in a production environment:
+1. **Structural Enforcement (Startup):**
+   [`StubNormativeProvider.__init__()`](../../src/gateway/governance/seams/normative_provider.py) now raises `RuntimeError` at construction time if instantiated in a production environment:
 
 ```python
 def __init__(self) -> None:
@@ -613,7 +616,7 @@ All third-party compliance and attestation provider adapters are isolated under 
 > Provider 05 serves seeded synthetic records and does not perform live I/O today.
 
 **Key security properties:**
-- Vendor SDKs are **not imported at module load time** — `get_normative_provider()` in [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py) resolves vendor packages through lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
+- Vendor SDKs are **not imported at module load time** — `get_normative_provider()` in [`src/gateway/governance/seams/normative_provider.py`](../../src/gateway/governance/seams/normative_provider.py) resolves vendor packages through lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
 - Every adapter is exercised by the hermetic Universal Protocol Conformance Suite ([`tests/test_normative_provider_conformance.py`](../../tests/test_normative_provider_conformance.py)), which asserts protocol conformance and fail-closed semantics across all regions in CI. Some vendor directories additionally carry a package-local suite under `src/integrations/{vendor}/tests/`.
 - Cloud KMS (`kms_signer.py`) and Redis (`evidence_stream.py`) are **not** vendor adapters — they are substrate infrastructure invariants and remain in `src/gateway/governance/`.
 

@@ -38,15 +38,17 @@ import pytest
 
 from src.gateway.governance.defer_queue import DeferReason
 from src.gateway.governance.normative_provider import (
-    EvidenceSeal,
-    ExecutionStatus,
     FRIAEnforcementResult,
-    NormativeBaseline,
     NormativeProviderDaemon,
     StubNormativeProvider,
-    ValidationResult,
     enforce_fria_boundary,
     get_normative_provider,
+)
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    ExecutionStatus,
+    NormativeBaseline,
+    ValidationResult,
 )
 from src.integrations.provider_01 import FlowSignalNormativeProvider
 
@@ -658,7 +660,7 @@ class TestDataContracts:
         assert result.validation is None
 
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.mark.asyncio

@@ -130,17 +130,26 @@ def should_skip(path: Path, base_dir: Path) -> bool:
     if path.name in EXCLUDED_FILES:
         return True
 
+    # Skip test files (tests/ or *_test.py) — test fixtures may use domain vocabulary
+    if (
+        "/tests/" in str(path)
+        or path.name.endswith("_test.py")
+        or path.name.startswith("test_")
+    ):
+        return True
+
     return False
 
 
 def main() -> int:
-    """Scan src/gateway/ for forbidden domain action literals.
+    """Scan src/gateway/ and src/integrations/ for forbidden domain action literals.
 
     Returns:
         Exit code: 0 if no violations, 1 if violations found.
     """
     repo_root = Path(__file__).parent.parent
     gateway_dir = repo_root / "src" / "gateway"
+    integrations_dir = repo_root / "src" / "integrations"
 
     if not gateway_dir.exists():
         print(f"❌ Gateway directory not found: {gateway_dir}", file=sys.stderr)
@@ -149,6 +158,7 @@ def main() -> int:
     violations_found = False
     scanned_count = 0
 
+    # Scan kernel (src/gateway/)
     for py_file in gateway_dir.rglob("*.py"):
         if should_skip(py_file, gateway_dir):
             continue
@@ -163,14 +173,32 @@ def main() -> int:
             for line_num, literal in violations:
                 print(f"   Line {line_num}: '{literal}'")
 
+    # Scan integrations (src/integrations/)
+    if integrations_dir.exists():
+        for py_file in integrations_dir.rglob("*.py"):
+            if should_skip(py_file, integrations_dir):
+                continue
+
+            scanned_count += 1
+            violations = check_file(py_file)
+
+            if violations:
+                violations_found = True
+                rel_path = py_file.relative_to(repo_root)
+                print(f"❌ {rel_path}:")
+                for line_num, literal in violations:
+                    print(f"   Line {line_num}: '{literal}'")
+
     if violations_found:
         print()
         print(
-            "❌ Gate G6 FAILED: Found forbidden domain action literals in kernel code."
+            "❌ Gate G6 FAILED: Found forbidden domain action literals in kernel/integration code."
         )
         print(f"   Forbidden literals: {', '.join(sorted(FORBIDDEN_LITERALS))}")
         print()
-        print("   The kernel must be domain-agnostic. Move domain-specific logic")
+        print(
+            "   The kernel and integrations must be domain-agnostic. Move domain-specific logic"
+        )
         print("   to domain plugins (src/cage_finance/, src/cage_healthcare/, etc.).")
         return 1
 

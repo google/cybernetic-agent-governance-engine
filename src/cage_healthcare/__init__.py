@@ -24,11 +24,11 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 def create_healthcare_tiers() -> tuple[GovernanceTierPlugin, ...]:
     """Create healthcare domain governance tiers for construction-time registration.
-    
+
     Task 2.1 (ARCH-2): Tier registration is now immutable at construction time.
     This factory returns a tuple of tiers that must be passed to
     SymbolicGovernor.__init__() via the domain_tiers parameter.
-    
+
     Returns:
         Tuple of healthcare domain tiers in (phase, order, tier_name) order.
         The tiers are:
@@ -36,7 +36,7 @@ def create_healthcare_tiers() -> tuple[GovernanceTierPlugin, ...]:
         - ClinicalConsensusTier (phase=1, order=5) — Multi-model clinical consensus
     """
     barrier = SerumConcentrationBarrier()
-    
+
     return (
         DoseBarrierTier(ControlBarrierFunction(barrier)),
         ClinicalConsensusTier(ConsensusGate()),

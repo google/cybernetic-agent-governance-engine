@@ -133,7 +133,7 @@ resource "kubernetes_deployment" "nemo_guardrails" {
 
           env {
             name  = "CAGE_ENV"
-            value = "development"
+            value = var.environment
           }
 
           env {
@@ -154,6 +154,11 @@ resource "kubernetes_deployment" "nemo_guardrails" {
           # LLM backend URL for NeMo rails (points at vLLM fast service)
           env {
             name  = "OPENAI_API_BASE"
+            value = var.llm_api_base
+          }
+
+          env {
+            name  = "VLLM_BASE_URL"
             value = var.llm_api_base
           }
 

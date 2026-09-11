@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Document Version** | 3.0                                                                                                           |
-| **Date**             | 2026-09-07                                                                                                    |
+| **Document Version** | 3.0.1                                                                                                           |
+| **Date**             | 2026-09-09                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 3,925 tests collected / 3,446 passed, 0 failed, 96 skipped; 75.40% statement coverage) |
+| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -14,6 +14,8 @@
 ## 1. Architectural Overview
 
 > **v3.0.0 additions**: 6 Governance Decision Primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), Routing Seal v3 (JWT format with `record_hash` Binding and KMS HSM signing; dev/test fallback HMAC), Lua-Atomic CBF Check & Commit, Synchronous Replica Barrier with Monotonic Fence Epoch, Provider 05 3-Axiom External Evidence Attestation (`src/integrations/provider_05/`), FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`), Phase A Ingress Adapters (`src/gateway/governance/ingress/`), Phase B AGW Absorption (`agw_adapter.py`), CAGE-003 Agent Registry (`agent_registry_adapter.py`), LangGraph Harness (`src/gateway/governance/langgraph_harness/`), AgentSight UI (`src/agentsight-ui/`), and Langfuse Native OTLP.
+>
+> **v3.0.1 additions (2026-09-09)**: Seams Contracts Extraction (`src/gateway/governance/seams/`) with zero-kernel-import boundary, In-kernel `ConsequenceToken` and `ContentAddress` primitives, `DeferReason.EXTERNAL_HOLD` replacing legacy vendor routing, Full `RefusalReceipt` v3 evidence serialization with KMS staging/production requirements, and Ed25519 CER signature verification for attestation failure attributability.
 
 
 The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime system composed of five major subsystems that operate cooperatively to enforce real-time AI governance over a LangGraph-based financial advisory pipeline. Each subsystem has a discrete runtime boundary, a defined communication protocol, and a specific governance responsibility.
@@ -29,7 +31,7 @@ The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime syst
 
 All six subsystems are co-deployed within the `governance-stack` Kubernetes namespace on GKE and communicate over cluster-internal DNS. No subsystem exposes a public endpoint without traversing the Kubernetes `NetworkPolicy` boundary (9 objects, default-deny).
 
-> **Vendor Isolation (v3.0.0):** Third-party compliance provider adapters (Provider 01–Provider 06) are architecturally isolated in `src/integrations/{provider_id}/` to prevent vendor SDK code from leaking into the governance kernel. Infrastructure invariants (Cloud KMS, Redis) remain in `src/gateway/governance/`.
+> **Vendor Isolation (v3.0.0 & v3.0.1):** Third-party compliance provider adapters (Provider 01–Provider 06) are architecturally isolated in `src/integrations/{provider_id}/` to prevent vendor SDK code from leaking into the governance kernel. In v3.0.1, the Seams Contracts layer (`src/gateway/governance/seams/`) establishes a strict zero-kernel-import boundary using protocols like `NormativeProvider` and `AttestationProvider`. Infrastructure invariants (Cloud KMS, Redis) remain in `src/gateway/governance/`.
 
 ---
 
@@ -405,7 +407,7 @@ flowchart TD
 | **4** | Domain Tier | 2 | 4 | Fiscal Limit Pre-Reservation | `FiscalTierPlugin` wrapping `safety/resource_guard.py` | `FISCAL_DAILY_CAP_USD` ($500,000); 300s TTL |
 | **5** | Domain Tier | 1 | 5 | Multi-Agent Consensus | `ConsensusTierPlugin` wrapping `consensus/engine.py` | Threshold $10,000; fail-closed `ESCALATE` on error |
 | **6** | Domain Tier | 1 | 6 | Causal Gatekeeper | `CausalTierPlugin` wrapping `causal/gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; Placebo p < 0.05 or \|eff\| > 0.2 |
-| **7** | Kernel Gate | 1 | 7 | Adaptive FRIA Gate | `enforce_fria_boundary()` in `normative_provider.py` | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
+| **7** | Kernel Gate | 1 | 7 | Adaptive FRIA Gate | `enforce_fria_boundary()` in `seams/normative_provider.py` | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
 
 > **Two-Phase Decoupling & Zero Budget Leakage:** All Phase 1 validation checks execute before any state mutation occurs. If any validation tier emits a violation, the pipeline terminates in Phase 1 without modifying Redis balances or reserving daily limits, structurally eliminating downstream budget leakage. If Phase 2 fails downstream, committed Phase 2 tiers are rolled back in LIFO order.
 
@@ -455,6 +457,12 @@ The Symbolic Governor pipeline is region-aware. The `CAGE_DEPLOYMENT_REGION` env
 | `US_FED`    | United States       | `config/compliance/US_FED_BASELINE.json` (5 ctrls)  | SR 26-2, NIST SP 800-53, ISO 42001 | Baseline thresholds |
 | `EU_ECB`    | European Union      | `config/compliance/EU_ECB_BASELINE.json` (6 ctrls)  | EU AI Act, DORA, GDPR, EBA/GL/2023/02, ISO 42001 | Stricter across all tiers + FRIA |
 | `APAC_MAS`  | Singapore / APAC    | `config/compliance/APAC_MAS_BASELINE.json` (5 ctrls) | MAS FEAT, MAS TRM Guidelines, ISO 42001 | $5k consensus threshold |
+
+### 6.4 In-Kernel Primitives and State Management
+
+CAGE relies on strict in-kernel abstractions to represent operational state and manage deferrals safely without leaking vendor details:
+- **`ConsequenceToken` & `ContentAddress`:** Introduced to the kernel (`src/gateway/governance/`) to provide cryptographically secure references to executed decisions and immutable content payload addresses, decoupling downstream verification from storage mechanisms.
+- **`DeferReason.EXTERNAL_HOLD`:** Replaces the legacy vendor-specific `FLOWSIGNAL_ESCALATION` routing. It provides a generalized `DEFER` reason where TTLs are driven dynamically from the structural findings of external normative providers rather than hardcoded heuristics.
 
 ---
 

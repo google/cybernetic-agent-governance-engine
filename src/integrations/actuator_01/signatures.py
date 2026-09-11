@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from src.gateway.governance.kms_signer import KMSGovernanceSigner
+from src.gateway.governance.raw_signer_protocol import RawMessageSigner
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ ACTUATOR_01_DOMAIN_TAG_QUORUM = b"ARCHYTAN_QUORUM_V1:"
 
 
 def sign_for_quorum(
-    signer: KMSGovernanceSigner,
+    signer: RawMessageSigner,
     raw_body: bytes,
 ) -> str:
     """Sign a canonical envelope body for quorum verification.
@@ -61,7 +61,7 @@ def sign_for_quorum(
     Example:
         >>> from src.gateway.governance.kms_signer import get_governance_signer
         >>> from src.integrations.actuator_01.signatures import sign_for_quorum
-        >>> signer = get_governance_signer()
+        >>> signer = get_governance_signer()  # Returns RawMessageSigner protocol
         >>> canonical_bytes = b'{"action":"execute_trade",...}'
         >>> sig_hex = sign_for_quorum(signer, canonical_bytes)
         >>> len(sig_hex)

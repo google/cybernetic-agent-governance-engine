@@ -70,18 +70,18 @@ def create_finance_tiers(
     bounding_registry: BoundingContractRegistry | None = None,
 ) -> tuple[GovernanceTierPlugin, ...]:
     """Create finance domain governance tiers for construction-time registration.
-    
+
     Task 2.1 (ARCH-2): Tier registration is now immutable at construction time.
     This factory returns a tuple of tiers that must be passed to
     SymbolicGovernor.__init__() via the domain_tiers parameter.
-    
+
     Args:
         cbf: ControlBarrierFunction instance for cash barrier validation
         fiscal_guard: FiscalLimitGuard instance for daily spending limits
         consensus_gate: ConsensusGate instance for multi-model consensus
         bounding_registry: Optional BoundingContractRegistry for Phase 5 bounding tier.
                           If None, bounding tier is created with default stub providers.
-    
+
     Returns:
         Tuple of finance domain tiers in (phase, order, tier_name) order.
         The tiers are:
@@ -107,7 +107,7 @@ def create_finance_tiers(
             rollback_provider=rollback_provider,
             enforcer=bounding_enforcer,
         )
-    
+
     return (
         BoundingContractTierPlugin(bounding_registry),
         CBFTierPlugin(cbf),

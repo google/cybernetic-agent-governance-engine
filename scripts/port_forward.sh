@@ -184,16 +184,33 @@ start_pf() {
   echo "[port-forward]   $name loop pid: ${loop_pid}"
 }
 
+# ── Endpoint Check Helper ──────────────────────────────────────────────────
+has_endpoints() {
+  local svc="$1"
+  kubectl get endpointslice -n "$NS" -l kubernetes.io/service-name="$svc" -o json 2>/dev/null | jq -e '.items[].endpoints | select(. != null) | length > 0' &>/dev/null
+}
+
 # ── Core Services Required by Tests ──────────────────────────────────────────
 : > "${PF_PIDS_FILE}"
 
 start_pf opa          opa                       8181  8181  # OPA policy engine
 start_pf langfuse     langfuse-web              3001  3000  # Langfuse API (LLM judge evaluation)
 start_pf langfuse-web langfuse-web              3000  3000  # Langfuse UI (NextAuth)
-start_pf vllm-fast    vllm-service              8001  8000  # Fast vLLM (Qwen2.5-7B) — primary (:8001)
-start_pf vllm-fast2   vllm-service             18081  8000  # Fast vLLM — VLLM_FAST_API_BASE (:18081)
-start_pf vllm-reason  vllm-reasoning            8000  8000  # Reasoning vLLM (DeepSeek R1) — primary (:8000)
-start_pf vllm-reason2 vllm-reasoning           18082  8000  # Reasoning vLLM — VLLM_REASONING_API_BASE (:18082)
+
+if has_endpoints vllm-service; then
+  start_pf vllm-fast    vllm-service              8001  8000  # Fast vLLM (Qwen2.5-7B) — primary (:8001)
+  start_pf vllm-fast2   vllm-service             18081  8000  # Fast vLLM — VLLM_FAST_API_BASE (:18081)
+else
+  echo "[port-forward]   vllm-service has no active endpoints (GPU disabled) — skipping"
+fi
+
+if has_endpoints vllm-reasoning; then
+  start_pf vllm-reason  vllm-reasoning            8000  8000  # Reasoning vLLM (DeepSeek R1) — primary (:8000)
+  start_pf vllm-reason2 vllm-reasoning           18082  8000  # Reasoning vLLM — VLLM_REASONING_API_BASE (:18082)
+else
+  echo "[port-forward]   vllm-reasoning has no active endpoints (GPU disabled) — skipping"
+fi
+
 start_pf gateway      gateway                   8080  8080  # Gateway gRPC/HTTP
 
 if kubectl get svc -n "$NS" redis-master &>/dev/null; then
@@ -214,7 +231,15 @@ echo "[port-forward] Waiting for readiness (3s)..."
 sleep 3
 
 echo "[port-forward] Status checks:"
-for port in 8181 3001 3000 8001 8000 8080 3002 8081 6379; do
+CHECK_PORTS=(8181 3001 3000 8080 3002 8081 6379)
+if has_endpoints vllm-service; then
+  CHECK_PORTS+=(8001)
+fi
+if has_endpoints vllm-reasoning; then
+  CHECK_PORTS+=(8000)
+fi
+
+for port in "${CHECK_PORTS[@]}"; do
   if nc -z localhost "$port" 2>/dev/null; then
     echo "  ✅ localhost:$port reachable"
   else

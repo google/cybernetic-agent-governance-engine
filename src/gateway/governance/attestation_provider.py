@@ -23,49 +23,22 @@ Providers fetch, cache, and verify attestation records from external
 trust services.  They are polled at boot and on a configurable interval;
 cached attestations are embedded into GovernanceEnvelopes without
 per-transaction network calls.
+
+BREAKING CHANGE (C0): AttestationProvider and ExternalAttestation have been
+moved to src.gateway.governance.seams.attestation to eliminate circular
+dependencies with vendor adapters. This module now re-exports them for
+backward compatibility, but the re-export will be removed in the same PR
+per the C0 specification.
 """
 
 from __future__ import annotations
 
-import abc
-from typing import Any
+# Re-export seam contracts for backward compatibility during transition.
+# New code should import directly from seams.attestation.
+from src.gateway.governance.seams.attestation import (
+    AttestationProvider,
+    AttestationStatus,
+    ExternalAttestation,
+)
 
-from src.gateway.governance.governance_envelope import ExternalAttestation
-
-
-class AttestationProvider(abc.ABC):
-    """Protocol for external attestation providers.
-
-    Implementations fetch, cache, and verify attestation records from
-    external trust services.  The provider is polled at boot and on a
-    configurable interval; cached attestations are embedded into
-    GovernanceEnvelopes without per-transaction network calls.
-
-    To integrate a new attestation source:
-
-    1. Create a new module in ``src/integrations/<vendor>/``.
-    2. Subclass ``AttestationProvider``.
-    3. Implement ``fetch_attestations()`` and ``provider_name``.
-    4. Register the provider with ``AttestationAggregator.register()``.
-    """
-
-    @abc.abstractmethod
-    async def fetch_attestations(
-        self, context: dict[str, Any]
-    ) -> list[ExternalAttestation]:
-        """Fetch current attestations for the given governance context.
-
-        Args:
-            context: A dictionary of contextual information that the
-                provider can use to scope its attestation query (e.g.,
-                action name, deployment region, agent identity).
-
-        Returns:
-            A list of ExternalAttestation entries to embed in the
-            GovernanceEnvelope.
-        """
-
-    @property
-    @abc.abstractmethod
-    def provider_name(self) -> str:
-        """Unique provider identifier for telemetry and logging."""
+__all__ = ["AttestationProvider", "AttestationStatus", "ExternalAttestation"]

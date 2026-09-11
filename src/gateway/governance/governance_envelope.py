@@ -82,6 +82,10 @@ from enum import Enum
 from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.attestation import (
+    AttestationStatus,
+    ExternalAttestation,
+)
 
 logger = logging.getLogger("Gateway.Governance.GovernanceEnvelope")
 
@@ -110,18 +114,7 @@ class EnvelopeType(str, Enum):
     AUDIT_CHECKPOINT = "cage_audit_checkpoint"
 
 
-class AttestationStatus(str, Enum):
-    """Status of an external attestation entry.
-
-    Mirrors the OSCAL four-state finding vocabulary to prevent
-    vocabulary drift across attestation providers (c.f. decisions.py).
-    """
-
-    VERIFIED = "VERIFIED"
-    DENIED = "DENIED"
-    STALE = "STALE"
-    DRIFT_DETECTED = "DRIFT_DETECTED"
-    ERROR = "ERROR"
+# AttestationStatus is now imported from seams.attestation
 
 
 @dataclass
@@ -195,37 +188,7 @@ class SignatureBlock:
         }
 
 
-@dataclass
-class ExternalAttestation:
-    """An external attestation entry embedded in a governance envelope.
-
-    Generic container for third-party attestation data (e.g.,
-    risk-acceptance proofs, identity admissibility grants, substrate
-    integrity checks). The ``attestation_type`` and ``metadata`` fields
-    are provider-defined; the remaining fields are standardized.
-
-    The ``metadata`` dict is flattened into the serialized output alongside
-    the standard fields so that provider-specific keys (e.g.
-    ``threshold_id``, ``ca_fingerprint``, ``node_id``) appear at the top
-    level of each attestation entry in the envelope JSON.
-    """
-
-    attestation_type: str  # e.g. "BLUEPRINT", "KEY", "PHYSICS"
-    status: str  # AttestationStatus value
-    receipt_id: str  # Provider-issued receipt ID
-    attested_at: str  # ISO 8601 UTC timestamp
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict.  Provider metadata is flattened to top level."""
-        result: dict[str, Any] = {
-            "type": self.attestation_type,
-            "status": self.status,
-            "receipt_id": self.receipt_id,
-            "attested_at": self.attested_at,
-        }
-        result.update(self.metadata)
-        return result
+# ExternalAttestation is now imported from seams.attestation
 
 
 @dataclass
@@ -639,7 +602,13 @@ class GovernanceEnvelopeBuilder:
         external_attestations: list[ExternalAttestation] = []
         for att in attestations_data:
             # Standard fields are extracted; everything else goes into metadata
-            standard_keys = {"type", "status", "receipt_id", "attested_at"}
+            standard_keys = {
+                "type",
+                "status",
+                "receipt_id",
+                "attested_at",
+                "provider_name",
+            }
             metadata = {k: v for k, v in att.items() if k not in standard_keys}
             external_attestations.append(
                 ExternalAttestation(
@@ -647,6 +616,7 @@ class GovernanceEnvelopeBuilder:
                     status=att.get("status", ""),
                     receipt_id=att.get("receipt_id", ""),
                     attested_at=att.get("attested_at", ""),
+                    provider_name=att.get("provider_name", "unknown"),
                     metadata=metadata,
                 )
             )

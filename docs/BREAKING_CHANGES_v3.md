@@ -1,6 +1,6 @@
-# CAGE v3.0.0 Breaking Changes
+# CAGE v3.0.1 Breaking Changes
 
-> **Status:** Released. CAGE v3.0.0 release date: 2026-09-07.
+> **Status:** Released. CAGE v3.0.1 release date: 2026-09-07.
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
 > describes the breaking changes included in this release. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
@@ -15,7 +15,7 @@
 
 ## Overview
 
-CAGE `v3.0.0` removes deprecated shims, backward-compatibility aliases, and
+CAGE `v3.0.1` removes deprecated shims, backward-compatibility aliases, and
 ad hoc environment-variable configuration that have been carrying
 `DeprecationWarning`s since `v2.x`. It also graduates (or explicitly declines
 to graduate) two feature flags to their stable default, and consolidates
@@ -44,7 +44,7 @@ the environment variables listed under [Configuration Changes](#configuration-ch
 
 **Not affected:** Consumers already using the canonical replacement
 symbols/accessors/config files listed in each table below experience no
-behavior change in `v3.0.0`.
+behavior change in `v3.0.1`.
 
 ---
 
@@ -217,7 +217,7 @@ Per [`plans/domain_extraction_implementation_plan.md`](../plans/domain_extractio
 
 ### Removed Endpoints
 
-No CAGE HTTP endpoint is removed in v3.0.0. `POST /v1/nemo/apply-refinement`
+No CAGE HTTP endpoint is removed in v3.0.1. `POST /v1/nemo/apply-refinement`
 (the legacy NeMo auto-apply route) **stays** — only its
 `NEMO_AUTO_APPLY_ENABLED=true` internal code branch is removed (see CR-2
 below). No consumer-facing route signature changes.
@@ -242,7 +242,7 @@ below). No consumer-facing route signature changes.
 None of the following are hard-deleted in Wave 1–3 of the cleanup plan —
 they are **consolidated into `config/thresholds/` JSON files** and their
 direct `os.getenv()` reads are removed from source. Setting these
-environment variables in `v3.0.0` will have **no effect** once the
+environment variables in `v3.0.1` will have **no effect** once the
 corresponding module is migrated; use the config file instead.
 
 | Variable | Replacement | Migration |
@@ -250,7 +250,7 @@ corresponding module is migrated; use the config file instead.
 | `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | `config/thresholds/*.json` (per-region FTRA boundary thresholds) | Move the values you previously set via env var into the appropriate region file under [`config/thresholds/`](../config/thresholds/). This migration also fixes a latent drift bug where [`src/gateway/governance/ftra/graph_analyzer.py:73-74`](../src/gateway/governance/ftra/graph_analyzer.py:73) hardcoded `0.70` independent of the env var — after migration, both `symbolic_governor.py` and `graph_analyzer.py` read the same config value via `get_fria_zone_defer()`. |
 | `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`symbolic_governor.py:1088-1097,1366-1368`](../src/gateway/governance/symbolic_governor.py:1088) are consolidated into a single read via `get_agent_confidence_threshold()`. |
 | `CAUSAL_LOCK_P_VALUE_THRESHOLD`, `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE`, `CAUSAL_LOCK_RISK_BOUNDARY` | `config/thresholds/*.json` | Move MRM/ISO 42001 §A.9.4-governed threshold values from env vars ([`src/gateway/governance/causal_gatekeeper.py:80-110`](../src/gateway/governance/causal_gatekeeper.py:80)) into the versioned config file. This also gives an audit trail for threshold changes. |
-| `NEMO_AUTO_APPLY_ENABLED` | *(deleted, not migrated)* | This variable is removed entirely as part of CR-2 (the legacy auto-apply code path is deleted). Setting it in v3.0.0 has no effect regardless of value. |
+| `NEMO_AUTO_APPLY_ENABLED` | *(deleted, not migrated)* | This variable is removed entirely as part of CR-2 (the legacy auto-apply code path is deleted). Setting it in v3.0.1 has no effect regardless of value. |
 | `KMS_BATCH_MAX_SIZE`, `KMS_BATCH_ENABLED` | `config/thresholds/*.json` | **Resolved:** The default is standardized to `"false"` across `kms_batch_signer.py` and `main.py`. Batch configuration is loaded via schema thresholds. |
 | `CAUSAL_MIN_SAMPLES`, `CAUSAL_CACHE_TTL_SECONDS`, `TELEMETRY_MAX_STALENESS_SECONDS` | `config/thresholds/*.json` | Consolidated to `config/thresholds/*.json` via accessor functions like `get_telemetry_max_staleness_seconds()`. |
 
@@ -268,7 +268,7 @@ corresponding module is migrated; use the config file instead.
 
 | Flag | New Behavior |
 |------|--------------|
-| `CAGE_DEFER_ENABLED` | **Not graduated in v3.0.0** (explicit recommendation in the cleanup plan §2.4). The flag remains, still defaulting to `"true"`. If your deployment currently sets this to `"false"` to force the DENY-fallback path, that behavior is **unchanged** in v3.0.0. This is a deliberate deviation from the "graduate stable flags" theme of this release — flagged here so consumers do not assume removal. |
+| `CAGE_DEFER_ENABLED` | **Not graduated in v3.0.1** (explicit recommendation in the cleanup plan §2.4). The flag remains, still defaulting to `"true"`. If your deployment currently sets this to `"false"` to force the DENY-fallback path, that behavior is **unchanged** in v3.0.1. This is a deliberate deviation from the "graduate stable flags" theme of this release — flagged here so consumers do not assume removal. |
 | `KMS_BATCH_ENABLED` | **Resolved.** The Wave 0 discrepancy is closed: the confirmed default is `"false"` (disabled), matching [`KmsBatchThresholds.enabled`](../src/gateway/governance/schemas/thresholds.py:277) (`Field(default=False, ...)`) and [`config/governance_thresholds.json`](../config/governance_thresholds.json:56) (`"enabled": false`). The flag is **not graduated** — `KMS_BATCH_ENABLED` remains a valid env-var override of the config default via `get_kms_batch_enabled()`. **Known documentation debt (not yet code-fixed):** the startup comment at [`main.py:213`](../src/compliance_bridge/main.py:213) still incorrectly states "The signer is enabled by default (kms_batch.enabled=true..." — this comment is stale and requires a follow-up code change (out of scope for this documentation-only correction) to align with the verified `false` default. |
 
 ---
@@ -709,5 +709,21 @@ Per the Core Architectural Principle in [`AGENTS.md`](../AGENTS.md), CAGE is a r
 
 ---
 
-**Last updated:** 2026-09-05 (Vendor Decoupling Program AW-1–AW-8 + Gate G3 & G7 hardening)
+## Post-v3.0.1 Seam Contracts & Provider Conformance Clean Breaks (2026-09-09)
+
+Following the v3.0.1 major release, 19 feature branches were implemented to complete seam decoupling, remediate contract drift, and stabilize the test suite across 3,921 passing tests (4,148 collected tests):
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **SC-1** | Seams | Seam contracts extracted into `src/gateway/governance/seams/{normative,attestation,actuation,graph_topology}.py` with **ZERO imports from the kernel**. | Eliminates circular dependencies between the kernel and vendor integration packages. | `ImportError` on importing seam contracts from old module locations (`normative_provider`, `attestation_provider`, `execution_actuator`). |
+| **SC-2** | Hold | `DeferReason.FLOWSIGNAL_ESCALATION` renamed to `DeferReason.EXTERNAL_HOLD`. Vendor-specific branch in `enforce_fria_boundary()` removed. | Generalizes external hold mechanism across all providers; drives TTL dynamically from finding fields (`hold_ttl_seconds`). | `AttributeError` on `DeferReason.FLOWSIGNAL_ESCALATION`. |
+| **SC-3** | Attestation | `provider_name` added as first-class field on `ExternalAttestation`. Error smuggling via `attestation_type="PROVIDER_ERROR:{name}"` eliminated (POAM-2026-072). | Prevents single-provider exceptions from aborting the entire fetch loop; ensures full non-repudiation (AU-10/AU-12). | Callers filtering by `PROVIDER_ERROR` prefix will miss errors; inspect `fetch_error` and `provider_name` instead. |
+| **SC-4** | Evidence | Complete `RefusalReceipt` v3 and `PauseReceipt` objects serialized into evidence stream via `dataclasses.asdict()`. | Preserves 5-part proof chain, `tier_failures`, and byte-identical `proof_hash` in audit trail. | Stale consumers expecting flat refusal summaries must parse v3 nested receipt structure. |
+| **SC-5** | Tokens | Consequence token minting moved exclusively to kernel (`src/gateway/governance/consequence_token_service.py`). | Prevents external adapters from minting consequence authorizations outside kernel governance. | Direct calls to external adapter token generators fail or lack kernel signature validation. |
+| **SC-6** | Provider 02 | Provider 02 adheres to `AttestationProvider` protocol; verifies Ed25519 CER signatures against key manifest. | Fails closed on unverified CER signatures to prevent forged causal evidence. | Unsigned or unverified CER payloads trigger immediate fail-closed rejection. |
+| **SC-7** | Evidence KMS | Strict validation requiring KMS signing in `production` and `staging` postures. | Prevents running production evidence chains without cryptographic non-repudiation. | Fails fast with `ConfigurationError` on startup if KMS key is not configured in production. |
+
+---
+
+**Last updated:** 2026-09-09 (Post-v3.0.1 Seam Contracts SC-1–SC-7 + POAM-2026-072 Remediation)
 

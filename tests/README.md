@@ -80,7 +80,8 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `local` | Runs with **no network and no live service**. All I/O is faked (`fakeredis`, `respx`, `TestClient`, `monkeypatch`). | Default |
 | `unit` | Scope is a single module/class in isolation. Additive to `local`. | Default |
 | `integration` | Requires a live service (GKE, OPA, Langfuse, Redis, vLLM). | `--run-integration` |
-| `live_external` | Hits a third-party partner API. Always combined with `integration`. | `--run-live-external` |
+| `partner_integration` | Hits external partner APIs. Isolated from default integration tests. | `--run-partner-integration` / `--run-live-external` |
+| `live_external` | Hits a third-party partner API. Never combined with `integration`. | `--run-live-external` |
 | `chaos` | Fault injection / failover (e.g. Redis primary loss). | `--run-chaos` |
 | `load` | Locust load tests on dedicated infrastructure. | Dedicated CI job |
 
@@ -101,6 +102,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 
 | Marker | Meaning |
 |---|---|
+| `partner` | External partner adapter and integration tests. |
 | `slow` | Takes >10 s, or asserts wall-clock budgets. Exclude with `-m "not slow"`. |
 | `regression` | Golden-question behavioural check after a model or policy update. |
 | `red_team` | Adversarial / prompt-injection test. |
@@ -279,6 +281,17 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `test_defer_queue.py`                 | `unit`                     | Hermetic `fakeredis` DeferQueue tests: park/resolve/get/list/expire, `DEFER_CONFIDENCE_THRESHOLD == 0.70`, `db=1` isolation, 4-hour TTL default |
 | `test_aarm_mapper.py`                 | `unit`                     | 11-vector ledger completeness, NEUTRALIZED/PARTIAL/EXPOSED scoring, SECURE/DEGRADED/CRITICAL posture classification |
 | `test_compliance_bridge_integration.py` | `integration`            | **104-test live GKE suite** (Groups 1–17): audit ingest, controls API, OSCAL export, SSE stream, Langfuse eval dataset, AARM conformance report, Context Accumulator chain integrity, DEFER queue endpoints |
+| `test_refusal_receipt_ingestion.py`   | `unit` / `local`           | Serialization of complete RefusalReceipt v3 and PauseReceipt into evidence stream; preserves 5-part proof chain and proof_hash |
+| `test_consequence_token_service.py`   | `unit` / `local`           | In-kernel ConsequenceToken minting, asymmetric signature verification, and TTL expiry |
+| `test_content_address.py`             | `unit` / `local`           | SHA-256 immutable ContentAddress kernel primitive and serialization |
+| `test_external_hold_generalization.py`| `unit` / `local`           | Dynamic finding-field driven external hold TTL and DeferReason.EXTERNAL_HOLD parity |
+| `test_oscal_cer_disclosure.py`        | `unit` / `local`           | OSCAL SSP export wiring with Causal Evidence Record (CER) index links |
+| `test_oscal_endpoint_cer_wiring.py`   | `unit` / `local`           | Compliance Bridge FastAPI OSCAL endpoint with CER index attachment |
+| `test_provider_02_topology_injection.py` | `unit` / `local`        | Provider 02 graph topology injection and AttestationProvider conformance |
+| `test_layer_boundary_gates.py`        | `unit` / `local`           | Gate G3 and G7 layer isolation and vendor-brand boundary checks |
+| `test_actuator_01_signer_injection.py`| `unit` / `local`           | ExecutionActuator raw signer injection and clearance generation |
+| `test_attestation_aggregator.py`      | `unit` / `local`           | POAM-2026-072: Attestation failure attribution, non-raising provider property isolation, cache retention |
+| `test_evidence_stream_preconditions.py` | `unit` / `local`         | Precondition validation enforcing mandatory KMS signing in production/staging postures |
 | `load/locustfile.py`                  | `load`                     | Locust load test — sustained concurrent inference traffic          |
 
 ---

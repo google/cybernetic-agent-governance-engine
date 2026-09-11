@@ -854,7 +854,7 @@ class SymbolicGovernor:
         # This enforces architectural clarity: the tier topology is fixed at startup,
         # not modified dynamically during request handling.
         _all_tiers = tuple(core_tiers) + tuple(domain_tiers)
-        
+
         # Validate: no duplicate tier names across core_tiers and domain_tiers
         _seen_names: set[str] = set()
         for tier in _all_tiers:
@@ -863,7 +863,7 @@ class SymbolicGovernor:
                     f"duplicate tier registration at construction: {tier.tier_name}"
                 )
             _seen_names.add(tier.tier_name)
-        
+
         # Sort by (phase, order, tier_name) to match formal model ordering
         self._domain_tiers: tuple[GovernanceTierPlugin, ...] = tuple(
             sorted(_all_tiers, key=lambda t: (t.phase, t.order, t.tier_name))
@@ -879,7 +879,6 @@ class SymbolicGovernor:
         # for boundary-level FTRA validation. Shared instance with in-graph ftra_node
         # to ensure consistent classification semantics.
         self._ftra_classifier: Any | None = None  # IrreversibilityClassifier
-
 
     def registered_tier_names(self) -> list[str]:
         """Ordered tier names — consumed by the formal-model parity test."""

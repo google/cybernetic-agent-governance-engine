@@ -59,6 +59,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    NormativeBaseline,
+    ValidationResult,
+)
+
 logger = logging.getLogger("cage.integrations.provider_06")
 
 # ---------------------------------------------------------------------------
@@ -237,7 +243,6 @@ class Provider06AgentIntegrityAdapter:
 
         For full normative data, compose with another provider (e.g., provider_01).
         """
-        from src.gateway.governance.normative_provider import NormativeBaseline
 
         # Agent Integrity doesn't provide normative baselines — it verifies
         # agent responses against project-configured policy. Return a minimal
@@ -266,8 +271,6 @@ class Provider06AgentIntegrityAdapter:
             ValidationResult with admitted flag and findings list.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import ValidationResult
 
         if not self._endpoint:
             return ValidationResult(
@@ -355,7 +358,6 @@ class Provider06AgentIntegrityAdapter:
         The REVIEW→defer mapping preserves Agent Integrity's semantic intent
         ("hold for human review") within CAGE's existing primitives.
         """
-        from src.gateway.governance.normative_provider import ValidationResult
 
         # Convert IntegrityFindings to dict format
         findings_list = [f.to_dict() for f in result.findings]
@@ -400,8 +402,6 @@ class Provider06AgentIntegrityAdapter:
         attestation.
         """
         import httpx
-
-        from src.gateway.governance.normative_provider import EvidenceSeal
 
         if not self._endpoint:
             return EvidenceSeal(

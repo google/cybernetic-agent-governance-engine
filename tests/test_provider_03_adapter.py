@@ -25,7 +25,7 @@ import respx
 from src.integrations.provider_03 import Provider03NormativeProvider
 
 # Hermetic: uses respx mocked transport, no live services.
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
 @pytest.mark.asyncio

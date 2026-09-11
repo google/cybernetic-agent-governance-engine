@@ -54,6 +54,7 @@ RUN uv sync --frozen --no-dev --no-install-project --no-build --extra compliance
 # Copy application source — all directories needed by the compliance-bridge.
 # Placed AFTER uv sync to maximise Docker layer cache reuse.
 COPY src/compliance_bridge /app/compliance_bridge/
+COPY src/compliance_bridge /app/src/compliance_bridge/
 COPY src/gateway            /app/src/gateway/
 COPY config                 /app/config/
 COPY compliance             /app/compliance/

@@ -521,7 +521,26 @@ def validate_evidence_stream_preconditions() -> None:
             )
 
     # -------------------------------------------------------------------------
-    # Check 3: Stream disabled warning (B4 Enhancement)
+    # Check 3: Production KMS signing (A4)
+    # When CAGE_ENV=prod and the stream is enabled, require KMS signing.
+    # An unsigned evidence chain in production is an integrity violation.
+    # -------------------------------------------------------------------------
+    kms_sign_enabled = (
+        os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
+    )
+    if cage_env == "prod" and stream_enabled and not kms_sign_enabled:
+        raise ConfigurationError(
+            "KMS signing is required in production. "
+            "EVIDENCE_STREAM_KMS_SIGN=false means evidence records are not "
+            "individually signed, which violates audit trail integrity requirements. "
+            f"Current configuration: CAGE_ENV={cage_env}, "
+            f"EVIDENCE_STREAM_ENABLED={stream_enabled}, "
+            f"EVIDENCE_STREAM_KMS_SIGN={kms_sign_enabled}. "
+            "Set EVIDENCE_STREAM_KMS_SIGN=true to enable per-record signing."
+        )
+
+    # -------------------------------------------------------------------------
+    # Check 4: Stream disabled warning (B4 Enhancement)
     # When evidence stream is disabled, log a warning for visibility.
     # This is informational and does not fail startup.
     # -------------------------------------------------------------------------
@@ -896,9 +915,12 @@ class EvidenceStreamSink:
                 "record_hash": record_hash,
                 "payload_json": payload_json,
                 "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
-                "kms_signature": "",
-                "kms_signature_algorithm": _get_signing_algorithm(),
             }
+
+            # Only include KMS signature fields when signing is enabled
+            if self._kms_sign:
+                entry["kms_signature"] = ""
+                entry["kms_signature_algorithm"] = _get_signing_algorithm()
 
             # Advance chain state
             self._prev_hash = record_hash
@@ -1092,9 +1114,12 @@ class EvidenceStreamSink:
                 "record_hash": record_hash,
                 "payload_json": payload_json,
                 "timestamp_utc": commit_timestamp.isoformat(),
-                "kms_signature": "",
-                "kms_signature_algorithm": _get_signing_algorithm(),
             }
+
+            # Only include KMS signature fields when signing is enabled
+            if _KMS_SIGN:
+                entry["kms_signature"] = ""
+                entry["kms_signature_algorithm"] = _get_signing_algorithm()
 
             # Persist to Redis Stream BEFORE advancing chain state
             # This ensures we don't advance the chain if Redis write fails
@@ -1216,7 +1241,7 @@ class EvidenceStreamSink:
                     f"batch-{last_id.replace(':', '-')}.ndjson"
                 )
 
-                receipt = await self._cold_store.put_batch(
+                receipt, created = await self._cold_store.put_if_absent(
                     key=batch_key,
                     content=ndjson_bytes,
                     metadata={
@@ -1232,14 +1257,22 @@ class EvidenceStreamSink:
                         outcome="success",
                     ).inc()
 
-                logger.info(
-                    "[EvidenceStream] Cold store flush: %d entries → %s (backend=%s, last_id=%s, sha256=%s…)",
-                    len(entries),
-                    receipt.uri,
-                    receipt.backend_id,
-                    last_id,
-                    receipt.content_sha256[:12],
-                )
+                if created:
+                    logger.info(
+                        "[EvidenceStream] Cold store flush: %d entries → %s (backend=%s, last_id=%s, sha256=%s…)",
+                        len(entries),
+                        receipt.uri,
+                        receipt.backend_id,
+                        last_id,
+                        receipt.content_sha256[:12],
+                    )
+                else:
+                    logger.debug(
+                        "[EvidenceStream] Cold store batch already exists (idempotent skip): %s (sha256=%s…, last_id=%s)",
+                        receipt.uri,
+                        receipt.content_sha256[:12],
+                        last_id,
+                    )
 
             except asyncio.CancelledError:
                 break

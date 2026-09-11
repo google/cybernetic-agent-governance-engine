@@ -52,6 +52,12 @@ import os
 from typing import Any
 from urllib.parse import quote
 
+from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
+    NormativeBaseline,
+    ValidationResult,
+)
+
 logger = logging.getLogger("cage.integrations.provider_01")
 
 # ---------------------------------------------------------------------------
@@ -77,101 +83,8 @@ _FLOWSIGNAL_ESCALATE = "ESCALATE"
 
 # Finding codes for FlowSignal decision mapping
 FINDING_CODE_FLOWSIGNAL_REFUSE = "FLOWSIGNAL_REFUSE"
-FINDING_CODE_FLOWSIGNAL_HOLD = "FLOWSIGNAL_HOLD"
+FINDING_CODE_EXTERNAL_HOLD = "EXTERNAL_HOLD"
 FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
-FINDING_CODE_CONSEQUENCE_TOKEN = "CONSEQUENCE_TOKEN"
-FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED = "CONSEQUENCE_TOKEN_MINT_FAILED"
-
-
-def _mint_consequence_token(
-    response_data: dict[str, Any], action_payload: dict[str, Any]
-) -> dict[str, Any]:
-    """Mint a ConsequenceToken on FlowSignal ALLOW (Phase 2 ST-4).
-
-    Extracts the five ConsequenceToken claim inputs (sub, tid, rec, act, ver)
-    from the FlowSignal response and FRIA action payload, mints a KMS-signed
-    JWS, and returns it as a CONSEQUENCE_TOKEN finding.
-
-    Args:
-        response_data: FlowSignal /validate/fria response payload containing
-            authority_record_id and optionally authority_state_version.
-        action_payload: Original FRIA request payload containing actor_id,
-            thread_id, and the full action context for digest computation.
-
-    Returns:
-        A finding dict with code=CONSEQUENCE_TOKEN, severity=info, and the JWS
-        token in the 'token' field. On mint failure (KMS error), returns a
-        fail-closed finding with code=CONSEQUENCE_TOKEN_MINT_FAILED, admitted=False.
-
-    Fail-closed behavior:
-        If minting fails (KMS unavailable, missing required fields), returns a
-        blocking finding rather than silently allowing execution without a token.
-    """
-    from src.gateway.governance.consequence_token import ConsequenceToken
-    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-    from src.gateway.governance.kms_signer import get_governance_signer
-
-    # Extract required mint inputs from response and action payload
-    try:
-        # Mint inputs (5 required):
-        # 1. sub (actor_id): from action_payload
-        actor_id = action_payload.get("actor_id")
-        if not actor_id:
-            raise ValueError("actor_id missing from action_payload")
-
-        # 2. tid (thread_id): from action_payload
-        thread_id = action_payload.get("thread_id")
-        if not thread_id:
-            raise ValueError("thread_id missing from action_payload")
-
-        # 3. rec (authority_record_id): from FlowSignal response
-        authority_record_id = response_data.get("authority_record_id")
-        if not authority_record_id:
-            raise ValueError("authority_record_id missing from FlowSignal response")
-
-        # 4. act (action digest): SHA-256 over JCS-canonicalized action_payload
-        action_digest = hashlib.sha256(
-            jcs_canonicalize_plan(action_payload)
-        ).hexdigest()
-
-        # 5. ver (authority_state_version): nullable, from FlowSignal response
-        authority_state_version = response_data.get("authority_state_version")
-
-        # Get KMS signer (may raise if KMS not active in dev/test)
-        signer = get_governance_signer()
-
-        # Mint the token (60s TTL default per plan §5.4)
-        token = ConsequenceToken.mint(
-            sub=actor_id,
-            tid=thread_id,
-            rec=authority_record_id,
-            act=action_digest,
-            ver=authority_state_version,
-            ttl_seconds=60,
-            signer=signer,
-        )
-
-        # Return as an informational finding (does NOT block; admitted=True)
-        # The token travels with the execution plan to the consequence gateway
-        return {
-            "code": FINDING_CODE_CONSEQUENCE_TOKEN,
-            "severity": "info",
-            "token": token,
-            "authority_record_id": authority_record_id,
-            "message": "ConsequenceToken minted for post-FRIA consequence enforcement",
-        }
-
-    except Exception as exc:
-        # Mint failure: fail-closed (return a blocking finding, not a silent admit)
-        logger.error(
-            "[FlowSignal] ConsequenceToken minting failed: %s — fail-closed, blocking execution",
-            exc,
-        )
-        return {
-            "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
-            "severity": "blocked",
-            "message": f"ConsequenceToken minting failed: {exc}",
-        }
 
 
 def _map_flowsignal_decision(
@@ -188,7 +101,7 @@ def _map_flowsignal_decision(
     Mapping logic:
       - ALLOW    → admitted=True, findings=[CONSEQUENCE_TOKEN] (ConsequenceToken JWS)
       - REFUSE   → admitted=False, findings with code=FLOWSIGNAL_REFUSE
-      - ESCALATE → admitted=False, findings with code=FLOWSIGNAL_HOLD,
+      - ESCALATE → admitted=False, findings with code=EXTERNAL_HOLD,
                    needs_human_review=True for DeferQueue parking
 
     Args:
@@ -203,13 +116,24 @@ def _map_flowsignal_decision(
     Raises:
         ValueError: If decision is unrecognized (fail-closed).
     """
-    from src.gateway.governance.normative_provider import ValidationResult
 
     decision_upper = decision.upper().strip()
 
     if decision_upper == _FLOWSIGNAL_ALLOW:
         # ALLOW: admitted=True, with ConsequenceToken finding (Phase 2 ST-4)
-        consequence_token_finding = _mint_consequence_token(data, action_payload)
+        # Delegate to kernel minting service (relocated from this adapter)
+        from src.gateway.governance.consequence_token_service import (
+            mint_consequence_token_finding,
+        )
+
+        consequence_token_finding = mint_consequence_token_finding(
+            actor_id=action_payload.get("actor_id", ""),
+            thread_id=action_payload.get("thread_id", ""),
+            authority_record_id=data.get("authority_record_id", ""),
+            action_payload=action_payload,
+            authority_state_version=data.get("authority_state_version"),
+            ttl_seconds=60,
+        )
         return True, [consequence_token_finding]
 
     if decision_upper == _FLOWSIGNAL_REFUSE:
@@ -228,10 +152,11 @@ def _map_flowsignal_decision(
         message = data.get("message", "FlowSignal escalated — requires human approval")
         return False, [
             {
-                "code": FINDING_CODE_FLOWSIGNAL_HOLD,
+                "code": FINDING_CODE_EXTERNAL_HOLD,
                 "severity": "review",
                 "message": message,
                 "needs_human_review": True,  # CAGE-specific extension for DeferQueue
+                "hold_ttl_seconds": 300,  # 5-minute hold for FlowSignal escalations
             }
         ]
 
@@ -287,8 +212,6 @@ class FlowSignalNormativeProvider:
         """Fetch the active legal baseline from provider."""
         import httpx
 
-        from src.gateway.governance.normative_provider import NormativeBaseline
-
         url = f"{self._endpoint}/legal-baseline/{quote(region, safe='')}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -333,8 +256,6 @@ class FlowSignalNormativeProvider:
         """
         import httpx
 
-        from src.gateway.governance.normative_provider import ValidationResult
-
         url = f"{self._endpoint}/validate/fria"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -350,6 +271,10 @@ class FlowSignalNormativeProvider:
                             decision, data, payload
                         )
                         # Check if minting failed (fail-closed finding present)
+                        from src.gateway.governance.consequence_token_service import (
+                            FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+                        )
+
                         mint_failed = any(
                             f.get("code") == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
                             for f in findings
@@ -438,8 +363,6 @@ class FlowSignalNormativeProvider:
     async def submit_evidence(self, thread_id: str, evidence_hash: str):  # type: ignore[no-untyped-def]
         """Submit governance evidence hash for external sealing."""
         import httpx
-
-        from src.gateway.governance.normative_provider import EvidenceSeal
 
         url = f"{self._endpoint}/evidence-chain/{quote(thread_id, safe='')}"
         try:

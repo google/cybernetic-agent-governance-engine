@@ -1,6 +1,6 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-09-07 | **System Version:** v3.0.0
+**Last Updated:** 2026-09-07 | **System Version:** v3.0.1
 
 > **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
 > - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
@@ -9,13 +9,22 @@
 >
 > Controls marked *(All Regions)* are ISO 42001 obligations. Controls marked with a specific region are additive obligations for that jurisdiction only.
 
-> **Release Note (v3.0.0):** This document reflects the v3.0.0 stable release. Key changes in v3.0.0:
+> **Release Note (v3.0.1):** This document reflects the v3.0.1 stable release. Key changes in v3.0.1:
 > - **Lua-Atomic CBF Check & Commit (CR-3):** `ControlBarrierFunction.atomic_verify_and_commit()` collapses barrier checks and balance commits into a single atomic Redis Lua execution, eliminating TOCTOU race conditions.
 > - **Strictly Human-Gated NeMo Refinement (CR-2):** Autonomous auto-apply branch removed; all refinements require human review via `POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`.
 > - **Evidence Stream Schema Consolidation (CR-1):** Canonical `1.1` schema enforcing 6-field `record_hash` cryptographic binding.
 > - **Centralized Threshold Governance:** Numeric thresholds centralized under `config/thresholds/<REGION>_BASELINE.json` accessed via typed accessor functions.
 > - **Operational External Reconciliation (POAM-023 / POAM-2026-038 CLOSED):** GCS WORM ledger + Cloud KMS signing + 300s TTL in Redis.
 > - **PAUSE & NARROW Primitives:** Resumable pause tokens with fence-epoch protection and bounded partial-authority execution.
+> - **Seams Contracts Extraction:** Zero-kernel-import boundaries isolating `NormativeProvider`, `AttestationProvider`, and `ExecutionActuator` in `src/gateway/governance/seams/`.
+
+> - **External Hold Generalization:** `DeferReason.EXTERNAL_HOLD` replaces legacy vendor-specific `FLOWSIGNAL_ESCALATION` routing.
+
+> - **Full RefusalReceipt v3:** Complete `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream.
+
+> - **Attestation Failure Attributability:** First-class `provider_name` logging and `fetch_error` attribution, along with Ed25519 CER signature verification.
+
+> - **In-Kernel ConsequenceToken & ContentAddress:** Cryptographically secure references decoupled from storage mechanisms.
 
 This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md).
 
@@ -434,7 +443,7 @@ All four phases of the NIST AI 600-1 implementation are now complete. The follow
 
 ### Three-Region Compliance Matrix
 
-CAGE v3.0.0 ships separate OSCAL SSPs and Lula manifests for each deployment region:
+CAGE v3.0.1 ships separate OSCAL SSPs and Lula manifests for each deployment region:
 
 | Region | OSCAL SSP | Lula Manifests |
 |--------|-----------|----------------|

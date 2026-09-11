@@ -266,3 +266,38 @@ The CAGE Layered Refactoring (PRs 1-4) restructured governance boundaries, inval
 1. Re-run Lula validation for all affected controls in the GKE staging environment.
 2. Verify formal proof assertions still align with the loaded plugin sequence.
 3. Attach updated `lula-validation` execution logs proving the newly decoupled pipeline preserves all gating criteria.
+
+### POAM-2026-072: Attestation Fetch Failure Attributability
+
+**Control:** AU-10 (Non-Repudiation), AU-12 (Audit Record Generation)
+**Risk Level:** Medium
+**Status:** Open
+**Date Opened:** 2026-09-09
+**Target Closure:** 2026-09-11
+
+**Description:**
+Five defects in `AttestationAggregator._do_fetch()` reduced attestation failure attributability and created latent availability risks:
+
+1. **Defect (a)**: `attestation_type` overloaded as `PROVIDER_ERROR:{name}` — error channel smuggled through type field, requiring string-prefix matching for discovery
+2. **Defect (b)**: `provider.provider_name` evaluated inside `except` block — a provider whose property raises escapes handler and aborts fetch loop, dropping all subsequent providers
+3. **Defect (c)**: `self._cache = all_attestations` replaces cache wholesale — total-failure poll silently discards previous good attestation set
+4. **Defect (d)**: `_last_fetch_at` set even when every provider failed — staleness monitors read healthy timestamp over fully-failed fetch
+5. **Defect (e)**: Poll loop swallows exceptions with no failure counter or backoff (deferred — see remediation plan)
+
+**Impact:**
+- Defect (b) creates single-point-of-failure: one misbehaving provider aborts entire attestation subsystem
+- Defect (d) creates same failure class as Wave 1 A2: system reports health it does not have
+- Combined defects defeat AU-10 non-repudiation by making failed provider identity unattributable
+
+**Remediation Plan:**
+1. ✅ Add first-class `provider_name` field to `ExternalAttestation` (seam module)
+2. ✅ Capture `provider_name` before `try` block; handle raising property with placeholder identity
+3. ✅ Distinguish total from partial failure; retain prior cache on total failure
+4. ✅ Introduce `_last_fetch_succeeded` staleness signal; leave `_last_fetch_at` unchanged on total failure
+5. ✅ Correct stale `boot_fetch()` docstring describing fail-open behavior code no longer has
+6. ✅ Add 5 regression tests covering all requirements
+7. ⏸️ **Deferred:** Defect (e) failure counter and exponential backoff — current poll loop exception handling is reasonable for periodic background tasks; adding failure counters would require larger scheduling subsystem changes beyond C3 scope
+
+**Remediation Commit:** `fix(governance): make attestation fetch failures attributable` (pending merge)
+
+**OSCAL Update Required:** Update `compliance/oscal/` AU-10 and AU-12 component implementations within 2 business days of merge.

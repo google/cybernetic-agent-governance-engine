@@ -319,11 +319,174 @@ class TestProductionNonBlockingCheck:
                 "CAGE_ENV": "prod",
                 "EVIDENCE_CHAIN_BLOCKING": "true",
                 "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "true",  # A4: Required in prod
             },
             clear=False,
         ):
-            # Should not raise - blocking enabled with stream
+            # Should not raise - blocking enabled with stream and KMS signing
             evidence_stream.validate_evidence_stream_preconditions()
+
+
+class TestProductionKmsSigningCheck:
+    """A4: Test production KMS signing configuration check.
+
+    When CAGE_ENV=prod and the evidence stream is enabled, KMS signing
+    must be enabled. An unsigned evidence chain in production violates
+    audit trail integrity requirements.
+    """
+
+    def test_prod_stream_enabled_kms_disabled_fails(self) -> None:
+        """In production with stream enabled, KMS signing disabled should fail startup."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "prod",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "false",
+            },
+            clear=False,
+        ):
+            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
+                evidence_stream.validate_evidence_stream_preconditions()
+
+            error_msg = str(exc_info.value)
+            assert "KMS signing" in error_msg or "KMS" in error_msg
+            assert "production" in error_msg.lower() or "prod" in error_msg.lower()
+            assert "EVIDENCE_STREAM_KMS_SIGN" in error_msg
+
+    def test_prod_stream_enabled_kms_enabled_succeeds(self) -> None:
+        """In production with stream and KMS signing enabled, should pass."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "prod",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "true",
+            },
+            clear=False,
+        ):
+            # Should not raise - valid production configuration
+            evidence_stream.validate_evidence_stream_preconditions()
+
+    def test_prod_stream_disabled_kms_check_skipped(self) -> None:
+        """When stream is disabled in prod, KMS check should not apply.
+
+        This test verifies the interaction: if stream is disabled, the
+        blocking-mode clause already fails first, so the KMS check is
+        not reached. This is the correct fail-fast order.
+        """
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "prod",
+                "EVIDENCE_STREAM_ENABLED": "false",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "false",
+            },
+            clear=False,
+        ):
+            # Should raise due to blocking=true + stream=false,
+            # NOT due to missing KMS signing
+            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
+                evidence_stream.validate_evidence_stream_preconditions()
+
+            error_msg = str(exc_info.value)
+            # Should be the blocking-mode error, not KMS error
+            assert "EVIDENCE_CHAIN_BLOCKING" in error_msg
+
+    def test_dev_stream_enabled_kms_disabled_succeeds(self) -> None:
+        """In dev environment, KMS signing is not required."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "dev",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "false",
+            },
+            clear=False,
+        ):
+            # Should not raise - dev environment doesn't require KMS signing
+            evidence_stream.validate_evidence_stream_preconditions()
+
+    def test_staging_stream_enabled_kms_disabled_succeeds(self) -> None:
+        """In staging environment, KMS signing is not required."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "staging",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "false",
+            },
+            clear=False,
+        ):
+            # Should not raise - staging environment doesn't require KMS signing
+            evidence_stream.validate_evidence_stream_preconditions()
+
+    def test_prod_kms_check_case_insensitive(self) -> None:
+        """KMS signing check should handle various capitalizations."""
+        # Test that "TRUE" is recognized as enabled
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "PROD",
+                "EVIDENCE_STREAM_ENABLED": "TRUE",
+                "EVIDENCE_CHAIN_BLOCKING": "TRUE",
+                "EVIDENCE_STREAM_KMS_SIGN": "TRUE",
+            },
+            clear=False,
+        ):
+            # Should not raise
+            evidence_stream.validate_evidence_stream_preconditions()
+
+    def test_error_message_contains_current_values(self) -> None:
+        """Error message should display current configuration values."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "prod",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "false",
+            },
+            clear=False,
+        ):
+            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
+                evidence_stream.validate_evidence_stream_preconditions()
+
+            error_msg = str(exc_info.value)
+            # Should show current config values
+            assert "CAGE_ENV=prod" in error_msg
+            assert (
+                "EVIDENCE_STREAM_ENABLED=true" in error_msg
+                or "EVIDENCE_STREAM_ENABLED=True" in error_msg
+            )
+            assert (
+                "EVIDENCE_STREAM_KMS_SIGN=false" in error_msg
+                or "EVIDENCE_STREAM_KMS_SIGN=False" in error_msg
+            )
+
+    def test_error_message_explains_remedy(self) -> None:
+        """Error message should explain how to fix the issue."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "prod",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_CHAIN_BLOCKING": "true",
+                "EVIDENCE_STREAM_KMS_SIGN": "false",
+            },
+            clear=False,
+        ):
+            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
+                evidence_stream.validate_evidence_stream_preconditions()
+
+            error_msg = str(exc_info.value)
+            # Should explain the fix
+            assert "EVIDENCE_STREAM_KMS_SIGN=true" in error_msg
 
 
 class TestStreamDisabledWarning:

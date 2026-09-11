@@ -8,6 +8,7 @@
 - View-access log: `examples/evidence/view_access_log_<YYYY-MM-DD>.ndjson`
 
 ---
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 
 ## Overview
 
@@ -51,6 +52,7 @@ valid, count = tel.verify_chain()
 ```
 
 ---
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 
 ## Schema 1: `cage-intent/1.0`
 
@@ -104,6 +106,7 @@ Emitted for every **governance evaluation** (automated) and **HITL approval** (h
 
 | Field | Type | Description |
 |-------|------|-------------|
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 | `schema` | `string` | Always `"cage-intent/1.0"` |
 | `record_id` | `string (uuid4)` | Unique record identifier |
 | `timestamp` | `string (ISO 8601)` | UTC timestamp of record creation |
@@ -142,6 +145,7 @@ The governance pipeline is an **8-tier symbolic governor** (FTRA pre-pipeline bo
 
 | Tier | Gate | Control | Source |
 |------|------|---------|--------|
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 | 0 | STPA Unsafe Control Action validation | UCA-* (from `config/stpa_control_structure.yaml`) | `generated_stpa_validator.py` |
 | 1 | Agentic model confidence threshold (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `symbolic_governor.py` |
 | 2/4 | Control Barrier Function (CBF) + OPA concurrent (`asyncio.gather`) | CBF: `h(x)≥0`, γ=0.5; OPA: `CTRL_OPA_005` | `cbf.py`, `core/policy.py` |
@@ -151,6 +155,7 @@ The governance pipeline is an **8-tier symbolic governor** (FTRA pre-pipeline bo
 | 6b | Adaptive FRIA gate (EU_ECB only) | `CTRL_FRIA_006` | `normative_provider.py` |
 
 ---
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 
 ## Schema 2: `cage-view-access/1.0`
 
@@ -177,6 +182,7 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 
 | Field | Type | Description |
 |-------|------|-------------|
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 | `schema` | `string` | Always `"cage-view-access/1.0"` |
 | `event_id` | `string (uuid4)` | Unique event identifier |
 | `timestamp` | `string (ISO 8601)` | UTC timestamp of the read event |
@@ -189,6 +195,7 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 | `event_hash` | `string (sha256 hex)` | Hash of this view-access event |
 
 ---
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 
 ## Regulatory Compliance Mapping
 
@@ -196,6 +203,7 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 
 | Regulatory Requirement | Jurisdiction | How the Audit Log Satisfies It |
 |------------------------|-------------|-------------------------------|
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 | **ISO 42001 §6.1** — Risk treatment documentation | **Universal** (all regions) | HITL approval records persist the human's risk treatment decision and rationale before graph resumption |
 | **ISO 42001 A.7.2** — Accountability | **Universal** (all regions) | `reviewer` field attributes every HITL decision to a named individual |
 | **ISO 42001 A.8.4** — AI system operation controls | **Universal** (all regions) | Governance evaluation records provide continuous evidence of operational control enforcement |
@@ -208,6 +216,7 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 | **FISMA AU-11** — Audit record retention | **US_FED only** | Evidence chain retained per US_FED baseline retention policy |
 
 ---
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 
 ## OTel Span Attribute Alignment
 
@@ -215,6 +224,7 @@ The following OTel span attributes are emitted alongside every evidence record, 
 
 | OTel Attribute | Value | Notes |
 |----------------|-------|-------|
+> **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 | `langfuse.observation.type` | `"span"` | |
 | `langfuse.observation.name` | `"governance_evaluation"` or `"hitl_approval"` | |
 | `langfuse.observation.input` | JSON of scenario + action + params | |

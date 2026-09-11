@@ -14,7 +14,7 @@ CAGE is an application-agnostic governance substrate that contains **zero built-
 
 Domain specificity and jurisdictional compliance are **configuration, not core requirements**. The finance and healthcare packages shipped in this repository are illustrative example domains that exercise the extension contract — neither is privileged by the kernel.
 
-![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2553 Tests Passing](https://img.shields.io/badge/tests-2553%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
+![v3.0.1](https://img.shields.io/badge/version-3.0.1-brightgreen) ![3921 Tests Passing](https://img.shields.io/badge/tests-3921%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -22,26 +22,32 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 ---
 
-## What's New in v3.0.0
+## What's New in v3.0.1
 
 > **Release date:** 2026-09-07 — Major Version Release: Domain-agnostic kernel extraction, Layer 1/Layer 2 separation, architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
+> **Remediation & Hardening:** 2026-09-09 — 19 feature branches, 26 distinct architectural enhancements, 5 defect fixes, and test suite stabilization (3839 → 3921 passing, 4148 total collected tests).
 > See [CHANGELOG.md](CHANGELOG.md#300---2026-09-07) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
 
-**v3.0.0 Architectural Consolidation (September 2026):** CAGE v3.0.0 includes a comprehensive Phase 1–3 consolidation effort spanning 6 PRs and 20 feature branches that completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Domain-specific semantics (trading controls, dosing barriers, fiscal limits) moved to optional [`cage.plugins`](src/cage_finance/) packages loaded via `CAGE_ACTIVE_PLUGINS`. This architectural shift resolves Issue #107 (FTRA registry signing) and establishes the foundation for third-party domain adoption. See [`plans/post_consolidation_roadmap.md`](plans/post_consolidation_roadmap.md) for the full consolidation roadmap and [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the domain-agnostic kernel thesis.
+**v3.0.1 Architectural Consolidation & Hardening:** CAGE v3.0.1 completed the **Layer 1 (domain-neutral kernel) / Layer 2 (domain plugins)** separation. All governance enforcement mechanisms now live under [`src/gateway/governance/`](src/gateway/governance/) and operate on abstract action primitives. Following the major release, a comprehensive September 9, 2026 implementation session remediated contract drift across 19 feature branches, stabilizing the test suite from 3,839 to 3,921 unit/local tests (4,148 total collected tests) and resolving 25 test issues (21 failures + 4 errors) and 5 defects.
 
 ### Major Capabilities & Enhancements
 
 | Capability | Location | Description |
 |---|---|---|
 | **6 Governance Decision Primitives** | `src/gateway/governance/symbolic_governor.py` | Full first-class runtime routing for all six decisions: `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE` (`validate_action()`). |
+| **Seams Contract Extraction** | `src/gateway/governance/seams/` | Decoupled `NormativeProvider`, `AttestationProvider`, and `ExecutionActuator` into dedicated seam protocols with zero kernel imports, eliminating circular vendor dependencies. |
+| **Full Refusal & Pause Receipt Ingestion** | `src/gateway/server/governance_middleware.py` | Complete serialization of `RefusalReceipt` v3 and `PauseReceipt` into the evidence stream, preserving 5-part proof chains and byte-identical `proof_hash` calculations. |
+| **External Hold Generalization** | `src/gateway/governance/defer_queue.py` | Generalized `DeferReason.EXTERNAL_HOLD` driven dynamically by finding fields (`hold_ttl_seconds`), removing hardcoded vendor branches. |
+| **Kernel ConsequenceToken & ContentAddress** | `src/gateway/governance/` | In-kernel token minting (`consequence_token_service.py`) and content-addressed storage primitives (`content_address.py`). |
+| **Attestation Attribution & CER Verification** | `src/integrations/provider_02/` | AttestationProvider protocol conformance, Ed25519 CER signature verification against key manifests with fail-closed enforcement, and graph topology injection. |
+| **OSCAL CER Disclosure Links** | `src/compliance_bridge/` | Automatic injection of Causal Evidence Record (CER) indices and links directly into OSCAL SSP exports. |
 | **Routing Seal v3 (JWT/KMS format with `record_hash` Binding)** | `src/gateway/governance/routing_seal.py` | Cryptographically binds the SHA-256 evidence `record_hash` into the 4-tuple seal format `<expire_hex>.<action_slug>.<record_hash_hex>.<signature_hex>`, enforcing fail-closed actuator checks. |
 | **Lua-Atomic CBF Check & Commit (CR-3)** | `src/gateway/governance/safety/cbf_engine.py` | Eliminates TOCTOU concurrency windows by consolidating barrier check and balance deduction into atomic Redis Lua execution (`atomic_verify_and_commit()`). |
 | **Synchronous Replica Barrier & Monotonic Fence Epoch** | `src/gateway/governance/safety/cbf_engine.py` | Synchronous `WAIT` verification with fail-closed automatic rollback on replica timeout, plus monotonic `safety:fence_epoch` seeding (`_fetch_initial_fence_epoch_sync()`). |
 | **Evidence Stream Blocking Preconditions** | `src/compliance_bridge/evidence_stream.py` | Hard startup precondition guard (`validate_evidence_stream_preconditions()`) halting in production if evidence durability blocking is bypassed. |
-| **Human-Gated NeMo Refinement (CR-2 / EV-4)** | `src/governed_financial_advisor/server.py` | Removed unattended auto-apply bypass branch (`NEMO_AUTO_APPLY_ENABLED`). All incoming policy changes are staged via `/v1/nemo/propose-refinement` for explicit human approval. |
 | **Centralized Threshold Governance (EV-1–EV-6)** | `config/thresholds/*.json` | Replaced scattered `os.getenv` reads with typed, schema-validated configuration lookups (`get_fria_zone_defer()`, `get_telemetry_max_staleness_seconds()`). |
 | **Dual vLLM Architecture** | `deployment/k8s/`, `infra/targets/gcp-gke/` | Distinct `vllm-inference` (`Qwen2.5-7B-Instruct` with Hermes tool-calling) and `vllm-reasoning` (`DeepSeek-R1-Distill-Llama-8B` for pure chain-of-thought analysis). |
-| **Typed Node Configs & Clean Imports (SR-1–SR-7)** | `src/gateway/governance/` | Removed legacy shims (`stpa_validator.py`, `safety.py`), migrated to typed `FtraNodeConfig`, and standardized on `StructuredLLMClient` & `AsyncRedisClient`. |
+| **Reverse Boundary & Vendor Brand CI Gates** | `scripts/check_vendor_brands.py` | CI gates G3 and G7 enforcing strict architectural layer boundaries and vendor branding standards across adapters. |
 
 ---
 
@@ -49,6 +55,7 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 | Suite / Jurisdiction | Posture | Result | Date |
 |---|---|---|---|
+| **Universal / Unit Suite** | `test` (offline) | ✅ **3,921 passed** / 0 failed / 82 skipped (4,148 total collected) | 2026-09-09 |
 | **US_FED** (NIST SP 800-53 / FedRAMP) | `dev` / `test` | ✅ **3,747 passed** / 0 failed / 67 skipped (75.40% cov) | 2026-09-03 |
 | **US_FED** (NIST SP 800-53 / FedRAMP) | `prod` | ✅ **217 passed** / 0 failed / 131 skipped | 2026-09-03 |
 | **EU_ECB** (GDPR / EU AI Act) | `dev` / `test` | ✅ **3,747 passed** / 0 failed / 75 skipped (75.40% cov) | 2026-09-03 |
@@ -164,7 +171,7 @@ Domain plugins and jurisdictional postures compose independently — any plugin 
 
 ## The CAGE Product Offering
 
-CAGE v3.0.0 provides a **three-layer governance architecture** for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
+CAGE v3.0.1 provides a **three-layer governance architecture** for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
 
 **Layer 1 (L1) — Domain-Neutral Kernel** provides universal enforcement mechanisms:
 
@@ -207,7 +214,7 @@ CAGE is composed of the following runtime subsystems:
 | **FTRA Boundary Enforcement**    | **L1** | `src/gateway/governance/ftra/`    | Forward-Looking Trajectory Reachability Analyzer (Tier 0.5); signed terminal registry; bounding contracts B1–B10 — see [`FTRA_BOUNDARY_ENFORCEMENT.md`](docs/architecture/FTRA_BOUNDARY_ENFORCEMENT.md) |
 | **Policy Ingress Adapters**      | **L1** | `src/gateway/governance/ingress/` | Absorbs ACS / AAIF / OSCAL / Lula policy, AGW requests, and the GEAP agent registry into CAGE artifacts — see [`INGRESS_ADAPTER_ARCHITECTURE.md`](docs/architecture/INGRESS_ADAPTER_ARCHITECTURE.md) |
 | **Compliance Bridge**            | **L3** | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API; infrastructure telemetry to ClickHouse |
-| **Vendor Integrations**          | **L3** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `provider_04/` (socket-level execution guillotine), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier) |
+| **Vendor Integrations**          | **L3** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `actuator_01/` (execution actuator), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier), `storage_gcs/` (GCS durable sink), `storage_s3/` (S3 durable sink) |
 | **Domain Plugins** *(optional)*  | **L2** | `src/cage_finance/`, `src/cage_healthcare/` | Entry-point (`cage.plugins`) capability packages contributing domain-specific tiers, barriers, rails, tools, and compliance overlays. Finance and healthcare are equal-standing example domains; adopters add `src/cage_<domain>/`. **Zero plugins loaded:** kernel denies all domain actions (fail-closed) |
 | **Jurisdictional Configuration** *(config layer)* | **L3** | `config/thresholds/`, `config/compliance/`, `config/opa/` | Region-selected thresholds, control profiles, and policy bundles resolved from `CAGE_DEPLOYMENT_REGION`. No Python code is region-specific |
 | **AgentSight UI**                | **L3** | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
@@ -456,7 +463,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 ## Security & Compliance Status
 
 > [!IMPORTANT]
-> **CAGE v3.0.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
+> **CAGE v3.0.1 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
 
 ### Compliance Framework Scope
 
@@ -793,4 +800,4 @@ This is not an officially supported Google product. This project is not eligible
 
 By participating in this project, you agree to abide by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-_CAGE v3.0.0 — 2026-09-07 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_
+_CAGE v3.0.1 — 2026-09-07 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_

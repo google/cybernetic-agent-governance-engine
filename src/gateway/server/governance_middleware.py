@@ -245,6 +245,7 @@ async def enforce_governance(tool_name: str, params: dict[str, Any]) -> str:
             refusal_reason=str(exc),
             oscal_control_ref="SC-4",
             params=params,
+            receipt=exc.receipt,
         )
         raise PermissionError(f"Governance Blocked: {exc}")
 
@@ -538,11 +539,119 @@ def _verify_governance_signature(governance_signature: str, payload_plan: dict) 
 # ---------------------------------------------------------------------------
 
 
+def _serialize_receipt(
+    receipt_obj: Any,
+) -> dict[str, Any]:
+    """Serialize RefusalReceipt or PauseReceipt to a dict for evidence ingestion.
+
+    Preserves the receipt's computed proof_hash exactly without recomputation.
+    Handles nested frozen dataclasses (GovernanceTierFailure).
+
+    Args:
+        receipt_obj: RefusalReceipt or PauseReceipt instance.
+
+    Returns:
+        Serialized dict suitable for JSON encoding and evidence stream ingestion.
+    """
+    from dataclasses import asdict, is_dataclass
+
+    def _convert_value(obj: Any) -> Any:
+        """Recursively convert dataclass instances and tuples."""
+        if is_dataclass(obj) and not isinstance(obj, type):
+            return asdict(obj)
+        elif isinstance(obj, tuple):
+            return [_convert_value(item) for item in obj]
+        elif isinstance(obj, list):
+            return [_convert_value(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: _convert_value(v) for k, v in obj.items()}
+        else:
+            return obj
+
+    return _convert_value(receipt_obj)
+
+
+async def _emit_pause_receipt(
+    action_id: str,
+    pause_receipt: Any,
+) -> None:
+    """Emit a signed OSCAL compliance receipt for a PAUSE decision (A3).
+
+    PAUSE decisions are neither approved nor denied; they indicate transient
+    conditions (rate limiting, circuit breaker, resource unavailable) that
+    will resolve without human intervention.
+
+    The pause receipt is signed via KMS and published to the evidence stream
+    for tamper-evident audit trail parity with DENY and ALLOW decisions.
+
+    Args:
+        action_id:     The tool / action name that was paused.
+        pause_receipt: Full PauseReceipt object from validate_action result.
+    """
+    if pause_receipt is None:
+        logger.warning(
+            "⚠️ [A3] _emit_pause_receipt called with pause_receipt=None for action='%s'",
+            action_id,
+        )
+        return
+
+    receipt_id = str(uuid.uuid4())
+    timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
+
+    # A3: Serialize the full PauseReceipt with proof_hash intact
+    receipt_payload: dict[str, Any] = _serialize_receipt(pause_receipt)
+    receipt_payload["type"] = "GOVERNANCE_PAUSE_RECEIPT"
+    receipt_payload["receipt_id"] = receipt_id
+    receipt_payload["action_id"] = action_id
+    receipt_payload["timestamp_utc"] = timestamp_utc
+    receipt_payload["oscal_control_ref"] = "ISO-42001-A.8.4"
+    receipt_payload["kms_signature"] = ""
+
+    # Sign the receipt via KMS
+    try:
+        signer = get_governance_signer()
+        signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
+        receipt_payload["kms_signature"] = signer.sign(signable)
+    except Exception as sign_exc:
+        logger.error(
+            "❌ [A3] Failed to KMS-sign pause receipt for action '%s' "
+            "(receipt_id=%s): %s — receipt will be emitted unsigned.",
+            action_id,
+            receipt_id,
+            sign_exc,
+        )
+
+    # Publish to evidence stream
+    try:
+        sink = get_evidence_sink()
+        await sink.ingest(receipt_payload)
+        logger.info(
+            "⏸️ [A3] Signed OSCAL pause receipt emitted: action='%s' "
+            "receipt_id=%s pause_token=%s kms_signed=%s has_proof_hash=%s",
+            action_id,
+            receipt_id,
+            pause_receipt.pause_token
+            if hasattr(pause_receipt, "pause_token")
+            else "unknown",
+            bool(receipt_payload["kms_signature"]),
+            "proof_hash" in receipt_payload,
+        )
+    except Exception as emit_exc:
+        logger.error(
+            "❌ [A3] Failed to emit OSCAL pause receipt for action '%s' "
+            "(receipt_id=%s): %s — PAUSE decision will still proceed.",
+            action_id,
+            receipt_id,
+            emit_exc,
+        )
+
+
 async def _emit_refusal_receipt(
     action_id: str,
     refusal_reason: str,
     oscal_control_ref: str,
     params: dict[str, Any],
+    receipt: Any = None,
 ) -> None:
     """Emit a signed OSCAL compliance receipt for a hard governance refusal.
 
@@ -554,39 +663,58 @@ async def _emit_refusal_receipt(
     original ``GovernanceError`` is NOT suppressed — the refusal must still
     propagate to the caller.
 
-    Receipt fields:
-        - ``action_id``         : tool / action name that was refused
-        - ``refusal_reason``    : human-readable violation description
-        - ``timestamp_utc``     : ISO 8601 UTC timestamp of the refusal
-        - ``oscal_control_ref`` : OSCAL control ID (e.g. ``"SC-4"``)
-        - ``kms_signature``     : hex-encoded KMS signature of the receipt
-        - ``receipt_id``        : UUID v4 for idempotent deduplication
+    A2 fix: Now accepts the full RefusalReceipt v3 object and serializes it
+    with tier_failures and the 5-part proof chain intact. When receipt is None,
+    degrades to a summary form (legacy path) but logs a warning to make the
+    degraded case visible.
 
     Args:
         action_id:         The tool / action name that triggered the refusal.
         refusal_reason:    The ``str(exc)`` of the ``GovernanceError``.
         oscal_control_ref: OSCAL control reference (e.g. ``"SC-4"``).
         params:            Original action parameters (used for context only).
+        receipt:           Full RefusalReceipt v3 object (if available).
     """
     receipt_id = str(uuid.uuid4())
     timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
 
-    receipt: dict[str, Any] = {
-        "type": "GOVERNANCE_REFUSAL_RECEIPT",
-        "receipt_id": receipt_id,
-        "action_id": action_id,
-        "refusal_reason": refusal_reason,
-        "timestamp_utc": timestamp_utc,
-        "oscal_control_ref": oscal_control_ref,
-        "kms_signature": "",
-    }
+    # A2: Serialize the full receipt if provided; degrade to summary if None
+    if receipt is not None:
+        # Serialize the full v3 RefusalReceipt with tier_failures and proof chain
+        receipt_payload: dict[str, Any] = _serialize_receipt(receipt)
+        receipt_payload["type"] = "GOVERNANCE_REFUSAL_RECEIPT"
+        receipt_payload["receipt_id"] = receipt_id
+        receipt_payload["action_id"] = action_id
+        receipt_payload["timestamp_utc"] = timestamp_utc
+        receipt_payload["oscal_control_ref"] = oscal_control_ref
+        receipt_payload["kms_signature"] = ""
+        # proof_hash is already in the serialized payload from the receipt
+    else:
+        # Degraded path: emit summary form when receipt is None
+        # Log a warning to make this visible — silently emitting thin receipts
+        # is how the defect arose in the first place.
+        logger.warning(
+            "⚠️ [A2] Emitting degraded refusal receipt (receipt=None): "
+            "action='%s' — tier_failures and proof_hash unavailable. "
+            "This indicates GovernanceError was raised without a receipt.",
+            action_id,
+        )
+        receipt_payload = {
+            "type": "GOVERNANCE_REFUSAL_RECEIPT",
+            "receipt_id": receipt_id,
+            "action_id": action_id,
+            "refusal_reason": refusal_reason,
+            "timestamp_utc": timestamp_utc,
+            "oscal_control_ref": oscal_control_ref,
+            "kms_signature": "",
+        }
 
     # Sign the receipt via KMS
     try:
         signer = get_governance_signer()
         # Sign a stable subset of the receipt (exclude kms_signature itself)
-        signable = {k: v for k, v in receipt.items() if k != "kms_signature"}
-        receipt["kms_signature"] = signer.sign(signable)
+        signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
+        receipt_payload["kms_signature"] = signer.sign(signable)
     except Exception as sign_exc:
         logger.error(
             "❌ [P6] Failed to KMS-sign refusal receipt for action '%s' "
@@ -599,16 +727,17 @@ async def _emit_refusal_receipt(
     # Publish to evidence stream
     try:
         sink = get_evidence_sink()
-        await sink.ingest(receipt)
+        await sink.ingest(receipt_payload)
         # MED-7 fix: a successfully emitted refusal receipt is not an error —
         # logging it at ERROR level polluted error dashboards with normal events.
         logger.info(
             "🔴 [P6] Signed OSCAL refusal receipt emitted: action='%s' "
-            "control='%s' receipt_id=%s kms_signed=%s",
+            "control='%s' receipt_id=%s kms_signed=%s has_proof_hash=%s",
             action_id,
             oscal_control_ref,
             receipt_id,
-            bool(receipt["kms_signature"]),
+            bool(receipt_payload["kms_signature"]),
+            "proof_hash" in receipt_payload,
         )
     except Exception as emit_exc:
         logger.error(
@@ -772,17 +901,26 @@ async def validate_action_endpoint(
         )
         payload = {"schema_version": "1.0.0", **result}
 
-        # Phase 1, §3.2: HTTP 202 Accepted for FlowSignal ESCALATE decisions
-        # When the verdict is DEFER and it's a FlowSignal escalation, return
-        # HTTP 202 with an async receipt body so clients know to poll for resolution.
-        # Detection: defer_reason == "FLOWSIGNAL_ESCALATION" OR
-        #            is_flowsignal_hold == True (explicit marker from FRIA tier)
+        # A3: Emit pause receipt for PAUSE verdicts before responding
         verdict = result.get("verdict")
+        if verdict == "PAUSE":
+            pause_receipt = result.get("pause_receipt")
+            if pause_receipt is not None:
+                await _emit_pause_receipt(
+                    action_id=body.action,
+                    pause_receipt=pause_receipt,
+                )
+
+        # Phase 1, §3.2: HTTP 202 Accepted for FlowSignal ESCALATE decisions
+        # When the verdict is DEFER and it's an external provider escalation, return
+        # HTTP 202 with an async receipt body so clients know to poll for resolution.
+        # Detection: defer_reason == "EXTERNAL_HOLD" OR
+        #            is_external_hold == True (explicit marker from FRIA tier)
         defer_reason = result.get("defer_reason", "")
-        is_flowsignal_hold = result.get("is_flowsignal_hold", False)
+        is_external_hold = result.get("is_external_hold", False)
 
         if verdict == "DEFER" and (
-            defer_reason == "FLOWSIGNAL_ESCALATION" or is_flowsignal_hold is True
+            defer_reason == "EXTERNAL_HOLD" or is_external_hold is True
         ):
             defer_id = result.get("defer_id", "")
             receipt_payload = {
@@ -791,8 +929,8 @@ async def validate_action_endpoint(
                 "status": "pending_review",
                 "poll_url": f"/v1/defer/{defer_id}",
                 "verdict": "DEFER",
-                "defer_reason": "FLOWSIGNAL_ESCALATION",
-                "ttl_seconds": 300,  # FlowSignal escalations use 5-minute TTL
+                "defer_reason": "EXTERNAL_HOLD",
+                "ttl_seconds": 300,  # External provider escalations use 5-minute TTL (configurable per-provider)
                 "latency_ms": result.get("latency_ms", 0),
             }
             logger.info(
@@ -815,6 +953,7 @@ async def validate_action_endpoint(
             refusal_reason=str(exc),
             oscal_control_ref="SC-4",
             params=body.params,
+            receipt=exc.receipt,
         )
         return JSONResponse(
             status_code=403,

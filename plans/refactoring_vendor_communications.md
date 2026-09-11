@@ -65,18 +65,17 @@ Your integration implements the [`NormativeProvider`](src/gateway/governance/nor
 
 ---
 
-## Provider 04 — Attestation Provider + Envelope Mapper
+## Actuator 01 (formerly `provider_04`) — Downstream Execution Actuator
 
 **Context**: CAGE is undergoing a significant refactoring to extract finance-specific logic into a plugin architecture, enabling domain-agnostic governance. This refactoring represents our last opportunity to introduce coordinated breaking changes before the v4.0.0 protocol stabilization and reference architecture freeze. We're reaching out now to give sufficient lead time for any adaptations on your side, as the window for API changes is closing rapidly after this release.
 
-Your integration subclasses the abstract [`AttestationProvider`](src/gateway/governance/attestation_provider.py:36) and supplies bidirectional `GovernanceEnvelope` translation, and **you are not impacted by this refactoring.** The `fetch_attestations(context) -> list[ExternalAttestation]` contract, the shared `AttestationStatus` vocabulary (`VERIFIED` / `DENIED` / `STALE` / `DRIFT_DETECTED` / `ERROR`), and the `cage_envelope` wrapping performed by [`Provider04EnvelopeMapper`](src/integrations/provider_04/envelope_mapper.py:44) all sit above the finance extraction boundary — the mapper treats the signed envelope as an opaque dict and never inspects domain fields. Because your fetch path is currently a stub returning `[]`, there is additionally no live wire contract exposed to drift. When you implement the real fetch, note only that the `context` dict is scoped metadata and should not be assumed to contain finance-specific keys.
+Your integration implements the [`ExecutionActuator`](src/gateway/governance/execution_actuator.py:24) protocol, orchestrating execution clearance submission over mTLS with KMS-signed quorum assertions. The wire protocol uses the `X-Archytan-Signatures` header and the `ARCHYTAN_QUORUM_V1:` domain tag, which are load-bearing in the protocol contract and cannot be anonymized without coordinated protocol changes. The refactoring does not impact your integration — execution clearances remain domain-agnostic, and the `ExecutionClearance` dataclass carries generic `magnitude` and `context` fields rather than finance-specific keys.
 
-**Action Required**: NO — None. The attestation and envelope-mapper contracts are stable across this refactoring.
+**Action Required**: NO — None. The execution actuator contract is stable across this refactoring.
 
 **Questions for Your Team**:
-1. While no immediate action is required, do you have any concerns about the domain-agnostic refactoring affecting future attestation fetch implementations? We want to ensure the `context` parameter remains sufficient for your use case.
-2. Is vendor anonymity in the CAGE codebase important to you? The current "Provider 04" numbering is incomplete — the pre-anonymization package name "Archytan" still appears in old git branch names and some coverage reports. Would you prefer we complete the anonymization, or use "Archytan" consistently in committed code?
-3. When would you like to review the final v4.0.0 attestation and envelope-mapper contracts before we freeze them? We're targeting freeze within the next 2-3 weeks.
+1. While no immediate action is required, do you have any concerns about the domain-agnostic refactoring affecting the execution actuator protocol or clearance submission flow?
+2. When would you like to review the final v4.0.0 execution actuator contract before we freeze it? We're targeting freeze within the next 2-3 weeks.
 
 ---
 

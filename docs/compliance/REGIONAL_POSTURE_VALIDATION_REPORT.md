@@ -1,7 +1,7 @@
 # Regional Posture Validation Report
 
 **Date:** 2026-09-04  
-**CAGE Version:** v3.0.0 (post-consolidation)  
+**CAGE Version:** v3.0.1 (post-consolidation)  
 **Validator:** Automated Test Suite + Manual Verification  
 **Scope:** Task C2 — Regional Compliance Posture Validation
 
@@ -332,7 +332,7 @@ All baseline files are valid JSON and contain required sections (`hitl`, `stpa`,
 
 ## 7. Conclusion
 
-All three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) have been validated successfully. The CAGE v3.0.0 architecture demonstrates **true composability** of domain plugins and jurisdictional overlays, with all 12 matrix cells passing validation.
+All three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) have been validated successfully. The CAGE v3.0.1 architecture demonstrates **true composability** of domain plugins and jurisdictional overlays, with all 12 matrix cells passing validation.
 
 **Regional test suites:** 40 total tests, 40 passed, 3 skipped (infrastructure-specific), 0 failed.
 
