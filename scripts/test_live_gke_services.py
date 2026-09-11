@@ -47,7 +47,7 @@ def test_http_service(name, url, timeout=5):
         try:
             data = response.json()
             print(f"✓ Response: {json.dumps(data, indent=2)[:200]}")
-        except:
+        except Exception:
             print(f"✓ Response (non-JSON): {response.text[:100]}")
         return response.status_code < 400
     except Exception as e:

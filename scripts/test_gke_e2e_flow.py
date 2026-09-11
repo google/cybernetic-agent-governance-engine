@@ -70,10 +70,14 @@ def test_vllm_inference():
     # Test fast model
     print("\n1. vLLM Fast Model (Qwen 7B)...")
     try:
+        fast_model = os.environ.get(
+            "VLLM_FAST_MODEL",
+            "gs://cage-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28",
+        )
         response = httpx.post(
             "http://localhost:8001/v1/completions",
             json={
-                "model": "gs://laah-cybernetics-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28",
+                "model": fast_model,
                 "prompt": "Hello, this is a test. Reply with 'OK' if you can read this.",
                 "max_tokens": 10,
                 "temperature": 0.1,
