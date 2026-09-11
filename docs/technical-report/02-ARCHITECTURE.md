@@ -18,18 +18,25 @@
 > **v3.0.1 additions (2026-09-09)**: Seams Contracts Extraction (`src/gateway/governance/seams/`) with zero-kernel-import boundary, In-kernel `ConsequenceToken` and `ContentAddress` primitives, `DeferReason.EXTERNAL_HOLD` replacing legacy vendor routing, Full `RefusalReceipt` v3 evidence serialization with KMS staging/production requirements, and Ed25519 CER signature verification for attestation failure attributability.
 
 
-The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime system composed of five major subsystems that operate cooperatively to enforce real-time AI governance over a LangGraph-based financial advisory pipeline. Each subsystem has a discrete runtime boundary, a defined communication protocol, and a specific governance responsibility.
+The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime platform composed of major subsystems that operate cooperatively to enforce real-time AI governance over agentic pipelines. Each subsystem has a discrete runtime boundary, a defined communication protocol, and a specific governance responsibility. CAGE can govern any generic multi-agent pipeline; it ships with example demo applications (such as the Governed Financial Advisor and a Healthcare demo) to illustrate these capabilities.
+
+### Platform Core Subsystems
+
+| #   | Subsystem                      | Root Path                         | Runtime                   | Port            |
+| --- | ------------------------------ | --------------------------------- | ------------------------- | --------------- |
+| 1   | **Hybrid Inference Gateway**   | `src/gateway/`                    | Python / FastAPI + gRPC   | 8080            |
+| 2   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3001 (internal) / 3002 (local port-forward) |
+| 3   | **AgentSight UI**              | `src/agentsight-ui/`              | React / TypeScript / Vite | 5173            |
+| 4   | **AgentSight eBPF DaemonSet**  | `deployment/agentsight/`          | Kernel / BPF              | N/A (DaemonSet) |
+| 5   | **Vendor & Partner Integrations** | `src/integrations/`            | Python (lazy-loaded)      | N/A (adapters: `provider_01`–`provider_06`) |
+
+### Demo Applications
 
 | #   | Subsystem                      | Root Path                         | Runtime                   | Port            |
 | --- | ------------------------------ | --------------------------------- | ------------------------- | --------------- |
 | 1   | **Governed Financial Advisor** | `src/governed_financial_advisor/` | Python / FastAPI          | 80 (K8s) / 8081 (local port-forward) |
-| 2   | **Hybrid Inference Gateway**   | `src/gateway/`                    | Python / FastAPI + gRPC   | 8080            |
-| 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3001 (internal) / 3002 (local port-forward) |
-| 4   | **AgentSight UI**              | `src/agentsight-ui/`              | React / TypeScript / Vite | 5173            |
-| 5   | **AgentSight eBPF DaemonSet**  | `deployment/agentsight/`          | Kernel / BPF              | N/A (DaemonSet) |
-| 6   | **Vendor & Partner Integrations** | `src/integrations/`            | Python (lazy-loaded)      | N/A (adapters: `provider_01`–`provider_06`) |
 
-All six subsystems are co-deployed within the `governance-stack` Kubernetes namespace on GKE and communicate over cluster-internal DNS. No subsystem exposes a public endpoint without traversing the Kubernetes `NetworkPolicy` boundary (9 objects, default-deny).
+All platform subsystems and active demo applications are co-deployed within the `governance-stack` Kubernetes namespace on GKE and communicate over cluster-internal DNS. No subsystem exposes a public endpoint without traversing the Kubernetes `NetworkPolicy` boundary (9 objects, default-deny).
 
 > **Vendor Isolation (v3.0.0 & v3.0.1):** Third-party compliance provider adapters (Provider 01–Provider 06) are architecturally isolated in `src/integrations/{provider_id}/` to prevent vendor SDK code from leaking into the governance kernel. In v3.0.1, the Seams Contracts layer (`src/gateway/governance/seams/`) establishes a strict zero-kernel-import boundary using protocols like `NormativeProvider` and `AttestationProvider`. Infrastructure invariants (Cloud KMS, Redis) remain in `src/gateway/governance/`.
 

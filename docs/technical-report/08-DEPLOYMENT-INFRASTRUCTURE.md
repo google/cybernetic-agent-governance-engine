@@ -33,9 +33,10 @@ CAGE runs on Google Kubernetes Engine (GKE) in the `governance-stack` namespace.
 
 All services run in the `governance-stack` namespace. Full manifest inventory lives under `deployment/k8s/`.
 
+### Core Platform Services
+
 | Service                    | Manifest                       | Port | Purpose                      |
 | -------------------------- | ------------------------------ | ---- | ---------------------------- |
-| Governed Financial Advisor | `deployment/k8s/financial-advisor.yaml`       | 80 (K8s) / 8081 (local port-forward) | FastAPI agent server         |
 | Hybrid Gateway             | `deployment/k8s/backend-deployment.yaml`      | 8080 | MCP SSE at `/`, inference proxy at `/inference`, governance middleware at `/governance` |
 | Compliance Bridge          | `deployment/k8s/compliance-bridge.yaml`       | 3001 (internal) / 3002 (local port-forward) | OSCAL audit + SSE events     |
 | AgentSight UI              | `frontend-deployment.yaml.tpl` | 5173 | React dashboard              |
@@ -43,6 +44,12 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 | vLLM Fast                  | `vllm-fast.yaml.tpl`           | —    | Qwen/Qwen2.5-1.5B-Instruct   |
 | OPA                        | `deployment/k8s/opa.yaml`                     | —    | Policy engine (`opa:0.68.0-static`) |
 | Redis (reads)              | `deployment/k8s/redis-statefulset.yaml`       | 6379 | Checkpointing (db=0) + DEFER (db=1, noeviction); `redis-stack-server:7.4.0-v1` |
+
+### Demo Applications
+
+| Service                    | Manifest                       | Port | Purpose                      |
+| -------------------------- | ------------------------------ | ---- | ---------------------------- |
+| Governed Financial Advisor | `deployment/k8s/financial-advisor.yaml`       | 80 (K8s) / 8081 (local port-forward) | FastAPI agent server (Demo application) |
 | Redis (writes)             | `deployment/k8s/redis-master-service.yaml`    | 6379 | `redis-master` ClusterIP pinned to Sentinel primary (`redis-node-1`); write-only endpoint |
 | NeMo                       | `deployment/k8s/nemo.yaml`                    | —    | Guardrails server            |
 | MinIO                      | `deployment/k8s/minio.yaml`                   | —    | Model weight storage         |
@@ -175,7 +182,7 @@ Source: `deployment/docker/`
 | Lula Runtime      | `deployment/docker/Dockerfile.lula-runtime`    | `alpine:3.19`             | Lula binary only                                                                       |
 | Lula Multi-stage  | `deployment/docker/Dockerfile.lula-multistage` | Multi-stage build         | Build + runtime separation                                                             |
 | NeMo              | `Dockerfile.nemo`                              | NeMo base                 | Guardrails server                                                                      |
-| Main              | `Dockerfile`                                   | Python 3.11-slim          | Governed Financial Advisor; `google-adk>=1.28.1` (advisor extras)                      |
+| Demo App          | `Dockerfile`                                   | Python 3.11-slim          | Governed Financial Advisor (demo app); `google-adk>=1.28.1` (advisor extras)                      |
 
 > **Note:** The Compliance Bridge base image is `python:3.12-slim` (NOT `python:3.11-slim`). This was updated in v2.0.0 to align with the Python ≥3.10, <3.13 constraint and to pick up 3.12 performance improvements.
 
@@ -193,7 +200,7 @@ Source: `deployment/docker/`
 | Pipeline                    | Config                                                                                    | Builds                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Gateway                     | `deployment/docker/cloudbuild.gateway.yaml`                                               | `gcr.io/YOUR_PROJECT_ID/gateway:latest` — Hybrid Gateway image           |
-| Governed Financial Advisor  | `deployment/docker/cloudbuild.advisor.yaml`                                               | `gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest` — Advisor image |
+| Demo App (Financial Advisor)| `deployment/docker/cloudbuild.advisor.yaml`                                               | `gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest` — Advisor image |
 | Compliance Bridge           | `deployment/docker/cloudbuild.compliance.yaml`                                            | `gcr.io/$PROJECT_ID/compliance-bridge:latest` — Compliance Bridge image   |
 | AgentSight UI               | `deployment/docker/cloudbuild.ui.yaml`                                                    | `gcr.io/$PROJECT_ID/agentsight-ui:latest` — React dashboard image         |
 | vLLM                        | `deployment/docker/cloudbuild.vllm.yaml`                                                  | `gcr.io/$PROJECT_ID/vllm-streamer:latest` — vLLM inference image          |
