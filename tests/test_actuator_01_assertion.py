@@ -143,6 +143,9 @@ class TestDomainTagIsolation:
     def test_assertion_domain_tag_differs_from_quorum(self):
         assert ACTUATOR_01_DOMAIN_TAG_ASSERTION != ACTUATOR_01_DOMAIN_TAG_QUORUM
 
+    def test_assertion_domain_tag_exact_value(self):
+        assert ACTUATOR_01_DOMAIN_TAG_ASSERTION == b"ARCHYTAN_ASSERTION_V1:"
+
     def test_signer_receives_assertion_domain_tag(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
