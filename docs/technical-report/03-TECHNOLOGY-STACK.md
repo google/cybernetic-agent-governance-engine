@@ -176,7 +176,7 @@ Third-party compliance and attestation provider adapters are architecturally iso
 
 ### 5.1 Vendor Adapter Architecture Standards
 
-All external vendor adapters and partner integrations (`src/integrations/provider_*`) **must strictly follow** the design principles, isolation boundaries, and latency budgets specified in the authoritative **Secure Plugin & Adapter Architecture Specification** ([`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](../../local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md)).
+All external vendor adapters and partner integrations (`src/integrations/provider_*`) **must strictly follow** the design principles, isolation boundaries, and latency budgets specified in the authoritative **Secure Plugin & Adapter Architecture Specification** ([`11-ADAPTER-ARCHITECTURE.md`](11-ADAPTER-ARCHITECTURE.md)).
 
 **Core architectural principles:**
 
@@ -214,7 +214,7 @@ class Provider01NormativeProvider:
         pass
 ```
 
-For complete adapter design patterns, latency budgets, sidecar architecture, and test requirements, see the authoritative specification: [`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](../../local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md).
+For complete adapter design patterns, latency budgets, sidecar architecture, and test requirements, see the authoritative specification: [`11-ADAPTER-ARCHITECTURE.md`](11-ADAPTER-ARCHITECTURE.md).
 
 ---
 
