@@ -21,6 +21,21 @@ GFA service (or any downstream actuator) MUST verify the seal before executing
 the trade.  This ensures that execution cannot proceed by simply ignoring the
 HTTP response from the governance endpoint.
 
+Theoretical Foundation:
+    Enforces the 'Evidence Sufficiency' invariant defined by Krti Tallam (2026),
+    "A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents"
+    (arXiv:2606.12320): actuation must strictly depend on prior, immutable evidence
+    persistence rather than uncommitted in-memory claims.
+
+Architectural Hardening:
+    Identified during security review by K. Tallam: decoupling the cryptographic HMAC seal
+    from durable hash-chain writes allowed an execution path where actions could be authorized
+    even if the audit sink was unreachable or dropped events.
+
+    ``generate_seal_with_evidence()`` enforces fail-closed semantics: seal issuance blocks
+    on a synchronous, durable chain commit, raising ``EvidenceChainUnavailableError`` if the
+    sink fails or times out.
+
 Seal format (v3 — asymmetric JWT with evidence binding):
     Standard JWT signed by the Gateway KMS signer.
 

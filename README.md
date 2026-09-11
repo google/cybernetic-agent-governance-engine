@@ -780,6 +780,18 @@ See [`docs/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md) for the f
 
 ---
 
+## Acknowledgements & Theoretical Lineage
+
+CAGE is an open-source reference implementation of the **Five-Plane Reference Architecture** introduced by **Krti Tallam** in:
+
+> Tallam, K. (2026). *A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents*. arXiv:2606.12320.
+
+CAGE implements the four correctness invariants (*Composed Authority, Mediation Coverage, Bounded Composite Authority, Evidence Sufficiency*) and the six-primitive interruption model defined in that work. We also gratefully acknowledge Krti Tallam for extensive architectural code reviews of CAGE's concurrency models and safety boundaries, which directly motivated our distributed CBF replication fencing, synchronous evidence chain sealing, and formal verification scoping in v3.0 and v3.1.
+
+For full architectural mapping, invariant derivations, and contributor details, see [`ACKNOWLEDGEMENTS.md`](ACKNOWLEDGEMENTS.md) and [`docs/CONTRIBUTOR_ACKNOWLEDGMENTS.md`](docs/CONTRIBUTOR_ACKNOWLEDGMENTS.md).
+
+---
+
 ## Contributing
 
 We welcome contributions! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) for:

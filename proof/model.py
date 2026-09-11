@@ -10,7 +10,7 @@
 # Licensed under the Apache License, Version 2.0
 #
 # ---------------------------------------------------------------------------
-# Model Scope & Distributed Extensions (peer review Fix C)
+# Model Scope & Distributed Extensions (review recommendation by Krti Tallam)
 # ---------------------------------------------------------------------------
 # This model covers SINGLE-REQUEST concurrency within the governance pipeline.
 # It proves the No-Direct-Bind invariant holds for all interleavings of the
