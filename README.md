@@ -171,11 +171,15 @@ Domain plugins and jurisdictional postures compose independently — any plugin 
 
 ## The CAGE Product Offering
 
-CAGE v3.0.1 provides a **three-layer governance architecture** for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
+CAGE v3.0.1 provides a **three-layer governance architecture** for enterprise AI, built on the **STPA ↔ STERA Duality**. 
+- **STPA (System-Theoretic Process Analysis)** identifies *what* can go wrong at design time, generating the declarative rules.
+- **STERA (System-Theoretic Execution and Risk Assessment)** is the runtime bind-time admissibility framework that decides *whether this specific action is admissible right now*.
+
+This provides **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks.
 
 **Layer 1 (L1) — Domain-Neutral Kernel** provides universal enforcement mechanisms:
 
-1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **pipeline orchestration model** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper, adaptive FRIA gate). Combined with network and runtime hardening (Linkerd mTLS, standard Kubernetes NetworkPolicy L3/L4 baseline). **Optional GKE Dataplane V2 overlay** (`deployment/k8s/cilium/`) adds Cilium L7 FQDN enforcement when `enable_dataplane_v2=true`. Acts as the "Controller" in our Controller-Plant architecture.
+1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **STERA Runtime Pipeline** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper, adaptive FRIA gate). The evaluation boundary is strictly isolated from side-effect actuators via zero-dependency protocols in `src/gateway/governance/seams/` (Formal Seam Extraction). Combined with network and runtime hardening (Linkerd mTLS, standard Kubernetes NetworkPolicy L3/L4 baseline). **Optional GKE Dataplane V2 overlay** (`deployment/k8s/cilium/`) adds Cilium L7 FQDN enforcement when `enable_dataplane_v2=true`. Acts as the "Controller" in our Controller-Plant architecture.
 2.  **The FTRA Reachability Gate** *(L1)*: Pre-execution Forward-Looking Trajectory Reachability Analyzer ([`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)) that builds a NetworkX directed graph from the agent's `ExecutionPlan`, classifies each step with `IrreversibilityClassifier` against the signed terminal registry, and issues a CLEAR / HITL_REQUIRED / BLOCKED verdict before any tool call is made.
 3.  **The Reusable Agent Harness** *(L1)*: Deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
 4.  **The STPA-to-Policy Compiler** *(L1)*: CLI tool ingesting declarative YAML control structure ([`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml)) and auto-generating OPA Rego policies, NeMo Colang rails, Python `GeneratedSTPAValidator` classes, and LangGraph Saga compensating sub-graphs.

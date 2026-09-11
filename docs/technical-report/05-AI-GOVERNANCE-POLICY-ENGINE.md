@@ -145,7 +145,7 @@ flowchart TD
 
 ### Execution-Time Revalidation
 
-A critical architecture shift in CAGE v2.0 separates pre-check reasoning from execution-time commitment. While the full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers via `SymbolicGovernor`) is executed pre-HITL to evaluate the broad intent and strategy, only a subset of deterministic tiers reliant on continuous environmental variables are re-evaluated immediately prior to execution.
+A critical architecture shift in CAGE v2.0 separates pre-check reasoning from execution-time commitment. While the full **STERA Runtime Pipeline** (FTRA + 7 in-pipeline tiers via `SymbolicGovernor`) is executed pre-HITL to evaluate the broad intent and strategy, only a subset of deterministic tiers reliant on continuous environmental variables are re-evaluated immediately prior to execution.
 
 Specifically, the `post_hitl_revalidate_node` runs the transaction through:
 - **Tier 2 (Control Barrier Function)**: Ensures that the cash balance boundary remains satisfied under live, fresh pricing.
@@ -1191,7 +1191,7 @@ The following table summarises all NIST AI 600-1 governance modules, their POAM 
 
 ## 16. Mathematical Policy Invariants
 
-This section formalises the key mathematical invariants enforced by the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+This section formalises the key mathematical invariants enforced by the **STERA Runtime Pipeline** (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
 ### 16.1 Two-Phase Eight-Tier Pipeline — Formal Summary
 
@@ -1807,7 +1807,7 @@ The kernel remains strictly domain-agnostic. It knows nothing about "trades", "c
 
 ## Summary
 
-The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across an 8-tier governance pipeline (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers: Tiers 0–6 with the adaptive Tier 6b FRIA gate; Tiers 2 and 4 execute concurrently). Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, a Fiscal Limit Pre-Reservation, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed; the EU_ECB region additionally stamps a FRIA attestation as part of Tier 6b rather than as a separate numbered step.
+The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across the **STERA Runtime Pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers: Tiers 0–6 with the adaptive Tier 6b FRIA gate; Tiers 2 and 4 execute concurrently). Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, a Fiscal Limit Pre-Reservation, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed; the EU_ECB region additionally stamps a FRIA attestation as part of Tier 6b rather than as a separate numbered step.
 
 The **universal baseline** (ISO/IEC 42001:2023 + CSA AARM) applies to all regions. The **NIST AI 600-1 governance modules** (§15) are US_FED-only additive controls: confabulation scoring (§2.1), PII audit logging (§2.2), prompt injection detection (§2.3), CBRN keyword scanning (§2.6), HITL escalation (§2.5), and cryptographic provenance chaining (§2.7). The **PII Sanitizer** (§13) is a universal pre-ledger pipeline implementing ISO 42001 A.6 across all regions. The **Text Filter** (§4) provides universal Aho-Corasick keyword scanning with a US_FED-only CBRN extension gated by `tier1_keywords_cbrn_enabled`.
 

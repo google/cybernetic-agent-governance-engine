@@ -440,7 +440,7 @@ All tools are implemented as LangChain-compatible callables and are registered e
 
 ## 13. Agent Governance Integration
 
-This section documents how agents interact with the 8-tier symbolic governor pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All agent tool calls are mediated by [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+This section documents how agents interact with the **STERA Runtime Pipeline** (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All agent tool calls are mediated by [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
 ### 13.1 NoDirectBind Invariant
 
@@ -449,9 +449,9 @@ The **NoDirectBind invariant** is the foundational structural guarantee of the a
 - Every tool call an agent may issue must pass through `POST /governance/validate-action`, which invokes `SymbolicGovernor._run_checks()`.
 - **No code path exists** from agent intent to trade execution that bypasses this choke point. Direct binding from an agent to an actuator (e.g., calling `execute_trade` without a valid routing seal) is structurally prohibited — the `GovernanceMiddleware` rejects any request that does not carry a valid `X-CAGE-Routing-Seal` header, verified via `verify_seal()`.
 
-This invariant ensures that even if an agent is compromised or produces a malformed output, it cannot actuate a trade without traversing the full 8-tier pipeline (FTRA + 7 in-pipeline tiers).
+This invariant ensures that even if an agent is compromised or produces a malformed output, it cannot actuate a trade without traversing the full **STERA Runtime Pipeline** (FTRA + 7 in-pipeline tiers).
 
-### 13.2 How Agents Traverse the 8-Tier Pipeline
+### 13.2 How Agents Traverse the STERA Runtime Pipeline
 
 When an agent calls a governed tool (e.g., `execute_trade_action`), the following sequence executes:
 

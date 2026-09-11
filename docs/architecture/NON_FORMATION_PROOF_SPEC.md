@@ -39,7 +39,7 @@ Non-formation is the *contrapositive*, made evidentiary rather than purely
 formal: `resolvedAllow = FALSE` implies `phase != "EXECUTED"`, and the
 `GovernanceRefusalReceipt` is the signed, replayable witness that this
 contrapositive held for one specific request, at one specific instant,
-against one specific compiled rule-set.
+against one specific compiled rule-set. This transforms a standard software refusal into a cryptographic **STERA Non-Binding event** — proving that the STERA containment boundary held firm against an unsafe control action.
 
 This document defines the receipt schema, the components that already
 supply each of Terry's 9 proof elements, the components that must be built,
