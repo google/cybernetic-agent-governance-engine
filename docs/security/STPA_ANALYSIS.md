@@ -8,6 +8,9 @@ This document details the STPA analysis applied to the Financial Advisor system 
 
 The STPA control structure is the **single source of truth** for all governance enforcement. The STPA Compiler (`src/gateway/governance/stpa_compiler.py`) ingests `config/stpa_control_structure.yaml` and auto-generates artifacts for four enforcement targets: OPA Rego policies, NeMo Colang rails, Python validator classes, and LangGraph Saga compensating sub-graphs.
 
+### From STPA to STERA
+This document defines the **STPA Design-Time Configuration** (the hazard analysis and compilation). The compiled artifacts are then injected into the **STERA (System-Theoretic Execution and Risk Assessment)** runtime governor. STERA is the bind-time admissibility engine that evaluates these constraints against live state, drawing a hard conceptual line between generating a policy and enforcing it.
+
 ---
 
 ## 1. System Control Structure

@@ -14,7 +14,7 @@
 
 ---
 
-> **v3.0.1 Update (2026-09-09):** Compliance reporting now includes Attestation Failure Attributability (POAM-2026-072), Ed25519 CER signature verification for fail-closed security, Full `RefusalReceipt` v3 evidence serialization, and mandatory KMS staging/production signing requirements.
+> **v3.0.1 Update (2026-09-09):** Compliance reporting now includes Attestation Failure Attributability (POAM-2026-072), Ed25519 CER signature verification for fail-closed security, **STERA Deterministically Bound Refusal** serialization (Full `RefusalReceipt` v3), and mandatory KMS staging/production signing requirements.
 
 ## 1. Regulatory Perimeter & Framework Mapping
 
@@ -178,7 +178,7 @@ Any mutation of node `k` invalidates all hashes for nodes `k … n`, making tamp
 
 **Source:** [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py) · **Control:** `CTRL_MRM_004`
 
-In production (v3), the routing seal is an asymmetric JWT signed by Cloud KMS HSM (`iss="cage-governance-kernel"`, `aud="cage-execution-engine"`, `exp`, `act`, `ehash`) that cryptographically binds the decision to the compliance evidence stream `record_hash`. In local/test environments without KMS, it falls back to a 4-tuple HMAC token:
+In production (v3), the routing seal is an asymmetric JWT signed by Cloud KMS HSM (`iss="cage-governance-kernel"`, `aud="cage-execution-engine"`, `exp`, `act`, `ehash`) that cryptographically binds the decision to the compliance evidence stream `record_hash`. The evidence stream acts as the immutable ledger for all **STERA Admissibility Decisions**. When an action fails the STERA gate, it generates a **Deterministically Bound Refusal** (a full 5-part `RefusalReceipt` v3), proving that failures are handled as mathematically constrained containment events rather than standard software exceptions. In local/test environments without KMS, it falls back to a 4-tuple HMAC token:
 
 ```
 <expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
@@ -196,7 +196,7 @@ TTL: **30 seconds**. Unsigned, invalid, or expired requests return HTTP 401 / 40
 
 **Source:** [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py), [`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml)
 
-The STPA-to-Policy Compiler (`src/gateway/governance/stpa_compiler.py`) ingests the declarative YAML control structure and auto-generates OPA Rego policies, NeMo Colang rails, Python validator classes, and LangGraph Saga compensating sub-graphs from the following UCA definitions:
+The STPA-to-Policy Compiler (`src/gateway/governance/stpa_compiler.py`) ingests the declarative YAML control structure and auto-generates OPA Rego policies, NeMo Colang rails, Python validator classes, and LangGraph Saga compensating sub-graphs. These artifacts form the design-time configuration that is executed at bind-time by the **STERA (System-Theoretic Execution and Risk Assessment)** admissibility engine, enforcing the following UCA definitions:
 
 | UCA ID | Condition | Generated Enforcement Artifact |
 |--------|-----------|-------------------------------|
