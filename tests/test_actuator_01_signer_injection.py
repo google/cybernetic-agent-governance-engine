@@ -116,8 +116,14 @@ class TestActuatorSignerInjection:
         )
 
         # Verify resolver is wired correctly
-        assert adapter._resolve_signer("urn:operator:alice") is operator_signers["urn:operator:alice"]
-        assert adapter._resolve_signer("urn:operator:bob") is operator_signers["urn:operator:bob"]
+        assert (
+            adapter._resolve_signer("urn:operator:alice")
+            is operator_signers["urn:operator:alice"]
+        )
+        assert (
+            adapter._resolve_signer("urn:operator:bob")
+            is operator_signers["urn:operator:bob"]
+        )
         assert adapter._resolve_signer("urn:operator:charlie") is mock_default_signer
 
     def test_kms_inactive_signer_fails_closed(self) -> None:

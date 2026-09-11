@@ -60,9 +60,7 @@ class GraphTopology:
         """Validate topology invariants."""
         # Terminal node must exist in the graph
         if self.terminal_node not in self.nodes:
-            raise ValueError(
-                f"terminal_node '{self.terminal_node}' not in graph nodes"
-            )
+            raise ValueError(f"terminal_node '{self.terminal_node}' not in graph nodes")
 
         # Interrupt node (if specified) must exist
         if self.interrupt_node is not None and self.interrupt_node not in self.nodes:

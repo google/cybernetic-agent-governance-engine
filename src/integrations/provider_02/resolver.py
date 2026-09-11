@@ -154,7 +154,9 @@ class Provider02CERResolver:
                 logger.warning(f"Failed to parse content address: {e}")
                 return CERResolution(
                     address=ContentAddress(
-                        algorithm="sha256", hex_digest="", kind=ContentAddressKind.DIGEST
+                        algorithm="sha256",
+                        hex_digest="",
+                        kind=ContentAddressKind.DIGEST,
                     ),
                     status=AttestationStatus.ERROR.value,
                     resolved=False,
@@ -232,7 +234,9 @@ class Provider02CERResolver:
             # Handle 400 INVALID_HASH_FORMAT
             if response.status_code == 400:
                 error_detail = response.text
-                logger.warning(f"Invalid hash format for {address.canonical}: {error_detail}")
+                logger.warning(
+                    f"Invalid hash format for {address.canonical}: {error_detail}"
+                )
                 return CERResolution(
                     address=address,
                     status=AttestationStatus.ERROR.value,
@@ -248,7 +252,9 @@ class Provider02CERResolver:
 
             # Handle 5xx and other errors
             if response.status_code >= 500:
-                logger.error(f"Server error resolving {address.canonical}: {response.status_code}")
+                logger.error(
+                    f"Server error resolving {address.canonical}: {response.status_code}"
+                )
                 return CERResolution(
                     address=address,
                     status=AttestationStatus.ERROR.value,
@@ -264,7 +270,9 @@ class Provider02CERResolver:
 
             # Handle unexpected status codes
             if response.status_code != 200:
-                logger.error(f"Unexpected status {response.status_code} for {address.canonical}")
+                logger.error(
+                    f"Unexpected status {response.status_code} for {address.canonical}"
+                )
                 return CERResolution(
                     address=address,
                     status=AttestationStatus.ERROR.value,
@@ -282,7 +290,9 @@ class Provider02CERResolver:
             try:
                 body = response.json()
             except Exception as e:
-                logger.error(f"Failed to parse JSON response for {address.canonical}: {e}")
+                logger.error(
+                    f"Failed to parse JSON response for {address.canonical}: {e}"
+                )
                 return CERResolution(
                     address=address,
                     status=AttestationStatus.ERROR.value,

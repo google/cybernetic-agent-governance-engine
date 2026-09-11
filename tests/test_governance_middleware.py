@@ -1219,7 +1219,7 @@ class TestFlowSignalHttp202Receipt:
         self, client_for_flowsignal, mock_kms_signer
     ):
         """EXTERNAL_HOLD defer_reason without is_external_hold marker still returns HTTP 202.
-        
+
         Regression test for Defect 1: Previously the middleware only checked
         defer_reason == "FLOWSIGNAL_ESCALATION" (dead code after rename) OR
         is_flowsignal_hold == True. An EXTERNAL_HOLD with no marker would

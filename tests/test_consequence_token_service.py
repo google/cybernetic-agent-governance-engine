@@ -91,7 +91,9 @@ class TestConsequenceTokenService:
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"
-        assert "authority_record_id missing from FlowSignal response" in finding["message"]
+        assert (
+            "authority_record_id missing from FlowSignal response" in finding["message"]
+        )
 
     def test_mint_without_actor_id_fails_closed(self) -> None:
         """Missing actor_id fails closed with MINT_FAILED finding."""
@@ -168,17 +170,17 @@ class TestConsequenceTokenService:
             )
 
         # The tokens MUST be byte-identical (this is the regression guard)
-        assert (
-            token_new == token_old
-        ), "Kernel service must produce byte-identical tokens to old adapter path"
+        assert token_new == token_old, (
+            "Kernel service must produce byte-identical tokens to old adapter path"
+        )
 
         # Verify signing input was identical (same number of calls, same message)
         assert mock_signer.sign_raw.call_count == 2
         call_args_new = mock_signer.sign_raw.call_args_list[0][0][0]
         call_args_old = mock_signer.sign_raw.call_args_list[1][0][0]
-        assert (
-            call_args_new == call_args_old
-        ), "Signing inputs must match across relocation"
+        assert call_args_new == call_args_old, (
+            "Signing inputs must match across relocation"
+        )
 
     def test_kms_signing_failure_fails_closed(self) -> None:
         """KMS signing failure returns fail-closed MINT_FAILED finding."""

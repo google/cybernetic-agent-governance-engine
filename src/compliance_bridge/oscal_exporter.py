@@ -241,9 +241,7 @@ def build_oscal_assessment_results(
         if _cer_uri:
             # Extract the hash portion (last path segment)
             hash_segment = (
-                _cer_uri.rstrip("/").rsplit("/", 1)[-1]
-                if "/" in _cer_uri
-                else _cer_uri
+                _cer_uri.rstrip("/").rsplit("/", 1)[-1] if "/" in _cer_uri else _cer_uri
             )
 
             # B7: Try to parse as ContentAddress first (handles sha256:abc... or sha256%3Aabc...)

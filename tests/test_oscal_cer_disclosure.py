@@ -249,9 +249,7 @@ def test_encoded_and_unencoded_uris_produce_identical_hash():
         f for f in oscal_findings if f["target"]["target-id"] == "AU-12"
     )
 
-    ir6_hash = next(
-        p["value"] for p in ir6_finding["props"] if p["name"] == "cer-hash"
-    )
+    ir6_hash = next(p["value"] for p in ir6_finding["props"] if p["name"] == "cer-hash")
     au12_hash = next(
         p["value"] for p in au12_finding["props"] if p["name"] == "cer-hash"
     )

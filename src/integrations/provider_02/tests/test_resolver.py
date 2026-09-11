@@ -88,7 +88,10 @@ class TestSuccessfulResolution:
     @respx.mock
     @pytest.mark.asyncio
     async def test_200_returns_unverified_never_verified(
-        self, resolver: Provider02CERResolver, valid_address: ContentAddress, sample_cer_body: dict
+        self,
+        resolver: Provider02CERResolver,
+        valid_address: ContentAddress,
+        sample_cer_body: dict,
     ) -> None:
         """A 200 response MUST map to UNVERIFIED status, never VERIFIED.
 
@@ -97,7 +100,7 @@ class TestSuccessfulResolution:
         verification) may promote to VERIFIED.
         """
         # Prepare response body with deterministic serialization
-        body_bytes = json.dumps(sample_cer_body, separators=(',', ':')).encode("utf-8")
+        body_bytes = json.dumps(sample_cer_body, separators=(",", ":")).encode("utf-8")
         computed_hash = hashlib.sha256(body_bytes).hexdigest()
 
         # Update the address to match the computed hash
@@ -141,11 +144,14 @@ class TestSuccessfulResolution:
     @respx.mock
     @pytest.mark.asyncio
     async def test_etag_caching_and_304_revalidation(
-        self, resolver: Provider02CERResolver, valid_address: ContentAddress, sample_cer_body: dict
+        self,
+        resolver: Provider02CERResolver,
+        valid_address: ContentAddress,
+        sample_cer_body: dict,
     ) -> None:
         """Second request with matching ETag returns cached data with from_cache=True."""
         # First request - populate cache
-        body_bytes = json.dumps(sample_cer_body, separators=(',', ':')).encode("utf-8")
+        body_bytes = json.dumps(sample_cer_body, separators=(",", ":")).encode("utf-8")
         computed_hash = hashlib.sha256(body_bytes).hexdigest()
         address = ContentAddress(
             algorithm="sha256", hex_digest=computed_hash, kind=ContentAddressKind.DIGEST
@@ -174,9 +180,12 @@ class TestSuccessfulResolution:
 
         result2 = await resolver.resolve(address)
         assert route_304.called
-        
+
         # Verify If-None-Match header was sent
-        assert route_304.calls.last.request.headers.get("If-None-Match") == '"cache-key-001"'
+        assert (
+            route_304.calls.last.request.headers.get("If-None-Match")
+            == '"cache-key-001"'
+        )
         assert result2.resolved is True
         assert result2.from_cache is True
         assert result2.etag == '"cache-key-001"'
@@ -191,7 +200,7 @@ class TestSuccessfulResolution:
         self, resolver: Provider02CERResolver, sample_cer_body: dict
     ) -> None:
         """Resolver accepts string addresses and parses before network call."""
-        body_bytes = json.dumps(sample_cer_body, separators=(',', ':')).encode("utf-8")
+        body_bytes = json.dumps(sample_cer_body, separators=(",", ":")).encode("utf-8")
         computed_hash = hashlib.sha256(body_bytes).hexdigest()
 
         route = respx.get(

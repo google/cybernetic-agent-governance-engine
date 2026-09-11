@@ -212,10 +212,14 @@ class Provider02AttestationProvider(AttestationProvider):
         self._jwk_cache = JWKCache()
         self._sync_task: asyncio.Task | None = None
         self._running = False
-        
+
         # CER resolver for fetching receipts during verification
         # Extract base URL without the /v1 suffix if present
-        resolver_base_url = self._endpoint.rsplit("/v1", 1)[0] if self._endpoint.endswith("/v1") else self._endpoint
+        resolver_base_url = (
+            self._endpoint.rsplit("/v1", 1)[0]
+            if self._endpoint.endswith("/v1")
+            else self._endpoint
+        )
         self._resolver = Provider02CERResolver(
             base_url=resolver_base_url,
             timeout=self._timeout,
@@ -296,9 +300,7 @@ class Provider02AttestationProvider(AttestationProvider):
                 key_bytes = self._b64url_decode_unpadded(x_b64url)
                 return Ed25519PublicKey.from_public_bytes(key_bytes)
             except Exception as exc:
-                logger.warning(
-                    "[Provider02] Failed to load key %s: %s", kid, exc
-                )
+                logger.warning("[Provider02] Failed to load key %s: %s", kid, exc)
                 return None
 
         return None
@@ -467,7 +469,7 @@ class Provider02AttestationProvider(AttestationProvider):
                 signature_checked=False,
                 error=f"Invalid certificate hash length: {len(certificate_hash)} (expected 64)",
             )
-        
+
         # Fallback to remote verification if JWK cache is empty
         if not self._jwk_cache.has_keys:
             return await self._verify_remote(certificate_hash)
@@ -520,7 +522,7 @@ class Provider02AttestationProvider(AttestationProvider):
         verification_envelope = cer_body.get("verification", {})
 
         # --- Stage 1: Certificate-hash binding ---
-        
+
         # Check matchesCertificateHash self-attestation
         if not certificate.get("matchesCertificateHash"):
             return CERVerification(
@@ -577,7 +579,9 @@ class Provider02AttestationProvider(AttestationProvider):
                 )
 
         # Extract signature and payload
-        signature_b64url = verification_envelope.get("verificationEnvelopeSignature", "")
+        signature_b64url = verification_envelope.get(
+            "verificationEnvelopeSignature", ""
+        )
         if not signature_b64url:
             return CERVerification(
                 valid=False,
@@ -730,7 +734,11 @@ class Provider02AttestationProvider(AttestationProvider):
                 if self._jwk_endpoint.startswith("/"):
                     # Relative path - construct full URL from base endpoint
                     # Extract base from _endpoint (without /v1 suffix if present)
-                    base = self._endpoint.rsplit("/v1", 1)[0] if self._endpoint.endswith("/v1") else self._endpoint
+                    base = (
+                        self._endpoint.rsplit("/v1", 1)[0]
+                        if self._endpoint.endswith("/v1")
+                        else self._endpoint
+                    )
                     jwk_url = f"{base}{self._jwk_endpoint}"
 
                 resp = await client.get(jwk_url, headers=headers)

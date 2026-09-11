@@ -340,18 +340,18 @@ class TestAttestationStatusTransition:
         # have a full signed CER fixture here. The real verification tests are in
         # test_verification.py. This test only verifies the status mapping logic
         # in fetch_attestations().
-        
+
         # For this test to properly verify VERIFIED status, we'd need to mock
         # verify_cer to return valid=True, signature_checked=True
         from unittest.mock import AsyncMock
-        
+
         provider = Provider02AttestationProvider(
             endpoint="https://api.provider02.example.com/v1"
         )
-        
+
         # Mock verify_cer to return a successful verification result
         from src.integrations.provider_02.provider import CERVerification
-        
+
         provider.verify_cer = AsyncMock(  # type: ignore[method-assign]
             return_value=CERVerification(
                 valid=True,

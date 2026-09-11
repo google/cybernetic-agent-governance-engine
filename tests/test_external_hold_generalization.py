@@ -149,17 +149,18 @@ async def test_external_hold_dlq_routing_fires_on_expiry():
 
     # Create a minimal fake Redis that returns the expired token
     redis_mock = MagicMock()
-    
+
     async def _zrangebyscore(zset_key, min_score, max_score, **kwargs):
         return [token.defer_id]
-    
+
     async def _hget(key, field):
         import json
+
         return json.dumps(token.model_dump()).encode()
-    
+
     redis_mock.zrangebyscore = _zrangebyscore
     redis_mock.hget = _hget
-    
+
     queue = DeferQueue(redis_mock, dlq_publisher=dlq_publisher)
 
     # Park an EXTERNAL_HOLD token that's already expired (ttl_seconds=-10)
