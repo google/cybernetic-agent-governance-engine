@@ -470,6 +470,22 @@ All external vendor adapters and integrations (`src/integrations/provider_*`) **
 - **Sidecar & UDS Architecture**: In production deployments, external vendor SDKs (e.g. Node.js engines) run as sidecar containers communicating via Unix Domain Sockets (UDS) to meet sub-millisecond hot-path latency requirements.
 - **Hermetic Testing & Schema Validation**: Vendor mocks must validate payloads against vendored JSON schemas and provide 100% hermetic unit tests with mock clients (e.g. `respx`). Live API calls must never run in PR CI.
 
+### Partner Adapter Branding & Trademark Policy ("Generic in Code, Specific in Prose")
+
+CAGE adheres to open-source trademark standards and architectural vendor neutrality:
+
+1. **Code & Structural Architecture (Strict Vendor Neutrality):**
+   - **Layer 1 Governance Kernel (`src/gateway/`)**: Must remain 100% vendor-neutral in all executable code, variables, function names, enum members (e.g. `EXTERNAL_HOLD` rather than vendor-specific names), Redis keys, and environment variables. Enforced in CI by Gate G8 (`scripts/check_vendor_brands.py`) and Gate G3 (`scripts/check_import_boundaries.py`).
+   - **Layer 3 Package Paths & Namespaces (`src/integrations/`)**: Must use anonymized namespaces and package import paths (e.g., `provider_01`, `actuator_01`, `provider_05`) rather than partner brand names to preserve import stability across branches and prevent structural coupling.
+
+2. **Documentation & Attribution (Descriptive Fair Use):**
+   - Real partner names (e.g., Archytan, NexArt, FlowSignal, Veritas, VEIP) are explicitly permitted and encouraged in Layer 3 prose, including adapter `README.md` files, release notes, and architecture guides.
+   - All partner adapter READMEs must follow the `provider_05` reference convention with an explicit **Naming note** block directly below the reference-architecture header, crediting the partner while explaining that the package path remains anonymized for import stability.
+
+3. **Interoperability & Compliance Exceptions (Functional Necessity):**
+   - **Wire Protocols**: Where third-party identifiers are load-bearing parts of cryptographic protocol constants or HTTP headers (e.g., `X-Archytan-Signatures`, `ARCHYTAN_QUORUM_V1:`, `ARCHYTAN_ASSERTION_V1:`), they are retained as functional protocol requirements.
+   - **Compliance Artifacts**: Historical test fixtures, OSCAL component definitions, and validation manifests (e.g., `lula-validation-flowsignal.yaml`) retain partner names to maintain verifiable audit trails and regulatory traceability.
+
 ---
 
 ## Documentation Standards
@@ -497,6 +513,7 @@ documents rather than paraphrasing from memory:
 | Compliance obligations | [`compliance/lula/`](compliance/lula/), [`compliance/oscal/`](compliance/oscal/) |
 | POAM tracking | [`docs/POAM.md`](docs/POAM.md) |
 | Vendor adapters / Plugin architecture | [`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md) |
+| Partner branding & trademark policy | [Partner Adapter Branding & Trademark Policy](#partner-adapter-branding--trademark-policy-generic-in-code-specific-in-prose) |
 
 When explaining compliance posture or security controls:
 - CAGE is a reference architecture — clarify that region gates and deployment
