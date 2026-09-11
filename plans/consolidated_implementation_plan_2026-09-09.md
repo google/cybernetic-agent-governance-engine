@@ -387,17 +387,65 @@ cancelled outright.
 
 ---
 
-## 9. Current state at a glance
+## 9. Execution record — COMPLETE 2026-09-09
 
-| | Count |
-|---|---|
-| Complete | 1 (CER Phase 0 — fail-closed verification) |
-| Implementable now | 25 across Tiers A–D |
-| Blocked externally | **1** (X2 — CER disclosure policy, mitigated behind an enum) |
+**All 26 items implemented.** Final suite: **3921 passed, 99 skipped, 0 failed,
+0 errors.** Baseline at start of Wave 1 was 3839 passed — **+82 tests**. Mypy
+clean across 297 source files; Gates G3, G6, G8 green.
 
-**Start with A1.** It is one line, needs no design discussion, and removes
-duplicate writes from a hash-chained store.
+### Branch chain (each branched from the previous, unmerged)
 
-**The item that matters most is A2** — until DENY events enter the tamper-evident
-chain, the audit record systematically over-represents permitted actions, and
-every downstream evidence citation inherits that gap.
+```
+C0  refactor/extract-seam-contracts
+C1  fix/provider-02-seam-contract
+C2  fix/attestation-aggregator-typecheck
+C9  refactor/generic-external-hold
+B1  feat/content-address-primitive
+B2  feat/provider-02-cer-resolver
+B3  feat/provider-02-cer-verification
+B6  feat/oscal-cer-links-wiring
+C4  refactor/provider-02-topology-injection
+C7  ci/layer-boundary-gates
+C3  fix/attestation-error-attribution
+C5/C6 refactor/kernel-token-minting
+C8  test/provider-conformance-coverage
+D   docs/adapter-partner-branding  ← head, includes remediation commit
+```
+
+Wave 1 (A1, A2+A3, A4) landed on independent branches off `main`.
+
+### Defects found and fixed *during* execution
+
+Five were not in the plan and were caught by verification rather than design:
+
+| Found in | Defect | Severity |
+|---|---|---|
+| C9 | `EXTERNAL_HOLD` rename left half-applied — HTTP 202 escalation condition became **dead code**, so an external-hold DEFER without a marker silently returned 200 instead of 202. Fail-open on a human-in-the-loop path. | High |
+| C9 | `compliance_bridge` quorum-3 injection gate referenced the deleted enum member — `AttributeError` on a governance control | High |
+| B6 | Runtime wiring deferred as "future work" — the plumbing was rebuilt but `main.py` still never passed `cer_uris`, so **zero links were still emitted** | High |
+| C3 | `warrant.py:364` constructed `ExternalAttestation` without the newly-required field — **production `TypeError`** | High |
+| C5/C6 | `MagicMock` signer leaked into the kernel singleton — order-dependent flake under `-n auto` | Medium |
+
+### Process finding
+
+A subtask reported 21 failures and 4 errors as *"pre-existing, unrelated"*. A
+debug pass disproved it: the same files gave **104 passed, 1 skipped** on
+pristine `main`. Every failure came from this chain.
+
+Root cause: **subtasks ran only their own test files.** C4 updated
+`src/integrations/provider_02/tests/` but not `tests/test_provider_02_adapter.py`.
+Requiring the full `make test-fast` gate before declaring green would have caught
+all 25 at the point of introduction.
+
+### Outstanding
+
+| Item | Owner | Notes |
+|---|---|---|
+| **X2** — CER disclosure policy | NexArt | Only remaining external dependency; absorbed behind the four-state `Disclosure` enum |
+| OSCAL component update — B6/B7 | CAGE | OSCAL emission touched; due within 2 business days of merge |
+| OSCAL component update — C3 | CAGE | AU-10, AU-12; POAM-2026-072 filed |
+| OSCAL component update — C5/C6 | CAGE | SC-13, IA-5 |
+| Defect (e) — aggregator backoff | CAGE | Deferred in POAM-2026-072 item 7; needs scheduling-subsystem change |
+| Quorum-3 injection gate coverage | CAGE | `test_defer_dual_control_auth.py:216` is a `pass` placeholder — the gap that let the C9 dead-enum defect through |
+| D5 — citation-freshness gate | CAGE | Optional; would have caught the `Provider04EnvelopeMapper` drift automatically |
+| Merge the 14-branch chain | CAGE | Squash-merge each in dependency order; the remediation commit sits on the head and should be attributed per-item |
