@@ -5,9 +5,10 @@
 > has **no configured live endpoint**. Adopters should treat this as an
 > integration pattern to adapt, not a hosted service.
 >
-> **Naming note:** The vendor name for this integration is **Archytan**. The
-> package path `actuator_01` is retained for import stability across branches
-> and test fixtures.
+> **Naming & Partner Note:** **Archytan** is the reference downstream
+> execution actuator integration partner for CAGE. The package path
+> `actuator_01` is retained for import stability across branches and test
+> fixtures.
 >
 > **Formerly `provider_04`:** This integration was renamed from `provider_04`
 > to `actuator_01` to reflect its role as an execution actuator rather than a
@@ -77,8 +78,9 @@ environment variables:
 | `X-Archytan-Signatures` | Quorum signature array | Per-operator signature over the 120-byte assertion |
 | `Content-Type` | `application/json` | Envelope payload |
 
-**Note:** The header name `X-Archytan-Signatures` and the domain tag
-`ARCHYTAN_QUORUM_V1:` embedded in quorum signatures are load-bearing in the
+**Note:** The header name `X-Archytan-Signatures` and the domain tags
+`ARCHYTAN_ASSERTION_V1:` (assertion signing) and `ARCHYTAN_QUORUM_V1:`
+(quorum signing) embedded in wire signatures are load-bearing in the
 wire protocol. This makes vendor anonymization unavailable for this partner
 without a coordinated protocol change. See
 [`docs/meetings/luis_actuator_01_response.md`](../../../docs/meetings/luis_actuator_01_response.md)

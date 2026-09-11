@@ -26,7 +26,7 @@ nonce, timestamp, and a domain-tagged KMS signature into exactly 120 bytes:
     48..55       8     Timestamp — ``issued_at`` as unsigned 64-bit big-endian
     56..119     64     Domain-tagged KMS signature over bytes [0..55]
 
-Domain tag:  ``ACTUATOR_01_ASSERTION_V1:``
+Domain tag:  ``ARCHYTAN_ASSERTION_V1:``
     Isolates assertion signatures from quorum signatures (which use
     ``ARCHYTAN_QUORUM_V1:``), preventing cross-context replay.
 
@@ -59,7 +59,9 @@ _SIGNATURE_OFFSET = 56
 _SIGNATURE_SIZE = 64
 
 # Domain tag — distinct from ARCHYTAN_QUORUM_V1: (quorum tag) used in signatures.py.
-ACTUATOR_01_DOMAIN_TAG_ASSERTION = b"ACTUATOR_01_ASSERTION_V1:"
+# NOTE: This is the wire-load-bearing value required by Archytan kernel verification.
+# The constant name is anonymized; the runtime value must match the kernel contract.
+ACTUATOR_01_DOMAIN_TAG_ASSERTION = b"ARCHYTAN_ASSERTION_V1:"
 
 
 class AssertionBuildError(Exception):
