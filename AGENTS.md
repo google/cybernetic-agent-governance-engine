@@ -886,7 +886,7 @@ To prevent runaway frontier model billing and cache-write churn:
 - **When to Use Claude 5 (Opus 5 / Fable 5.1) vs. Sonnet**:
   - **Architecting**:
     - *Sonnet (Default)*: API route definition, standard database migrations, scaffolding components, and single-service interfaces. Sonnet delivers 95% of standard architectural design at roughly 1/5th the cost.
-    - *Escalate to Claude 5*: Strictly reserved for multi-system boundaries, safety-critical state machines, complex distributed protocols, or formal verification proofs where subtle design flaws cause massive downstream rewrites.
+    - *Escalate to Claude 5 (`escalated-architect`)*: Strictly reserved for multi-system boundaries, safety-critical state machines, complex distributed protocols, or formal verification proofs where subtle design flaws cause massive downstream rewrites.
   - **Debugging**:
     - *Sonnet (Default)*: Syntax issues, failed assertions, standard unit test errors, missing imports, and single-function logic bugs.
     - *Escalate to Claude 5 (`escalated-debug`)*: Only when Sonnet fails after two targeted turns, or when diagnosing elusive race conditions, distributed tracing anomalies, memory leaks, or subtle deadlocks.

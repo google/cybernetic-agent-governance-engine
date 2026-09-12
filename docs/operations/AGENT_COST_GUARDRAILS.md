@@ -156,52 +156,158 @@ To prevent accidental invocation of paid execution agents for simple questions, 
 
 ---
 
-## Step 5: Day-to-Day Cost-Governed Workflow
+## Step 5: Day-to-Day Cost-Governed Workflow Lifecycle
 
 ```
-       [ FREE: Google Antigravity + Gemini Flash ]
-                         │
-         ┌───────────────┴───────────────┐
-         │ • Whole-repo indexing & AST   │
-         │ • "Where is this defined?"    │
-         │ • Generate <=50-line briefing │
-         └───────────────┬───────────────┘
-                         │
-                         ├─────────────────────────────────────────┐
-                         │ (Standard Tasks & Daily Code)           │ (Complex Concurrency / Deep Architecture)
-                         ▼                                         ▼
-         [ BUDGETED: Zoo Code + Sonnet ]           [ SURGICAL ESCALATION: Claude 5 (1–3 Turns) ]
-         ┌───────────────────────────────┐         ┌───────────────────────────────────────────┐
-         │ • Code Mode: Multi-file diffs │         │ • Escalated Architect / Escalated Debug   │
-         │ • TDD loops (Max 5 turns)     │ ◄────── │ • Strict sub-200k tokens                  │
-         │ • Inner-loop unit tests       │ handoff │ • Produces spec or root-cause diagnosis   │
-         │ • Full gate (make test-fast)  │         │ • Immediately hands off back to Sonnet    │
-         │ • Context reset via /clear    │         └───────────────────────────────────────────┘
-         └───────────────────────────────┘
+  [ PHASE 1: DISCOVERY & ARCHITECTURE ]
+  Google Antigravity (Gemini Flash) ────> Zoo Code Architect Mode (Sonnet / Claude 5)
+  • Ingest full repo at $0              • Define contracts & boundary invariants
+  • Map interfaces & call graphs        • Draft step-by-step execution plan
+                 │
+                 ▼
+  [ PHASE 2: IMPLEMENTATION & CONTINUOUS TESTING ]
+  Zoo Code Code Mode (Claude Sonnet)
+  • Two-phase testing: isolated unit test per turn (`uv run pytest path/to/test.py::case -v`)
+  • Hard 5-turn cap via AGENTS.md / .roomodes
+                 │
+                 ▼
+  [ PHASE 3: INTERACTIVE DEBUGGING ]
+  Zoo Code Debug Mode (Claude Sonnet)
+  • Fast fix for logic errors, missing imports, syntax bugs
+  • 2-turn fail-fast threshold
+                 │
+                 ├──────────────────────────────┐
+                 │ (If simple/resolved)         │ (If race condition / deadlock / safety hazard)
+                 ▼                              ▼
+  [ PHASE 5: FULL-SUITE GATE & DOCS ]   [ PHASE 4: DEEP SAFETY & BUG AUDIT ]
+  • Run `make test-fast`                Zoo Code Escalated Debug Mode (Claude 5 / Opus / Fable)
+  • Antigravity: $0 docstrings/typing   • Formal state-machine & CBF verification
+  • Run `/clear` in Zoo Code            • Concurrency, race condition, & deadlock audit
 ```
 
-### Phase 1: Free Exploration & Mapping (Google Antigravity)
-- Run broad repository searches, trace caller hierarchies, and investigate dependency graphs in Antigravity.
-- Let Gemini Flash absorb large multi-megabyte codebase contexts at zero or marginal cost.
-- Synthesize findings into a concise, focused $\le$50-line briefing.
+---
 
-### Phase 2: Scoped Handoff & Model Selection
-- Formulate a concise specification with exact target file paths and acceptance criteria.
-- Open only the 1–2 target files in the editor.
-- **Daily driver**: Select **Code Mode** (`claude-3-7-sonnet`) or **Architect Mode** (`claude-3-7-sonnet`).
-- **Surgical escalation**: If and only if the task touches safety-critical distributed protocols, formal verification proofs, or elusive race conditions, invoke **Escalated Architect** or **Escalated Debug** (`claude-opus-5` / `claude-fable-5.1`).
+### 5.1 Architectural Discovery & Scoping ($0 Cost Tier)
 
-### Phase 3: Governed Execution or Surgical Diagnosis
-- **Under Sonnet**: Execute the diffs, run isolated unit tests (`uv run pytest tests/...::test_case -v`), and keep turns fast (< 5 min TTL).
-- **Under Claude 5 (Surgical Escalation)**: Limit execution to 1–3 turns. Let Claude 5 output the architectural specification or identify the root-cause bug diagnosis. **Switch immediately back to Code Mode (Sonnet)** to write the code diffs and run tests.
+*Tool: Google Antigravity (`Cmd+Alt+A`) | Model: Gemini Flash*
 
-### Phase 4: Full-Gate Verification & Immediate Context Reset
-- Once the isolated test passes, execute `make test-fast` once to satisfy the repository full-gate invariant.
-- The moment the test suite passes, issue `/clear`.
-- Never carry terminal stdout histories, diff blobs, or compiler traces into the next task. Contexts crossing 200k tokens double the billing rate.
+Never start architectural exploration or file discovery in paid reasoning models. Use the 1M–2M+ token native context of Gemini Flash to index and map the codebase at zero marginal cost.
 
-### Phase 5: Free Documentation & Annotation (Antigravity)
-- Use Antigravity (`Cmd+Alt+K`) to generate docstrings, type hints, and comments without consuming paid token quotas.
+1. **Broad Discovery Query:**
+   ```text
+   Map all modules that interact with the agent governance state machine and STERA admissibility engine. 
+   List all incoming/outgoing data contracts, active middleware, and identify any breaking changes 
+   if we modify the transition validation hooks.
+   ```
+
+2. **Synthesize the Scoped Contract:**
+   - Allow Gemini Flash to parse the directory tree and identify the exact files involved.
+   - Synthesize the findings into a concise, focused $\le$50-line briefing.
+   - Copy only the identified file paths, type definitions, and relevant API signatures.
+
+---
+
+### 5.2 System Designing & Contract Definition
+
+*Tool: Zoo Code / Roo Code (`Cmd+Shift+Z`) | Mode: `architect` (Sonnet) or `escalated-architect` (Claude 5 / Opus)*
+
+Use Sonnet for standard feature contracts (API route definitions, database migrations, component scaffolding). Escalate to Claude 5 (`escalated-architect`) **only** if designing safety-critical state machines, distributed consensus, or formal verification proofs.
+
+1. **Initiate the Plan:**
+   - Open Zoo Code in **Architect Mode** (`architect`). If the task involves multi-system safety boundaries, switch to **Escalated Architect Mode** (`escalated-architect`).
+   - Paste the targeted contract briefing from Step 5.1:
+     ```text
+     Review this extracted interface contract for the state machine hooks:
+     <paste 50-line briefing>
+     
+     Draft a multi-file implementation plan for adding runtime verification.
+     Specify exact file diff targets and edge-case failure modes. Do not write full code.
+     ```
+
+2. **Review Plan Invariants:**
+   - Ensure the generated plan specifies discrete, decoupled phases and references targeted unit test paths (`uv run pytest tests/...::test_case -v`).
+   - If in `escalated-architect` mode, limit the turn interaction to 1–3 turns, finalize the spec, and prepare to hand off to Sonnet.
+
+---
+
+### 5.3 Coding & Continuous Inner-Loop Testing
+
+*Tool: Zoo Code / Roo Code (`Cmd+Shift+Z`) | Mode: `code` | Model: Claude 3.7 Sonnet*
+
+Execute the implementation phase using Claude 3.7 Sonnet as the mandatory daily driver, strictly adhering to the **Two-Phase Testing Strategy**.
+
+1. **Invoke Implementation:**
+   - Switch Zoo Code to **Code Mode** (`code`).
+   - Instruct the agent with a scoped, static prompt prefix:
+     ```text
+     Execute Step 1 of the implementation plan on src/gateway/governance/safety/cbf_engine.py. 
+     Adhere strictly to AGENTS.md: do not scan unrelated folders or inject dynamic timestamps. 
+     Verify using only: uv run pytest tests/test_cbf_formal_properties.py::test_cbf_strict_invariance -v
+     ```
+
+2. **Inner-Loop Test Execution (Turn-by-Turn):**
+   - The agent modifies the designated target file and runs **only the isolated unit test case**.
+   - Keeping the terminal output buffer to $\sim$10 lines prevents context bloat, preserving the sub-200k token boundary.
+   - Because instructions and headers remain static, every turn hits the **prompt cache at a 90% discount**.
+
+3. **Turn Cap Enforcement:**
+   - The `.roomodes` and `AGENTS.md` guardrail halts the agent after **5 consecutive tool actions**, requiring explicit human review before continuing.
+
+---
+
+### 5.4 Interactive vs. Deep Safety Debugging
+
+#### A. Interactive Debugging (Standard Bugs)
+*Tool: Zoo Code | Mode: `debug` | Model: Claude 3.7 Sonnet*
+
+- **Trigger**: Lint failures, assertion errors, missing mock fixtures, missing imports, or syntax errors.
+- **Process**:
+  - Feed the specific failure output directly to Sonnet in `debug` mode.
+  - **Fail-Fast Rule**: If Sonnet fails to fix the issue in **2 turns**, halt the session immediately. Do not allow speculative trial-and-error patching.
+
+#### B. Deep Safety & Root-Cause Analysis (Escalated Tier)
+*Tool: Zoo Code | Mode: `escalated-debug` | Model: Claude 5 (Opus 5 / Fable 5.1)*
+
+- **Trigger**: Subtle race conditions, distributed tracing anomalies, state-space violations, Control Barrier Function (CBF) failures, memory leaks, or complex deadlocks (or after Sonnet fails 2 turns).
+- **Surgical Context Preparation**:
+  1. Open Antigravity (`Cmd+Alt+A`) and isolate the exact failure window:
+     ```text
+     Extract the minimal execution path from this trace log leading to the deadlocked mutex or CBF violation.
+     ```
+  2. Switch Zoo Code to **Escalated Debug Mode** (`escalated-debug`).
+  3. Provide *only* the minimal trace, the root-cause hypothesis from Sonnet's failed turn, and the 1–2 target source files:
+     ```text
+     Analyze this concurrent state-transition failure. 
+     Perform a formal root-cause analysis on the synchronization barrier.
+     Propose the corrected invariant before emitting any diffs.
+     ```
+  4. Once the invariant is identified and the patch strategy proposed within 1–3 turns, **switch back to Code Mode (Sonnet) immediately** to write the code diffs and run tests. Never burn Claude 5 tokens on test re-runs.
+
+---
+
+### 5.5 Full-Suite Gate, Documentation, and Context Reset
+
+1. **The Pre-Completion Gate (Phase B Testing):**
+   - Run the full suite locally once implementation passes all inner-loop unit tests:
+     ```bash
+     make test-fast
+     ```
+   - Running the broad suite once at the conclusion ensures full-suite verification without compounding context tokens across iterative turns.
+
+2. **Zero-Cost Polish & Documentation:**
+   - In your editor, highlight the new implementation functions or classes.
+   - Trigger Antigravity (`Cmd+Alt+K`):
+     ```text
+     Generate complete, production-grade docstrings and typing annotations for these functions.
+     ```
+   - Antigravity / Gemini Flash generates all documentation artifacts at zero token expense.
+
+3. **Mandatory Context Reset:**
+   - In Zoo Code / Roo Code, issue:
+     ```text
+     /clear
+     ```
+   - Wiping session memory ensures stale diffs, terminal traces, and tool outputs are not carried over, permanently keeping future tasks below the 200k-token pricing escalation threshold.
 
 ---
 
