@@ -880,17 +880,17 @@ See [`infra/targets/gcp-gke/staging.tfvars`](infra/targets/gcp-gke/staging.tfvar
 
 ### Operational Roles & Model Tier Enforcement
 
-To prevent runaway frontier model billing and cache-write churn:
-- **Ambient / Exploration Tier (Zero or Marginal Cost)**: High-level codebase indexing, AST exploration, syntax lookups, broad documentation, and docstring/typing generation are handled by **Google Antigravity** backed by **Gemini Flash** (`gemini-2.5-flash` or `gemini-3-flash`). Do not run wide codebase sweeps or structural discovery with paid frontier models.
-- **Targeted Implementation Engine (Budgeted Tier)**: Precise multi-file diffs, TDD execution loops, and code implementation are handled by **Roo Code / Zoo Code** in **Code Mode** backed by **Claude 3.7 Sonnet** (`claude-3-7-sonnet`).
-- **When to Use Claude 5 (Opus 5 / Fable 5.1) vs. Sonnet**:
-  - **Architecting**:
-    - *Sonnet (Default)*: API route definition, standard database migrations, scaffolding components, and single-service interfaces. Sonnet delivers 95% of standard architectural design at roughly 1/5th the cost.
-    - *Escalate to Claude 5 (`escalated-architect`)*: Strictly reserved for multi-system boundaries, safety-critical state machines, complex distributed protocols, or formal verification proofs where subtle design flaws cause massive downstream rewrites.
-  - **Debugging**:
-    - *Sonnet (Default)*: Syntax issues, failed assertions, standard unit test errors, missing imports, and single-function logic bugs.
-    - *Escalate to Claude 5 (`escalated-debug`)*: Only when Sonnet fails after two targeted turns, or when diagnosing elusive race conditions, distributed tracing anomalies, memory leaks, or subtle deadlocks.
-- **Ask Mode Restriction**: Never point conversational or Q&A modes to Opus or Fable. Use Gemini Flash or Claude Haiku.
+To eliminate runaway frontier model billing, avoid quota lockouts, and eliminate multi-window context friction, this repository standardizes on the **Unified Sidebar + Passive Keystroke Daemon** architecture:
+
+1. **Unified Sidebar Engine (Roo Code / Zoo Code)**: 100% of conversational engineering, codebase exploration, code diffs, and terminal execution run inside Zoo Code to eliminate the "two-inbox problem" and ensure strict governance under `.roomodes`:
+   - **Exploration & Discovery (`ask` mode)**: Powered by **Gemini Flash via Google Cloud Vertex AI ADC** (`gemini-2.5-flash` or `gemini-3-flash`). Executes high-speed AST indexing and repository sweeps at pay-as-you-go rates (~$0.001/query), completely bypassing consumer subscription quota freezes and 5-hour rolling lockouts.
+   - **Targeted Implementation (`code` mode)**: Powered by **Claude 3.7 Sonnet**. Governed by active Cost & Search Gates that intercept unstructured searches and direct them to `ask` mode before paid tokens are spent.
+   - **Standard Debugging (`debug` mode)**: Powered by **Claude 3.7 Sonnet** for syntax, failed assertions, and unit tests. Enforces a 2-turn fail-fast threshold.
+   - **Surgical Escalation (`escalated-architect`, `escalated-debug`)**: Powered by **Claude 5 (Opus 5 / Fable 5.1)** for safety-critical state machines, CBF formal proofs, or deep concurrency defects. Strictly capped at 1–3 turns with pre-filtered context.
+
+2. **Ambient Keystroke Completion Daemon (Google Antigravity)**: Installed strictly as a headless, passive background daemon for **unmetered inline tab completions (ghost text)** inside editor buffers. Its chat panel remains permanently closed during active development to preserve unified telemetry, single-point audit logging, and `.roomodes` enforcement.
+
+3. **Ask Mode Restriction**: Never point conversational or Q&A modes to Opus or Fable. Use Gemini Flash or Claude Haiku.
 
 ### Three Rules to Make Claude 5 Affordable
 

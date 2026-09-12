@@ -335,28 +335,65 @@ Inspect session metrics at the conclusion of each Zoo Code / Roo Code task:
 
 ## 7. Engine Architecture Comparison: Dual-Engine vs. Unified Sidebar
 
-When standardizing your development environment, choose the operational model that best balances cognitive friction against monthly token budgets:
+When standardizing your development environment, choose the operational model that best balances cognitive friction against monthly token budgets.
 
-### 7.1 Architectural Comparison
+### 7.1 Operational Complexity & Ergonomics
 
-| Dimension | Option A: Dual-Engine (Antigravity + Zoo Code) | Option B: Unified Sidebar (Zoo Code + Vertex Flash) | Option C: Pure Zoo Code (Sonnet Only) |
-| :--- | :--- | :--- | :--- |
-| **Expected Monthly Spend** | **$30 – $80 / mo** | **$60 – $120 / mo** | **$80 – $220+ / mo** |
-| **Cognitive Friction** | Moderate (two chat panels, hotkey switching) | **Lowest** (single sidebar chat for all tasks) | **Lowest** (single sidebar chat) |
-| **Inline Autocomplete** | Yes (Free passive ghost text via Antigravity) | Optional (Antigravity running passively in background) | None (Turn-based agent interactions only) |
-| **Repo Discovery Engine** | Gemini Flash in Antigravity Chat ($0) | Gemini Flash in Zoo Code `ask` mode (~$0.001/query) | Claude Sonnet in Zoo Code (~$0.10–$0.25/query) |
-| **Code & TDD Engine** | Claude Sonnet in Zoo Code `code` mode | Claude Sonnet in Zoo Code `code` mode | Claude Sonnet in Zoo Code `code` mode |
-| **Escalated Reasoning** | Claude 5 / Opus (Surgical 1–3 turns) | Claude 5 / Opus (Surgical 1–3 turns) | Claude 5 / Opus (Surgical 1–3 turns) |
+* **Unified Zoo Code (All Models in One Panel — Recommended):**
+  - **Zero Context Switching**: Eliminates the "two-inbox problem." You don't have to decide which chat window to open, manage conflicting hotkeys (`Cmd+Alt+A` vs. `Cmd+Shift+Z`), or copy-paste 50-line summaries between extensions.
+  - **Unified Tooling & Governance**: Zoo Code executes terminal commands, edits local files, and adheres directly to your repo’s `AGENTS.md` and `.roomodes`. Antigravity’s chat operates in its own separate runtime, creating a bifurcation of tool policies and logs.
+  - **Unified Billing & Telemetry**: All model usage (Gemini Flash, Sonnet, Claude 5) flows through a single Google Cloud project invoice via Vertex AI ADC (`gcloud auth application-default login`), making budget alerts and cost tracking centralized.
 
-### 7.2 Configuration Guidelines by Model
+* **Separating Conversational Gemini into Antigravity Chat:**
+  - **High Mental Drag**: Using Antigravity for conversational discovery and Zoo Code for execution introduces continuous friction. A developer’s time lost to clipboard handoffs and context juggling quickly negates small token savings.
+  - **Extension Footprint**: Running two active agent runtimes in VS Code increases memory usage, file-watcher overhead, and the risk of concurrent edit conflicts.
 
-* **If adopting Option A (Dual-Engine):** Map `Cmd+Alt+A` to Antigravity for all conversational discovery and `Cmd+Shift+Z` to Zoo Code for implementation loops.
-* **If adopting Option B (Unified Sidebar — Recommended):**
-  1. In Zoo Code Settings $\rightarrow$ Providers, register **Google Vertex AI** credentials.
-  2. Set `ask` mode to `gemini-2.5-flash` (or `gemini-3-flash`).
-  3. Keep Antigravity installed with its sidebar chat closed, utilizing it solely for ambient editor tab completions.
-  4. Conduct 100% of chat interactions inside Zoo Code, toggling to `/ask` for repo searches and `/code` for implementation.
-* **If adopting Option C (Pure Zoo Code):**
-  1. Disable all inline completions to avoid partial-keystroke prompt thrashing.
-  2. Enforce the `/clear` context reset between tasks to prevent context accumulation past 200,000 tokens.
+---
+
+### 7.2 Quota Mechanics vs. Pay-As-You-Go Metering
+
+* **The Antigravity Pro Quota Trap (\$20/mo):**
+  - Antigravity measures consumption on **"work done"** rather than raw queries. Deep repository indexing or complex multi-file searches drain the 1x baseline quota quickly.
+  - If you hit the ceiling during an active work sprint, you face a 5-hour lockout (or multi-day lockouts if weekly thresholds are breached), unless you purchase separate AI Credits.
+
+* **Zoo Code via Vertex AI Pay-As-You-Go:**
+  - Gemini Flash on Vertex AI is inexpensive: **~\$0.10 per 1M input tokens** (\$0.0001 per 1,000 tokens).
+  - Ingesting 500k tokens of codebase AST via Zoo Code's `/ask` mode costs roughly **\$0.05**.
+  - Running 20–30 deep repo scans a day on Vertex Gemini Flash costs **less than \$2.00 to \$3.00 for the entire month**—far below the \$20/mo Pro subscription—with zero risk of rolling lockouts or 5-hour quota freezes.
+
+---
+
+### 7.3 The Technical Divide: Turn-Based Agent vs. Keystroke Daemon
+
+* **Turn-Based vs. Keystroke Daemon**: Zoo Code is an interactive, turn-based agent. It responds to prompts with tool executions and diffs; it **cannot** provide sub-second, character-by-character ghost text autocomplete as you type inside a function body.
+* **Where Antigravity Wins**: Google Antigravity provides **unlimited, unmetered inline tab completions (ghost text)** via low-latency Fill-In-The-Middle (FIM) streaming models directly in the editor buffer.
+
+---
+
+### 7.4 Decision Matrix
+
+| Evaluation Criteria | Option B: Unified Zoo Code (All Chat/Agent) | Option A: Split Conversational (Antigravity Chat + Zoo Code) | Option C: Pure Zoo Code (Sonnet Only) |
+|---|---|---|---|
+| **Expected Monthly Spend** | **\$60 – \$120 / mo** | **\$30 – \$80 / mo** | **\$80 – \$220+ / mo** |
+| **Cognitive Friction** | **Minimal** (1 chat panel, 1 shortcut, unified context) | **High** (2 chat panels, manual copy-paste handoffs) | **Minimal** (1 chat panel) |
+| **Repo Discovery Cost** | **Negligible** (~$2–$5/mo on Vertex Gemini Flash) | Included in $20/mo Pro (or Free quota) | Moderate (~$0.10–$0.25/query on Sonnet) |
+| **Rate Limit Resilience** | **Infinite** (Direct cloud quota, never locks out) | **Vulnerable** (5-hour rolling windows & weekly ceilings) | **Infinite** (Direct cloud quota) |
+| **Governance Enforcement** | **Strict** (`AGENTS.md` and `.roomodes` apply to all modes) | **Fragmented** (Antigravity ignores `.roomodes`) | **Strict** (`AGENTS.md` and `.roomodes`) |
+| **Inline Ghost Autocomplete** | **Yes** (Passive background Antigravity daemon) | **Yes** (Antigravity active in editor) | **None** (Turn-based agent interactions only) |
+
+---
+
+### 7.5 Canonical Setup (Unified Sidebar + Passive Keystroke Daemon)
+
+**Do not split conversational tasks between two tools.** Route all active reasoning, exploration, and coding through **Zoo Code**, and restrict Antigravity (if kept) to a headless completion role:
+
+1. **Conduct 100% of Chat & Agent Interactions in Zoo Code:**
+   - Switch to `/ask` (Gemini Flash via Vertex AI) for all repo sweeps, interface mapping, and syntax questions at fractions of a cent per query.
+   - Switch to `/code` (Claude Sonnet) for implementation and TDD.
+   - Switch to `/escalated-architect` or `/escalated-debug` (Claude 5) only when safety invariants or complex race conditions require it.
+
+2. **Use Antigravity Solely for Ambient Autocomplete (Free Tier or Pro):**
+   - Keep the Antigravity extension installed for **unmetered inline tab completions** while you write code.
+   - Keep the Antigravity chat panel permanently closed. This eliminates the cognitive complexity of deciding where to ask questions and ensures all agent actions are strictly governed by your repository’s `.roomodes` and `AGENTS.md`.
+
 
