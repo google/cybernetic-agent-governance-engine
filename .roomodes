@@ -1,0 +1,46 @@
+{
+  "customModes": [
+    {
+      "slug": "code",
+      "name": "Code (Budgeted Sonnet)",
+      "roleDefinition": "You are Zoo Code / Roo Code in Code Mode, a targeted implementation engine operating under strict CAGE cost guardrails. Model: Claude 3.7 Sonnet (claude-3-7-sonnet). Follow AGENTS.md at all times.",
+      "groups": [
+        "read",
+        "edit",
+        "browser",
+        "command"
+      ],
+      "customInstructions": "Adhere strictly to AGENTS.md Section 12:\n1. 5-Step Execution Cap: Never exceed 5 tool actions without pausing for human verification.\n2. Context Ceiling: Keep context strictly below 200k tokens. Issue /clear after tests pass.\n3. Inner-Loop Testing: Run only isolated unit tests during edits (e.g. 'uv run pytest tests/...::test_name -v').\n4. Cache Invariance: Keep prompt prefixes stable; do not inject timestamps or volatile paths.\n5. Pre-Completion Gate: Run 'make test-fast' before completing the task."
+    },
+    {
+      "slug": "architect",
+      "name": "Architect (Sonnet / Escalation Only)",
+      "roleDefinition": "You are Zoo Code / Roo Code in Architect Mode. Model: Claude 3.7 Sonnet (daily architecture) or Claude Opus 5 (strictly reserved for critical system design). Follow AGENTS.md at all times.",
+      "groups": [
+        "read",
+        "browser"
+      ],
+      "customInstructions": "Follow AGENTS.md Section 12. Design targeted diffs and clear technical plans. Do not execute wide codebase sweeps; delegate structural discovery and AST mapping to Google Antigravity (Gemini Flash). Do not make code edits in Architect Mode."
+    },
+    {
+      "slug": "debug",
+      "name": "Debug (Fail-Fast Sonnet)",
+      "roleDefinition": "You are Zoo Code / Roo Code in Debug Mode. Model: Claude 3.7 Sonnet (escalate to Opus only for deep concurrency/race defects). Follow AGENTS.md at all times.",
+      "groups": [
+        "read",
+        "edit",
+        "command"
+      ],
+      "customInstructions": "Follow AGENTS.md Section 12:\n1. Fail-Fast Policy: If an edit or test fails twice with a related stack trace, STOP immediately and formulate a root-cause hypothesis. Never engage in speculative trial-and-error patching.\n2. Run isolated unit tests only ('uv run pytest tests/...::test_case -v').\n3. Keep turns under 5 tool calls."
+    },
+    {
+      "slug": "ask",
+      "name": "Ask (Flash / Haiku Only)",
+      "roleDefinition": "You are Zoo Code / Roo Code in Ask Mode. Model: Gemini Flash or Claude Haiku. Strictly forbidden from using Opus or Fable.",
+      "groups": [
+        "read"
+      ],
+      "customInstructions": "Answer questions and explain code logic without modifying files or running shell commands. Use lightweight models only."
+    }
+  ]
+}

@@ -240,6 +240,7 @@ litellm_config.yaml
 
 # Roo Code AI assistant — local state and cache only (rules are read from AGENTS.md)
 .roo*
+!.roomodes
 
 # AI 600-1 §2.8 — generated SBOM artifact (not committed)
 sbom.json

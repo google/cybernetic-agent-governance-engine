@@ -34,6 +34,7 @@ Cursor, Cline, GitHub Copilot, and Windsurf) — see
 9. [Answering Questions About This Repository](#answering-questions-about-this-repository)
 10. [Tool-Specific Configuration](#tool-specific-configuration)
 11. [Test Execution](#test-execution)
+12. [Agent Governance & Cost Guardrails](#agent-governance--cost-guardrails)
 
 ---
 
@@ -872,3 +873,39 @@ See [`infra/targets/gcp-gke/staging.tfvars`](infra/targets/gcp-gke/staging.tfvar
 - Tests that genuinely require live GKE (live OPA policy evaluation, Langfuse SLA timing, CMEK/pod-restart checks, real backend accuracy) **cannot be replaced** by a mock-only nightly — these are the `integration`-marked corpus and the 51 skips in the full run.
 - Existing CI already covers what a nightly would target: `pytest-logic` (mock/unit, every push), `ai600-unit-tests` (red-team mock, every push), `locust-load-test` (nightly load test).
 - **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job, manual full-suite runs (`scripts/port_forward_staging.sh` + `uv run pytest tests/ --run-integration`), and **staging lifecycle validation** (`./scripts/staging_lifecycle.sh`) for periodic live-service validation.
+
+---
+
+## Agent Governance & Cost Guardrails
+
+### Operational Roles & Model Tier Enforcement
+
+To prevent runaway frontier model billing and cache-write churn:
+- **Ambient / Exploration Tier (Zero or Marginal Cost)**: High-level codebase indexing, AST exploration, syntax lookups, broad documentation, and docstring/typing generation are handled by **Google Antigravity** backed by **Gemini Flash** (`gemini-2.5-flash` or `gemini-3-flash`). Do not run wide codebase sweeps or structural discovery with paid frontier models.
+- **Targeted Implementation Engine (Budgeted Tier)**: Precise multi-file diffs, TDD execution loops, and code implementation are handled by **Roo Code / Zoo Code** in **Code Mode** backed by **Claude 3.7 Sonnet** (`claude-3-7-sonnet`).
+- **Opus / Frontier Model Restriction**: Frontier models (`claude-opus-5`, `claude-fable-5.1`) are strictly reserved for critical, high-level system architecture decisions and deep multi-service concurrency defects. Daily implementation, refactoring, and test authoring must use Sonnet.
+- **Ask Mode Restriction**: Never point conversational or Q&A modes to Opus or Fable. Use Gemini Flash or Claude Haiku.
+
+### Hard Anti-Loop & Cost Invariants
+
+1. **5-Step Execution Cap**: Never exceed 5 consecutive autonomous tool actions (file edits, shell commands, reads) in a single turn without pausing for human verification.
+2. **Context Ceiling (< 200k Tokens)**: Keep active session contexts strictly below 200,000 tokens. Never ingest entire repositories, build artifacts, or extensive multi-megabyte log files into an active session.
+3. **Fail-Fast Policy**: If an edit or test fails twice with a related stack trace, STOP immediately. Formulate and state a concrete root-cause hypothesis instead of applying speculative trial-and-error patches.
+4. **Immediate Context Reset (`/clear`)**: Issue `/clear` the moment a task passes its tests. Carrying stale diffs and shell logs into subsequent tasks pushes context across the 200k boundary into higher-priced token billing tiers.
+5. **Open Tab Context Limit**: Maintain no more than 1 or 2 open editor tabs during active sessions to avoid silent context bloat.
+
+### Two-Phase Testing Lifecycle
+
+To reconcile fast developer iteration and token context limits with the CAGE full-gate verification invariant:
+- **Inner Loop (Active Turn)**: Target only the isolated unit test (`uv run pytest tests/<path>::<test_name> -v`) during iterative editing turns. This keeps shell buffer outputs compact, avoids cache eviction, and prevents context escalation past 200k tokens.
+- **Gate Phase (Pre-Completion & PR)**: Once the isolated test passes, execute the full-suite gate (`make test-fast`) before declaring the task complete or opening a PR.
+
+### Strict Cache-Invariance Rules
+
+Prompt caching provides up to a 90% discount on cache reads, but incurs a 25% surcharge on cache writes:
+- **Byte-for-Byte Prefix Stability**: Never inject dynamic timestamps (e.g., current time, ISO dates), randomized session IDs, or volatile environment paths into system prompts, plans, or file headers. Prompt prefixes must remain byte-for-byte identical across turns.
+- **5-Minute TTL Window**: Keep turn cycles compact and interactive to maintain cache warmness within the 5-minute TTL window, ensuring Cache Read tokens account for 80%+ of total input volume.
+- **Code Standards**: Always write complete, production-ready code with full error handling. Never omit logic with `# TODO` or placeholder shims.
+
+For the complete end-to-end setup guide, IDE shortcuts, Vertex AI ADC credentials, and GCP billing alerts, see [`docs/operations/AGENT_COST_GUARDRAILS.md`](docs/operations/AGENT_COST_GUARDRAILS.md).
+
