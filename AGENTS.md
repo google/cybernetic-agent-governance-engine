@@ -883,8 +883,21 @@ See [`infra/targets/gcp-gke/staging.tfvars`](infra/targets/gcp-gke/staging.tfvar
 To prevent runaway frontier model billing and cache-write churn:
 - **Ambient / Exploration Tier (Zero or Marginal Cost)**: High-level codebase indexing, AST exploration, syntax lookups, broad documentation, and docstring/typing generation are handled by **Google Antigravity** backed by **Gemini Flash** (`gemini-2.5-flash` or `gemini-3-flash`). Do not run wide codebase sweeps or structural discovery with paid frontier models.
 - **Targeted Implementation Engine (Budgeted Tier)**: Precise multi-file diffs, TDD execution loops, and code implementation are handled by **Roo Code / Zoo Code** in **Code Mode** backed by **Claude 3.7 Sonnet** (`claude-3-7-sonnet`).
-- **Opus / Frontier Model Restriction**: Frontier models (`claude-opus-5`, `claude-fable-5.1`) are strictly reserved for critical, high-level system architecture decisions and deep multi-service concurrency defects. Daily implementation, refactoring, and test authoring must use Sonnet.
+- **When to Use Claude 5 (Opus 5 / Fable 5.1) vs. Sonnet**:
+  - **Architecting**:
+    - *Sonnet (Default)*: API route definition, standard database migrations, scaffolding components, and single-service interfaces. Sonnet delivers 95% of standard architectural design at roughly 1/5th the cost.
+    - *Escalate to Claude 5*: Strictly reserved for multi-system boundaries, safety-critical state machines, complex distributed protocols, or formal verification proofs where subtle design flaws cause massive downstream rewrites.
+  - **Debugging**:
+    - *Sonnet (Default)*: Syntax issues, failed assertions, standard unit test errors, missing imports, and single-function logic bugs.
+    - *Escalate to Claude 5 (`escalated-debug`)*: Only when Sonnet fails after two targeted turns, or when diagnosing elusive race conditions, distributed tracing anomalies, memory leaks, or subtle deadlocks.
 - **Ask Mode Restriction**: Never point conversational or Q&A modes to Opus or Fable. Use Gemini Flash or Claude Haiku.
+
+### Three Rules to Make Claude 5 Affordable
+
+When invoking Claude 5 in `escalated-architect` or `escalated-debug` mode, strictly satisfy these three conditions to keep monthly frontier spend governed:
+1. **Pre-Filter Context in the Free Tier (Antigravity + Gemini Flash)**: Never allow Claude 5 to crawl directories or search for files. Use Gemini Flash in Antigravity to index the repo, locate the exact modules, and produce a concise $\le$50-line briefing. Provide only that briefing and the 1–2 target files to Claude 5.
+2. **Keep Context Strictly Under 200k Tokens**: Crossing the 200k boundary triggers the 200,001–1,000,000 token pricing tier with severe cache-write and cache-read surcharges. Keep active contexts small and tightly bounded.
+3. **Execute 1–3 Turns, Then Switch Back to Sonnet**: Treat Claude 5 like an external consulting architect. Let it generate the specification or identify the root cause within 1–3 turns. The moment the design plan or bug diagnosis is produced, switch Roo Code / Zoo Code back to `code` mode (Sonnet) to implement the diff and run tests.
 
 ### Hard Anti-Loop & Cost Invariants
 

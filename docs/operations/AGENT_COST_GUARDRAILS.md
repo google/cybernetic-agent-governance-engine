@@ -24,9 +24,10 @@
 Analysis of frontier AI coding agent billing indicates three primary drivers of runaway expense:
 
 ### 1.1 The Opus / Frontier Over-Utilization Trap
+- **Empirical Billing Impact**: In our recent billing breakdown, Claude 5 (Opus 5) alone accounted for **over \$462 in 12 days**, driven by unconstrained context windows (200k–1M tokens) and cache-write penalties.
 - **Frontier Pricing vs. Mid-Tier Pricing**: Claude 3.5/3.7 Opus costs \$15.00/M input tokens and \$75.00/M output tokens. Claude 3.7 Sonnet costs \$3.00/M input and \$15.00/M output (5x cheaper). Gemini 2.5 Flash costs \$0.075–\$0.15/M input (100x–200x cheaper).
-- **Runaway Defect**: When an agent session defaults to Opus for AST indexing, grep sweeps, boilerplate generation, or docstrings, massive context windows (100k–180k tokens) are repeatedly processed at frontier rates, rapidly driving thousands of dollars in unintended API billing.
-- **Remedy**: Hard tier separation. Ambient repository discovery runs on free/marginal Gemini Flash. Code execution defaults to Sonnet. Opus is restricted to deep architectural designs and multi-service concurrency defects.
+- **Runaway Defect**: When an agent session defaults to Opus for general AST indexing, grep sweeps, boilerplate generation, or simple unit tests, massive context windows (100k–180k tokens) are repeatedly processed at frontier rates.
+- **The Surgical Remedy**: Dropping Claude 5 completely compromises the quality of complex architectural design and tricky concurrency debugging. Instead, govern **when and how** it is invoked, treating it as an escalated, surgical consulting tool to keep its monthly share under **\$20–\$40/month**.
 
 ### 1.2 The Cache-Write Penalty Trap
 - **Cache Read Discount**: Prompt caching offers a **90% price reduction** (\$0.30/M input tokens on Sonnet vs. \$3.00/M standard input).
@@ -36,6 +37,7 @@ Analysis of frontier AI coding agent billing indicates three primary drivers of 
 - **Remedy**: Prefix stability (zero dynamic headers in system prompts), compact turn times (< 5 minutes), and monitoring for an 80%+ Cache Read ratio.
 
 ### 1.3 The 200k+ Token Escalation Boundary
+- **Empirical Billing Impact**: The billing audit revealed severe concentration in the **200,001 to 1,000,000 Token tier** (**\$165.45 in cache writes** and **\$152.07 in cache reads**).
 - **Tier Escalation**: Model providers apply steep price escalations once context windows cross 200,000 tokens (often doubling the base per-million token rate).
 - **Buffer Accumulation**: Large test execution outputs (e.g. running the entire enterprise test suite on every minor edit), unpruned diffs, and multiple open tabs push context beyond 200k tokens within 5–8 turns.
 - **Remedy**: Strict sub-200k context ceiling, 1–2 open tabs maximum, two-phase testing lifecycle, and immediate context reset (`/clear`) upon task completion.
@@ -106,14 +108,33 @@ If direct Anthropic routing is required:
 
 ### 3.2 Mode-to-Model Assignment Matrix
 
+The committed [`.roomodes`](../../.roomodes) file configures dedicated mode profiles separating daily Sonnet execution from surgical Claude 5 escalation:
+
 | Mode | Assigned Model | Operational Scope & Guardrails |
 |---|---|---|
-| **Code** | `claude-3-7-sonnet` | **Mandatory daily driver.** Multi-file diffs, TDD loops, targeted refactoring. |
-| **Architect** | `claude-3-7-sonnet` | Daily architectural design and technical specifications. Escalate to `claude-opus-5` **strictly** for critical system designs. |
-| **Debug** | `claude-3-7-sonnet` | Standard bug isolation. Escalate to `claude-opus-5` **only** for verified multi-service concurrency or deep distributed race conditions. |
+| **Code** | `claude-3-7-sonnet` | **Mandatory daily driver.** Multi-file diffs, TDD loops, targeted refactoring. Max 5 tool calls per turn. |
+| **Architect (Default)** | `claude-3-7-sonnet` | API route definitions, database migrations, component scaffolding, single-service interfaces. Delivers 95% of designs at ~1/5th cost. |
+| **Escalated Architect** | `claude-opus-5` / `claude-fable-5.1` | **Surgical escalation only.** Multi-system boundaries, safety-critical state machines, distributed consensus, formal verification proofs. Max 1–3 turns. |
+| **Debug (Default)** | `claude-3-7-sonnet` | Syntax errors, failed assertions, standard unit test failures, missing imports, single-function logic. Fail-fast after 2 turns. |
+| **Escalated Debug** | `claude-opus-5` / `claude-fable-5.1` | **Surgical deep diagnosis only.** Elusive race conditions, distributed tracing anomalies, memory leaks, subtle deadlocks, or after Sonnet fails 2 turns. Max 1–3 turns. |
 | **Ask** | `gemini-2.5-flash` / `claude-haiku` | General codebase Q&A. **Never** point Ask mode to Opus or Fable. |
 
-### 3.3 Context & Cache Preservation Settings
+### 3.3 The Three Affordability Rules for Claude 5 (Opus 5 / Fable 5.1)
+
+To retain Claude 5's frontier reasoning while capping its billing share at **\$20–\$40/month**, every invocation of `escalated-architect` or `escalated-debug` must satisfy:
+
+1. **Pre-Filter Context in the Free Tier (Antigravity + Gemini Flash)**:
+   - Never let Claude 5 crawl directories or run wide greps to locate relevant files.
+   - Use Gemini Flash in Google Antigravity to index the repo, locate the target modules, and produce a concise $\le$50-line briefing.
+   - Paste only that briefing and the 1–2 target source files into Claude 5.
+2. **Keep the Context Strictly Under 200k Tokens**:
+   - The billing audit revealed severe cost escalation in the **200,001–1,000,000 token tier** (\$165.45 in cache writes and \$152.07 in cache reads).
+   - Keeping sessions focused and below 200k tokens keeps prompt caching in the lower, non-penalized pricing bracket.
+3. **Execute 1–3 Turns, Then Switch Back to Sonnet**:
+   - Treat Claude 5 like a high-end external consulting architect: let it generate the spec or identify the root cause in Architect or Debug mode within 1–3 turns.
+   - Once the design plan or bug diagnosis is written, switch Zoo Code back to **Code Mode (Sonnet)** to write the actual code and run tests.
+
+### 3.4 Context & Cache Preservation Settings
 
 Inside Roo Code / Zoo Code Extension Settings:
 - **Prompt Caching**: Toggle **ON** (mandatory).
@@ -138,32 +159,45 @@ To prevent accidental invocation of paid execution agents for simple questions, 
 ## Step 5: Day-to-Day Cost-Governed Workflow
 
 ```
-       [ FREE: Google Antigravity + Gemini Flash ]             [ BUDGETED: Zoo Code + Claude 3.7 Sonnet ]
-                         │                                                       │
- ┌───────────────────────┴───────────────────────┐               ┌───────────────┴───────────────────┐
- │ • Infinite Tab Completions                    │               │ • Multi-file targeted diffs       │
- │ • Whole-repo indexing & AST exploration       │ ──hand off──> │ • TDD tool loops (Max 5 turns)    │
- │ • "Where is this defined?" lookups            │   clean spec  │ • Stay strictly under 200k tokens │
- │ • Docstring, typing, and boilerplate gen      │               │ • Context reset via /clear        │
- └───────────────────────────────────────────────┘               └───────────────────────────────────┘
+       [ FREE: Google Antigravity + Gemini Flash ]
+                         │
+         ┌───────────────┴───────────────┐
+         │ • Whole-repo indexing & AST   │
+         │ • "Where is this defined?"    │
+         │ • Generate <=50-line briefing │
+         └───────────────┬───────────────┘
+                         │
+                         ├─────────────────────────────────────────┐
+                         │ (Standard Tasks & Daily Code)           │ (Complex Concurrency / Deep Architecture)
+                         ▼                                         ▼
+         [ BUDGETED: Zoo Code + Sonnet ]           [ SURGICAL ESCALATION: Claude 5 (1–3 Turns) ]
+         ┌───────────────────────────────┐         ┌───────────────────────────────────────────┐
+         │ • Code Mode: Multi-file diffs │         │ • Escalated Architect / Escalated Debug   │
+         │ • TDD loops (Max 5 turns)     │ ◄────── │ • Strict sub-200k tokens                  │
+         │ • Inner-loop unit tests       │ handoff │ • Produces spec or root-cause diagnosis   │
+         │ • Full gate (make test-fast)  │         │ • Immediately hands off back to Sonnet    │
+         │ • Context reset via /clear    │         └───────────────────────────────────────────┘
+         └───────────────────────────────┘
 ```
 
 ### Phase 1: Free Exploration & Mapping (Google Antigravity)
 - Run broad repository searches, trace caller hierarchies, and investigate dependency graphs in Antigravity.
 - Let Gemini Flash absorb large multi-megabyte codebase contexts at zero or marginal cost.
+- Synthesize findings into a concise, focused $\le$50-line briefing.
 
-### Phase 2: Scoped Handoff to Zoo Code
+### Phase 2: Scoped Handoff & Model Selection
 - Formulate a concise specification with exact target file paths and acceptance criteria.
 - Open only the 1–2 target files in the editor.
-- Hand off the scoped prompt to Zoo Code in **Code Mode**.
+- **Daily driver**: Select **Code Mode** (`claude-3-7-sonnet`) or **Architect Mode** (`claude-3-7-sonnet`).
+- **Surgical escalation**: If and only if the task touches safety-critical distributed protocols, formal verification proofs, or elusive race conditions, invoke **Escalated Architect** or **Escalated Debug** (`claude-opus-5` / `claude-fable-5.1`).
 
-### Phase 3: Governed Code Execution (Zoo Code + Sonnet)
-- Zoo Code executes the edits and runs targeted unit tests (`uv run pytest tests/...::test_case -v`).
-- Keep turn pacing fast (< 5 minutes between interactions) to maintain cache warmness and exploit the 90% cache-read discount.
-- Enforce the fail-fast rule: if a test fails twice with a related trace, pause and diagnose rather than iterating blindly.
+### Phase 3: Governed Execution or Surgical Diagnosis
+- **Under Sonnet**: Execute the diffs, run isolated unit tests (`uv run pytest tests/...::test_case -v`), and keep turns fast (< 5 min TTL).
+- **Under Claude 5 (Surgical Escalation)**: Limit execution to 1–3 turns. Let Claude 5 output the architectural specification or identify the root-cause bug diagnosis. **Switch immediately back to Code Mode (Sonnet)** to write the code diffs and run tests.
 
-### Phase 4: Immediate Context Reset
-- The moment the test passes and changes are validated, issue `/clear`.
+### Phase 4: Full-Gate Verification & Immediate Context Reset
+- Once the isolated test passes, execute `make test-fast` once to satisfy the repository full-gate invariant.
+- The moment the test suite passes, issue `/clear`.
 - Never carry terminal stdout histories, diff blobs, or compiler traces into the next task. Contexts crossing 200k tokens double the billing rate.
 
 ### Phase 5: Free Documentation & Annotation (Antigravity)
