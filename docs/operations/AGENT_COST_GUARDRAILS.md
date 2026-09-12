@@ -14,8 +14,9 @@
 3. [Step 2: Google Antigravity Setup (Zero-Cost Ambient Tier)](#step-2-google-antigravity-setup-zero-cost-ambient-tier)
 4. [Step 3: Zoo Code / Roo Code Setup (Targeted Execution Tier)](#step-3-zoo-code--roo-code-setup-targeted-execution-tier)
 5. [Step 4: Keyboard Shortcuts & Tool Separation](#step-4-keyboard-shortcuts--tool-separation)
-6. [Step 5: Day-to-Day Cost-Governed Workflow](#step-5-day-to-day-cost-governed-workflow)
+6. [Step 5: Day-to-Day Cost-Governed Workflow Lifecycle](#step-5-day-to-day-cost-governed-workflow-lifecycle)
 7. [Step 6: Billing Safeguards & Metrics Auditing](#step-6-billing-safeguards--metrics-auditing)
+8. [Step 7: Engine Architecture Comparison: Dual-Engine vs. Unified Sidebar](#step-7-engine-architecture-comparison-dual-engine-vs-unified-sidebar)
 
 ---
 
@@ -329,3 +330,33 @@ Inspect session metrics at the conclusion of each Zoo Code / Roo Code task:
 - **Cache Write Ratio**: Should remain **under 20%**.
 - **Context Size**: Must remain **below 200,000 tokens** at all times.
 - If Cache Write exceeds 25% or Cache Read drops below 70%, verify that system prompt prefixes do not contain dynamic timestamps, git hashes, or randomized session IDs.
+
+---
+
+## 7. Engine Architecture Comparison: Dual-Engine vs. Unified Sidebar
+
+When standardizing your development environment, choose the operational model that best balances cognitive friction against monthly token budgets:
+
+### 7.1 Architectural Comparison
+
+| Dimension | Option A: Dual-Engine (Antigravity + Zoo Code) | Option B: Unified Sidebar (Zoo Code + Vertex Flash) | Option C: Pure Zoo Code (Sonnet Only) |
+| :--- | :--- | :--- | :--- |
+| **Expected Monthly Spend** | **$30 – $80 / mo** | **$60 – $120 / mo** | **$80 – $220+ / mo** |
+| **Cognitive Friction** | Moderate (two chat panels, hotkey switching) | **Lowest** (single sidebar chat for all tasks) | **Lowest** (single sidebar chat) |
+| **Inline Autocomplete** | Yes (Free passive ghost text via Antigravity) | Optional (Antigravity running passively in background) | None (Turn-based agent interactions only) |
+| **Repo Discovery Engine** | Gemini Flash in Antigravity Chat ($0) | Gemini Flash in Zoo Code `ask` mode (~$0.001/query) | Claude Sonnet in Zoo Code (~$0.10–$0.25/query) |
+| **Code & TDD Engine** | Claude Sonnet in Zoo Code `code` mode | Claude Sonnet in Zoo Code `code` mode | Claude Sonnet in Zoo Code `code` mode |
+| **Escalated Reasoning** | Claude 5 / Opus (Surgical 1–3 turns) | Claude 5 / Opus (Surgical 1–3 turns) | Claude 5 / Opus (Surgical 1–3 turns) |
+
+### 7.2 Configuration Guidelines by Model
+
+* **If adopting Option A (Dual-Engine):** Map `Cmd+Alt+A` to Antigravity for all conversational discovery and `Cmd+Shift+Z` to Zoo Code for implementation loops.
+* **If adopting Option B (Unified Sidebar — Recommended):**
+  1. In Zoo Code Settings $\rightarrow$ Providers, register **Google Vertex AI** credentials.
+  2. Set `ask` mode to `gemini-2.5-flash` (or `gemini-3-flash`).
+  3. Keep Antigravity installed with its sidebar chat closed, utilizing it solely for ambient editor tab completions.
+  4. Conduct 100% of chat interactions inside Zoo Code, toggling to `/ask` for repo searches and `/code` for implementation.
+* **If adopting Option C (Pure Zoo Code):**
+  1. Disable all inline completions to avoid partial-keystroke prompt thrashing.
+  2. Enforce the `/clear` context reset between tasks to prevent context accumulation past 200,000 tokens.
+
