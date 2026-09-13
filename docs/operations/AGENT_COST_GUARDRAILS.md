@@ -160,31 +160,67 @@ To prevent accidental invocation of paid execution agents for simple questions, 
 
 ## Step 5: Day-to-Day Cost-Governed Workflow Lifecycle
 
-```
-  [ PHASE 1: DISCOVERY & ARCHITECTURE ]
-  Google Antigravity (Gemini Flash) ────> Zoo Code Architect Mode (Sonnet / Claude 5)
-  • Ingest full repo at $0              • Define contracts & boundary invariants
-  • Map interfaces & call graphs        • Draft step-by-step execution plan
-                 │
-                 ▼
-  [ PHASE 2: IMPLEMENTATION & CONTINUOUS TESTING ]
-  Zoo Code Code Mode (Claude Sonnet)
-  • Two-phase testing: isolated unit test per turn (`uv run pytest path/to/test.py::case -v`)
-  • Hard 5-turn cap via AGENTS.md / .roomodes
-                 │
-                 ▼
-  [ PHASE 3: INTERACTIVE DEBUGGING ]
-  Zoo Code Debug Mode (Claude Sonnet)
-  • Fast fix for logic errors, missing imports, syntax bugs
-  • 2-turn fail-fast threshold
-                 │
-                 ├──────────────────────────────┐
-                 │ (If simple/resolved)         │ (If race condition / deadlock / safety hazard)
-                 ▼                              ▼
-  [ PHASE 5: FULL-SUITE GATE & DOCS ]   [ PHASE 4: DEEP SAFETY & BUG AUDIT ]
-  • Run `make test-fast`                Zoo Code Escalated Debug Mode (Claude 5 / Opus / Fable)
-  • Antigravity: $0 docstrings/typing   • Formal state-machine & CBF verification
-  • Run `/clear` in Zoo Code            • Concurrency, race condition, & deadlock audit
+> For the visual lifecycle and mode architecture charts with color-coded badges, see [`UNIFIED_AGENTIC_ENGINEERING.md`](UNIFIED_AGENTIC_ENGINEERING.md).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant Orch as 🎯 Orchestrator
+    participant Ask as ❓ Ask (Gemini Flash)
+    participant Arch as 🏗️ Architect (Sonnet / Claude 5)
+    participant Code as 💻 Code (Sonnet)
+    participant Debug as 🪲 Debug (Sonnet / Claude 5)
+    participant Gate as 🛡️ Pre-Completion Gate
+
+    Dev->>Orch: Submit high-level feature goal
+    activate Orch
+
+    rect rgb(232, 240, 254)
+        Note over Orch,Ask: Phase 1: Zero-Cost Discovery
+        Orch->>Ask: Delegate repository discovery & schema mapping
+        activate Ask
+        Ask-->>Orch: Return scoped target file paths (<=50 lines)
+        deactivate Ask
+    end
+
+    rect rgb(230, 244, 234)
+        Note over Orch,Arch: Phase 2: Architectural Contract
+        Orch->>Arch: Delegate implementation diff plan
+        activate Arch
+        Arch-->>Orch: Step-by-step diff plan + isolated test paths
+        deactivate Arch
+    end
+
+    rect rgb(230, 244, 234)
+        Note over Orch,Code: Phase 3: Surgical TDD Loops
+        loop Step-by-step implementation (Max 5 turns)
+            Orch->>Code: Delegate Step N implementation
+            activate Code
+            Code->>Code: Edit target file
+            Code->>Code: Run isolated unit test (uv run pytest path::case)
+            Code-->>Orch: Step N verified green (Cache Read >80%)
+            deactivate Code
+        end
+    end
+
+    rect rgb(252, 232, 230)
+        Note over Orch,Debug: Phase 4: Diagnostic Triage (If Failed)
+        alt Standard Assertion Failure
+            Orch->>Debug: Delegate to Sonnet Debug (Max 2 turns)
+        else Race Condition / Invariant Breach
+            Orch->>Debug: Delegate to Claude 5 Escalated Debug (<=3 turns)
+        end
+        Debug-->>Orch: Invariant fix returned & handed back to Code
+    end
+
+    rect rgb(254, 247, 224)
+        Note over Orch,Gate: Phase 5: Verification & Context Flush
+        Orch->>Gate: Run full test gate (make test-fast)
+        Gate-->>Dev: All 3,900+ tests passed
+        Dev->>Orch: Issue /clear (Flush session memory)
+    end
+    deactivate Orch
 ```
 
 ---
