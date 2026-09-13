@@ -82,6 +82,8 @@ from typing import Any
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import (
     AttestationStatus as AttestationStatus,
+)
+from src.gateway.governance.seams.attestation import (
     ExternalAttestation,
 )
 

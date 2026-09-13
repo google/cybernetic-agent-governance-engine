@@ -224,9 +224,9 @@ class TestEnforceFRIABoundary:
 
         # Verify DEFER queue was used
         mock_defer_queue.park.assert_called_once()
-        mock_defer_queue.resolve.assert_called_once()
-        # Verify resolution was INJECTED (admitted)
-        resolve_args = mock_defer_queue.resolve.call_args
+        mock_defer_queue._resolve.assert_called_once()
+        # Verify resolution was INJECTED (admitted via replay_evaluate)
+        resolve_args = mock_defer_queue._resolve.call_args
         assert resolve_args[0][1] == "INJECTED"
 
     @pytest.mark.asyncio
@@ -252,7 +252,7 @@ class TestEnforceFRIABoundary:
         assert len(result.validation.findings) == 1
 
         # Verify resolution was ESCALATED (rejected)
-        resolve_args = mock_defer_queue.resolve.call_args
+        resolve_args = mock_defer_queue._resolve.call_args
         assert resolve_args[0][1] == "ESCALATED"
 
     @pytest.mark.asyncio
@@ -276,7 +276,7 @@ class TestEnforceFRIABoundary:
         assert result.path == "SYNC_GATE_TIMEOUT"
 
         # Verify resolution was EXPIRED (timeout)
-        resolve_args = mock_defer_queue.resolve.call_args
+        resolve_args = mock_defer_queue._resolve.call_args
         assert resolve_args[0][1] == "EXPIRED"
 
     @pytest.mark.asyncio

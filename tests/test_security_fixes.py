@@ -90,7 +90,7 @@ class TestC01TradeSide:
         ):
             mock_redis.get.return_value = None  # no safety violation
 
-            result = await execute_trade(order)
+            result = await execute_trade(order, routing_seal="test-seal-c01-sell")
 
         assert captured_payload.get("side") == "sell", (
             f"Expected side='sell' in broker payload but got: {captured_payload}"
@@ -137,7 +137,7 @@ class TestC01TradeSide:
         ):
             mock_redis.get.return_value = None
 
-            result = await execute_trade(order)
+            result = await execute_trade(order, routing_seal="test-seal-c01-buy")
 
         assert captured_payload.get("side") == "buy", (
             f"Expected side='buy' in broker payload but got: {captured_payload}"
@@ -176,7 +176,7 @@ class TestC01TradeSide:
             mock_redis.get.return_value = None
 
             with pytest.raises(AssertionError, match="Invalid trade side"):
-                await execute_trade(order)
+                await execute_trade(order, routing_seal="test-seal-c01-invalid")
 
         # Broker must never be called for an invalid side.
         mock_post.assert_not_called()
@@ -210,7 +210,7 @@ class TestC01TradeSide:
         ):
             mock_redis.get.return_value = None
 
-            result = await execute_trade(order)
+            result = await execute_trade(order, routing_seal="test-seal-c01-mock")
 
         # The mock result string includes the side from the order object.
         assert "sell" in result.lower(), (

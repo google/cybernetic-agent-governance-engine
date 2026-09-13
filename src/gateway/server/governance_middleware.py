@@ -46,6 +46,7 @@ from opentelemetry.propagate import extract as otel_extract
 from pydantic import BaseModel, field_validator
 
 from src.gateway.governance.evidence.stream import get_evidence_sink
+from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
@@ -899,7 +900,6 @@ async def validate_action_endpoint(
             params=body.params,
             policy_version_id=body.policy_version_id,
         )
-        payload = {"schema_version": "1.0.0", **result}
 
         # A3: Emit pause receipt for PAUSE verdicts before responding
         verdict = result.get("verdict")
@@ -943,6 +943,54 @@ async def validate_action_endpoint(
                 content=receipt_payload,
             )
 
+        # ADR-008 Phase 3: Build canonical signed envelope for APPROVED verdicts
+        if verdict == "APPROVED":
+            from src.gateway.governance.seams.attestation import ExternalAttestation
+            
+            # Convert dict attestations to ExternalAttestation objects
+            attestations_raw = result.get("external_attestations")
+            attestations = None
+            if attestations_raw:
+                attestations = []
+                for att in attestations_raw:
+                    if isinstance(att, dict):
+                        # Extract standard fields; everything else goes into metadata
+                        standard_keys = {
+                            "type",
+                            "status",
+                            "receipt_id",
+                            "attested_at",
+                            "provider_name",
+                        }
+                        metadata = {k: v for k, v in att.items() if k not in standard_keys}
+                        attestations.append(
+                            ExternalAttestation(
+                                attestation_type=att.get("type", ""),
+                                status=att.get("status", ""),
+                                receipt_id=att.get("receipt_id", ""),
+                                attested_at=att.get("attested_at", ""),
+                                provider_name=att.get("provider_name", "unknown"),
+                                metadata=metadata,
+                            )
+                        )
+                    else:
+                        attestations.append(att)
+            
+            builder = GovernanceEnvelopeBuilder()
+            envelope = await builder.build(
+                action=body.action,
+                params=body.params,
+                governance_result=result,
+                record_hash=result.get("record_hash"),
+                agent_id=result.get("agent_id"),
+                tiers_passed=result.get("tiers_passed", []),
+                controls_satisfied=result.get("controls_satisfied", []),
+                external_attestations=attestations,
+            )
+            return JSONResponse(content=envelope.to_dict(include_signature=True))
+
+        # Fall through for non-APPROVED, non-DEFER verdicts (legacy flat format)
+        payload = {"schema_version": "1.0.0", **result}
         return JSONResponse(content=payload)
 
     except GovernanceError as exc:
@@ -955,15 +1003,23 @@ async def validate_action_endpoint(
             params=body.params,
             receipt=exc.receipt,
         )
+        
+        # ADR-008 Phase 3: Return complete refusal contract
+        refusal_content: dict[str, Any] = {
+            "schema_version": "2.0.0",
+            "verdict": "DENIED",
+            "violations": getattr(exc, "violations", [str(exc)]),
+        }
+        
+        # Include refusal receipt fields if available
+        if hasattr(exc, "receipt") and exc.receipt is not None:
+            refusal_content["refusal_receipt"] = _serialize_receipt(exc.receipt)
+            if hasattr(exc.receipt, "proof_hash"):
+                refusal_content["proof_hash"] = exc.receipt.proof_hash
+        
         return JSONResponse(
             status_code=403,
-            content={
-                "schema_version": "1.0.0",
-                "verdict": "DENIED",
-                "violations": [str(exc)],
-                "seal": "",
-                "latency_ms": 0,
-            },
+            content=refusal_content,
         )
     except Exception:
         logger.error("❌ validate_action internal error", exc_info=True)

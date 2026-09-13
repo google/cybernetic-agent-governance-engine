@@ -405,7 +405,7 @@ class TestL7_DeferQueueCorrelationID:
 
         queue = DeferQueue(mock_redis)
 
-        await queue.resolve("test-defer-789", "ESCALATED")
+        await queue._resolve("test-defer-789", "ESCALATED")
 
         # Verify correlation_id appears in resolution log
         assert any(

@@ -420,8 +420,36 @@ async def enforce_fria_boundary(
             )
 
             if result.admitted:
+                # Invoke replay_evaluate() instead of raw resolve() to enforce
+                # DEFER_CONFIDENCE_THRESHOLD (0.70) and boundary checks
                 if defer_queue is not None:
-                    await defer_queue.resolve(token.defer_id, "INJECTED")
+                    from src.gateway.governance.defer_queue import (
+                        ReplayResult,
+                        replay_evaluate,
+                    )
+
+                    # Build enriched context with external validation signal
+                    enriched_context = {
+                        "confidence_score": getattr(result, "confidence_score", None) or consensus_score,
+                        "external_validation": "ADMITTED",
+                        "provider_findings": getattr(result, "findings", []),
+                    }
+                    replay_result = await replay_evaluate(
+                        defer_queue, token.defer_id, enriched_context
+                    )
+                    if replay_result == ReplayResult.PARKED:
+                        logger.warning(
+                            "[FRIA] External provider ADMITTED but confidence=%.3f below threshold — token remains PARKED: defer_id=%s",
+                            consensus_score,
+                            token.defer_id,
+                        )
+                        return FRIAEnforcementResult(
+                            status=ExecutionStatus.DEFER,
+                            path="SYNC_GATE_BELOW_THRESHOLD",
+                            consensus_score=consensus_score,
+                            validation=result,
+                            defer_id=token.defer_id,
+                        )
                 logger.info(
                     "[FRIA] Sync gate ADMITTED for defer_id=%s thread=%s",
                     token.defer_id,
@@ -447,7 +475,7 @@ async def enforce_fria_boundary(
                     )
 
                     if defer_queue is not None:
-                        await defer_queue.resolve(token.defer_id, "ESCALATED")
+                        await defer_queue._resolve(token.defer_id, "ESCALATED")
 
                     # Drive TTL from finding fields; use default if not specified
                     ttl = finding.get("hold_ttl_seconds")
@@ -479,7 +507,7 @@ async def enforce_fria_boundary(
                     )
 
                 if defer_queue is not None:
-                    await defer_queue.resolve(token.defer_id, "ESCALATED")
+                    await defer_queue._resolve(token.defer_id, "ESCALATED")
                 logger.warning(
                     "[FRIA] Sync gate REJECTED for defer_id=%s thread=%s findings=%s",
                     token.defer_id,
@@ -496,7 +524,7 @@ async def enforce_fria_boundary(
         except asyncio.TimeoutError:
             # Provider unreachable in ambiguous zone → fail-closed
             if defer_queue is not None:
-                await defer_queue.resolve(token.defer_id, "EXPIRED")
+                await defer_queue._resolve(token.defer_id, "EXPIRED")
             logger.error(
                 "[FRIA] Sync gate TIMEOUT (%.1fs) for defer_id=%s thread=%s — "
                 "fail-closed: blocking action.",

@@ -377,16 +377,20 @@ class DeferQueue:
         return token.defer_id
 
     # ------------------------------------------------------------------
-    # resolve — mark a parked token as resolved
+    # _resolve — mark a parked token as resolved (internal only)
     # ------------------------------------------------------------------
 
-    async def resolve(
+    async def _resolve(
         self,
         defer_id: str,
         resolution: str,  # "ESCALATED" | "INJECTED" | "EXPIRED"
         injection_data: dict | None = None,
     ) -> DeferToken | None:
-        """Resolve a parked DeferToken.
+        """Resolve a parked DeferToken (internal only).
+
+        External callers must use replay_evaluate() to enforce invariant-governed
+        resolution. Direct resolution bypasses confidence threshold checks and
+        violates ADR-008 Phase 5.
 
         Args:
             defer_id:       The token's defer_id.
@@ -400,7 +404,7 @@ class DeferQueue:
         raw = await self._redis.hget(key, "token")
         if raw is None:
             logger.warning(
-                "[defer_queue] resolve() called for unknown defer_id=%s", defer_id
+                "[defer_queue] _resolve() called for unknown defer_id=%s", defer_id
             )
             return None
 
@@ -426,7 +430,7 @@ class DeferQueue:
                 await pipe.execute()
         except TransactionAbortedError:
             logger.warning(
-                "[defer_queue] resolve() transaction aborted for defer_id=%s resolution=%s — "
+                "[defer_queue] _resolve() transaction aborted for defer_id=%s resolution=%s — "
                 "returning DeferResult.ABORTED",
                 defer_id,
                 resolution,
@@ -584,6 +588,33 @@ class DeferQueue:
         return DeferToken.model_validate_json(raw)
 
     # ------------------------------------------------------------------
+    # get_token — inspect token and status without consuming
+    # ------------------------------------------------------------------
+
+    async def get_token(self, defer_id: str) -> DeferToken | None:
+        """Inspect a DEFER token by defer_id without mutating or consuming it.
+
+        This method is used by the polling endpoint (GET /v1/defer/{defer_id})
+        to allow clients to check the status of a parked decision.
+
+        Args:
+            defer_id: The unique defer_id of the parked token.
+
+        Returns:
+            The DeferToken instance if found, None if the token does not exist
+            (never parked, or already expired and removed from Redis).
+
+        Note:
+            This method does NOT mutate the token or remove it from the queue.
+            To resolve a token, use resolve() or approve().
+        """
+        key = f"{_KEY_PREFIX}{defer_id}"
+        raw = await self._redis.hget(key, "token")
+        if raw is None:
+            return None
+        return DeferToken.model_validate_json(raw)
+
+    # ------------------------------------------------------------------
     # list_pending — return all unresolved tokens
     # ------------------------------------------------------------------
 
@@ -642,7 +673,7 @@ class DeferQueue:
         for defer_id in members:
             # Fetch token BEFORE resolving — needed for DLQ routing decision
             token_before = await self.get(defer_id)
-            resolved = await self.resolve(defer_id, "EXPIRED")
+            resolved = await self._resolve(defer_id, "EXPIRED")
             if resolved:
                 count += 1
                 logger.warning(
@@ -816,7 +847,7 @@ async def replay_evaluate(
 
     Decision logic:
       - If ``enriched_context["confidence_score"] >= DEFER_CONFIDENCE_THRESHOLD``:
-          Calls ``queue.resolve(defer_id, "INJECTED", injection_data=enriched_context)``
+          Calls ``queue._resolve(defer_id, "INJECTED", injection_data=enriched_context)``
           to remove the token from the DEFER queue and returns ``ReplayResult.ADMITTED``.
       - If the effective confidence is still below the threshold:
           The token remains PARKED; returns ``ReplayResult.PARKED``.
@@ -851,7 +882,7 @@ async def replay_evaluate(
     )
 
     if effective_confidence >= DEFER_CONFIDENCE_THRESHOLD:
-        await queue.resolve(defer_id, "INJECTED", injection_data=enriched_context)
+        await queue._resolve(defer_id, "INJECTED", injection_data=enriched_context)
         logger.info(
             "[replay_evaluate] Token ADMITTED: defer_id=%s effective_confidence=%.3f "
             "threshold=%.2f",

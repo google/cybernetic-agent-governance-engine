@@ -1151,10 +1151,14 @@ class SymbolicGovernor:
         in-graph ftra_node. Uses the same IrreversibilityClassifier and
         terminal_registry.json as the in-graph ftra_node.
 
+        Version 2.1: Upgraded to semantic schema validation against FTRA boundary
+        rules. Validates required parameters, type constraints, numerical bounds,
+        and detects forbidden payload injections.
+
         Args:
             tool_name: The action name to classify (e.g. "execute_trade").
-            tool_input: The action parameters dict (currently unused but
-                        available for future input-dependent classification).
+            tool_input: The action parameters dict. v2.1 performs semantic
+                        validation against action schemas.
             detect_bypass: If True, attempt to detect whether this check is
                            catching an action that would have bypassed ftra_node.
                            Default True.
@@ -1172,12 +1176,12 @@ class SymbolicGovernor:
                 f"FTRA boundary invariant violation: 'tool_input' must be a dict, "
                 f"received {type(tool_input).__name__}."
             )
-        _ = tool_input
 
         from src.gateway.governance.ftra.models import (
             FtraBoundaryResult,
             TerminalClassification,
         )
+        from src.gateway.governance.ftra.semantic_validator import validate_tool_input
 
         with tracer.start_as_current_span("cage.ftra_boundary_check") as span:
             span.set_attribute(OBSERVATION_NAME, "ftra_boundary_check")
@@ -1187,6 +1191,21 @@ class SymbolicGovernor:
             _t0 = time.perf_counter()
 
             try:
+                # Phase 1: Semantic validation (v2.1)
+                semantic_result = validate_tool_input(tool_name, tool_input)
+                span.set_attribute(
+                    "cage.ftra.semantic_validation_passed", semantic_result.is_valid
+                )
+                if not semantic_result.is_valid:
+                    span.set_attribute(
+                        "cage.ftra.semantic_failure_code", semantic_result.failure_code
+                    )
+                    span.set_attribute(
+                        "cage.ftra.semantic_failed_parameter",
+                        semantic_result.failed_parameter or "",
+                    )
+
+                # Phase 2: Name-based classification
                 classifier = self._get_ftra_classifier()
                 classification = classifier.classify(tool_name)
 
@@ -1211,12 +1230,29 @@ class SymbolicGovernor:
                         tool_name,
                     )
 
-                result = FtraBoundaryResult.from_classification(
-                    classification=classification,
-                    action_name=tool_name,
-                    in_registry=in_registry,
-                    bypassed_ftra_node=bypassed_ftra_node,
-                )
+                # Semantic validation failure → BOUNDARY_BREACH regardless of classification
+                if not semantic_result.is_valid:
+                    logger.warning(
+                        "⚠️ FTRA Semantic Boundary Breach: Action '%s' failed semantic "
+                        "validation. Failure code: %s. Violations: %s",
+                        tool_name,
+                        semantic_result.failure_code,
+                        semantic_result.violations,
+                    )
+                    result = FtraBoundaryResult.from_semantic_breach(
+                        semantic_result=semantic_result,
+                        action_name=tool_name,
+                        classification=classification,
+                        in_registry=in_registry,
+                    )
+                else:
+                    # Semantic validation passed → proceed with name-based classification
+                    result = FtraBoundaryResult.from_classification(
+                        classification=classification,
+                        action_name=tool_name,
+                        in_registry=in_registry,
+                        bypassed_ftra_node=bypassed_ftra_node,
+                    )
 
                 # Record telemetry
                 span.set_attribute("cage.ftra.classification", result.classification)

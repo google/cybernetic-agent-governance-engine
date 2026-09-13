@@ -1304,6 +1304,85 @@ async def list_defer_pending(
         )
 
 
+@app.get(
+    "/v1/defer/{defer_id}",
+    tags=["governance"],
+    summary="Poll deferred token status by ID",
+)
+async def get_defer_status(defer_id: str) -> JSONResponse:
+    """Fetch the status of a single DEFER token by defer_id (ADR-008 Phase 4).
+
+    This endpoint implements the defer status polling mechanism, allowing clients
+    to check whether a parked token has been resolved by external validation,
+    human review, or automated data injection.
+
+    Returns:
+        HTTP 200 with structured status payload containing:
+          - defer_id: The unique token identifier
+          - status: Current Redis status (PARKED, PARTIALLY_APPROVED, RESOLVED)
+          - defer_reason: The root cause enumeration value
+          - confidence_score: Model confidence at decision time
+          - created_at: ISO-8601 timestamp when token was parked
+          - ttl_seconds: Time-to-live window before auto-escalation
+          - routing_seal: HMAC-SHA256 seal (only when status=RESOLVED)
+
+        HTTP 404 if the token does not exist (never parked or already expired)
+    """
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    if not redis_url:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "REDIS_URL_NOT_CONFIGURED"},
+        )
+
+    try:
+        import redis.asyncio as aioredis
+
+        from src.gateway.governance.defer_queue import DeferQueue
+
+        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
+        queue = DeferQueue(client)
+
+        # Use get_token() instead of direct Redis access
+        token = await queue.get_token(defer_id)
+
+        # Fetch Redis status separately (not part of DeferToken model)
+        key = f"DEFER:{defer_id}"
+        raw_status = await client.hget(key, "status")
+
+        await client.aclose()
+
+        if token is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"detail": "Defer token not found or expired"},
+            )
+
+        status = raw_status or "PARKED"
+
+        # Build structured response per ADR-008 Phase 4 spec
+        response_content = {
+            "defer_id": defer_id,
+            "status": status,
+            "defer_reason": token.defer_reason.value if hasattr(token.defer_reason, "value") else str(token.defer_reason),
+            "confidence_score": token.confidence_score,
+            "created_at": token.deferred_at_utc if hasattr(token, "deferred_at_utc") else str(getattr(token, "created_at_utc", "")),
+            "ttl_seconds": token.ttl_seconds,
+            "routing_seal": getattr(token, "routing_seal", None) if status == "RESOLVED" else None,
+        }
+
+        return JSONResponse(content=response_content)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("[defer/status] Failed to fetch token status: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
+        )
+
+
 class DeferResolveRequest(BaseModel):
     injection_data: dict | None = None
     note: str | None = None

@@ -51,8 +51,10 @@ import httpx
 from src.gateway.governance.execution_actuator import (
     ActuationReceipt,
     ActuatorCapability,
-    ExecutionActuator as ExecutionActuator,
     ExecutionClearance,
+)
+from src.gateway.governance.execution_actuator import (
+    ExecutionActuator as ExecutionActuator,
 )
 from src.gateway.governance.raw_signer_protocol import RawMessageSigner
 from src.integrations.actuator_01.assertion import (

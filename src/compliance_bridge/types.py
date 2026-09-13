@@ -494,17 +494,19 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
 
 
 # Re-export get_iso_control_map for backward compatibility
-from src.gateway.governance.iso_control import get_iso_control_map as get_iso_control_map
+from src.gateway.governance.iso_control import (
+    get_iso_control_map as get_iso_control_map,
+)
 
 __all__ = [
+    "CRITICAL_CONTROLS",
+    "FRAMEWORK_CONTROLS",
+    "SUPPORTED_CONTROLS",
+    "SUPPORTED_FRAMEWORKS",
     "ComplianceMetrics",
     "OscalFinding",
     "OscalResult",
     "get_control_meta",
     "get_iso_control_map",
     "get_sla_seconds",
-    "SUPPORTED_CONTROLS",
-    "CRITICAL_CONTROLS",
-    "FRAMEWORK_CONTROLS",
-    "SUPPORTED_FRAMEWORKS",
 ]

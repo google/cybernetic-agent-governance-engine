@@ -87,18 +87,45 @@ def test_jcs_key_ordering_invariant(obj: Any) -> None:
     )
 
 
+def _strip_json_strings(json_bytes: bytes) -> bytes:
+    """Remove string literals from JSON bytes to inspect structural characters."""
+    result = bytearray()
+    in_string = False
+    escape = False
+    for b in json_bytes:
+        if in_string:
+            if escape:
+                escape = False
+            elif b == ord(b"\\"):
+                escape = True
+            elif b == ord(b'"'):
+                in_string = False
+        else:
+            if b == ord(b'"'):
+                in_string = True
+            else:
+                result.append(b)
+    return bytes(result)
+
+
 @given(obj=json_value)
 def test_jcs_whitespace_invariant(obj: Any) -> None:
     """
-    Property: JCS canonical form strips all non-structural whitespace.
+    Property: JCS canonical form strips all non-structural whitespace (RFC 8785 §3.2.1).
 
-    Verifies that canonical JSON has no extraneous whitespace.
+    Verifies that canonical JSON has no whitespace outside string literals and no
+    unescaped newlines.
     """
     canonical_bytes = jcs_canonicalize_plan(obj)
 
-    # Verify no extraneous whitespace exists
-    assert b"\n" not in canonical_bytes, "Canonical form contains newlines"
-    assert b"  " not in canonical_bytes, "Canonical form contains double spaces"
+    # Verify no unescaped newlines exist anywhere (RFC 8259 strings escape newlines as \n)
+    assert b"\n" not in canonical_bytes, "Canonical form contains literal newlines"
+
+    # Verify no whitespace exists outside string literals (RFC 8785 §3.2.1)
+    structural = _strip_json_strings(canonical_bytes)
+    assert b" " not in structural, "Canonical form contains spaces outside string literals"
+    assert b"\t" not in structural, "Canonical form contains tabs outside string literals"
+    assert b"\r" not in structural, "Canonical form contains carriage returns"
 
     # Verify the canonical form is valid JSON
     try:

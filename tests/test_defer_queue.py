@@ -208,7 +208,7 @@ async def test_resolve_escalated(fake_redis):
     token = _token()
     await queue.park(token)
 
-    resolved = await queue.resolve(token.defer_id, "ESCALATED")
+    resolved = await queue._resolve(token.defer_id, "ESCALATED")
 
     assert resolved is not None
     assert resolved.resolution == "ESCALATED"
@@ -222,7 +222,7 @@ async def test_resolve_injected_with_data(fake_redis):
     inject_data = {"market_data": {"TSLA": 650.0}, "confidence_refreshed": 0.88}
     await queue.park(token)
 
-    resolved = await queue.resolve(
+    resolved = await queue._resolve(
         token.defer_id, "INJECTED", injection_data=inject_data
     )
 
@@ -233,7 +233,7 @@ async def test_resolve_injected_with_data(fake_redis):
 @pytest.mark.asyncio
 async def test_resolve_unknown_defer_id_returns_none(fake_redis):
     queue = DeferQueue(fake_redis)
-    resolved = await queue.resolve("nonexistent-defer-id", "ESCALATED")
+    resolved = await queue._resolve("nonexistent-defer-id", "ESCALATED")
     assert resolved is None
 
 
@@ -715,6 +715,50 @@ def test_inject_rejects_nan_confidence():
 # Event publication behavior is covered by:
 # - Integration tests in tests/test_compliance_bridge_integration.py
 # - Live endpoint testing via test_defer_inject_unknown_id_returns_404
+
+
+@pytest.mark.asyncio
+async def test_replay_evaluate_enforces_confidence_threshold(fake_redis):
+    """replay_evaluate() must enforce DEFER_CONFIDENCE_THRESHOLD (0.70) before admitting token."""
+    from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
+
+    queue = DeferQueue(fake_redis)
+
+    # Park a token
+    token = DeferToken(
+        defer_id="test-replay-001",
+        thread_id="thread-001",
+        defer_reason=DeferReason.EXTERNAL_VALIDATION,
+        confidence_score=0.65,
+        ttl_seconds=300,
+        opa_input_snapshot={"action": "test"},
+    )
+    await queue.park(token)
+
+    # Case 1: Enriched context with confidence below threshold (0.65) should remain PARKED
+    enriched_low = {"confidence_score": 0.65, "extra_data": "foo"}
+    result_low = await replay_evaluate(queue, token.defer_id, enriched_low)
+    assert result_low == ReplayResult.PARKED
+
+    # Case 2: Enriched context with confidence at threshold (0.70) should be ADMITTED
+    enriched_at = {"confidence_score": 0.70, "extra_data": "bar"}
+    result_at = await replay_evaluate(queue, token.defer_id, enriched_at)
+    assert result_at == ReplayResult.ADMITTED
+
+    # Case 3: Enriched context with confidence above threshold (0.75) should be ADMITTED
+    enriched_high = {"confidence_score": 0.75, "extra_data": "baz"}
+    # Need to re-park the token since it was resolved in previous test
+    token2 = DeferToken(
+        defer_id="test-replay-002",
+        thread_id="thread-002",
+        defer_reason=DeferReason.EXTERNAL_VALIDATION,
+        confidence_score=0.65,
+        ttl_seconds=300,
+        opa_input_snapshot={"action": "test"},
+    )
+    await queue.park(token2)
+    result_high = await replay_evaluate(queue, token2.defer_id, enriched_high)
+    assert result_high == ReplayResult.ADMITTED
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

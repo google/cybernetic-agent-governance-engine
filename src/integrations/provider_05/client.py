@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.integrations.provider_05.warrant import (
     Warrant,
+)
+from src.integrations.provider_05.warrant import (
     WarrantStandingVerifier as WarrantStandingVerifier,
 )
 

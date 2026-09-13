@@ -95,7 +95,7 @@ async def test_optimistic_execution_interruption(
     mock_redis.get.side_effect = [None, "Simulated Hazard", "Simulated Hazard"]
 
     # We use create_task to run it "in the background"
-    trade_task = asyncio.create_task(execute_trade(order))
+    trade_task = asyncio.create_task(execute_trade(order, routing_seal="test-seal-interrupt"))
 
     # 3. Wait for trade to finish (it should fail)
     with pytest.raises(RuntimeError) as excinfo:
@@ -125,5 +125,5 @@ async def test_optimistic_execution_success(mock_redis, slow_executor_setup, moc
         transaction_id=tx_id,
     )
 
-    result = await execute_trade(order)
+    result = await execute_trade(order, routing_seal="test-seal-success")
     assert "EXECUTED" in result

@@ -385,6 +385,52 @@ class FtraBoundaryResult:
             bypassed_ftra_node=bypassed_ftra_node,
         )
 
+    @classmethod
+    def from_semantic_breach(
+        cls,
+        semantic_result: Any,
+        action_name: str,
+        classification: TerminalClassification,
+        *,
+        in_registry: bool = True,
+    ) -> FtraBoundaryResult:
+        """Factory method to create FtraBoundaryResult for a semantic validation breach.
+
+        Version 2.1: Semantic validation failures always trigger HITL requirement,
+        regardless of the name-based classification. This ensures that malformed
+        or out-of-bound inputs are blocked at the boundary.
+
+        Args:
+            semantic_result: The SemanticValidationResult from semantic validator.
+            action_name: The action name being validated.
+            classification: The name-based TerminalClassification (for reference).
+            in_registry: Whether the action was found in the terminal registry.
+
+        Returns:
+            FtraBoundaryResult with HITL required and semantic violations.
+        """
+        # Semantic breach always requires HITL (fail-closed)
+        violations: list[str] = [
+            f"FTRA Semantic Boundary Breach: Action '{action_name}' failed semantic "
+            f"validation. Failure code: {semantic_result.failure_code}."
+        ]
+        violations.extend(semantic_result.violations)
+
+        # Add diagnostic information if available
+        if semantic_result.diagnostic_message:
+            violations.append(
+                f"Diagnostic: {semantic_result.diagnostic_message}"
+            )
+
+        return cls(
+            requires_hitl=True,  # Always require HITL on semantic breach
+            irreversibility_score=1.0,  # Maximum score (fail-closed)
+            classification=f"{classification.value}_SEMANTIC_BREACH",
+            terminal_match=action_name if in_registry else None,
+            violations=violations,
+            bypassed_ftra_node=False,  # Not a bypass, but a validation failure
+        )
+
 
 class PlanStep(BaseModel):
     id: str = Field(default="", description="Unique identifier for the step")

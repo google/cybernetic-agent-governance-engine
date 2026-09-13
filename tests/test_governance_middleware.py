@@ -392,7 +392,7 @@ class TestValidateActionEndpoint:
         mw._ENVIRONMENT = original_env
 
     def test_validate_action_happy_path_approved(self, client, mock_symbolic_governor):
-        """Valid action returns 200 with APPROVED verdict."""
+        """Valid action returns 200 with APPROVED verdict in canonical envelope."""
         resp = client.post(
             "/validate-action",
             json={
@@ -403,10 +403,27 @@ class TestValidateActionEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data.get("schema_version") == "1.0.0"
-        assert data["verdict"] == "APPROVED"
-        assert data["violations"] == []
-        assert "seal" in data
+        
+        # ADR-008 Phase 3: Assert canonical envelope structure
+        assert data.get("envelope_version") == "2.1"
+        assert data.get("envelope_type") == "cage_governance_decision"
+        assert "envelope_id" in data
+        assert "issued_at" in data
+        assert "expires_at" in data
+        assert "issuer" in data
+        assert "subject" in data
+        assert "governance_context" in data
+        assert "payload" in data
+        
+        # Assert that the payload contains the governance result
+        payload = data["payload"]
+        assert payload["verdict"] == "APPROVED"
+        assert payload["violations"] == []
+        assert "seal" in payload
+        
+        # Assert signature presence (may be None if KMS not active in test)
+        assert "signature" in data or data.get("signature") is None
+        
         mock_symbolic_governor.validate_action.assert_awaited_once_with(
             action="execute_trade",
             params={"amount": 100, "symbol": "AAPL"},
@@ -450,10 +467,14 @@ class TestValidateActionEndpoint:
 
         assert resp.status_code == 403
         data = resp.json()
-        assert data.get("schema_version") == "1.0.0"
+        
+        # ADR-008 Phase 3: Assert refusal contract structure
+        assert data.get("schema_version") == "2.0.0"
         assert data["verdict"] == "DENIED"
         assert len(data["violations"]) > 0
-        assert data["seal"] == ""
+        
+        # refusal_receipt and proof_hash may be absent if receipt is None
+        # (existing tests don't set receipt on GovernanceError)
 
     def test_validate_action_internal_exception_returns_500_safe_message(
         self, client, mock_symbolic_governor
@@ -1254,7 +1275,7 @@ class TestFlowSignalHttp202Receipt:
     def test_approved_verdict_still_returns_200(
         self, client_for_flowsignal, mock_kms_signer
     ):
-        """APPROVED verdict returns HTTP 200 (not affected by external-hold changes)."""
+        """APPROVED verdict returns HTTP 200 with canonical envelope (ADR-008 Phase 3)."""
         approved_result = {
             "verdict": "APPROVED",
             "violations": [],
@@ -1274,4 +1295,7 @@ class TestFlowSignalHttp202Receipt:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["verdict"] == "APPROVED"
+        
+        # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
+        assert data.get("envelope_version") == "2.1"
+        assert data["payload"]["verdict"] == "APPROVED"

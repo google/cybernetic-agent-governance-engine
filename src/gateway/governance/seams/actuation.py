@@ -78,6 +78,10 @@ class ExecutionClearance:
     # Execution context
     nonce: str  # 32 hex chars (16 bytes) - execution/session UUID
 
+    # Structured action parameters (ADR-008 Phase 2)
+    # Contains the validated parameters needed to execute the action
+    params: dict = field(default_factory=dict)
+
     # Fields with defaults (must come after fields without defaults)
     semantic_distance: float | None = None
     confidence_score: float | None = None
