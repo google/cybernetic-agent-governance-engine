@@ -22,6 +22,7 @@ before actuation reaches the ExecutionActuator (ADR-008 Phase 2).
 import hashlib
 import time
 
+import fakeredis.aioredis
 import pytest
 
 from src.gateway.governance.consequence_authority_store import (
@@ -33,8 +34,7 @@ from src.gateway.governance.consequence_gateway import (
 )
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-from src.gateway.governance.kms_signer import KMSGovernanceSigner
-from src.gateway.infrastructure.redis_client import redis_client
+from tests.test_consequence_gateway import _make_mock_signer_with_keypair
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -42,21 +42,15 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 @pytest.fixture
 def mock_signer():
     """Mock KMSGovernanceSigner for test token signing."""
-    return KMSGovernanceSigner()
+    signer_obj, _ = _make_mock_signer_with_keypair("ec_p256")
+    return signer_obj
 
 
 @pytest.fixture
 async def consequence_store():
     """Fresh ConsequenceAuthorityStore for each test."""
-    if redis_client is None:
-        pytest.skip("Redis client not available")
-    store = ConsequenceAuthorityStore(redis_client)
-    # Clear any existing test data using the correct async method
-    try:
-        await redis_client.execute_command("FLUSHDB")
-    except Exception:
-        pass  # If clearing fails, continue with existing data
-    return store
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    return ConsequenceAuthorityStore(fake_redis)
 
 
 @pytest.mark.asyncio
