@@ -480,3 +480,109 @@ class TestTypesConstants:
             assert control_id in SUPPORTED_CONTROLS, (
                 f"ISO control map [{event_name!r}]={control_id!r} not in SUPPORTED_CONTROLS"
             )
+
+
+class TestFtraControlMappings:
+    """Verify FTRA semantic boundary control mappings (AC-4, SI-10) in US_FED jurisdiction."""
+
+    def test_ac4_present_in_us_fed(self):
+        """AC-4 (Information Flow Enforcement) must be present in US_FED controls."""
+        from src.compliance_bridge.types import get_control_meta
+
+        us_fed_controls = get_control_meta("US_FED")
+        assert "AC-4" in us_fed_controls
+        
+        ac4_meta = us_fed_controls["AC-4"]
+        assert ac4_meta["name"] == "Information Flow Enforcement — FTRA Parameter Smuggling Protection"
+        assert ac4_meta["scoreName"] == "nist.AC-4.passed"
+        assert ac4_meta["iso_clause"] == "NIST SP 800-53 Rev 5 AC-4"
+        assert "fedramp" in ac4_meta["frameworks"]
+        assert ac4_meta["frameworks"]["fedramp"] == "AC-4 (Information Flow Enforcement)"
+        assert "aarm" in ac4_meta["frameworks"]
+        assert "AARM-V3" in ac4_meta["frameworks"]["aarm"]
+        assert "AARM-V5" in ac4_meta["frameworks"]["aarm"]
+
+    def test_si10_present_in_us_fed(self):
+        """SI-10 (Input Validation) must be present in US_FED controls."""
+        from src.compliance_bridge.types import get_control_meta
+
+        us_fed_controls = get_control_meta("US_FED")
+        assert "SI-10" in us_fed_controls
+        
+        si10_meta = us_fed_controls["SI-10"]
+        assert si10_meta["name"] == "Input Validation — Multi-Component Protection"
+        assert si10_meta["scoreName"] == "nist.SI-10.passed"
+        assert si10_meta["iso_clause"] == "NIST SP 800-53 Rev 5 SI-10"
+        assert "fedramp" in si10_meta["frameworks"]
+        assert si10_meta["frameworks"]["fedramp"] == "SI-10 (Information Input Validation)"
+        assert "aarm" in si10_meta["frameworks"]
+
+    def test_ac4_not_in_eu_ecb(self):
+        """AC-4 must NOT be present in EU_ECB controls (jurisdictional isolation)."""
+        from src.compliance_bridge.types import get_control_meta
+
+        eu_ecb_controls = get_control_meta("EU_ECB")
+        assert "AC-4" not in eu_ecb_controls
+
+    def test_ac4_not_in_apac_mas(self):
+        """AC-4 must NOT be present in APAC_MAS controls (jurisdictional isolation)."""
+        from src.compliance_bridge.types import get_control_meta
+
+        apac_mas_controls = get_control_meta("APAC_MAS")
+        assert "AC-4" not in apac_mas_controls
+
+    def test_si10_not_in_eu_ecb(self):
+        """SI-10 must NOT be present in EU_ECB controls (jurisdictional isolation)."""
+        from src.compliance_bridge.types import get_control_meta
+
+        eu_ecb_controls = get_control_meta("EU_ECB")
+        assert "SI-10" not in eu_ecb_controls
+
+    def test_si10_not_in_apac_mas(self):
+        """SI-10 must NOT be present in APAC_MAS controls (jurisdictional isolation)."""
+        from src.compliance_bridge.types import get_control_meta
+
+        apac_mas_controls = get_control_meta("APAC_MAS")
+        assert "SI-10" not in apac_mas_controls
+
+    def test_ftra_boundary_check_maps_to_si10(self):
+        """ftra_boundary_check event must map to SI-10 under US_FED."""
+        from src.compliance_bridge.types import get_iso_control_map
+
+        us_fed_map = get_iso_control_map("US_FED")
+        assert "ftra_boundary_check" in us_fed_map
+        assert us_fed_map["ftra_boundary_check"] == "SI-10"
+
+    def test_ftra_semantic_validation_maps_to_si10(self):
+        """ftra_semantic_validation event must map to SI-10 under US_FED."""
+        from src.compliance_bridge.types import get_iso_control_map
+
+        us_fed_map = get_iso_control_map("US_FED")
+        assert "ftra_semantic_validation" in us_fed_map
+        assert us_fed_map["ftra_semantic_validation"] == "SI-10"
+
+    def test_ftra_flow_enforcement_maps_to_ac4(self):
+        """ftra_flow_enforcement event must map to AC-4 under US_FED."""
+        from src.compliance_bridge.types import get_iso_control_map
+
+        us_fed_map = get_iso_control_map("US_FED")
+        assert "ftra_flow_enforcement" in us_fed_map
+        assert us_fed_map["ftra_flow_enforcement"] == "AC-4"
+
+    def test_ftra_events_not_in_eu_ecb_map(self):
+        """FTRA events must NOT appear in EU_ECB control map (jurisdictional isolation)."""
+        from src.compliance_bridge.types import get_iso_control_map
+
+        eu_ecb_map = get_iso_control_map("EU_ECB")
+        assert "ftra_boundary_check" not in eu_ecb_map
+        assert "ftra_semantic_validation" not in eu_ecb_map
+        assert "ftra_flow_enforcement" not in eu_ecb_map
+
+    def test_ftra_events_not_in_apac_mas_map(self):
+        """FTRA events must NOT appear in APAC_MAS control map (jurisdictional isolation)."""
+        from src.compliance_bridge.types import get_iso_control_map
+
+        apac_mas_map = get_iso_control_map("APAC_MAS")
+        assert "ftra_boundary_check" not in apac_mas_map
+        assert "ftra_semantic_validation" not in apac_mas_map
+        assert "ftra_flow_enforcement" not in apac_mas_map

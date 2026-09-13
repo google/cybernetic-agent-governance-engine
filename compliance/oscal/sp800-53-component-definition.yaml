@@ -338,7 +338,57 @@ component-definition:
                   rel: reference
 
     # -----------------------------------------------------------------------
-    # Component 3: OPA Policy Engine (deployment/system_authz.rego)
+    # Component 3: FTRA Semantic Classifier (src/gateway/governance/ftra/)
+    # Enforces: SI-10 (Input Validation), AC-4 (Information Flow Enforcement)
+    # -----------------------------------------------------------------------
+    - uuid: "ftra0001-4e47-bbc8-semantic-validator01"
+      title: "FTRA Semantic Classifier"
+      type: software
+      description: >
+        Formal Transition Risk Automaton (FTRA) semantic validator enforcing
+        schema totality, numerical boundary constraints, and parameter smuggling
+        protection on tool invocation payloads. Implements allow_extra_fields=False
+        to reject undeclared mutation arguments (AC-4) and validates parameter
+        types, numerical ranges, and injection vectors (SI-10).
+      purpose: "Deterministic parameter boundary and semantic validation for tool execution"
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "ftra0001-ctrl-impl-8000-validator01"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA Semantic Classifier"
+          implemented-requirements:
+            - uuid: "si100001-ftra-8000-validator00001"
+              control-id: si-10
+              description: |
+                FTRA semantic validator enforces schema-aware validation of tool parameters
+                against ActionSchema definitions in src/gateway/governance/ftra/schemas.py,
+                preventing malformed types, numerical limit breaches, and payload injection.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10"
+                  rel: reference
+
+            - uuid: "ac040001-ftra-8000-validator00001"
+              control-id: ac-4
+              description: |
+                FTRA semantic classifier enforces allow_extra_fields=False on mutating tool schemas,
+                rejecting parameter smuggling and undeclared argument injection.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4"
+                  rel: reference
+
+    # -----------------------------------------------------------------------
+    # Component 4: OPA Policy Engine (deployment/system_authz.rego)
     # Enforces: AC-6 (Least Privilege), AC-3 (Access Enforcement),
     #           IA-3 (Device Identification and Authentication)
     # -----------------------------------------------------------------------

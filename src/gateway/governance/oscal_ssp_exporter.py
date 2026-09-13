@@ -108,6 +108,12 @@ _STPA_BY_COMP_UUID = "h8000099-stpa-4000-8000-compiler00001"
 _STPA_CTRL_IMPL_UUID = "c3000099-stpa-4000-8000-compiler00001"
 _STPA_REQ_UUID_PREFIX = "d4000099-stpa-4000-8000"
 
+# Stable UUIDs for the FTRA Semantic Classifier component — deterministic so the SSP diff
+# is minimal across re-runs (no UUID churn).
+_FTRA_COMPONENT_UUID = "ftra0001-4e47-bbc8-semantic-validator01"
+_FTRA_SI10_IMPL_UUID = "si100001-ftra-8000-validator00001"
+_FTRA_AC4_IMPL_UUID = "ac040001-ftra-8000-validator00001"
+
 # ---------------------------------------------------------------------------
 # Multi-jurisdiction SSP router — see docs/technical-report/06-COMPLIANCE-STANDARDS.md §15.7
 # ---------------------------------------------------------------------------
@@ -548,6 +554,83 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
     }
 
 
+def generate_ftra_component_entry() -> dict[str, Any]:
+    """
+    Generate a new OSCAL component entry for the FTRA Semantic Classifier,
+    to be merged into component-definition.yaml.
+
+    Returns a component dict with SI-10 and AC-4 control implementations.
+    """
+    now = _now_iso()
+
+    return {
+        "uuid": _FTRA_COMPONENT_UUID,
+        "title": "FTRA Semantic Classifier",
+        "type": "software",
+        "description": (
+            "Formal Transition Risk Automaton (FTRA) semantic validator enforcing "
+            "schema totality, numerical boundary constraints, and parameter smuggling "
+            "protection on tool invocation payloads. Implements allow_extra_fields=False "
+            "to reject undeclared mutation arguments (AC-4) and validates parameter "
+            "types, numerical ranges, and injection vectors (SI-10)."
+        ),
+        "purpose": (
+            "Deterministic parameter boundary and semantic validation for tool execution"
+        ),
+        "responsible-roles": [{"role-id": "provider"}],
+        "props": [
+            {"name": "source-file", "value": "src/gateway/governance/ftra/schemas.py"},
+            {"name": "last-compiled", "value": now},
+        ],
+        "control-implementations": [
+            {
+                "uuid": "ftra0001-ctrl-impl-8000-validator01",
+                "source": "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home",
+                "description": "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA Semantic Classifier",
+                "implemented-requirements": [
+                    {
+                        "uuid": _FTRA_SI10_IMPL_UUID,
+                        "control-id": "si-10",
+                        "description": (
+                            "FTRA semantic validator enforces schema-aware validation of tool parameters "
+                            "against ActionSchema definitions in src/gateway/governance/ftra/schemas.py, "
+                            "preventing malformed types, numerical limit breaches, and payload injection."
+                        ),
+                        "props": [
+                            {"name": "implementation-status", "value": "implemented"},
+                            {"name": "control-origination", "value": "system-specific"},
+                        ],
+                        "links": [
+                            {
+                                "href": "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10",
+                                "rel": "reference",
+                            }
+                        ],
+                    },
+                    {
+                        "uuid": _FTRA_AC4_IMPL_UUID,
+                        "control-id": "ac-4",
+                        "description": (
+                            "FTRA semantic classifier enforces allow_extra_fields=False on mutating tool schemas, "
+                            "rejecting parameter smuggling and undeclared argument injection."
+                        ),
+                        "props": [
+                            {"name": "implementation-status", "value": "implemented"},
+                            {"name": "control-origination", "value": "system-specific"},
+                        ],
+                        "links": [
+                            {
+                                "href": "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4",
+                                "rel": "reference",
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # SSP patch application (idempotent)
 # ---------------------------------------------------------------------------
@@ -647,6 +730,46 @@ def _apply_component_patch(
         )
 
     logger.info("✅ Component definition patched → %s", comp_path)
+    return True
+
+
+def _apply_ftra_component_patch(
+    comp_path: Path,
+    ftra_component_entry: dict[str, Any],
+    dry_run: bool = False,
+) -> bool:
+    """Inject/replace the FTRA component in component-definition.yaml."""
+    if not comp_path.exists():
+        logger.warning("Component definition not found at %s — skipping", comp_path)
+        return False
+
+    with open(comp_path) as fh:
+        comp_def = yaml.safe_load(fh)
+
+    try:
+        components: list[dict] = comp_def["component-definition"]["components"]
+    except (KeyError, TypeError) as exc:
+        logger.error("Cannot navigate component-definition: %s", exc)
+        return False
+
+    # Remove existing FTRA component (idempotent)
+    components = [c for c in components if c.get("uuid") != _FTRA_COMPONENT_UUID]
+    components.append(ftra_component_entry)
+    comp_def["component-definition"]["components"] = components
+
+    now = _now_iso()
+    comp_def["component-definition"]["metadata"]["last-modified"] = now
+
+    if dry_run:
+        logger.info("[DRY-RUN] Would update FTRA component in %s", comp_path)
+        return True
+
+    with open(comp_path, "w") as fh:
+        yaml.dump(
+            comp_def, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
+        )
+
+    logger.info("✅ FTRA component definition patched → %s", comp_path)
     return True
 
 
@@ -820,9 +943,11 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     patch_block = generate_ssp_patch(cs, target_framework=framework_key)
     component_entry = generate_component_entry(cs)
+    ftra_component_entry = generate_ftra_component_entry()
 
     ok_ssp = _apply_ssp_patch(args.ssp, patch_block, dry_run=args.dry_run)
     _apply_component_patch(args.component_def, component_entry, dry_run=args.dry_run)
+    _apply_ftra_component_patch(args.component_def, ftra_component_entry, dry_run=args.dry_run)
     _write_standalone_patch(
         args.patch_out, patch_block, component_entry, cs, dry_run=args.dry_run
     )
