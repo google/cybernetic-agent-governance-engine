@@ -20,13 +20,14 @@ flowchart TD
             direction TB
             ORCH["🎯 Orchestrator Mode<br><i>Master Task Coordinator</i>"]
             ASK["❓ Ask Mode<br><b>Gemini Flash</b> (~$0.001)"]
+            ARCH["🏗️ Architect Mode<br><b>Claude Sonnet</b> (Contracts / Plans)"]
             CODE["💻 Code Mode<br><b>Claude Sonnet</b> (TDD / Edits)"]
             DEBUG["🪲 Debug Mode<br><b>Claude Sonnet</b> (Fail-Fast)"]
             ESC_ARCH["🏛️ Escalated Architect<br><b>Claude 5 / Opus</b> (&le;3 turns)"]
             ESC_DEBUG["🔬 Escalated Debug<br><b>Claude 5 / Opus</b> (&le;3 turns)"]
 
             ORCH -->|1. Discovery| ASK
-            ORCH -->|2. Standard Architecture| CODE
+            ORCH -->|2. Standard Architecture| ARCH
             ORCH -->|2b. Critical Invariants| ESC_ARCH
             ORCH -->|3. Implementation| CODE
             ORCH -->|4. Standard Defects| DEBUG
@@ -40,7 +41,7 @@ flowchart TD
     classDef orch fill:#fef7e0,stroke:#f9ab00,stroke-width:2px,color:#b06000;
 
     class AG,AG_FIM,ASK free;
-    class CODE,DEBUG sonnet;
+    class ARCH,CODE,DEBUG sonnet;
     class ESC_ARCH,ESC_DEBUG claude5;
     class ORCH orch;
 ```
