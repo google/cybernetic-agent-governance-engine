@@ -65,7 +65,6 @@ import logging
 import os
 import re
 import uuid
-import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -174,7 +173,6 @@ def create_ftra_node(
             )
             ftra_node_fn = create_ftra_node(config=config)
     """
-    from opentelemetry import trace
 
     from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
     from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer

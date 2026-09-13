@@ -39,7 +39,6 @@ from src.governed_financial_advisor.tools.market_data_tool import get_market_dat
 from src.governed_financial_advisor.utils.routing_seal import (
     SymbolicGovernorViolation,
     verify_and_consume_seal,
-    verify_seal,
 )
 
 _tracer = otel_trace.get_tracer("gfa.tools")

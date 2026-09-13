@@ -36,11 +36,9 @@ Wire encoding: base64url (RFC 4648 §5, no padding) per wire contract §7.3.
 from __future__ import annotations
 
 import base64
-import hashlib
 import logging
 import struct
 
-from src.gateway.governance.kms_signer import KMSGovernanceSigner
 from src.gateway.governance.raw_signer_protocol import RawMessageSigner
 
 logger = logging.getLogger(__name__)

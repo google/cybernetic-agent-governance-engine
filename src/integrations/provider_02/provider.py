@@ -55,7 +55,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import json
 import logging
 import os
 import time
@@ -66,7 +65,6 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from src.gateway.governance.content_address import ContentAddress, ContentAddressKind
-from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import (
     AttestationProvider,
     AttestationStatus,

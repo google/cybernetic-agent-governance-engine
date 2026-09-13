@@ -20,6 +20,7 @@ and scripts/lib/utils.py.
 """
 
 import shlex
+
 import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -30,8 +31,9 @@ class TestShellInjectionPrevention:
 
     def test_verify_all_does_not_use_shell_true(self):
         """verify_all.py subprocess.run() does not use shell=True."""
-        import scripts.verify_all as verify_all
         import inspect
+
+        import scripts.verify_all as verify_all
         
         source = inspect.getsource(verify_all.run_command)
         
@@ -47,8 +49,9 @@ class TestShellInjectionPrevention:
 
     def test_lib_utils_does_not_use_shell_true(self):
         """scripts/lib/utils.py subprocess.run() does not use shell=True."""
-        import scripts.lib.utils as utils
         import inspect
+
+        import scripts.lib.utils as utils
         
         source = inspect.getsource(utils)
         

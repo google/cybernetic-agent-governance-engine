@@ -201,10 +201,25 @@ def _build_presidio_action():  # type: ignore[no-untyped-def]
 
             Registered via ``rails.register_action()`` so it overrides the built-in
             SDD action without touching any private NeMo symbols.
+            
+            Args:
+                text: Input text to analyze for sensitive data
+                entities: List of entity types to detect (defaults to all supported)
+                score_threshold: Minimum confidence score (0.0-1.0) for detections.
+                                 Results below this threshold are filtered out.
+                **kwargs: Additional keyword arguments for compatibility
+            
+            Returns:
+                List of detected sensitive entities meeting the score threshold
             """
             if not text:
                 return []
-            return analyzer.analyze(text=text, entities=entities or [])
+            
+            # Analyze text and filter by score threshold
+            results = analyzer.analyze(text=text, entities=entities or [])
+            
+            # Filter results by score_threshold (fail-closed: only return high-confidence detections)
+            return [r for r in results if r.score >= score_threshold]
 
         logger.info(
             "✅ Presidio SDD action built (model=%s, score_threshold=0.3)", model_name

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-import time
 from typing import Any
 
 from opentelemetry import trace

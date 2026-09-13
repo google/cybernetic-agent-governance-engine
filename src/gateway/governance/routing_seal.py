@@ -82,8 +82,6 @@ from src.gateway.governance.constants import GovernanceControl
 from src.gateway.governance.evidence import stream as es
 from src.gateway.governance.evidence.stream import (
     EvidenceChainUnavailableError,
-    get_evidence_sink,
-    is_evidence_chain_blocking,
 )
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.jwks import pem_to_jwk
@@ -627,7 +625,6 @@ def verify_seal(
             # First, try to extract kid from JWT header and look up in JWKS
             from src.gateway.governance.jwks import (
                 extract_kid_from_jwt,
-                get_jwks,
                 get_verification_key_for_jwt,
             )
 
@@ -1194,7 +1191,6 @@ def require_cleared_seal(
 # C-03: Auto-enforce custom HMAC salt at import time in production.
 # This ensures the check runs before any seal is generated or verified.
 # ---------------------------------------------------------------------------
-import os as _os
 
 # MED-8 fix: removed the `== "prod"` guard that only triggered for CAGE_ENV=prod
 # exactly.  Deployments with CAGE_ENV=staging, CAGE_ENV=uat, or CAGE_ENV=preprod

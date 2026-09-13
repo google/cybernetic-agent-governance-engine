@@ -51,7 +51,6 @@ See: third_party/agent-integrity/docs/ARCHITECTURE.md
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os

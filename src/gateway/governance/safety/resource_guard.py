@@ -78,7 +78,7 @@ import os
 import random
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)

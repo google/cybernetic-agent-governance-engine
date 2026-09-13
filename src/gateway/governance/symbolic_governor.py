@@ -1166,6 +1166,14 @@ class SymbolicGovernor:
             - OTel span attribute: cage.ftra.boundary_check_triggered
             - Prometheus counter: cage_ftra_boundary_checks_total
         """
+        # Enforce structural fail-closed validation
+        if not isinstance(tool_input, dict):
+            raise TypeError(
+                f"FTRA boundary invariant violation: 'tool_input' must be a dict, "
+                f"received {type(tool_input).__name__}."
+            )
+        _ = tool_input
+
         from src.gateway.governance.ftra.models import (
             FtraBoundaryResult,
             TerminalClassification,
@@ -1503,6 +1511,8 @@ class SymbolicGovernor:
             # --- Phase 1.1: OPA policy evaluation (read-only) ---
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
+            # Wire tool_input into policy evaluation context for STPA/OPA invariant validation
+            opa_payload["tool_input"] = params
 
             with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
                 opa_span.set_attribute(OBSERVATION_NAME, "opa_policy_pre_check")
@@ -2244,7 +2254,6 @@ class SymbolicGovernor:
             GovernanceError: If any mandatory check fails with DENY verdict.
         """
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.routing_seal import generate_seal
 
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute("cage.action", action)
@@ -2474,8 +2483,6 @@ class SymbolicGovernor:
 
                     # ── PAUSE path (Phase 1.4 — resumable suspension) ──────────
                     if decision == GovernanceDecision.PAUSE:
-                        from datetime import datetime
-                        from datetime import timezone as tz
 
                         from src.gateway.governance.contracts import PauseReceipt
                         from src.gateway.governance.pause_primitive import (

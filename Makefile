@@ -23,6 +23,8 @@ NAMESPACE ?= cage
         deploy-kill \
         verify-deploy \
         poam-drift-check \
+        lint \
+        security \
         test \
         test-fast \
         test-last-failed \
@@ -98,6 +100,30 @@ advisor-health:
 .PHONY: verify-deploy
 verify-deploy: ## Verify GKE deployment matches latest build and all Secrets are populated
 	./scripts/verify_deploy.sh
+
+# ---------------------------------------------------------------------------
+# Linting and Security
+# ---------------------------------------------------------------------------
+
+## Run linters and lockfile validation
+lint:
+	@echo "==> Running ruff linter..."
+	@uv run ruff check src/ scripts/ tests/
+	@echo "==> Validating dependency lockfile..."
+	@uv lock --check
+	@echo "✅ Lint checks passed."
+
+## Run security scanning (Bandit SAST, pip-audit CVEs, Semgrep)
+security:
+	@echo "==> Running Bandit SAST scanner..."
+	@uv run --with bandit bandit -r src/ scripts/ -ll -ii
+	@echo ""
+	@echo "==> Running pip-audit for CVE scanning..."
+	@uv run pip-audit
+	@echo ""
+	@echo "==> Running Semgrep static analysis..."
+	@uv run --with semgrep semgrep scan --config=auto --error src/
+	@echo "✅ Security scans completed."
 
 # ---------------------------------------------------------------------------
 # Testing

@@ -59,7 +59,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import InvariantModel

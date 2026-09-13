@@ -43,9 +43,6 @@ import logging
 import os
 from typing import Any
 
-from nemoguardrails.actions import action
-from opentelemetry import trace
-
 from src.gateway.observability.attributes import (
     OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,

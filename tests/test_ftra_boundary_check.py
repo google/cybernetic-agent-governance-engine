@@ -372,4 +372,91 @@ class TestClassifierStandaloneInstantiation:
         assert classifier.is_irreversible("prompt_injection_check") is False
 
 
+class TestFtraBoundaryCheckInputValidation:
+    """Test fail-closed validation of tool_input parameter."""
+
+    @pytest.mark.asyncio
+    async def test_ftra_boundary_check_rejects_none_input(
+        self,
+        symbolic_governor: SymbolicGovernor,
+    ) -> None:
+        """Verify _ftra_boundary_check raises TypeError when tool_input is None."""
+        with pytest.raises(TypeError) as exc_info:
+            await symbolic_governor._ftra_boundary_check(
+                tool_name="execute_trade",
+                tool_input=None,  # type: ignore[arg-type]
+                detect_bypass=True,
+            )
+
+        assert "FTRA boundary invariant violation" in str(exc_info.value)
+        assert "'tool_input' must be a dict" in str(exc_info.value)
+        assert "NoneType" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_ftra_boundary_check_rejects_string_input(
+        self,
+        symbolic_governor: SymbolicGovernor,
+    ) -> None:
+        """Verify _ftra_boundary_check raises TypeError when tool_input is a string."""
+        with pytest.raises(TypeError) as exc_info:
+            await symbolic_governor._ftra_boundary_check(
+                tool_name="execute_trade",
+                tool_input="invalid_string",  # type: ignore[arg-type]
+                detect_bypass=True,
+            )
+
+        assert "FTRA boundary invariant violation" in str(exc_info.value)
+        assert "'tool_input' must be a dict" in str(exc_info.value)
+        assert "str" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_ftra_boundary_check_rejects_list_input(
+        self,
+        symbolic_governor: SymbolicGovernor,
+    ) -> None:
+        """Verify _ftra_boundary_check raises TypeError when tool_input is a list."""
+        with pytest.raises(TypeError) as exc_info:
+            await symbolic_governor._ftra_boundary_check(
+                tool_name="execute_trade",
+                tool_input=[{"amount": 100}],  # type: ignore[arg-type]
+                detect_bypass=True,
+            )
+
+        assert "FTRA boundary invariant violation" in str(exc_info.value)
+        assert "'tool_input' must be a dict" in str(exc_info.value)
+        assert "list" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_ftra_boundary_check_accepts_valid_dict(
+        self,
+        symbolic_governor: SymbolicGovernor,
+    ) -> None:
+        """Verify _ftra_boundary_check accepts valid dict input."""
+        # Should not raise — valid dict input
+        result = await symbolic_governor._ftra_boundary_check(
+            tool_name="execute_trade",
+            tool_input={"amount": 100, "symbol": "AAPL"},
+            detect_bypass=True,
+        )
+
+        assert result.classification == "IRREVERSIBLE_TERMINAL"
+        assert result.requires_hitl is True
+
+    @pytest.mark.asyncio
+    async def test_ftra_boundary_check_accepts_empty_dict(
+        self,
+        symbolic_governor: SymbolicGovernor,
+    ) -> None:
+        """Verify _ftra_boundary_check accepts empty dict input."""
+        # Should not raise — empty dict is still valid
+        result = await symbolic_governor._ftra_boundary_check(
+            tool_name="execute_trade",
+            tool_input={},
+            detect_bypass=True,
+        )
+
+        assert result.classification == "IRREVERSIBLE_TERMINAL"
+        assert result.requires_hitl is True
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

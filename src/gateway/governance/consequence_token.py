@@ -73,7 +73,6 @@ Usage (Phase 2 integration point, from provider_01 validate_fria):
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import time

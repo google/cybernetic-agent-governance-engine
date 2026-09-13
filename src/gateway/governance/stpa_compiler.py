@@ -1511,9 +1511,6 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     from src.gateway.governance.ftra.models import (
         CLASSIFICATION_SEVERITY,
     )
-    from src.gateway.governance.ftra.models import (
-        TerminalClassification as TC,
-    )
 
     # Derive string-keyed severity map from the canonical enum-keyed map
     _SEVERITY_ORDER = {

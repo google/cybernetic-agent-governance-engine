@@ -31,13 +31,11 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
-import json
 import logging
 import math
 import os
 import sys
 import time
-import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -66,7 +64,6 @@ from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
 from src.gateway.server.governance_middleware import (
-    enforce_governance,
     enforce_routing_seal,
 )
 from src.gateway.tracing_setup import setup_tracing

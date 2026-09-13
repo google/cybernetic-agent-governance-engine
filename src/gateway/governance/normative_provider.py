@@ -74,7 +74,6 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
     ExecutionStatus,
-    FindingStatus,
     NormativeBaseline,
     NormativeProvider,
     ValidationResult,
@@ -165,7 +164,7 @@ def _verify_policy_integrity(policy_path: Path, raw_bytes: bytes) -> None:
 # Seam contracts are imported from src.gateway.governance.seams.normative
 # to eliminate circular dependencies with vendor adapters.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

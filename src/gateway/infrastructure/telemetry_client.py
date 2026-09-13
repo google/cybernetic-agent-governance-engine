@@ -331,7 +331,6 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
             OTLPSpanExporter as GRPCSpanExporter,
         )
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            Compression,
             OTLPSpanExporter,
         )
         from opentelemetry.sdk.resources import Resource

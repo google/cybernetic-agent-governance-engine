@@ -26,11 +26,10 @@ Contract Severity Taxonomy:
 - HITL_ESCALATE: Requires human review before proceeding (B3, B5, B6, B8)
 """
 
-import hashlib
 import logging
 import math
 import time
-from typing import Any, Optional
+from typing import Any
 
 from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,

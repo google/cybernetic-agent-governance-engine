@@ -19,7 +19,6 @@ decoupling the Gateway from the specific application implementations.
 """
 
 import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable

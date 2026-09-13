@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-from src.integrations.provider_05.warrant import Warrant, WarrantStandingVerifier
+from src.integrations.provider_05.warrant import (
+    Warrant,
+    WarrantStandingVerifier as WarrantStandingVerifier,
+)
 
 logger = logging.getLogger("cage.integrations.provider_05.client")
 

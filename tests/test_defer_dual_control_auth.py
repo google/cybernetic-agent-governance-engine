@@ -215,17 +215,12 @@ class TestDeferInjectBypassProtection:
     @pytest.mark.asyncio
     async def test_inject_rejects_quorum_3_defer_reasons(self):
         """Verify defer_inject rejects tokens with quorum-3 defer_reason."""
-        # This test would require mocking the full FastAPI request flow
-        # Placeholder for integration test that validates the reason-gate
-        # Expected: 403 INJECTION_FORBIDDEN for FTRA_IRREVERSIBLE_TERMINAL
-        pass  # TODO: Add full integration test
+        pytest.skip("Integration test pending dual-control staging environment")
 
     @pytest.mark.asyncio
     async def test_inject_rejects_partially_approved_tokens(self):
         """Verify defer_inject rejects tokens with incomplete quorum approvals."""
-        # Placeholder for integration test that validates the status-gate
-        # Expected: 403 PARTIAL_APPROVALS_EXIST if len(approvals) < required_quorum
-        pass  # TODO: Add full integration test
+        pytest.skip("Integration test pending dual-control staging environment")
 
 
 class TestBreakingChangeCompatibility:

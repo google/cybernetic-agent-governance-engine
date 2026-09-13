@@ -29,18 +29,8 @@ Wave 1 Additions and Differing Semantics:
 
 from __future__ import annotations
 
-import hashlib
-import logging
-import os
-from collections.abc import Mapping
-from datetime import datetime, timezone
 from typing import Any
 
-from src.gateway.governance.evidence.cold_store import (
-    ColdStoreHealth,
-    ColdStoreReceipt,
-    EvidenceColdStore,
-)
 from src.gateway.governance.telemetry_provider import NullTelemetryProvider
 
 

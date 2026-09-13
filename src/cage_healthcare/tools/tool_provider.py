@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-from src.cage_healthcare.tools.dose_order import DoseOrder
 
 
 class ClinicalToolProvider:

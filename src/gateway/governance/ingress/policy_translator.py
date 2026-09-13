@@ -49,7 +49,6 @@ Usage::
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -161,10 +160,6 @@ def _translate_acs(spec: dict[str, Any], bundle: ArtifactBundle) -> None:
     """Route ACS spec through the ACS adapter and STPA compiler."""
     from src.gateway.governance.ingress.acs_adapter import (
         acs_to_control_structure_patch,
-    )
-    from src.gateway.governance.stpa_compiler import (
-        ControlStructureModel,
-        compile_control_structure,
     )
 
     try:

@@ -157,7 +157,7 @@ def _get_registry(path: Path | None = None) -> dict[str, str]:
     return _registry_cache
 
 
-def _bust_cache(signum: int, frame: Any) -> None:  # noqa: ARG001
+def _bust_cache(_signum: int, _frame: Any) -> None:
     """SIGUSR1 handler — clears the registry cache for hot-reload."""
     global _registry_cache
     with _registry_lock:

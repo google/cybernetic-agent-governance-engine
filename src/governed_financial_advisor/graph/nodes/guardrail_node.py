@@ -108,16 +108,6 @@ def _extract_user_input(state: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-# Re-export validate_with_nemo for test mock targets
-try:
-    from src.gateway.governance.nemo.manager import (
-        validate_with_nemo,
-        verify_and_mask_output,
-    )
-except ImportError:
-    pass  # fail-closed at runtime via the harness
-
-
 # ---------------------------------------------------------------------------
 # Nodes — produced by the governance harness factories
 # ---------------------------------------------------------------------------

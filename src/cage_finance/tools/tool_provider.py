@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP

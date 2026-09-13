@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-import os
 from typing import Any
 
 from src.gateway.core.policy import OPAClient

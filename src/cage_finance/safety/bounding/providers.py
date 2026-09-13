@@ -188,9 +188,22 @@ class StubMarketDataProvider:
     def get_volatility_percentile(
         self, symbol: str, window_days: int
     ) -> dict[str, float]:
-        """Return permissive mock volatility (always low volatility percentile)."""
+        """Return permissive mock volatility (always low volatility percentile).
+        
+        Args:
+            symbol: Ticker symbol (e.g., 'AAPL', 'BTC')
+            window_days: Historical window in days (e.g., 30, 60, 90)
+                         In production, this would determine the rolling window
+                         for volatility calculation. Stub ignores this parameter
+                         and returns fixed permissive values.
+        """
         import time
 
+        # Production implementation would compute volatility over window_days
+        # using: annualized_vol = std_dev(returns[:-window_days]) * sqrt(252)
+        # and percentile ranking against historical distribution
+        _ = window_days  # Acknowledge parameter; stub returns fixed values
+        
         return {
             "percentile": 30.0,  # 30th percentile (low volatility, passes B5 check)
             "annualized_vol": 0.15,  # 15% annualized volatility

@@ -69,7 +69,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.gateway.governance.schemas.thresholds import (
-    get_kms_batch_enabled,
     get_kms_batch_max_size,
 )
 

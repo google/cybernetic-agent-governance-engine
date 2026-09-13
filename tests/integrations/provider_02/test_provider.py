@@ -38,6 +38,8 @@ from src.integrations.provider_02.provider import (
     Provider02AttestationProvider,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ---------------------------------------------------------------------------
 # Test 1: CER creation
 # ---------------------------------------------------------------------------

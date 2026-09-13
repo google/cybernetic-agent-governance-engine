@@ -71,10 +71,8 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -83,7 +81,7 @@ from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import (
-    AttestationStatus,
+    AttestationStatus as AttestationStatus,
     ExternalAttestation,
 )
 
@@ -495,7 +493,7 @@ class GovernanceEnvelopeBuilder:
                 utils,
             )
 
-            from src.gateway.governance.jwks import get_jwks, pem_to_jwk
+            from src.gateway.governance.jwks import get_jwks
 
             # Get the verification key
             kid = envelope.signature.kid

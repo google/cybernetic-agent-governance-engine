@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from types import TracebackType
@@ -52,7 +51,7 @@ import httpx
 from src.gateway.governance.execution_actuator import (
     ActuationReceipt,
     ActuatorCapability,
-    ExecutionActuator,
+    ExecutionActuator as ExecutionActuator,
     ExecutionClearance,
 )
 from src.gateway.governance.raw_signer_protocol import RawMessageSigner
@@ -449,8 +448,8 @@ class Actuator01Adapter:
 
     async def __aexit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
+        _exc_type: type[BaseException] | None,
+        _exc_val: BaseException | None,
+        _exc_tb: TracebackType | None,
     ) -> None:
         await self.close()

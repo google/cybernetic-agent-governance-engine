@@ -25,7 +25,7 @@ Per Section 3 (Architecture):
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from src.cage_finance.safety.bounding.contracts import (
     contract_b1_max_notional,

@@ -347,6 +347,18 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Validate dependency lockfile is up to date
+        run: |
+          uv lock --check || {
+            echo "::error::uv.lock is out of sync with pyproject.toml. Run 'uv lock' locally and commit the result."
+            exit 1
+          }
+
       - name: Check for dependency lockfile
         run: |
           if [ ! -f "requirements.txt" ] && \
@@ -441,3 +453,32 @@ jobs:
             --redact \
             --verbose \
             --exit-code 1
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Semgrep Static Analysis
+  # Universal security hygiene — runs for ALL regions (US_FED, EU_ECB, APAC_MAS)
+  # Detects common vulnerability patterns, insecure API usage, and logic flaws.
+  # ---------------------------------------------------------------------------
+  semgrep-scan:
+    name: "Semgrep Static Analysis (Universal)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Run Semgrep static analysis
+        run: |
+          uv run --with semgrep semgrep scan --config=auto --error src/

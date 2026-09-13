@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
 from .cold_store import EvidenceColdStore
 from .null_cold_store import NullColdStore
