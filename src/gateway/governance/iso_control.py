@@ -275,6 +275,9 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
         "agentsight_syscall": "AU-2",  # AgentSight execve/connect syscall events
         "agentsight_fim": "SI-7",  # AgentSight file integrity events
         "cilium_l7_flow": "SC-7",  # Cilium L7 FQDN enforcement evidence
+        "ftra_boundary_check": "SI-10",  # FTRA semantic boundary validation
+        "ftra_semantic_validation": "SI-10",  # FTRA ActionSchema validation
+        "ftra_flow_enforcement": "AC-4",  # FTRA parameter smuggling protection
     },
 }
 
