@@ -272,6 +272,7 @@ Every collected test must carry at least one selection marker (`local`, `unit`, 
 To eliminate runaway frontier model billing, avoid quota lockouts, and eliminate multi-window context friction, this repository standardizes on the **Unified Sidebar + Passive Keystroke Daemon** architecture:
 
 1. **Unified Sidebar Engine (Roo Code / Zoo Code)**: 100% of conversational engineering, codebase exploration, code diffs, and terminal execution run inside Zoo Code to eliminate the "two-inbox problem" and ensure strict governance under [`.roomodes`](.roomodes):
+   - **Cost-Governed Dispatcher (`orchestrator` mode)**: Coordinates multi-phase tasks by delegating discovery to `ask`, architecture to `architect`/`escalated-architect`, edits/tests to `code`, and root-cause fixes to `debug`/`escalated-debug`. Never executes edits or bash directly.
    - **Exploration & Discovery (`ask` mode)**: Powered by **Gemini Flash via Google Cloud Vertex AI ADC** (`gemini-2.5-flash` or `gemini-3-flash`). Executes high-speed AST indexing and repository sweeps at pay-as-you-go rates (~$0.001/query), completely bypassing consumer subscription quota freezes and 5-hour rolling lockouts.
    - **Targeted Implementation (`code` mode)**: Powered by **Claude 3.7 Sonnet**. Governed by active Cost & Search Gates that intercept unstructured searches and direct them to `ask` mode before paid tokens are spent.
    - **Standard Debugging (`debug` mode)**: Powered by **Claude 3.7 Sonnet** for syntax, failed assertions, and unit tests. Enforces a 2-turn fail-fast threshold.

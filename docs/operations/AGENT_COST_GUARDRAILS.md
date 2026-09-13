@@ -113,6 +113,7 @@ The committed [`.roomodes`](../../.roomodes) file configures dedicated mode prof
 
 | Mode | Assigned Model | Operational Scope & Guardrails |
 |---|---|---|
+| **Orchestrator (Governor)** | `claude-3-7-sonnet` | Master task coordinator. Decomposes complex user requests and programmatically delegates sub-tasks across specialized modes (`ask`, `architect`, `code`, `debug`, `escalated-*`). Never executes edits or bash directly. |
 | **Code** | `claude-3-7-sonnet` | **Mandatory daily driver.** Multi-file diffs, TDD loops, targeted refactoring. Max 5 tool calls per turn. |
 | **Architect (Default)** | `claude-3-7-sonnet` | API route definitions, database migrations, component scaffolding, single-service interfaces. Delivers 95% of designs at ~1/5th cost. |
 | **Escalated Architect** | `claude-opus-5` / `claude-fable-5.1` | **Surgical escalation only.** Multi-system boundaries, safety-critical state machines, distributed consensus, formal verification proofs. Max 1–3 turns. |
