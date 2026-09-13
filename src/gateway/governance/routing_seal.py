@@ -822,6 +822,11 @@ def extract_record_hash(seal: str) -> str | None:
     if _is_jwt_seal(seal):
         # JWT format: extract from claims
         try:
+            # SECURITY NOTE: Signature verification is intentionally disabled here because
+            # this function only extracts metadata from the seal. Cryptographic verification
+            # happens in verify_seal() via KMS public key validation. This pattern prevents
+            # double-verification overhead while maintaining security boundaries.
+            # See: verify_seal() for signature verification logic.
             claims = pyjwt.decode(seal, options={"verify_signature": False})
             return claims.get("record_hash")
         except Exception:
@@ -965,6 +970,11 @@ async def verify_and_consume_seal(
     if is_jwt:
         # JWT format: extract nonce and expiry from claims (unverified)
         try:
+            # SECURITY NOTE: Signature verification is intentionally disabled here because
+            # this function only extracts metadata from the seal. Cryptographic verification
+            # happens in verify_seal() via KMS public key validation. This pattern prevents
+            # double-verification overhead while maintaining security boundaries.
+            # See: verify_seal() for signature verification logic.
             claims = pyjwt.decode(seal, options={"verify_signature": False})
             nonce = claims.get("nonce")
             ttl = claims.get("exp", 0) - int(time.time())

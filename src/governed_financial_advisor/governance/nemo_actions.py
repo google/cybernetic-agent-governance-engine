@@ -181,7 +181,17 @@ def generate_approval_token(
     thread_id: str, trade_id: str, ttl_seconds: int = 3600
 ) -> str:
     """Generate a cryptographically signed approval token."""
-    secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "dev-secret")
+    secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
+    if not secret:
+        raise RuntimeError(
+            "CAGE_ROUTING_SEAL_SECRET must be set in the environment. "
+            "Generate a cryptographically random secret of at least 32 characters."
+        )
+    if len(secret) < 32:
+        raise RuntimeError(
+            f"CAGE_ROUTING_SEAL_SECRET is only {len(secret)} characters long. "
+            f"A minimum of 32 characters is required for HMAC-SHA256 security."
+        )
     expiry = int(time.time()) + ttl_seconds
     payload = f"{thread_id}:{trade_id}:{expiry}"
     signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -205,7 +215,17 @@ def validate_approval_token(token: str, thread_id: str, trade_id: str) -> bool:
             return False
         if int(time.time()) > int(expiry_str):
             return False
-        secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "dev-secret")
+        secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
+        if not secret:
+            raise RuntimeError(
+                "CAGE_ROUTING_SEAL_SECRET must be set in the environment. "
+                "Generate a cryptographically random secret of at least 32 characters."
+            )
+        if len(secret) < 32:
+            raise RuntimeError(
+                f"CAGE_ROUTING_SEAL_SECRET is only {len(secret)} characters long. "
+                f"A minimum of 32 characters is required for HMAC-SHA256 security."
+            )
         expected_sig = hmac.new(
             secret.encode(), payload.encode(), hashlib.sha256
         ).hexdigest()

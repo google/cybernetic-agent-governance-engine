@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -44,7 +45,7 @@ def run_command(command, check=True, capture_output=False, env=None):
     Runs a shell command and prints the output.
 
     Args:
-        command (list): The command to run.
+        command (list or str): The command to run. Strings are safely parsed via shlex.split.
         check (bool): Whether to raise an exception on failure.
         capture_output (bool): Whether to capture stdout/stderr.
         env (dict): Environment variables to pass.
@@ -52,10 +53,12 @@ def run_command(command, check=True, capture_output=False, env=None):
     Returns:
         subprocess.CompletedProcess or subprocess.CalledProcessError
     """
-    print(f"🚀 Running: {' '.join(command)}")
+    # Safely handle both string and list inputs
+    cmd_args = shlex.split(command) if isinstance(command, str) else command
+    print(f"🚀 Running: {' '.join(cmd_args)}")
     try:
         result = subprocess.run(
-            command,
+            cmd_args,
             check=check,
             capture_output=capture_output,
             text=True,
