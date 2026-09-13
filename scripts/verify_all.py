@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import shlex
 import subprocess
 import sys
 
@@ -21,7 +22,10 @@ def run_command(command, description):
     print(f"Command: {command}")
     try:
         result = subprocess.run(
-            command, shell=True, check=True, text=True, capture_output=True
+            shlex.split(command) if isinstance(command, str) else command,
+            check=True,
+            text=True,
+            capture_output=True,
         )
         print("✅ SUCCESS")
         print(result.stdout.strip())

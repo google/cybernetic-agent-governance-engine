@@ -123,3 +123,26 @@ deployment. Key security controls are documented in:
 ### Evidence Stream Precondition Hardening
 
 > **Audit Durability Guarantee:** `validate_evidence_stream_preconditions()` halts startup in production if `EVIDENCE_CHAIN_BLOCKING=false`, ensuring no routing seal is issued without durable evidence commitment to the tamper-evident log.
+
+## Prohibited Security Anti-Patterns
+
+The following patterns are strictly forbidden in production code and will be rejected in review:
+
+### 1. Hardcoded Cryptographic Secrets (CWE-798)
+- **PROHIBITED:** `secret = os.environ.get("API_KEY", "default-secret")`
+- **REQUIRED:** Fail-closed validation asserting `os.environ["API_KEY"]` exists and meets minimum entropy length (>= 32 chars).
+
+### 2. Shell Injection Vectors (CWE-78)
+- **PROHIBITED:** `subprocess.run(command, shell=True)`
+- **REQUIRED:** `subprocess.run(shlex.split(command))` with direct argument lists.
+
+### 3. TLS/SSL Verification Bypass (CWE-295)
+- **PROHIBITED:** `requests.get(url, verify=False)`
+- **REQUIRED:** Explicit TLS certificate verification (`verify=True`).
+
+### 4. Insecure Deserialization (CWE-502)
+- **PROHIBITED:** `pickle.loads(data)` or unconstrained `yaml.load(data)`
+- **REQUIRED:** `json.loads(data)` or `yaml.safe_load(data)`.
+
+## Enforcement
+All prohibited patterns are enforced via static grep checks, pre-commit hooks, CI security jobs, and targeted unit regression suites in `tests/test_*_security.py`.
