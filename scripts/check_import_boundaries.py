@@ -69,6 +69,15 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
     ]
 )
 
+# Allowlist for function-scope lazy imports of compliance_bridge in Layer 1
+# OSCAL SSP exporter may lazy-load AssurancePosture for metadata injection (v3.1.5).
+# Adding an entry requires deliberate architectural review — keep this minimal.
+COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST = frozenset(
+    [
+        "src/gateway/governance/oscal_ssp_exporter.py",  # lazy-loads AssurancePosture for SSP metadata
+    ]
+)
+
 
 @dataclass(frozen=True)
 class BoundaryViolation:
@@ -172,6 +181,12 @@ def check_file_boundaries(
         filepath_str.endswith(allowed_path) or allowed_path in filepath_str
         for allowed_path in INTEGRATIONS_FACTORY_ALLOWLIST
     )
+    
+    # Check if file is in the compliance_bridge factory allowlist
+    is_in_bridge_allowlist = any(
+        filepath_str.endswith(allowed_path) or allowed_path in filepath_str
+        for allowed_path in COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST
+    )
 
     is_evidence_kernel = False
     try:
@@ -202,17 +217,31 @@ def check_file_boundaries(
             if verbose:
                 print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
 
-        # Check Layer 1 -> Layer 3
+        # Check Layer 1 -> Layer 3 compliance_bridge (scope-aware with allowlist)
         if LAYER_3_BRIDGE_PATTERN.match(imp):
-            v = BoundaryViolation(
-                file_path=filepath_str,
-                line_number=lineno,
-                imported_module=imp,
-                rule_violated="Layer 1 → Layer 3 (gateway must not import compliance_bridge)",
-            )
-            violations.append(v)
-            if verbose:
-                print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+            if is_module_scope:
+                # Module-scope compliance_bridge imports are ALWAYS forbidden
+                v = BoundaryViolation(
+                    file_path=filepath_str,
+                    line_number=lineno,
+                    imported_module=imp,
+                    rule_violated="Layer 1 → Layer 3 (module-scope compliance_bridge import forbidden; use function-scope lazy import)",
+                )
+                violations.append(v)
+                if verbose:
+                    print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+            elif not is_in_bridge_allowlist:
+                # Function-scope import but file not in allowlist
+                v = BoundaryViolation(
+                    file_path=filepath_str,
+                    line_number=lineno,
+                    imported_module=imp,
+                    rule_violated="Layer 1 → Layer 3 (compliance_bridge import outside the factory allowlist)",
+                )
+                violations.append(v)
+                if verbose:
+                    print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+            # else: function-scope AND in allowlist → permitted (no violation)
 
         # Check Layer 1 -> Layer 3 integrations (scope-aware)
         if LAYER_3_INTEGRATIONS_PATTERN.match(imp):

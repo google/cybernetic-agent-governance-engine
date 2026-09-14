@@ -586,3 +586,106 @@ class TestFtraControlMappings:
         assert "ftra_boundary_check" not in apac_mas_map
         assert "ftra_semantic_validation" not in apac_mas_map
         assert "ftra_flow_enforcement" not in apac_mas_map
+
+
+class TestUniversalAssuranceStatus:
+    """Verify AssuranceStatus enum and AssurancePosture model (v3.1.5 Sprint 1 Phase 1.1-1.2)."""
+
+    def test_assurance_status_enum_has_four_states(self):
+        """AssuranceStatus must define exactly 4 lifecycle states."""
+        from src.compliance_bridge.types import AssuranceStatus
+
+        assert len(AssuranceStatus) == 4
+        assert AssuranceStatus.ILLUSTRATIVE_REFERENCE.value == "ILLUSTRATIVE_REFERENCE"
+        assert AssuranceStatus.SELF_ASSESSED_PRE_DEPLOYMENT.value == "SELF_ASSESSED_PRE_DEPLOYMENT"
+        assert AssuranceStatus.OPERATIONAL_STAGING.value == "OPERATIONAL_STAGING"
+        assert AssuranceStatus.THIRD_PARTY_ASSESSED.value == "THIRD_PARTY_ASSESSED"
+
+    def test_assurance_posture_defaults_to_illustrative(self):
+        """AssurancePosture must default to ILLUSTRATIVE_REFERENCE status."""
+        from src.compliance_bridge.types import AssurancePosture, AssuranceStatus
+
+        posture = AssurancePosture()
+        assert posture.status == AssuranceStatus.ILLUSTRATIVE_REFERENCE
+        assert posture.attestation_boundary == "CODEBASE_SYNTHETIC_EVALUATION"
+        assert posture.third_party_certificate_url is None
+
+    def test_assurance_posture_is_frozen(self):
+        """AssurancePosture must be frozen (immutable after construction)."""
+        from pydantic import ValidationError
+
+        from src.compliance_bridge.types import AssurancePosture
+
+        posture = AssurancePosture()
+        with pytest.raises(ValidationError, match="frozen"):
+            posture.status = "OPERATIONAL_STAGING"  # type: ignore
+
+    def test_disclaimer_mentions_all_frameworks(self):
+        """AssurancePosture disclaimer must mention FedRAMP, CE Mark, ISO/IEC 42001, and MAS."""
+        from src.compliance_bridge.types import AssurancePosture
+
+        posture = AssurancePosture()
+        disclaimer = posture.disclaimer
+        assert "FedRAMP" in disclaimer
+        assert "CE Mark" in disclaimer or "EU" in disclaimer
+        assert "ISO/IEC 42001" in disclaimer or "42001" in disclaimer
+        assert "MAS" in disclaimer or "Monetary Authority of Singapore" in disclaimer
+        assert "reference architecture" in disclaimer.lower()
+
+
+class TestAssurancePostureInOSCAL:
+    """Verify AssurancePosture injection into OSCAL SSP exports (v3.1.5 Sprint 1 Phase 1.2)."""
+
+    def test_us_fed_ssp_includes_assurance_posture(self):
+        """US_FED SSP export must include AssurancePosture in metadata."""
+        from src.compliance_bridge.types import AssurancePosture
+        from src.gateway.governance.oscal_ssp_exporter import _build_metadata
+
+        metadata = _build_metadata(region="US_FED")
+        
+        # metadata must include 'props' list with assurance posture properties
+        assert "props" in metadata
+        props = metadata["props"]
+        
+        # Extract assurance_status and attestation_boundary from props
+        assurance_status_prop = next((p for p in props if p["name"] == "assurance_status"), None)
+        attestation_boundary_prop = next((p for p in props if p["name"] == "attestation_boundary"), None)
+        
+        assert assurance_status_prop is not None
+        assert attestation_boundary_prop is not None
+        assert assurance_status_prop["value"] == "ILLUSTRATIVE_REFERENCE"
+        assert attestation_boundary_prop["value"] == "CODEBASE_SYNTHETIC_EVALUATION"
+
+    def test_eu_ecb_ssp_includes_assurance_posture(self):
+        """EU_ECB SSP export must include AssurancePosture in metadata."""
+        from src.compliance_bridge.types import AssurancePosture
+        from src.gateway.governance.oscal_ssp_exporter import _build_metadata
+
+        metadata = _build_metadata(region="EU_ECB")
+        
+        # metadata must include 'props' list with assurance posture properties
+        assert "props" in metadata
+        props = metadata["props"]
+        
+        # Extract assurance_status from props
+        assurance_status_prop = next((p for p in props if p["name"] == "assurance_status"), None)
+        
+        assert assurance_status_prop is not None
+        assert assurance_status_prop["value"] == "ILLUSTRATIVE_REFERENCE"
+
+    def test_apac_mas_ssp_includes_assurance_posture(self):
+        """APAC_MAS SSP export must include AssurancePosture in metadata."""
+        from src.compliance_bridge.types import AssurancePosture
+        from src.gateway.governance.oscal_ssp_exporter import _build_metadata
+
+        metadata = _build_metadata(region="APAC_MAS")
+        
+        # metadata must include 'props' list with assurance posture properties
+        assert "props" in metadata
+        props = metadata["props"]
+        
+        # Extract assurance_status from props
+        assurance_status_prop = next((p for p in props if p["name"] == "assurance_status"), None)
+        
+        assert assurance_status_prop is not None
+        assert assurance_status_prop["value"] == "ILLUSTRATIVE_REFERENCE"

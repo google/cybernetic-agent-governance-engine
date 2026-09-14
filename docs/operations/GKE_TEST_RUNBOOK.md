@@ -245,6 +245,7 @@ terraform destroy -var-file=staging.tfvars -auto-approve
 - NIST SP 800-53 controls enforced without HA overhead
 - Cluster-scoped controls active (Binary Authorization, PSS restricted, CMEK, audit logs)
 - Regional compliance postures (US_FED, EU_ECB, APAC_MAS) validated
+- **Assurance status**: CAGE operates at `ILLUSTRATIVE_REFERENCE` (see [`docs/compliance/ASSURANCE_STATUS_GUIDE.md`](../compliance/ASSURANCE_STATUS_GUIDE.md) for legal boundaries and attestation context)
 
 **Key characteristics**:
 - **Cost**: ~$2-4 per validation cycle (20-30 minutes runtime)

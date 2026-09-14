@@ -59,6 +59,7 @@ its own TradingKnowledgeGraph.get_control_map(region) for short-form event mappi
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -136,6 +137,86 @@ class OscalFinding(BaseModel):
     # Optional position in the Context Accumulator chain (CAGE v2.0.0+)
     # Populated by audit_workflow after the ContextAccumulator appends the finding.
     chain_index: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# AssuranceStatus & AssurancePosture — Universal Assurance Lifecycle
+# (v3.1.5 Phase 1.1 & 1.2: Sprint 1 Technical Core)
+#
+# AssuranceStatus: Four-state lifecycle model for deployment maturity.
+# AssurancePosture: Immutable statutory disclaimer and attestation boundary.
+#
+# Injected into OSCAL SSP metadata via oscal_ssp_exporter._build_metadata()
+# to ensure every exported SSP carries explicit assurance posture context.
+# ---------------------------------------------------------------------------
+
+
+class AssuranceStatus(str, Enum):
+    """Four-state assurance lifecycle model (v3.1.5).
+
+    ILLUSTRATIVE_REFERENCE: No deployment exists; architecture is a reference
+        implementation for adopters to adapt. No FedRAMP ATO, CE Mark, BSI
+        ISO/IEC 42001 certification, or MAS approval is claimed or implied.
+
+    SELF_ASSESSED_PRE_DEPLOYMENT: Internal self-assessment complete; no live
+        deployment. Suitable for pre-deployment verification and internal
+        staging environments.
+
+    OPERATIONAL_STAGING: Live staging deployment with operational telemetry,
+        but not yet subject to third-party assessment. Suitable for beta
+        environments and pre-production validation.
+
+    THIRD_PARTY_ASSESSED: Production deployment with completed third-party
+        assessment (e.g., FedRAMP 3PAO, BSI audit, MAS validation). Requires
+        attestation evidence and certificate URL.
+    """
+
+    ILLUSTRATIVE_REFERENCE = "ILLUSTRATIVE_REFERENCE"
+    SELF_ASSESSED_PRE_DEPLOYMENT = "SELF_ASSESSED_PRE_DEPLOYMENT"
+    OPERATIONAL_STAGING = "OPERATIONAL_STAGING"
+    THIRD_PARTY_ASSESSED = "THIRD_PARTY_ASSESSED"
+
+
+class AssurancePosture(BaseModel):
+    """Immutable assurance posture metadata for OSCAL SSP exports.
+
+    Injected into OSCAL SSP ``metadata`` block by
+    ``oscal_ssp_exporter._build_metadata()``. Ensures every exported SSP
+    carries explicit statutory disclaimers and attestation boundaries.
+
+    Attributes:
+        status: Current assurance lifecycle state (defaults to
+            ILLUSTRATIVE_REFERENCE for CAGE reference architecture).
+        attestation_boundary: Scope of attestation evidence. Defaults to
+            CODEBASE_SYNTHETIC_EVALUATION (test suite, Lula validations).
+            OPERATIONAL_DEPLOYMENT requires live telemetry and third-party
+            assessment.
+        disclaimer: Statutory disclaimer specifying CAGE is an architectural
+            reference and does NOT constitute formal FedRAMP ATO, CE Mark,
+            BSI ISO/IEC 42001 certification, or MAS approval.
+        third_party_certificate_url: Optional URL to third-party assessment
+            certificate (required when status=THIRD_PARTY_ASSESSED).
+
+    Frozen: This model is immutable (``ConfigDict(frozen=True)``) to ensure
+        assurance posture cannot be mutated after SSP export.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: AssuranceStatus = AssuranceStatus.ILLUSTRATIVE_REFERENCE
+    attestation_boundary: Literal[
+        "CODEBASE_SYNTHETIC_EVALUATION", "OPERATIONAL_DEPLOYMENT"
+    ] = "CODEBASE_SYNTHETIC_EVALUATION"
+    disclaimer: str = (
+        "This System Security Plan represents an illustrative reference "
+        "architecture for AI governance systems. It does NOT constitute a "
+        "formal FedRAMP Authority to Operate (ATO), EU CE Mark conformity "
+        "assessment, BSI ISO/IEC 42001:2023 certification, or Monetary "
+        "Authority of Singapore (MAS) approval. Organizations adopting this "
+        "architecture must conduct their own conformity assessments and "
+        "obtain applicable regulatory approvals for production deployments."
+    )
+    third_party_certificate_url: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +608,8 @@ __all__ = [
     "FRAMEWORK_CONTROLS",
     "SUPPORTED_CONTROLS",
     "SUPPORTED_FRAMEWORKS",
+    "AssurancePosture",
+    "AssuranceStatus",
     "ComplianceMetrics",
     "OscalFinding",
     "OscalResult",

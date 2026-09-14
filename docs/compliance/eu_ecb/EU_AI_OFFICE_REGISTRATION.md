@@ -8,8 +8,10 @@
 
 ---
 
+> **Legal Status:** This registration runbook represents an architectural reference (AssuranceStatus: ILLUSTRATIVE_REFERENCE). See [../ASSURANCE_STATUS_GUIDE.md](../ASSURANCE_STATUS_GUIDE.md) for the canonical 4-stage lifecycle and legal boundaries. CAGE demonstrates EU AI Act compliance pathways for adopters to customize; no CE Mark conformity assessment or EU AI Office registration is complete or claimed.
+
 > [!IMPORTANT]
-> EU AI Office registration is **mandatory** before production deployment of CAGE in any EU_ECB context. The registration portal is accessible at [https://digital-strategy.ec.europa.eu/en/activities/eu-ai-office](https://digital-strategy.ec.europa.eu/en/activities/eu-ai-office). This runbook describes the steps; a designated EU compliance officer must execute them.
+> EU AI Office registration is **mandatory** before production deployment of CAGE in any EU_ECB context. The registration portal is accessible at [https://digital-strategy.ec.europa.eu/en/activities/eu-ai-office](https://digital-strategy.ec.europa.eu/en/activities/eu-ai-office). This runbook describes the steps for adopters; a designated EU compliance officer must execute them.
 
 ---
 

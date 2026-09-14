@@ -8,6 +8,8 @@
 
 ---
 
+> **Legal Status:** This FRIA represents an architectural reference (AssuranceStatus: ILLUSTRATIVE_REFERENCE). See [../ASSURANCE_STATUS_GUIDE.md](../ASSURANCE_STATUS_GUIDE.md) for the canonical 4-stage lifecycle and legal boundaries. CAGE demonstrates EU AI Act FRIA technical implementation patterns for adopters to customize; no institutional FRIA sign-off, DPO approval, or EU AI Office submission is complete or claimed.
+
 > [!IMPORTANT]
 > This FRIA is a **draft** and has not been signed off by the Data Protection Officer (DPO) or reviewed by the EU AI Office. EU-001 remains **In Progress** until:
 > 1. External normative provider credentials are provisioned and `CAGE_NORMATIVE_PROVIDER=provider_01` is active in EU_ECB prod

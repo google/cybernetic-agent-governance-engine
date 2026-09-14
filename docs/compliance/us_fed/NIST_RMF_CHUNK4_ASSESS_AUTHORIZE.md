@@ -2,6 +2,8 @@
 
 ## Cybernetic Governance Engine — Chunk 4 of 5: Assess & Authorize
 
+> **Legal Status:** This RMF analysis represents an architectural reference (AssuranceStatus: ILLUSTRATIVE_REFERENCE). See [../ASSURANCE_STATUS_GUIDE.md](../ASSURANCE_STATUS_GUIDE.md) for the canonical 4-stage lifecycle and legal boundaries. CAGE demonstrates control assessment patterns for adopters to customize; no FedRAMP ATO is claimed or implied.
+
 **Document Date:** 2026-06-01
 **System Version:** CAGE v2.0.0
 **System Categorization:** C=Moderate / I=High / A=Moderate → **NIST SP 800-53 Rev 5 HIGH Baseline**

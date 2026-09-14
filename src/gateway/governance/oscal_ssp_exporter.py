@@ -373,6 +373,61 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
+    """Build OSCAL SSP metadata with AssurancePosture injection (v3.1.5 Phase 1.2).
+    
+    Args:
+        region: Deployment region (US_FED, EU_ECB, APAC_MAS, UK_DSIT).
+        
+    Returns:
+        OSCAL metadata dict with assurance posture props.
+    """
+    # Lazy import to avoid Layer 1 → Layer 3 boundary violation (Gate G3)
+    from src.compliance_bridge.types import AssurancePosture
+    
+    posture = AssurancePosture()
+    
+    # Convert AssurancePosture to OSCAL props format
+    props = [
+        {
+            "name": "assurance_status",
+            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+            "value": posture.status.value,
+            "class": "assurance-lifecycle"
+        },
+        {
+            "name": "attestation_boundary",
+            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+            "value": posture.attestation_boundary,
+            "class": "assurance-lifecycle"
+        },
+        {
+            "name": "disclaimer",
+            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+            "value": posture.disclaimer,
+            "class": "legal-notice"
+        },
+    ]
+    
+    if posture.third_party_certificate_url:
+        props.append({
+            "name": "third_party_certificate_url",
+            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+            "value": posture.third_party_certificate_url,
+            "class": "assurance-evidence"
+        })
+    
+    metadata = {
+        "title": f"CAGE System Security Plan — {region}",
+        "last-modified": _now_iso(),
+        "version": "3.1.5",
+        "oscal-version": "1.0.4",
+        "props": props,
+    }
+    
+    return metadata
+
+
 def generate_ssp_patch(
     cs: ControlStructureModel,
     target_framework: str = "NIST",
@@ -679,6 +734,14 @@ def _apply_ssp_patch(
     old_version = ssp["system-security-plan"]["metadata"].get("version", "1.0.0-draft")
     if not old_version.endswith("-stpa"):
         ssp["system-security-plan"]["metadata"]["version"] = f"{old_version}+stpa"
+
+    # Inject AssurancePosture (v3.1.5 Phase 1.2)
+    # Lazy import to avoid Layer 1 → Layer 3 boundary violation (Gate G3)
+    from src.compliance_bridge.types import AssurancePosture
+    
+    # Convert to dict with mode='json' to ensure enums serialize as strings
+    posture_dict = AssurancePosture().model_dump(mode='json')
+    ssp["system-security-plan"]["metadata"]["assurance-posture"] = posture_dict
 
     if dry_run:
         logger.info("[DRY-RUN] Would update SSP at %s", ssp_path)

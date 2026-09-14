@@ -8,8 +8,10 @@
 
 ---
 
+> **Legal Status:** This certification runbook represents an architectural reference (AssuranceStatus: ILLUSTRATIVE_REFERENCE). See [../ASSURANCE_STATUS_GUIDE.md](../ASSURANCE_STATUS_GUIDE.md) for the canonical 4-stage lifecycle and legal boundaries. CAGE provides runtime telemetry hooks and audit trail infrastructure for MAS Notice 655 compliance; statutory MAS compliance, accredited auditor certification, and regulatory submission remain the responsibility of the adopting financial institution.
+
 > [!IMPORTANT]
-> MAS Notice 655 audit certification requires engagement of a **MAS-accredited auditor**. This runbook describes the preparation steps; the certification itself must be conducted by the accredited auditor and the results submitted to MAS if required.
+> MAS Notice 655 audit certification requires engagement of a **MAS-accredited auditor**. This runbook describes the preparation steps for adopters; the certification itself must be conducted by the accredited auditor and the results submitted to MAS if required.
 
 ---
 

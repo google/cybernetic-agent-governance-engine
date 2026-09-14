@@ -344,16 +344,14 @@ make advisor-watch      # monitors recovery
 
 ---
 
-## Compliance Note
+## Assurance Status & Legal Boundaries
 
-Cloud Build deployments support the following controls:
+**CAGE is an illustrative reference architecture.** See [`docs/compliance/ASSURANCE_STATUS_GUIDE.md`](../compliance/ASSURANCE_STATUS_GUIDE.md) for:
+- Four-stage assurance lifecycle (ILLUSTRATIVE_REFERENCE → THIRD_PARTY_ASSESSED)
+- Regulatory disclaimers (no FedRAMP ATO, CE Mark, ISO/IEC 42001 certification, or MAS approval claimed)
+- Attestation boundaries and compliance framework context
 
-- **ISO 42001 A.5.2** — AI system deployment control
-- **NIST AI RMF** — Controlled deployment practices
-- **SOC 2 CC8.1** — Change management controls
-
-All GKE deployments via Cloud Build are automatically logged to Cloud Logging
-for audit purposes.
+All GKE deployments via Cloud Build are automatically logged to Cloud Logging for audit trail purposes.
 
 ---
 

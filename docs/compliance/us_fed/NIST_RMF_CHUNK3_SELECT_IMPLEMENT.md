@@ -2,6 +2,8 @@
 
 ## Cybernetic Governance Engine — Gap Analysis Report (Chunk 3 of 5)
 
+> **Legal Status:** This RMF analysis represents an architectural reference (AssuranceStatus: ILLUSTRATIVE_REFERENCE). See [../ASSURANCE_STATUS_GUIDE.md](../ASSURANCE_STATUS_GUIDE.md) for the canonical 4-stage lifecycle and legal boundaries. CAGE demonstrates control implementation patterns for adopters to customize; no FedRAMP ATO is claimed or implied.
+
 **Date:** 2026-06-01
 **System:** Cybernetic Governance Engine (CAGE) v2.0.0
 **Baseline:** NIST SP 800-53 Rev 5 **HIGH** baseline (derived from FIPS 199: C=Moderate / I=High / A=Moderate → overall High)

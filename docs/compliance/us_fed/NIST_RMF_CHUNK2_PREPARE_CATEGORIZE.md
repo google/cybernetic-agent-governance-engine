@@ -2,6 +2,8 @@
 
 ## Cybernetic Governance Engine (CAGE) — Chunk 2 of 5
 
+> **Legal Status:** This RMF analysis represents an architectural reference (AssuranceStatus: ILLUSTRATIVE_REFERENCE). See [../ASSURANCE_STATUS_GUIDE.md](../ASSURANCE_STATUS_GUIDE.md) for the canonical 4-stage lifecycle and legal boundaries. CAGE demonstrates control implementation patterns for adopters to customize; no FedRAMP ATO is claimed or implied.
+
 > **Scope:** NIST RMF Steps 1 (Prepare) and 2 (Categorize)
 > **Produced:** 2026-06-01
 > **System Version:** CAGE v2.0.0
