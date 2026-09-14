@@ -1,24 +1,10 @@
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 component-definition:
   uuid: a1b2c3d4-e5f6-7890-abcd-ef1234567890
   metadata:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-08-31T23:56:33Z'
+    last-modified: '2026-09-14T01:09:18Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -537,9 +523,9 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-08-31T23:56:33Z'
+      value: '2026-09-14T01:09:18Z'
     - name: uca-count
-      value: '9'
+      value: '12'
     control-implementations:
     - uuid: c3000099-stpa-4000-8000-compiler00001
       source: https://www.iso.org/standard/81230.html
@@ -549,30 +535,85 @@ component-definition:
         control-id: A.8.4
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa_control_structure.yaml.
-          UCAs: UCA-1, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9.'
+          UCAs: UCA-1, UCA-11, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9, UCA-12.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0001001
-        control-id: A.6.2
+        control-id: A.9.4
         description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa_control_structure.yaml.
-          UCAs: UCA-2, UCA-5, UCA-6.'
+          for A.9.4 (Monitoring and measurement — Live telemetry validation) from
+          config/stpa_control_structure.yaml. UCAs: UCA-10.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0002002
+        control-id: A.6.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa_control_structure.yaml.
+          UCAs: UCA-11, UCA-2, UCA-5, UCA-6, UCA-12.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0003003
         control-id: A.9.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.9.2 (Data transfer to suppliers and third parties / PII protection)
           from config/stpa_control_structure.yaml. UCAs: UCA-3.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
-      - uuid: d4000099-stpa-4000-8000-0003003
+      - uuid: d4000099-stpa-4000-8000-0004004
         control-id: A.5.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.5.2 (Social impact — AI system impact on society and environment)
           from config/stpa_control_structure.yaml. UCAs: UCA-7.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
+  - uuid: ftra0001-4e47-bbc8-semantic-validator01
+    title: FTRA Semantic Classifier
+    type: software
+    description: Formal Transition Risk Automaton (FTRA) semantic validator enforcing
+      schema totality, numerical boundary constraints, and parameter smuggling protection
+      on tool invocation payloads. Implements allow_extra_fields=False to reject undeclared
+      mutation arguments (AC-4) and validates parameter types, numerical ranges, and
+      injection vectors (SI-10).
+    purpose: Deterministic parameter boundary and semantic validation for tool execution
+    responsible-roles:
+    - role-id: provider
+    props:
+    - name: source-file
+      value: src/gateway/governance/ftra/schemas.py
+    - name: last-compiled
+      value: '2026-09-14T01:09:18Z'
+    control-implementations:
+    - uuid: ftra0001-ctrl-impl-8000-validator01
+      source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home
+      description: NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA
+        Semantic Classifier
+      implemented-requirements:
+      - uuid: si100001-ftra-8000-validator00001
+        control-id: si-10
+        description: FTRA semantic validator enforces schema-aware validation of tool
+          parameters against ActionSchema definitions in src/gateway/governance/ftra/schemas.py,
+          preventing malformed types, numerical limit breaches, and payload injection.
+        props:
+        - name: implementation-status
+          value: implemented
+        - name: control-origination
+          value: system-specific
+        links:
+        - href: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10
+          rel: reference
+      - uuid: ac040001-ftra-8000-validator00001
+        control-id: ac-4
+        description: FTRA semantic classifier enforces allow_extra_fields=False on
+          mutating tool schemas, rejecting parameter smuggling and undeclared argument
+          injection.
+        props:
+        - name: implementation-status
+          value: implemented
+        - name: control-origination
+          value: system-specific
+        links:
+        - href: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4
+          rel: reference
   back-matter:
     resources:
     - uuid: f2a3b4c5-d6e7-8901-fabc-012345678901

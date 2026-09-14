@@ -508,4 +508,4 @@ jobs:
 
       - name: Run Bandit SAST (medium+ severity, fail on error)
         run: |
-          uv run --with bandit bandit -r src/ scripts/ -ll -ii
+          uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii

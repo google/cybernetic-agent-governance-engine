@@ -113,6 +113,8 @@ class OTLPTraceSource(TraceSource):
             import urllib.request
 
             url = f"{self.endpoint}/api/traces?service={service_name}&lookback={lookback_minutes}m"
+            if not url.startswith(("http://", "https://")):
+                raise ValueError(f"Invalid URL scheme: {url}")
             with urllib.request.urlopen(url, timeout=10) as resp:
                 payload = _json.loads(resp.read().decode())
             # Jaeger returns {"data": [...traces...]}

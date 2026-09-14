@@ -119,7 +119,7 @@ security:
 	@uv lock --check
 	@echo ""
 	@echo "==> Running Bandit SAST scanner..."
-	@uv run --with bandit bandit -r src/ scripts/ -ll -ii
+	@uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii
 	@echo ""
 	@echo "==> Running pip-audit for CVE scanning..."
 	@uv run pip-audit

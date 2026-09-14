@@ -1,19 +1,5 @@
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 stpa-compiler-ssp-patch:
-  generated: '2026-08-31T23:56:33Z'
+  generated: '2026-09-14T01:09:18Z'
   source: config/stpa_control_structure.yaml
   system: CAGE Financial Advisor
   version: 1.1.0
@@ -29,44 +15,54 @@ stpa-compiler-ssp-patch:
       \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
       \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
       \    (OPA Rego — 5 UCAs)\n            - config/rails/generated_stpa_rails.co\
-      \     (NeMo Colang — 3 UCAs)\n            - src/gateway/governance/generated_stpa_validator.py\
-      \ (Python — 6 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
+      \     (NeMo Colang — 5 UCAs)\n            - src/gateway/governance/generated_stpa_validator.py\
+      \ (Python — 7 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
       \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
-      \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded: 9\n\
+      \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded: 12\n\
       \          Hazards modelled: 7\n          Safety constraints: 3\n          Last\
-      \ compiled: 2026-08-31T23:56:33Z\n\n          UCA-to-Control mapping (NIST SP\
+      \ compiled: 2026-09-14T01:09:18Z\n\n          UCA-to-Control mapping (NIST SP\
       \ 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action): Agent\
       \ executes write operation without a signed approval token.\n  → NIST: ac-3\
       \ (Access Enforcement), sc-4 (Information in Shared System Resources / Fiscal\
-      \ Limits)\nUCA-2 (wrong_timing): Agent executes trade with stale market data\
-      \ (latency > threshold).\n  → NIST: cm-6 (Configuration Settings), sa-11 (Developer\
-      \ Testing and Evaluation)\nUCA-3 (unsafe_action): Agent outputs PII to user\
-      \ interface.\n  → NIST: ac-3 (Access Enforcement), sc-28 (Protection of Information\
-      \ at Rest)\nUCA-4 (stopped_too_soon): Agent debits account but fails to credit\
-      \ asset (atomic failure).\n  → NIST: si-7 (Software, Firmware, and Information\
-      \ Integrity), au-10 (Non-Repudiation)\nUCA-5 (unsafe_action): Agent executes\
-      \ buy order when daily drawdown exceeds limit.\n  → NIST: ac-3 (Access Enforcement),\
-      \ sc-4 (Information in Shared System Resources / Fiscal Limits)\nUCA-6 (wrong_timing):\
-      \ Agent submits market order exceeding allowable fraction of daily volume.\n\
-      \  → NIST: sc-4 (Information in Shared System Resources / Fiscal Limits), si-3\
-      \ (Malicious Code Protection)\nUCA-7 (unsafe_action): Adversarial prompt injection\
-      \ score exceeds detection threshold.\n  → NIST: sc-4 (Information in Shared\
-      \ System Resources / Fiscal Limits), si-3 (Malicious Code Protection)\nUCA-8\
-      \ (wrong_timing): Agent executes trade before risk assessment is complete.\n\
-      \  → NIST: ac-3 (Access Enforcement), sa-11 (Developer Testing and Evaluation)\n\
-      UCA-9 (wrong_timing): Agent executes trade with compliance check bypassed.\n\
-      \  → NIST: ac-3 (Access Enforcement), cm-6 (Configuration Settings)"
+      \ Limits)\nUCA-10 (wrong_timing): Agent reads account balance with stale connection\
+      \ data.\n  → NIST: cm-6 (Configuration Settings), si-4 (System Monitoring)\n\
+      UCA-11 (unsafe_action): Agent initiates wire transfer that is reversible only\
+      \ within settlement window.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information\
+      \ in Shared System Resources / Fiscal Limits)\nUCA-2 (wrong_timing): Agent executes\
+      \ trade with stale market data (latency > threshold).\n  → NIST: cm-6 (Configuration\
+      \ Settings), sa-11 (Developer Testing and Evaluation)\nUCA-3 (unsafe_action):\
+      \ Agent outputs PII to user interface.\n  → NIST: ac-3 (Access Enforcement),\
+      \ sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon): Agent\
+      \ debits account but fails to credit asset (atomic failure).\n  → NIST: si-7\
+      \ (Software, Firmware, and Information Integrity), au-10 (Non-Repudiation)\n\
+      UCA-5 (unsafe_action): Agent executes buy order when daily drawdown exceeds\
+      \ limit.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information in Shared System\
+      \ Resources / Fiscal Limits)\nUCA-6 (wrong_timing): Agent submits market order\
+      \ exceeding allowable fraction of daily volume.\n  → NIST: sc-4 (Information\
+      \ in Shared System Resources / Fiscal Limits), si-3 (Malicious Code Protection)\n\
+      UCA-7 (unsafe_action): Adversarial prompt injection score exceeds detection\
+      \ threshold.\n  → NIST: sc-4 (Information in Shared System Resources / Fiscal\
+      \ Limits), si-3 (Malicious Code Protection)\nUCA-8 (wrong_timing): Agent executes\
+      \ trade before risk assessment is complete.\n  → NIST: ac-3 (Access Enforcement),\
+      \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing): Agent executes\
+      \ trade with compliance check bypassed.\n  → NIST: ac-3 (Access Enforcement),\
+      \ cm-6 (Configuration Settings)\nUCA-12 (unsafe_action): Agent executes bounded\
+      \ trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded\
+      \ is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling\
+      \ HITL review without confidence hard-gate per VEC-004. When B10 fails, classification\
+      \ override to IRREVERSIBLE_TERMINAL prevents execution.\n  → NIST: ac-3 (Access\
+      \ Enforcement), sa-11 (Developer Testing and Evaluation)"
     props:
     - name: implementation-status
       value: implemented
     - name: stpa-compiler-version
       value: 1.1.0
     - name: uca-count
-      value: '9'
+      value: '12'
     - name: hazard-count
       value: '7'
     - name: last-compiled
-      value: '2026-08-31T23:56:33Z'
+      value: '2026-09-14T01:09:18Z'
     - name: target-framework
       value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
     - name: artifact-opa
@@ -85,7 +81,7 @@ stpa-compiler-ssp-patch:
       description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
         (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-1, UCA-3, UCA-5, UCA-8, UCA-9.'
+        validator). UCAs covered: UCA-1, UCA-11, UCA-3, UCA-5, UCA-8, UCA-9, UCA-12.'
       implementation-status:
         state: implemented
       links:
@@ -100,7 +96,7 @@ stpa-compiler-ssp-patch:
       description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
         / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
         (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-        (Python validator). UCAs covered: UCA-1, UCA-5, UCA-6, UCA-7.'
+        (Python validator). UCAs covered: UCA-1, UCA-11, UCA-5, UCA-6, UCA-7.'
       implementation-status:
         state: implemented
       links:
@@ -115,7 +111,7 @@ stpa-compiler-ssp-patch:
       description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
         (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-2, UCA-9.'
+        validator). UCAs covered: UCA-10, UCA-2, UCA-9.'
       implementation-status:
         state: implemented
       links:
@@ -127,10 +123,10 @@ stpa-compiler-ssp-patch:
         text: Generated OPA Rego policy
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00003
-      description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
-        via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
-        config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-        (Python validator). UCAs covered: UCA-2, UCA-8.'
+      description: 'STPA compiler enforces SI-4 (System Monitoring) via generated
+        artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+        validator). UCAs covered: UCA-10.'
       implementation-status:
         state: implemented
       links:
@@ -142,6 +138,21 @@ stpa-compiler-ssp-patch:
         text: Generated OPA Rego policy
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00004
+      description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
+        via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
+        config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+        (Python validator). UCAs covered: UCA-2, UCA-8, UCA-12.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00005
       description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
         via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
         config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
@@ -156,7 +167,7 @@ stpa-compiler-ssp-patch:
         rel: reference
         text: Generated OPA Rego policy
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
-      uuid: h8000099-stpa-4000-8000-compiler00005
+      uuid: h8000099-stpa-4000-8000-compiler00006
       description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
         Integrity) via generated artifacts: config/opa/generated_stpa_policy.rego
         (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
@@ -171,7 +182,7 @@ stpa-compiler-ssp-patch:
         rel: reference
         text: Generated OPA Rego policy
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
-      uuid: h8000099-stpa-4000-8000-compiler00006
+      uuid: h8000099-stpa-4000-8000-compiler00007
       description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated artifacts:
         config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
         (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
@@ -186,7 +197,7 @@ stpa-compiler-ssp-patch:
         rel: reference
         text: Generated OPA Rego policy
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
-      uuid: h8000099-stpa-4000-8000-compiler00007
+      uuid: h8000099-stpa-4000-8000-compiler00008
       description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
         (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
@@ -223,9 +234,9 @@ stpa-compiler-ssp-patch:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-08-31T23:56:33Z'
+      value: '2026-09-14T01:09:18Z'
     - name: uca-count
-      value: '9'
+      value: '12'
     control-implementations:
     - uuid: c3000099-stpa-4000-8000-compiler00001
       source: https://www.iso.org/standard/81230.html
@@ -235,24 +246,31 @@ stpa-compiler-ssp-patch:
         control-id: A.8.4
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa_control_structure.yaml.
-          UCAs: UCA-1, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9.'
+          UCAs: UCA-1, UCA-11, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9, UCA-12.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0001001
-        control-id: A.6.2
+        control-id: A.9.4
         description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa_control_structure.yaml.
-          UCAs: UCA-2, UCA-5, UCA-6.'
+          for A.9.4 (Monitoring and measurement — Live telemetry validation) from
+          config/stpa_control_structure.yaml. UCAs: UCA-10.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0002002
+        control-id: A.6.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa_control_structure.yaml.
+          UCAs: UCA-11, UCA-2, UCA-5, UCA-6, UCA-12.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0003003
         control-id: A.9.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.9.2 (Data transfer to suppliers and third parties / PII protection)
           from config/stpa_control_structure.yaml. UCAs: UCA-3.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
-      - uuid: d4000099-stpa-4000-8000-0003003
+      - uuid: d4000099-stpa-4000-8000-0004004
         control-id: A.5.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.5.2 (Social impact — AI system impact on society and environment)
