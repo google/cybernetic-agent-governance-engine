@@ -161,6 +161,19 @@ component-definition:
                 (ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL) are enforced in
                 provenance_chain.py (VALID_DECISIONS). The compliance-bridge aggregates
                 spans into OSCAL Assessment Results via audit_workflow.py.
+
+                3. ATTESTATION FETCH AUDIT (Phase 5b C3, POAM-2026-072, 2026-09-09):
+                   Attestation fetch operations generate structured audit records capturing
+                   provider_name, fetch attempt timestamp, success/failure outcome, and error
+                   details. The ExternalAttestation dataclass (src/gateway/governance/attestation.py)
+                   includes a dedicated provider_name field for first-class provider attribution,
+                   eliminating ambiguity in multi-provider environments. The AttestationAggregator._do_fetch()
+                   method (src/gateway/governance/attestation_aggregator.py) wraps external provider
+                   calls in try-except blocks that pre-capture provider context before execution,
+                   ensuring defect diagnosis remains possible even when the fetch operation fails.
+                   ERROR-status attestations embed structured failure metadata directly into the
+                   ExternalAttestation record, preserving fetch failures as first-class evidence
+                   for non-repudiation analysis (AU-10 correlation).
               props:
                 - name: implementation-status
                   value: implemented
@@ -174,11 +187,65 @@ component-definition:
                   value: "RFC 8785 JCS for deterministic cross-platform evidence integrity"
                 - name: canonical-decision-vocabulary
                   value: "ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL"
+                - name: attestation-fetch-audit-implementation-date
+                  value: "2026-09-09"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-12"
                   rel: reference
                 - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
                   rel: lula
+                - href: "../../src/gateway/governance/attestation.py"
+                  rel: implementation
+                  text: "ExternalAttestation dataclass with provider_name field"
+                - href: "../../src/gateway/governance/attestation_aggregator.py"
+                  rel: implementation
+                  text: "AttestationAggregator._do_fetch() try-block pre-capture"
+
+            - uuid: "c3-au10-attestation-2026-0909"
+              control-id: au-10
+              description: |
+                Non-repudiation of attestation fetch operations is implemented via dedicated
+                provider attribution and error-preserving audit trails. The ExternalAttestation
+                dataclass (src/gateway/governance/attestation.py) includes a first-class
+                provider_name field that records the originating attestation provider for
+                every fetch operation, ensuring unambiguous attribution in multi-provider
+                environments. The AttestationAggregator._do_fetch() method wraps all external
+                provider calls in try-except blocks that capture provider context BEFORE
+                the fetch operation executes, guaranteeing that provider identity and
+                diagnostic context survive even when the fetch operation raises an exception.
+
+                ERROR-status attestations are constructed as complete ExternalAttestation
+                records embedding structured failure metadata (exception type, message,
+                timestamp) rather than being discarded or logged ephemerally. This design
+                ensures that fetch failures enter the tamper-evident evidence chain with
+                the same completeness as successful fetch operations, satisfying non-repudiation
+                requirements for negative outcomes (AU-10). All attestation records participate
+                in the hash-linked evidence chain described in AU-12, providing time-correlated
+                audit trail binding between governance decisions and their supporting external
+                attestations.
+
+                This remediation (Phase 5b C3, POAM-2026-072, closed 2026-09-09) addresses
+                defect patterns where provider identity was inferred from ambient context
+                or where fetch failures produced ephemeral logs rather than durable evidence
+                records suitable for compliance reporting and incident investigation.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-072"
+                - name: phase-5b-c3-implementation-date
+                  value: "2026-09-09"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-10"
+                  rel: reference
+                - href: "../../src/gateway/governance/attestation.py"
+                  rel: implementation
+                  text: "ExternalAttestation.provider_name first-class field"
+                - href: "../../src/gateway/governance/attestation_aggregator.py"
+                  rel: implementation
+                  text: "AttestationAggregator._do_fetch() pre-capture error handling"
 
             - uuid: "61c43f8a-6693-4049-ae09-edd8b22f500a"
               control-id: sc-12
@@ -203,30 +270,33 @@ component-definition:
             - uuid: "2f94e8b5-7d3a-4c61-b9f4-8e5a9d6c3f2a"
               control-id: sc-13
               description: |
-                Cryptographic protection is implemented via KMS-signed ConsequenceToken
-                JWS (src/gateway/governance/consequence_token.py) introduced in FlowSignal
-                Phase 2. ConsequenceToken.mint() uses KMSGovernanceSigner.sign_raw()
-                to produce a compact JWS with 8 claims (sub, tid, rec, act, ver, iat,
-                exp, jti). The signing algorithm is determined by the KMS key type
-                (ES256/ES384 for ECDSA, EdDSA for Ed25519, PS256/RS256 for RSA).
-                ConsequenceToken.verify() validates the JWS signature via
-                KMSGovernanceSigner.verify_raw(), rejects alg:none, and enforces
-                algorithm consistency (protected header alg must match signer.jose_alg).
-                All cryptographic operations fail closed — bad signature, expired token,
-                algorithm confusion, or malformed claims raise ConsequenceTokenError.
-                The token carries a SHA-256 digest of the RFC 8785 JCS-canonicalized
-                action payload in the 'act' claim, providing cryptographic binding
-                between governance evaluation and execution. The backward-compatibility
-                remediation (BC-01–BC-08, 2026-08-27) migrated all hash-chain modules
-                (provenance_chain.py, evidence_stream.py, context_accumulator.py) from
-                json.dumps(sort_keys=True) to RFC 8785 JCS (jcs_canonicalize_plan) for
-                deterministic cross-platform evidence integrity verification. This migration
-                was a breaking change — records written before 2026-08-27 are not verifiable
-                by the current code. No cryptographic path is excluded from JCS: the
-                WORM-bucket KMS signing payload built by _sign_record() in uca_logger.py
-                was migrated to RFC 8785 JCS with no compatibility shim and no carve-out,
-                so previously-signed WORM UCA records will not verify under the current
-                algorithm. That break is accepted because the data-at-rest
+                Cryptographic protection is implemented via the RawMessageSigner protocol
+                abstraction (src/gateway/governance/raw_signer_protocol.py) for KMS-signed
+                ConsequenceToken JWS (src/gateway/governance/consequence_token.py) introduced
+                in FlowSignal Phase 2. The RawMessageSigner protocol decouples cryptographic
+                operations from key lifecycle management via dependency injection in
+                actuator_01 (src/integrations/actuator_01/adapter.py:117-142), replacing
+                direct KMSGovernanceSigner coupling. ConsequenceToken.mint() uses the
+                injected signer's sign_raw() to produce a compact JWS with 8 claims
+                (sub, tid, rec, act, ver, iat, exp, jti). The signing algorithm is
+                determined by the KMS key type (ES256/ES384 for ECDSA, EdDSA for Ed25519,
+                PS256/RS256 for RSA). ConsequenceToken.verify() validates the JWS signature
+                via verify_raw(), rejects alg:none, and enforces algorithm consistency
+                (protected header alg must match signer.jose_alg). All cryptographic
+                operations fail closed — bad signature, expired token, algorithm confusion,
+                or malformed claims raise ConsequenceTokenError. The token carries a SHA-256
+                digest of the RFC 8785 JCS-canonicalized action payload in the 'act' claim,
+                providing cryptographic binding between governance evaluation and execution.
+                The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) migrated
+                all hash-chain modules (provenance_chain.py, evidence_stream.py,
+                context_accumulator.py) from json.dumps(sort_keys=True) to RFC 8785 JCS
+                (jcs_canonicalize_plan) for deterministic cross-platform evidence integrity
+                verification. This migration was a breaking change — records written before
+                2026-08-27 are not verifiable by the current code. No cryptographic path is
+                excluded from JCS: the WORM-bucket KMS signing payload built by _sign_record()
+                in uca_logger.py was migrated to RFC 8785 JCS with no compatibility shim and
+                no carve-out, so previously-signed WORM UCA records will not verify under the
+                current algorithm. That break is accepted because the data-at-rest
                 read-compatibility exception is dormant, not active (see the Dormant Rules
                 section of AGENTS.md).
               props:
@@ -236,9 +306,56 @@ component-definition:
                   value: system-specific
                 - name: phase-2-implementation
                   value: "true"
+                - name: raw-signer-protocol
+                  value: "src/gateway/governance/raw_signer_protocol.py"
+                - name: actuator-01-di
+                  value: "src/integrations/actuator_01/adapter.py:117-142"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-13"
                   rel: reference
+
+            - uuid: "c5c6-ia5-kms-lifecycle-00001111"
+              control-id: ia-5
+              description: |
+                Authenticator management is implemented via multi-vendor KMS support
+                ('gcp', 'aws', 'azure') through BaseKMSProvider abstraction
+                (src/gateway/governance/kms_provider.py). Key lifecycle management follows
+                documented rotation schedules in docs/operations/KEY_ROTATION.md: 90-day
+                rotation for Cloud KMS HSM keys, 30-day rotation for HMAC routing seal
+                secrets. RawMessageSigner dependency injection (src/gateway/governance/raw_signer_protocol.py)
+                decouples cryptographic execution from key lifecycle, enabling zero-downtime
+                key rotation without code changes. Multi-vendor support allows cryptographic
+                operations to remain vendor-neutral at the application layer while enforcing
+                jurisdiction-specific key residency requirements (US Federal: Cloud KMS in
+                us-central1, EU ECB: AWS KMS in eu-west-1, APAC MAS: Azure Key Vault in
+                southeastasia). Emergency key revocation procedures documented in
+                docs/operations/KEY_ROTATION.md include immediate rotation triggers
+                (detected key compromise, cryptographic algorithm deprecation, regulatory
+                mandate) and fail-closed behavior (expired or revoked keys rejected with
+                structured audit trail).
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: kms-rotation-schedule-hsm
+                  value: "90-day"
+                - name: kms-rotation-schedule-hmac
+                  value: "30-day"
+                - name: multi-vendor-kms
+                  value: "gcp, aws, azure"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-5"
+                  rel: reference
+                - href: "../../docs/operations/KEY_ROTATION.md"
+                  rel: documentation
+                  text: "Key rotation schedules and emergency revocation procedures"
+                - href: "../../src/gateway/governance/raw_signer_protocol.py"
+                  rel: implementation
+                  text: "RawMessageSigner protocol abstraction"
+                - href: "../../src/gateway/governance/kms_provider.py"
+                  rel: implementation
+                  text: "BaseKMSProvider multi-vendor abstraction"
 
             - uuid: "3a85d9c6-8e4b-5d72-a0a5-9f6b0e7d4a3b"
               control-id: si-7
@@ -524,6 +641,13 @@ component-definition:
         responsible parties within SLA-defined timeframes.
       responsible-roles:
         - role-id: provider
+      props:
+        - name: cer-disclosure-capability
+          value: "true"
+        - name: cer-hash-algorithms
+          value: "SHA-256, SHA-512"
+        - name: cer-disclosure-postures
+          value: "PUBLIC, PRIVATE, EMBARGO"
       control-implementations:
         - uuid: "43e1c175-3c01-4176-9cf2-8de2549c876d"
           source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"

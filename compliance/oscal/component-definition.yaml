@@ -442,6 +442,89 @@ component-definition:
         links:
         - href: ../../compliance/lula/lula-validation-flowsignal.yaml
           rel: lula
+  - uuid: b6b7-2026-cer-disclosure-00001111aaaa
+    title: Compliance Evidence Repository (CER) Disclosure Infrastructure
+    type: software
+    description: 'CER Disclosure Infrastructure providing tamper-evident, content-addressed
+      evidence disclosure to external normative providers and auditors. Implements
+      a three-posture disclosure model: PUBLIC (unrestricted access, public internet
+      distribution), PRIVATE (authenticated access only, no public distribution),
+      and EMBARGO (time-locked disclosure with explicit release date). Evidence
+      records are indexed via SHA-256 and SHA-512 multihash identifiers, stored
+      in write-once evidence repositories (GCS/S3), and disclosed via signed manifest
+      files containing content-addressing metadata. Disclosure posture is determined
+      at evidence capture time and enforced cryptographically through access control
+      and distribution policies.
+
+      '
+    purpose: 'Provides verifiable evidence disclosure to normative providers (FlowSignal,
+      external auditors) while maintaining confidentiality boundaries appropriate
+      to each deployment region''s regulatory posture. Implements ISO 42001 §A.8.4
+      operational transparency requirements — specifically the mandate that AI system
+      operation controls are auditable by authorized external parties. Satisfies
+      NIST SP 800-53 AU-16 (Cross-Organizational Audit Information Sharing) for
+      US_FED deployments.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    props:
+    - name: software-version
+      value: '0.1.0'
+    - name: source-file-disclosure
+      value: src/gateway/governance/evidence/disclosure.py
+    - name: source-file-exporter
+      value: src/gateway/governance/oscal_ssp_exporter.py
+    - name: source-file-index
+      value: src/gateway/governance/evidence/index.py
+    - name: hash-algorithms
+      value: SHA-256, SHA-512
+    - name: content-addressing-scheme
+      value: multihash (sha256- / sha512- prefix)
+    control-implementations:
+    - uuid: b6b7-ctrl-impl-iso42001-00001111
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 Annex A.8.4 controls implemented by CER Disclosure
+        Infrastructure
+      implemented-requirements:
+      - uuid: b6b7-req-a84-cer-00001111
+        control-id: A.8.4
+        description: 'CER Disclosure Infrastructure implements ISO 42001 §A.8.4
+          operational transparency by providing tamper-evident evidence disclosure
+          to authorized normative providers and auditors. Three disclosure postures
+          satisfy regional regulatory requirements: PUBLIC posture (unrestricted
+          access, content-addressed manifest files distributed via public URLs) satisfies
+          open-governance mandates in US_FED deployments where OMB A-130 requires
+          transparency-by-default for federal AI systems. PRIVATE posture (authenticated
+          access only, no public distribution) satisfies EU_ECB data minimization
+          requirements under GDPR Article 5(1)(c) where evidence disclosure is limited
+          to authorized supervisory authorities. EMBARGO posture (time-locked disclosure
+          with explicit release date) satisfies APAC_MAS pre-approval requirements
+          where evidence must be retained internally until regulatory clearance is
+          granted. Evidence records are indexed via SHA-256 and SHA-512 multihash
+          identifiers (multihash format: sha256-<hex-digest> / sha512-<hex-digest>),
+          ensuring content-addressable verification across organizational boundaries.
+          Disclosure manifest files are cryptographically signed via KMS to prevent
+          tampering and provide non-repudiation. This implements ISO 42001 §A.8.4
+          AI System Operation Controls — specifically the requirement that operational
+          evidence is available to authorized parties in a verifiable, tamper-evident
+          format.
+
+          '
+        remarks: 'Disclosure posture is determined at evidence capture time via
+          CAGE_CER_DISCLOSURE_POSTURE environment variable (PUBLIC | PRIVATE | EMBARGO).
+          Posture enforcement is cryptographic — PUBLIC evidence is written to publicly-readable
+          GCS/S3 buckets with unrestricted IAM policies, PRIVATE evidence requires
+          authenticated access tokens, EMBARGO evidence carries time-lock metadata
+          enforced at manifest generation. Reference architecture: adopters should
+          adapt disclosure postures, hash algorithms, and content-addressing schemes
+          to their regulatory environments. Default posture is PRIVATE (fail-closed
+          on disclosure).
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-cer-disclosure.yaml
+          rel: lula
   - uuid: tls-infra-2026-0827-sc8-000000000001
     title: TLS Infrastructure
     type: software

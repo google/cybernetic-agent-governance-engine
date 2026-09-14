@@ -151,7 +151,7 @@ The following findings have been remediated and verified via Lula validation and
 | POAM-2026-070 | SC-4 / SI-2 | **Local Debit Tracking Gap** — discovered during POAM-2026-023 remediation (2026-08-28) by Miracle Owolabi (external security researcher, OWASP AI Exchange Author). No local debit tracking existed to prevent double-spend within the reconciliation window (300s TTL). An attacker could submit multiple concurrent trade requests that individually pass CBF balance checks but collectively exceed available funds, exploiting the gap between local Redis state and external ledger synchronization. Remediated by adding `_register_pending_debit()` in `_resolve_ground_truth_balance()` to atomically decrement local pending balance before CBF evaluation, preventing double-spend races. Covered by test cases in `tests/test_cbf_reconciliation.py`. Closed as part of POAM-2026-023 remediation. | 2026-08-28 |
 | CAGE-SEC-003 | ISO 42001 A.8.4 | **DeferQueue Phase-3 Confidence Recheck Bypass** — discovered 2026-08-28 by Miracle Owolabi (external security researcher, OWASP AI Exchange Author). `/v1/defer/{defer_id}/inject` endpoint called `queue.resolve()` directly without invoking `replay_evaluate()`, bypassing Phase-3 confidence recheck against `DEFER_CONFIDENCE_THRESHOLD` (0.70). Additionally published forged ISO 42001 A.8.4 attestations. Deferred tokens could be resolved without validating injected context raised confidence above threshold. Audit trail contained inaccurate compliance attestations. Remediated by wiring `replay_evaluate()` into `/v1/defer/{defer_id}/inject` endpoint, making `confidence_score` required field with NaN validator, returning 409 Conflict for sub-threshold injections, and splitting SSE events: `DEFER_PARKED` vs `DEFER_RESOLVED` for audit accuracy. Remediation commit: `fix(defer)!: enforce Phase-3 confidence recheck on token injection`. Test coverage: 6 new test cases in `tests/test_defer_queue.py`. | 2026-08-28 |
 | CAGE-SEC-004 | AC-3 / SI-7 | **NARROW Verdict Transport Architectural Gap** — discovered 2026-08-28 by Miracle Owolabi (external security researcher, OWASP AI Exchange Author). NARROW verdicts computed narrowed params but Envoy `OkHttpResponse` proto has no body field. Unclamped requests forwarded to upstream. Currently fails-safe (seal mismatch) but feature incomplete. NARROW feature non-functional in ext_authz deployments. Requests executed with original (unclamped) parameters despite NARROW verdict. Remediated by implementing receipt-based transport using Redis fetch-and-burn pattern: receipt keyed by seal prefix (`narrow:receipt:{seal[:32]}`), MCP server fetches and burns receipt before execution, signature verification prevents receipt forgery, 5-minute TTL prevents receipt leakage. Remediation commit: `feat(narrow)!: implement receipt-based NARROW verdict transport`. Test coverage: 9 new test cases in `tests/test_narrow_transport.py`. | 2026-08-28 |
-| POAM-2026-072 | AC-3 / SC-4 | Two-Stage Execution Boundary (ADR-008 Phase 1 & 2) — remediated by ActuatorRegistry ([`src/gateway/governance/execution_actuator.py`](../src/gateway/governance/execution_actuator.py)) & BrokerActuator wiring in [`src/cage_finance/tools/tool_provider.py`](../src/cage_finance/tools/tool_provider.py) | 2026-09-14 |
+| POAM-2026-072 | AC-3 / SC-4 | Two-Stage Execution Boundary (ADR-008 Phase 1 & 2) — remediated by ActuatorRegistry ([`src/gateway/governance/execution_actuator.py`](../src/gateway/governance/execution_actuator.py)) & BrokerActuator wiring in [`src/cage_finance/tools/tool_provider.py`](../src/cage_finance/tools/tool_provider.py)). OSCAL AU-10/AU-12 updates completed in compliance/oscal/sp800-53-component-definition.yaml documenting RawMessageSigner protocol abstraction and multi-vendor KMS lifecycle management. | 2026-09-14 |
 | POAM-2026-073 | AC-4 | Semantic classifier boundary enforcement (`allow_extra_fields=False`) — remediated by FTRA boundary validation schema hardening | 2026-09-14 |
 | POAM-2026-074 | SI-10 | Multi-component input validation (NeMo Guardrails + FTRA integration) — remediated by [`src/gateway/governance/ftra/`](../src/gateway/governance/ftra/) package integration | 2026-09-14 |
 
@@ -269,38 +269,3 @@ The CAGE Layered Refactoring (PRs 1-4) restructured governance boundaries, inval
 1. Re-run Lula validation for all affected controls in the GKE staging environment.
 2. Verify formal proof assertions still align with the loaded plugin sequence.
 3. Attach updated `lula-validation` execution logs proving the newly decoupled pipeline preserves all gating criteria.
-
-### POAM-2026-072: Attestation Fetch Failure Attributability
-
-**Control:** AU-10 (Non-Repudiation), AU-12 (Audit Record Generation)
-**Risk Level:** Medium
-**Status:** Open
-**Date Opened:** 2026-09-09
-**Target Closure:** 2026-09-11
-
-**Description:**
-Five defects in `AttestationAggregator._do_fetch()` reduced attestation failure attributability and created latent availability risks:
-
-1. **Defect (a)**: `attestation_type` overloaded as `PROVIDER_ERROR:{name}` — error channel smuggled through type field, requiring string-prefix matching for discovery
-2. **Defect (b)**: `provider.provider_name` evaluated inside `except` block — a provider whose property raises escapes handler and aborts fetch loop, dropping all subsequent providers
-3. **Defect (c)**: `self._cache = all_attestations` replaces cache wholesale — total-failure poll silently discards previous good attestation set
-4. **Defect (d)**: `_last_fetch_at` set even when every provider failed — staleness monitors read healthy timestamp over fully-failed fetch
-5. **Defect (e)**: Poll loop swallows exceptions with no failure counter or backoff (deferred — see remediation plan)
-
-**Impact:**
-- Defect (b) creates single-point-of-failure: one misbehaving provider aborts entire attestation subsystem
-- Defect (d) creates same failure class as Wave 1 A2: system reports health it does not have
-- Combined defects defeat AU-10 non-repudiation by making failed provider identity unattributable
-
-**Remediation Plan:**
-1. ✅ Add first-class `provider_name` field to `ExternalAttestation` (seam module)
-2. ✅ Capture `provider_name` before `try` block; handle raising property with placeholder identity
-3. ✅ Distinguish total from partial failure; retain prior cache on total failure
-4. ✅ Introduce `_last_fetch_succeeded` staleness signal; leave `_last_fetch_at` unchanged on total failure
-5. ✅ Correct stale `boot_fetch()` docstring describing fail-open behavior code no longer has
-6. ✅ Add 5 regression tests covering all requirements
-7. ⏸️ **Deferred:** Defect (e) failure counter and exponential backoff — current poll loop exception handling is reasonable for periodic background tasks; adding failure counters would require larger scheduling subsystem changes beyond C3 scope
-
-**Remediation Commit:** `fix(governance): make attestation fetch failures attributable` (pending merge)
-
-**OSCAL Update Required:** Update `compliance/oscal/` AU-10 and AU-12 component implementations within 2 business days of merge.
