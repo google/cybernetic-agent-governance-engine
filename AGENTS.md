@@ -155,6 +155,10 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
 
 **Never suggest disabling or skipping a CI check as a fix.**
 
+### Static Analysis & SAST Invocations
+- **Configuration Parity**: Any invocation of `bandit` across local scripts, Makefile, or `.github/workflows/*.yml` must explicitly load project configuration via `-c pyproject.toml` to prevent suppression drift.
+- **Strict Scheme Validation**: Internal diagnostic or auditing scripts making network requests via `urllib.request` must assert URL scheme validity (`http://` or `https://`) prior to `urlopen` (Bandit B310 compliance).
+
 ---
 
 ## Compliance Artifact Obligations
@@ -163,6 +167,11 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
 - **Kubernetes resources**: Update Lula validations in `compliance/lula/` when adding or removing resources referenced by Lula assertion files.
 - **POAM remediations**: Update [`docs/POAM.md`](docs/POAM.md) with: commit SHA, Lula result, closure date.
 - **STPA source modifications**: Regenerate STPA artifacts before committing (`uv run python scripts/check_stpa_freshness.py`).
+
+### OSCAL & POAM Synchronization Guardrails
+- **OSCAL Exporter CLI Contract**: Always invoke the exporter using default discovery mode (`uv run python -m src.gateway.governance.oscal_ssp_exporter export`). Do not pass `--ssp` unless explicitly targeting a non-canonical schema path.
+- **No Backdated POAM Closures**: POAM closure dates ([`docs/POAM.md`](docs/POAM.md)) must reflect the actual calendar date of artifact verification/generation, never backdated or estimated past dates.
+- **Pre-Closure Verification**: An OSCAL SSP export must successfully compile and pass test suites ([`tests/test_oscal_ssp_exporter.py`](tests/test_oscal_ssp_exporter.py)) before corresponding POAM items can be marked CLOSED.
 
 ---
 
@@ -199,6 +208,11 @@ All imports and test mocks must use these canonical locations:
 - **Resolution Status Is Not Verification Status**: Successful fetch proves receipt exists, not signature validity. Return `UNVERIFIED` until cryptographic verification succeeds.
 - **Refusals Are Primary Evidence**: DENY and PAUSE receipts must enter the tamper-evident chain with the same completeness as ALLOW approvals.
 - **Generic in Code, Specific in Prose**: Layer 1 kernel and Layer 3 package paths use anonymized namespaces (`provider_01`, `actuator_01`); vendor brand names belong in prose and READMEs only.
+
+### Governance Gate Invariants (ADR-008 Enforcement)
+- **Fail-Closed Execution Boundary**: All domain tool execution paths (Layer 2) must route through [`ConsequenceGateway`](src/gateway/governance/consequence_gateway.py) evaluation and [`ActuatorRegistry`](src/gateway/governance/actuator_registry.py) dispatch (Layer 1). Direct invocation bypassing the gateway is strictly forbidden.
+- **Private Queue Resolution**: Deferral resolution must remain strictly private (`_resolve()` in [`DeferQueue`](src/gateway/governance/defer_queue.py)). Public state transitions bypassing the gate are prohibited.
+- **Envelope Integrity**: All production requests traversing middleware must be wrapped via [`GovernanceEnvelopeBuilder`](src/gateway/governance/envelope.py).
 
 ---
 
