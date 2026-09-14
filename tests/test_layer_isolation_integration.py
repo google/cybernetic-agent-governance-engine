@@ -12,14 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PR B — Layer Isolation Tests (G3)
+"""Layer Isolation Integration Tests (Gate G3)
 
-Verifies that the plugin seam architecture established in PR B correctly
-enforces the three-layer split:
+End-to-end integration tests verifying that the three-layer clean architecture
+enforces import boundaries:
 - Layer 1 (src/gateway/) must NOT import from Layer 2 (src/cage_*)
+- Layer 1 must NOT import from Layer 3 (src/integrations/, src/compliance_bridge/)
 - Layer 1 must NOT import from Layer 4 (src/governed_financial_advisor/)
 
-These tests are marked with pytest marker 'layer_isolation' and 'local'.
+These integration tests complement the unit tests in test_import_boundaries.py
+by running the check_import_boundaries.py script as a subprocess and performing
+independent AST scans of plugin seam modules.
+
+Markers: pytest.mark.layer_isolation, pytest.mark.local
 """
 
 import ast
@@ -86,14 +91,12 @@ def test_gateway_files_have_no_cage_imports():
 
 @pytest.mark.local
 @pytest.mark.layer_isolation
-@pytest.mark.skip(
-    reason="Layer 1 → Layer 4 (GFA) violations are out of scope for PR B - fixed in PR D"
-)
+@pytest.mark.skip(reason="Layer 1 → Layer 4 remediation deferred to future work stream")
 def test_gateway_files_have_no_gfa_imports():
     """Directly verify that no src/gateway/ files import from src/governed_financial_advisor/.
 
-    NOTE: This test is skipped for PR B. Layer 1 → Layer 4 violations will be fixed in PR D
-    (Rail Seam and Second Domain Proof). PR B only addresses Layer 1 → Layer 2 (cage_*) violations.
+    NOTE: Layer 1 → Layer 4 violations are tracked separately and will be remediated
+    as part of the Rails Seam refactoring. Currently focuses on Layer 1 → Layer 2/3 enforcement.
     """
     gateway_root = Path(__file__).parent.parent / "src" / "gateway"
     assert gateway_root.exists(), f"Gateway directory not found: {gateway_root}"

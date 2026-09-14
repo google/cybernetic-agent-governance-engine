@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PR B — Regional Posture Tests (G8)
+"""Regional HITL Constants Tests
 
 Verifies that HITL regulatory constants are correctly loaded from regional
-baseline JSONs (T-B5) and that regional behavior parity is maintained.
+baseline JSONs and that regional behavior parity is maintained across
+US_FED, EU_ECB, and APAC_MAS configurations.
 
-These tests ensure that the move from hardcoded cage_finance/constants.py
-to config/thresholds/*_BASELINE.json preserves the region-specific HITL
-citations, SLA hours, and PII retention authorities.
+These tests ensure that config/thresholds/*_BASELINE.json files contain
+complete and well-formed _hitl sections with region-specific citations,
+SLA hours, and PII retention authorities.
+
+Markers: pytest.mark.local, pytest.mark.unit
 """
 
 import json

@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PR B — Plugin Seam Tests (Overlay Registry & Background Tasks)
+"""Plugin Seam Architecture Tests
 
-Verifies that the plugin seams established in PR B work correctly:
-1. Overlay registry (register_overlay_dir) allows plugins to contribute
-   compliance mappings without hardcoding paths in the kernel
-2. Background task registry allows plugins to contribute long-running
-   coroutines without direct imports in hybrid_server.py
+Verifies that the plugin seam contracts allow domain plugins to contribute
+components to the kernel without hardcoding dependencies:
+
+1. Overlay registry (register_overlay_dir): Plugins contribute compliance
+   mappings without hardcoding paths in the kernel
+2. Background task registry: Plugins contribute long-running coroutines
+   without direct imports in hybrid_server.py
+3. Singleton installation: Plugins install safety filters and consensus
+   providers via install_domain_components()
+
+Markers: pytest.mark.local, pytest.mark.unit
 """
 
 import asyncio
