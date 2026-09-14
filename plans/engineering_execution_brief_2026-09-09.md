@@ -330,7 +330,7 @@ that silently appears correct.
 at [`provider.py:115`](../src/integrations/provider_02/provider.py:115).
 
 **Inverts** the test at
-[`provider_02/tests/test_provider.py:259`](../src/integrations/provider_02/tests/test_provider.py:259),
+[`provider_02/tests/test_provider.py:259`](../tests/integrations/provider_02/test_provider.py:259),
 which currently pins the incorrect wiring.
 
 **Commit:** `fix(governance)!: make provider_02 satisfy AttestationProvider`

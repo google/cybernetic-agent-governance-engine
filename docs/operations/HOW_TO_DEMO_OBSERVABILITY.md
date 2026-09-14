@@ -65,14 +65,14 @@ kubectl port-forward svc/langfuse-web 3000:3000 -n governance-stack
 
 ## Running the Demo Script
 
-[`src/governed_financial_advisor/demo/demo_observability.py`](../../src/governed_financial_advisor/demo/demo_observability.py)
+[`scripts/demo_observability.py`](../../scripts/demo_observability.py)
 orchestrates three scenarios designed to exercise the governance pipeline and
 populate the Langfuse dashboard.
 
 Run it from the project root:
 
 ```bash
-python3 src/governed_financial_advisor/demo/demo_observability.py
+python3 scripts/demo_observability.py
 ```
 
 ### Demo Scenarios

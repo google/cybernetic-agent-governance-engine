@@ -210,9 +210,9 @@ All imports and test mocks must use these canonical locations:
 - **Generic in Code, Specific in Prose**: Layer 1 kernel and Layer 3 package paths use anonymized namespaces (`provider_01`, `actuator_01`); vendor brand names belong in prose and READMEs only.
 
 ### Governance Gate Invariants (ADR-008 Enforcement)
-- **Fail-Closed Execution Boundary**: All domain tool execution paths (Layer 2) must route through [`ConsequenceGateway`](src/gateway/governance/consequence_gateway.py) evaluation and [`ActuatorRegistry`](src/gateway/governance/actuator_registry.py) dispatch (Layer 1). Direct invocation bypassing the gateway is strictly forbidden.
+- **Fail-Closed Execution Boundary**: All domain tool execution paths (Layer 2) must route through [`ConsequenceGateway`](src/gateway/governance/consequence_gateway.py) evaluation and [`ActuatorRegistry`](src/gateway/governance/execution_actuator.py) dispatch (Layer 1). Direct invocation bypassing the gateway is strictly forbidden.
 - **Private Queue Resolution**: Deferral resolution must remain strictly private (`_resolve()` in [`DeferQueue`](src/gateway/governance/defer_queue.py)). Public state transitions bypassing the gate are prohibited.
-- **Envelope Integrity**: All production requests traversing middleware must be wrapped via [`GovernanceEnvelopeBuilder`](src/gateway/governance/envelope.py).
+- **Envelope Integrity**: All production requests traversing middleware must be wrapped via [`GovernanceEnvelopeBuilder`](src/gateway/governance/governance_envelope.py).
 
 ---
 

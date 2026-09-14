@@ -744,7 +744,7 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 - **`fix(infra)`: P0 blocker remediation (D-01, D-02, D-04, D-06, D-07)** — PodSecurity `restricted`-compliant `securityContext` applied to all 6 app deployment manifests (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`). Security-scan CronJob deployed (closes D-06 / POAM-010 RA-5 dependency). PSA labels applied via Terraform (`enable_pod_security_standards=true`). `GOVERNANCE_SALT` moved to `secretKeyRef` in `live_deployment.yaml`.
 
-- **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `src/integrations/provider_02/tests/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v2.0.0`).
+- **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `tests/integrations/provider_02/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v2.0.0`).
 
 - **`fix(infra)`: Lula-audit CronJob self-perpetuating failure resolved** — Stale Job deletion logic corrected; `lula-sc4-watch` patched to `lula:0.9.5` (resolves `ImagePullBackOff`). `Dockerfile.lula` rewritten as multi-stage `go-build` from source (v0.9.5). `scripts/build_images.sh` fixed: `SHORT_SHA` substitution added for `vllm-streamer` build.
 

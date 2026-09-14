@@ -414,7 +414,7 @@ flowchart TD
 | **4** | Domain Tier | 2 | 4 | Fiscal Limit Pre-Reservation | `FiscalTierPlugin` wrapping `safety/resource_guard.py` | `FISCAL_DAILY_CAP_USD` ($500,000); 300s TTL |
 | **5** | Domain Tier | 1 | 5 | Multi-Agent Consensus | `ConsensusTierPlugin` wrapping `consensus/engine.py` | Threshold $10,000; fail-closed `ESCALATE` on error |
 | **6** | Domain Tier | 1 | 6 | Causal Gatekeeper | `CausalTierPlugin` wrapping `causal/gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; Placebo p < 0.05 or \|eff\| > 0.2 |
-| **7** | Kernel Gate | 1 | 7 | Adaptive FRIA Gate | `enforce_fria_boundary()` in `seams/normative_provider.py` | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
+| **7** | Kernel Gate | 1 | 7 | Adaptive FRIA Gate | `enforce_fria_boundary()` in `normative_provider.py` | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
 
 > **Two-Phase Decoupling & Zero Budget Leakage:** All Phase 1 validation checks execute before any state mutation occurs. If any validation tier emits a violation, the pipeline terminates in Phase 1 without modifying Redis balances or reserving daily limits, structurally eliminating downstream budget leakage. If Phase 2 fails downstream, committed Phase 2 tiers are rolled back in LIFO order.
 

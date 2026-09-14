@@ -433,7 +433,7 @@ debug pass disproved it: the same files gave **104 passed, 1 skipped** on
 pristine `main`. Every failure came from this chain.
 
 Root cause: **subtasks ran only their own test files.** C4 updated
-`src/integrations/provider_02/tests/` but not `tests/test_provider_02_adapter.py`.
+`tests/integrations/provider_02/` but not `tests/test_provider_02_adapter.py`.
 Requiring the full `make test-fast` gate before declaring green would have caught
 all 25 at the point of introduction.
 

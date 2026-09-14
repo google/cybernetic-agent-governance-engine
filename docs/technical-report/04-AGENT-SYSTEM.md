@@ -482,7 +482,7 @@ SymbolicGovernor._run_checks()
 Routing seal v3 issued: Asymmetric JWT signed by Cloud KMS HSM (dev/test fallback HMAC)
         │
         ▼
-ExecutionActuator (src/gateway/governance/seams/execution_actuator.py) verifies seal & evidence binding before firing
+ExecutionActuator (src/gateway/governance/seams/actuation.py) verifies seal & evidence binding before firing
 ```
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.

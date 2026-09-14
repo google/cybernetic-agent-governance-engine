@@ -361,7 +361,7 @@ documenting exactly that usage.
    `provider_02` is requested from the normative factory.
 
 **Note:** this deletes the behavior asserted by
-[`provider_02/tests/test_provider.py:259`](../src/integrations/provider_02/tests/test_provider.py:259),
+[`provider_02/tests/test_provider.py:259`](../tests/integrations/provider_02/test_provider.py:259),
 which currently pins the incorrect wiring. Invert that test.
 
 **Preserve** the `CERVerification.__post_init__` fail-closed invariant at
@@ -630,7 +630,7 @@ uv run pytest tests/ --run-integration -v --tb=short
 | Finding-code rename splits emitter/consumer, silently failing open | 1 | Change both sides in one commit; add a test asserting the escalation path still parks with quorum 3 |
 | Lula gate fails after keyspace rename | 3 | Update the embedded Rego in the same PR; run the staging lifecycle before tagging |
 | Removing `provider_02` from the normative factory breaks an unknown caller | 4 | Raise `ValueError` naming the correct aggregator rather than returning `None` |
-| Topology injection breaks bundle classification | 6 | Fail closed on unknown nodes; assert against the existing fixtures in [`test_adapter.py:382`](../src/integrations/provider_02/tests/test_adapter.py:382) |
+| Topology injection breaks bundle classification | 6 | Fail closed on unknown nodes; assert against the existing fixtures in [`test_adapter.py:382`](../tests/integrations/provider_02/test_adapter.py:382) |
 | Token-minting relocation weakens the POAM-2026-064 fail-closed guarantee | 8 | Treat [`test_provider_01.py:704`](../tests/test_provider_01.py:704) as a frozen regression gate |
 | G8 over-matches and blocks legitimate prose | 9 | AST-based, docstring-skipping, comment-blind by construction |
 

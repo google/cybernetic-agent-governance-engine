@@ -895,6 +895,7 @@ The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`,
 | [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name (via a compiled `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`. Fail-closed: unregistered actions default to `IRREVERSIBLE_TERMINAL`. |
 | [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute reachable terminals and the critical path |
 | [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` (`worst_case_classification`, `reachable_terminals`, `critical_path`, `verdict`, `confidence_at_analysis`) |
+| [`ftra/semantic_validator.py`](../../src/gateway/governance/ftra/semantic_validator.py) | `SemanticValidator` — ensures execution payloads conform to FTRA boundaries (e.g., parameter smuggling checks, bounds checks, schema validation) before execution. |
 | [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge routing function reading `ftra_status` from `AgentState` |
 
 **Verdict routing:** `CLEAR` → proceed to the `safety_check` OPA gate. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ `FRIA_ZONE_DEFER` = 0.70) → park in DeferQueue `db=1` pending human clearance. `BLOCKED` (irreversible terminal reachable, confidence < 0.70) → route to `explainer`; plan halted outright. All construction/traversal errors fail closed to `HITL_REQUIRED`/`BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern.
@@ -1382,6 +1383,8 @@ All mutations use atomic Lua scripts (`EVALSHA`) to eliminate the GET-then-SET r
 ### 19.1 Six-Step Evaluation Sequence
 
 [`ConsequenceGateway.evaluate()`](../../src/gateway/governance/consequence_gateway.py:116) executes a strict 6-step verification sequence:
+
+**ADR-008 Invariants:** Enforces fail-closed execution boundary, private queue resolution, and envelope integrity.
 
 1. **JWS Signature Verification** — [`ConsequenceToken.verify()`](../../src/gateway/governance/consequence_token.py:219) validates the KMS-signed token
 2. **TTL / Expiry Check** — Rejects expired tokens (default TTL: 60 seconds)
