@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -1348,7 +1349,8 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
 
         # Fetch Redis status separately (not part of DeferToken model)
         key = f"DEFER:{defer_id}"
-        raw_status = await client.hget(key, "status")
+        status_result = client.hget(key, "status")
+        raw_status = await status_result if inspect.isawaitable(status_result) else status_result  # type: ignore[misc]
 
         await client.aclose()
 

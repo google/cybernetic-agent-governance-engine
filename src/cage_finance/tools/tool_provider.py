@@ -190,15 +190,15 @@ async def execute_trade_action(
     # Step 5: Construct ExecutionClearance (ADR-008 Phase 2)
     # Build the clearance structure required by the ActuatorRegistry
     clearance = ExecutionClearance(
-        thread_id=action_params.get("transaction_id", str(uuid.uuid4())),
+        thread_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
         decision="ALLOW",
         decision_path="DIRECT",
         action="execute_trade",
-        target=action_params.get("symbol", ""),
-        operator_urn=action_params.get("trader_id", "agent_001"),
+        target=str(action_params.get("symbol", "")),
+        operator_urn=str(action_params.get("trader_id", "agent_001")),
         issued_at=int(time.time()),
         issued_at_provenance="CONSTRUCTION_TIME",
-        correlation_id=action_params.get("transaction_id", str(uuid.uuid4())),
+        correlation_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
         correlation_id_source="THREAD_DERIVED",
         governance_decision_digest=seal,
         opa_input_digest=hashlib.sha256(json.dumps(action_params, sort_keys=True).encode()).hexdigest(),

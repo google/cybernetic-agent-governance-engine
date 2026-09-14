@@ -231,7 +231,7 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
 
                 # ── Actuate ───────────────────────────────────────────────────
                 t1 = time.perf_counter()
-                output = await core_execute_trade(order)
+                output = await core_execute_trade(order, routing_seal=seal)
                 exec_ms = (time.perf_counter() - t1) * 1000
                 root_span.set_attribute("cage.execution_latency_ms", round(exec_ms, 2))
                 root_span.set_attribute(

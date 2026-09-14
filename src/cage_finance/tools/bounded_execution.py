@@ -130,7 +130,7 @@ async def execute_trade_bounded(
     # before CBF and other tiers, blocking on HARD_BLOCK violations or parking
     # on HITL_ESCALATE violations.
     try:
-        result_message = await execute_trade(order)
+        result_message = await execute_trade(order, routing_seal="INTERNAL_BOUNDED_EXECUTION")
 
         return {
             "status": "executed",
