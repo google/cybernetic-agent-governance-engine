@@ -51,6 +51,7 @@ NON_TESTABLE_CONTROLS = {
     "sa11",  # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
     "sa9",  # SA-9 (External System Services) — external integration boundary
     "si7",  # SI-7 (Software/System Integrity) — algorithmic/code integrity enforced via Python unit tests/formal proofs; no standalone Lula stub
+    "si10",  # SI-10 (Input Validation) — multi-component validation via NeMo Guardrails + FTRA integration; enforced via code-level integration in src/gateway/governance/ftra/; covered by tests/test_ftra_package.py
     "sc13",  # SC-13 (Cryptographic Protection) — KMS/JCS canonicalization in Python codebase; verified via unit tests
     "iso42001a84",  # ISO 42001 A.8.4 (CAGE-SEC-003) — DeferQueue Phase-3 confidence recheck requires validating replay_evaluate() call sequence in Python endpoint; not practical for Lula OPA validation; covered by 6 test cases in tests/test_defer_queue.py
     "external",
