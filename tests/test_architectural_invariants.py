@@ -374,7 +374,7 @@ async def test_validate_action_returns_canonical_envelope():
     
     # Assert envelope_version follows semantic versioning
     assert isinstance(body["envelope_version"], str), "envelope_version must be a string"
-    assert body["envelope_version"].startswith("2."), f"Expected version 2.x, got {body['envelope_version']}"
+    assert body["envelope_version"].startswith("3."), f"Expected version 3.x, got {body['envelope_version']}"
     
     # Assert envelope_type identifies governance decisions
     assert body["envelope_type"] == "cage_governance_decision", (

@@ -113,7 +113,7 @@ class TestEnvelopeTransportApproved:
         data = resp.json()
 
         # Assert top-level envelope structure
-        assert data["envelope_version"] == "2.1"
+        assert data["envelope_version"] == "3.0"
         assert data["envelope_type"] == "cage_governance_decision"
         assert "envelope_id" in data
         assert data["envelope_id"].startswith("cage-")

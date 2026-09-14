@@ -212,6 +212,14 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     "cage.gateway_verdict", gov_result.get("verdict", "")
                 )
 
+                # ── Envelope provenance attribution (v3.0) ─────────────────────
+                if gov_result.get("envelope_id"):
+                    root_span.set_attribute("cage.envelope_id", gov_result["envelope_id"])
+                if gov_result.get("envelope_version"):
+                    root_span.set_attribute("cage.envelope_version", gov_result["envelope_version"])
+                if isinstance(gov_result.get("subject"), dict) and gov_result["subject"].get("action_hash"):
+                    root_span.set_attribute("cage.action_hash", gov_result["subject"]["action_hash"])
+
                 # ── Verify and atomically consume routing seal before actuation ──
                 # verify_and_consume_seal() burns the seal in Redis (CAGE-SEC-008),
                 # preventing replay attacks within the 30-second TTL window.

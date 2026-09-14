@@ -28,6 +28,7 @@ from typing import Any
 import httpx
 from opentelemetry.propagate import inject as otel_inject
 
+from src.gateway.governance.governance_envelope import unwrap_governance_envelope
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 
 logger = logging.getLogger("infrastructure.gateway_client")
@@ -193,7 +194,7 @@ class GatewayClient:
                             "Consecutive policy drift check failed. Cluster synchronization boundary out-of-bounds."
                         )
                     retry_response.raise_for_status()
-                    result = retry_response.json()
+                    result = unwrap_governance_envelope(retry_response.json())
 
                     verdict = result.get("verdict", "DENIED")
                     if verdict == "DENIED":
@@ -219,7 +220,7 @@ class GatewayClient:
                 response.raise_for_status()
 
         response.raise_for_status()
-        result: dict[str, Any] = response.json()  # type: ignore[no-redef]  # reuse name after 403 branch which may also assign result
+        result: dict[str, Any] = unwrap_governance_envelope(response.json())  # type: ignore[no-redef]  # reuse name after 403 branch which may also assign result
 
         verdict = result.get("verdict", "DENIED")
         if verdict == "DENIED":

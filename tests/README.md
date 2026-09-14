@@ -43,6 +43,38 @@ skipped unless you pass `--run-integration`.
 uv run pytest tests/ --run-integration
 ```
 
+### Partner integration tests
+
+```bash
+# Requires partner sandbox credentials — see config/environments/partner-sandbox.env.example
+source config/environments/partner-sandbox.env
+
+# Run all live partner integration tests
+make test-partner
+
+# Or directly with pytest
+uv run pytest tests/ -m partner_integration --run-partner-integration -v
+
+# Test specific partner
+uv run pytest tests/test_provider_01_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/test_provider_02_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partner-integration -v
+```
+
+**Credential Configuration:**
+
+1. Copy the template: `cp config/environments/partner-sandbox.env.example config/environments/partner-sandbox.env`
+2. Fill in partner sandbox credentials (never commit `partner-sandbox.env`)
+3. Source before testing: `source config/environments/partner-sandbox.env`
+4. Tests gracefully skip when credentials are not configured
+
+**Partner Integration vs. Internal Integration:**
+
+- **Internal Integration (`integration` marker)**: Tests CAGE's internal GKE services, Redis, Langfuse, vLLM — under our operational control
+- **Partner Integration (`partner_integration` marker)**: Tests external third-party APIs (FlowSignal, Provider 02–06, Actuator 01) — outside our control, may have sandbox downtime
+
+Partner tests are isolated to prevent external API failures from blocking internal development velocity.
+
 ### Filter by marker
 
 ```bash
@@ -78,6 +110,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | Marker | Meaning | Enabled by |
 |---|---|---|
 | `local` | Runs with **no network and no live service**. All I/O is faked (`fakeredis`, `respx`, `TestClient`, `monkeypatch`). | Default |
+| `partner_integration` | Runs against **live external partner sandboxes** (Provider 01–06, Actuator 01). Requires partner credentials. | `--run-partner-integration` or `make test-partner` |
 | `unit` | Scope is a single module/class in isolation. Additive to `local`. | Default |
 | `integration` | Requires a live service (GKE, OPA, Langfuse, Redis, vLLM). | `--run-integration` |
 | `partner_integration` | Hits external partner APIs. Isolated from default integration tests. | `--run-partner-integration` / `--run-live-external` |
@@ -260,6 +293,11 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `test_trades_mcp.py`                  | `integration`              | `execute_trade_action` MCP tool full governance pipeline           |
 | `test_gateway_connectivity.py`        | `unit` / `local` / `regression` | Mocked golden-question regression check — no gateway required      |
 | `test_gateway_connectivity_live.py`   | `integration`              | Live gateway MCP/chat-proxy reachability and TLS 1.2+ enforcement (POAM-011 / SC-8) |
+| `test_provider_01_live.py`            | `partner_integration` / `live_external` / `partner` | FlowSignal (Provider 01) live baseline, FRIA validation, evidence submission |
+| `test_provider_02_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 02 CER attestation, Ed25519 signature verification, JWK sync |
+| `test_provider_03_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 03 normative baseline, cache staleness, evidence sealing |
+| `test_provider_05_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 05 AO warrant retrieval, blueprint drift detection, JCS canonical binding |
+| `test_actuator_01_live.py`            | `partner_integration` / `live_external` / `partner` | Actuator 01 execution gateway, mTLS wire dispatch, quorum signatures, JCS canonicalization |
 | `test_compliance_bridge_infra_events.py` | `unit` / `local`         | `POST /v1/infra/events` — Bearer auth, secret scrubbing, 422 on unregistered event type or cross-jurisdiction mismatch, `evidence_class='INFRA'` persistence |
 | `test_agent_accuracy.py`              | `integration`              | End-to-end agent response accuracy                                 |
 | `test_agent_performance.py`           | `integration` / `slow`     | Latency and throughput benchmarks                                  |

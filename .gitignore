@@ -18,6 +18,9 @@ venv.bak/
 .manual_deploy_venv/
 .mirror_venv/
 .venv_migrate/
+
+# Partner integration credentials (never commit)
+config/environments/partner-sandbox.env
 source/
 deploy_*.txt
 deployment/artifacts/

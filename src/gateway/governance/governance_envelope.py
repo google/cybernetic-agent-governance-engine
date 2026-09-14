@@ -93,7 +93,7 @@ logger = logging.getLogger("Gateway.Governance.GovernanceEnvelope")
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENVELOPE_VERSION = "2.1"
+_ENVELOPE_VERSION = "3.0"
 _ENVELOPE_TYPE = "cage_governance_decision"
 
 # Instance identification (from environment or generated)
@@ -141,11 +141,17 @@ class SubjectMetadata:
     action_hash: str
     record_hash: str | None = None
     agent_id: str | None = None
+    consequence_ceiling: str = "LOW_INFORMATIONAL"
+    target_route: str = "local://default"
+    executor_id: str = "kernel"
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "action": self.action,
             "action_hash": self.action_hash,
+            "consequence_ceiling": self.consequence_ceiling,
+            "target_route": self.target_route,
+            "executor_id": self.executor_id,
         }
         if self.record_hash:
             result["record_hash"] = self.record_hash
@@ -312,6 +318,9 @@ class GovernanceEnvelopeBuilder:
         controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
         external_attestations: list[ExternalAttestation] | None = None,
+        consequence_ceiling: str = "LOW_INFORMATIONAL",
+        target_route: str = "local://default",
+        executor_id: str = "kernel",
     ) -> GovernanceEnvelope:
         """Build an unsigned envelope for external signing.
 
@@ -328,6 +337,9 @@ class GovernanceEnvelopeBuilder:
                 entries to embed in the envelope.  These are included in
                 the JCS-canonicalized digest and therefore protected by
                 the envelope's KMS signature.
+            consequence_ceiling: Consequence tier ceiling (e.g., "LOW_INFORMATIONAL", "HIGH_FINANCIAL").
+            target_route: Target route for execution (e.g., "synthetic://resource/alpha").
+            executor_id: Executor/actuator identifier (e.g., "actuator_01", "synthetic_actuator_01").
 
         Returns:
             An unsigned GovernanceEnvelope ready for signing.
@@ -342,6 +354,9 @@ class GovernanceEnvelopeBuilder:
             action_hash=action_hash,
             record_hash=record_hash,
             agent_id=agent_id,
+            consequence_ceiling=consequence_ceiling,
+            target_route=target_route,
+            executor_id=executor_id,
         )
 
         context = GovernanceContext(
@@ -408,6 +423,9 @@ class GovernanceEnvelopeBuilder:
         controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
         external_attestations: list[ExternalAttestation] | None = None,
+        consequence_ceiling: str = "LOW_INFORMATIONAL",
+        target_route: str = "local://default",
+        executor_id: str = "kernel",
     ) -> GovernanceEnvelope:
         """Build a signed envelope using the KMS signer.
 
@@ -422,6 +440,9 @@ class GovernanceEnvelopeBuilder:
             envelope_type: The type of envelope to create.
             external_attestations: Optional list of external attestation
                 entries to embed in the envelope.
+            consequence_ceiling: Consequence tier ceiling (e.g., "LOW_INFORMATIONAL", "HIGH_FINANCIAL").
+            target_route: Target route for execution (e.g., "synthetic://resource/alpha").
+            executor_id: Executor/actuator identifier (e.g., "actuator_01", "synthetic_actuator_01").
 
         Returns:
             A signed GovernanceEnvelope.
@@ -436,6 +457,9 @@ class GovernanceEnvelopeBuilder:
             controls_satisfied=controls_satisfied,
             envelope_type=envelope_type,
             external_attestations=external_attestations,
+            consequence_ceiling=consequence_ceiling,
+            target_route=target_route,
+            executor_id=executor_id,
         )
 
         try:
@@ -578,6 +602,9 @@ class GovernanceEnvelopeBuilder:
             action_hash=subject_data.get("action_hash", ""),
             record_hash=subject_data.get("record_hash"),
             agent_id=subject_data.get("agent_id"),
+            consequence_ceiling=subject_data.get("consequence_ceiling", "LOW_INFORMATIONAL"),
+            target_route=subject_data.get("target_route", "local://default"),
+            executor_id=subject_data.get("executor_id", "kernel"),
         )
 
         context_data = data.get("governance_context", {})
@@ -684,3 +711,33 @@ async def build_governance_envelope(
         record_hash=record_hash,
         **kwargs,
     )
+
+
+def unwrap_governance_envelope(envelope_data: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap a GovernanceEnvelope response for upstream agent consumers.
+
+    Upstream agent consumers (e.g. domain plugins, agent orchestrators) evaluate
+    immediate execution decisions (verdict, seal, violations) while binding
+    top-level envelope provenance (envelope_id, action_hash) into telemetry.
+
+    External verification partners (actuators, attestation ledgers) MUST NOT
+    unwrap envelopes and must consume the raw canonical dictionary to preserve
+    RFC 8785 JCS signature verification.
+
+    Args:
+        envelope_data: The dictionary response received from the gateway.
+
+    Returns:
+        The unwrapped payload dictionary enriched with top-level envelope metadata.
+    """
+    if envelope_data.get("envelope_version") == "3.0" and "payload" in envelope_data:
+        payload = dict(envelope_data.get("payload", {}))
+        payload["envelope_id"] = envelope_data.get("envelope_id")
+        payload["envelope_version"] = envelope_data.get("envelope_version")
+        payload["issuer"] = envelope_data.get("issuer")
+        payload["subject"] = envelope_data.get("subject")
+        payload["signature"] = envelope_data.get("signature")
+        payload["governance_context"] = envelope_data.get("governance_context")
+        payload["external_attestations"] = envelope_data.get("external_attestations", [])
+        return payload
+    return envelope_data

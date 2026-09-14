@@ -222,7 +222,7 @@ class TestGovernanceEnvelopeBuilder:
             controls_satisfied=["CTRL_OPA_001"],
         )
 
-        assert envelope.envelope_version == "2.1"
+        assert envelope.envelope_version == "3.0"
         assert envelope.envelope_type == "cage_governance_decision"
         assert envelope.envelope_id.startswith("cage-")
         assert envelope.subject.action == "execute_trade"
@@ -618,8 +618,8 @@ class TestEnvelopeTypes:
 class TestWireFormatV2:
     """Tests verifying the v2.0 wire format changes."""
 
-    def test_envelope_version_is_2_1(self, sample_governance_result, sample_params):
-        """Verify envelope_version is now 2.1."""
+    def test_envelope_version_is_3_0(self, sample_governance_result, sample_params):
+        """Verify envelope_version is now 3.0."""
         from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
         builder = GovernanceEnvelopeBuilder()
@@ -629,7 +629,7 @@ class TestWireFormatV2:
             governance_result=sample_governance_result,
         )
 
-        assert envelope.envelope_version == "2.1"
+        assert envelope.envelope_version == "3.0"
 
     def test_envelope_type_uses_cage_prefix(
         self, sample_governance_result, sample_params
@@ -870,7 +870,7 @@ class TestExternalAttestations:
         serialized = envelope.to_dict()
         reconstructed = builder._envelope_from_dict(serialized)
 
-        assert reconstructed.envelope_version == "2.1"
+        assert reconstructed.envelope_version == "3.0"
         assert len(reconstructed.external_attestations) == 1
         recon_att = reconstructed.external_attestations[0]
         assert recon_att.attestation_type == "PHYSICS"
@@ -880,3 +880,42 @@ class TestExternalAttestations:
         assert recon_att.metadata["node_id"] == "gke-node-1"
         assert recon_att.metadata["freshness_seconds"] == 15
         assert reconstructed.compute_digest() == envelope.compute_digest()
+
+
+class TestUnwrapGovernanceEnvelope:
+    """Unit tests for the unwrap_governance_envelope client helper function."""
+
+    def test_unwrap_v3_envelope(self, sample_governance_result, sample_params):
+        """Test unwrapping a canonical v3.0 GovernanceEnvelope dictionary."""
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelopeBuilder,
+            unwrap_governance_envelope,
+        )
+
+        builder = GovernanceEnvelopeBuilder()
+        envelope = builder.build_unsigned(
+            action="execute_trade",
+            params=sample_params,
+            governance_result=sample_governance_result,
+        )
+
+        envelope_dict = envelope.to_dict(include_signature=True)
+        unwrapped = unwrap_governance_envelope(envelope_dict)
+
+        # Core payload attributes are unwrapped to top-level
+        assert unwrapped["verdict"] == sample_governance_result["verdict"]
+        assert unwrapped["confidence"] == sample_governance_result["confidence"]
+
+        # Envelope provenance metadata is attached
+        assert unwrapped["envelope_id"] == envelope.envelope_id
+        assert unwrapped["envelope_version"] == "3.0"
+        assert unwrapped["subject"]["action"] == "execute_trade"
+        assert unwrapped["subject"]["consequence_ceiling"] == "LOW_INFORMATIONAL"
+
+    def test_unwrap_legacy_flat_dict(self):
+        """Test passing a flat legacy dictionary returns the dictionary unchanged."""
+        from src.gateway.governance.governance_envelope import unwrap_governance_envelope
+
+        flat = {"verdict": "APPROVED", "seal": "test-seal"}
+        unwrapped = unwrap_governance_envelope(flat)
+        assert unwrapped == flat

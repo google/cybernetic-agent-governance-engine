@@ -157,6 +157,12 @@ test-integration:
 	@echo "==> Running local (non-infrastructure) tests..."
 	@uv run pytest tests/ -v --tb=short -m local
 
+## Run live external partner integration tests (requires partner credentials)
+test-partner:
+	@echo "==> Running live external partner integration tests..."
+	@echo "NOTE: Requires partner sandbox credentials. See config/environments/partner-sandbox.env.example"
+	@uv run pytest tests/ -m partner_integration --run-partner-integration -v
+
 ## Run R-22 regression guard test suite
 test-r22:
 	@echo "==> Running R-22 NeMo action registry regression guard..."

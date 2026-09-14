@@ -172,6 +172,11 @@ class DeferToken(BaseModel):
         required_quorum     — number of distinct approvals needed for resolution.
         correlation_id      — UUID minted at ingress, before the governance decision.
 
+    Schema v3 additions (PRAXIS Phase 2):
+        upstream_permit_id  — External upstream authority reference. If set, token
+                              is authority-bound and cannot be resumed via quorum
+                              approvals or context injection (zero-authority parking).
+
     Fields:
         defer_id            — stable UUID v4 assigned at park time.
         thread_id           — LangGraph thread (checkpoint) ID for the paused graph.
@@ -208,6 +213,24 @@ class DeferToken(BaseModel):
     approvals: list[ApprovalRecord] = Field(default_factory=list)
     required_quorum: int = Field(default=2, ge=2, le=5)
     correlation_id: str | None = None
+
+    # --- v3 additions (PRAXIS Phase 2) ------------------------------------
+    upstream_permit_id: str | None = None
+
+    def is_authority_bound(self) -> bool:
+        """Return True if bound to external upstream authority.
+
+        Authority-bound tokens cannot be resumed via quorum or injection;
+        they must expire naturally, forcing zero-base re-adjudication.
+
+        This implements the PRAXIS Alignment Phase 2 zero-authority parking
+        principle: tokens holding external permit dependencies surrender all
+        compute and signing authority upon parking.
+
+        Returns:
+            True if upstream_permit_id is set, False otherwise.
+        """
+        return self.upstream_permit_id is not None
 
     def model_post_init(self, __context: Any) -> None:
         """Post-init: derive correlation_id and wire quorum threshold."""
@@ -463,6 +486,10 @@ class DeferQueue:
           - Status becomes PARTIALLY_APPROVED while len(approvals) < required_quorum
           - Status becomes RESOLVED only when distinct approver count >= required_quorum
 
+        PRAXIS Phase 2 Zero-Authority Parking:
+          - Authority-bound tokens (upstream_permit_id is set) REFUSE all approvals
+          - Returns ApprovalStatus.NOT_FOUND to fail-closed for authority-bound tokens
+
         Concurrent approval safety (R-13): Uses Redis WATCH/MULTI/EXEC to prevent
         lost updates when two operators approve simultaneously.
 
@@ -500,6 +527,19 @@ class DeferQueue:
                 return (ApprovalStatus.NOT_FOUND, None)
 
             token = DeferToken.model_validate_json(raw)
+
+            # PRAXIS Phase 2: Refuse approval for authority-bound tokens
+            if token.is_authority_bound():
+                await self._redis.unwatch()
+                logger.warning(
+                    "[defer_queue] Approval REFUSED for authority-bound token: "
+                    "defer_id=%s upstream_permit_id=%s. Token must expire; "
+                    "re-entry requires fresh query with fresh permit.",
+                    defer_id,
+                    token.upstream_permit_id,
+                )
+                return (ApprovalStatus.NOT_FOUND, None)
+
             current_status = status_raw or "PARKED"
 
             # Only approve tokens in PARKED or PARTIALLY_APPROVED state
@@ -854,6 +894,10 @@ async def replay_evaluate(
       - If the token is not found (expired or never parked):
           Returns ``ReplayResult.NOT_FOUND``.
 
+    PRAXIS Phase 2 Zero-Authority Parking:
+      - Authority-bound tokens (upstream_permit_id is set) REFUSE injection
+      - Returns ``ReplayResult.NOT_FOUND`` to fail-closed for authority-bound tokens
+
     Args:
         queue:            A ``DeferQueue`` instance connected to Redis db=1.
         defer_id:         The ``defer_id`` of the parked token to re-evaluate.
@@ -874,6 +918,17 @@ async def replay_evaluate(
         logger.warning(
             "[replay_evaluate] Token not found for defer_id=%s — returning NOT_FOUND.",
             defer_id,
+        )
+        return ReplayResult.NOT_FOUND
+
+    # PRAXIS Phase 2: Refuse injection for authority-bound tokens
+    if token.is_authority_bound():
+        logger.warning(
+            "[replay_evaluate] Context injection REFUSED for authority-bound token: "
+            "defer_id=%s upstream_permit_id=%s. Authority-bound tokens are strictly "
+            "immutable after parking and must expire naturally.",
+            defer_id,
+            token.upstream_permit_id,
         )
         return ReplayResult.NOT_FOUND
 

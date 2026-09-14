@@ -405,7 +405,7 @@ class TestValidateActionEndpoint:
         data = resp.json()
         
         # ADR-008 Phase 3: Assert canonical envelope structure
-        assert data.get("envelope_version") == "2.1"
+        assert data.get("envelope_version") == "3.0"
         assert data.get("envelope_type") == "cage_governance_decision"
         assert "envelope_id" in data
         assert "issued_at" in data
@@ -1297,5 +1297,5 @@ class TestFlowSignalHttp202Receipt:
         data = resp.json()
         
         # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
-        assert data.get("envelope_version") == "2.1"
+        assert data.get("envelope_version") == "3.0"
         assert data["payload"]["verdict"] == "APPROVED"

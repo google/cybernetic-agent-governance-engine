@@ -137,14 +137,69 @@ uv run pytest tests/test_compliance_bridge_integration.py --run-integration -v -
 
 ## 6. Partner Integration Tests Isolation
 
-External partner integration tests hitting third-party vendor APIs (such as `tests/test_provider_01_live.py`) are tagged with the **`partner_integration`** selection marker (and `live_external`), **NOT** the default `integration` marker:
-- Running `uv run pytest tests/ --run-integration` or `-m integration` **excludes** partner tests by default.
-- To execute partner integration tests when external sandbox credentials are configured:
-  ```bash
-  uv run pytest -m partner_integration --run-partner-integration
-  # Or with live external flag:
-  uv run pytest tests/test_provider_01_live.py --run-live-external
-  ```
+External partner integration tests hitting third-party vendor APIs are tagged with the **`partner_integration`** selection marker (and `live_external`), **NOT** the default `integration` marker. This isolation prevents external partner sandbox outages from blocking internal development velocity.
+
+### Partner Integration vs. Internal Integration
+
+| Dimension | Internal Integration (`integration`) | Partner Integration (`partner_integration`) |
+|---|---|---|
+| **Target** | CAGE internal services (GKE, Redis, Langfuse, OPA, vLLM) | External partner sandboxes (Provider 01–06, Actuator 01) |
+| **Operational Control** | Under CAGE operational control | Outside CAGE control, partner-managed sandboxes |
+| **Credential Management** | Configured in cluster secrets (Workload Identity) | Configured via `config/environments/partner-sandbox.env` |
+| **Failure Impact** | Blocks PR merge (critical path) | Does not block PR merge (workflow_dispatch only) |
+| **CI Execution** | Every PR via `ci-integration.yml` | Manual dispatch via `ci-partner-integration.yml` |
+| **Test Markers** | `[integration, local]` or `[integration]` | `[partner_integration, live_external, partner]` |
+
+### Partner Test Execution
+
+Running `uv run pytest tests/ --run-integration` or `-m integration` **excludes** partner tests by default.
+
+**Local execution with credentials:**
+
+```bash
+# 1. Configure partner sandbox credentials
+cp config/environments/partner-sandbox.env.example config/environments/partner-sandbox.env
+# Edit partner-sandbox.env and fill in real sandbox credentials
+
+# 2. Source credentials
+source config/environments/partner-sandbox.env
+
+# 3. Run all partner integration tests
+make test-partner
+
+# Or run specific partner tests
+uv run pytest tests/test_provider_01_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/test_provider_02_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/test_provider_03_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/test_provider_05_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partner-integration -v
+```
+
+**CI execution:** Partner integration tests run via `.github/workflows/ci-partner-integration.yml` on `workflow_dispatch` only. Partner credentials are stored in GitHub Secrets and injected at runtime.
+
+### Partner Integration Test Coverage
+
+| Partner | Test Module | Validates |
+|---|---|---|
+| **Provider 01** (FlowSignal / EU ECB) | [`test_provider_01_live.py`](../../tests/test_provider_01_live.py) | Normative baseline retrieval, FRIA validation, evidence submission |
+| **Provider 02** (CER Attestation) | [`test_provider_02_live.py`](../../tests/test_provider_02_live.py) | CER creation, Ed25519 signature verification, out-of-band JWK resolution, two-stage verification (hash binding + signature) |
+| **Provider 03** (Normative Baseline) | [`test_provider_03_live.py`](../../tests/test_provider_03_live.py) | Baseline retrieval, cache staleness (ETag), FRIA validation, evidence sealing |
+| **Provider 05** (AO Warrant / Blueprint) | [`test_provider_05_live.py`](../../tests/test_provider_05_live.py) | Risk acceptance warrant retrieval, threshold drift detection, JCS canonical binding |
+| **Actuator 01** (Execution Gateway) | [`test_actuator_01_live.py`](../../tests/test_actuator_01_live.py) | mTLS wire dispatch, quorum signatures, JCS envelope canonicalization, capability advertisement |
+
+### Credential Security & Fail-Closed Skipping
+
+- **Never commit `partner-sandbox.env`** to version control (gitignored)
+- **Graceful skip on missing credentials**: All partner live tests check for required environment variables and skip with `pytest.skip("... not configured")` when credentials are missing
+- **Standard developers** running `make test-fast` or `make test` never encounter partner tests (they require explicit `--run-partner-integration` flag)
+
+### Trust Anchors & Cryptographic Verification Rules
+
+Partner integration tests enforce the **Trust Anchor Isolation** invariant from [`AGENTS.md`](../../AGENTS.md) § Architecture:
+
+- **Never verify a signature against an embedded key**: Public keys must be resolved out-of-band by `kid` from an independently-fetched key manifest (e.g., Provider 02 JWK endpoint)
+- **Resolution status is not verification status**: Successful CER fetch proves receipt exists, not signature validity
+- **Refusals are primary evidence**: DENY and PAUSE receipts must enter the tamper-evident chain with the same completeness as ALLOW approvals
 
 ---
 

@@ -1,0 +1,125 @@
+name: Partner Integration Tests
+
+# This workflow runs live integration tests against external partner sandboxes.
+# It is decoupled from standard CI to prevent partner API failures from blocking
+# internal development.
+#
+# Trigger: Manual dispatch only (workflow_dispatch)
+# Secrets: Partner credentials must be configured in GitHub Secrets
+
+on:
+  workflow_dispatch:
+    inputs:
+      partner_filter:
+        description: 'Partner to test (provider_01, provider_02, provider_03, provider_05, actuator_01, or "all")'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - provider_01
+          - provider_02
+          - provider_03
+          - provider_05
+          - actuator_01
+
+jobs:
+  partner-integration:
+    name: Partner Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@93c32ef79a93e8b9cd720e0d03bac7b406f26370  # v5.3.0
+        with:
+          version: "0.4.18"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --all-extras
+
+      - name: Configure partner credentials
+        env:
+          # Provider 01 (FlowSignal / EU ECB)
+          PROVIDER_01_ENDPOINT: ${{ secrets.PROVIDER_01_ENDPOINT }}
+          PROVIDER_01_API_KEY: ${{ secrets.PROVIDER_01_API_KEY }}
+          
+          # Provider 02 (CER Attestation)
+          PROVIDER_02_API_ENDPOINT: ${{ secrets.PROVIDER_02_API_ENDPOINT }}
+          PROVIDER_02_JWK_ENDPOINT: ${{ secrets.PROVIDER_02_JWK_ENDPOINT }}
+          PROVIDER_02_API_KEY_SECRET: ${{ secrets.PROVIDER_02_API_KEY_SECRET }}
+          PROVIDER_02_TEST_CERT_HASH: ${{ secrets.PROVIDER_02_TEST_CERT_HASH }}
+          
+          # Provider 03 (Normative Baseline)
+          PROVIDER_03_ENDPOINT: ${{ secrets.PROVIDER_03_ENDPOINT }}
+          PROVIDER_03_API_KEY: ${{ secrets.PROVIDER_03_API_KEY }}
+          
+          # Provider 05 (AO Warrant / Blueprint)
+          PROVIDER_05_BLUEPRINT_REGISTRY_URL: ${{ secrets.PROVIDER_05_BLUEPRINT_REGISTRY_URL }}
+          PROVIDER_05_API_KEY: ${{ secrets.PROVIDER_05_API_KEY }}
+          
+          # Actuator 01 (Execution Gateway)
+          ACTUATOR_01_ENDPOINT: ${{ secrets.ACTUATOR_01_ENDPOINT }}
+          ACTUATOR_01_CLIENT_CERT: ${{ secrets.ACTUATOR_01_CLIENT_CERT }}
+          ACTUATOR_01_CLIENT_KEY: ${{ secrets.ACTUATOR_01_CLIENT_KEY }}
+          
+          # KMS (for Actuator 01 quorum signatures)
+          KMS_GOVERNANCE_KEY: ${{ secrets.KMS_GOVERNANCE_KEY }}
+          CAGE_OPERATOR_URNS: ${{ secrets.CAGE_OPERATOR_URNS }}
+          
+          # Disable LangSmith tracing
+          LANGSMITH_TRACING: "false"
+          LANGCHAIN_TRACING_V2: "false"
+        run: |
+          echo "Partner credentials configured via GitHub Secrets"
+          echo "Filter: ${{ github.event.inputs.partner_filter }}"
+
+      - name: Run partner integration tests
+        run: |
+          FILTER="${{ github.event.inputs.partner_filter }}"
+          
+          if [ "$FILTER" = "all" ]; then
+            echo "Running all partner integration tests..."
+            uv run pytest tests/ -m partner_integration --run-partner-integration -v --tb=short
+          else
+            echo "Running $FILTER partner integration tests..."
+            uv run pytest tests/test_${FILTER}_live.py -m partner_integration --run-partner-integration -v --tb=short
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: partner-integration-results
+          path: |
+            .pytest_cache/
+            *.log
+          retention-days: 7
+
+  summary:
+    name: Partner Integration Summary
+    runs-on: ubuntu-22.04
+    needs: partner-integration
+    if: always()
+    
+    steps:
+      - name: Report status
+        run: |
+          if [ "${{ needs.partner-integration.result }}" = "success" ]; then
+            echo "✅ Partner integration tests passed"
+          elif [ "${{ needs.partner-integration.result }}" = "skipped" ]; then
+            echo "⏭️  Partner integration tests skipped (credentials not configured)"
+          else
+            echo "❌ Partner integration tests failed"
+            exit 1
+          fi

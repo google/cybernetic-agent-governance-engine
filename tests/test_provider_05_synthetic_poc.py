@@ -161,7 +161,7 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
     )
 
     # 3. Verify envelope structure and all three attestation types
-    assert envelope.envelope_version == "2.1"
+    assert envelope.envelope_version == "3.0"
     assert len(envelope.external_attestations) == 3
 
     types = {att.attestation_type for att in envelope.external_attestations}

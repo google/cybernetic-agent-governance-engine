@@ -79,6 +79,14 @@ def fake_redis():
     async def _zrem(zset_key: str, member: str):
         zsets.get(zset_key, {}).pop(member, None)
 
+    # watch (no-op in mock — concurrency not enforced in unit tests)
+    async def _watch(key: str):
+        pass
+
+    # unwatch (no-op in mock — concurrency not enforced in unit tests)
+    async def _unwatch():
+        pass
+
     # Pipeline context manager
     class FakePipeline:
         def __init__(self):
@@ -119,6 +127,8 @@ def fake_redis():
     redis.zadd = _zadd
     redis.zrangebyscore = _zrangebyscore
     redis.zrem = _zrem
+    redis.watch = _watch
+    redis.unwatch = _unwatch
     redis.pipeline = lambda transaction=True: FakePipeline()
 
     return redis
@@ -759,6 +769,230 @@ async def test_replay_evaluate_enforces_confidence_threshold(fake_redis):
     await queue.park(token2)
     result_high = await replay_evaluate(queue, token2.defer_id, enriched_high)
     assert result_high == ReplayResult.ADMITTED
+
+
+# ---------------------------------------------------------------------------
+# Test: PRAXIS Phase 2 — Authority-bound token zero-authority parking
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_authority_bound_token_refuses_approval(fake_redis):
+    """Authority-bound tokens with upstream_permit_id refuse all approvals."""
+    from src.gateway.governance.defer_queue import ApprovalRecord, ApprovalStatus
+
+    queue = DeferQueue(fake_redis)
+
+    # Park a token with upstream_permit_id (authority-bound)
+    token = DeferToken(
+        thread_id="thread-praxis-001",
+        defer_reason=DeferReason.EXTERNAL_VALIDATION,
+        confidence_score=0.75,
+        ttl_seconds=600,
+        opa_input_snapshot={"action": "execute_trade", "amount_usd": 100000},
+        upstream_permit_id="praxis-permit-001",
+    )
+    await queue.park(token)
+
+    # Verify token is authority-bound
+    assert token.is_authority_bound() is True
+
+    # Attempt approval
+    approval = ApprovalRecord(
+        approver_urn="urn:operator:alice",
+        approved_at_utc="2026-09-14T20:00:00Z",
+        auth_method="OIDC",
+        auth_principal_hash="abc123",
+    )
+
+    status, updated_token = await queue.approve(token.defer_id, approval)
+
+    # Assert approval was REFUSED (returns NOT_FOUND for fail-closed)
+    assert status == ApprovalStatus.NOT_FOUND
+    assert updated_token is None
+
+    # Retrieve token and verify it remains PARKED and untouched
+    retrieved = await queue.get(token.defer_id)
+    assert retrieved is not None
+    assert retrieved.defer_id == token.defer_id
+    assert len(retrieved.approvals) == 0  # No approvals were recorded
+    assert retrieved.resolution is None  # Still parked
+
+
+@pytest.mark.asyncio
+async def test_non_authority_token_allows_approval(fake_redis):
+    """Non-authority-bound tokens (upstream_permit_id=None) allow standard approvals."""
+    from src.gateway.governance.defer_queue import ApprovalRecord, ApprovalStatus
+
+    queue = DeferQueue(fake_redis)
+
+    # Park a standard internal token WITHOUT upstream_permit_id
+    token = DeferToken(
+        thread_id="thread-internal-001",
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        confidence_score=0.65,
+        ttl_seconds=600,
+        opa_input_snapshot={"action": "query_data"},
+        upstream_permit_id=None,  # Explicitly None (internal token)
+    )
+    await queue.park(token)
+
+    # Verify token is NOT authority-bound
+    assert token.is_authority_bound() is False
+
+    # First approval
+    approval1 = ApprovalRecord(
+        approver_urn="urn:operator:alice",
+        approved_at_utc="2026-09-14T20:00:00Z",
+        auth_method="OIDC",
+        auth_principal_hash="abc123",
+    )
+    status1, updated1 = await queue.approve(token.defer_id, approval1)
+
+    # First approval should yield PARTIAL_QUORUM (need 2 for quorum)
+    assert status1 == ApprovalStatus.PARTIAL_QUORUM
+    assert updated1 is not None
+    assert len(updated1.approvals) == 1
+
+    # Second approval from different operator
+    approval2 = ApprovalRecord(
+        approver_urn="urn:operator:bob",
+        approved_at_utc="2026-09-14T20:01:00Z",
+        auth_method="OIDC",
+        auth_principal_hash="def456",
+    )
+    status2, updated2 = await queue.approve(token.defer_id, approval2)
+
+    # Second approval should reach quorum
+    assert status2 == ApprovalStatus.QUORUM_REACHED
+    assert updated2 is not None
+    assert len(updated2.approvals) == 2
+    assert updated2.resolution == "ESCALATED"
+    assert updated2.resolved_at_utc is not None
+
+
+@pytest.mark.asyncio
+async def test_authority_bound_token_refuses_injection(fake_redis):
+    """Authority-bound tokens refuse context injection via replay_evaluate."""
+    from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
+
+    queue = DeferQueue(fake_redis)
+
+    # Park an authority-bound token
+    token = DeferToken(
+        thread_id="thread-inject-refuse-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
+        confidence_score=0.65,
+        ttl_seconds=600,
+        opa_input_snapshot={"action": "execute_trade"},
+        upstream_permit_id="external-permit-xyz",
+    )
+    await queue.park(token)
+
+    # Verify token is authority-bound
+    assert token.is_authority_bound() is True
+
+    # Attempt to inject context with high confidence (would normally admit)
+    enriched_context = {"confidence_score": 0.85, "extra_data": "injected"}
+
+    result = await replay_evaluate(queue, token.defer_id, enriched_context)
+
+    # Injection should be REFUSED (returns NOT_FOUND for fail-closed)
+    assert result == ReplayResult.NOT_FOUND
+
+    # Verify token remains in queue and unmodified
+    retrieved = await queue.get(token.defer_id)
+    assert retrieved is not None
+    assert retrieved.defer_id == token.defer_id
+    assert retrieved.resolution is None  # Still parked
+
+
+@pytest.mark.asyncio
+async def test_non_authority_token_allows_injection(fake_redis):
+    """Non-authority-bound tokens allow standard context injection."""
+    from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
+
+    queue = DeferQueue(fake_redis)
+
+    # Park a standard internal token
+    token = DeferToken(
+        thread_id="thread-inject-allow-001",
+        defer_reason=DeferReason.DATA_STARVATION,
+        confidence_score=0.65,
+        ttl_seconds=600,
+        opa_input_snapshot={"action": "query_data"},
+        upstream_permit_id=None,  # Internal token, no authority binding
+    )
+    await queue.park(token)
+
+    # Verify token is NOT authority-bound
+    assert token.is_authority_bound() is False
+
+    # Inject context with confidence above threshold
+    enriched_context = {"confidence_score": 0.78, "market_data": "fresh"}
+
+    result = await replay_evaluate(queue, token.defer_id, enriched_context)
+
+    # Injection should succeed
+    assert result == ReplayResult.ADMITTED
+
+    # Verify token was resolved with INJECTED resolution
+    retrieved = await queue.get(token.defer_id)
+    assert retrieved is not None
+    assert retrieved.resolution == "INJECTED"
+    assert retrieved.resolved_at_utc is not None
+
+
+def test_is_authority_bound_returns_true_when_upstream_permit_set():
+    """is_authority_bound() returns True when upstream_permit_id is set."""
+    token = DeferToken(
+        thread_id="thread-001",
+        defer_reason=DeferReason.EXTERNAL_VALIDATION,
+        confidence_score=0.75,
+        upstream_permit_id="permit-abc123",
+    )
+    assert token.is_authority_bound() is True
+
+
+def test_is_authority_bound_returns_false_when_upstream_permit_none():
+    """is_authority_bound() returns False when upstream_permit_id is None."""
+    token = DeferToken(
+        thread_id="thread-002",
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        confidence_score=0.65,
+        upstream_permit_id=None,
+    )
+    assert token.is_authority_bound() is False
+
+
+def test_is_authority_bound_returns_false_by_default():
+    """is_authority_bound() returns False when upstream_permit_id is not set (default)."""
+    token = DeferToken(
+        thread_id="thread-003",
+        defer_reason=DeferReason.INSUFFICIENT_CONTEXT,
+        confidence_score=0.60,
+        # upstream_permit_id not specified (defaults to None)
+    )
+    assert token.is_authority_bound() is False
+
+
+def test_defer_token_serialization_preserves_upstream_permit_id():
+    """DeferToken serialization/deserialization preserves upstream_permit_id."""
+    token = DeferToken(
+        thread_id="thread-serialize-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
+        confidence_score=0.72,
+        upstream_permit_id="upstream-permit-789",
+    )
+
+    # Serialize to JSON
+    json_str = token.model_dump_json()
+    assert "upstream-permit-789" in json_str
+
+    # Deserialize
+    restored = DeferToken.model_validate_json(json_str)
+    assert restored.upstream_permit_id == "upstream-permit-789"
+    assert restored.is_authority_bound() is True
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
