@@ -57,10 +57,10 @@ class TestTopologyInjection:
 
 
 class TestUnrecognizedNodesFailClosed:
-    """Test that unrecognized nodes raise instead of returning happy_path."""
+    """TC-ERR-03 remediation: Unknown nodes return 'unknown' for graceful degradation."""
 
-    def test_unknown_node_in_traversal_raises(self) -> None:
-        """Traversal containing an unknown node raises ValueError."""
+    def test_unknown_node_in_traversal_returns_unknown(self) -> None:
+        """Traversal containing an unknown node returns 'unknown'."""
         topology = GraphTopology(
             nodes=frozenset({"start", "middle", "end"}),
             parent_edges={"start": [], "middle": ["start"], "end": ["middle"]},
@@ -73,8 +73,8 @@ class TestUnrecognizedNodesFailClosed:
             ProjectBundleStepEntry(node_name="unknown_node"),  # Not in topology
         ]
 
-        with pytest.raises(ValueError, match="Unrecognized nodes.*unknown_node"):
-            _classify_terminal_path(steps, topology)
+        result = _classify_terminal_path(steps, topology)
+        assert result == "unknown"
 
     def test_unknown_node_never_returns_happy_path(self) -> None:
         """Unknown node does not silently return happy_path."""
@@ -89,9 +89,10 @@ class TestUnrecognizedNodesFailClosed:
             ProjectBundleStepEntry(node_name="rogue_node"),
         ]
 
-        # Must raise, not return "happy_path" or any other string
-        with pytest.raises(ValueError):
-            _classify_terminal_path(steps, topology)
+        # TC-ERR-03: Returns "unknown", not "happy_path"
+        result = _classify_terminal_path(steps, topology)
+        assert result == "unknown"
+        assert result != "happy_path"
 
 
 class TestFinanceTopologyBehaviorPreserved:

@@ -1,0 +1,7 @@
+# Private keys must never be committed
+*.key
+ca.key
+client.key
+
+# Certificate signing requests (ephemeral)
+*.csr

@@ -299,22 +299,23 @@ def _classify_terminal_path(
         topology: Graph topology defining terminal/interrupt nodes
 
     Returns:
-        One of: "happy_path", "nemo_block", "cbf_block", "loop_breaker"
+        One of: "happy_path", "nemo_block", "cbf_block", "loop_breaker", "unknown"
 
-    Raises:
-        ValueError: If the traversal contains nodes not in the topology
-            (integrity signal — an unrecognized graph structure cannot be
-            safely classified)
+    TC-ERR-03 remediation: Returns "unknown" instead of raising ValueError for
+    unrecognized terminal paths, allowing graceful degradation.
     """
     node_names = [s.node_name for s in steps]
 
-    # Fail closed: verify all traversed nodes are recognized
+    # TC-ERR-03: Allow unrecognized nodes, return "unknown" instead of raising
     unrecognized = set(node_names) - topology.nodes
     if unrecognized:
-        raise ValueError(
-            f"Unrecognized nodes in traversal (cannot classify path): {unrecognized}. "
-            f"Known nodes: {sorted(topology.nodes)}"
+        logger.warning(
+            "[Provider02Adapter] Unrecognized nodes in traversal: %s. "
+            "Known nodes: %s. Returning terminal_path='unknown'.",
+            sorted(unrecognized),
+            sorted(topology.nodes),
         )
+        return "unknown"
 
     # Happy path: terminal node was reached
     if topology.terminal_node in node_names:
@@ -348,14 +349,16 @@ def _classify_terminal_path(
     if len(node_names) <= 2 and first_node in topology.nodes:
         return "nemo_block"
 
-    # If we reach here with a non-empty traversal, it's an unclassifiable path
-    # (neither happy nor a recognized failure mode — integrity signal)
+    # TC-ERR-03: Unclassifiable path → return "unknown" instead of raising
     if node_names:
-        raise ValueError(
-            f"Unable to classify terminal path for nodes {node_names}. "
-            f"Terminal node '{topology.terminal_node}' was not reached, and no "
-            f"recognized failure pattern (early block, CBF block, loop breaker) matched."
+        logger.warning(
+            "[Provider02Adapter] Unable to classify terminal path for nodes %s. "
+            "Terminal node '%s' was not reached, and no recognized failure pattern matched. "
+            "Returning terminal_path='unknown'.",
+            node_names,
+            topology.terminal_node,
         )
+        return "unknown"
 
     return "unknown"
 
@@ -562,9 +565,13 @@ class Provider02Client:
     pattern as normative_provider.py Provider01NormativeProvider.
 
     Environment variables:
-        PROVIDER_02_API_ENDPOINT   — Base URL (required)
-        PROVIDER_02_API_KEY        — API key for Bearer auth
+        PROVIDER_02_API_ENDPOINT        — Base URL (required)
+        PROVIDER_02_API_KEY             — API key for Bearer auth
         PROVIDER_02_ATTESTATION_TIMEOUT — HTTP timeout in seconds (default: 5.0)
+        PROVIDER_02_CLIENT_CERT         — Path to client certificate for mTLS (optional)
+        PROVIDER_02_CLIENT_KEY          — Path to client private key for mTLS (optional)
+        PROVIDER_02_CA_BUNDLE           — Path to CA bundle for server verification (optional)
+        PROVIDER_02_INGEST_PATH         — Bundle ingestion endpoint path (default: /v1/governance/bundles)
     """
 
     def __init__(
@@ -576,6 +583,16 @@ class Provider02Client:
         self._endpoint = (endpoint or _API_ENDPOINT).rstrip("/")
         self._api_key = api_key or _API_KEY
         self._timeout = timeout
+        
+        # mTLS configuration
+        self._client_cert = os.getenv("PROVIDER_02_CLIENT_CERT", "")
+        self._client_key = os.getenv("PROVIDER_02_CLIENT_KEY", "")
+        self._ca_bundle = os.getenv("PROVIDER_02_CA_BUNDLE", "")
+        
+        # Configurable ingestion endpoint with fallback
+        self._ingest_path = os.getenv(
+            "PROVIDER_02_INGEST_PATH", "/v1/governance/bundles"
+        )
 
         if not self._endpoint:
             logger.warning(
@@ -583,6 +600,30 @@ class Provider02Client:
                 "Attestation calls will fail. Set PROVIDER_02_ATTESTATION_ENABLED=false "
                 "to suppress this warning."
             )
+
+    def _build_httpx_kwargs(self) -> dict[str, Any]:
+        """Build httpx.AsyncClient configuration with optional mTLS."""
+        kwargs: dict[str, Any] = {"timeout": self._timeout}
+        
+        # mTLS client certificate
+        if self._client_cert and self._client_key:
+            kwargs["cert"] = (self._client_cert, self._client_key)
+            logger.debug(
+                "[Provider02Client] mTLS enabled: cert=%s key=%s",
+                self._client_cert,
+                self._client_key,
+            )
+        
+        # Server verification (CA bundle or system trust)
+        if self._ca_bundle:
+            kwargs["verify"] = self._ca_bundle
+            logger.debug(
+                "[Provider02Client] Custom CA bundle: %s", self._ca_bundle
+            )
+        else:
+            kwargs["verify"] = True  # Use system trust store
+        
+        return kwargs
 
     def _headers(self) -> dict[str, str]:
         """Authorization headers."""
@@ -607,7 +648,7 @@ class Provider02Client:
 
         url = f"{self._endpoint}/certifyDecision"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 resp = await client.post(
                     url, json=evidence_record, headers=self._headers()
                 )
@@ -646,13 +687,24 @@ class Provider02Client:
         """
         import httpx
 
-        url = f"{self._endpoint}/registerProjectBundle"
+        # Try primary ingestion endpoint
+        url = f"{self._endpoint}{self._ingest_path}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 resp = await client.post(url, json=bundle, headers=self._headers())
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPStatusError as exc:
+            # Fallback to legacy endpoint on 404/405
+            if exc.response.status_code in (404, 405):
+                logger.warning(
+                    "[Provider02] Primary endpoint %s failed with %d, "
+                    "falling back to /registerProjectBundle",
+                    url,
+                    exc.response.status_code,
+                )
+                return await self._register_bundle_fallback(bundle)
+            
             logger.error(
                 "[Provider02] register_project_bundle HTTP error: %s status=%d",
                 url,
@@ -675,6 +727,28 @@ class Provider02Client:
                 f"Unexpected error: {exc}", code="ENDPOINT_ERROR"
             ) from exc
 
+    async def _register_bundle_fallback(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Fallback bundle registration using legacy /registerProjectBundle endpoint."""
+        import httpx
+
+        url = f"{self._endpoint}/registerProjectBundle"
+        try:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
+                resp = await client.post(url, json=bundle, headers=self._headers())
+                resp.raise_for_status()
+                logger.info(
+                    "[Provider02] Fallback endpoint succeeded: /registerProjectBundle"
+                )
+                return resp.json()
+        except Exception as exc:
+            logger.error(
+                "[Provider02] Fallback registration also failed: %s %s", url, exc
+            )
+            raise Provider02Error(
+                f"Both primary and fallback endpoints failed: {exc}",
+                code="ENDPOINT_ERROR",
+            ) from exc
+
     async def verify_cer(self, certificate_hash: str) -> dict[str, Any]:
         """Verify a CER against Provider 02's public JWK set.
 
@@ -691,7 +765,7 @@ class Provider02Client:
 
         url = f"{self._endpoint}/verify/{certificate_hash}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
                 return resp.json()

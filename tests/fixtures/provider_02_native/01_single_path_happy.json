@@ -1,0 +1,74 @@
+{
+  "bundleId": "a1b2c3d4-e5f6-4789-a012-3456789abcde",
+  "threadId": "thread-happy-linear-001",
+  "steps": [
+    {
+      "stepId": "step-0001-0000-0000-000000000001",
+      "nodeName": "input_validator",
+      "parentStepIds": [],
+      "timestampUtc": "2026-09-14T10:00:00.000Z",
+      "durationMs": 125.5,
+      "signals": {
+        "validation_status": "passed",
+        "input_schema_version": "v1.2.0"
+      },
+      "metadata": {
+        "node_type": "validation",
+        "input_size_bytes": 1024
+      },
+      "stateHash": "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890"
+    },
+    {
+      "stepId": "step-0002-0000-0000-000000000002",
+      "nodeName": "safety_check",
+      "parentStepIds": ["step-0001-0000-0000-000000000001"],
+      "timestampUtc": "2026-09-14T10:00:00.150Z",
+      "durationMs": 89.3,
+      "signals": {
+        "cbf_verdict": "ALLOW",
+        "safety_score": 0.95
+      },
+      "metadata": {
+        "cbf_type": "velocity_constraint",
+        "model": "gemini-2.0-flash-thinking-exp-01-21"
+      },
+      "stateHash": "b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1"
+    },
+    {
+      "stepId": "step-0003-0000-0000-000000000003",
+      "nodeName": "governed_executor",
+      "parentStepIds": ["step-0002-0000-0000-000000000002"],
+      "timestampUtc": "2026-09-14T10:00:00.265Z",
+      "durationMs": 342.7,
+      "signals": {
+        "execution_status": "completed",
+        "action_type": "data_query"
+      },
+      "metadata": {
+        "model": "claude-3-7-sonnet",
+        "tokens_in": 512,
+        "tokens_out": 256
+      },
+      "stateHash": "c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2"
+    },
+    {
+      "stepId": "step-0004-0000-0000-000000000004",
+      "nodeName": "report_generator",
+      "parentStepIds": ["step-0003-0000-0000-000000000003"],
+      "timestampUtc": "2026-09-14T10:00:00.635Z",
+      "durationMs": 78.2,
+      "signals": {
+        "report_format": "json",
+        "output_validated": true
+      },
+      "metadata": {
+        "output_size_bytes": 2048,
+        "compression": "none"
+      },
+      "stateHash": "d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3"
+    }
+  ],
+  "startedAt": "2026-09-14T10:00:00.000Z",
+  "completedAt": "2026-09-14T10:00:00.715Z",
+  "terminalPath": "happy_path"
+}

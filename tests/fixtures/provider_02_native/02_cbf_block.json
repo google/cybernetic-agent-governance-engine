@@ -1,0 +1,61 @@
+{
+  "bundleId": "b2c3d4e5-f6a7-4890-b123-456789abcdef",
+  "threadId": "thread-cbf-block-002",
+  "steps": [
+    {
+      "stepId": "step-1001-0000-0000-000000000001",
+      "nodeName": "request_parser",
+      "parentStepIds": [],
+      "timestampUtc": "2026-09-14T11:30:00.000Z",
+      "durationMs": 45.8,
+      "signals": {
+        "parse_status": "success",
+        "request_type": "financial_transaction"
+      },
+      "metadata": {
+        "content_type": "application/json",
+        "request_id": "req-cbf-001"
+      },
+      "stateHash": "1a2b3c4d5e6f7890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890"
+    },
+    {
+      "stepId": "step-1002-0000-0000-000000000002",
+      "nodeName": "cbf_velocity_check",
+      "parentStepIds": ["step-1001-0000-0000-000000000001"],
+      "timestampUtc": "2026-09-14T11:30:00.065Z",
+      "durationMs": 156.4,
+      "signals": {
+        "cbf_verdict": "BLOCK",
+        "violation_type": "velocity_limit_exceeded",
+        "measured_velocity": 125.3,
+        "max_allowed_velocity": 100.0,
+        "barrier_function_value": -0.253
+      },
+      "metadata": {
+        "cbf_type": "control_barrier_function",
+        "safety_critical": true,
+        "recovery_action": "reject_request"
+      },
+      "stateHash": "2b3c4d5e6f7890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1"
+    },
+    {
+      "stepId": "step-1003-0000-0000-000000000003",
+      "nodeName": "termination_handler",
+      "parentStepIds": ["step-1002-0000-0000-000000000002"],
+      "timestampUtc": "2026-09-14T11:30:00.235Z",
+      "durationMs": 23.1,
+      "signals": {
+        "termination_reason": "cbf_safety_violation",
+        "user_notified": true
+      },
+      "metadata": {
+        "error_code": "CBF_BLOCK_001",
+        "retry_allowed": false
+      },
+      "stateHash": "3c4d5e6f7890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2"
+    }
+  ],
+  "startedAt": "2026-09-14T11:30:00.000Z",
+  "completedAt": "2026-09-14T11:30:00.260Z",
+  "terminalPath": "cbf_block"
+}

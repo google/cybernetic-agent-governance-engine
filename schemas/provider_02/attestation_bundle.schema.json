@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cage:governance:v1:attestation-bundle",
+  "title": "AttestationBundle",
+  "description": "A complete governance bundle for a single graph execution. Assembled from all ProjectBundleStepEntry objects collected during a graph run. Submitted to Provider 02's registerProjectBundle endpoint for CER issuance.",
+  "type": "object",
+  "properties": {
+    "bundleId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this governance bundle (UUID v4)"
+    },
+    "threadId": {
+      "type": "string",
+      "description": "Thread/session identifier linking multiple graph executions",
+      "minLength": 1
+    },
+    "steps": {
+      "type": "array",
+      "description": "Ordered sequence of node execution steps forming the governance DAG",
+      "items": {
+        "$ref": "urn:cage:governance:v1:step-entry"
+      },
+      "minItems": 1
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when graph execution started"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when graph execution completed or terminated"
+    },
+    "terminalPath": {
+      "type": "string",
+      "enum": [
+        "happy_path",
+        "nemo_block",
+        "cbf_block",
+        "loop_breaker",
+        "unknown"
+      ],
+      "description": "Terminal path classification: happy_path (success), nemo_block (policy violation), cbf_block (safety barrier), loop_breaker (iteration limit), unknown (unclassifiable/fallback)"
+    }
+  },
+  "required": [
+    "bundleId",
+    "threadId",
+    "steps",
+    "startedAt",
+    "completedAt",
+    "terminalPath"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,62 @@
+{
+  "bundleId": "d4e5f6a7-b8c9-4012-d345-6789abcdef01",
+  "threadId": "thread-nemo-block-004",
+  "steps": [
+    {
+      "stepId": "step-3001-0000-0000-000000000001",
+      "nodeName": "request_intake",
+      "parentStepIds": [],
+      "timestampUtc": "2026-09-14T13:45:00.000Z",
+      "durationMs": 67.2,
+      "signals": {
+        "intake_status": "accepted",
+        "request_category": "sensitive_data_access"
+      },
+      "metadata": {
+        "user_id": "user-12345",
+        "request_classification": "high_risk"
+      },
+      "stateHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "stepId": "step-3002-0000-0000-000000000002",
+      "nodeName": "nemo_guardrails_check",
+      "parentStepIds": ["step-3001-0000-0000-000000000001"],
+      "timestampUtc": "2026-09-14T13:45:00.085Z",
+      "durationMs": 245.8,
+      "signals": {
+        "nemo_verdict": "BLOCK",
+        "policy_violated": "data_residency_policy",
+        "violation_severity": "critical",
+        "rule_triggered": "cross_region_pii_access_denied",
+        "compliance_frameworks": ["GDPR", "CCPA"]
+      },
+      "metadata": {
+        "guardrails_version": "v2.3.1",
+        "policy_bundle": "healthcare_privacy",
+        "detected_entities": ["patient_record", "medical_history"]
+      },
+      "stateHash": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+    },
+    {
+      "stepId": "step-3003-0000-0000-000000000003",
+      "nodeName": "policy_enforcement",
+      "parentStepIds": ["step-3002-0000-0000-000000000002"],
+      "timestampUtc": "2026-09-14T13:45:00.345Z",
+      "durationMs": 34.5,
+      "signals": {
+        "enforcement_action": "deny_and_log",
+        "audit_trail_id": "audit-nemo-001",
+        "user_notification_sent": true
+      },
+      "metadata": {
+        "notification_channel": "email",
+        "escalation_required": false
+      },
+      "stateHash": "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
+    }
+  ],
+  "startedAt": "2026-09-14T13:45:00.000Z",
+  "completedAt": "2026-09-14T13:45:00.380Z",
+  "terminalPath": "nemo_block"
+}

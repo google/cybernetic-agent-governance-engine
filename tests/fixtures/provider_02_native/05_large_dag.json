@@ -1,0 +1,229 @@
+{
+  "bundleId": "e5f6a7b8-c9d0-4123-e456-789abcdef012",
+  "threadId": "thread-large-dag-005",
+  "steps": [
+    {
+      "stepId": "step-4001-0000-0000-000000000001",
+      "nodeName": "ingestion_gateway",
+      "parentStepIds": [],
+      "timestampUtc": "2026-09-14T14:00:00.000Z",
+      "durationMs": 45.2,
+      "signals": {"gateway_status": "open"},
+      "metadata": {"entry_point": true},
+      "stateHash": "aaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001"
+    },
+    {
+      "stepId": "step-4002-0000-0000-000000000002",
+      "nodeName": "schema_validator",
+      "parentStepIds": ["step-4001-0000-0000-000000000001"],
+      "timestampUtc": "2026-09-14T14:00:00.065Z",
+      "durationMs": 78.3,
+      "signals": {"validation": "passed"},
+      "metadata": {"schema_version": "v3.2.1"},
+      "stateHash": "bbbb0002ccccddddeeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbb"
+    },
+    {
+      "stepId": "step-4003-0000-0000-000000000003",
+      "nodeName": "auth_check",
+      "parentStepIds": ["step-4001-0000-0000-000000000001"],
+      "timestampUtc": "2026-09-14T14:00:00.075Z",
+      "durationMs": 134.7,
+      "signals": {"auth_status": "authorized"},
+      "metadata": {"auth_method": "oauth2"},
+      "stateHash": "cccc0003ddddeeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbbcccc"
+    },
+    {
+      "stepId": "step-4004-0000-0000-000000000004",
+      "nodeName": "risk_profiler",
+      "parentStepIds": ["step-4002-0000-0000-000000000002", "step-4003-0000-0000-000000000003"],
+      "timestampUtc": "2026-09-14T14:00:00.235Z",
+      "durationMs": 156.8,
+      "signals": {"risk_level": "medium"},
+      "metadata": {"risk_score": 0.42},
+      "stateHash": "dddd0004eeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccdddd"
+    },
+    {
+      "stepId": "step-4005-0000-0000-000000000005",
+      "nodeName": "intent_classifier",
+      "parentStepIds": ["step-4004-0000-0000-000000000004"],
+      "timestampUtc": "2026-09-14T14:00:00.415Z",
+      "durationMs": 234.5,
+      "signals": {"intent": "multi_step_query"},
+      "metadata": {"confidence": 0.89},
+      "stateHash": "eeee0005ffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4006-0000-0000-000000000006",
+      "nodeName": "branch_router",
+      "parentStepIds": ["step-4005-0000-0000-000000000005"],
+      "timestampUtc": "2026-09-14T14:00:00.675Z",
+      "durationMs": 23.1,
+      "signals": {"routing_decision": "parallel_execution"},
+      "metadata": {"branch_count": 3},
+      "stateHash": "ffff0006aaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeeeffff"
+    },
+    {
+      "stepId": "step-4007-0000-0000-000000000007",
+      "nodeName": "data_retrieval_branch_a",
+      "parentStepIds": ["step-4006-0000-0000-000000000006"],
+      "timestampUtc": "2026-09-14T14:00:00.720Z",
+      "durationMs": 345.6,
+      "signals": {"retrieval_status": "success"},
+      "metadata": {"records_fetched": 127},
+      "stateHash": "0001aaaa0007bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeeeffffaaaa"
+    },
+    {
+      "stepId": "step-4008-0000-0000-000000000008",
+      "nodeName": "ml_inference_branch_b",
+      "parentStepIds": ["step-4006-0000-0000-000000000006"],
+      "timestampUtc": "2026-09-14T14:00:00.735Z",
+      "durationMs": 567.8,
+      "signals": {"inference_complete": true},
+      "metadata": {"model": "gemini-2.0-flash-thinking-exp-01-21"},
+      "stateHash": "0002bbbb0008ccccddddeeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001"
+    },
+    {
+      "stepId": "step-4009-0000-0000-000000000009",
+      "nodeName": "compliance_check_branch_c",
+      "parentStepIds": ["step-4006-0000-0000-000000000006"],
+      "timestampUtc": "2026-09-14T14:00:00.745Z",
+      "durationMs": 189.4,
+      "signals": {"compliance_status": "compliant"},
+      "metadata": {"frameworks": ["SOC2", "ISO27001"]},
+      "stateHash": "0003cccc0009ddddeeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbb"
+    },
+    {
+      "stepId": "step-4010-0000-0000-000000000010",
+      "nodeName": "cache_lookup",
+      "parentStepIds": ["step-4007-0000-0000-000000000007"],
+      "timestampUtc": "2026-09-14T14:00:01.085Z",
+      "durationMs": 12.3,
+      "signals": {"cache_hit": false},
+      "metadata": {"cache_backend": "redis"},
+      "stateHash": "0004dddd0010eeeeffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbbcccc"
+    },
+    {
+      "stepId": "step-4011-0000-0000-000000000011",
+      "nodeName": "enrichment_engine",
+      "parentStepIds": ["step-4010-0000-0000-000000000010"],
+      "timestampUtc": "2026-09-14T14:00:01.115Z",
+      "durationMs": 289.5,
+      "signals": {"enrichment_applied": true},
+      "metadata": {"enrichment_rules": 17},
+      "stateHash": "0005eeee0011ffffaaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccdddd"
+    },
+    {
+      "stepId": "step-4012-0000-0000-000000000012",
+      "nodeName": "feature_extractor",
+      "parentStepIds": ["step-4008-0000-0000-000000000008"],
+      "timestampUtc": "2026-09-14T14:00:01.325Z",
+      "durationMs": 123.7,
+      "signals": {"features_extracted": 45},
+      "metadata": {"feature_version": "v2.1"},
+      "stateHash": "0006ffff0012aaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4013-0000-0000-000000000013",
+      "nodeName": "anomaly_detector",
+      "parentStepIds": ["step-4012-0000-0000-000000000012"],
+      "timestampUtc": "2026-09-14T14:00:01.465Z",
+      "durationMs": 98.2,
+      "signals": {"anomalies_detected": 0},
+      "metadata": {"detector_sensitivity": 0.85},
+      "stateHash": "0007aaaa0013bbbb0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4014-0000-0000-000000000014",
+      "nodeName": "policy_engine",
+      "parentStepIds": ["step-4009-0000-0000-000000000009"],
+      "timestampUtc": "2026-09-14T14:00:00.955Z",
+      "durationMs": 167.3,
+      "signals": {"policy_verdict": "allow"},
+      "metadata": {"policies_evaluated": 23},
+      "stateHash": "0008bbbb0014cccc0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4015-0000-0000-000000000015",
+      "nodeName": "cbf_safety_check",
+      "parentStepIds": ["step-4014-0000-0000-000000000014"],
+      "timestampUtc": "2026-09-14T14:00:01.145Z",
+      "durationMs": 145.8,
+      "signals": {"cbf_verdict": "ALLOW", "barrier_margin": 0.342},
+      "metadata": {"cbf_type": "multi_constraint"},
+      "stateHash": "0009cccc0015dddd0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4016-0000-0000-000000000016",
+      "nodeName": "convergence_point",
+      "parentStepIds": ["step-4011-0000-0000-000000000011", "step-4013-0000-0000-000000000013", "step-4015-0000-0000-000000000015"],
+      "timestampUtc": "2026-09-14T14:00:01.585Z",
+      "durationMs": 67.4,
+      "signals": {"all_branches_completed": true},
+      "metadata": {"merge_strategy": "union"},
+      "stateHash": "0010dddd0016eeee0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4017-0000-0000-000000000017",
+      "nodeName": "result_aggregator",
+      "parentStepIds": ["step-4016-0000-0000-000000000016"],
+      "timestampUtc": "2026-09-14T14:00:01.675Z",
+      "durationMs": 112.5,
+      "signals": {"aggregation_complete": true},
+      "metadata": {"total_data_points": 342},
+      "stateHash": "0011eeee0017ffff0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4018-0000-0000-000000000018",
+      "nodeName": "quality_scorer",
+      "parentStepIds": ["step-4017-0000-0000-000000000017"],
+      "timestampUtc": "2026-09-14T14:00:01.805Z",
+      "durationMs": 89.6,
+      "signals": {"quality_score": 0.92},
+      "metadata": {"scoring_model": "custom_v3"},
+      "stateHash": "0012ffff0018aaaa0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4019-0000-0000-000000000019",
+      "nodeName": "formatter",
+      "parentStepIds": ["step-4018-0000-0000-000000000018"],
+      "timestampUtc": "2026-09-14T14:00:01.915Z",
+      "durationMs": 45.7,
+      "signals": {"format": "json_ld"},
+      "metadata": {"output_version": "v1.0"},
+      "stateHash": "0013aaaa0019bbbb0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4020-0000-0000-000000000020",
+      "nodeName": "encryption_wrapper",
+      "parentStepIds": ["step-4019-0000-0000-000000000019"],
+      "timestampUtc": "2026-09-14T14:00:01.980Z",
+      "durationMs": 78.3,
+      "signals": {"encryption_applied": true},
+      "metadata": {"algorithm": "AES-256-GCM"},
+      "stateHash": "0014bbbb0020cccc0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4021-0000-0000-000000000021",
+      "nodeName": "audit_logger",
+      "parentStepIds": ["step-4020-0000-0000-000000000020"],
+      "timestampUtc": "2026-09-14T14:00:02.080Z",
+      "durationMs": 34.2,
+      "signals": {"audit_logged": true},
+      "metadata": {"log_destination": "gcs"},
+      "stateHash": "0015cccc0021dddd0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    },
+    {
+      "stepId": "step-4022-0000-0000-000000000022",
+      "nodeName": "response_sender",
+      "parentStepIds": ["step-4021-0000-0000-000000000021"],
+      "timestampUtc": "2026-09-14T14:00:02.135Z",
+      "durationMs": 23.8,
+      "signals": {"transmission_status": "sent"},
+      "metadata": {"response_size_bytes": 4096},
+      "stateHash": "0016dddd0022eeee0001bbbbccccddddeeeeffffaaaa0001bbbbccccddddeeee"
+    }
+  ],
+  "startedAt": "2026-09-14T14:00:00.000Z",
+  "completedAt": "2026-09-14T14:00:02.160Z",
+  "terminalPath": "happy_path"
+}

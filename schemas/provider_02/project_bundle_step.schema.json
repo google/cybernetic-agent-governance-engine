@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cage:governance:v1:step-entry",
+  "title": "ProjectBundleStepEntry",
+  "description": "A single step in the CAGE governance DAG. Maps 1:1 to a LangGraph node execution snapshot. The parentStepIds field captures DAG edges from preceding nodes.",
+  "type": "object",
+  "properties": {
+    "stepId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this step (UUID v4)"
+    },
+    "nodeName": {
+      "type": "string",
+      "description": "LangGraph node name (e.g., 'safety_check', 'governed_trader')",
+      "minLength": 1
+    },
+    "parentStepIds": {
+      "type": "array",
+      "description": "Step IDs of all parent nodes in the DAG. Empty for entry nodes.",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "uniqueItems": true
+    },
+    "timestampUtc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when this step was executed"
+    },
+    "durationMs": {
+      "type": "number",
+      "description": "Execution duration in milliseconds",
+      "minimum": 0
+    },
+    "signals": {
+      "type": "object",
+      "description": "Governance signals emitted by this node (CBF verdicts, OPA decisions, etc.). Open extension point for domain-specific data.",
+      "additionalProperties": true
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary node metadata (model names, token counts, etc.). Open extension point.",
+      "additionalProperties": true
+    },
+    "stateHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hex digest of the serialized AgentState snapshot at this node"
+    }
+  },
+  "required": [
+    "stepId",
+    "nodeName",
+    "parentStepIds",
+    "timestampUtc",
+    "durationMs",
+    "signals",
+    "metadata",
+    "stateHash"
+  ],
+  "additionalProperties": false
+}

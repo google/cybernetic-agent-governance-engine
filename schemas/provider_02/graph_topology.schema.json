@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cage:governance:v1:graph-topology",
+  "title": "GraphTopology",
+  "description": "Domain-agnostic control graph topology. Describes the structure of a LangGraph control flow without naming specific actions. Used by attestation adapters for DAG construction, terminal path classification, and parent-edge resolution.",
+  "type": "object",
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "description": "All node names in the graph (unordered set)",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "parentEdges": {
+      "type": "object",
+      "description": "Maps each node to its possible parent nodes. Keys are node names, values are arrays of parent node names.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
+      }
+    },
+    "terminalNode": {
+      "type": "string",
+      "description": "The canonical success terminal node (e.g., final action executor)",
+      "minLength": 1
+    },
+    "interruptNode": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The node where HITL (human-in-the-loop) interrupts occur, if any",
+      "minLength": 1
+    },
+    "attestationNodes": {
+      "type": "array",
+      "description": "Nodes that trigger attestation CER emission (unordered set)",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "nodes",
+    "parentEdges",
+    "terminalNode"
+  ],
+  "additionalProperties": false
+}

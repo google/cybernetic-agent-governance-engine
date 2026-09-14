@@ -210,6 +210,16 @@ class Provider02AttestationProvider(AttestationProvider):
         self._jwk_cache = JWKCache()
         self._sync_task: asyncio.Task | None = None
         self._running = False
+        
+        # mTLS configuration
+        self._client_cert = os.getenv("PROVIDER_02_CLIENT_CERT", "")
+        self._client_key = os.getenv("PROVIDER_02_CLIENT_KEY", "")
+        self._ca_bundle = os.getenv("PROVIDER_02_CA_BUNDLE", "")
+        
+        # Configurable ingestion endpoint with fallback
+        self._ingest_path = os.getenv(
+            "PROVIDER_02_INGEST_PATH", "/v1/governance/bundles"
+        )
 
         # CER resolver for fetching receipts during verification
         # Extract base URL without the /v1 suffix if present
@@ -235,6 +245,30 @@ class Provider02AttestationProvider(AttestationProvider):
             self._jwk_endpoint or "(not set)",
             self._timeout,
         )
+
+    def _build_httpx_kwargs(self) -> dict[str, Any]:
+        """Build httpx.AsyncClient configuration with optional mTLS."""
+        kwargs: dict[str, Any] = {"timeout": self._timeout}
+        
+        # mTLS client certificate
+        if self._client_cert and self._client_key:
+            kwargs["cert"] = (self._client_cert, self._client_key)
+            logger.debug(
+                "[Provider02] mTLS enabled: cert=%s key=%s",
+                self._client_cert,
+                self._client_key,
+            )
+        
+        # Server verification (CA bundle or system trust)
+        if self._ca_bundle:
+            kwargs["verify"] = self._ca_bundle
+            logger.debug(
+                "[Provider02] Custom CA bundle: %s", self._ca_bundle
+            )
+        else:
+            kwargs["verify"] = True  # Use system trust store
+        
+        return kwargs
 
     def _headers(self) -> dict[str, str]:
         """Authorization headers."""
@@ -423,7 +457,7 @@ class Provider02AttestationProvider(AttestationProvider):
 
         url = f"{self._endpoint}/certifyDecision"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 resp = await client.post(
                     url, json=evidence_record, headers=self._headers()
                 )
@@ -660,7 +694,7 @@ class Provider02AttestationProvider(AttestationProvider):
 
         url = f"{self._endpoint}/verify/{certificate_hash}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
@@ -700,15 +734,52 @@ class Provider02AttestationProvider(AttestationProvider):
         """
         import httpx
 
-        url = f"{self._endpoint}/registerProjectBundle"
+        # Try primary ingestion endpoint
+        url = f"{self._endpoint}{self._ingest_path}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 resp = await client.post(url, json=bundle, headers=self._headers())
                 resp.raise_for_status()
                 return resp.json()
+        except httpx.HTTPStatusError as exc:
+            # Fallback to legacy endpoint on 404/405
+            if exc.response.status_code in (404, 405):
+                logger.warning(
+                    "[Provider02] Primary endpoint %s failed with %d, "
+                    "falling back to /registerProjectBundle",
+                    url,
+                    exc.response.status_code,
+                )
+                return await self._register_bundle_fallback(bundle)
+            
+            logger.error(
+                "[Provider02] registerProjectBundle failed: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            return {"error": f"HTTP {exc.response.status_code}"}
         except Exception as exc:
             logger.error("[Provider02] registerProjectBundle failed: %s %s", url, exc)
             return {"error": str(exc)}
+
+    async def _register_bundle_fallback(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Fallback bundle registration using legacy /registerProjectBundle endpoint."""
+        import httpx
+
+        url = f"{self._endpoint}/registerProjectBundle"
+        try:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
+                resp = await client.post(url, json=bundle, headers=self._headers())
+                resp.raise_for_status()
+                logger.info(
+                    "[Provider02] Fallback endpoint succeeded: /registerProjectBundle"
+                )
+                return resp.json()
+        except Exception as exc:
+            logger.error(
+                "[Provider02] Fallback registration also failed: %s %s", url, exc
+            )
+            return {"error": f"Both endpoints failed: {exc}"}
 
     # ------------------------------------------------------------------
     # JWK sync daemon
@@ -722,7 +793,7 @@ class Provider02AttestationProvider(AttestationProvider):
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
                 headers = {}
                 if self._jwk_cache.etag:
                     headers["If-None-Match"] = self._jwk_cache.etag

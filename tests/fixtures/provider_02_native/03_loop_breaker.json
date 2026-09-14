@@ -1,0 +1,108 @@
+{
+  "bundleId": "c3d4e5f6-a7b8-4901-c234-56789abcdef0",
+  "threadId": "thread-loop-breaker-003",
+  "steps": [
+    {
+      "stepId": "step-2001-0000-0000-000000000001",
+      "nodeName": "query_planner",
+      "parentStepIds": [],
+      "timestampUtc": "2026-09-14T12:15:00.000Z",
+      "durationMs": 112.3,
+      "signals": {
+        "plan_generated": true,
+        "iteration_count": 0
+      },
+      "metadata": {
+        "planner_model": "gemini-2.0-flash-thinking-exp-01-21",
+        "complexity_score": 7
+      },
+      "stateHash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+      "stepId": "step-2002-0000-0000-000000000002",
+      "nodeName": "executor",
+      "parentStepIds": ["step-2001-0000-0000-000000000001"],
+      "timestampUtc": "2026-09-14T12:15:00.145Z",
+      "durationMs": 234.5,
+      "signals": {
+        "execution_result": "partial_success",
+        "needs_refinement": true,
+        "iteration_count": 1
+      },
+      "metadata": {
+        "executor_type": "query_engine",
+        "results_count": 42
+      },
+      "stateHash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    },
+    {
+      "stepId": "step-2003-0000-0000-000000000003",
+      "nodeName": "query_planner",
+      "parentStepIds": ["step-2002-0000-0000-000000000002"],
+      "timestampUtc": "2026-09-14T12:15:00.425Z",
+      "durationMs": 98.7,
+      "signals": {
+        "plan_refined": true,
+        "iteration_count": 2
+      },
+      "metadata": {
+        "refinement_reason": "insufficient_precision"
+      },
+      "stateHash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    },
+    {
+      "stepId": "step-2004-0000-0000-000000000004",
+      "nodeName": "executor",
+      "parentStepIds": ["step-2003-0000-0000-000000000003"],
+      "timestampUtc": "2026-09-14T12:15:00.565Z",
+      "durationMs": 189.2,
+      "signals": {
+        "execution_result": "partial_success",
+        "needs_refinement": true,
+        "iteration_count": 3
+      },
+      "metadata": {
+        "executor_type": "query_engine",
+        "results_count": 67
+      },
+      "stateHash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+    },
+    {
+      "stepId": "step-2005-0000-0000-000000000005",
+      "nodeName": "query_planner",
+      "parentStepIds": ["step-2004-0000-0000-000000000004"],
+      "timestampUtc": "2026-09-14T12:15:00.785Z",
+      "durationMs": 87.3,
+      "signals": {
+        "plan_refined": true,
+        "iteration_count": 4
+      },
+      "metadata": {
+        "refinement_reason": "convergence_slow"
+      },
+      "stateHash": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+    },
+    {
+      "stepId": "step-2006-0000-0000-000000000006",
+      "nodeName": "loop_breaker",
+      "parentStepIds": ["step-2005-0000-0000-000000000005"],
+      "timestampUtc": "2026-09-14T12:15:00.900Z",
+      "durationMs": 12.4,
+      "signals": {
+        "loop_detected": true,
+        "iteration_limit_reached": true,
+        "max_iterations": 5,
+        "current_iteration": 5,
+        "resolution_strategy": "terminate_with_best_effort"
+      },
+      "metadata": {
+        "breaker_type": "iteration_count",
+        "best_result_iteration": 3
+      },
+      "stateHash": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+    }
+  ],
+  "startedAt": "2026-09-14T12:15:00.000Z",
+  "completedAt": "2026-09-14T12:15:00.915Z",
+  "terminalPath": "loop_breaker"
+}
