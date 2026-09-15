@@ -799,6 +799,7 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         - "flowsignal"   — FlowSignal legal baseline & FRIA API (alias: "provider_01")
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
+        - "provider_07"  — Provider 07 Bayesian causal suitability oracle (alias: "infertheta")
 
     Note: actuator_01 (see src/integrations/actuator_01/) implements the
     ExecutionActuator seam (KMS-signed envelope protocol), not NormativeProvider.
@@ -819,8 +820,10 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         "p01": "provider_01",
         "p03": "provider_03",
         "p06": "provider_06",
+        "p07": "provider_07",
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",
+        "infertheta": "provider_07",
     }
     provider_name = alias_map.get(provider_name, provider_name)
 
@@ -852,11 +855,17 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
         return Provider06AgentIntegrityAdapter()
 
+    if provider_name == "provider_07":
+        from src.integrations.provider_07 import Provider07NormativeProvider
+
+        return Provider07NormativeProvider.from_env()
+
     valid = [
         *_PROVIDERS.keys(),
         "provider_01",
         "provider_03",
         "provider_06",
+        "provider_07",
     ]
     raise ValueError(
         f"Unknown normative provider: {provider_name!r}. Available providers: {valid}. "
