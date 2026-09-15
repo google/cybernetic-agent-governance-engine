@@ -430,7 +430,8 @@ async def enforce_fria_boundary(
 
                     # Build enriched context with external validation signal
                     enriched_context = {
-                        "confidence_score": getattr(result, "confidence_score", None) or consensus_score,
+                        "confidence_score": getattr(result, "confidence_score", None)
+                        or consensus_score,
                         "external_validation": "ADMITTED",
                         "provider_findings": getattr(result, "findings", []),
                     }

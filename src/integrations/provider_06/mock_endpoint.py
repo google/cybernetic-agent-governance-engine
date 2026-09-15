@@ -371,7 +371,6 @@ def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
 
 
 if __name__ == "__main__":
-
     logging.basicConfig(level=logging.INFO)
 
     host = os.environ.get("MOCK_HOST", "127.0.0.1")

@@ -160,25 +160,31 @@ In Python-based runtimes like CAGE, capability contracts are implemented via str
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
+
 class AdapterCapability(str, Enum):
     BATCHING = "BATCHING"
     STREAMING = "STREAMING"
     ATTESTATION = "ATTESTATION"
     ASYNC_VALIDATION = "ASYNC_VALIDATION"
 
+
 @runtime_checkable
 class BaseAdapterProtocol(Protocol):
     @property
     def adapter_id(self) -> str: ...
-    
+
     async def initialize(self, config: dict[str, Any]) -> None: ...
     async def health_check(self) -> bool: ...
     def get_capabilities(self) -> set[AdapterCapability]: ...
     async def shutdown(self) -> None: ...
 
+
 @runtime_checkable
 class BatchExecutionProtocol(BaseAdapterProtocol, Protocol):
-    async def execute_batch(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+    async def execute_batch(
+        self, items: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]: ...
+
 
 @runtime_checkable
 class AttestationProtocol(BaseAdapterProtocol, Protocol):

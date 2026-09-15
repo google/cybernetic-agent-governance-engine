@@ -491,13 +491,18 @@ class TestFtraControlMappings:
 
         us_fed_controls = get_control_meta("US_FED")
         assert "AC-4" in us_fed_controls
-        
+
         ac4_meta = us_fed_controls["AC-4"]
-        assert ac4_meta["name"] == "Information Flow Enforcement — FTRA Parameter Smuggling Protection"
+        assert (
+            ac4_meta["name"]
+            == "Information Flow Enforcement — FTRA Parameter Smuggling Protection"
+        )
         assert ac4_meta["scoreName"] == "nist.AC-4.passed"
         assert ac4_meta["iso_clause"] == "NIST SP 800-53 Rev 5 AC-4"
         assert "fedramp" in ac4_meta["frameworks"]
-        assert ac4_meta["frameworks"]["fedramp"] == "AC-4 (Information Flow Enforcement)"
+        assert (
+            ac4_meta["frameworks"]["fedramp"] == "AC-4 (Information Flow Enforcement)"
+        )
         assert "aarm" in ac4_meta["frameworks"]
         assert "AARM-V3" in ac4_meta["frameworks"]["aarm"]
         assert "AARM-V5" in ac4_meta["frameworks"]["aarm"]
@@ -508,13 +513,15 @@ class TestFtraControlMappings:
 
         us_fed_controls = get_control_meta("US_FED")
         assert "SI-10" in us_fed_controls
-        
+
         si10_meta = us_fed_controls["SI-10"]
         assert si10_meta["name"] == "Input Validation — Multi-Component Protection"
         assert si10_meta["scoreName"] == "nist.SI-10.passed"
         assert si10_meta["iso_clause"] == "NIST SP 800-53 Rev 5 SI-10"
         assert "fedramp" in si10_meta["frameworks"]
-        assert si10_meta["frameworks"]["fedramp"] == "SI-10 (Information Input Validation)"
+        assert (
+            si10_meta["frameworks"]["fedramp"] == "SI-10 (Information Input Validation)"
+        )
         assert "aarm" in si10_meta["frameworks"]
 
     def test_ac4_not_in_eu_ecb(self):
@@ -597,7 +604,10 @@ class TestUniversalAssuranceStatus:
 
         assert len(AssuranceStatus) == 4
         assert AssuranceStatus.ILLUSTRATIVE_REFERENCE.value == "ILLUSTRATIVE_REFERENCE"
-        assert AssuranceStatus.SELF_ASSESSED_PRE_DEPLOYMENT.value == "SELF_ASSESSED_PRE_DEPLOYMENT"
+        assert (
+            AssuranceStatus.SELF_ASSESSED_PRE_DEPLOYMENT.value
+            == "SELF_ASSESSED_PRE_DEPLOYMENT"
+        )
         assert AssuranceStatus.OPERATIONAL_STAGING.value == "OPERATIONAL_STAGING"
         assert AssuranceStatus.THIRD_PARTY_ASSESSED.value == "THIRD_PARTY_ASSESSED"
 
@@ -642,15 +652,19 @@ class TestAssurancePostureInOSCAL:
         from src.gateway.governance.oscal_ssp_exporter import _build_metadata
 
         metadata = _build_metadata(region="US_FED")
-        
+
         # metadata must include 'props' list with assurance posture properties
         assert "props" in metadata
         props = metadata["props"]
-        
+
         # Extract assurance_status and attestation_boundary from props
-        assurance_status_prop = next((p for p in props if p["name"] == "assurance_status"), None)
-        attestation_boundary_prop = next((p for p in props if p["name"] == "attestation_boundary"), None)
-        
+        assurance_status_prop = next(
+            (p for p in props if p["name"] == "assurance_status"), None
+        )
+        attestation_boundary_prop = next(
+            (p for p in props if p["name"] == "attestation_boundary"), None
+        )
+
         assert assurance_status_prop is not None
         assert attestation_boundary_prop is not None
         assert assurance_status_prop["value"] == "ILLUSTRATIVE_REFERENCE"
@@ -662,14 +676,16 @@ class TestAssurancePostureInOSCAL:
         from src.gateway.governance.oscal_ssp_exporter import _build_metadata
 
         metadata = _build_metadata(region="EU_ECB")
-        
+
         # metadata must include 'props' list with assurance posture properties
         assert "props" in metadata
         props = metadata["props"]
-        
+
         # Extract assurance_status from props
-        assurance_status_prop = next((p for p in props if p["name"] == "assurance_status"), None)
-        
+        assurance_status_prop = next(
+            (p for p in props if p["name"] == "assurance_status"), None
+        )
+
         assert assurance_status_prop is not None
         assert assurance_status_prop["value"] == "ILLUSTRATIVE_REFERENCE"
 
@@ -679,13 +695,15 @@ class TestAssurancePostureInOSCAL:
         from src.gateway.governance.oscal_ssp_exporter import _build_metadata
 
         metadata = _build_metadata(region="APAC_MAS")
-        
+
         # metadata must include 'props' list with assurance posture properties
         assert "props" in metadata
         props = metadata["props"]
-        
+
         # Extract assurance_status from props
-        assurance_status_prop = next((p for p in props if p["name"] == "assurance_status"), None)
-        
+        assurance_status_prop = next(
+            (p for p in props if p["name"] == "assurance_status"), None
+        )
+
         assert assurance_status_prop is not None
         assert assurance_status_prop["value"] == "ILLUSTRATIVE_REFERENCE"

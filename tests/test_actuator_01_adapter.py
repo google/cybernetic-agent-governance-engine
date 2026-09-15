@@ -772,7 +772,9 @@ class TestV3SecurityGates:
         """Trailing-slash normalization allows matching routes."""
         clearance = make_valid_clearance()
         clearance.executor_id = "actuator_01"
-        clearance.target_route = "https://sandbox.archytan.example.com/"  # With trailing slash
+        clearance.target_route = (
+            "https://sandbox.archytan.example.com/"  # With trailing slash
+        )
 
         async def mock_submit(*args, **kwargs):
             return httpx.Response(
@@ -785,7 +787,9 @@ class TestV3SecurityGates:
             )
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
-        mock_client.base_url = "https://sandbox.archytan.example.com"  # No trailing slash
+        mock_client.base_url = (
+            "https://sandbox.archytan.example.com"  # No trailing slash
+        )
         mock_client.submit_envelope = mock_submit
         mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
 

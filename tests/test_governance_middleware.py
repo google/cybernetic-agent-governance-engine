@@ -403,7 +403,7 @@ class TestValidateActionEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
-        
+
         # ADR-008 Phase 3: Assert canonical envelope structure
         assert data.get("envelope_version") == "3.0"
         assert data.get("envelope_type") == "cage_governance_decision"
@@ -414,16 +414,16 @@ class TestValidateActionEndpoint:
         assert "subject" in data
         assert "governance_context" in data
         assert "payload" in data
-        
+
         # Assert that the payload contains the governance result
         payload = data["payload"]
         assert payload["verdict"] == "APPROVED"
         assert payload["violations"] == []
         assert "seal" in payload
-        
+
         # Assert signature presence (may be None if KMS not active in test)
         assert "signature" in data or data.get("signature") is None
-        
+
         mock_symbolic_governor.validate_action.assert_awaited_once_with(
             action="execute_trade",
             params={"amount": 100, "symbol": "AAPL"},
@@ -467,12 +467,12 @@ class TestValidateActionEndpoint:
 
         assert resp.status_code == 403
         data = resp.json()
-        
+
         # ADR-008 Phase 3: Assert refusal contract structure
         assert data.get("schema_version") == "2.0.0"
         assert data["verdict"] == "DENIED"
         assert len(data["violations"]) > 0
-        
+
         # refusal_receipt and proof_hash may be absent if receipt is None
         # (existing tests don't set receipt on GovernanceError)
 
@@ -1295,7 +1295,7 @@ class TestFlowSignalHttp202Receipt:
 
         assert resp.status_code == 200
         data = resp.json()
-        
+
         # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
         assert data.get("envelope_version") == "3.0"
         assert data["payload"]["verdict"] == "APPROVED"

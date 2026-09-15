@@ -233,6 +233,7 @@ Retrieves the **normative ruleset** and configuration for a specific regulatory 
 2. **Verify Ed25519 Signature**:
    ```python
    from cryptography.hazmat.primitives.asymmetric import ed25519
+
    public_key.verify(signature_bytes, canonical_body_bytes)
    ```
 3. **On Failure**: Reject with `SIGNATURE_VERIFICATION_FAILED`, set `admitted=False`.
@@ -312,9 +313,7 @@ Defined in [`src/integrations/provider_07/README.md`](../../src/integrations/pro
 `posterior_risk_score` is computed as a **weighted sum** of marginal probabilities for adverse events:
 ```python
 posterior_risk_score = (
-    0.5 * P(drawdown_gt_15pct)
-    + 0.3 * P(volatility_spike)
-    + 0.2 * P(liquidity_stress)
+    0.5 * P(drawdown_gt_15pct) + 0.3 * P(volatility_spike) + 0.2 * P(liquidity_stress)
 )
 ```
 Thresholds (configured per region in baseline):

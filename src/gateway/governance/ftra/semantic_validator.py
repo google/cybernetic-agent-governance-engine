@@ -164,10 +164,10 @@ ACTION_SCHEMAS: dict[str, ActionSchema] = {}
 
 def register_action_schema(action_name: str, schema: ActionSchema) -> None:
     """Register a semantic schema for a specific action.
-    
+
     This function is called by domain plugins during initialization to register
     their action-specific validation schemas. The kernel remains domain-agnostic.
-    
+
     Args:
         action_name: The action name (e.g., from domain plugin).
         schema: The ActionSchema defining validation rules for this action.
@@ -313,7 +313,9 @@ def _validate_parameter(
 
     # Forbidden pattern detection (security)
     if constraint.forbidden_patterns:
-        matched_pattern = _check_forbidden_patterns(value, constraint.forbidden_patterns)
+        matched_pattern = _check_forbidden_patterns(
+            value, constraint.forbidden_patterns
+        )
         if matched_pattern:
             return SemanticValidationResult(
                 is_valid=False,
@@ -400,7 +402,9 @@ def validate_tool_input(
         # This catches injection attempts in unexpected fields (fail-closed security)
         for param_name in extra_params:
             # Check parameter NAME for forbidden patterns (e.g., "override_governance")
-            matched_pattern_name = _check_forbidden_patterns(param_name, _FORBIDDEN_PATTERNS)
+            matched_pattern_name = _check_forbidden_patterns(
+                param_name, _FORBIDDEN_PATTERNS
+            )
             if matched_pattern_name:
                 return SemanticValidationResult(
                     is_valid=False,
@@ -415,7 +419,9 @@ def validate_tool_input(
 
             # Check parameter VALUE for forbidden patterns
             param_value = tool_input[param_name]
-            matched_pattern_value = _check_forbidden_patterns(param_value, _FORBIDDEN_PATTERNS)
+            matched_pattern_value = _check_forbidden_patterns(
+                param_value, _FORBIDDEN_PATTERNS
+            )
             if matched_pattern_value:
                 return SemanticValidationResult(
                     is_valid=False,

@@ -178,18 +178,20 @@ def sign_policy_decision(
 
     # Construct decision binding payload with 0x1F unit separators
     unit_sep = b"\x1f"
-    binding_payload = unit_sep.join([
-        action.encode("utf-8"),
-        target_digest.encode("utf-8"),
-        correlation_id.encode("utf-8"),
-        decision.encode("utf-8"),
-        decision_path.encode("utf-8"),
-        str(required_quorum).encode("utf-8"),
-        policy_version.encode("utf-8"),
-        str(evaluated_at).encode("utf-8"),
-        (receipt_id or "").encode("utf-8"),
-        (receipt_hash or "").encode("utf-8"),
-    ])
+    binding_payload = unit_sep.join(
+        [
+            action.encode("utf-8"),
+            target_digest.encode("utf-8"),
+            correlation_id.encode("utf-8"),
+            decision.encode("utf-8"),
+            decision_path.encode("utf-8"),
+            str(required_quorum).encode("utf-8"),
+            policy_version.encode("utf-8"),
+            str(evaluated_at).encode("utf-8"),
+            (receipt_id or "").encode("utf-8"),
+            (receipt_hash or "").encode("utf-8"),
+        ]
+    )
 
     # Compute SHA-256 digest of the binding payload
     decision_binding_sha256 = hashlib.sha256(binding_payload).digest()

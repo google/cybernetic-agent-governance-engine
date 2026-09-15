@@ -48,9 +48,7 @@ json_value = st.recursive(
         st.lists(children, max_size=10),
         st.dictionaries(
             st.text(
-                alphabet=st.characters(
-                    min_codepoint=1, blacklist_categories=("Cs",)
-                ),
+                alphabet=st.characters(min_codepoint=1, blacklist_categories=("Cs",)),
                 min_size=1,
                 max_size=20,
             ),
@@ -123,8 +121,12 @@ def test_jcs_whitespace_invariant(obj: Any) -> None:
 
     # Verify no whitespace exists outside string literals (RFC 8785 §3.2.1)
     structural = _strip_json_strings(canonical_bytes)
-    assert b" " not in structural, "Canonical form contains spaces outside string literals"
-    assert b"\t" not in structural, "Canonical form contains tabs outside string literals"
+    assert b" " not in structural, (
+        "Canonical form contains spaces outside string literals"
+    )
+    assert b"\t" not in structural, (
+        "Canonical form contains tabs outside string literals"
+    )
     assert b"\r" not in structural, "Canonical form contains carriage returns"
 
     # Verify the canonical form is valid JSON
@@ -150,9 +152,7 @@ def test_jcs_idempotency(obj: Any) -> None:
     canonical_2 = jcs_canonicalize_plan(parsed)
 
     assert canonical_1 == canonical_2, (
-        f"Idempotency violated:\n"
-        f"  First:  {canonical_1}\n"
-        f"  Second: {canonical_2}"
+        f"Idempotency violated:\n  First:  {canonical_1}\n  Second: {canonical_2}"
     )
 
 
@@ -164,8 +164,14 @@ def test_jcs_rfc8785_example() -> None:
     key ordering, number formatting, and string escaping.
     """
     test_obj = {
-        "numbers": [333333333.33333329, 1e30, 4.50, 2e-3, 0.000000000000000000000000001],
-        "string": "\u20ac$\u000F\u000aA'B",
+        "numbers": [
+            333333333.33333329,
+            1e30,
+            4.50,
+            2e-3,
+            0.000000000000000000000000001,
+        ],
+        "string": "\u20ac$\u000f\u000aA'B",
         "literals": [None, True, False],
     }
 

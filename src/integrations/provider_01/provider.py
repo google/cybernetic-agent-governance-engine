@@ -190,68 +190,69 @@ def _build_cage_authority_request(envelope: dict[str, Any]) -> dict[str, Any]:
         Complete 37-field payload dict ready for POST /cage/validate.
     """
     params = envelope.get("params", {})
-    
+
     # Extract and format datetime fields (ISO 8601)
     now_iso = datetime.now(timezone.utc).isoformat()
-    
+
     return {
         # Core Request Identifiers (3 fields)
-        "approval_id": envelope.get("approval_id") or envelope.get("correlation_id", ""),
+        "approval_id": envelope.get("approval_id")
+        or envelope.get("correlation_id", ""),
         "platform": "GOOGLE-CAGE-REFERENCE",
         "execution_id": envelope.get("correlation_id", ""),
-        
         # Scenario & Action Context (4 fields)
         "scenario_id": envelope.get("thread_id", ""),
         "action": envelope.get("action", ""),
         "target": envelope.get("target", ""),
         "context": params.get("symbol") or params.get("purpose", ""),
-        
         # Actor Identity & Authorization (5 fields)
         "actor_id": envelope.get("operator_urn", ""),
         "actor_type": "autonomous_agent",
         "actor_role": params.get("actor_role", "agent"),
         "actor_authenticated": True,
         "kya_status": "VERIFIED",
-        
         # Principal (Institutional Context) (2 fields)
         "principal_id": params.get("principal_id", "cage-default"),
         "principal_name": params.get("principal_name", "CAGE Platform"),
-        
         # Mandate Boundary & Limits (7 fields)
         "mandate_id": params.get("mandate_id", "DEFAULT-MANDATE"),
         "mandate_status": "ACTIVE",
         "mandate_max_amount": float(params.get("mandate_max_amount", 1000000.0)),
         "mandate_currency": params.get("currency", "USD"),
-        "permitted_source_accounts": params.get("permitted_source_accounts", ["DEFAULT"]),
-        "permitted_counterparty_class": params.get("permitted_counterparty_class", "UNRESTRICTED"),
-        "mandate_valid_until": params.get("mandate_valid_until", "2099-12-31T23:59:59Z"),
-        
+        "permitted_source_accounts": params.get(
+            "permitted_source_accounts", ["DEFAULT"]
+        ),
+        "permitted_counterparty_class": params.get(
+            "permitted_counterparty_class", "UNRESTRICTED"
+        ),
+        "mandate_valid_until": params.get(
+            "mandate_valid_until", "2099-12-31T23:59:59Z"
+        ),
         # Proposed Transaction Details (5 fields)
         "magnitude": float(params.get("amount", 0.0)),
         "currency": params.get("currency", "USD"),
         "source_account": params.get("source_account", "DEFAULT"),
         "beneficiary": params.get("beneficiary", "UNKNOWN"),
         "purpose": params.get("purpose", "CAGE transaction"),
-        
         # Runtime State & Risk Context (4 fields)
         "counterparty_status": params.get("counterparty_status", "UNKNOWN"),
         "account_status": params.get("account_status", "ACTIVE"),
         "risk_state": params.get("risk_state", "NORMAL"),
         "approval_required": bool(params.get("approval_required", False)),
-        
         # Mutable Evidence Freshness (4 fields)
         "screening_status": params.get("screening_status", "CLEAR"),
         "screening_captured_at": params.get("screening_captured_at", now_iso),
         "screening_max_age_seconds": int(params.get("screening_max_age_seconds", 3600)),
         "screening_source": params.get("screening_source", "CAGE-INTERNAL"),
-        
         # Execution Timing (1 field)
         "requested_execution_time": params.get("requested_execution_time", now_iso),
-        
         # Optional Fields (2 fields)
         "authority_resolution_path": None,
         "evidence_references": [
-            {"type": "governance_decision", "uri": f"cer://{envelope.get('correlation_id', '')}"}
+            {
+                "type": "governance_decision",
+                "uri": f"cer://{envelope.get('correlation_id', '')}",
+            }
         ],
     }
 
@@ -354,11 +355,13 @@ class FlowSignalNormativeProvider:
 
         # Build full 37-field payload per Phase 3 v0.2 schema
         cage_payload = _build_cage_authority_request(payload)
-        
+
         url = f"{self._endpoint}{_VALIDATE_PATH}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=cage_payload, headers=self._headers())
+                resp = await client.post(
+                    url, json=cage_payload, headers=self._headers()
+                )
                 resp.raise_for_status()
                 data = resp.json()
 

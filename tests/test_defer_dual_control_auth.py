@@ -211,14 +211,14 @@ class TestDualControlQuorumIntegrity:
 
 class TestDeferInjectBypassProtection:
     """Test security gates preventing dual-control bypass via injection.
-    
+
     Comprehensive integration tests with in-memory multi-party quorum fixtures.
     """
 
     @pytest.mark.asyncio
     async def test_inject_rejects_quorum_3_defer_reasons(self):
         """Verify defer_inject rejects tokens with quorum-3 defer_reason.
-        
+
         Test 1: Full Approval Path - Simulates 3-of-3 multi-party quorum.
         """
         from src.gateway.governance.defer_queue import (
@@ -239,7 +239,7 @@ class TestDeferInjectBypassProtection:
             defer_reason=DeferReason.FTRA_IRREVERSIBLE_TERMINAL,
             confidence_score=0.82,
         )
-        
+
         # Verify token auto-wires quorum=3
         assert token_base.required_quorum == 3
 
@@ -250,22 +250,22 @@ class TestDeferInjectBypassProtection:
             auth_method="SVID",
             auth_principal_hash=hashlib.sha256(b"risk-officer").hexdigest(),
         )
-        
+
         # Mock Redis: token with NO approvals yet
         token_json_0 = token_base.model_dump_json()
         mock_redis.hget = AsyncMock(side_effect=[token_json_0, "PARKED"])
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=AsyncMock())
-        
+
         status_1, updated_token_1 = await queue.approve(
             "test-defer-id-quorum3", approval_1
         )
-        
+
         # Verify state remains PENDING_QUORUM (PARTIALLY_APPROVED)
         assert status_1 == ApprovalStatus.PARTIAL_QUORUM
         assert len(updated_token_1.approvals) == 1
-        
+
         # --- Phase 2: Second Signature (Compliance Officer) ---
         approval_2 = ApprovalRecord(
             approver_urn="spiffe://cage.example/operator/compliance-officer",
@@ -273,7 +273,7 @@ class TestDeferInjectBypassProtection:
             auth_method="SVID",
             auth_principal_hash=hashlib.sha256(b"compliance-officer").hexdigest(),
         )
-        
+
         # Mock Redis: token with 1 approval (from phase 1)
         token_with_1_approval = DeferToken(
             thread_id="test-thread-quorum-3",
@@ -286,15 +286,15 @@ class TestDeferInjectBypassProtection:
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=AsyncMock())
-        
+
         status_2, updated_token_2 = await queue.approve(
             "test-defer-id-quorum3", approval_2
         )
-        
+
         # Verify state still PARTIAL_QUORUM (need 3 approvals)
         assert status_2 == ApprovalStatus.PARTIAL_QUORUM
         assert len(updated_token_2.approvals) == 2
-        
+
         # --- Phase 3: Third Signature (Security Officer) ---
         approval_3 = ApprovalRecord(
             approver_urn="spiffe://cage.example/operator/security-officer",
@@ -302,7 +302,7 @@ class TestDeferInjectBypassProtection:
             auth_method="SVID",
             auth_principal_hash=hashlib.sha256(b"security-officer").hexdigest(),
         )
-        
+
         # Mock Redis: token with 2 approvals (from phases 1 and 2)
         token_with_2_approvals = DeferToken(
             thread_id="test-thread-quorum-3",
@@ -315,20 +315,20 @@ class TestDeferInjectBypassProtection:
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=AsyncMock())
-        
+
         status_3, updated_token_3 = await queue.approve(
             "test-defer-id-quorum3", approval_3
         )
-        
+
         # Verify state transitions atomically to APPROVED (QUORUM_REACHED)
         assert status_3 == ApprovalStatus.QUORUM_REACHED
         assert updated_token_3.resolution == "ESCALATED"
         assert updated_token_3.resolved_at_utc is not None
         assert len(updated_token_3.approvals) == 3
-        
+
         # Verify injection is forbidden for quorum-3 reasons (security gate)
         from src.gateway.governance.defer_queue import get_required_quorum
-        
+
         quorum_3_reasons = {
             DeferReason.FTRA_IRREVERSIBLE_TERMINAL,
             DeferReason.EXTERNAL_VALIDATION,
@@ -340,7 +340,7 @@ class TestDeferInjectBypassProtection:
     @pytest.mark.asyncio
     async def test_inject_rejects_partially_approved_tokens(self):
         """Verify defer_inject rejects tokens with incomplete quorum approvals.
-        
+
         Test 2: Dual-Control Denial & Tamper Rejection - Validates fail-closed
         invariants when signatures are invalid or mismatched.
         """
@@ -362,53 +362,55 @@ class TestDeferInjectBypassProtection:
             defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
             confidence_score=0.65,
         )
-        
+
         # --- Scenario A: Explicit Rejection by One Party ---
         # In dual-control systems, explicit rejection should fail-closed
         # (This test validates the token cannot reach APPROVED state)
-        
+
         approval_alice = ApprovalRecord(
             approver_urn="spiffe://cage.example/operator/alice",
             approved_at_utc="2026-09-13T12:00:00Z",
             auth_method="SVID",
             auth_principal_hash=hashlib.sha256(b"alice").hexdigest(),
         )
-        
+
         # Add first valid approval
         token.approvals.append(approval_alice)
         assert token.required_quorum == 2
         assert len(token.approvals) == 1
-        
+
         # Mock Redis for partial approval state
         token_json_partial = token.model_dump_json()
         mock_redis.hget = AsyncMock(return_value=token_json_partial)
-        
+
         # Verify status-gate blocks injection when partial approvals exist
         # (simulating endpoint's 403 PARTIAL_APPROVALS_EXIST logic)
         assert token.approvals and len(token.approvals) < token.required_quorum
-        
+
         # --- Scenario B: Invalid/Mismatched Signature Key ---
         # Attempt duplicate approval from same operator (tamper scenario)
-        mock_redis.hget = AsyncMock(side_effect=[token_json_partial, "PARTIALLY_APPROVED"])
+        mock_redis.hget = AsyncMock(
+            side_effect=[token_json_partial, "PARTIALLY_APPROVED"]
+        )
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
-        
+
         duplicate_approval = ApprovalRecord(
             approver_urn="spiffe://cage.example/operator/alice",  # Same URN
             approved_at_utc="2026-09-13T12:05:00Z",
             auth_method="SVID",
             auth_principal_hash=hashlib.sha256(b"alice").hexdigest(),
         )
-        
+
         status, updated_token = await queue.approve(
             "test-defer-id-denial", duplicate_approval
         )
-        
+
         # Verify state machine transitions fail-closed to REJECTED
         # (ALREADY_APPROVED status prevents resurrection)
         assert status == ApprovalStatus.ALREADY_APPROVED
         assert updated_token.resolution != "ESCALATED"  # Cannot be approved
-        
+
         # Verify quorum cannot be satisfied via duplicate signatures
         distinct_approvers = len({a.approver_urn for a in updated_token.approvals})
         assert distinct_approvers == 1  # Only one distinct approver

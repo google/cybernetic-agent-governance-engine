@@ -418,9 +418,7 @@ class FtraBoundaryResult:
 
         # Add diagnostic information if available
         if semantic_result.diagnostic_message:
-            violations.append(
-                f"Diagnostic: {semantic_result.diagnostic_message}"
-            )
+            violations.append(f"Diagnostic: {semantic_result.diagnostic_message}")
 
         return cls(
             requires_hitl=True,  # Always require HITL on semantic breach

@@ -602,7 +602,9 @@ class GovernanceEnvelopeBuilder:
             action_hash=subject_data.get("action_hash", ""),
             record_hash=subject_data.get("record_hash"),
             agent_id=subject_data.get("agent_id"),
-            consequence_ceiling=subject_data.get("consequence_ceiling", "LOW_INFORMATIONAL"),
+            consequence_ceiling=subject_data.get(
+                "consequence_ceiling", "LOW_INFORMATIONAL"
+            ),
             target_route=subject_data.get("target_route", "local://default"),
             executor_id=subject_data.get("executor_id", "kernel"),
         )
@@ -738,6 +740,8 @@ def unwrap_governance_envelope(envelope_data: dict[str, Any]) -> dict[str, Any]:
         payload["subject"] = envelope_data.get("subject")
         payload["signature"] = envelope_data.get("signature")
         payload["governance_context"] = envelope_data.get("governance_context")
-        payload["external_attestations"] = envelope_data.get("external_attestations", [])
+        payload["external_attestations"] = envelope_data.get(
+            "external_attestations", []
+        )
         return payload
     return envelope_data

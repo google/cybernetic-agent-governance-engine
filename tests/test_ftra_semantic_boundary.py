@@ -63,7 +63,7 @@ def register_test_schemas():
     """Register test action schemas (simulates domain plugin initialization)."""
     # Clear any existing schemas
     ACTION_SCHEMAS.clear()
-    
+
     # Register schemas for test actions (using test-specific names to avoid domain literals)
     register_action_schema(
         "execute_trade",  # Test action
@@ -103,7 +103,7 @@ def register_test_schemas():
             allow_extra_parameters=True,
         ),
     )
-    
+
     register_action_schema(
         "execute_trade_bounded",
         ActionSchema(
@@ -143,7 +143,7 @@ def register_test_schemas():
             allow_extra_parameters=True,
         ),
     )
-    
+
     register_action_schema(
         "release_wire",
         ActionSchema(
@@ -175,7 +175,7 @@ def register_test_schemas():
             allow_extra_parameters=True,
         ),
     )
-    
+
     register_action_schema(
         "write_db",
         ActionSchema(
@@ -199,9 +199,9 @@ def register_test_schemas():
             allow_extra_parameters=True,
         ),
     )
-    
+
     yield
-    
+
     # Cleanup after tests
     ACTION_SCHEMAS.clear()
 
@@ -652,7 +652,9 @@ def test_all_registered_actions_have_schemas():
         "release_wire",
         "write_db",
     }
-    assert actions_with_schemas == expected_schemas, f"Expected {expected_schemas}, got {actions_with_schemas}"
+    assert actions_with_schemas == expected_schemas, (
+        f"Expected {expected_schemas}, got {actions_with_schemas}"
+    )
 
 
 def test_backward_compatibility_extra_parameters_allowed():

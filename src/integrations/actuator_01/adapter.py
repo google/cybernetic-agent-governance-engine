@@ -236,7 +236,7 @@ class Actuator01Adapter:
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
         # ── v3.0 Security Gates ───────────────────────────────────────────
-        
+
         # Gate 1: Identity validation
         if clearance.executor_id != self.actuator_id:
             logger.error(
@@ -264,13 +264,13 @@ class Actuator01Adapter:
         # Gate 2: Target route validation
         normalized_target = clearance.target_route.rstrip("/")
         normalized_client_base = (
-            getattr(self._client, "base_url", "").rstrip("/")
-            if self._client
-            else ""
+            getattr(self._client, "base_url", "").rstrip("/") if self._client else ""
         )
 
         if normalized_target not in (normalized_client_base, "*", "local://default"):
-            client_base = getattr(self._client, "base_url", None) if self._client else None
+            client_base = (
+                getattr(self._client, "base_url", None) if self._client else None
+            )
             logger.error(
                 "[actuator_01/adapter] TARGET_ROUTE_MISMATCH: clearance.target_route=%s, client.base_url=%s",
                 clearance.target_route,

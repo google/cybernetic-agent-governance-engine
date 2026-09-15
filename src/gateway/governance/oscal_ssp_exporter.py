@@ -375,48 +375,50 @@ def _now_iso() -> str:
 
 def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
     """Build OSCAL SSP metadata with AssurancePosture injection (v3.1.5 Phase 1.2).
-    
+
     Args:
         region: Deployment region (US_FED, EU_ECB, APAC_MAS, UK_DSIT).
-        
+
     Returns:
         OSCAL metadata dict with assurance posture props.
     """
     # Lazy import to avoid Layer 1 → Layer 3 boundary violation (Gate G3)
     from src.compliance_bridge.types import AssurancePosture
-    
+
     posture = AssurancePosture()
-    
+
     # Convert AssurancePosture to OSCAL props format
     props = [
         {
             "name": "assurance_status",
             "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
             "value": posture.status.value,
-            "class": "assurance-lifecycle"
+            "class": "assurance-lifecycle",
         },
         {
             "name": "attestation_boundary",
             "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
             "value": posture.attestation_boundary,
-            "class": "assurance-lifecycle"
+            "class": "assurance-lifecycle",
         },
         {
             "name": "disclaimer",
             "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
             "value": posture.disclaimer,
-            "class": "legal-notice"
+            "class": "legal-notice",
         },
     ]
-    
+
     if posture.third_party_certificate_url:
-        props.append({
-            "name": "third_party_certificate_url",
-            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
-            "value": posture.third_party_certificate_url,
-            "class": "assurance-evidence"
-        })
-    
+        props.append(
+            {
+                "name": "third_party_certificate_url",
+                "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+                "value": posture.third_party_certificate_url,
+                "class": "assurance-evidence",
+            }
+        )
+
     metadata = {
         "title": f"CAGE System Security Plan — {region}",
         "last-modified": _now_iso(),
@@ -424,7 +426,7 @@ def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
         "oscal-version": "1.0.4",
         "props": props,
     }
-    
+
     return metadata
 
 
@@ -738,9 +740,9 @@ def _apply_ssp_patch(
     # Inject AssurancePosture (v3.1.5 Phase 1.2)
     # Lazy import to avoid Layer 1 → Layer 3 boundary violation (Gate G3)
     from src.compliance_bridge.types import AssurancePosture
-    
+
     # Convert to dict with mode='json' to ensure enums serialize as strings
-    posture_dict = AssurancePosture().model_dump(mode='json')
+    posture_dict = AssurancePosture().model_dump(mode="json")
     ssp["system-security-plan"]["metadata"]["assurance-posture"] = posture_dict
 
     if dry_run:
@@ -1010,7 +1012,9 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     ok_ssp = _apply_ssp_patch(args.ssp, patch_block, dry_run=args.dry_run)
     _apply_component_patch(args.component_def, component_entry, dry_run=args.dry_run)
-    _apply_ftra_component_patch(args.component_def, ftra_component_entry, dry_run=args.dry_run)
+    _apply_ftra_component_patch(
+        args.component_def, ftra_component_entry, dry_run=args.dry_run
+    )
     _write_standalone_patch(
         args.patch_out, patch_block, component_entry, cs, dry_run=args.dry_run
     )

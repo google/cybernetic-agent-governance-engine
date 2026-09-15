@@ -36,7 +36,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
     @pytest.mark.asyncio
     async def test_execute_trade_action_rejects_none_seal(self):
         """execute_trade_action() with seal=None must raise SymbolicGovernorViolation."""
-        
+
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
             new_callable=AsyncMock,
@@ -51,12 +51,14 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                 )
 
             assert "CRITICAL" in str(exc_info.value)
-            assert "execute_trade_action invoked without mandatory routing seal" in str(exc_info.value)
+            assert "execute_trade_action invoked without mandatory routing seal" in str(
+                exc_info.value
+            )
 
     @pytest.mark.asyncio
     async def test_execute_trade_action_rejects_empty_string_seal(self):
         """execute_trade_action() with seal='' must raise SymbolicGovernorViolation."""
-        
+
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
             new_callable=AsyncMock,
@@ -71,12 +73,14 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                 )
 
             assert "CRITICAL" in str(exc_info.value)
-            assert "execute_trade_action invoked without mandatory routing seal" in str(exc_info.value)
+            assert "execute_trade_action invoked without mandatory routing seal" in str(
+                exc_info.value
+            )
 
     @pytest.mark.asyncio
     async def test_execute_trade_action_rejects_whitespace_seal(self):
         """execute_trade_action() with seal='   ' must raise SymbolicGovernorViolation."""
-        
+
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
             new_callable=AsyncMock,
@@ -91,12 +95,14 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                 )
 
             assert "CRITICAL" in str(exc_info.value)
-            assert "execute_trade_action invoked without mandatory routing seal" in str(exc_info.value)
+            assert "execute_trade_action invoked without mandatory routing seal" in str(
+                exc_info.value
+            )
 
     @pytest.mark.asyncio
     async def test_execute_trade_action_rejects_non_string_seal(self):
         """execute_trade_action() with seal=123 must raise SymbolicGovernorViolation."""
-        
+
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
             new_callable=AsyncMock,
@@ -111,12 +117,14 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                 )
 
             assert "CRITICAL" in str(exc_info.value)
-            assert "execute_trade_action invoked without mandatory routing seal" in str(exc_info.value)
+            assert "execute_trade_action invoked without mandatory routing seal" in str(
+                exc_info.value
+            )
 
     @pytest.mark.asyncio
     async def test_execute_trade_action_accepts_valid_seal(self):
         """execute_trade_action() with valid seal proceeds to NARROW receipt check."""
-        
+
         with (
             patch(
                 "src.cage_finance.tools.tool_provider.enforce_governance",
@@ -159,7 +167,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
     @pytest.mark.asyncio
     async def test_execute_trade_action_dry_run_requires_seal(self):
         """execute_trade_action() in dry_run mode still requires a valid seal."""
-        
+
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
             new_callable=AsyncMock,
@@ -175,4 +183,6 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                 )
 
             assert "CRITICAL" in str(exc_info.value)
-            assert "execute_trade_action invoked without mandatory routing seal" in str(exc_info.value)
+            assert "execute_trade_action invoked without mandatory routing seal" in str(
+                exc_info.value
+            )

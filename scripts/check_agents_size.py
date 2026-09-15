@@ -30,16 +30,23 @@ def main() -> int:
 
     size = agents_path.stat().st_size
     if size > MAX_BYTES:
-        print(f"❌ Error: AGENTS.md is {size:,} bytes, exceeding the {MAX_BYTES:,} byte (24KB) cap.")
+        print(
+            f"❌ Error: AGENTS.md is {size:,} bytes, exceeding the {MAX_BYTES:,} byte (24KB) cap."
+        )
         print(f"   Excess: {size - MAX_BYTES:,} bytes.")
-        print("   Exceeding 24KB causes Google Antigravity and other agents to silently truncate rules.")
-        print("   Move operational runbooks to docs/operations/ to keep AGENTS.md lean and high-signal.")
+        print(
+            "   Exceeding 24KB causes Google Antigravity and other agents to silently truncate rules."
+        )
+        print(
+            "   Move operational runbooks to docs/operations/ to keep AGENTS.md lean and high-signal."
+        )
         return 1
 
-    print(f"✅ AGENTS.md size check passed: {size:,} bytes / {MAX_BYTES:,} max ({size / MAX_BYTES * 100:.1f}% of 24KB cap).")
+    print(
+        f"✅ AGENTS.md size check passed: {size:,} bytes / {MAX_BYTES:,} max ({size / MAX_BYTES * 100:.1f}% of 24KB cap)."
+    )
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

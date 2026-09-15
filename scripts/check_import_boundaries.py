@@ -181,7 +181,7 @@ def check_file_boundaries(
         filepath_str.endswith(allowed_path) or allowed_path in filepath_str
         for allowed_path in INTEGRATIONS_FACTORY_ALLOWLIST
     )
-    
+
     # Check if file is in the compliance_bridge factory allowlist
     is_in_bridge_allowlist = any(
         filepath_str.endswith(allowed_path) or allowed_path in filepath_str
@@ -229,7 +229,9 @@ def check_file_boundaries(
                 )
                 violations.append(v)
                 if verbose:
-                    print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                    )
             elif not is_in_bridge_allowlist:
                 # Function-scope import but file not in allowlist
                 v = BoundaryViolation(
@@ -240,7 +242,9 @@ def check_file_boundaries(
                 )
                 violations.append(v)
                 if verbose:
-                    print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
+                    )
             # else: function-scope AND in allowlist → permitted (no violation)
 
         # Check Layer 1 -> Layer 3 integrations (scope-aware)

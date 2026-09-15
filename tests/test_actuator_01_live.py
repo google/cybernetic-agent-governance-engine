@@ -56,12 +56,12 @@ async def live_adapter() -> Actuator01Adapter:
             "Actuator 01 credentials not configured — "
             "set ACTUATOR_01_ENDPOINT, ACTUATOR_01_CLIENT_CERT, ACTUATOR_01_CLIENT_KEY"
         )
-    
+
     try:
         adapter = Actuator01Adapter.from_env()
     except RuntimeError as exc:
         pytest.skip(f"Actuator 01 adapter initialization failed: {exc}")
-    
+
     async with adapter:
         yield adapter
 
@@ -77,14 +77,17 @@ async def test_live_health_check(live_adapter: Actuator01Adapter) -> None:
 async def test_live_capabilities(live_adapter: Actuator01Adapter) -> None:
     """Verify Actuator 01 advertises expected capabilities."""
     capabilities = live_adapter.get_capabilities()
-    
+
     # Assert core capabilities
-    assert ActuatorCapability.MULTI_SIG_QUORUM in capabilities, \
+    assert ActuatorCapability.MULTI_SIG_QUORUM in capabilities, (
         "Multi-sig quorum capability should be advertised"
-    assert ActuatorCapability.MTLS_REQUIRED in capabilities, \
+    )
+    assert ActuatorCapability.MTLS_REQUIRED in capabilities, (
         "mTLS capability should be advertised"
-    assert ActuatorCapability.DIGEST_ONLY_PAYLOAD in capabilities, \
+    )
+    assert ActuatorCapability.DIGEST_ONLY_PAYLOAD in capabilities, (
         "Digest-only payload capability should be advertised"
+    )
 
 
 @pytest.mark.asyncio
@@ -92,11 +95,11 @@ async def test_live_wire_dispatch_roundtrip(
     live_adapter: Actuator01Adapter,
 ) -> None:
     """Verify live wire dispatch with v3 envelope schema and quorum signatures.
-    
+
     This test exercises the Archytan Vector 3 wire schema when ACTUATOR_01_ENDPOINT
     is configured. It validates that the live adapter correctly serializes the
     ExecutionClearance with WebAuthn attestation fields and v3.0 routing extensions.
-    
+
     The test will skip if KMS is not configured or credentials are unavailable.
     """
     # Create a v3.0-compliant test clearance with WebAuthn attestation
@@ -143,10 +146,10 @@ async def test_live_wire_dispatch_roundtrip(
         consequence_ceiling="LOW_INFORMATIONAL",
         ttl_seconds=30,
     )
-    
+
     # Execute the actuation
     receipt = await live_adapter.actuate(clearance)
-    
+
     # The test environment may not have real KMS configured, so we accept
     # either success or a clear KMS-related failure
     if receipt.error:
@@ -154,7 +157,7 @@ async def test_live_wire_dispatch_roundtrip(
             pytest.skip(f"KMS not configured in test environment: {receipt.error}")
         # Other errors should fail the test
         pytest.fail(f"Actuation failed: {receipt.error}")
-    
+
     # If we got a receipt, assert basic structure
     assert receipt.receipt_id, "Receipt ID should be present"
     assert receipt.submitted_at, "Submission timestamp should be present"
@@ -165,7 +168,7 @@ async def test_live_jcs_canonicalization(
     live_adapter: Actuator01Adapter,
 ) -> None:
     """Verify RFC 8785 (JCS) canonical serialization in wire format.
-    
+
     This is a structural test that validates envelope construction without
     requiring full actuation. It will skip if basic validation fails.
     """
@@ -188,13 +191,15 @@ async def test_live_jcs_canonicalization(
             },
         ],
     )
-    
+
     # The adapter validates clearance during actuation
     receipt = await live_adapter.actuate(clearance)
-    
+
     # Accept either success or well-formed errors
     if receipt.error:
         # Envelope size, KMS, or validation errors are acceptable
         acceptable_errors = ["KMS", "Envelope exceeds", "validation failed"]
         if not any(err in receipt.error for err in acceptable_errors):
-            pytest.fail(f"Unexpected error during JCS canonicalization: {receipt.error}")
+            pytest.fail(
+                f"Unexpected error during JCS canonicalization: {receipt.error}"
+            )

@@ -73,14 +73,16 @@ def ed25519_keypair() -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
 
 
 @pytest.fixture
-def jwks_payload(ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey]) -> dict[str, Any]:
+def jwks_payload(
+    ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
+) -> dict[str, Any]:
     """Generate mock JWKS payload with valid Ed25519 public key."""
     _, public_key = ed25519_keypair
-    
+
     # Serialize public key to base64url (32 bytes for Ed25519)
     public_bytes = public_key.public_bytes_raw()
     x_b64 = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode("ascii")
-    
+
     return {
         "keys": [
             {
@@ -99,14 +101,14 @@ def mock_jwks_client(
 ) -> Provider07JwksClient:
     """Create a mock JWKS client that returns the test public key."""
     _, public_key = ed25519_keypair
-    
+
     client = MagicMock(spec=Provider07JwksClient)
-    
+
     async def mock_get_key(kid: str) -> Ed25519PublicKey | None:
         if kid == "test-key-001":
             return public_key
         return None
-    
+
     client.get_key = mock_get_key
     return client
 
@@ -119,17 +121,19 @@ def sign_response(
     """Generate a canonically signed InferTheta response payload."""
     # Add kid first (will be part of signed content)
     payload_with_kid = {**payload, "kid": kid}
-    
+
     # Create canonical copy omitting signature field
     canonical_payload = {k: v for k, v in payload_with_kid.items() if k != "signature"}
-    
+
     # Canonicalize via JCS
     canonical_bytes = jcs_canonicalize_plan(canonical_payload)
-    
+
     # Sign with Ed25519
     signature_bytes = private_key.sign(canonical_bytes)
-    signature_b64 = base64.urlsafe_b64encode(signature_bytes).rstrip(b"=").decode("ascii")
-    
+    signature_b64 = (
+        base64.urlsafe_b64encode(signature_bytes).rstrip(b"=").decode("ascii")
+    )
+
     # Return payload with kid and signature
     return {
         **payload_with_kid,
@@ -180,6 +184,7 @@ def _mock_http_response(json_data: dict[str, Any], status_code: int = 200) -> Ma
     mock.raise_for_status = MagicMock()
     if status_code >= 400:
         import httpx
+
         mock.raise_for_status.side_effect = httpx.HTTPStatusError(
             f"HTTP {status_code}",
             request=MagicMock(),
@@ -456,7 +461,9 @@ class TestSignatureVerification:
         }
 
         # Sign with unknown kid
-        signed_response = sign_response(unsigned_payload, private_key, kid="unknown-key-999")
+        signed_response = sign_response(
+            unsigned_payload, private_key, kid="unknown-key-999"
+        )
         mock_response = _mock_http_response(signed_response)
 
         with patch("httpx.AsyncClient") as MockClient:
@@ -491,10 +498,12 @@ class TestSignatureVerification:
         }
 
         signed_response = sign_response(unsigned_payload, private_key)
-        
+
         # Corrupt the signature
-        signed_response["signature"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        
+        signed_response["signature"] = (
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
+
         mock_response = _mock_http_response(signed_response)
 
         with patch("httpx.AsyncClient") as MockClient:

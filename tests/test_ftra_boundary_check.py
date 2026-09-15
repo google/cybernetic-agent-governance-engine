@@ -124,7 +124,7 @@ class TestFtraBoundaryResult:
 def register_test_schemas_boundary():
     """Register test schemas for boundary check tests."""
     ACTION_SCHEMAS.clear()
-    
+
     # Register minimal schema for execute_trade
     register_action_schema(
         "execute_trade",
@@ -151,9 +151,9 @@ def register_test_schemas_boundary():
             allow_extra_parameters=True,
         ),
     )
-    
+
     yield
-    
+
     ACTION_SCHEMAS.clear()
 
 
@@ -491,7 +491,7 @@ class TestFtraBoundaryCheckInputValidation:
         symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify _ftra_boundary_check fails on empty dict for actions with required params.
-        
+
         v2.1 semantic validation: empty dict triggers semantic validation failure
         for actions with required parameters like execute_trade.
         """

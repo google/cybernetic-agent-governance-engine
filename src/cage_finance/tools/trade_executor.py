@@ -51,22 +51,26 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
 
     OPTIMISTIC EXECUTION: Checks 'safety_violation' in Redis before committing.
     CONFIG: Uses ConfigManager for secure key retrieval.
-    
+
     Args:
         order: The trade order to execute.
         routing_seal: Required cryptographic seal proving governance approval.
                      Must be non-empty string. Enforces fail-closed invariant.
-    
+
     Raises:
         SymbolicGovernorViolation: If routing_seal is missing, empty, or invalid.
     """
     from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-    
+
     # CRITICAL: Fail-closed invariant enforcement — reject direct execution attempts
-    if not routing_seal or not isinstance(routing_seal, str) or not routing_seal.strip():
+    if (
+        not routing_seal
+        or not isinstance(routing_seal, str)
+        or not routing_seal.strip()
+    ):
         raise SymbolicGovernorViolation(
             "CRITICAL: Direct execution attempt rejected. execute_trade requires a valid x-cage-routing-seal.",
-            action="execute_trade"
+            action="execute_trade",
         )
     # C-01: Validate trade side before use — fail closed on invalid values.
     action = order.side

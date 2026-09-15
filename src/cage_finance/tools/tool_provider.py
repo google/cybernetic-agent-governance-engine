@@ -103,19 +103,23 @@ async def execute_trade_action(
         return f"BLOCKED: {exc}"
 
     # CRITICAL: Fail-closed seal validation at entry — reject unsealed execution attempts
-    if not governance_result or not isinstance(governance_result, str) or not governance_result.strip():
+    if (
+        not governance_result
+        or not isinstance(governance_result, str)
+        or not governance_result.strip()
+    ):
         raise SymbolicGovernorViolation(
             "CRITICAL: execute_trade_action invoked without mandatory routing seal.",
-            action="execute_trade"
+            action="execute_trade",
         )
-    
+
     seal = governance_result
 
     # Step 2: ConsequenceGateway evaluation (ADR-008 Phase 2)
     # Check if governance_result contains a consequence_token (from FRIA tier)
     # For now, consequence_token would be passed separately if present
     # This is a placeholder for future integration
-    
+
     # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
     # Check for NARROW verdict receipt using seal prefix before seal verification
     action_params = params  # Default: use original params
@@ -201,7 +205,9 @@ async def execute_trade_action(
         correlation_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
         correlation_id_source="THREAD_DERIVED",
         governance_decision_digest=seal,
-        opa_input_digest=hashlib.sha256(json.dumps(action_params, sort_keys=True).encode()).hexdigest(),
+        opa_input_digest=hashlib.sha256(
+            json.dumps(action_params, sort_keys=True).encode()
+        ).hexdigest(),
         nonce=str(uuid.uuid4()).replace("-", "")[:32],
         params=action_params,
         executor_id="cage_finance_broker",
@@ -216,12 +222,12 @@ async def execute_trade_action(
     if actuator is None:
         raise SymbolicGovernorViolation(
             "CRITICAL: No actuator registered for execute_trade.",
-            action="execute_trade"
+            action="execute_trade",
         )
-    
+
     try:
         receipt = await actuator.actuate(clearance)
-        
+
         if not receipt.accepted:
             # Actuation rejected — rollback state if possible
             if hasattr(symbolic_governor.safety_filter, "rollback_state"):
@@ -232,20 +238,19 @@ async def execute_trade_action(
                     else float(amount)
                 )
                 await symbolic_governor.safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
-            
+
             # Format findings for error message
             findings_str = "; ".join(
                 f"{f.get('code', 'UNKNOWN')}: {f.get('detail', '')}"
                 for f in receipt.findings
             )
             raise SymbolicGovernorViolation(
-                f"Actuation rejected: {findings_str}",
-                action="execute_trade"
+                f"Actuation rejected: {findings_str}", action="execute_trade"
             )
-        
+
         # Success — return formatted result
         return f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} (Receipt ID: {receipt.receipt_id})"
-        
+
     except SymbolicGovernorViolation:
         raise
     except Exception as exc:

@@ -99,7 +99,7 @@ Prioritizing Vertex AI consolidates billing within your Google Cloud project, ma
    gcloud auth application-default login
    ```
 2. In Zoo Code / Roo Code Settings $\rightarrow$ **API Provider**, select **Google Vertex AI**.
-3. Set **Project ID** to your active GCP project (e.g., `laah-cybernetics`).
+3. Set **Project ID** to your active GCP project (e.g., `<your-project-id>`).
 4. Set **Location** to your target region (e.g., `us-central1` or `us-east5`).
 
 #### Fallback: Direct Anthropic API
@@ -354,7 +354,7 @@ Execute the implementation phase using Claude 3.7 Sonnet as the mandatory daily 
 ### 6.1 GCP Cloud Console Budget Alerts
 Configure organizational cost controls in Google Cloud Console:
 1. Navigate to **Billing** $\rightarrow$ **Budgets & alerts**.
-2. Create a budget scoped to your active project (e.g., `laah-cybernetics`) or billing account.
+2. Create a budget scoped to your active project (e.g., `<your-project-id>`) or billing account.
 3. Configure alert thresholds at:
    - **\$500.00** (50% target ceiling — warning notification)
    - **\$1,000.00** (90% target ceiling — urgent operational review)

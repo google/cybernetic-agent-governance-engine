@@ -64,14 +64,17 @@ def mock_kms_signer():
     signer.get_public_key_pem = MagicMock(
         return_value=b"-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
     )
-    
+
     # Mock pem_to_jwk to return a simple JWK
-    with patch(
-        "src.gateway.governance.kms_signer.get_governance_signer",
-        return_value=signer,
-    ), patch(
-        "src.gateway.governance.jwks.pem_to_jwk",
-        return_value={"kid": "test-key-001", "alg": "ES256"},
+    with (
+        patch(
+            "src.gateway.governance.kms_signer.get_governance_signer",
+            return_value=signer,
+        ),
+        patch(
+            "src.gateway.governance.jwks.pem_to_jwk",
+            return_value={"kid": "test-key-001", "alg": "ES256"},
+        ),
     ):
         yield signer
 
@@ -172,9 +175,7 @@ class TestEnvelopeTransportApproved:
         assert context["controls_satisfied"] == ["CTRL_OPA_001", "CTRL_CBF_002"]
         assert "deployment_region" in context
 
-    def test_approved_envelope_contains_payload(
-        self, client, mock_symbolic_governor
-    ):
+    def test_approved_envelope_contains_payload(self, client, mock_symbolic_governor):
         """Envelope payload contains the original governance result."""
         resp = client.post(
             "/validate-action",
@@ -248,11 +249,12 @@ class TestEnvelopeTransportDenied:
 
         from src.gateway.server.governance_middleware import governance_app
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", gov
-        ), patch(
-            "src.gateway.server.governance_middleware._emit_refusal_receipt",
-            new=AsyncMock(return_value=None),
+        with (
+            patch("src.gateway.server.governance_middleware.symbolic_governor", gov),
+            patch(
+                "src.gateway.server.governance_middleware._emit_refusal_receipt",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             test_client = TestClient(governance_app, raise_server_exceptions=False)
             yield test_client

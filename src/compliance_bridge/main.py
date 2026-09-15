@@ -1350,7 +1350,9 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
         # Fetch Redis status separately (not part of DeferToken model)
         key = f"DEFER:{defer_id}"
         status_result = client.hget(key, "status")
-        raw_status = await status_result if inspect.isawaitable(status_result) else status_result  # type: ignore[misc]
+        raw_status = (
+            await status_result if inspect.isawaitable(status_result) else status_result
+        )  # type: ignore[misc]
 
         await client.aclose()
 
@@ -1366,11 +1368,17 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
         response_content = {
             "defer_id": defer_id,
             "status": status,
-            "defer_reason": token.defer_reason.value if hasattr(token.defer_reason, "value") else str(token.defer_reason),
+            "defer_reason": token.defer_reason.value
+            if hasattr(token.defer_reason, "value")
+            else str(token.defer_reason),
             "confidence_score": token.confidence_score,
-            "created_at": token.deferred_at_utc if hasattr(token, "deferred_at_utc") else str(getattr(token, "created_at_utc", "")),
+            "created_at": token.deferred_at_utc
+            if hasattr(token, "deferred_at_utc")
+            else str(getattr(token, "created_at_utc", "")),
             "ttl_seconds": token.ttl_seconds,
-            "routing_seal": getattr(token, "routing_seal", None) if status == "RESOLVED" else None,
+            "routing_seal": getattr(token, "routing_seal", None)
+            if status == "RESOLVED"
+            else None,
         }
 
         return JSONResponse(content=response_content)

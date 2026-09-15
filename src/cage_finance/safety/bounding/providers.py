@@ -189,7 +189,7 @@ class StubMarketDataProvider:
         self, symbol: str, window_days: int
     ) -> dict[str, float]:
         """Return permissive mock volatility (always low volatility percentile).
-        
+
         Args:
             symbol: Ticker symbol (e.g., 'AAPL', 'BTC')
             window_days: Historical window in days (e.g., 30, 60, 90)
@@ -203,7 +203,7 @@ class StubMarketDataProvider:
         # using: annualized_vol = std_dev(returns[:-window_days]) * sqrt(252)
         # and percentile ranking against historical distribution
         _ = window_days  # Acknowledge parameter; stub returns fixed values
-        
+
         return {
             "percentile": 30.0,  # 30th percentile (low volatility, passes B5 check)
             "annualized_vol": 0.15,  # 15% annualized volatility

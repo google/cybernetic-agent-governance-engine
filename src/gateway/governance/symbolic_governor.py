@@ -2519,7 +2519,6 @@ class SymbolicGovernor:
 
                     # ── PAUSE path (Phase 1.4 — resumable suspension) ──────────
                     if decision == GovernanceDecision.PAUSE:
-
                         from src.gateway.governance.contracts import PauseReceipt
                         from src.gateway.governance.pause_primitive import (
                             PauseManager,

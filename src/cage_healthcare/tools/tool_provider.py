@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 
-
 class ClinicalToolProvider:
     """Provides healthcare domain tools to the MCP tool server."""
 

@@ -302,7 +302,7 @@ state = {
     "nodeName": "safety_check",
     "timestampUtc": "2026-09-14T12:00:00.500Z",
     "signals": {"opa_verdict": "ALLOW"},
-    "metadata": {"policy": "OPA_PRE_TRADE_001"}
+    "metadata": {"policy": "OPA_PRE_TRADE_001"},
 }
 
 canonical = jcs.canonicalize(state)

@@ -299,9 +299,9 @@ Code must use region-aware accessor functions from [`src/compliance_bridge/types
 
 ```python
 from src.compliance_bridge.types import (
-    get_control_meta,      # Returns universal + jurisdictional controls
-    get_iso_control_map,   # Returns universal + jurisdictional event mappings
-    get_sla_seconds,       # Returns universal + jurisdictional SLA targets
+    get_control_meta,  # Returns universal + jurisdictional controls
+    get_iso_control_map,  # Returns universal + jurisdictional event mappings
+    get_sla_seconds,  # Returns universal + jurisdictional SLA targets
 )
 
 # Correct (region-filtered)

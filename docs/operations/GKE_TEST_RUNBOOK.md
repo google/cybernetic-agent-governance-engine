@@ -29,7 +29,7 @@
 Before running integration tests, verify the `kubectl` context points to the staging cluster (e.g., `cage-staging` in `us-central1-a`) and all non-GPU services are Running:
 
 ```bash
-kubectl config current-context  # e.g., gke_laah-cybernetics_us-central1-a_cage-staging
+kubectl config current-context  # e.g., gke_<your-project-id>_us-central1-a_cage-staging
 kubectl get pods -n governance-stack
 ```
 

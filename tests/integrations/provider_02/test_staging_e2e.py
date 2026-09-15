@@ -221,7 +221,9 @@ async def test_tc05_large_dag(provider: Provider02AttestationProvider) -> None:
 
 @skip_if_no_endpoint
 @pytest.mark.asyncio
-async def test_tc_err_01_invalid_parent(provider: Provider02AttestationProvider) -> None:
+async def test_tc_err_01_invalid_parent(
+    provider: Provider02AttestationProvider,
+) -> None:
     """TC-ERR-01: Submit bundle with invalid parent step ID and expect rejection.
 
     Constructs a bundle with a broken parent reference.
@@ -239,12 +241,17 @@ async def test_tc_err_01_invalid_parent(provider: Provider02AttestationProvider)
     # This test documents the current behavior
     # If error is returned, it should be a validation error
     if "error" in response:
-        assert "parent" in response["error"].lower() or "validation" in response["error"].lower()
+        assert (
+            "parent" in response["error"].lower()
+            or "validation" in response["error"].lower()
+        )
 
 
 @skip_if_no_endpoint
 @pytest.mark.asyncio
-async def test_tc_err_02_non_canonical_jcs(provider: Provider02AttestationProvider) -> None:
+async def test_tc_err_02_non_canonical_jcs(
+    provider: Provider02AttestationProvider,
+) -> None:
     """TC-ERR-02: Submit bundle with non-canonical float and expect rejection.
 
     Constructs a signal payload with non-canonical float representation.
@@ -265,7 +272,9 @@ async def test_tc_err_02_non_canonical_jcs(provider: Provider02AttestationProvid
 
 @skip_if_no_endpoint
 @pytest.mark.asyncio
-async def test_tc_err_03_unknown_terminal_path(provider: Provider02AttestationProvider) -> None:
+async def test_tc_err_03_unknown_terminal_path(
+    provider: Provider02AttestationProvider,
+) -> None:
     """TC-ERR-03: Submit bundle with unknown terminal path and expect graceful handling.
 
     TC-ERR-03 remediation: classify_terminal_path() returns "unknown" instead of
@@ -281,9 +290,9 @@ async def test_tc_err_03_unknown_terminal_path(provider: Provider02AttestationPr
     response = await provider.register_project_bundle(bundle)
 
     # Validate graceful acceptance
-    assert "error" not in response or "unknown" not in response.get("error", "").lower(), (
-        "Provider should accept terminalPath='unknown' gracefully"
-    )
+    assert (
+        "error" not in response or "unknown" not in response.get("error", "").lower()
+    ), "Provider should accept terminalPath='unknown' gracefully"
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +302,9 @@ async def test_tc_err_03_unknown_terminal_path(provider: Provider02AttestationPr
 
 @skip_if_no_endpoint
 @pytest.mark.asyncio
-async def test_provider_02_endpoint_reachable(provider: Provider02AttestationProvider) -> None:
+async def test_provider_02_endpoint_reachable(
+    provider: Provider02AttestationProvider,
+) -> None:
     """Smoke test: Verify Provider 02 endpoint is reachable.
 
     Does not submit a bundle; validates connectivity only.

@@ -95,22 +95,22 @@ From [`src/gateway/governance/governance_envelope.py:136-155`](../../src/gateway
 @dataclass
 class SubjectMetadata:
     """Metadata about the governance subject (action being governed)."""
-    
+
     action: str
     action_hash: str
     thread_id: str | None = None
     agent_id: str | None = None
     consequence_ceiling: str = "LOW_INFORMATIONAL"  # NEW in v3.0
-    target_route: str = "local://default"            # NEW in v3.0
-    executor_id: str = "kernel"                      # NEW in v3.0
-    
+    target_route: str = "local://default"  # NEW in v3.0
+    executor_id: str = "kernel"  # NEW in v3.0
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "action": self.action,
             "action_hash": self.action_hash,
             "consequence_ceiling": self.consequence_ceiling,  # Bound in digest
-            "target_route": self.target_route,                # Bound in digest
-            "executor_id": self.executor_id,                  # Bound in digest
+            "target_route": self.target_route,  # Bound in digest
+            "executor_id": self.executor_id,  # Bound in digest
         }
 ```
 

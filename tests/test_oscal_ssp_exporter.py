@@ -802,15 +802,15 @@ class TestFtraTelemetryToOscalTraceability:
 
     def test_ftra_semantic_validation_emits_si10_cer(self) -> None:
         """Assert ftra_semantic_validation event maps to SI-10 and ISO 42001 A.8.4.
-        
+
         Simulates an FTRA semantic boundary validation execution and verifies
         that the telemetry event maps correctly to the expected controls.
         """
         from src.compliance_bridge.types import get_iso_control_map
-        
+
         # Get US_FED control map (SI-10 is jurisdictional)
         control_map = get_iso_control_map("US_FED")
-        
+
         # Assert ftra_semantic_validation → SI-10
         assert "ftra_semantic_validation" in control_map, (
             "ftra_semantic_validation must be in US_FED control map"
@@ -818,21 +818,21 @@ class TestFtraTelemetryToOscalTraceability:
         assert control_map["ftra_semantic_validation"] == "SI-10", (
             "ftra_semantic_validation must map to NIST SI-10 (Input Validation)"
         )
-        
+
         # Assert ftra_boundary_check also maps to SI-10
         assert "ftra_boundary_check" in control_map
         assert control_map["ftra_boundary_check"] == "SI-10"
-        
+
         # Verify SI-10 metadata exists in US_FED controls
         from src.compliance_bridge.types import get_control_meta
-        
+
         us_fed_controls = get_control_meta("US_FED")
         assert "SI-10" in us_fed_controls, "SI-10 must be in US_FED control metadata"
         si10_meta = us_fed_controls["SI-10"]
         assert si10_meta["scoreName"] == "nist.SI-10.passed"
         assert "fedramp" in si10_meta["frameworks"]
         assert "aarm" in si10_meta["frameworks"]
-        
+
         # Verify ISO 42001 A.8.4 cross-reference (universal control)
         universal_controls = get_control_meta("LOCAL")
         assert "A.8.4" in universal_controls
@@ -840,15 +840,15 @@ class TestFtraTelemetryToOscalTraceability:
 
     def test_ftra_parameter_smuggling_emits_ac4_cer(self) -> None:
         """Assert action with undeclared extra parameters maps to AC-4.
-        
+
         Simulates an action failing closed with PARAMETER_SMUGGLING (extra fields
         when allow_extra_fields=False) and verifies the telemetry event maps to AC-4.
         """
         from src.compliance_bridge.types import get_control_meta, get_iso_control_map
-        
+
         # Get US_FED control map (AC-4 is jurisdictional)
         control_map = get_iso_control_map("US_FED")
-        
+
         # Assert ftra_flow_enforcement → AC-4
         assert "ftra_flow_enforcement" in control_map, (
             "ftra_flow_enforcement must be in US_FED control map"
@@ -856,25 +856,33 @@ class TestFtraTelemetryToOscalTraceability:
         assert control_map["ftra_flow_enforcement"] == "AC-4", (
             "ftra_flow_enforcement must map to NIST AC-4 (Information Flow Enforcement)"
         )
-        
+
         # Verify AC-4 metadata exists in US_FED controls
         us_fed_controls = get_control_meta("US_FED")
         assert "AC-4" in us_fed_controls, "AC-4 must be in US_FED control metadata"
         ac4_meta = us_fed_controls["AC-4"]
         assert ac4_meta["scoreName"] == "nist.AC-4.passed"
-        assert ac4_meta["name"] == "Information Flow Enforcement — FTRA Parameter Smuggling Protection"
-        assert "allow_extra_fields=False" in generate_ftra_component_entry()["control-implementations"][0]["implemented-requirements"][1]["description"]
+        assert (
+            ac4_meta["name"]
+            == "Information Flow Enforcement — FTRA Parameter Smuggling Protection"
+        )
+        assert (
+            "allow_extra_fields=False"
+            in generate_ftra_component_entry()["control-implementations"][0][
+                "implemented-requirements"
+            ][1]["description"]
+        )
 
     def test_si10_multi_component_satisfaction(
         self, tmp_path: Path, minimal_cs: ControlStructureModel
     ) -> None:
         """Verify SI-10 control lists implemented requirements for BOTH components.
-        
+
         Exports the complete System Security Plan and validates that control SI-10
         lists implemented requirements for:
         (a) NeMo Guardrails component (nemo0001-4e47-bbc8-guardrails001)
         (b) FTRA Semantic Classifier component (ftra0001-4e47-bbc8-semantic-validator01)
-        
+
         This multi-component control implementation demonstrates defense-in-depth:
         - NeMo: PII validation, content masking
         - FTRA: ActionSchema validation, boundary checks, injection mitigation
@@ -908,24 +916,28 @@ class TestFtraTelemetryToOscalTraceability:
             comp_def = yaml.safe_load(fh)
 
         components = comp_def["component-definition"]["components"]
-        
+
         # Verify FTRA component exists
         ftra_component = next(
             (c for c in components if c["uuid"] == _FTRA_COMPONENT_UUID), None
         )
-        assert ftra_component is not None, "FTRA component must be in component-definition"
-        
+        assert ftra_component is not None, (
+            "FTRA component must be in component-definition"
+        )
+
         # Verify FTRA component implements SI-10
-        ftra_impl_reqs = ftra_component["control-implementations"][0]["implemented-requirements"]
+        ftra_impl_reqs = ftra_component["control-implementations"][0][
+            "implemented-requirements"
+        ]
         ftra_control_ids = {r["control-id"] for r in ftra_impl_reqs}
         assert "si-10" in ftra_control_ids, "FTRA must implement SI-10"
-        
+
         # Find SI-10 requirement in FTRA component
         ftra_si10_req = next(r for r in ftra_impl_reqs if r["control-id"] == "si-10")
         assert ftra_si10_req["uuid"] == _FTRA_SI10_IMPL_UUID
         assert "schema" in ftra_si10_req["description"].lower()
         assert "validation" in ftra_si10_req["description"].lower()
-        
+
         # Count components implementing SI-10
         si10_implementing_components = []
         for comp in components:
@@ -936,12 +948,12 @@ class TestFtraTelemetryToOscalTraceability:
                     if req.get("control-id") == "si-10":
                         si10_implementing_components.append(comp["uuid"])
                         break
-        
+
         # Assert FTRA is among the SI-10 implementers
         assert _FTRA_COMPONENT_UUID in si10_implementing_components, (
             "FTRA Semantic Classifier must be listed as implementing SI-10"
         )
-        
+
         # Note: NeMo Guardrails component UUID would be checked here if it exists
         # in the minimal fixture. In production SSP, both components should be present.
         # Verify at least FTRA is present (minimal test fixture constraint)
@@ -951,43 +963,43 @@ class TestFtraTelemetryToOscalTraceability:
 
     def test_jurisdictional_isolation_ac4(self) -> None:
         """Verify AC-4 evaluation under EU_ECB or APAC_MAS baselines raises error.
-        
+
         AC-4 is a US_FED-only (NIST SP 800-53) control. Attempting to evaluate it
         under EU_ECB (EU AI Act) or APAC_MAS (MAS FEAT) baselines should raise a
         configuration error or return a NOT_APPLICABLE status, not silently pass.
         """
         from src.compliance_bridge.types import get_control_meta, get_iso_control_map
-        
+
         # Verify AC-4 is NOT in EU_ECB control metadata
         eu_ecb_controls = get_control_meta("EU_ECB")
         assert "AC-4" not in eu_ecb_controls, (
             "AC-4 (NIST SP 800-53) must NOT be in EU_ECB control metadata"
         )
-        
+
         # Verify AC-4 is NOT in APAC_MAS control metadata
         apac_mas_controls = get_control_meta("APAC_MAS")
         assert "AC-4" not in apac_mas_controls, (
             "AC-4 (NIST SP 800-53) must NOT be in APAC_MAS control metadata"
         )
-        
+
         # Verify ftra_flow_enforcement event is NOT in EU_ECB control map
         eu_ecb_map = get_iso_control_map("EU_ECB")
         assert "ftra_flow_enforcement" not in eu_ecb_map, (
             "ftra_flow_enforcement must NOT be in EU_ECB control map (no AC-4)"
         )
-        
+
         # Verify ftra_flow_enforcement event is NOT in APAC_MAS control map
         apac_mas_map = get_iso_control_map("APAC_MAS")
         assert "ftra_flow_enforcement" not in apac_mas_map, (
             "ftra_flow_enforcement must NOT be in APAC_MAS control map (no AC-4)"
         )
-        
+
         # Verify AC-4 IS in US_FED control metadata (positive assertion)
         us_fed_controls = get_control_meta("US_FED")
         assert "AC-4" in us_fed_controls, (
             "AC-4 must be present in US_FED control metadata"
         )
-        
+
         # Verify ftra_flow_enforcement IS in US_FED control map (positive assertion)
         us_fed_map = get_iso_control_map("US_FED")
         assert "ftra_flow_enforcement" in us_fed_map

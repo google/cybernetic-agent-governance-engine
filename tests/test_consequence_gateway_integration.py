@@ -57,36 +57,38 @@ async def consequence_store():
 async def test_consequence_gateway_blocks_invalid_token(consequence_store, mock_signer):
     """ConsequenceGateway blocks execution when token is invalid."""
     gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
-    
+
     action_payload = {
         "symbol": "AAPL",
         "amount": 100.0,
         "transaction_id": "test-123",
     }
-    
+
     # Invalid token (malformed JWS)
     invalid_token = "invalid.token.signature"
-    
+
     evaluation = await gateway.evaluate(invalid_token, action_payload)
-    
+
     assert evaluation.decision == ConsequenceDecision.BLOCK
     assert evaluation.reason_code == "TOKEN_INVALID"
 
 
 @pytest.mark.asyncio
-async def test_consequence_gateway_blocks_consumed_token(consequence_store, mock_signer):
+async def test_consequence_gateway_blocks_consumed_token(
+    consequence_store, mock_signer
+):
     """ConsequenceGateway blocks replay of consumed tokens."""
     gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
-    
+
     action_payload = {
         "symbol": "AAPL",
         "amount": 100.0,
         "transaction_id": "test-123",
     }
-    
+
     # Mint a valid consequence token
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
-    
+
     token_jws = ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
@@ -96,12 +98,12 @@ async def test_consequence_gateway_blocks_consumed_token(consequence_store, mock
         ver="1",
         ttl_seconds=300,
     )
-    
+
     # First consumption should succeed
     eval1 = await gateway.evaluate(token_jws, action_payload)
     assert eval1.decision == ConsequenceDecision.EXECUTE
     assert eval1.reason_code == "OK"
-    
+
     # Second consumption (replay) should be blocked
     eval2 = await gateway.evaluate(token_jws, action_payload)
     assert eval2.decision == ConsequenceDecision.BLOCK
@@ -109,19 +111,21 @@ async def test_consequence_gateway_blocks_consumed_token(consequence_store, mock
 
 
 @pytest.mark.asyncio
-async def test_consequence_gateway_blocks_action_binding_mismatch(consequence_store, mock_signer):
+async def test_consequence_gateway_blocks_action_binding_mismatch(
+    consequence_store, mock_signer
+):
     """ConsequenceGateway blocks when action payload doesn't match token."""
     gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
-    
+
     original_payload = {
         "symbol": "AAPL",
         "amount": 100.0,
         "transaction_id": "test-123",
     }
-    
+
     # Token bound to original payload
     action_digest = hashlib.sha256(jcs_canonicalize_plan(original_payload)).hexdigest()
-    
+
     token_jws = ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
@@ -131,16 +135,16 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(consequence_st
         ver="1",
         ttl_seconds=300,
     )
-    
+
     # Attempt execution with different payload (TOCTOU attack)
     modified_payload = {
         "symbol": "AAPL",
         "amount": 500.0,  # Modified amount
         "transaction_id": "test-123",
     }
-    
+
     evaluation = await gateway.evaluate(token_jws, modified_payload)
-    
+
     assert evaluation.decision == ConsequenceDecision.BLOCK
     assert evaluation.reason_code == "ACTION_BINDING_MISMATCH"
 
@@ -149,15 +153,15 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(consequence_st
 async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_signer):
     """ConsequenceGateway blocks expired tokens."""
     gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
-    
+
     action_payload = {
         "symbol": "AAPL",
         "amount": 100.0,
         "transaction_id": "test-123",
     }
-    
+
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
-    
+
     # Mint token with 1-second TTL
     token_jws = ConsequenceToken.mint(
         signer=mock_signer,
@@ -168,12 +172,12 @@ async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_
         ver="1",
         ttl_seconds=1,  # Very short TTL
     )
-    
+
     # Wait for token to expire
     time.sleep(2)
-    
+
     evaluation = await gateway.evaluate(token_jws, action_payload)
-    
+
     assert evaluation.decision == ConsequenceDecision.BLOCK
     assert evaluation.reason_code == "TOKEN_INVALID"
     assert "expired" in evaluation.detail.lower() or "ttl" in evaluation.detail.lower()
@@ -183,15 +187,15 @@ async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_
 async def test_consequence_gateway_success_path(consequence_store, mock_signer):
     """ConsequenceGateway permits valid, unconsumed tokens."""
     gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
-    
+
     action_payload = {
         "symbol": "AAPL",
         "amount": 100.0,
         "transaction_id": "test-123",
     }
-    
+
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
-    
+
     token_jws = ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
@@ -201,9 +205,9 @@ async def test_consequence_gateway_success_path(consequence_store, mock_signer):
         ver="1",
         ttl_seconds=300,
     )
-    
+
     evaluation = await gateway.evaluate(token_jws, action_payload)
-    
+
     assert evaluation.decision == ConsequenceDecision.EXECUTE
     assert evaluation.reason_code == "OK"
     assert evaluation.detail == ""

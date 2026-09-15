@@ -946,7 +946,7 @@ async def validate_action_endpoint(
         # ADR-008 Phase 3: Build canonical signed envelope for APPROVED verdicts
         if verdict == "APPROVED":
             from src.gateway.governance.seams.attestation import ExternalAttestation
-            
+
             # Convert dict attestations to ExternalAttestation objects
             attestations_raw = result.get("external_attestations")
             attestations = None
@@ -962,7 +962,9 @@ async def validate_action_endpoint(
                             "attested_at",
                             "provider_name",
                         }
-                        metadata = {k: v for k, v in att.items() if k not in standard_keys}
+                        metadata = {
+                            k: v for k, v in att.items() if k not in standard_keys
+                        }
                         attestations.append(
                             ExternalAttestation(
                                 attestation_type=att.get("type", ""),
@@ -975,7 +977,7 @@ async def validate_action_endpoint(
                         )
                     else:
                         attestations.append(att)
-            
+
             builder = GovernanceEnvelopeBuilder()
             envelope = await builder.build(
                 action=body.action,
@@ -1003,20 +1005,20 @@ async def validate_action_endpoint(
             params=body.params,
             receipt=exc.receipt,
         )
-        
+
         # ADR-008 Phase 3: Return complete refusal contract
         refusal_content: dict[str, Any] = {
             "schema_version": "2.0.0",
             "verdict": "DENIED",
             "violations": getattr(exc, "violations", [str(exc)]),
         }
-        
+
         # Include refusal receipt fields if available
         if hasattr(exc, "receipt") and exc.receipt is not None:
             refusal_content["refusal_receipt"] = _serialize_receipt(exc.receipt)
             if hasattr(exc.receipt, "proof_hash"):
                 refusal_content["proof_hash"] = exc.receipt.proof_hash
-        
+
         return JSONResponse(
             status_code=403,
             content=refusal_content,

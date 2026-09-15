@@ -34,14 +34,14 @@ class TestShellInjectionPrevention:
         import inspect
 
         import scripts.verify_all as verify_all
-        
+
         source = inspect.getsource(verify_all.run_command)
-        
+
         # Assert shell=True is NOT present in the function
         assert "shell=True" not in source, (
             "verify_all.run_command() must not use shell=True (CWE-78 prevention)"
         )
-        
+
         # Assert shlex.split is present (secure pattern)
         assert "shlex.split" in source, (
             "verify_all.run_command() must use shlex.split() for safe argument parsing"
@@ -52,9 +52,9 @@ class TestShellInjectionPrevention:
         import inspect
 
         import scripts.lib.utils as utils
-        
+
         source = inspect.getsource(utils)
-        
+
         # Count shell=True occurrences (should be 0)
         shell_true_count = source.count("shell=True")
         assert shell_true_count == 0, (
@@ -65,26 +65,26 @@ class TestShellInjectionPrevention:
         """shlex.split() treats command separators as literal tokens, not shell operators."""
         malicious_cmd = "echo safe; echo danger"
         args = shlex.split(malicious_cmd)
-        
+
         # Command chaining operators are tokenized as literal strings
         assert args == ["echo", "safe;", "echo", "danger"]
-        
+
         # This proves the injection vector is neutralized:
         # - ";" is treated as part of the first argument "safe;"
         # - No second command execution occurs
-        
+
     def test_shlex_split_neutralizes_pipe_injection(self):
         """shlex.split() neutralizes pipe injection attempts."""
         pipe_injection = "ls | grep secret"
         args = shlex.split(pipe_injection)
-        
+
         # Pipe operator is tokenized as a literal argument
         assert args == ["ls", "|", "grep", "secret"]
-        
+
     def test_shlex_split_neutralizes_redirection_injection(self):
         """shlex.split() neutralizes file redirection injection."""
         redirect_injection = "cat /etc/passwd > /tmp/stolen"
         args = shlex.split(redirect_injection)
-        
+
         # Redirection operators are tokenized as literals
         assert args == ["cat", "/etc/passwd", ">", "/tmp/stolen"]

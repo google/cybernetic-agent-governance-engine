@@ -120,9 +120,9 @@ def build_envelope_dict(
 
     Returns a dict ready for JCS canonicalization. Does not canonicalize here;
     canonicalization happens in canonicalize_envelope().
-    
+
     Phase 3: Emits canonical Archytan ArbiterKernel wire structure per Vector 1/3.
-    
+
     Args:
         clearance: ExecutionClearance from governance decision.
         policy_signer: Optional policy authority signer for decision_signature.
@@ -136,8 +136,11 @@ def build_envelope_dict(
 
     # Compute target digest for policy decision signature
     # Per Archytan spec: target_digest is SHA-256 of JCS-canonical target object
-    target_obj = {"account_hash": hashlib.sha256(clearance.target.encode("utf-8")).hexdigest()}
+    target_obj = {
+        "account_hash": hashlib.sha256(clearance.target.encode("utf-8")).hexdigest()
+    }
     from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
     target_canonical = jcs_canonicalize_plan(target_obj)
     target_digest = hashlib.sha256(target_canonical).hexdigest()
 
@@ -145,7 +148,7 @@ def build_envelope_dict(
     decision_signature = None
     if policy_signer is not None and policy_signer.is_kms_active:
         from src.integrations.actuator_01.signatures import sign_policy_decision
-        
+
         try:
             decision_signature = sign_policy_decision(
                 signer=policy_signer,
@@ -155,7 +158,9 @@ def build_envelope_dict(
                 decision=clearance.decision,
                 decision_path=clearance.decision_path,
                 required_quorum=clearance.required_quorum,
-                policy_version=clearance.policy_version if hasattr(clearance, 'policy_version') else "cage-policy-2.1.1",
+                policy_version=clearance.policy_version
+                if hasattr(clearance, "policy_version")
+                else "cage-policy-2.1.1",
                 evaluated_at=clearance.issued_at,
                 receipt_id=receipt_id,
                 receipt_hash=receipt_hash,
@@ -164,10 +169,12 @@ def build_envelope_dict(
             # Log but don't fail envelope construction if policy signature fails
             # The envelope can still proceed with operator quorum signatures only
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(
                 "[envelope_builder] Policy decision signature generation failed: %s. "
-                "Proceeding with operator quorum signatures only.", e
+                "Proceeding with operator quorum signatures only.",
+                e,
             )
 
     # Archytan canonical wire structure (per Vector 1 & 3)
@@ -184,7 +191,9 @@ def build_envelope_dict(
             "decision_path": clearance.decision_path,
             "decision_signature": decision_signature,
             "evaluated_at": clearance.issued_at,
-            "policy_version": clearance.policy_version if hasattr(clearance, 'policy_version') else "cage-policy-2.1.1",
+            "policy_version": clearance.policy_version
+            if hasattr(clearance, "policy_version")
+            else "cage-policy-2.1.1",
             "receipt_hash": receipt_hash or ("0" * 64),
             "receipt_id": receipt_id or "cage-generated-receipt",
             "required_quorum": clearance.required_quorum,

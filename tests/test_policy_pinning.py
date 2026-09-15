@@ -174,12 +174,12 @@ def test_middleware_validate_action_version_matching(registry):
                 },
             )
             assert resp.status_code == 200
-            
+
             # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
             data = resp.json()
             assert data.get("envelope_version") == "3.0"
             assert data["payload"]["verdict"] == "APPROVED"
-            
+
             mock_validate.assert_awaited_once_with(
                 action="execute_trade",
                 params={"amount": 100},

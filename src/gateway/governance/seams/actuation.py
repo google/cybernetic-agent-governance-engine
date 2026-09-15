@@ -55,7 +55,7 @@ class ExecutionClearance:
 
     Per Implementation Plan v2 §2.5, `issued_at` and `correlation_id` are
     externally-supplied with provenance flags to keep both Q6 branches open.
-    
+
     v3.0 Routing Extensions (Archytan Vector 3):
         executor_id: Identifies the downstream actuator responsible for execution.
         target_route: Resource locator for the execution endpoint (URI scheme).
@@ -94,23 +94,23 @@ class ExecutionClearance:
     # v3.0 Routing and Consequence Boundary (Archytan Vector 3 Integration)
     executor_id: str = "actuator_01"
     """Downstream actuator identifier (e.g., 'actuator_01', 'cage_finance_broker')."""
-    
+
     target_route: str = "local://default"
     """Execution target route URI (e.g., 'local://default', 'mtls://broker.example.com')."""
-    
+
     consequence_ceiling: str = "LOW_INFORMATIONAL"
     """Maximum permitted consequence tier for this clearance."""
 
     # Receipt and Authority Graph Anchors (Archytan Wire Realignment Phase 1)
     receipt_id: str = ""
     """Upstream receipt identifier linking to attestation/normative baseline."""
-    
+
     receipt_hash: str = ""
     """SHA-256 hex digest of the upstream attestation receipt."""
-    
+
     authority_graph_hash: str = "0" * 64
     """Merkle root of the authority graph at the time of decision."""
-    
+
     authority_graph_version: str = "ag-2026-08-01T00:00:00Z"
     """ISO-8601 timestamp versioning the authority graph snapshot."""
 
@@ -123,7 +123,7 @@ class ExecutionClearance:
     required_quorum: int = 2  # 2-5, per partner contract
 
     ttl_seconds: int = 30  # ≤30 per partner Micro-TTL
-    
+
     def to_dict(self) -> dict:
         """Convert clearance to dictionary, preserving all v3.0 routing fields."""
         return {

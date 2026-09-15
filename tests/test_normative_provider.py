@@ -116,11 +116,11 @@ def action_context() -> dict[str, Any]:
 def mock_defer_queue() -> AsyncMock:
     """Mock DeferQueue for testing DEFER zone behavior."""
     from src.gateway.governance.defer_queue import DeferReason, DeferToken
-    
+
     queue = AsyncMock()
     queue.park = AsyncMock(return_value="mock-defer-id")
     queue._resolve = AsyncMock()
-    
+
     # Return a non-authority-bound token (upstream_permit_id=None)
     mock_token = DeferToken(
         thread_id="mock-thread-001",
@@ -131,7 +131,7 @@ def mock_defer_queue() -> AsyncMock:
         upstream_permit_id=None,  # Explicitly None to avoid authority-bound behavior
     )
     queue.get = AsyncMock(return_value=mock_token)
-    
+
     return queue
 
 

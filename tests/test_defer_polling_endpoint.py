@@ -61,14 +61,18 @@ def mock_defer_queue(mock_redis_client):
 
 
 @pytest.mark.asyncio
-async def test_get_token_returns_none_on_unknown_token(mock_defer_queue, mock_redis_client):
+async def test_get_token_returns_none_on_unknown_token(
+    mock_defer_queue, mock_redis_client
+):
     """Verify get_token returns None on unknown token without raising an error."""
     mock_redis_client.hget.return_value = None
 
     result = await mock_defer_queue.get_token("unknown-defer-id-12345")
 
     assert result is None
-    mock_redis_client.hget.assert_awaited_once_with("DEFER:unknown-defer-id-12345", "token")
+    mock_redis_client.hget.assert_awaited_once_with(
+        "DEFER:unknown-defer-id-12345", "token"
+    )
 
 
 @pytest.mark.asyncio
@@ -122,7 +126,11 @@ def test_get_defer_status_returns_404_on_unknown_token(compliance_bridge_client)
             data = response.json()
             assert "detail" in data
             # detail can be a string or dict depending on response format
-            detail_str = data["detail"] if isinstance(data["detail"], str) else str(data["detail"])
+            detail_str = (
+                data["detail"]
+                if isinstance(data["detail"], str)
+                else str(data["detail"])
+            )
             assert "not found" in detail_str.lower()
 
 
@@ -167,7 +175,7 @@ def test_get_defer_status_returns_200_with_parked_status(compliance_bridge_clien
 
 def test_get_defer_status_includes_routing_seal_when_resolved(compliance_bridge_client):
     """Verify GET /v1/defer/{defer_id} includes routing_seal field when status='RESOLVED'.
-    
+
     Note: routing_seal is currently None since DeferToken model doesn't include it yet.
     This test verifies the response structure includes the field for future compatibility.
     """
@@ -205,7 +213,9 @@ def test_get_defer_status_includes_routing_seal_when_resolved(compliance_bridge_
             # Verify routing_seal field exists in response (None when not in model schema)
             assert "routing_seal" in data
             # When RESOLVED, the field should be included (currently None since model lacks it)
-            assert data["routing_seal"] is None  # Will be populated when DeferToken.routing_seal is added
+            assert (
+                data["routing_seal"] is None
+            )  # Will be populated when DeferToken.routing_seal is added
 
 
 def test_get_defer_status_handles_redis_unavailable(compliance_bridge_client):

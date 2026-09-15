@@ -210,12 +210,12 @@ class Provider02AttestationProvider(AttestationProvider):
         self._jwk_cache = JWKCache()
         self._sync_task: asyncio.Task | None = None
         self._running = False
-        
+
         # mTLS configuration
         self._client_cert = os.getenv("PROVIDER_02_CLIENT_CERT", "")
         self._client_key = os.getenv("PROVIDER_02_CLIENT_KEY", "")
         self._ca_bundle = os.getenv("PROVIDER_02_CA_BUNDLE", "")
-        
+
         # Configurable ingestion endpoint with fallback
         self._ingest_path = os.getenv(
             "PROVIDER_02_INGEST_PATH", "/v1/governance/bundles"
@@ -249,7 +249,7 @@ class Provider02AttestationProvider(AttestationProvider):
     def _build_httpx_kwargs(self) -> dict[str, Any]:
         """Build httpx.AsyncClient configuration with optional mTLS."""
         kwargs: dict[str, Any] = {"timeout": self._timeout}
-        
+
         # mTLS client certificate
         if self._client_cert and self._client_key:
             kwargs["cert"] = (self._client_cert, self._client_key)
@@ -258,16 +258,14 @@ class Provider02AttestationProvider(AttestationProvider):
                 self._client_cert,
                 self._client_key,
             )
-        
+
         # Server verification (CA bundle or system trust)
         if self._ca_bundle:
             kwargs["verify"] = self._ca_bundle
-            logger.debug(
-                "[Provider02] Custom CA bundle: %s", self._ca_bundle
-            )
+            logger.debug("[Provider02] Custom CA bundle: %s", self._ca_bundle)
         else:
             kwargs["verify"] = True  # Use system trust store
-        
+
         return kwargs
 
     def _headers(self) -> dict[str, str]:
@@ -751,7 +749,7 @@ class Provider02AttestationProvider(AttestationProvider):
                     exc.response.status_code,
                 )
                 return await self._register_bundle_fallback(bundle)
-            
+
             logger.error(
                 "[Provider02] registerProjectBundle failed: %s status=%d",
                 url,

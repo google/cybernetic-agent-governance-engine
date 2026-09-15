@@ -201,6 +201,7 @@ def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
 2. **Verify Ed25519 Signature**:
    ```python
    from cryptography.hazmat.primitives.asymmetric import ed25519
+
    public_key.verify(signature_bytes, canonical_body_bytes)
    ```
 3. **On Failure**: Fail with `SIGNATURE_VERIFICATION_FAILED`, set `admitted=False`

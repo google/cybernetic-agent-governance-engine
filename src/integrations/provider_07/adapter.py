@@ -142,7 +142,9 @@ class Provider07NormativeProvider:
             Configured Provider07NormativeProvider instance
         """
         # Default endpoint for test environments (conformance suite)
-        endpoint = os.environ.get("PROVIDER_07_ENDPOINT", "http://localhost:8087").strip()
+        endpoint = os.environ.get(
+            "PROVIDER_07_ENDPOINT", "http://localhost:8087"
+        ).strip()
         api_key = os.environ.get("PROVIDER_07_API_KEY", "").strip()
         jwks_url = os.environ.get("PROVIDER_07_JWKS_URL", "").strip()
         timeout_seconds = float(os.environ.get("PROVIDER_07_TIMEOUT_SECONDS", "5.0"))
@@ -314,7 +316,11 @@ class Provider07NormativeProvider:
         try:
             public_key = await self._jwks_client.get_key(inference_response.kid)
         except Exception as exc:
-            logger.error("provider_07: JWKS fetch failed for kid=%s: %s", inference_response.kid, exc)
+            logger.error(
+                "provider_07: JWKS fetch failed for kid=%s: %s",
+                inference_response.kid,
+                exc,
+            )
             return ValidationResult(
                 admitted=False,
                 findings=[
@@ -444,9 +450,7 @@ class Provider07NormativeProvider:
 
         else:
             # Unknown decision state — fail closed
-            logger.error(
-                "provider_07: Unknown decision=%r — failing closed", decision
-            )
+            logger.error("provider_07: Unknown decision=%r — failing closed", decision)
             return ValidationResult(
                 admitted=False,
                 findings=[
@@ -458,9 +462,7 @@ class Provider07NormativeProvider:
                 ],
             )
 
-    async def submit_evidence(
-        self, thread_id: str, evidence_hash: str
-    ) -> EvidenceSeal:
+    async def submit_evidence(self, thread_id: str, evidence_hash: str) -> EvidenceSeal:
         """
         Submit governance evidence hash to provider's audit trail.
 

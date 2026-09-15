@@ -69,8 +69,12 @@ SYNTHETIC_PARAMS = {
     "route": "synthetic://resource/alpha",
 }
 
-EXPECTED_PARAM_DIGEST = "27f4188867f27b3431c635a1110b7cbc5e06bfd51eb5be6569672b30e7d3d5de"
-EXPECTED_ACTION_DIGEST = "fdf5580a8d0add3d71394f57579467469a71d7bb684e7dd234ac9882cf5ec78e"
+EXPECTED_PARAM_DIGEST = (
+    "27f4188867f27b3431c635a1110b7cbc5e06bfd51eb5be6569672b30e7d3d5de"
+)
+EXPECTED_ACTION_DIGEST = (
+    "fdf5580a8d0add3d71394f57579467469a71d7bb684e7dd234ac9882cf5ec78e"
+)
 
 # ---------------------------------------------------------------------------
 # Test 1: JCS Parameter Digest
