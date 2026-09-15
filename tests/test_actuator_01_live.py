@@ -26,8 +26,8 @@ from typing import Any
 import pytest
 
 from src.gateway.governance.execution_actuator import (
-    ExecutionClearance,
     ActuatorCapability,
+    ExecutionClearance,
 )
 from src.integrations.actuator_01.adapter import Actuator01Adapter
 
@@ -91,29 +91,57 @@ async def test_live_capabilities(live_adapter: Actuator01Adapter) -> None:
 async def test_live_wire_dispatch_roundtrip(
     live_adapter: Actuator01Adapter,
 ) -> None:
-    """Verify live wire dispatch with quorum signatures.
+    """Verify live wire dispatch with v3 envelope schema and quorum signatures.
     
-    This test requires a valid governance clearance and KMS signer.
-    It will skip if KMS is not configured.
+    This test exercises the Archytan Vector 3 wire schema when ACTUATOR_01_ENDPOINT
+    is configured. It validates that the live adapter correctly serializes the
+    ExecutionClearance with WebAuthn attestation fields and v3.0 routing extensions.
+    
+    The test will skip if KMS is not configured or credentials are unavailable.
     """
-    # Create a test clearance
+    # Create a v3.0-compliant test clearance with WebAuthn attestation
     clearance = ExecutionClearance(
+        thread_id="test-live-thread-001",
+        decision="ALLOW",
+        decision_path="ESCALATE",
+        action="test.wire.dispatch",
+        target="sandbox://test-target",
+        operator_urn="urn:archytan:cage:operator:test-alice",
+        issued_at=1726416000,
+        issued_at_provenance="CHALLENGE_TIME",
         correlation_id="test-cage-actuator01-live-001",
-        action_name="test.wire.dispatch",
-        payload_digest="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        context={"test": True, "environment": "sandbox"},
+        correlation_id_source="INGRESS_MINTED",
+        governance_decision_digest="a" * 64,
+        opa_input_digest="b" * 64,
+        nonce="0102030405060708090a0b0c0d0e0f10",
+        params={"test": True, "environment": "sandbox"},
         approvals=[
             {
-                "operator_urn": "urn:cage:operator:test-alice",
-                "approved_at": "2026-09-14T20:00:00Z",
-                "signature": "placeholder-alice-sig",
+                "approver_urn": "urn:archytan:cage:operator:test-alice",
+                "approved_at_utc": "2026-09-15T12:00:00Z",
+                "auth_method": "WEBAUTHN",
+                "auth_principal_hash": "d" * 64,
+                "credential_id": "test-credential-alice",
+                "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
+                "authenticator_data": "dGVzdC1hdXRoLWRhdGEtYWxpY2U",
+                "signature": "dGVzdC1zaWduYXR1cmUtYWxpY2U",
             },
             {
-                "operator_urn": "urn:cage:operator:test-bob",
-                "approved_at": "2026-09-14T20:00:01Z",
-                "signature": "placeholder-bob-sig",
+                "approver_urn": "urn:archytan:cage:operator:test-bob",
+                "approved_at_utc": "2026-09-15T12:00:05Z",
+                "auth_method": "WEBAUTHN",
+                "auth_principal_hash": "e" * 64,
+                "credential_id": "test-credential-bob",
+                "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
+                "authenticator_data": "dGVzdC1hdXRoLWRhdGEtYm9i",
+                "signature": "dGVzdC1zaWduYXR1cmUtYm9i",
             },
         ],
+        required_quorum=2,
+        executor_id="actuator_01",
+        target_route="https://sandbox.archytan.example.com",
+        consequence_ceiling="LOW_INFORMATIONAL",
+        ttl_seconds=30,
     )
     
     # Execute the actuation
