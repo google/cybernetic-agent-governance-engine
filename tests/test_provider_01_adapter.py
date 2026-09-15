@@ -119,7 +119,8 @@ async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> N
 
     from src.gateway.governance.kms_signer import reset_governance_signer
 
-    respx.post("https://provider01.example.com/validate/fria").mock(
+    # Phase 3 v0.2: endpoint cutover to /cage/validate
+    respx.post("https://provider01.example.com/cage/validate").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -148,7 +149,8 @@ async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> N
 @pytest.mark.asyncio
 @respx.mock
 async def test_validate_fria_error(provider: FlowSignalNormativeProvider) -> None:
-    respx.post("https://provider01.example.com/validate/fria").mock(
+    # Phase 3 v0.2: endpoint cutover to /cage/validate
+    respx.post("https://provider01.example.com/cage/validate").mock(
         return_value=httpx.Response(502)
     )
     result = await provider.validate_fria({"action": "trade"})

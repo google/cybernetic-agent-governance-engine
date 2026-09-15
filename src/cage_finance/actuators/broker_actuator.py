@@ -108,6 +108,45 @@ class BrokerActuator:
         timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
         findings: list[dict] = []
         
+        # ── v3.0 Security Gates ───────────────────────────────────────────
+        
+        # Gate 1: Identity validation
+        if clearance.executor_id != self.actuator_id:
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=[
+                    {
+                        "code": "EXECUTOR_ID_MISMATCH",
+                        "severity": "TERMINAL",
+                        "detail": f"Clearance executor_id '{clearance.executor_id}' does not match '{self.actuator_id}'",
+                    }
+                ],
+                retryable=False,
+                timestamp_utc=timestamp_utc,
+            )
+
+        # Gate 2: Route validation (in-process broker only accepts local routes)
+        normalized_target = clearance.target_route.rstrip("/")
+        if normalized_target not in ("local://default", "*"):
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=[
+                    {
+                        "code": "TARGET_ROUTE_MISMATCH",
+                        "severity": "TERMINAL",
+                        "detail": f"Route '{clearance.target_route}' invalid for in-process broker actuator",
+                    }
+                ],
+                retryable=False,
+                timestamp_utc=timestamp_utc,
+            )
+        
         # Step 1: Validate clearance pre-conditions
         if clearance.decision != "ALLOW":
             findings.append({

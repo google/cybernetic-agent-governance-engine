@@ -187,7 +187,7 @@ async def execute_trade_action(
     if dry_run:
         return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
 
-    # Step 5: Construct ExecutionClearance (ADR-008 Phase 2)
+    # Step 5: Construct ExecutionClearance (ADR-008 Phase 2 + v3.0 Routing)
     # Build the clearance structure required by the ActuatorRegistry
     clearance = ExecutionClearance(
         thread_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
@@ -204,6 +204,9 @@ async def execute_trade_action(
         opa_input_digest=hashlib.sha256(json.dumps(action_params, sort_keys=True).encode()).hexdigest(),
         nonce=str(uuid.uuid4()).replace("-", "")[:32],
         params=action_params,
+        executor_id="cage_finance_broker",
+        target_route="local://default",
+        consequence_ceiling="HIGH_FINANCIAL",
         approvals=[],  # Populated by dual-control in future phases
         required_quorum=0,  # No quorum required for single-agent trades
     )

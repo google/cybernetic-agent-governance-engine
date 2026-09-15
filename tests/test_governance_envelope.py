@@ -914,7 +914,9 @@ class TestUnwrapGovernanceEnvelope:
 
     def test_unwrap_legacy_flat_dict(self):
         """Test passing a flat legacy dictionary returns the dictionary unchanged."""
-        from src.gateway.governance.governance_envelope import unwrap_governance_envelope
+        from src.gateway.governance.governance_envelope import (
+            unwrap_governance_envelope,
+        )
 
         flat = {"verdict": "APPROVED", "seal": "test-seal"}
         unwrapped = unwrap_governance_envelope(flat)

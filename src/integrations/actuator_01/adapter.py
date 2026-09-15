@@ -124,16 +124,19 @@ class Actuator01Adapter:
         client: ActuatorHttpClient,
         signer: RawMessageSigner,
         signer_resolver: SignerResolver | None = None,
+        policy_signer: RawMessageSigner | None = None,
     ) -> None:
         self._client = client
         self._signer = signer
         self._resolve_signer = signer_resolver or (lambda _urn: signer)
+        self._policy_signer = policy_signer  # Optional dual-authority policy signer
 
     @classmethod
     def from_env(
         cls,
         signer: RawMessageSigner,
         signer_resolver: SignerResolver | None = None,
+        policy_signer: RawMessageSigner | None = None,
     ) -> Actuator01Adapter:
         """Construct adapter from environment variables.
 
@@ -141,6 +144,7 @@ class Actuator01Adapter:
             signer: Base signer (RawMessageSigner) for assertions and default quorum signing.
             signer_resolver: Optional callable ``(operator_urn: str) -> RawMessageSigner``
                 for per-operator signing keys. If ``None``, defaults to ``signer`` for all.
+            policy_signer: Optional policy authority signer for dual-authority decision signatures.
 
         Raises:
             RuntimeError: If any required environment variable is missing.
@@ -177,7 +181,12 @@ class Actuator01Adapter:
             tenant_id=tenant_id,
         )
 
-        return cls(client=client, signer=signer, signer_resolver=signer_resolver)
+        return cls(
+            client=client,
+            signer=signer,
+            signer_resolver=signer_resolver,
+            policy_signer=policy_signer,
+        )
 
     # ── ExecutionActuator Protocol Implementation ─────────────────────────
 
@@ -226,9 +235,69 @@ class Actuator01Adapter:
         """
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
+        # ── v3.0 Security Gates ───────────────────────────────────────────
+        
+        # Gate 1: Identity validation
+        if clearance.executor_id != self.actuator_id:
+            logger.error(
+                "[actuator_01/adapter] EXECUTOR_ID_MISMATCH: clearance.executor_id=%s, self.actuator_id=%s",
+                clearance.executor_id,
+                self.actuator_id,
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=[
+                    {
+                        "code": "EXECUTOR_ID_MISMATCH",
+                        "severity": "TERMINAL",
+                        "detail": f"Clearance executor_id '{clearance.executor_id}' does not match '{self.actuator_id}'",
+                    }
+                ],
+                retryable=False,
+                envelope_digest=None,
+                timestamp_utc=timestamp_utc,
+            )
+
+        # Gate 2: Target route validation
+        normalized_target = clearance.target_route.rstrip("/")
+        normalized_client_base = (
+            getattr(self._client, "base_url", "").rstrip("/")
+            if self._client
+            else ""
+        )
+
+        if normalized_target not in (normalized_client_base, "*", "local://default"):
+            client_base = getattr(self._client, "base_url", None) if self._client else None
+            logger.error(
+                "[actuator_01/adapter] TARGET_ROUTE_MISMATCH: clearance.target_route=%s, client.base_url=%s",
+                clearance.target_route,
+                client_base,
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=[
+                    {
+                        "code": "TARGET_ROUTE_MISMATCH",
+                        "severity": "TERMINAL",
+                        "detail": f"Route '{clearance.target_route}' does not match client egress '{client_base}'",
+                    }
+                ],
+                retryable=False,
+                envelope_digest=None,
+                timestamp_utc=timestamp_utc,
+            )
+
         # ── Step 1-2: Build, canonicalize, digest ─────────────────────────
         try:
-            canonical_bytes, envelope_digest = build_and_canonicalize(clearance)
+            canonical_bytes, envelope_digest = build_and_canonicalize(
+                clearance, policy_signer=self._policy_signer
+            )
         except InvalidClearanceError as exc:
             logger.warning("[actuator_01/adapter] Clearance validation failed: %s", exc)
             return ActuationReceipt(

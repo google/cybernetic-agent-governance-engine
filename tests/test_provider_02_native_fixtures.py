@@ -36,13 +36,13 @@ SCHEMAS_DIR = REPO_ROOT / "schemas" / "provider_02"
 
 def load_schema(schema_path: Path) -> dict:
     """Load a JSON schema from disk."""
-    with open(schema_path, "r", encoding="utf-8") as f:
+    with open(schema_path, encoding="utf-8") as f:
         return json.load(f)
 
 
 def load_fixture(fixture_path: Path) -> dict:
     """Load a JSON fixture from disk."""
-    with open(fixture_path, "r", encoding="utf-8") as f:
+    with open(fixture_path, encoding="utf-8") as f:
         return json.load(f)
 
 

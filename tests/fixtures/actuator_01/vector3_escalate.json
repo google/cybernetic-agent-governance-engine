@@ -1,0 +1,38 @@
+{
+  "action": "payment.wire.execute",
+  "approval": {
+    "approver_urn": "urn:archytan:op:test_vector_3_approver",
+    "authenticator_data": "vfdKKZV6j8c6iDxKhlRqWiKsJ4tEA37-Sv41IVu_OM4FAAAAAQ",
+    "challenge_binding": "dfec44596615c011c663c1d8999d3f9d6c7ef12fbb4e0e7cc0552f5983ab7413",
+    "client_data_json": "eyJjaGFsbGVuZ2UiOiIzLXhFV1dZVndCSEdZOEhZbVowX25XeC04Uy03VGc1OHdGVXZXWU9yZEJNIiwib3JpZ2luIjoiaHR0cHM6Ly9hcmNoeXRhbi5sb2NhbCIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ",
+    "credential_id": "dGVzdC1jcmVkZW50aWFsLXZlY3Rvci0z",
+    "signature": "s1Fm-rbokvMFqr3RwJ87yE6TcIBTrj7zvi0AuqyJ6eVjKtel_ISluSOHnZSPW5YqQR216YW_TJjPyYvoyZkUBA"
+  },
+  "authority_ref": {
+    "graph_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+    "graph_version": "ag-2026-08-01T00:00:00Z"
+  },
+  "correlation_id": "660e8400-e29b-41d4-a716-446655440099",
+  "envelope_version": "archytan.envelope/v1",
+  "governance": {
+    "decision": "ALLOW",
+    "decision_path": "ESCALATE",
+    "decision_signature": "9471ba2eea6d52fb1734d7b6f483d1ab61cfb4806538dd355f9efc13930e0bf0085ebe2abc3596fd99a48aa8354b14745f39fafe0495dabe662b340e2f43670c",
+    "evaluated_at": 1785012000,
+    "policy_version": "cage-policy-2.1.1",
+    "receipt_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+    "receipt_id": "cage-seal-test-0003",
+    "required_quorum": 3
+  },
+  "issued_at": 1785012000,
+  "nonce": "0102030405060708090a0b0c0d0e0f11",
+  "operator_urn": "urn:archytan:op:test_vector_3_op1",
+  "parameters": {
+    "amount_minor": 500000,
+    "currency": "USD"
+  },
+  "target": {
+    "account_hash": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "ttl_seconds": 30
+}

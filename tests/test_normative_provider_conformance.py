@@ -265,7 +265,7 @@ class TestFlowSignalDecisionMapping:
             mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
             mock_get_signer.return_value = mock_signer
 
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -294,7 +294,7 @@ class TestFlowSignalDecisionMapping:
     async def test_flowsignal_decision_refuse(self, provider) -> None:
         """REFUSE decision → admitted=False, FLOWSIGNAL_REFUSE finding with blocked severity."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -320,7 +320,7 @@ class TestFlowSignalDecisionMapping:
     async def test_flowsignal_decision_escalate(self, provider) -> None:
         """ESCALATE decision → admitted=False, EXTERNAL_HOLD finding with needs_human_review=True."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -352,7 +352,7 @@ class TestFlowSignalDecisionMapping:
     ) -> None:
         """Malformed/unrecognized decision value → fail-closed with PARSE_ERROR."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -379,7 +379,7 @@ class TestFlowSignalDecisionMapping:
     ) -> None:
         """Payload without decision field → fail closed (BC-03 remediation)."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -409,7 +409,7 @@ class TestFlowSignalDecisionMapping:
     ) -> None:
         """Payload without decision field fails closed regardless of admitted value (BC-03 remediation)."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -456,7 +456,7 @@ class TestFlowSignalDecisionMapping:
             mock_get_signer.return_value = mock_signer
 
             # Lowercase "allow"
-            respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
+            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={

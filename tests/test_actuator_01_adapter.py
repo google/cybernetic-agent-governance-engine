@@ -423,7 +423,7 @@ class TestFailClosedBranches:
         clearance = make_valid_clearance()
 
         # Patch at the module level where it's imported in adapter
-        def mock_build_and_canonicalize(clearance):
+        def mock_build_and_canonicalize(clearance, policy_signer=None):
             raise EnvelopeTooLargeError(5000)
 
         monkeypatch.setattr(
@@ -712,3 +712,150 @@ class TestAsyncContextManager:
             assert ctx_adapter is adapter
 
         mock_client.close.assert_called_once()
+
+
+class TestV3SecurityGates:
+    """Test v3.0 executor_id and target_route security gates."""
+
+    async def test_actuator_01_rejects_executor_id_mismatch(self, monkeypatch):
+        """EXECUTOR_ID_MISMATCH: clearance with wrong executor_id is rejected."""
+        clearance = make_valid_clearance()
+        clearance.executor_id = "wrong_actuator"  # Mismatch
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=mock_signer,  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.findings[0]["code"] == "EXECUTOR_ID_MISMATCH"
+        assert receipt.findings[0]["severity"] == "TERMINAL"
+        assert "wrong_actuator" in receipt.findings[0]["detail"]
+        assert "actuator_01" in receipt.findings[0]["detail"]
+        assert not receipt.retryable
+        assert receipt.envelope_digest is None
+        # Client should never be called (gate fails before envelope construction)
+        mock_client.submit_envelope.assert_not_called()
+
+    async def test_actuator_01_rejects_target_route_mismatch(self, monkeypatch):
+        """TARGET_ROUTE_MISMATCH: clearance with unauthorized route is rejected."""
+        clearance = make_valid_clearance()
+        clearance.executor_id = "actuator_01"  # Correct executor
+        clearance.target_route = "https://unauthorized.egress.example.com"  # Mismatch
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.base_url = "https://sandbox.archytan.example.com"
+        mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=mock_signer,  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.findings[0]["code"] == "TARGET_ROUTE_MISMATCH"
+        assert receipt.findings[0]["severity"] == "TERMINAL"
+        assert "unauthorized.egress.example.com" in receipt.findings[0]["detail"]
+        assert not receipt.retryable
+        assert receipt.envelope_digest is None
+        # Client should never be called
+        mock_client.submit_envelope.assert_not_called()
+
+    async def test_actuator_01_accepts_normalized_target_route(self, monkeypatch):
+        """Trailing-slash normalization allows matching routes."""
+        clearance = make_valid_clearance()
+        clearance.executor_id = "actuator_01"
+        clearance.target_route = "https://sandbox.archytan.example.com/"  # With trailing slash
+
+        async def mock_submit(*args, **kwargs):
+            return httpx.Response(
+                200,
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
+            )
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.base_url = "https://sandbox.archytan.example.com"  # No trailing slash
+        mock_client.submit_envelope = mock_submit
+        mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=mock_signer,  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        # Should succeed due to normalization
+        assert receipt.accepted
+        assert receipt.receipt_id == "r-123"
+
+    async def test_actuator_01_accepts_wildcard_route(self, monkeypatch):
+        """Wildcard route '*' is always accepted."""
+        clearance = make_valid_clearance()
+        clearance.executor_id = "actuator_01"
+        clearance.target_route = "*"  # Wildcard
+
+        async def mock_submit(*args, **kwargs):
+            return httpx.Response(
+                200,
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
+            )
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.base_url = "https://sandbox.archytan.example.com"
+        mock_client.submit_envelope = mock_submit
+        mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=mock_signer,  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert receipt.accepted
+
+    async def test_actuator_01_accepts_local_default_route(self, monkeypatch):
+        """'local://default' route is always accepted."""
+        clearance = make_valid_clearance()
+        clearance.executor_id = "actuator_01"
+        clearance.target_route = "local://default"
+
+        async def mock_submit(*args, **kwargs):
+            return httpx.Response(
+                200,
+                json={
+                    "receipt_id": "r-123",
+                    "session_uuid": "s-456",
+                    "status": "ACCEPTED",
+                },
+            )
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.base_url = "https://sandbox.archytan.example.com"
+        mock_client.submit_envelope = mock_submit
+        mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
+
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=mock_signer,  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert receipt.accepted

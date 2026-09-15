@@ -32,6 +32,7 @@ from typing import Any
 
 from src.gateway.governance.execution_actuator import ExecutionClearance
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.raw_signer_protocol import RawMessageSigner
 from src.integrations.actuator_01.constants import (
     ENVELOPE_MAX_BYTES,
     MAX_TTL_SECONDS,
@@ -103,7 +104,14 @@ def validate_clearance(clearance: ExecutionClearance) -> None:
         )
 
 
-def build_envelope_dict(clearance: ExecutionClearance) -> dict[str, Any]:
+def build_envelope_dict(
+    clearance: ExecutionClearance,
+    policy_signer: RawMessageSigner | None = None,
+    receipt_id: str | None = None,
+    receipt_hash: str | None = None,
+    graph_hash: str | None = None,
+    graph_version: str | None = None,
+) -> dict[str, Any]:
     """
     Build the envelope dictionary from ExecutionClearance.
 
@@ -112,39 +120,96 @@ def build_envelope_dict(clearance: ExecutionClearance) -> dict[str, Any]:
 
     Returns a dict ready for JCS canonicalization. Does not canonicalize here;
     canonicalization happens in canonicalize_envelope().
+    
+    Phase 3: Emits canonical Archytan ArbiterKernel wire structure per Vector 1/3.
+    
+    Args:
+        clearance: ExecutionClearance from governance decision.
+        policy_signer: Optional policy authority signer for decision_signature.
+                      If provided, generates dual-authority policy signature.
+        receipt_id: Optional partner receipt ID for governance block.
+        receipt_hash: Optional receipt hash for governance block.
+        graph_hash: Optional authority graph hash for authority_ref.
+        graph_version: Optional authority graph version for authority_ref.
     """
     validate_clearance(clearance)
 
-    # Core envelope structure (simplified for Phase 1)
-    # Full schema implementation will follow in Phase 3/Stream C
-    envelope = {
-        "version": "actuator_01.envelope/v1",
-        "correlation_id": clearance.correlation_id,
-        "issued_at": clearance.issued_at,
-        "ttl_seconds": clearance.ttl_seconds,
-        "nonce": clearance.nonce,
-        "operator_urn": clearance.operator_urn,
+    # Compute target digest for policy decision signature
+    # Per Archytan spec: target_digest is SHA-256 of JCS-canonical target object
+    target_obj = {"account_hash": hashlib.sha256(clearance.target.encode("utf-8")).hexdigest()}
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+    target_canonical = jcs_canonicalize_plan(target_obj)
+    target_digest = hashlib.sha256(target_canonical).hexdigest()
+
+    # Compute policy decision signature if policy signer provided
+    decision_signature = None
+    if policy_signer is not None and policy_signer.is_kms_active:
+        from src.integrations.actuator_01.signatures import sign_policy_decision
+        
+        try:
+            decision_signature = sign_policy_decision(
+                signer=policy_signer,
+                action=clearance.action,
+                target_digest=target_digest,
+                correlation_id=clearance.correlation_id,
+                decision=clearance.decision,
+                decision_path=clearance.decision_path,
+                required_quorum=clearance.required_quorum,
+                policy_version=clearance.policy_version if hasattr(clearance, 'policy_version') else "cage-policy-2.1.1",
+                evaluated_at=clearance.issued_at,
+                receipt_id=receipt_id,
+                receipt_hash=receipt_hash,
+            )
+        except (RuntimeError, ValueError) as e:
+            # Log but don't fail envelope construction if policy signature fails
+            # The envelope can still proceed with operator quorum signatures only
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "[envelope_builder] Policy decision signature generation failed: %s. "
+                "Proceeding with operator quorum signatures only.", e
+            )
+
+    # Archytan canonical wire structure (per Vector 1 & 3)
+    envelope: dict[str, Any] = {
         "action": clearance.action,
-        "target": clearance.target,
-        "decision": clearance.decision,
-        "decision_path": clearance.decision_path,
+        "authority_ref": {
+            "graph_hash": graph_hash or ("f" * 64),
+            "graph_version": graph_version or "ag-2026-08-01T00:00:00Z",
+        },
+        "correlation_id": clearance.correlation_id,
+        "envelope_version": "archytan.envelope/v1",
         "governance": {
-            "decision_digest": clearance.governance_decision_digest,
-            "opa_input_digest": clearance.opa_input_digest,
+            "decision": clearance.decision,
+            "decision_path": clearance.decision_path,
+            "decision_signature": decision_signature,
+            "evaluated_at": clearance.issued_at,
+            "policy_version": clearance.policy_version if hasattr(clearance, 'policy_version') else "cage-policy-2.1.1",
+            "receipt_hash": receipt_hash or ("0" * 64),
+            "receipt_id": receipt_id or "cage-generated-receipt",
             "required_quorum": clearance.required_quorum,
         },
-        "parameters": {
-            # Digest-only, never full content
-            "semantic_distance": clearance.semantic_distance,
-            "confidence_score": clearance.confidence_score,
-        },
+        "issued_at": clearance.issued_at,
+        "nonce": clearance.nonce,
+        "operator_urn": clearance.operator_urn,
+        "parameters": clearance.params if isinstance(clearance.params, dict) else {},
+        "target": target_obj,
+        "ttl_seconds": clearance.ttl_seconds,
     }
 
-    # Authority reference block (placeholder - will be configured at runtime)
-    envelope["authority_ref"] = {
-        "graph_version": "v1",  # Supplied by partner at onboarding
-        "graph_hash": "placeholder",  # Configured, not computed
-    }
+    # Approval block - construct ONLY if clearance.approvals is non-empty (ESCALATE path)
+    # Per Vector 1: DIRECT path omits the "approval" key entirely (not null)
+    if clearance.approvals:
+        # Extract from first approval (primary operator)
+        approval = clearance.approvals[0]
+        envelope["approval"] = {
+            "approver_urn": approval.get("approver_urn", clearance.operator_urn),
+            "authenticator_data": approval.get("authenticator_data"),
+            "challenge_binding": approval.get("challenge_binding"),
+            "client_data_json": approval.get("client_data_json"),
+            "credential_id": approval.get("credential_id"),
+            "signature": approval.get("signature"),
+        }
 
     return envelope
 
@@ -195,15 +260,30 @@ def generate_nonce() -> str:
     return secrets.token_hex(16)
 
 
-def build_and_canonicalize(clearance: ExecutionClearance) -> tuple[bytes, str]:
+def build_and_canonicalize(
+    clearance: ExecutionClearance,
+    policy_signer: RawMessageSigner | None = None,
+    receipt_id: str | None = None,
+    receipt_hash: str | None = None,
+    graph_hash: str | None = None,
+    graph_version: str | None = None,
+) -> tuple[bytes, str]:
     """
     Complete envelope construction pipeline.
 
     1. Validate clearance
-    2. Build envelope dict
+    2. Build envelope dict (with optional policy decision signature)
     3. Canonicalize per RFC 8785
     4. Assert within 4KB ceiling
     5. Compute body digest
+
+    Args:
+        clearance: ExecutionClearance from governance decision.
+        policy_signer: Optional policy authority signer for dual-authority model.
+        receipt_id: Optional partner receipt ID for governance block.
+        receipt_hash: Optional receipt hash for governance block.
+        graph_hash: Optional authority graph hash for authority_ref.
+        graph_version: Optional authority graph version for authority_ref.
 
     Returns:
         (canonical_bytes, digest) - The frozen bytes and their SHA-256 hex digest
@@ -212,7 +292,14 @@ def build_and_canonicalize(clearance: ExecutionClearance) -> tuple[bytes, str]:
         InvalidClearanceError: Pre-flight validation failure
         EnvelopeTooLargeError: Envelope exceeds 4096 bytes
     """
-    envelope = build_envelope_dict(clearance)
+    envelope = build_envelope_dict(
+        clearance,
+        policy_signer=policy_signer,
+        receipt_id=receipt_id,
+        receipt_hash=receipt_hash,
+        graph_hash=graph_hash,
+        graph_version=graph_version,
+    )
     canonical_bytes = canonicalize_envelope(envelope)
     assert_within_ceiling(canonical_bytes)
     digest = body_digest(canonical_bytes)

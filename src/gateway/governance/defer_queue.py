@@ -126,6 +126,12 @@ class ApprovalRecord(BaseModel):
 
     Phase 2 dual-control implementation per
     local/integrations/archytan/IMPLEMENTATION_PLAN_v2.md §4.4.1.
+    
+    v3.0 WebAuthn Audit Fix (Archytan Vector 3):
+        client_data_json replaces client_data_hash to preserve the raw W3C
+        CollectedClientData for cryptographic verification. This remediates
+        the audit finding where hashing before verification prevented
+        challenge binding validation.
     """
 
     # --- Required from Phase 2 -------------------------------------------
@@ -145,8 +151,11 @@ class ApprovalRecord(BaseModel):
     credential_id: str | None = None
     """base64url-encoded WebAuthn credential ID."""
 
+    client_data_json: str | None = None
+    """base64url-encoded W3C CollectedClientData raw JSON string (v3.0+)."""
+    
     client_data_hash: str | None = None
-    """hex SHA-256 of clientDataJSON."""
+    """hex SHA-256 of clientDataJSON (deprecated; use client_data_json)."""
 
     authenticator_data: str | None = None
     """base64url-encoded authenticator data."""
@@ -156,6 +165,55 @@ class ApprovalRecord(BaseModel):
 
     challenge_binding: str | None = None
     """hex SHA-256 over the bound decision fields."""
+    
+    def verify_webauthn_challenge(self) -> bool:
+        """Verify WebAuthn challenge binding (v3.0+ audit fix).
+        
+        This method validates that the challenge embedded in client_data_json
+        matches the expected challenge_binding. It implements the cryptographic
+        verification flow required by the W3C WebAuthn specification.
+        
+        Returns:
+            True if verification succeeds, False otherwise.
+            
+        Raises:
+            ValueError: If required fields are missing or malformed.
+        """
+        import base64
+        import hashlib
+        
+        if not self.client_data_json or not self.challenge_binding:
+            return False
+            
+        try:
+            # Decode client_data_json using canonical base64url padding
+            b64_str = self.client_data_json
+            pad = "=" * (-len(b64_str) % 4)
+            client_data_bytes = base64.urlsafe_b64decode(b64_str + pad)
+            
+            # Compute and cache the client_data_hash
+            computed_hash = hashlib.sha256(client_data_bytes).hexdigest()
+            if self.client_data_hash is None:
+                # Populate the hash field for backward compatibility
+                object.__setattr__(self, "client_data_hash", computed_hash)
+            
+            # Parse the JSON and extract the challenge field
+            client_data = json.loads(client_data_bytes.decode("utf-8"))
+            challenge_b64 = client_data.get("challenge", "")
+            
+            # Decode the challenge using canonical base64url padding
+            pad_challenge = "=" * (-len(challenge_b64) % 4)
+            challenge_bytes = base64.urlsafe_b64decode(challenge_b64 + pad_challenge)
+            
+            # Compare against the expected challenge_binding
+            expected_bytes = bytes.fromhex(self.challenge_binding)
+            return challenge_bytes == expected_bytes
+            
+        except (ValueError, KeyError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "WebAuthn challenge verification failed: %s", exc
+            )
+            return False
 
 
 # ---------------------------------------------------------------------------

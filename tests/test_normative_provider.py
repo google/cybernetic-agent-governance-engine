@@ -115,7 +115,7 @@ def action_context() -> dict[str, Any]:
 @pytest.fixture
 def mock_defer_queue() -> AsyncMock:
     """Mock DeferQueue for testing DEFER zone behavior."""
-    from src.gateway.governance.defer_queue import DeferToken, DeferReason
+    from src.gateway.governance.defer_queue import DeferReason, DeferToken
     
     queue = AsyncMock()
     queue.park = AsyncMock(return_value="mock-defer-id")

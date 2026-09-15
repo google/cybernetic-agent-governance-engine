@@ -55,6 +55,15 @@ class ExecutionClearance:
 
     Per Implementation Plan v2 §2.5, `issued_at` and `correlation_id` are
     externally-supplied with provenance flags to keep both Q6 branches open.
+    
+    v3.0 Routing Extensions (Archytan Vector 3):
+        executor_id: Identifies the downstream actuator responsible for execution.
+        target_route: Resource locator for the execution endpoint (URI scheme).
+        consequence_ceiling: Maximum consequence tier permitted for this clearance.
+        receipt_id: Upstream receipt identifier linking to attestation chain.
+        receipt_hash: SHA-256 digest of the attestation receipt.
+        authority_graph_hash: Merkle root of authority graph at decision time.
+        authority_graph_version: Timestamp versioning the authority graph snapshot.
     """
 
     # Core decision context
@@ -82,6 +91,29 @@ class ExecutionClearance:
     # Contains the validated parameters needed to execute the action
     params: dict = field(default_factory=dict)
 
+    # v3.0 Routing and Consequence Boundary (Archytan Vector 3 Integration)
+    executor_id: str = "actuator_01"
+    """Downstream actuator identifier (e.g., 'actuator_01', 'cage_finance_broker')."""
+    
+    target_route: str = "local://default"
+    """Execution target route URI (e.g., 'local://default', 'mtls://broker.example.com')."""
+    
+    consequence_ceiling: str = "LOW_INFORMATIONAL"
+    """Maximum permitted consequence tier for this clearance."""
+
+    # Receipt and Authority Graph Anchors (Archytan Wire Realignment Phase 1)
+    receipt_id: str = ""
+    """Upstream receipt identifier linking to attestation/normative baseline."""
+    
+    receipt_hash: str = ""
+    """SHA-256 hex digest of the upstream attestation receipt."""
+    
+    authority_graph_hash: str = "0" * 64
+    """Merkle root of the authority graph at the time of decision."""
+    
+    authority_graph_version: str = "ag-2026-08-01T00:00:00Z"
+    """ISO-8601 timestamp versioning the authority graph snapshot."""
+
     # Fields with defaults (must come after fields without defaults)
     semantic_distance: float | None = None
     confidence_score: float | None = None
@@ -91,6 +123,37 @@ class ExecutionClearance:
     required_quorum: int = 2  # 2-5, per partner contract
 
     ttl_seconds: int = 30  # ≤30 per partner Micro-TTL
+    
+    def to_dict(self) -> dict:
+        """Convert clearance to dictionary, preserving all v3.0 routing fields."""
+        return {
+            "thread_id": self.thread_id,
+            "decision": self.decision,
+            "decision_path": self.decision_path,
+            "action": self.action,
+            "target": self.target,
+            "operator_urn": self.operator_urn,
+            "issued_at": self.issued_at,
+            "issued_at_provenance": self.issued_at_provenance,
+            "correlation_id": self.correlation_id,
+            "correlation_id_source": self.correlation_id_source,
+            "governance_decision_digest": self.governance_decision_digest,
+            "opa_input_digest": self.opa_input_digest,
+            "nonce": self.nonce,
+            "params": self.params,
+            "executor_id": self.executor_id,
+            "target_route": self.target_route,
+            "consequence_ceiling": self.consequence_ceiling,
+            "receipt_id": self.receipt_id,
+            "receipt_hash": self.receipt_hash,
+            "authority_graph_hash": self.authority_graph_hash,
+            "authority_graph_version": self.authority_graph_version,
+            "semantic_distance": self.semantic_distance,
+            "confidence_score": self.confidence_score,
+            "approvals": self.approvals,
+            "required_quorum": self.required_quorum,
+            "ttl_seconds": self.ttl_seconds,
+        }
 
 
 @dataclass

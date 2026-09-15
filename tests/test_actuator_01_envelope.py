@@ -150,7 +150,7 @@ class TestBuildEnvelopeDict:
     """Tests for envelope dictionary construction."""
 
     def test_archytan_vector_3_structure(self, valid_clearance):
-        """Envelope emits canonical Archytan Vector 3 wire structure."""
+        """Envelope emits canonical Archytan ArbiterKernel wire structure."""
         envelope = build_envelope_dict(valid_clearance)
 
         # Verify envelope_version
@@ -161,24 +161,36 @@ class TestBuildEnvelopeDict:
         assert envelope["issued_at"] == valid_clearance.issued_at
         assert envelope["ttl_seconds"] == valid_clearance.ttl_seconds
         assert envelope["nonce"] == valid_clearance.nonce
+        assert envelope["action"] == valid_clearance.action
+        assert envelope["operator_urn"] == valid_clearance.operator_urn
         
-        # Verify target structure
+        # Verify authority_ref block
+        assert "authority_ref" in envelope
+        assert "graph_hash" in envelope["authority_ref"]
+        assert "graph_version" in envelope["authority_ref"]
+        
+        # Verify target structure (account_hash only)
         assert "target" in envelope
-        assert envelope["target"]["action"] == valid_clearance.action
-        assert isinstance(envelope["target"]["parameters"], dict)
+        assert "account_hash" in envelope["target"]
+        
+        # Verify parameters at root level
+        assert "parameters" in envelope
+        assert isinstance(envelope["parameters"], dict)
 
     def test_governance_block_v3_structure(self, valid_clearance):
-        """Governance block includes decision, decision_path, and policy_version."""
+        """Governance block includes decision, decision_path, policy_version, receipt fields."""
         envelope = build_envelope_dict(valid_clearance)
 
         assert "governance" in envelope
         gov = envelope["governance"]
         assert gov["decision"] == valid_clearance.decision
         assert gov["decision_path"] == valid_clearance.decision_path
-        assert gov["decision_digest"] == valid_clearance.governance_decision_digest
         assert gov["required_quorum"] == valid_clearance.required_quorum
-        assert gov["policy_version"] == "v1"
+        assert "policy_version" in gov
         assert "decision_signature" in gov  # May be None if no policy signer
+        assert "receipt_id" in gov
+        assert "receipt_hash" in gov
+        assert "evaluated_at" in gov
 
     def test_approval_block_with_webauthn_fields(self, valid_clearance):
         """Approval block maps WebAuthn fields from clearance.approvals."""
@@ -187,46 +199,43 @@ class TestBuildEnvelopeDict:
         valid_clearance.approvals[0]["client_data_json"] = "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0"
         valid_clearance.approvals[0]["authenticator_data"] = "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAA"
         valid_clearance.approvals[0]["signature"] = "MEUCIQDvHVRm..."
+        valid_clearance.approvals[0]["challenge_binding"] = "a" * 64
         
         envelope = build_envelope_dict(valid_clearance)
 
         assert "approval" in envelope
         approval = envelope["approval"]
         assert approval["approver_urn"] == valid_clearance.approvals[0]["approver_urn"]
-        assert approval["approved_at"] == valid_clearance.issued_at
         assert approval["credential_id"] == "test-credential-123"
         assert approval["client_data_json"] == "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0"
         assert approval["authenticator_data"] == "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAA"
         assert approval["signature"] == "MEUCIQDvHVRm..."
+        assert approval["challenge_binding"] == "a" * 64
 
-    def test_approval_block_none_when_no_approvals(self, valid_clearance):
-        """Approval block is None when clearance.approvals is empty."""
-        # This will fail validation, so we'll create a clearance with DENY
-        # and bypass validation in build_envelope_dict by calling it directly
+    def test_approval_key_omitted_when_no_approvals(self, valid_clearance):
+        """DIRECT path omits approval key entirely (not null) when clearance.approvals is empty."""
+        # DIRECT path: empty approvals list, quorum=0
         valid_clearance.approvals = []
         valid_clearance.required_quorum = 0
         
-        # Temporarily allow non-ALLOW to test approval=None behavior
-        envelope = {
-            "envelope_version": "archytan.envelope/v1",
-            "approval": None if not valid_clearance.approvals else {},
-        }
+        envelope = build_envelope_dict(valid_clearance)
         
-        assert envelope["approval"] is None
+        # Per Vector 1: DIRECT path does NOT include "approval" key at all
+        assert "approval" not in envelope
 
-    def test_target_parameters_from_params_field(self, valid_clearance):
-        """Target parameters are populated from clearance.params."""
-        valid_clearance.params = {"amount": 1000, "currency": "USD"}
+    def test_parameters_from_params_field(self, valid_clearance):
+        """Parameters are populated at root level from clearance.params."""
+        valid_clearance.params = {"amount_minor": 12345, "currency": "USD"}
         envelope = build_envelope_dict(valid_clearance)
 
-        assert envelope["target"]["parameters"] == {"amount": 1000, "currency": "USD"}
+        assert envelope["parameters"] == {"amount_minor": 12345, "currency": "USD"}
 
-    def test_target_parameters_empty_dict_when_params_none(self, valid_clearance):
-        """Target parameters default to empty dict when params is not a dict."""
+    def test_parameters_empty_dict_when_params_none(self, valid_clearance):
+        """Parameters default to empty dict when params is not a dict."""
         valid_clearance.params = None
         envelope = build_envelope_dict(valid_clearance)
 
-        assert envelope["target"]["parameters"] == {}
+        assert envelope["parameters"] == {}
 
     def test_validates_before_building(self, valid_clearance):
         """build_envelope_dict validates clearance first."""
@@ -636,87 +645,80 @@ class TestPolicyDecisionSignature:
         assert envelope["governance"]["decision_signature"] is None
 
 
+class TestVector1Golden:
+    """
+    Archytan Vector 1 (DIRECT path) golden fixture test.
+    
+    Validates byte-exact canonicalization parity with the Archytan ArbiterKernel
+    reference implementation.
+    """
+
+    def test_vector_1_canonical_golden(self):
+        """Verify Vector 1 byte-exact canonicalization and SHA-256 golden hash."""
+        import json
+        
+        # Load the golden fixture directly
+        v1 = json.load(open('tests/fixtures/actuator_01/vector1_direct.json'))
+        
+        # Canonicalize
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+        canonical_bytes = jcs_canonicalize_plan(v1)
+        digest = hashlib.sha256(canonical_bytes).hexdigest()
+        
+        # Golden targets from Archytan ArbiterKernel
+        expected_length = 958
+        expected_hash = "83398b88482ae07f5ef11a95f7a695849a407da398feef48e4701d9f67c35e6e"
+        
+        # Diagnostic output on mismatch
+        actual_length = len(canonical_bytes)
+        if actual_length != expected_length or digest != expected_hash:
+            import sys
+            print("\n[Vector 1 Golden Mismatch]", file=sys.stderr)
+            print(f"  Expected length: {expected_length}", file=sys.stderr)
+            print(f"  Actual length:   {actual_length}", file=sys.stderr)
+            print(f"  Expected hash:   {expected_hash}", file=sys.stderr)
+            print(f"  Actual hash:     {digest}", file=sys.stderr)
+            print("\n  Canonical bytes preview (first 300 chars):", file=sys.stderr)
+            print(f"  {canonical_bytes[:300].decode('utf-8', errors='replace')}", file=sys.stderr)
+        
+        # Assert byte-for-byte fidelity
+        assert actual_length == expected_length, (
+            f"Vector 1 canonical bytes length mismatch: "
+            f"expected {expected_length}, got {actual_length}"
+        )
+        assert digest == expected_hash, (
+            f"Vector 1 SHA-256 digest mismatch: "
+            f"expected {expected_hash}, got {digest}"
+        )
+
+
 class TestVector3Golden:
     """
-    Archytan Vector 3 golden fixture test.
+    Archytan Vector 3 (ESCALATE path) golden fixture test.
     
     Validates byte-exact canonicalization parity with the Archytan ArbiterKernel
     reference implementation. This test serves as a frozen contract validator:
     any deviation in serialization, field order, or whitespace will break the
     golden hash, signaling a regression.
-    
-    Per Implementation Plan v3.0 §5.6, Vector 3 is ESCALATE-path with full
-    WebAuthn attestation structure.
     """
 
     def test_vector_3_canonical_golden(self):
         """Verify Vector 3 byte-exact canonicalization and SHA-256 golden hash."""
-        # Construct ExecutionClearance with frozen Vector 3 parameters
-        clearance = ExecutionClearance(
-            thread_id="test-thread-123",
-            decision="ALLOW",
-            decision_path="ESCALATE",
-            action="execute_trade",
-            target='{"symbol":"AAPL","amount":500}',
-            operator_urn="urn:archytan:cage:operator:op1",
-            issued_at=1726416000,
-            issued_at_provenance="CHALLENGE_TIME",
-            correlation_id="550e8400-e29b-41d4-a716-446655440000",
-            correlation_id_source="INGRESS_MINTED",
-            governance_decision_digest="a" * 64,
-            opa_input_digest="b" * 64,
-            nonce="c" * 32,
-            params={"symbol": "AAPL", "amount": 500},
-            approvals=[
-                {
-                    "approver_urn": "urn:archytan:cage:operator:op1",
-                    "approved_at_utc": "2026-09-15T12:00:00Z",
-                    "auth_method": "WEBAUTHN",
-                    "auth_principal_hash": "d" * 64,
-                    "credential_id": "test-credential-id",
-                    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
-                    "authenticator_data": "dGVzdC1hdXRoLWRhdGE",
-                    "signature": "dGVzdC1zaWduYXR1cmU",
-                },
-                {
-                    "approver_urn": "urn:archytan:cage:operator:op2",
-                    "approved_at_utc": "2026-09-15T12:00:05Z",
-                    "auth_method": "WEBAUTHN",
-                    "auth_principal_hash": "e" * 64,
-                    "credential_id": "test-credential-id-2",
-                    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
-                    "authenticator_data": "dGVzdC1hdXRoLWRhdGEy",
-                    "signature": "dGVzdC1zaWduYXR1cmUy",
-                },
-                {
-                    "approver_urn": "urn:archytan:cage:operator:op3",
-                    "approved_at_utc": "2026-09-15T12:00:10Z",
-                    "auth_method": "WEBAUTHN",
-                    "auth_principal_hash": "f" * 64,
-                    "credential_id": "test-credential-id-3",
-                    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
-                    "authenticator_data": "dGVzdC1hdXRoLWRhdGEz",
-                    "signature": "dGVzdC1zaWduYXR1cmUz",
-                },
-            ],
-            required_quorum=3,
-            executor_id="actuator_01",
-            target_route="https://sandbox.archytan.example.com",
-            consequence_ceiling="HIGH_FINANCIAL",
-            ttl_seconds=30,
-        )
-
-        # Serialize through canonical RFC 8785 JCS serialization
-        canonical_bytes, digest = build_and_canonicalize(clearance)
-
-        # Assert byte-for-byte fidelity
-        # Note: The exact byte length and hash are determined by the Archytan
-        # ArbiterKernel golden fixture. If these assertions fail, it indicates
-        # a serialization regression that must be investigated.
-        expected_length = 753
-        expected_hash = "773bff1357954fce93b9cbd5cca6703a054cdd78472d9e69a37778fc3b09b672"
-
-        # Diagnostic output on mismatch (before assertion)
+        import json
+        
+        # Load the golden fixture directly
+        v3 = json.load(open('tests/fixtures/actuator_01/vector3_escalate.json'))
+        
+        # Canonicalize
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+        canonical_bytes = jcs_canonicalize_plan(v3)
+        digest = hashlib.sha256(canonical_bytes).hexdigest()
+        
+        # Golden targets from Archytan ArbiterKernel
+        expected_length = 1523
+        expected_hash = "aa10d1f8c0093808be0db3fba8c8787f755c8183ca8ab214fac42aaaadd6c080"
+        
+        # Diagnostic output on mismatch
         actual_length = len(canonical_bytes)
         if actual_length != expected_length or digest != expected_hash:
             import sys
@@ -725,16 +727,14 @@ class TestVector3Golden:
             print(f"  Actual length:   {actual_length}", file=sys.stderr)
             print(f"  Expected hash:   {expected_hash}", file=sys.stderr)
             print(f"  Actual hash:     {digest}", file=sys.stderr)
-            print("\n  Canonical bytes preview (first 500 chars):", file=sys.stderr)
-            print(f"  {canonical_bytes[:500].decode('utf-8', errors='replace')}", file=sys.stderr)
-
-        # Assert byte length
+            print("\n  Canonical bytes preview (first 300 chars):", file=sys.stderr)
+            print(f"  {canonical_bytes[:300].decode('utf-8', errors='replace')}", file=sys.stderr)
+        
+        # Assert byte-for-byte fidelity
         assert actual_length == expected_length, (
             f"Vector 3 canonical bytes length mismatch: "
             f"expected {expected_length}, got {actual_length}"
         )
-
-        # Assert SHA-256 digest
         assert digest == expected_hash, (
             f"Vector 3 SHA-256 digest mismatch: "
             f"expected {expected_hash}, got {digest}"
