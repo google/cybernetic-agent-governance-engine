@@ -66,6 +66,8 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/governance/normative_provider.py",  # lazy-loads provider_01/03/06
         "src/gateway/governance/evidence/factory.py",  # lazy-loads storage_gcs/storage_s3
         "src/compliance_bridge/main.py",  # lazy-loads provider_02.cer_index (B6 CER wiring)
+        "src/gateway/governance/attestation_aggregator.py",  # lazy-loads provider_02/provider_05
+        "src/gateway/governance/execution_actuator.py",  # lazy-loads actuator_01
     ]
 )
 

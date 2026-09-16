@@ -179,6 +179,12 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [AGENT_OPS_ARCHITECTURE.md](architecture/AGENT_OPS_ARCHITECTURE.md) | Agent operations architecture |
 | [GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | Inference gateway architecture (overview) — **CBF layer, routing seal, governance pipeline** |
 | [INFERENCE_GATEWAY_ARCHITECTURE.md](architecture/INFERENCE_GATEWAY_ARCHITECTURE.md) | Inference gateway architecture (detail) |
+| [SYMBOLIC_GOVERNOR_RUNTIME.md](architecture/SYMBOLIC_GOVERNOR_RUNTIME.md) | Dispatch loop, 2-phase commit, and interruption taxonomy |
+| [CONSEQUENCE_GATEWAY.md](architecture/CONSEQUENCE_GATEWAY.md) | 6-step token evaluation, JWS verification, and authority store |
+| [FTRA_REACHABILITY_ANALYZER.md](architecture/FTRA_REACHABILITY_ANALYZER.md) | Forward-Looking Trajectory Reachability Analyzer — Irreversibility classification and graph bounding |
+| [DEFERRAL_QUEUE.md](architecture/DEFERRAL_QUEUE.md) | AARM deferral queue, Redis storage, and dual-control resolution |
+| [EVIDENCE_CHAIN.md](architecture/EVIDENCE_CHAIN.md) | Cryptographic hash chaining, streams, and cold store daemon |
+| [CRYPTOGRAPHIC_SIGNER_ENGINE.md](architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution |
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |
 | [AUDIT_LOG_SCHEMA.md](architecture/AUDIT_LOG_SCHEMA.md) | Audit log schema |
 | [SUBSTRATE_MOAT_STRATEGY.md](architecture/SUBSTRATE_MOAT_STRATEGY.md) | Competitive positioning — CAGE vs MXC/ACS, AAIF, Google AGW |

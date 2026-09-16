@@ -27,6 +27,9 @@ in the same PR per the C0 specification.
 
 from __future__ import annotations
 
+import logging
+import os
+
 # Re-export seam contracts for backward compatibility during transition.
 # New code should import directly from seams.actuation.
 from src.gateway.governance.seams.actuation import (
@@ -36,6 +39,8 @@ from src.gateway.governance.seams.actuation import (
     ExecutionClearance,
 )
 
+logger = logging.getLogger("Gateway.Governance.ExecutionActuator")
+
 __all__ = [
     "ActuationReceipt",
     "ActuatorCapability",
@@ -43,7 +48,33 @@ __all__ = [
     "ExecutionActuator",
     "ExecutionClearance",
     "get_actuator_registry",
+    "load_actuators_from_env",
 ]
+
+
+def _load_actuator(name: str) -> ExecutionActuator:
+    """Lazy-load execution actuator by name.
+
+    Args:
+        name: Actuator name (actuator_01, a01, archytan).
+
+    Returns:
+        Instantiated ExecutionActuator.
+
+    Raises:
+        ValueError: Unknown actuator name.
+        Exception: Actuator.from_env() configuration errors propagate.
+    """
+    normalized = name.strip().lower()
+
+    if normalized in ("actuator_01", "a01", "archytan"):
+        from src.integrations.actuator_01.adapter import Actuator01ExecutionActuator
+
+        return Actuator01ExecutionActuator.from_env()
+
+    raise ValueError(
+        f"Unknown execution actuator: '{name}'. Supported: actuator_01"
+    )
 
 
 class ActuatorRegistry:
@@ -126,3 +157,55 @@ def get_actuator_registry() -> ActuatorRegistry:
     if _actuator_registry_singleton is None:
         _actuator_registry_singleton = ActuatorRegistry()
     return _actuator_registry_singleton
+
+
+def load_actuators_from_env(
+    registry: ActuatorRegistry | None = None,
+) -> ActuatorRegistry:
+    """Load actuators from CAGE_ACTIVE_ACTUATORS environment variable.
+
+    Reads:
+        CAGE_ACTIVE_ACTUATORS: Comma-separated list of actuator names
+            (e.g., "actuator_01,archytan"). Empty or unset -> no-op.
+
+    Args:
+        registry: Target registry (defaults to global singleton).
+
+    Returns:
+        The registry (for chaining).
+
+    Raises:
+        ValueError: Unknown actuator name or duplicate registration.
+        Exception: Actuator configuration errors propagate (fail-closed).
+    """
+    if registry is None:
+        registry = get_actuator_registry()
+
+    actuator_names_raw = os.getenv("CAGE_ACTIVE_ACTUATORS", "").strip()
+
+    # Hermetic default: return registry unmodified
+    if not actuator_names_raw:
+        logger.info(
+            "CAGE_ACTIVE_ACTUATORS unset or empty; no actuators loaded"
+        )
+        return registry
+
+    # Split on comma, strip whitespace, ignore empty tokens
+    actuator_names = [
+        name.strip() for name in actuator_names_raw.split(",") if name.strip()
+    ]
+
+    # Lazy-load and register each actuator
+    loaded_ids: list[str] = []
+    for name in actuator_names:
+        actuator = _load_actuator(name)
+        registry.register(actuator)
+        loaded_ids.append(actuator.actuator_id)
+
+    logger.info(
+        "Loaded %d execution actuator(s): %s",
+        len(loaded_ids),
+        ", ".join(loaded_ids),
+    )
+
+    return registry

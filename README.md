@@ -199,6 +199,7 @@ This provides **evidentiary independence** — the system cannot manufacture the
 15. **Healthcare Plugin** *(L2)*: Dosing concentration barriers, clinical decision oversight, `dose_order` tooling, `SerumConcentrationBarrier` declaration ([`src/cage_healthcare/`](src/cage_healthcare/)).
 
 **Layer 3 (L3) — Operational Tooling**:
+**Layer 3 (L3) — Integrations & Seam Contracts**:
 
 16. **Native AARM Threat Vector Mapping** *(L3)*: Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns live `NEUTRALIZED | PARTIAL | EXPOSED` verdicts per vector.
 17. **Human-Gated NeMo Refinement** *(L3)*: All incoming policy changes staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying.
@@ -247,11 +248,15 @@ graph TB
 
     subgraph CORE[Domain-Neutral Governance Substrate -- src/gateway -- Layer 1]
         FTRA[FTRA Reachability Gate]
+        FTRA[FTRA Reachability Gate<br/>Phase 1: Read-only inspection]
         ORCH[Pipeline Orchestrator<br/>A0-A6 arbitration ladder]
         CBF[Control Barrier Function engine<br/>atomic Lua hop]
+        CBF[Control Barrier Function engine<br/>Phase 2: Atomic mutation]
         CONS[Consensus Arbitration]
         CAUS[Causal Gatekeeper]
         EVID[Evidence Chain + KMS Routing Seal]
+        CGW[Consequence Gateway]
+        EVID[Redis Streams Hash-Chained Evidence Sink<br/>+ KMS Routing Seal]
     end
 
     REG -.parameterises.-> CORE
@@ -261,6 +266,7 @@ graph TB
     HLTH -.registers tiers and barriers.-> CORE
     CUST -.registers tiers and barriers.-> CORE
     FTRA --> ORCH --> CBF --> CONS --> CAUS --> EVID
+    FTRA --> ORCH --> CONS --> CAUS --> CGW --> CBF --> EVID
 ```
 
 Solid arrows are always-on kernel flow. Dashed arrows are optional or configuration-time bindings: remove every plugin and application, and the substrate still enforces FTRA, orchestration, barriers, consensus, causal checks, and evidence sealing.
@@ -269,6 +275,7 @@ The trace below illustrates the **Governed Financial Advisor demo application** 
 
 ```
 User ──POST /agent/query──► FastAPI Agent Server (:8000)
+User ──FastMCP over SSE──► Gateway Transport (:8080)
                                       │
                          [nemo_guardrail] (mandatory input rail - Node 1)
                                       │
@@ -595,6 +602,7 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:
 **Layer 1 (L1)** — Domain-neutral kernel, always present
 **Layer 2 (L2)** — Optional domain plugins (`CAGE_ACTIVE_PLUGINS`)
 **Layer 3 (L3)** — Configuration & operational tooling
+**Layer 3 (L3)** — Integrations & Seam Contracts
 
 ```
 cybernetic-agent-governance-engine/
@@ -694,6 +702,13 @@ cybernetic-agent-governance-engine/
 | [`docs/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md)                                           | POA&M — US_FED NIST SP 800-53 / ATO track (23 items; 6 closed)    |
 | [`docs/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md)                                           | POA&M — EU_ECB EU AI Act / DORA / GDPR (5 items)                  |
 | [`docs/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md)                                       | POA&M — APAC_MAS MAS FEAT / Notice 655 / TRM (4 items)            |
+| [`docs/architecture/AUDIT_LOG_SCHEMA.md`](docs/architecture/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
+| [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
+| [`docs/compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
+| [`docs/compliance/universal/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md)                                       | POA&M — ISO 42001 universal AIMS weaknesses (all regions, 6 items) |
+| [`docs/compliance/us_fed/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md)                                           | POA&M — US_FED NIST SP 800-53 / ATO track (23 items; 6 closed)    |
+| [`docs/compliance/eu_ecb/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md)                                           | POA&M — EU_ECB EU AI Act / DORA / GDPR (5 items)                  |
+| [`docs/compliance/apac_mas/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md)                                       | POA&M — APAC_MAS MAS FEAT / Notice 655 / TRM (4 items)            |
 | [`docs/architecture/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md)                         | Gateway subsystem detail                                           |
 | [`docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md`](docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md)        | Dispatch loop, 2-phase commit, and interruption taxonomy |
 | [`docs/architecture/CONSEQUENCE_GATEWAY.md`](docs/architecture/CONSEQUENCE_GATEWAY.md)        | 6-step token evaluation, JWS verification, and authority store |
@@ -704,6 +719,8 @@ cybernetic-agent-governance-engine/
 | [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md)| Extensibility architecture & domain plugin extension model — `CagePlugin` contract, `cage.plugins` entry points, tier/barrier/rail/tool seams, finance vs. healthcare |
 | [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
 | [`docs/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
+| [`docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
+| [`docs/security/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
 | [`tests/`](tests/)                                                                     | Automated unit, integration, and red-team test suites              |
 | [`examples/README.md`](examples/README.md)                                             | Chaos Agent Playground & Governance 3-Act Demo                     |
 | [`deployment/k8s/K8S_SECURITY_HARDENING.md`](deployment/k8s/K8S_SECURITY_HARDENING.md) | Pod Security Standards, network policy topology, Z3N verification  |

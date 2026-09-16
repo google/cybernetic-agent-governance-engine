@@ -14,6 +14,7 @@ Thank you for contributing. This document describes the Git workflow, branch nam
 6. [Release & Tagging Process](#release--tagging-process)
 7. [Protected Branches](#protected-branches)
 8. [Container Image Builds](#container-image-builds)
+9. [Architecture Extension Guidelines](#architecture-extension-guidelines)
 
 ---
 
@@ -455,3 +456,31 @@ If you or your current employer have already signed the Google CLA, no further a
 The CLA is checked automatically on pull requests via the CLA bot. PRs from contributors who have not signed the CLA will be blocked until the CLA is signed.
 
 > **Note:** This is not an officially supported Google product. The CLA requirement applies to contributions to this repository regardless of its support status.
+
+---
+
+## Architecture Extension Guidelines
+
+CAGE provides a domain-agnostic governance kernel (Layer 1) and delegates all domain specifics to optional plugins (Layer 2). When extending the architecture, contributors must adhere to strict boundary rules.
+
+### Implementing `GovernanceTierPlugin`
+
+New plugins extending the 8-tier symbolic governor must implement the `GovernanceTierPlugin` protocol. The execution model enforces a rigid 2-phase boundary to guarantee atomicity and prevent partial state mutations.
+
+#### Phase 1: Read-Only Inspection
+Phase 1 tiers (`Tier 0` through `Tier 6b`) must be **strictly read-only**. They may inspect the request, query external systems, execute causal refutations, or require human approval, but they **must not** mutate state.
+- Return `ALLOW`, `DENY`, `DEFER`, `PAUSE`, or `REQUIRE_APPROVAL`.
+- Rejections in Phase 1 halt the pipeline immediately, ensuring no Phase 2 mutations occur.
+
+#### Phase 2: Atomic Mutation
+Phase 2 tiers (e.g., `Tier 2a` Control Barrier Functions, `Tier 3` Fiscal Limits) perform state mutations.
+- Phase 2 executes **only after** all Phase 1 tiers have passed.
+- Any state-mutating tier in Phase 2 must provide a **LIFO compensating rollback** mechanism. If a subsequent Phase 2 tier fails, earlier mutations must be reversed cleanly to preserve the Saga transaction boundary.
+
+### Seam Contracts Interface
+
+All integrations and operational tooling (Layer 3) must communicate with the core kernel (Layer 1) exclusively through the seam contracts defined under `src/gateway/governance/seams/`. Direct circular imports into `src/gateway/` are prohibited.
+
+1. **`NormativeProvider`**: Interface for synchronous gate adapters (e.g., retrieving limit baselines, validating dynamic bounds).
+2. **`AttestationProvider`**: Interface for evidence attestation, requiring cryptographic signature verification against a key manifest (e.g., Ed25519 CER checks). Implementations must fail closed on unknown keys.
+3. **`ExecutionActuator`**: Interface for the final dispatch of the `ALLOW` state. Actuators receive the evaluated payload wrapped in a routing seal and must fail closed if the `record_hash` is missing or tampered.

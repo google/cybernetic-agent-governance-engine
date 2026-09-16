@@ -235,6 +235,31 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             provider_name,
         )
 
+    # ── Attestation Aggregator Boot & Polling ──────────────────────────────
+    from src.gateway.governance.attestation_aggregator import AttestationAggregator
+
+    attestation_aggregator = AttestationAggregator.from_env()
+    if attestation_aggregator.provider_count > 0:
+        await attestation_aggregator.boot_fetch()
+        polling_task = asyncio.create_task(attestation_aggregator.start_poll_loop())
+        app.state.attestation_aggregator = attestation_aggregator
+        app.state.attestation_polling_task = polling_task
+        logger.info("Attestation aggregator initialized with %d provider(s)", attestation_aggregator.provider_count)
+    else:
+        app.state.attestation_aggregator = attestation_aggregator
+        app.state.attestation_polling_task = None
+
+    # ── Actuator Registry Initialization ────────────────────────────────────
+    from src.gateway.governance.execution_actuator import load_actuators_from_env
+
+    actuator_registry = load_actuators_from_env()
+    app.state.actuator_registry = actuator_registry
+    logger.info(
+        "Actuator registry initialized with %d actuator(s): %s",
+        len(actuator_registry.list_actuators()),
+        ", ".join(actuator_registry.list_actuators()),
+    )
+
     # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
     registry_daemon: Any = None
     try:
@@ -289,13 +314,24 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     if registry_daemon is not None:
         await registry_daemon.stop()
 
-    # Shutdown: cancel polling task if running
+    # Shutdown: cancel normative provider polling task if running
     if polling_task is not None:
         polling_task.cancel()
         try:
             await polling_task
         except asyncio.CancelledError:
             pass
+
+    # Shutdown: cancel attestation aggregator polling task if running
+    attestation_task = getattr(app.state, "attestation_polling_task", None)
+    if attestation_task is not None:
+        attestation_task.cancel()
+        try:
+            await attestation_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Attestation aggregator polling task cancelled cleanly.")
+
     # No shutdown work required for tracing (BatchSpanProcessor flushes on GC).
 
 

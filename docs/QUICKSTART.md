@@ -29,6 +29,7 @@ CAGE_ROUTING_SEAL_SECRET=<random-32-char-string>
 # Domain-neutral defaults — no domain plugin, universal ISO 42001 baseline only
 CAGE_ACTIVE_PLUGINS=""
 CAGE_DEPLOYMENT_REGION=LOCAL
+CAGE_ENV=development
 ```
 
 Generate a routing seal secret:
@@ -44,6 +45,7 @@ docker compose up -d
 
 This starts:
 - **Gateway** (`localhost:8080`) — Governance enforcement proxy with 8-tier governance pipeline (FTRA pre-pipeline boundary gate + 7 in-pipeline tiers via SymbolicGovernor), and Phase A/B ingress adapters
+- **Gateway** (`localhost:8080`) — Governance enforcement proxy with 8-tier governance pipeline (FTRA pre-pipeline boundary gate + 7 in-pipeline tiers via SymbolicGovernor), and FastMCP over SSE gateway transport
 - **Governed Application (`app`)** (`localhost:3000`) — Governed application service container
 - **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies
 - **SLM Sidecar** (`localhost:5000`) — Sentence-transformers similarity scoring service
@@ -53,6 +55,9 @@ This starts:
 ```bash
 curl http://localhost:8080/health
 # Expected: {"status": "healthy", "governance": "active"}
+# Verify the FastMCP over SSE transport is ready
+curl -N http://localhost:8080/mcp/sse
+# Expected: data: {"event": "endpoint", "data": "http://localhost:8080/mcp/messages"}
 ```
 
 ## 4. Run the domain-neutral governance demo

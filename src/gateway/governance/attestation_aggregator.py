@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -41,6 +42,40 @@ logger = logging.getLogger("Gateway.Governance.AttestationAggregator")
 
 # Default poll interval: 6 hours (matches THR-AUD-002 Lula cadence)
 _DEFAULT_POLL_INTERVAL_S = 21600.0
+
+
+def _load_attestation_provider(name: str) -> AttestationProvider:
+    """Lazy-load attestation provider by name.
+
+    Args:
+        name: Provider name (provider_02, p02, provider_05, p05).
+
+    Returns:
+        Instantiated AttestationProvider.
+
+    Raises:
+        ValueError: Unknown provider name.
+        Exception: Provider.from_env() configuration errors propagate.
+    """
+    normalized = name.strip().lower()
+
+    if normalized in ("provider_02", "p02"):
+        from src.integrations.provider_02.attestation_provider import (
+            Provider02AttestationProvider,
+        )
+
+        return Provider02AttestationProvider.from_env()
+
+    if normalized in ("provider_05", "p05"):
+        from src.integrations.provider_05.blueprint_provider import (
+            Provider05BlueprintProvider,
+        )
+
+        return Provider05BlueprintProvider.from_env()
+
+    raise ValueError(
+        f"Unknown attestation provider: '{name}'. Supported: provider_02, provider_05"
+    )
 
 
 class AttestationAggregator:
@@ -77,6 +112,69 @@ class AttestationAggregator:
         self._last_fetch_at: float = 0.0
         self._last_fetch_succeeded: bool = False  # Staleness signal
         self._poll_task: asyncio.Task[None] | None = None
+
+    @classmethod
+    def from_env(
+        cls, poll_interval_s: float | None = None
+    ) -> AttestationAggregator:
+        """Construct AttestationAggregator from environment variables.
+
+        Reads:
+            CAGE_ATTESTATION_PROVIDERS: Comma-separated list of provider names
+                (e.g., "provider_02,provider_05"). Empty or unset -> hermetic default.
+            CAGE_ATTESTATION_POLL_INTERVAL_S: Optional poll interval override.
+
+        Returns:
+            Configured AttestationAggregator instance.
+
+        Raises:
+            ValueError: Unknown provider name.
+            Exception: Provider configuration errors propagate (fail-closed).
+        """
+        provider_names_raw = os.getenv("CAGE_ATTESTATION_PROVIDERS", "").strip()
+
+        # Read optional poll interval override
+        interval_override = os.getenv("CAGE_ATTESTATION_POLL_INTERVAL_S")
+        if interval_override:
+            try:
+                poll_interval_s = float(interval_override)
+            except ValueError:
+                logger.warning(
+                    "Invalid CAGE_ATTESTATION_POLL_INTERVAL_S='%s', using default",
+                    interval_override,
+                )
+
+        # Hermetic default: empty provider list
+        if not provider_names_raw:
+            logger.info(
+                "CAGE_ATTESTATION_PROVIDERS unset or empty; returning hermetic aggregator"
+            )
+            return cls(
+                providers=[],
+                poll_interval_s=poll_interval_s or _DEFAULT_POLL_INTERVAL_S,
+            )
+
+        # Split on comma, strip whitespace, ignore empty tokens
+        provider_names = [
+            name.strip() for name in provider_names_raw.split(",") if name.strip()
+        ]
+
+        # Lazy-load each provider
+        loaded_providers: list[AttestationProvider] = []
+        for name in provider_names:
+            provider = _load_attestation_provider(name)
+            loaded_providers.append(provider)
+
+        logger.info(
+            "Loaded %d attestation provider(s): %s",
+            len(loaded_providers),
+            ", ".join(p.provider_name for p in loaded_providers),
+        )
+
+        return cls(
+            providers=loaded_providers,
+            poll_interval_s=poll_interval_s or _DEFAULT_POLL_INTERVAL_S,
+        )
 
     # ------------------------------------------------------------------
     # Provider management
