@@ -25,6 +25,7 @@ environments.  All tests set CAGE_ENV=ci via autouse fixture.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -313,6 +314,13 @@ class TestRunAuditWorkflow:
         mock_acc.export_ndjson.return_value = '{"node": "test"}'
         return mock_acc
 
+    @staticmethod
+    def _fake_create_task(coro, *args, **kwargs):
+        """Mock asyncio.create_task and close coroutine to prevent unawaited warning."""
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return MagicMock()
+
     @pytest.mark.asyncio
     async def test_pipeline_returns_ok_status(self):
         """run_audit_workflow returns status='ok' with required keys."""
@@ -351,7 +359,7 @@ class TestRunAuditWorkflow:
                     subscriber_count=0,
                 ),
             ),
-            patch("asyncio.create_task"),
+            patch("asyncio.create_task", side_effect=self._fake_create_task),
             patch(
                 "src.compliance_bridge.aarm_mapper.build_aarm_conformance_report",
                 side_effect=ImportError("aarm_mapper not available"),
@@ -409,7 +417,7 @@ class TestRunAuditWorkflow:
                     subscriber_count=0,
                 ),
             ),
-            patch("asyncio.create_task"),
+            patch("asyncio.create_task", side_effect=self._fake_create_task),
             patch(
                 "src.compliance_bridge.aarm_mapper.build_aarm_conformance_report",
                 side_effect=ImportError("aarm_mapper"),
@@ -460,7 +468,7 @@ class TestRunAuditWorkflow:
                     subscriber_count=0,
                 ),
             ),
-            patch("asyncio.create_task"),
+            patch("asyncio.create_task", side_effect=self._fake_create_task),
             patch(
                 "src.compliance_bridge.aarm_mapper.build_aarm_conformance_report",
                 side_effect=ImportError("aarm_mapper"),
@@ -517,7 +525,7 @@ class TestRunAuditWorkflow:
                     subscriber_count=0,
                 ),
             ),
-            patch("asyncio.create_task"),
+            patch("asyncio.create_task", side_effect=self._fake_create_task),
             patch(
                 "src.compliance_bridge.aarm_mapper.build_aarm_conformance_report",
                 return_value=mock_aarm_report,

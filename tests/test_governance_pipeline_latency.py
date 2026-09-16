@@ -264,15 +264,15 @@ def _opa_patches():
         ),
         patch(
             "src.gateway.governance.langgraph_harness.opa_node_factory.stamp_iso_control",
-            new_callable=AsyncMock,
+            new_callable=MagicMock,
         ),
         patch(
             "src.governed_financial_advisor.graph.nodes.safety_node.stamp_iso_control",
-            new_callable=AsyncMock,
+            new_callable=MagicMock,
         ),
         patch(
             "src.gateway.governance.iso_control.stamp_iso_control",
-            new_callable=AsyncMock,
+            new_callable=MagicMock,
         ),
     ]
 

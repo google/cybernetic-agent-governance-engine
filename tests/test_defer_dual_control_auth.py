@@ -42,6 +42,14 @@ from src.gateway.governance.defer_queue import ApprovalRecord, DeferReason, Defe
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
+def _make_mock_pipe():
+    pipe = MagicMock()
+    pipe.execute = AsyncMock(return_value=[])
+    pipe.__aenter__ = AsyncMock(return_value=pipe)
+    pipe.__aexit__ = AsyncMock(return_value=None)
+    return pipe
+
+
 class TestOperatorIdentityProvenance:
     """Test identity extraction from SPIFFE SVID / OIDC / dev-synthetic channels."""
 
@@ -192,7 +200,7 @@ class TestDualControlQuorumIntegrity:
         # Return status as string (not bytes) to match code expectations
         mock_redis.hget = AsyncMock(side_effect=[token_json, "PARKED"])
         mock_redis.unwatch = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=AsyncMock())
+        mock_redis.pipeline = MagicMock(return_value=_make_mock_pipe())
 
         queue = DeferQueue(mock_redis)
 
@@ -256,7 +264,7 @@ class TestDeferInjectBypassProtection:
         mock_redis.hget = AsyncMock(side_effect=[token_json_0, "PARKED"])
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=AsyncMock())
+        mock_redis.pipeline = MagicMock(return_value=_make_mock_pipe())
 
         status_1, updated_token_1 = await queue.approve(
             "test-defer-id-quorum3", approval_1
@@ -285,7 +293,7 @@ class TestDeferInjectBypassProtection:
         mock_redis.hget = AsyncMock(side_effect=[token_json_1, "PARTIALLY_APPROVED"])
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=AsyncMock())
+        mock_redis.pipeline = MagicMock(return_value=_make_mock_pipe())
 
         status_2, updated_token_2 = await queue.approve(
             "test-defer-id-quorum3", approval_2
@@ -314,7 +322,7 @@ class TestDeferInjectBypassProtection:
         mock_redis.hget = AsyncMock(side_effect=[token_json_2, "PARTIALLY_APPROVED"])
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=AsyncMock())
+        mock_redis.pipeline = MagicMock(return_value=_make_mock_pipe())
 
         status_3, updated_token_3 = await queue.approve(
             "test-defer-id-quorum3", approval_3

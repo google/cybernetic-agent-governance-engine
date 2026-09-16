@@ -833,6 +833,7 @@ class TestValidateActionDecisionRouting:
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
 
         consensus_engine = AsyncMock()
+        consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
         governor = SymbolicGovernor(
             opa_client=opa_client,
