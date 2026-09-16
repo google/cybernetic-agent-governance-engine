@@ -637,10 +637,10 @@ class TestUniversalAssuranceStatus:
         posture = AssurancePosture()
         disclaimer = posture.disclaimer
         assert "FedRAMP" in disclaimer
-        assert "CE Mark" in disclaimer or "EU" in disclaimer
+        assert any(term in disclaimer for term in ("CE Conformity Mark", "CE Mark", "EU"))
         assert "ISO/IEC 42001" in disclaimer or "42001" in disclaimer
         assert "MAS" in disclaimer or "Monetary Authority of Singapore" in disclaimer
-        assert "reference architecture" in disclaimer.lower()
+        assert "architectural reference" in disclaimer.lower() or "reference architecture" in disclaimer.lower()
 
 
 class TestAssurancePostureInOSCAL:

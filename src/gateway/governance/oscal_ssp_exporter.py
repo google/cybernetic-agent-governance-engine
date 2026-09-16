@@ -380,7 +380,7 @@ def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
         region: Deployment region (US_FED, EU_ECB, APAC_MAS, UK_DSIT).
 
     Returns:
-        OSCAL metadata dict with assurance posture props.
+        OSCAL metadata dict with assurance posture props and root assurance-posture block.
     """
     # Lazy import to avoid Layer 1 → Layer 3 boundary violation (Gate G3)
     from src.compliance_bridge.types import AssurancePosture
@@ -425,6 +425,7 @@ def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
         "version": "3.1.5",
         "oscal-version": "1.0.4",
         "props": props,
+        "assurance-posture": posture.model_dump(mode="json"),
     }
 
     return metadata

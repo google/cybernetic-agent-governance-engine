@@ -321,6 +321,11 @@ def build_oscal_assessment_results(
     # Collect all reviewed control IDs
     control_ids = sorted({f.control_id for f in findings})
 
+    # Phase 1.2: Inject AssurancePosture into metadata
+    from .types import AssurancePosture
+
+    posture = AssurancePosture()
+
     return {
         "assessment-results": {
             "uuid": doc_uuid,
@@ -329,6 +334,7 @@ def build_oscal_assessment_results(
                 "last-modified": now_utc,
                 "version": "1.0.0",
                 "oscal-version": "1.1.2",
+                "assurance-posture": posture.model_dump(mode="json"),
                 "parties": [
                     {
                         "uuid": party_uuid,
