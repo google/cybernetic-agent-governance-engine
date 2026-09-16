@@ -147,7 +147,7 @@ The healthcare package exists specifically to falsify the "it's really a finance
 
 ### 8c. Domain Plugin Example: Your Own
 
-Manufacturing, logistics, energy dispatch, customer service, critical infrastructure — create `src/cage_<domain>/` mirroring either example, declare your governed actions and barrier parameters, register the entry point, and add independence tests. The full step-by-step authoring guide is in [`docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md`](architecture/DOMAIN_PLUGIN_ARCHITECTURE.md) §10.
+Manufacturing, logistics, energy dispatch, customer service, critical infrastructure — create `src/cage_<domain>/` mirroring either example, declare your governed actions and barrier parameters, register the entry point, and add independence tests. The full step-by-step authoring guide is in [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](architecture/EXTENSIBILITY_ARCHITECTURE.md) §10.
 
 ---
 
@@ -180,7 +180,7 @@ Each posture resolves thresholds from `config/thresholds/<REGION>_BASELINE.json`
 - **Understand the architecture**: See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](architecture/GATEWAY_ARCHITECTURE.md)
 - **Configure governance policies**: See [`docs/governance/GOVERNANCE_OVERVIEW.md`](governance/GOVERNANCE_OVERVIEW.md)
 - **Connect an MCP client**: See [`docs/MCP_SETUP.md`](MCP_SETUP.md)
-- **Author a domain plugin**: See [`docs/architecture/DOMAIN_PLUGIN_ARCHITECTURE.md`](architecture/DOMAIN_PLUGIN_ARCHITECTURE.md)
+- **Author a domain plugin**: See [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](architecture/EXTENSIBILITY_ARCHITECTURE.md)
 - **Understand the domain-agnostic kernel thesis**: See [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](architecture/EXTENSIBILITY_ARCHITECTURE.md)
 - **Run the finance example application**: See [`src/governed_financial_advisor/`](../src/governed_financial_advisor/) — a reference application for the finance example domain, not a required component
 - **Inspect the healthcare example plugin**: See [`src/cage_healthcare/`](../src/cage_healthcare/)

@@ -537,7 +537,7 @@ async def test_action_regional(region, monkeypatch):
 ## Additional Resources
 
 - [Architecture Overview](../architecture/ARCHITECTURE.md)
-- [FTRA Specification](../architecture/FTRA_SPECIFICATION.md)
+- [FTRA Specification](../architecture/FTRA_REACHABILITY_ANALYZER.md)
 - [Governance Overview](../governance/GOVERNANCE_OVERVIEW.md)
 - [STPA Analysis](../security/STPA_ANALYSIS.md)
 - [Regional Compliance Matrix](../compliance/REGION_GUARD_AUDIT.md)

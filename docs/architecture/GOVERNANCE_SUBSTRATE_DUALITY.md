@@ -50,7 +50,7 @@ committed code.
 | Substrate property | CAGE implementation | File |
 |---|---|---|
 | Compiled hazard model (not interpreted at runtime) | STPA UCAs compiled to OPA Rego AST at build time via `stpa_compiler.py`; the compiled artifact is immutable at runtime — an agent cannot modify its own invariants even during a full container compromise | [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
-| Math-backed safety certificate | Discrete-time CBF: `h(S(t+1)) >= (1-γ)*h(S(t))` — a theorem, not a policy rule | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) |
+| Math-backed safety certificate | Discrete-time CBF: `h(S(t+1)) >= (1-γ)*h(S(t))` — a theorem, not a policy rule | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | Out-of-process policy engine | OPA runs as a separate process; CAGE calls it over HTTP — the agent cannot tamper with the policy evaluator | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | Multi-jurisdiction compliance registry | `ControlRegistry` resolves `CTRL_*` IDs to jurisdiction-specific regulatory citations at runtime from `config/compliance/{REGION}_BASELINE.json` | [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) |
 
@@ -58,7 +58,7 @@ committed code.
 
 | Substrate property | CAGE implementation | File |
 |---|---|---|
-| Zero-TOCTOU database commit gate | `atomic_verify_and_commit()` collapses CBF check and state commit into a single Redis Lua script — no Python round-trip between check and write | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) |
+| Zero-TOCTOU database commit gate | `atomic_verify_and_commit()` collapses CBF check and state commit into a single Redis Lua script — no Python round-trip between check and write | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | Cryptographic routing seal | HMAC-SHA256 seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers); downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
 | Fail-closed startup assertion | `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production — the container fails to start rather than degrading to an unguarded state | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | DEFER state machine | 4-state machine (PARK → HYDRATE → REPLAY) prevents binary forced decisions on incomplete context; parked in Redis `db=1` with 4-hour TTL | [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) |
@@ -221,7 +221,7 @@ left side (specification → enforcement, Phase A).
 The framing uses the phrase "substrate engines to enforce the physics of
 compliance at the commit boundary." This is technically precise for CAGE:
 
-- [`atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py) enforces
+- [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py) enforces
   the CBF invariant at the Redis commit boundary — the invariant is checked and
   the state is written in a single Lua script execution with zero TOCTOU window.
 - The routing seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py))
@@ -244,11 +244,11 @@ its technical substantiation in the CAGE codebase:
 | Suggested response claim | Technical substantiation | File |
 |---|---|---|
 | "machine-readable, out-of-process invariants" | OPA Rego AST compiled from STPA UCAs; OPA runs out-of-process | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
-| "physically gate the runtime" | Redis atomic Lua CBF check+commit; HMAC routing seal | [`cbf.py`](../../src/gateway/governance/cbf.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
+| "physically gate the runtime" | Redis atomic Lua CBF check+commit; HMAC routing seal | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
 | "policy-as-code feeds into infrastructure-as-code" | Ingress adapters proposed but not yet implemented; `stpa_compiler.py` already compiles CAGE YAML to enforcement artifacts | See §9 action items |
 | "governance frameworks to manage the logic of risk" | `ControlRegistry` resolves CTRL_* IDs to NIST SP 800-53 / ISO 42001 / SR 26-2 citations | [`constants.py`](../../src/gateway/governance/constants.py) |
-| "substrate engines to enforce the physics of compliance" | Discrete-time CBF (Ames et al. IEEE TAC 2017) — a mathematical theorem, not a policy rule | [`cbf.py`](../../src/gateway/governance/cbf.py) |
-| "at the commit boundary" | `atomic_verify_and_commit()` — single Lua hop, zero TOCTOU | [`cbf.py`](../../src/gateway/governance/cbf.py) |
+| "substrate engines to enforce the physics of compliance" | Discrete-time CBF (Ames et al. IEEE TAC 2017) — a mathematical theorem, not a policy rule | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) |
+| "at the commit boundary" | `atomic_verify_and_commit()` — single Lua hop, zero TOCTOU | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 
 ### 5.4 What the Framing Does NOT Yet Cover — IP Protection Boundary
 
@@ -381,7 +381,7 @@ readable policy declarations — and compiles them into enforcement artifacts
 that physically gate the runtime at three distinct commit boundaries:
 
 1. **The database commit boundary** — Redis atomic Lua CBF check+commit
-   ([`cbf.py`](../../src/gateway/governance/cbf.py))
+   ([`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py))
 2. **The actuator call boundary** — HMAC-SHA256 routing seal
    ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py))
 3. **The human approval boundary** — LangGraph HITL interrupt

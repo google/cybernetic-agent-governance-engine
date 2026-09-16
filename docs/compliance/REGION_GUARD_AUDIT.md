@@ -35,7 +35,7 @@
 | `src/gateway/governance/uca_logger.py` | 457 | WORM ledger writes |
 | `src/gateway/governance/iso_control.py` | 237 | Redis stream + ISO control stamping |
 | `src/gateway/governance/token_quota_proxy.py` | 544 | Redis quota counters |
-| `src/gateway/governance/fiscal_limit_guard.py` | 462 | Redis fiscal reservation |
+| `src/gateway/governance/safety/resource_guard.py` | 462 | Redis fiscal reservation |
 | `src/gateway/governance/telemetry_provider.py` | 287 | Langfuse telemetry reads |
 | `src/gateway/governance/normative_provider.py` | 848 | External HTTP (normative provider) |
 | `src/gateway/governance/pii_sanitizer.py` | 334 | PII audit log |
@@ -43,18 +43,18 @@
 | `src/gateway/governance/hitl_escalator.py` | 370 | HITL SLA / citations |
 | `src/gateway/governance/constants.py` | 455 | ControlRegistry JSON load |
 | `src/gateway/governance/singletons.py` | 84 | Redis client init |
-| `src/gateway/governance/cbf.py` | 290 | Redis cash-balance state |
+| `src/gateway/governance/safety/cbf_engine.py` | 290 | Redis cash-balance state |
 | `src/gateway/governance/symbolic_governor.py` | 876 | Governance orchestration |
 | `src/gateway/governance/provenance_chain.py` | 225 | Hash chain (pure computation) |
 | `src/gateway/governance/routing_seal.py` | 327 | HMAC seal (pure computation) |
-| ~~`src/gateway/governance/safety.py`~~ | — | **v3.0.1:** Removed (deprecated shim) |
+| ~~`src/gateway/governance/safety/cbf_engine.py`~~ | — | **v3.0.1:** Removed (deprecated shim) |
 | `src/gateway/infrastructure/telemetry.py` | 45 | OTel tracer factory |
 | `src/gateway/infrastructure/redis_client.py` | 271 | Redis client |
 | `src/gateway/tracing_setup.py` | 271 | OTel/OTLP setup |
 | `src/compliance_bridge/storage.py` | 310 | GCS/S3 artifact writes |
 | `src/compliance_bridge/audit_workflow.py` | 943 | Langfuse compliance writes |
-| `src/compliance_bridge/evidence_stream.py` | 436 | Redis Stream + GCS flush |
-| `src/compliance_bridge/reconciliation_worker.py` | 709 | Redis balance writes |
+| `src/gateway/governance/evidence/stream.py` | 436 | Redis Stream + GCS flush |
+| `src/gateway/governance/reconciliation/daemon.py` | 709 | Redis balance writes |
 | `src/compliance_bridge/metrics.py` | 268 | Langfuse API reads |
 | `src/compliance_bridge/notifier.py` | 656 | External HTTP alerts |
 | `src/compliance_bridge/cmek_guard.py` | 253 | CMEK validation |
@@ -409,7 +409,7 @@ Additionally, `_ingest_sync()` at lines 259–322 writes compliance traces and s
 
 ### GAP-07 — `compliance_bridge/evidence_stream.py`: GCS Flush and Redis Stream Without Region Guard ⚠️ HIGH
 
-**File:** `src/compliance_bridge/evidence_stream.py`
+**File:** `src/gateway/governance/evidence/stream.py`
 **Lines:** 118 (`_GCS_BUCKET`), 110–113 (`_REDIS_URL`), 372–406 (`_upload_to_gcs()`)
 **Sink type:** GCS bucket write (evidence NDJSON); Redis Stream write
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -442,7 +442,7 @@ These locations perform pure computation or local filesystem operations with no 
 |----|------|-------|--------|
 | N/A-01 | [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | 110–127 | SHA-256 hash chain computation only; no storage writes |
 | N/A-02 | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) | 162–181 | HMAC seal generation/verification; no storage writes |
-| ~~N/A-03~~ | ~~`src/gateway/governance/safety.py`~~ | — | **v3.0.1:** Removed (deprecated shim) |
+| ~~N/A-03~~ | ~~`src/gateway/governance/safety/cbf_engine.py`~~ | — | **v3.0.1:** Removed (deprecated shim) |
 | N/A-04 | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | 110–823 | Governance orchestration; delegates all storage to other modules |
 | N/A-05 | [`src/gateway/infrastructure/telemetry.py`](../../src/gateway/infrastructure/telemetry.py) | 28–45 | OTel tracer factory (`get_tracer()`); no storage writes |
 | N/A-06 | [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py) | 1–366 | SHA-256 hash chain computation; serialization delegated to `audit_workflow.py` |
@@ -567,7 +567,7 @@ def _get_bucket() -> str:
     return bucket_map.get(region, os.environ.get("OSCAL_S3_BUCKET", ""))
 ```
 
-Apply the same pattern to `EVIDENCE_STREAM_GCS_BUCKET` in `src/compliance_bridge/evidence_stream.py` (GAP-07).
+Apply the same pattern to `EVIDENCE_STREAM_GCS_BUCKET` in `src/gateway/governance/evidence/stream.py` (GAP-07).
 
 ### 6.4 Pattern D: Terraform Module Updates (Fixes GAP-13, GAP-14)
 
@@ -612,17 +612,17 @@ env { name = "CAGE_DEPLOYMENT_REGION";   value = var.cage_deployment_region }
 | GAP-04 | `src/gateway/governance/token_quota_proxy.py` | 224–256 | Redis quota counters | **HIGH** | ❌ GAP |
 | GAP-05 | `src/compliance_bridge/storage.py` | 144–148 | GCS/S3 artifact bucket | **HIGH** | ❌ GAP |
 | GAP-06 | `src/compliance_bridge/audit_workflow.py` | 165–175 | Langfuse compliance writes | **HIGH** | ❌ GAP |
-| GAP-07 | `src/compliance_bridge/evidence_stream.py` | 118, 372–406 | GCS flush + Redis Stream | **HIGH** | ❌ GAP |
-| GAP-08 | `src/compliance_bridge/reconciliation_worker.py` | 539–561 | Redis balance writes | **MEDIUM** | ❌ GAP |
+| GAP-07 | `src/gateway/governance/evidence/stream.py` | 118, 372–406 | GCS flush + Redis Stream | **HIGH** | ❌ GAP |
+| GAP-08 | `src/gateway/governance/reconciliation/daemon.py` | 539–561 | Redis balance writes | **MEDIUM** | ❌ GAP |
 | GAP-09 | `src/compliance_bridge/metrics.py` | 100–108 | Langfuse API reads | **MEDIUM** | ❌ GAP |
 | GAP-10 | `src/compliance_bridge/notifier.py` | 565–634 | External HTTP alerts | **MEDIUM** | ❌ GAP |
 | GAP-11 | `src/gateway/governance/telemetry_provider.py` | 163–206 | Langfuse telemetry reads | **MEDIUM** | ❌ GAP |
-| GAP-12 | `src/gateway/governance/cbf.py` | 72, 201–240 | Redis cash-balance | **MEDIUM** | ❌ GAP |
+| GAP-12 | `src/gateway/governance/safety/cbf_engine.py` | 72, 201–240 | Redis cash-balance | **MEDIUM** | ❌ GAP |
 | GAP-13 | `infra/modules/compliance_bridge/main.tf` | 148–156 | Terraform env injection | **MEDIUM** | ❌ GAP |
 | GAP-14 | `infra/modules/gateway/main.tf` | 86–219 | Terraform env injection | **MEDIUM** | ❌ GAP |
 | N/A-01 | `src/gateway/governance/provenance_chain.py` | 110–127 | Pure computation | — | ➖ N/A |
 | N/A-02 | `src/gateway/governance/routing_seal.py` | 162–181 | Pure computation | — | ➖ N/A |
-| ~~N/A-03~~ | ~~`src/gateway/governance/safety.py`~~ | — | **v3.0.1:** Removed | — | ➖ N/A |
+| ~~N/A-03~~ | ~~`src/gateway/governance/safety/cbf_engine.py`~~ | — | **v3.0.1:** Removed | — | ➖ N/A |
 | N/A-04 | `src/gateway/governance/symbolic_governor.py` | 110–823 | Orchestration only | — | ➖ N/A |
 | N/A-05 | `src/gateway/infrastructure/telemetry.py` | 28–45 | Tracer factory | — | ➖ N/A |
 | N/A-06 | `src/compliance_bridge/context_accumulator.py` | 1–366 | Pure computation | — | ➖ N/A |
@@ -675,7 +675,7 @@ This audit was conducted by static code analysis of the files listed in Section 
 
 ### GAP-08 — `compliance_bridge/reconciliation_worker.py`: Redis Balance Writes Without Region Guard ⚠️ MEDIUM
 
-**File:** `src/compliance_bridge/reconciliation_worker.py`
+**File:** `src/gateway/governance/reconciliation/daemon.py`
 **Lines:** 539–561 (`reconcile()` Redis write), 607–650 (`from_env()`)
 **Sink type:** Redis writes (`reconciliation:verified_balance`)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -774,7 +774,7 @@ The causal gatekeeper reads live governance telemetry from Langfuse to perform D
 
 ### GAP-12 — `cbf.py`: Redis Cash-Balance State Without Region Guard ⚠️ MEDIUM
 
-**File:** `src/gateway/governance/cbf.py`
+**File:** `src/gateway/governance/safety/cbf_engine.py`
 **Lines:** 72 (`redis_key`), 75–81 (`setup()`), 201–240 (`update_state()`), 246–285 (`rollback_state()`)
 **Sink type:** Redis writes (`safety:current_cash`)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)

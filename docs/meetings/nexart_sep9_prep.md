@@ -16,7 +16,7 @@ Leave with a written boundary, not a to-do list.
 > brief was written and has since landed, so it is stated as closed rather than
 > pending. And the adapter defect in §5 has been promoted from an observation into
 > a tracked finding with a sequenced phase — see
-> [`plans/layer_inversion_remediation_plan.md`](../../plans/layer_inversion_remediation_plan.md).
+> ``plans/layer_inversion_remediation_plan.md``.
 
 ### Framing
 
@@ -243,7 +243,7 @@ Since preparing this brief the defect has been promoted from an observation into
 tracked finding with a sequenced remediation phase, alongside a CI gate that will
 fail the build if application vocabulary reappears in an integration package. It is
 recorded in
-[`plans/layer_inversion_remediation_plan.md`](../../plans/layer_inversion_remediation_plan.md).
+``plans/layer_inversion_remediation_plan.md``.
 
 **One question for you, and it is the only thing here that touches your side:**
 does your validation reject a bundle whose `terminalPath` is `unknown`? If it

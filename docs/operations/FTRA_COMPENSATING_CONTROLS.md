@@ -165,6 +165,6 @@ cage_ftra_boundary_checks_total{result="error"}
 
 - [`config/ftra/terminal_registry.json`](../../config/ftra/terminal_registry.json) — Terminal action classifications
 - [`src/gateway/governance/ftra/`](../../src/gateway/governance/ftra/) — FTRA implementation
-- [`plans/CAGE_RISK_MATRIX.md`](../../plans/CAGE_RISK_MATRIX.md) — Risk R-02 and R-03 details
+- ``plans/CAGE_RISK_MATRIX.md`` — Risk R-02 and R-03 details
 - [`compliance/lula/lula-validation-ftra.yaml`](../../compliance/lula/lula-validation-ftra.yaml) — Lula validation
 - [`docs/POAM.md`](../POAM.md) — POAM-2026-030-B closure record

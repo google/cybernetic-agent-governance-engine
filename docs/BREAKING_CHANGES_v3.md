@@ -4,7 +4,7 @@
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
 > describes the breaking changes included in this release. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
-> [`docs/MAJOR_VERSION_CLEANUP_PLAN.md`](MAJOR_VERSION_CLEANUP_PLAN.md) 1:1
+> ``docs/MAJOR_VERSION_CLEANUP_PLAN.md`` 1:1
 > so the two documents can be cross-referenced.
 >
 > **Release Scope:** `AGWEnvelope`/`AGWEnvelopeBuilder` removal, legacy provider
@@ -172,7 +172,7 @@ plugin in PR C. No interim adapter is provided.
 
 ### Acceptance Criteria
 
-Per [`plans/domain_extraction_implementation_plan.md`](../plans/domain_extraction_implementation_plan.md:661):
+Per ``plans/domain_extraction_implementation_plan.md``:
 
 - [x] G1: Tier dispatch loop executes and honors phase/order
 - [x] G2: Capability predicate (`claims_action()`) replaces hardcoded literals
@@ -196,8 +196,8 @@ Per [`plans/domain_extraction_implementation_plan.md`](../plans/domain_extractio
 
 | Module | Replacement | Migration |
 |--------|-------------|-----------|
-| [`src/gateway/governance/stpa_validator.py`](../src/gateway/governance/stpa_validator.py) (`STPAValidator` class) | [`src/gateway/governance/generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py:38) (`GeneratedSTPAValidator`) | Replace `from src.gateway.governance.stpa_validator import STPAValidator` with `from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator`; replace `.validate(action_name, params)` calls with `.validate_generated(action_name, params)`. |
-| [`src/gateway/governance/safety.py`](../src/gateway/governance/safety.py) (entire file) | [`src/gateway/governance/text_filter.py`](../src/gateway/governance/text_filter.py) (`ac_keyword_scan`); [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py) (`ControlBarrierFunction`, `safety_filter`) | Replace `from src.gateway.governance.safety import ac_keyword_scan` with `from src.gateway.governance.text_filter import ac_keyword_scan`; replace `from src.gateway.governance.safety import ControlBarrierFunction, safety_filter` with `from src.gateway.governance.cbf import ControlBarrierFunction, safety_filter`. |
+| [`src/gateway/governance/generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) (`STPAValidator` class) | [`src/gateway/governance/generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py:38) (`GeneratedSTPAValidator`) | Replace `from src.gateway.governance.stpa_validator import STPAValidator` with `from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator`; replace `.validate(action_name, params)` calls with `.validate_generated(action_name, params)`. |
+| [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) (entire file) | [`src/gateway/governance/text_filter.py`](../src/gateway/governance/text_filter.py) (`ac_keyword_scan`); [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) (`ControlBarrierFunction`, `safety_filter`) | Replace `from src.gateway.governance.safety import ac_keyword_scan` with `from src.gateway.governance.text_filter import ac_keyword_scan`; replace `from src.gateway.governance.safety import ControlBarrierFunction, safety_filter` with `from src.gateway.governance.cbf import ControlBarrierFunction, safety_filter`. |
 | `src/gateway/governance/agw_envelope.py` (entire file — `AGWEnvelope`, `AGWEnvelopeBuilder` backward-compatibility aliases) | [`src/gateway/governance/governance_envelope.py`](../src/gateway/governance/governance_envelope.py) (`GovernanceEnvelope`, `GovernanceEnvelopeBuilder`) | Replace `from src.gateway.governance.agw_envelope import AGWEnvelope` with `from src.gateway.governance.governance_envelope import GovernanceEnvelope`; replace `AGWEnvelopeBuilder` with `GovernanceEnvelopeBuilder` (same module). `tests/test_agw_envelope.py` (the backward-compatibility test suite for these aliases) is also deleted — see [`tests/test_governance_envelope.py`](../tests/test_governance_envelope.py) for the canonical coverage. **(Completed post-tag, `fix/v3-breaking-changes-completion`.)** |
 
 ### Removed Classes/Functions
@@ -206,13 +206,13 @@ Per [`plans/domain_extraction_implementation_plan.md`](../plans/domain_extractio
 |--------|--------|-------------|-----------|
 | `GovernanceClient` (alias) | [`src/governed_financial_advisor/infrastructure/governance_client.py:323`](../src/governed_financial_advisor/infrastructure/governance_client.py:323) | `StructuredLLMClient` (same module) | Replace `GovernanceClient(...)` with `StructuredLLMClient(...)`; update any type hints from `GovernanceClient` to `StructuredLLMClient`. |
 | `RedisClient` (alias) | [`src/governed_financial_advisor/infrastructure/redis_client.py:268`](../src/governed_financial_advisor/infrastructure/redis_client.py:268) | `AsyncRedisClient` (same module) | Replace `RedisClient()` with `AsyncRedisClient()`. **Note:** do not confuse with the unrelated `_AsyncRedisClient`/`_SyncRedisClient` pair in [`src/gateway/infrastructure/redis_client.py`](../src/gateway/infrastructure/redis_client.py) — that module is untouched by this removal. |
-| `HybridClient` (alias) | [`src/governed_financial_advisor/infrastructure/llm_client.py:23`](../src/governed_financial_advisor/infrastructure/llm_client.py:23) | `GatewayClient` from [`src/gateway/core/llm.py`](../src/gateway/core/llm.py) | Replace `from src.governed_financial_advisor.infrastructure.llm_client import HybridClient` with `from src.gateway.core.llm import GatewayClient`. |
+| `HybridClient` (alias) | ``src/governed_financial_advisor/infrastructure/llm_client.py:23`` | `GatewayClient` from [`src/gateway/core/llm.py`](../src/gateway/core/llm.py) | Replace `from src.governed_financial_advisor.infrastructure.llm_client import HybridClient` with `from src.gateway.core.llm import GatewayClient`. |
 | `check_safety_constraints` (tool alias) | [`src/governed_financial_advisor/agents/evaluator/agent.py:193`](../src/governed_financial_advisor/agents/evaluator/agent.py:193); [`src/gateway/server/mcp_tool_server.py:483`](../src/gateway/server/mcp_tool_server.py:483); [`src/governed_financial_advisor/tools/api.py:87-88`](../src/governed_financial_advisor/tools/api.py:87); [`src/governed_financial_advisor/graph/nodes/evaluator_node.py:22,147`](../src/governed_financial_advisor/graph/nodes/evaluator_node.py:22) | `simulate_governance_check` | Rename every reference to the tool/function name `check_safety_constraints` to `simulate_governance_check` across all 4 call sites (they must land in one atomic PR). |
-| `create_ftra_node(registry_path=..., plan_key=...)` deprecated params | [`src/gateway/governance/ftra/node_factory.py:145-149`](../src/gateway/governance/ftra/node_factory.py:145) | `config: FtraNodeConfig` parameter (same function) | Replace `create_ftra_node(registry_path="x", plan_key="y")` with `create_ftra_node(config=FtraNodeConfig(registry_path="x", plan_key="y"))`. See [Migration Guide](MIGRATION_GUIDE_v3.md#step-3-update-api-calls) for the full before/after. |
+| `create_ftra_node(registry_path=..., plan_key=...)` deprecated params | [`src/gateway/governance/ftra/node_factory.py:145-149`](../src/gateway/governance/ftra/node_factory.py:145) | `config: FtraNodeConfig` parameter (same function) | Replace `create_ftra_node(registry_path="x", plan_key="y")` with `create_ftra_node(config=FtraNodeConfig(registry_path="x", plan_key="y"))`. See `Migration Guide` for the full before/after. |
 | `CONTROL_META` (module-level dict alias) | [`src/compliance_bridge/types.py:340`](../src/compliance_bridge/types.py:340) | `get_control_meta(region)` | Replace `from src.compliance_bridge.types import CONTROL_META` + direct iteration with `from src.compliance_bridge.types import get_control_meta` and call `get_control_meta(CAGE_DEPLOYMENT_REGION)`. **Behavior note:** `CONTROL_META` contained universal (ISO 42001) controls only — `get_control_meta(region)` returns universal + jurisdictional controls merged for the given region. Passing `"universal"` (or any unrecognized region string) reproduces the old universal-only subset. |
 | `EVIDENCE_SLA_SECONDS` (module-level dict alias) | [`src/compliance_bridge/types.py:446`](../src/compliance_bridge/types.py:446) | `get_sla_seconds(region)` | Replace direct dict access with `get_sla_seconds(region)`. Same universal-only → region-merged behavior note as `CONTROL_META` applies. |
 | `ISO_CONTROL_MAP` (module-level dict alias — **two distinct symbols**) | [`src/compliance_bridge/types.py:512`](../src/compliance_bridge/types.py:512) **and** [`src/gateway/governance/ontology.py:197-234`](../src/gateway/governance/ontology.py:197) (`TradingKnowledgeGraph.ISO_CONTROL_MAP` class attribute) | `get_iso_control_map(region)` (types.py); `get_control_map(region)` (ontology.py) | These are **two unrelated symbols with the same name in two different modules** — migrate each independently. `src/compliance_bridge/types.py` callers use `get_iso_control_map(region)`; `TradingKnowledgeGraph` callers use `get_control_map(region)`. |
-| `update_state()` (public API) | [`src/gateway/governance/cbf.py:907-998`](../src/gateway/governance/cbf.py:907) | `atomic_verify_and_commit()` (same module) | **Completed (CR-3)**: `update_state()` was renamed to `_update_state_unsafe()` (internal-only) to eliminate TOCTOU race conditions. External callers must call `atomic_verify_and_commit()`, which performs the CBF safety check and state commit atomically within a single Redis Lua execution. |
+| `update_state()` (public API) | [`src/gateway/governance/safety/cbf_engine.py:907-998`](../src/gateway/governance/safety/cbf_engine.py:907) | `atomic_verify_and_commit()` (same module) | **Completed (CR-3)**: `update_state()` was renamed to `_update_state_unsafe()` (internal-only) to eliminate TOCTOU race conditions. External callers must call `atomic_verify_and_commit()`, which performs the CBF safety check and state commit atomically within a single Redis Lua execution. |
 | `sign_actuator_01_digest()` (legacy method) | [`src/gateway/governance/kms_signer.py`](../src/gateway/governance/kms_signer.py) (`KMSSigner` class) | `sign()` (same class) | Replace legacy digest signing with `kms_signer.sign(payload)`; `sign()` is the canonical signing entry point and covers the same code path. **(Completed post-tag, `fix/v3-breaking-changes-completion`.)** |
 
 ### Removed Endpoints
@@ -249,7 +249,7 @@ corresponding module is migrated; use the config file instead.
 |----------|-------------|-----------|
 | `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | `config/thresholds/*.json` (per-region FTRA boundary thresholds) | Move the values you previously set via env var into the appropriate region file under [`config/thresholds/`](../config/thresholds/). This migration also fixes a latent drift bug where [`src/gateway/governance/ftra/graph_analyzer.py:73-74`](../src/gateway/governance/ftra/graph_analyzer.py:73) hardcoded `0.70` independent of the env var — after migration, both `symbolic_governor.py` and `graph_analyzer.py` read the same config value via `get_fria_zone_defer()`. |
 | `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`symbolic_governor.py:1088-1097,1366-1368`](../src/gateway/governance/symbolic_governor.py:1088) are consolidated into a single read via `get_agent_confidence_threshold()`. |
-| `CAUSAL_LOCK_P_VALUE_THRESHOLD`, `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE`, `CAUSAL_LOCK_RISK_BOUNDARY` | `config/thresholds/*.json` | Move MRM/ISO 42001 §A.9.4-governed threshold values from env vars ([`src/gateway/governance/causal_gatekeeper.py:80-110`](../src/gateway/governance/causal_gatekeeper.py:80)) into the versioned config file. This also gives an audit trail for threshold changes. |
+| `CAUSAL_LOCK_P_VALUE_THRESHOLD`, `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE`, `CAUSAL_LOCK_RISK_BOUNDARY` | `config/thresholds/*.json` | Move MRM/ISO 42001 §A.9.4-governed threshold values from env vars ([`src/gateway/governance/causal/gatekeeper.py:80-110`](../src/gateway/governance/causal/gatekeeper.py:80)) into the versioned config file. This also gives an audit trail for threshold changes. |
 | `NEMO_AUTO_APPLY_ENABLED` | *(deleted, not migrated)* | This variable is removed entirely as part of CR-2 (the legacy auto-apply code path is deleted). Setting it in v3.0.1 has no effect regardless of value. |
 | `KMS_BATCH_MAX_SIZE`, `KMS_BATCH_ENABLED` | `config/thresholds/*.json` | **Resolved:** The default is standardized to `"false"` across `kms_batch_signer.py` and `main.py`. Batch configuration is loaded via schema thresholds. |
 | `CAUSAL_MIN_SAMPLES`, `CAUSAL_CACHE_TTL_SECONDS`, `TELEMETRY_MAX_STALENESS_SECONDS` | `config/thresholds/*.json` | Consolidated to `config/thresholds/*.json` via accessor functions like `get_telemetry_max_staleness_seconds()`. |
@@ -306,8 +306,8 @@ corresponding module is migrated; use the config file instead.
   env vars will silently have no effect post-migration — the values must be
   moved into the corresponding `config/thresholds/*.json` file instead. This
   is the single most likely "silent" breaking change in this release since
-  no exception is raised; verify with the [Migration Guide's test
-  verification step](MIGRATION_GUIDE_v3.md#step-4-test-verification).
+  no exception is raised; verify with the `Migration Guide's test
+  verification step`.
 
 ---
 
@@ -359,8 +359,8 @@ Compliance Artifact Obligations, an OSCAL component update in
 `compliance/oscal/` is required within 2 business days of merge for any PR
 implementing MR-1–3 or CR-1. Region-gated CI must be run explicitly for all
 three postures (`CAGE_DEPLOYMENT_REGION=US_FED|EU_ECB|APAC_MAS`) before
-considering these items complete — see the [Migration Guide's test
-verification step](MIGRATION_GUIDE_v3.md#step-4-test-verification).
+considering these items complete — see the `Migration Guide's test
+verification step`.
 
 ---
 
@@ -408,7 +408,7 @@ where it fails to verify records it just wrote.
 
 | Module | Old sentinel | New sentinel |
 |---|---|---|
-| [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py) | `cage-evidence-stream/1.1` | `cage-evidence-stream/2.0` |
+| [`src/gateway/governance/evidence/stream.py`](../src/gateway/governance/evidence/stream.py) | `cage-evidence-stream/1.1` | `cage-evidence-stream/2.0` |
 | [`src/compliance_bridge/context_accumulator.py`](../src/compliance_bridge/context_accumulator.py) | `cage-context-accumulator/1.1` | `cage-context-accumulator/2.0` |
 
 **Who is affected:** any deployment holding evidence or context-accumulator
@@ -457,7 +457,7 @@ described in the callout above.
 
 | Removed symbol | Module | Replacement |
 |---|---|---|
-| `_detect_schema_version()` | [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py) | *(none — all records are `/2.0`; there is nothing to detect)* |
+| `_detect_schema_version()` | [`src/gateway/governance/evidence/stream.py`](../src/gateway/governance/evidence/stream.py) | *(none — all records are `/2.0`; there is nothing to detect)* |
 | `migrate_record_1_0_to_1_1()` | same | *(none — v1.0 read support was already removed; the helper had zero production callers)* |
 | `get_last_v1_0_hash()` | same | *(none)* |
 | `_link_hash_v1_1()` | same | Collapsed into `_link_hash()`, whose header fields are now unconditional |
@@ -478,7 +478,7 @@ by a short TTL, so the disruption is time-boxed rather than permanent.
 |---|---|---|---|
 | ConsequenceToken JWS header + payload | [`src/gateway/governance/consequence_token.py`](../src/gateway/governance/consequence_token.py) | 60 s | Tokens minted by a pre-migration pod are rejected by a post-migration pod. Brief 401/`ConsequenceTokenError` rate during cutover, self-clearing within the TTL. |
 | Routing seal (v2 HMAC `_canonical_payload()` and v3 JWT claims) | [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) | 30 s | Seals issued pre-cutover fail verification post-cutover. Single-use burn semantics are unchanged. Self-clearing within 30 s. |
-| Reconciliation signed balance | [`src/compliance_bridge/reconciliation_worker.py`](../src/compliance_bridge/reconciliation_worker.py) | 300 s | A balance signed pre-cutover will not verify post-cutover. The CBF **fails closed** on an unverifiable or expired balance, so a deployment may see up to 5 minutes of conservative DENY behavior until the reconciliation worker writes a freshly-signed balance. |
+| Reconciliation signed balance | [`src/gateway/governance/reconciliation/daemon.py`](../src/gateway/governance/reconciliation/daemon.py) | 300 s | A balance signed pre-cutover will not verify post-cutover. The CBF **fails closed** on an unverifiable or expired balance, so a deployment may see up to 5 minutes of conservative DENY behavior until the reconciliation worker writes a freshly-signed balance. |
 
 **Migration:** none required for correctly-behaving clients — retry after the
 relevant TTL. Do **not** attempt a partial rollout that leaves pre- and
@@ -639,7 +639,7 @@ rather than silently degrading, which is deliberate. This affects the
 ### `rollback()` requires an explicit window (BC-07)
 
 **Breaking Change:** `rollback()` in
-[`src/gateway/governance/fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py)
+[`src/gateway/governance/safety/resource_guard.py`](../src/gateway/governance/safety/resource_guard.py)
 now raises `ValueError` when called with neither `window_key` nor `token`.
 
 **Why this matters.** The removed legacy fallback silently targeted the

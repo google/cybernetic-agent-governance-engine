@@ -93,7 +93,7 @@ During the proof run, CAGE will submit:
 - ⏳ Both sides validate handshake + receipt round-trip
 
 ### Track 2: IAM Hardening Walkthrough (non-blocking, deferred)
-- Per-ceremony OIDC token exchange (Option B from [`actuator_01_kms_iam_model.md`](../architecture/actuator_01_kms_iam_model.md))
+- Per-ceremony OIDC token exchange (Option B from [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](../architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md))
 - Scheduled after connectivity proof succeeds
 - Multi-operator key independence remains **OPEN** until then
 

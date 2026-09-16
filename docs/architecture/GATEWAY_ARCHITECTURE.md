@@ -1,16 +1,24 @@
 # Gateway Architecture: Sovereign Edition — v3.0.1
+# Gateway Architecture
 
 ## Overview
+## 1. Architectural Role & Domain Boundary
 
 The Gateway acts as the central orchestrator and compliance enforcement point for the AI financial advisor. It implements a **Kubernetes Inference Gateway** architecture, abstracting a "Split-Brain" topology that routes tasks between a high-capacity Reasoning Model (`DeepSeek-R1-Distill-Llama-8B`) and a low-latency Governance Model (`Meta-Llama-3.1-8B-Instruct`). Both models are hosted on cost-optimized **Spot/preemptible GPU nodes** (NVIDIA L4). (GKE is the reference deployment; other Kubernetes distributions are supported)
+The Hybrid Gateway Service operates as the central orchestrator and compliance enforcement point for the Cybernetic Governance Engine (CAGE). It exposes a unified HTTP/FastMCP interface, decoupling client-facing abstractions from the underlying "Split-Brain" inference topology (Reasoning Model vs. Governance Model).
 
 **Version:** v3.0.1
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
+**Trust Boundaries**:
+- **Upstream (Clients)**: The Gateway is the primary ingress point and treats all incoming traffic as untrusted.
+- **Downstream (Kernel & Actuators)**: It bridges external requests to the Layer 1 Kernel (Symbolic Governor, Consequence Gateway) and the external Execution Actuators, ensuring that no tool execution occurs without traversing the full governance pipeline.
 
 > **Jurisdiction separation principle:** ISO/IEC 42001:2023 is the **sole universal governance baseline** — every control, pipeline step, and audit artifact applies to all deployment regions. All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable. No US_FED, EU_ECB, or APAC_MAS obligation is imposed on deployments in other regions.
+## 2. Data & Execution Flow
 
 ## Core Components
+The Gateway orchestrates the end-to-end request lifecycle, bridging synchronous HTTP boundaries with asynchronous inference and governance cycles.
 
 1.  **Hybrid Gateway Service (FastAPI + FastMCP):**
     - Exposes a unified HTTP/MCP interface.
@@ -45,12 +53,12 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
     - Normative constraints are loaded without redeployment via the `CAGE_DEPLOYMENT_REGION` environment variable.
 
 6.  **ConsensusModelRegistry (Heterogeneous Multi-Model Consensus):**
-    - `src/gateway/governance/consensus.py` manages a registry of heterogeneous models for multi-model consensus evaluation.
+    - `src/gateway/governance/consensus/engine.py` manages a registry of heterogeneous models for multi-model consensus evaluation.
     - Activated for trades ≥ $10,000 USD (consensus_threshold_usd).
     - Prevents single-model capture by requiring agreement across model families.
 
 7.  **ExternalLedgerReconciler (Externally Reconciled CBF — POAM-023 Closed 2026-07-27):**
-    - **Status:** Implemented. `src/compliance_bridge/reconciliation_worker.py` provides the `ExternalLedgerReconciler` polling loop with pluggable `LedgerProvider` backends: `StubLedgerProvider` (dev/CI), `GcsLedgerProvider` (GCS-native WORM snapshot reader), `ObjectStoreLedgerProvider` (S3-compatible via boto3 — AWS S3, GCS S3 Interop, MinIO, Ceph; registered as `"s3"` and `"object-store"`), `PlaidLedgerProvider` (production-ready, OAuth 2.0), and `AnchorageGrpcLedgerProvider` (interface contract defined; `fetch_balance()` raises `NotImplementedError` until Anchorage enterprise gRPC credentials and generated stubs are provisioned).
+    - **Status:** Implemented. `src/gateway/governance/reconciliation/daemon.py` provides the `ExternalLedgerReconciler` polling loop with pluggable `LedgerProvider` backends: `StubLedgerProvider` (dev/CI), `GcsLedgerProvider` (GCS-native WORM snapshot reader), `ObjectStoreLedgerProvider` (S3-compatible via boto3 — AWS S3, GCS S3 Interop, MinIO, Ceph; registered as `"s3"` and `"object-store"`), `PlaidLedgerProvider` (production-ready, OAuth 2.0), and `AnchorageGrpcLedgerProvider` (interface contract defined; `fetch_balance()` raises `NotImplementedError` until Anchorage enterprise gRPC credentials and generated stubs are provisioned).
     - The Control Barrier Function (CBF) cash-balance barrier (γ=0.5, min=$1,000) is reconciled against the external ledger balance when available; reconciled balances are KMS-signed before Redis write via `read_verified_balance()`.
     - When no fresh externally reconciled balance is available (TTL expiry or provider not configured), the CBF falls back to Redis `WATCH/MULTI/EXEC` optimistic locking. The "Stale Ground Truth" risk is mitigated by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling.
     - See POAM-023 for tracking status.
@@ -132,9 +140,31 @@ cybernetic-governance-engine/
 │   │   └── observability/  # Distributed MCP tracing (W3C traceparent extraction)
 │   └── governed_financial_advisor/ # LangGraph Agent Plane
 └── setup_test_env.sh       # OSS Environment Initializer
+```mermaid
+flowchart TD
+    Client[Client Request] --> Filter[Noise Filtering hook]
+    Filter --> Policy[Pre-Execution OPA Check]
+    Policy --> Router[Inference Router]
+    
+    subgraph Split-Brain Inference
+        Router --> Reasoning[Reasoning Node\nDeepSeek-R1]
+        Router --> Governance[Governance Node\nMeta-Llama-3.1]
+    end
+    
+    Reasoning --> MCP[MCP Tool Request]
+    Governance --> MCP
+    
+    MCP --> SymGov[[Symbolic Governor\n(See SYMBOLIC_GOVERNOR_RUNTIME.md)]]
+    
+    SymGov -->|ALLOW| ConsGate[[Consequence Gateway\n(See CONSEQUENCE_GATEWAY.md)]]
+    SymGov -->|DEFER| Defer[[Defer Queue\n(See DEFERRAL_QUEUE.md)]]
+    
+    ConsGate --> Actuator[Execution Actuator]
+    Actuator --> Evidence[[Evidence Chain\n(See EVIDENCE_CHAIN.md)]]
 ```
 
 ## Key Source Files
+## 3. State Machine & Lifecycle
 
 | File                                                          | Purpose                                                    |
 | :------------------------------------------------------------ | :--------------------------------------------------------- |
@@ -146,12 +176,23 @@ cybernetic-governance-engine/
 | `src/gateway/governance/nemo/manager.py`                      | NeMo Guardrails integration                                |
 | `src/gateway/governance/contracts.py`                         | `Protocol` interfaces (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, `CausalGatekeeper`, `FiscalGuard`) decoupling `SymbolicGovernor` from concrete implementations — structural subtyping (PEP 544) allows any object implementing the right method signatures to substitute for a real component in tests |
 | `src/gateway/governance/singletons.py`                        | Module-level singleton construction and wiring for `SymbolicGovernor` and its dependencies (`OPAClient`, `STPAValidator`, `FiscalLimitGuard`, `safety_filter`, `consensus_engine`) — see [GAP-03](../compliance/REGION_GUARD_AUDIT.md) for the tracked single-Redis-instance regional data-residency gap |
+- **Request Ingress**: Trace context (`traceparent`) is extracted to stitch distributed Langfuse spans. Scanner-noise filtering drops invalid HTTP methods.
+- **Pre-Execution**: OPA validates the raw intent against jurisdictional policies before inference tokens are spent.
+- **Tool Interception**: When a model requests a tool via MCP, the execution is hijacked by the reusable LangGraph Governance Harness.
+- **Governance Gate**: The payload is passed to the `SymbolicGovernor`, which emits one of the canonical states (ALLOW, DENY, DEFER, PAUSE, NARROW, REQUIRE_APPROVAL).
+- **TOCTOU Remediation**: For requests escalating to HITL (e.g., >$10k trades), the `hitl_gate` interrupts the graph. Upon human approval, a `post_hitl_revalidate` phase re-fetches market data and re-evaluates the Control Barrier Function and OPA policies on fresh data before proceeding.
 
 ## Governance Endpoints
+## 4. Operational Guarantees & Edge Cases
 
 ### `POST /governance/validate-action`
+- **Scanner-Noise Filtering**: Silently drops vulnerability scanner probes (non-GET/POST methods) from traces to preserve observability fidelity.
+- **Distributed MCP Tracing**: Bridges the SSE transport gap by injecting W3C `traceparent` into MCP tool call arguments, ensuring unbroken parent-child spans across the protocol boundary.
+- **Defense in Depth**: Enforces Linkerd mTLS for service-to-service communication and Cilium L7 egress lockdown at the kernel level to prevent unauthorized external network calls.
+- **Fail-Closed Inference**: If the Inference Gateway cannot route to the requested model pool (e.g., Spot nodes preempted), the gateway degrades gracefully, returning a structured PAUSE or DENY without attempting unauthorized model substitutions.
 
 Served by [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) and mounted under the `governance_app` FastAPI sub-application.
+## 5. Configuration Contracts & Runtime Matrix
 
 This is the **Single Choke Point** for all tool-level governance decisions — the Unified Gateway Governance path (Option 2). It is called by the GFA service and any future tool actuators instead of invoking OPA directly.
 
@@ -172,7 +213,7 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 
 - **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
 - **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
-- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/cbf.py). External ledger reconciliation via `ExternalLedgerReconciler` (POAM-023 closed 2026-07-27, `src/compliance_bridge/reconciliation_worker.py`) is preferred when a fresh KMS-signed reconciled balance is available; falls back to Redis `WATCH/MULTI/EXEC` optimistic locking otherwise. `verify_action()` is **read-only** — it does not modify Redis state. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`.
+- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py). External ledger reconciliation via `ExternalLedgerReconciler` (POAM-023 closed 2026-07-27, `src/gateway/governance/reconciliation/daemon.py`) is preferred when a fresh KMS-signed reconciled balance is available; falls back to Redis `WATCH/MULTI/EXEC` optimistic locking otherwise. `verify_action()` is **read-only** — it does not modify Redis state. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`.
 - **Tier 3 — Fiscal Limit Pre-Reservation (FiscalLimitGuard):** `execute_trade` only, when `fiscal_limit_guard` is injected and no prior violations exist. Atomically reserves the requested USD amount against the daily fiscal cap in Redis (`WATCH/MULTI/EXEC`) before the consensus gate. Closes the TOCTOU race between the CBF balance check and actual trade execution. Released immediately if any subsequent tier produces a violation.
 - **Tier 4 — OPA Rego policy evaluation:** All tool names. Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip. For `execute_trade`, CBF (Tier 2) and OPA (Tier 4) run **concurrently** via `asyncio.gather` to minimize latency.
 - **Tier 4b — Token Quota Proxy (TQP):** All tool names. Per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters (`token_quota_proxy.py`). Fail-closed: HTTP 429 on quota exceeded. Two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. UCA type: `quota_exceeded` logged to WORM via UCA Logger.
@@ -244,7 +285,7 @@ The following modules were added as part of the NIST AI 600-1 implementation (`C
 | [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | §2.5 — Human-AI Configuration | Human-in-the-Loop escalation for high-risk decisions. Produces structured `EscalationRecord` objects written to the DeferQueue (Redis db=1, noeviction). Escalation reasons: `CONSENSUS_THRESHOLD` (amount > $10k), `CONFIDENCE_LOW` (confidence < 0.95), `CAUSAL_BLOCK` (DoWhy refutation failed), `MANUAL_REVIEW` (OPA policy decision), `GOVERNANCE_CONFIDENCE_LOW` (recursive governance risk). SR 26-2 §3.2 SLA: 4-hour resolution window. | AI600-004 |
 | [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 14 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Stage 2.5 applies semantic similarity via `all-MiniLM-L6-v2` at threshold 0.82. Returns on first match (fail-fast). Violations logged to UCA Logger. | AI600-003 |
 | [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (one of the canonical six: `ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL` — the legacy `BLOCK`/`ESCALATE` values are rejected), and `parent_hash` for chain linkage. Hashes are computed with RFC 8785 JCS canonicalization. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
-| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (`tier1_keywords` and `tier1_keywords_cbrn` arrays; `tier1_keywords_cbrn_enabled: true`). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. *(Note: The legacy shim `src/gateway/governance/safety.py` was removed in v3.0.1; import `ac_keyword_scan` from `text_filter.py` and `ControlBarrierFunction` from `safety/cbf_engine.py` directly).* | — |
+| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (`tier1_keywords` and `tier1_keywords_cbrn` arrays; `tier1_keywords_cbrn_enabled: true`). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. *(Note: The legacy shim `src/gateway/governance/safety/cbf_engine.py` was removed in v3.0.1; import `ac_keyword_scan` from `text_filter.py` and `ControlBarrierFunction` from `safety/cbf_engine.py` directly).* | — |
 | [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | §2.2 — Data Privacy | Pre-ledger PII sanitization pipeline (ISO 42001 Annex A.6). Applies 8 compiled regex patterns sequentially: SSN (IRS-valid ranges), credit card (Visa/MC/Amex/Discover/JCB/Diners), IBAN, SWIFT/BIC, email, phone (US/international), API keys/Bearer tokens, and compact JWS/JWT tokens (`[REDACTED_JWS]`). Thread-safe singleton (`PIISanitizer`). `sanitize_dict()` recursively sanitizes nested dicts before WORM persistence. `pii_audit_log()` produces structured audit records (FISMA AU-11, 90-day retention). Active in **all regions**. | — |
 
 ### Module Integration in the Governance Pipeline
@@ -321,7 +362,7 @@ EU_ECB deployments additionally stamp a Fundamental Rights Impact Assessment (FR
 
 ## Control Barrier Function Layer
 
-The **Control Barrier Function (CBF)** layer provides a mathematically grounded cash-balance safety guarantee. Implementation: [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py).
+The **Control Barrier Function (CBF)** layer provides a mathematically grounded cash-balance safety guarantee. Implementation: [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
 
 ### Safe Set Definition
 
@@ -365,7 +406,7 @@ EXEC
 
 `verify_action()` is **read-only** at governance-check time — it does not debit the balance. The actual debit is performed by the `FiscalLimitGuard` atomic pre-reservation step after both CBF and OPA pass.
 
-> **POAM-023 (Closed 2026-07-27):** External ledger reconciliation via `ExternalLedgerReconciler` (`src/compliance_bridge/reconciliation_worker.py`) is implemented, reducing reliance on Redis-cached balances for safety-critical checks. `PlaidLedgerProvider` is production-ready; `AnchorageGrpcLedgerProvider` remains an interface contract pending Anchorage enterprise credentials. Redis `WATCH/MULTI/EXEC` remains the fallback path.
+> **POAM-023 (Closed 2026-07-27):** External ledger reconciliation via `ExternalLedgerReconciler` (`src/gateway/governance/reconciliation/daemon.py`) is implemented, reducing reliance on Redis-cached balances for safety-critical checks. `PlaidLedgerProvider` is production-ready; `AnchorageGrpcLedgerProvider` remains an interface contract pending Anchorage enterprise credentials. Redis `WATCH/MULTI/EXEC` remains the fallback path.
 
 ---
 
@@ -508,3 +549,6 @@ graph.add_node("opa_check", opa_check)
 ```
 
 Both factories produce nodes that are fail-closed: any exception in the guardrail or policy evaluation causes the node to return a `BLOCKED` verdict rather than propagating the exception to the agent.
+- **Jurisdiction Separation**: The base posture is ISO 42001. Additional frameworks are layered dynamically via the `CAGE_DEPLOYMENT_REGION` environment variable (e.g., `US_FED`, `EU_ECB`, `APAC_MAS`).
+- **Observability Plane**: Direct OTLP ingestion to Langfuse is configured via standard OpenTelemetry environment variables; the OTel Collector sidecar is deprecated.
+- **Node Allocation**: The Split-Brain topology explicitly targets cost-optimized Spot/preemptible GPU nodes (NVIDIA L4) via Kubernetes node selectors and tolerations.

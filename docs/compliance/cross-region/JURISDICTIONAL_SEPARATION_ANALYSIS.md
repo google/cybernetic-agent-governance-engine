@@ -977,7 +977,7 @@ lifecycle {
 
 ## 6. Compliance Artifacts Findings (Phase 4)
 
-> **Scope:** `compliance/lula/`, `compliance/oscal/`, `config/thresholds/`, `src/governed_financial_advisor/governance/policy/trade_governance.rego`
+> **Scope:** `compliance/lula/`, `compliance/oscal/`, `config/thresholds/`, `src/cage_finance/opa/trade_governance.rego`
 
 ---
 
@@ -1152,7 +1152,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 **Correct reference implementations** (use as templates for all Phase 1 remediations):
 - [`src/gateway/governance/constants.py`](../../../src/gateway/governance/constants.py) — `ControlRegistry` with region-specific JSON profile loading
 - [`src/gateway/governance/oscal_ssp_exporter.py`](../../../src/gateway/governance/oscal_ssp_exporter.py) — `REGIONAL_PROFILES` + `FrameworkRouter`
-- [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py) — `_NO_LEGAL_FORCE_MARKER` data-driven citation suppression
+- [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py) — `_NO_LEGAL_FORCE_MARKER` data-driven citation suppression
 - [`src/gateway/governance/uca_logger.py`](../../../src/gateway/governance/uca_logger.py) — `_get_worm_bucket()` with explicit regional routing
 
 ---
@@ -1321,9 +1321,9 @@ The following existing implementations in the codebase correctly enforce jurisdi
 
 [`REGIONAL_PROFILES`](../../../src/gateway/governance/oscal_ssp_exporter.py) and [`FrameworkRouter`](../../../src/gateway/governance/oscal_ssp_exporter.py) demonstrate the correct pattern for routing compliance evidence to the correct framework based on `CAGE_DEPLOYMENT_REGION`. Use this pattern for all compliance bridge endpoint filtering.
 
-### 9.3 Data-Driven Citation Suppression — `src/gateway/governance/causal_gatekeeper.py`
+### 9.3 Data-Driven Citation Suppression — `src/gateway/governance/causal/gatekeeper.py`
 
-[`_NO_LEGAL_FORCE_MARKER`](../../../src/gateway/governance/causal_gatekeeper.py) demonstrates the correct pattern for suppressing jurisdiction-specific regulatory citations in non-applicable regions without hardcoded conditionals. Use this pattern for SR 26-2 references in EU_ECB and APAC_MAS deployments.
+[`_NO_LEGAL_FORCE_MARKER`](../../../src/gateway/governance/causal/gatekeeper.py) demonstrates the correct pattern for suppressing jurisdiction-specific regulatory citations in non-applicable regions without hardcoded conditionals. Use this pattern for SR 26-2 references in EU_ECB and APAC_MAS deployments.
 
 ### 9.4 Regional WORM Bucket Routing — `src/gateway/governance/uca_logger.py`
 

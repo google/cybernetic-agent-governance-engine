@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document analyzes the legacy audit stream schemas ([`cage-context-accumulator/2.0`](../../src/compliance_bridge/context_accumulator.py:70), [`cage-intent/1.0`](../../examples/telemetry.py:147)) and their relationship to the unified [`cage-audit/3.0`](../../src/compliance_bridge/evidence_stream.py:508) schema. 
+This document analyzes the legacy audit stream schemas ([`cage-context-accumulator/2.0`](../../src/compliance_bridge/context_accumulator.py:70), [`cage-intent/1.0`](../../examples/telemetry.py:147)) and their relationship to the unified [`cage-audit/3.0`](../../src/gateway/governance/evidence/stream.py:508) schema. 
 
 **Key Finding:** No migration is required. The legacy schemas serve distinct, non-overlapping purposes:
 - **Context accumulator** (`cage-context-accumulator/2.0`): File-based OSCAL audit session chain for Lula compliance validation
@@ -123,7 +123,7 @@ Every record includes a machine-readable disclaimer (line 155-163):
 
 ## 2. Current Production Schema: `cage-audit/3.0`
 
-**Location:** [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py)
+**Location:** [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)
 
 **Purpose:** Evidence-grade streaming sink for real-time governance events. Promotes the SSE event bus from fire-and-forget UI notifications to a cryptographically hash-chained, durable evidence stream.
 
@@ -133,7 +133,7 @@ Every record includes a machine-readable disclaimer (line 155-163):
 
 **Producers:**
 - [`src/compliance_bridge/sse_events.py:GovernanceEventBus.publish()`](../../src/compliance_bridge/sse_events.py:205) — All governance events flow through the event bus
-  - Calls [`EvidenceStreamSink.ingest()`](../../src/compliance_bridge/evidence_stream.py:1012) after PII scrubbing
+  - Calls [`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py:1012) after PII scrubbing
   - Line 217: `await self._evidence_sink.ingest(event)`
 
 **Integration Points:**
@@ -189,12 +189,12 @@ header = {
 3. Migrated to RFC 8785 JCS canonicalization (from `json.dumps(sort_keys=True)`)
 
 **Multi-Writer Safety:**
-- Atomic append via Lua script (line 151-224): [`_LUA_ATOMIC_APPEND`](../../src/compliance_bridge/evidence_stream.py:151)
+- Atomic append via Lua script (line 151-224): [`_LUA_ATOMIC_APPEND`](../../src/gateway/governance/evidence/stream.py:151)
 - Python `asyncio.Lock` guards chain state (`_chain_lock`)
 - Sequence numbers are monotonic and Redis-derived (not process-local)
 
 **Chain Restoration:**
-- On startup, [`_restore_chain_state()`](../../src/compliance_bridge/evidence_stream.py:939) reads last record from Redis Streams
+- On startup, [`_restore_chain_state()`](../../src/gateway/governance/evidence/stream.py:939) reads last record from Redis Streams
 - Restores `_prev_hash`, `_sequence`, `_chain_id` for continuity across restarts
 
 ---
@@ -392,7 +392,7 @@ header = {
 
 ### 9.2 Chain Restoration Across Schema Versions
 **Current Behavior:**
-- [`_restore_chain_state()`](../../src/compliance_bridge/evidence_stream.py:939) reads last record from Redis Streams
+- [`_restore_chain_state()`](../../src/gateway/governance/evidence/stream.py:939) reads last record from Redis Streams
 - Assumes all records use `cage-audit/3.0` schema
 
 **Risk if Migration Occurs:**
@@ -421,7 +421,7 @@ header = {
 - **Trace ID:** ✅ W3C trace correlation satisfies AU-3 (Content of Audit Records)
 
 ### 10.3 GDPR Art. 30 (Records of Processing Activities)
-- **PII Scrubbing:** ✅ All evidence stream ingestion uses [`PIIScrubber.scrub()`](../../src/compliance_bridge/pii_scrubber.py) before commit
+- **PII Scrubbing:** ✅ All evidence stream ingestion uses [`PIIScrubber.scrub()`](../../src/gateway/governance/pii_sanitizer.py) before commit
 - **View-Access Logging:** ✅ Intent chain includes `view_access_log_<date>.ndjson` for read tracking
 
 ### 10.4 MiFID II Article 25 (Recording of Communications)
@@ -558,7 +558,7 @@ re-deriving them:
 - Three verification tiers with explicit conclusiveness boundaries: structural
   linkage (conclusive), in-database recomputation (conclusive only for
   escape-safe rows), and authoritative Python re-verification via
-  [`verify_record()`](../../src/compliance_bridge/evidence_stream.py:728) against
+  [`verify_record()`](../../src/gateway/governance/evidence/stream.py:728) against
   GCS. Only the third tier may declare `CONFIRMED` tampering.
 
 ### 13.6 Retention and erasure
@@ -576,7 +576,7 @@ simultaneously.
 
 **GDPR position.** Row-level erasure is impossible by design. The Art. 17
 obligation is discharged **upstream**: payloads are scrubbed by
-[`PIIScrubber`](../../src/compliance_bridge/pii_scrubber.py) before ingestion, so
+[`PIIScrubber`](../../src/gateway/governance/pii_sanitizer.py) before ingestion, so
 no personal data should reach any cold tier. Residual risk is handled by
 partition `DROP` or CMEK crypto-shredding. This trades granular erasure for
 immutability and makes scrubber coverage a load-bearing GDPR control.
@@ -609,10 +609,10 @@ Consistent with §6.1, the ClickHouse tier introduces **no Layer 1 changes**:
 ### Code Locations
 - Context Accumulator: [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py)
 - Intent Chain: [`examples/telemetry.py`](../../examples/telemetry.py)
-- Evidence Stream: [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py)
+- Evidence Stream: [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)
 - Event Bus: [`src/compliance_bridge/sse_events.py`](../../src/compliance_bridge/sse_events.py)
-- PII Scrubber: [`src/compliance_bridge/pii_scrubber.py`](../../src/compliance_bridge/pii_scrubber.py)
-- Evidence Consumer: [`src/compliance_bridge/evidence_consumer.py`](../../src/compliance_bridge/evidence_consumer.py)
+- PII Scrubber: [`src/gateway/governance/pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)
+- Evidence Consumer: [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py)
 - ClickHouse DDL: [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
 
 ### Compliance Standards

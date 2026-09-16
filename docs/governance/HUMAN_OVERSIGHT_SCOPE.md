@@ -28,7 +28,7 @@ CAGE automatically escalates governance decisions to human review when any of th
 | **Consensus threshold exceeded** | `hitl_escalator.py` `should_escalate_for_consensus()` | Trade amount > $10,000 USD (`consensus.threshold_usd` in `governance_thresholds.json`) |
 | **Model confidence low** | `hitl_escalator.py` `should_escalate_for_confidence()` | Confidence < 0.95 (CTRL_AGT_001) |
 | **CausalGatekeeper block** | `causal_gatekeeper.py` `causal_safety_check()` | World-model p-value < `get_causal_lock_p_value_threshold()` (0.05) or marginal risk boundary exceeded |
-| **OPA MANUAL_REVIEW decision** | `src/governed_financial_advisor/governance/policy/trade_governance.rego` | OPA policy (package `trade.governance`) returns `"MANUAL_REVIEW"` |
+| **OPA MANUAL_REVIEW decision** | `src/cage_finance/opa/trade_governance.rego` | OPA policy (package `trade.governance`) returns `"MANUAL_REVIEW"` |
 | **Governance confidence low** | `consensus.py` `ConsensusEngine` | ConsensusEngine self-reported confidence < threshold |
 | **POAM-TIER2-001 structural flag** | `symbolic_governor.py` `_run_checks()` Tier 2 | Structural corroboration heuristic: STPA violation count ≥ 1 AND OPA margin < threshold; overrides the model-supplied confidence signal |
 | **NeMo Policy Refinement Proposal (CR-2)** | `src/governed_financial_advisor/server.py` | `POST /v1/nemo/approve-refinement/{proposal_id}` requires human risk officer sign-off with rationale |
@@ -152,7 +152,7 @@ reviewer resolves it within the applicable SLA (see
 
 Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 5)
 before reaching the FRIA zone classifier. The consensus engine
-([`consensus.py`](../../src/gateway/governance/consensus.py)) invokes multiple
+([`consensus.py`](../../src/gateway/governance/consensus/engine.py)) invokes multiple
 LLM critics with a **30-second hard timeout** per critic call. Unanimity is
 required; a single dissenting critic escalates the decision to human review via
 the DeferQueue. Background audit logging for consensus decisions is handled by
@@ -161,7 +161,7 @@ task.
 
 ### Causal Lock Escalation
 
-**Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
+**Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)
 
 When the causal gatekeeper's marginal risk boundary condition is triggered:
 

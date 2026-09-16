@@ -31,10 +31,10 @@ The analysis below shows that CAGE v2.0.0 already implements the substrate-tier 
 The comparative matrix claims CAGE enforces at the **container network interface (CNI) kernel edge and database commit tier**. The codebase confirms this at two levels:
 
 **Database commit tier (Redis atomic Lua):**
-[`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py:406) collapses the CBF check and state commit into a single Redis Lua script execution. The Lua script (`LUA_ATOMIC_CBF`) evaluates `h(S(t+1)) >= (1-γ)*h(S(t))` and writes `safety:current_cash` atomically — no Python round-trip between check and write. This is the database commit tier enforcement described in the matrix. In the financial reference deployment `safety:current_cash` tracks cash balance; in other high-reliability deployments the same key tracks the domain-specific resource invariant (e.g. API call budget, actuator torque envelope, drug-dosage ceiling).
+[`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) collapses the CBF check and state commit into a single Redis Lua script execution. The Lua script (`LUA_ATOMIC_CBF`) evaluates `h(S(t+1)) >= (1-γ)*h(S(t))` and writes `safety:current_cash` atomically — no Python round-trip between check and write. This is the database commit tier enforcement described in the matrix. In the financial reference deployment `safety:current_cash` tracks cash balance; in other high-reliability deployments the same key tracks the domain-specific resource invariant (e.g. API call budget, actuator torque envelope, drug-dosage ceiling).
 
 **WATCH/MULTI/EXEC optimistic locking & Rollback:**  
-[`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/cbf.py) and [`rollback_state()`](../../src/gateway/governance/cbf.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.1, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
+[`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) and [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.1, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
 
 **No-Direct-Bind startup assertions:**  
 [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:64) raises `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production, and if `dowhy` is absent. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
@@ -51,7 +51,7 @@ The matrix claims CAGE uses **machine-readable hazard models compiled into hard 
 [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) ingests `config/stpa_control_structure.yaml` and emits deterministic OPA Rego policies (`config/opa/generated_stpa_policy.rego`), NeMo Colang rails, Python validators, and LangGraph Saga nodes. The UCAs are compiled — not interpreted at runtime — into hard Rego rules with `default stpa_allow = false` (fail-closed).
 
 **Control Barrier Function (math-backed):**  
-[`cbf.py`](../../src/gateway/governance/cbf.py:22) implements the discrete-time CBF from Ames et al. (IEEE TAC 2017):
+[`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py:22) implements the discrete-time CBF from Ames et al. (IEEE TAC 2017):
 ```
 h(S(t+1)) >= (1 - γ) * h(S(t))   for all t, where γ ∈ (0,1)
 ```
@@ -69,9 +69,9 @@ This is a formal mathematical safety certificate, not a text-based behavioral co
 The matrix claims CAGE uses **Redis optimistic concurrency locking (WATCH/MULTI/EXEC) to secure states right at the database bind-point**.
 
 This is confirmed by:
-- [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/cbf.py) — WATCH/MULTI/EXEC with retry (internal rollback/unsafe test utility)
-- [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py:406) — Lua atomic check+commit (zero TOCTOU window)
-- [`FiscalLimitGuard.reserve()`](../../src/gateway/governance/fiscal_limit_guard.py) — atomic pre-reservation of the operational budget cap (daily fiscal cap in the financial deployment) before the consensus gate
+- [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) — WATCH/MULTI/EXEC with retry (internal rollback/unsafe test utility)
+- [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) — Lua atomic check+commit (zero TOCTOU window)
+- [`FiscalLimitGuard.reserve()`](../../src/gateway/governance/safety/resource_guard.py) — atomic pre-reservation of the operational budget cap (daily fiscal cap in the financial deployment) before the consensus gate
 - [`DeferQueue.park()`](../../src/gateway/governance/defer_queue.py:167) and [`resolve()`](../../src/gateway/governance/defer_queue.py:215) — MULTI/EXEC pipeline for DEFER token state transitions
 
 The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic commit, creating an append-only tamper-evident log at the database tier.
@@ -235,7 +235,7 @@ The following work items are ordered by strategic priority. Items marked **[BLOC
 
 The following capabilities are **fully implemented** in v2.0.0 and constitute genuine structural advantages that neither Microsoft MXC/ACS nor Red Hat/AAIF can replicate without fundamental architectural changes. They apply to any high-reliability agentic AI deployment — not only financial services:
 
-1. **Zero-TOCTOU Guarantee** — [`atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py:406) collapses check and commit into a single Lua hop. Microsoft's synchronous validation blocks and Red Hat's trace-schema comparison both have TOCTOU windows between check and write.
+1. **Zero-TOCTOU Guarantee** — [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) collapses check and commit into a single Lua hop. Microsoft's synchronous validation blocks and Red Hat's trace-schema comparison both have TOCTOU windows between check and write.
 
 2. **Compiled Hazard Models** — [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) produces deterministic OPA Rego AST from STPA UCAs. The compiled artifacts are immutable at runtime — an agent cannot modify its own invariants even during a full container compromise.
 
@@ -264,10 +264,10 @@ The following claims from the competitive analysis are now technically substanti
 | Claim | Substantiation | File |
 |---|---|---|
 | "Immune to Prompt Breakouts" | `CBF_FAIL_OPEN=true` raises `RuntimeError` at startup in production | [`symbolic_governor.py:64`](../../src/gateway/governance/symbolic_governor.py:64) |
-| "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf.py:406`](../../src/gateway/governance/cbf.py:406) |
+| "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf.py:406`](../../src/gateway/governance/safety/cbf_engine.py:406) |
 | "Telco-Grade Velocity" | CBF+OPA run concurrently via `asyncio.gather()` | [`symbolic_governor.py:295`](../../src/gateway/governance/symbolic_governor.py:295) |
 | "Compiled AST Invariants" | STPA UCAs compiled to OPA Rego at build time | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
-| "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf.py:22`](../../src/gateway/governance/cbf.py:22) |
+| "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf.py:22`](../../src/gateway/governance/safety/cbf_engine.py:22) |
 | "Multi-Jurisdiction" | US_FED / EU_ECB / APAC_MAS regional profiles | [`constants.py:126`](../../src/gateway/governance/constants.py:126) |
 | "Cryptographic Seal" | HMAC-SHA256 routing seal, raises on verification failure | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
 
@@ -298,7 +298,7 @@ When implementing the Phase 1 ingress adapters:
 | Agentic Scope Statement | [`docs/AGENTIC_SCOPE_STATEMENT.md`](../AGENTIC_SCOPE_STATEMENT.md) |
 | NIST AI 600-1 Implementation Plan | [`docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md`](../compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md) |
 | POAM | [`docs/POAM.md`](../POAM.md) |
-| Control Barrier Function | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) |
+| Control Barrier Function | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | Symbolic Governor | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | STPA Compiler | [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | Normative Provider | [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py) |
@@ -357,7 +357,7 @@ AGW's integration with Agent Registry provides a centralized catalog of approved
 ### 9.4 Where CAGE Outperforms Agent Gateway
 
 **1. Database Commit Tier Enforcement (Structural Advantage — Irreplaceable)**
-AGW enforces at the network layer — it can block a request from reaching the agent, but it cannot enforce invariants at the moment a state mutation is written to a database. If an agent passes AGW's network gate and then triggers a consequential write that violates a resource invariant (e.g. a cash balance floor, an API budget ceiling, an actuator torque limit), AGW has no mechanism to intercept the database write. CAGE's [`atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py:406) enforces the CBF invariant atomically at the Redis write point — the invariant cannot be violated even if the agent has already passed all network-layer gates. This advantage is domain-agnostic: it applies to any high-reliability agentic system where the consequence of an action is a write to an authoritative state store.
+AGW enforces at the network layer — it can block a request from reaching the agent, but it cannot enforce invariants at the moment a state mutation is written to a database. If an agent passes AGW's network gate and then triggers a consequential write that violates a resource invariant (e.g. a cash balance floor, an API budget ceiling, an actuator torque limit), AGW has no mechanism to intercept the database write. CAGE's [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) enforces the CBF invariant atomically at the Redis write point — the invariant cannot be violated even if the agent has already passed all network-layer gates. This advantage is domain-agnostic: it applies to any high-reliability agentic system where the consequence of an action is a write to an authoritative state store.
 
 **2. Math-Backed Safety Certificates (Structural Advantage)**
 AGW's Semantic Governance Policies are declarative and evaluated by an external service — they are not formal mathematical safety certificates. CAGE's discrete-time CBF provides a provable safety guarantee: `h(S(t+1)) >= (1-γ)*h(S(t))` is a theorem, not a policy rule. For any regulated operator deploying high-reliability agentic AI (financial services under SR 26-2 MRM scope, pharmaceutical under 21 CFR Part 11, critical infrastructure under IEC 62443), a mathematical proof of safety is a compliance requirement that a declarative policy cannot satisfy.
@@ -369,7 +369,7 @@ AGW's policies are evaluated at runtime by external GCP services. CAGE's STPA UC
 AGW has no built-in multi-jurisdiction compliance registry. CAGE's [`ControlRegistry`](../../src/gateway/governance/constants.py:177) with US_FED / EU_ECB / APAC_MAS profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. For any global operator deploying high-reliability agentic AI across jurisdictions — financial services, healthcare, critical infrastructure — this is a significant differentiator. The profile mechanism is domain-agnostic: adding a new vertical or jurisdiction requires only a JSON profile update, not Python source changes.
 
 **5. Causal World-Model Validation (Unique Capability)**
-AGW has no equivalent to CAGE's DoWhy causal gatekeeper ([`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)). The placebo refutation check validates that the agent's world-model is causally trustworthy before allowing a high-stakes action — a capability that neither AGW, MXC/ACS, nor AAIF implements.
+AGW has no equivalent to CAGE's DoWhy causal gatekeeper ([`causal_gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)). The placebo refutation check validates that the agent's world-model is causally trustworthy before allowing a high-stakes action — a capability that neither AGW, MXC/ACS, nor AAIF implements.
 
 **6. DEFER State Machine (Unique Capability)**
 AGW's authorization model is binary: allow or deny. CAGE's [`DeferQueue`](../../src/gateway/governance/defer_queue.py:147) implements a formal DEFER state for situational ambiguity — parking execution contexts in Redis `db=1` with a 4-hour TTL and a three-phase replay flow (PARK → HYDRATE → REPLAY). This prevents operational fatigue from forcing binary decisions on fundamentally incomplete context windows.

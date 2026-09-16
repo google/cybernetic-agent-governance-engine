@@ -58,7 +58,7 @@ CAGE sits at the intersection of all three layers: it is a federal information s
 - Vulnerability scanning and flaw remediation (RA-5, SI-2, Trivy/pip-audit)
 
 **AI 600-1 covers — SP 800-53 has no equivalent:**
-- **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](../../../src/gateway/governance/consensus.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
+- **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](../../../src/gateway/governance/consensus/engine.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
 - **Agentic autonomy scope (§2.5.1–2.5.4):** SP 800-53 AC-5 covers separation of duties between human roles. It has no concept of an AI agent autonomously selecting which MCP tools to call. AI 600-1 §2.5.4 requires a formal human oversight scope statement — no SP 800-53 control requires this.
 - **Indirect prompt injection (§2.4):** SP 800-53 SI-3 covers antivirus/malware. It has no concept of a market data API response containing embedded instructions that hijack LLM behavior. CAGE's `get_market_data` MCP tool response flows into the LLM context window with no sanitization — invisible to SP 800-53.
 - **Harmful bias / algorithmic fairness (§2.6):** SP 800-53 has no fairness control. AI 600-1 §2.6 requires assessing disparate impact in financial recommendations — a direct ECOA/Regulation B obligation.
@@ -262,13 +262,13 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values (**v3.0.1:** deprecated `stpa_validator.py` shim removed)
-- [`src/gateway/governance/consensus.py`](../../../src/gateway/governance/consensus.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
-- [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
+- [`src/gateway/governance/consensus/engine.py`](../../../src/gateway/governance/consensus/engine.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
+- [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
 - `config/governance_thresholds.json` — `min_trade_confidence: 0.95` threshold rejects low-confidence outputs
 
 **Gaps:**
 1. **No confabulation rate metric.** There is no measurement of how often the financial advisor LLM produces factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. The `safety_rate` metric in [`src/compliance_bridge/metrics.py`](../../../src/compliance_bridge/metrics.py) measures governance pass/fail, not factual accuracy.
-2. **ConsensusEngine critics are also LLMs.** The "Risk Manager" and "Compliance Officer" personas in [`src/gateway/governance/consensus.py`](../../../src/gateway/governance/consensus.py) are themselves LLM calls — they can confabulate their risk assessments. There is no ground-truth validation of consensus outputs.
+2. **ConsensusEngine critics are also LLMs.** The "Risk Manager" and "Compliance Officer" personas in [`src/gateway/governance/consensus/engine.py`](../../../src/gateway/governance/consensus/engine.py) are themselves LLM calls — they can confabulate their risk assessments. There is no ground-truth validation of consensus outputs.
 3. **No hallucination detection on market data inputs.** The `get_market_data` MCP tool returns external data that the LLM may misinterpret or hallucinate about. No validation that the LLM's stated market price matches the actual API response.
 4. **No Lula validation for confabulation rate.** The 15 existing Lula manifests do not include any confabulation/hallucination rate assertion.
 5. **Explainer node output not validated.** The `explainer` agent generates human-readable explanations of governance decisions — these explanations could confabulate the reasoning behind a DENY verdict.
@@ -332,7 +332,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **Current Coverage:**
 - **Tier-1 Aho-Corasick scan** (`ac_keyword_scan`) — 14 bypass/injection keywords, O(n) scan
 - **NeMo Guardrails** — Colang `check_authorization` flow validates approval token; input/output rails
-- **OPA `trade.governance`** — `prompt_injection_check` rule in [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../../src/governed_financial_advisor/governance/policy/trade_governance.rego) returns `GOVERNANCE_VIOLATION` on injection detection
+- **OPA `trade.governance`** — `prompt_injection_check` rule in [`src/cage_finance/opa/trade_governance.rego`](../../../src/cage_finance/opa/trade_governance.rego) returns `GOVERNANCE_VIOLATION` on injection detection
 - **Red team dataset** — `tests/red_team/adversarial_dataset.json` contains PII injection and prompt injection payloads (PII-001 through PII-004)
 - **STPA UCA-1** — missing approval token blocks execution (prevents injection-driven authorization bypass)
 
@@ -427,7 +427,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - **STPA UCA constraints:** Deterministic validation of trade parameters prevents execution of trades based on obviously fabricated data (e.g., drawdown > 4.5% blocks execution regardless of LLM reasoning)
-- **CausalGatekeeper:** [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py) prevents spurious correlations from driving decisions
+- **CausalGatekeeper:** [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py) prevents spurious correlations from driving decisions
 - **ConsensusEngine:** Multi-agent consensus provides a cross-check on individual LLM outputs
 - **KMS-signed governance verdicts:** [`src/gateway/governance/kms_signer.py`](../../../src/gateway/governance/kms_signer.py) — HSM-backed asymmetric signing provides non-repudiation of governance decisions
 

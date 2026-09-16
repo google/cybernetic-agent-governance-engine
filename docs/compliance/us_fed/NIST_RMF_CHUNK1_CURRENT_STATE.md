@@ -69,13 +69,13 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 | Artifact                            | Location                                                                                         | Role                                                                  |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `ControlBarrierFunction`            | [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py) (**v3.0.1:** `safety.py` removed) | Redis-backed CBF with WATCH/MULTI/EXEC                                |
+| `ControlBarrierFunction`            | [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) (**v3.0.1:** `safety.py` removed) | Redis-backed CBF with WATCH/MULTI/EXEC                                |
 | `ac_keyword_scan`                   | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) (**v3.0.1:** `safety.py` removed) | Aho-Corasick Tier-1 prompt-injection scan                             |
 | `SymbolicGovernor`                  | `src/gateway/governance/symbolic_governor.py`  | Orchestrates all 5 governance tiers                                   |
 | `GeneratedSTPAValidator`            | [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) (**v3.0.1:** `stpa_validator.py` removed) | Deterministic STPA UCA constraint checks                              |
 | `TradingKnowledgeGraph`             | `src/gateway/governance/ontology.py`                    | UCA/constraint ontology (6 UCAs, 3 constraints)                       |
 | `stamp_iso_control`                 | `src/gateway/governance/iso_control.py`              | ISO 42001 OTel evidence stamping                                      |
-| `ConsensusEngine`                   | `src/gateway/governance/consensus.py`                  | Multi-agent LLM critic consensus                                      |
+| `ConsensusEngine`                   | `src/gateway/governance/consensus/engine.py`                  | Multi-agent LLM critic consensus                                      |
 | `SafetyFilter`, `ConsensusProvider` | `src/gateway/governance/contracts.py`                  | Protocol interfaces                                                   |
 | NeMo actions                        | [`src/gateway/governance/nemo/actions.py`](../../../config/rails/actions.py)               | 5 Colang-callable safety action functions                             |
 | `create_nemo_manager`               | `src/gateway/governance/nemo/manager.py`            | NeMo Guardrails factory with vLLM + Presidio                          |
@@ -208,7 +208,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 **OPA Rego policies** (active): Three policy packages in use:
 
 - `system.authz` (`deployment/system_authz.rego`): Identity-based allow, confidence thresholds (0.95 normal / 0.97 SLM-degraded), `slm_degraded_warning` audit metadata
-- `trade.governance` (`src/governed_financial_advisor/governance/policy/trade_governance.rego`): RBAC-based limits (junior ≤ $5k/$10k, senior ≤ $500k/$1M), risk-profile rules, prompt-injection detection
+- `trade.governance` (`src/cage_finance/opa/trade_governance.rego`): RBAC-based limits (junior ≤ $5k/$10k, senior ≤ $500k/$1M), risk-profile rules, prompt-injection detection
 - `finance.generated` (`src/governed_financial_advisor/governance/policy/generated_rules.rego`): Auto-generated from transpiler — DENY slippage (MARKET order > 1% daily volume) and drawdown (BUY with drawdown > 4.5%). **Note:** This file has been purged from the active repository; the consolidated canonical policy is `trade_governance.rego`.
 
 Two deprecated stub packages exist for historical tracking: `finance` and `financial.trade`.
@@ -222,7 +222,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 | Cloud NAT                 | [`deployment/terraform/networking.tf`](../../../infra/modules/gcp_gke_cluster/networking.tf)                                                                         | Private egress for GKE nodes                 |
 | OPA config                | [`deployment/opa_config.yaml`](../../../deployment/opa_config.yaml)                                                                                         | Decision logs, cache, ISO labels             |
 | `system.authz`            | [`deployment/system_authz.rego`](../../../deployment/system_authz.rego)                                                                                     | Identity + confidence enforcement            |
-| `trade.governance`        | [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../../src/governed_financial_advisor/governance/policy/trade_governance.rego) | RBAC, fiscal limits, risk profiles (canonical policy) |
+| `trade.governance`        | [`src/cage_finance/opa/trade_governance.rego`](../../../src/cage_finance/opa/trade_governance.rego) | RBAC, fiscal limits, risk profiles (canonical policy) |
 | ~~`finance.generated`~~   | ~~`src/governed_financial_advisor/governance/policy/generated_rules.rego`~~ (purged)                                                               | Transpiler-generated rules — removed; consolidated into `trade_governance.rego` |
 | `THRESHOLDS` singleton    | `config/governance_thresholds.json` + `src/gateway/governance/schemas/thresholds.py`                                                               | Single source for all security thresholds    |
 | `CircuitBreaker`          | `src/gateway/core/policy.py`                                                                                      | OPA fail-fast with 3000 ms hard limit        |
@@ -260,7 +260,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 **Automated Auditor** (`scripts/automated_auditor.py`): `TraceAuditor` class implementing a continuous verification loop. Audits OTel trace spans for the invariant: every `tool.execution` span must be causally preceded by a `governance.check` span with `decision=ALLOW`. Detects three violation patterns: missing governance check, orphaned execution, and execution despite DENY. Currently uses mock trace data; production integration requires Cloud Trace API or Jaeger/OTLP query.
 
-**Consensus background audit queue** (`src/gateway/governance/consensus.py`): All consensus decisions (above USD 10,000) are pushed to `_AUDIT_QUEUE` (asyncio.Queue, maxsize=1000) for background logging by `_background_audit_worker`, keeping the governance hot-path non-blocking.
+**Consensus background audit queue** (`src/gateway/governance/consensus/engine.py`): All consensus decisions (above USD 10,000) are pushed to `_AUDIT_QUEUE` (asyncio.Queue, maxsize=1000) for background logging by `_background_audit_worker`, keeping the governance hot-path non-blocking.
 
 ### 4.2 Key Artifacts
 
@@ -273,9 +273,9 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 | `get_compliance_metrics`                    | `src/compliance_bridge/metrics.py`                                                                             | TTL-cached Langfuse safety_rate aggregation  |
 | `EvaluatorAuditor`                          | [`src/governed_financial_advisor/agents/evaluator/auditor.py`](../../../src/governed_financial_advisor/agents/evaluator/auditor.py)                              | Agent trace auditor (SC-1, quality scoring)  |
 | `TraceAuditor`                              | `scripts/automated_auditor.py`                                                                                      | Invariant-based continuous span auditor      |
-| `_AUDIT_QUEUE` + `_background_audit_worker` | `src/gateway/governance/consensus.py`                                                                        | Non-blocking consensus audit queue           |
+| `_AUDIT_QUEUE` + `_background_audit_worker` | `src/gateway/governance/consensus/engine.py`                                                                        | Non-blocking consensus audit queue           |
 | `GovernanceEventBus`                        | [`src/compliance_bridge/sse_events.py`](../../../src/compliance_bridge/sse_events.py)                                                                           | Real-time SSE event distribution             |
-| NeMoOTelCallback                            | [`src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py`](../../../src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py) | NeMo-to-OTel span callback                   |
+| NeMoOTelCallback                            | ``src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py`` | NeMo-to-OTel span callback                   |
 
 ### 4.3 Coverage Assessment: **Strong**
 

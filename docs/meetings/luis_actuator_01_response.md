@@ -26,7 +26,7 @@ All 110 actuator_01 tests pass, including updated test vectors validating the co
 
 ## KMS IAM Model
 
-[`docs/architecture/actuator_01_kms_iam_model.md`](../architecture/actuator_01_kms_iam_model.md) is committed and up to date. It documents the single shared credential in the current reference implementation and lays out Option B (per-ceremony OIDC downscoping with zero standing IAM, credential lifetime = 30s window).
+[`docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md`](../architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) is committed and up to date. It documents the single shared credential in the current reference implementation and lays out Option B (per-ceremony OIDC downscoping with zero standing IAM, credential lifetime = 30s window).
 
 **Yes to the IAM binding walkthrough.** I'd like to understand the token-exchange flow and the specific `iamcredentials.generateAccessToken` call shape for downscoping to a ceremony-scoped credential. When you have time, let's walk through:
 

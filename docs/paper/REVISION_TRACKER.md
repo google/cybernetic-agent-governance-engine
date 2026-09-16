@@ -4,7 +4,7 @@ Tracks every finding from the Paper Assistant peer review of
 *"CAGE: A Neuro-Symbolic Architecture for Deterministic and Verifiable
 Governance of Agentic AI"* against its resolution in this repository.
 
-**Source paper:** [`CAGE_ARXIV.MD`](../../CAGE_ARXIV.MD)
+**Source paper:** ``CAGE_ARXIV.MD``
 **Ground truth:** repository source at the SHA recorded per row.
 
 Status legend: `OPEN` · `IN PROGRESS` · `FIXED` · `WITHDRAWN` (claim removed
@@ -128,7 +128,7 @@ Any change to the reachable-state count in `proof/model.py` must be mirrored in:
 - [`docs/technical-report/07-SECURITY-INFRASTRUCTURE.md`](../technical-report/07-SECURITY-INFRASTRUCTURE.md) line 139
 - [`docs/technical-report/10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md) lines 8, 208, 496
 - [`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md) line 406
-- [`CAGE_ARXIV.MD`](../../CAGE_ARXIV.MD) abstract, §4.4, Appendix A
+- ``CAGE_ARXIV.MD`` abstract, §4.4, Appendix A
 
 The VSM System 4 correction (ST4) must also be applied to
 [`docs/technical-report/10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md) line 50.
@@ -364,11 +364,11 @@ Benign FPR: **25.0% (5/20)** — unchanged total. Category breakdown:
 ## Phase 0.2: Reconciliation Worker Documentation Corrections (2026-08-15)
 
 This correction pass addresses 4 stale claims in `tmp/CAGE_ARXIV.md` §7.2 and §7.3
-identified in [`CAGE_IMPLEMENTATION_SPECS.md` §2.8](../../plans/CAGE_IMPLEMENTATION_SPECS.md#28-cage_arxivmd-stale-claims-correction-documentation-spec).
+identified in ``CAGE_IMPLEMENTATION_SPECS.md` §2.8`.
 
 ### Background
 
-The reconciliation worker code (`src/compliance_bridge/reconciliation_worker.py`) was
+The reconciliation worker code (`src/gateway/governance/reconciliation/daemon.py`) was
 complete but not operationally active (POAM-2026-038). The paper contained claims that
 the Kubernetes manifest didn't exist and that the `RECONCILIATION_PROVIDER=gcs` setting
 didn't match any registered provider — both claims became stale after code updates.
@@ -387,7 +387,7 @@ didn't match any registered provider — both claims became stale after code upd
 | Item | Evidence |
 |---|---|
 | CronJob manifest exists | [`deployment/k8s/reconciliation-worker.yaml`](../../deployment/k8s/reconciliation-worker.yaml) — 383 lines including CiliumNetworkPolicy and Secret template |
-| GcsLedgerProvider registered | [`reconciliation_worker.py:1151-1152`](../../src/compliance_bridge/reconciliation_worker.py:1151): `"gcs": GcsLedgerProvider` in provider registry |
+| GcsLedgerProvider registered | [`reconciliation_worker.py:1151-1152`](../../src/gateway/governance/reconciliation/daemon.py:1151): `"gcs": GcsLedgerProvider` in provider registry |
 | POAM-2026-038 tracking | [`docs/POAM.md`](../POAM.md) — secret population tracking |
 | Correction procedure | `scripts/_patch_paper.py` replacement blocks applied 2026-08-15 |
 
@@ -412,8 +412,8 @@ make previously optional security controls mandatory.
 | G1 | **NARROW/PAUSE Governance Decisions** | "four-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER)" | "six-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER/NARROW/PAUSE)" | [`decisions.py`](../../src/gateway/governance/decisions.py), [`pause_primitive.py`](../../src/gateway/governance/pause_primitive.py) | Abstract (line 7), §3.1, §7.1 |
 | G2 | **`_classify_violation()` Classification Helper** | No description of violation routing | New five-way classification routing (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) | [`symbolic_governor.py:227`](../../src/gateway/governance/symbolic_governor.py:227) | §4.2 (add explanation of violation routing) |
 | G3 | **FTRA Boundary Check Now Mandatory** | Gated by `CAGE_FTRA_BOUNDARY_ENABLED` flag (default false) | Runs unconditionally, flag removed per POAM-2026-030-B | [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/symbolic_governor.py) | §4.7 (update zero-trust controls description) |
-| G4 | **Reconciliation Replay Defense Now Implemented** | §7.2/§7.3 describe this as "open, unmitigated vulnerability" | Now implemented as opt-in via `CAGE_RECONCILIATION_REPLAY_DEFENSE` | [`cbf.py`](../../src/gateway/governance/cbf.py), [`reconciliation_worker.py`](../../src/compliance_bridge/reconciliation_worker.py) | §7.2/§7.3 (update to reflect implemented status) |
-| G5 | **Evidence Chain Blocking Gate Default Changed** | `EVIDENCE_CHAIN_BLOCKING` default unspecified or false | Now defaults to `"true"` | [`evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py) | Appendix C env-var table |
+| G4 | **Reconciliation Replay Defense Now Implemented** | §7.2/§7.3 describe this as "open, unmitigated vulnerability" | Now implemented as opt-in via `CAGE_RECONCILIATION_REPLAY_DEFENSE` | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py) | §7.2/§7.3 (update to reflect implemented status) |
+| G5 | **Evidence Chain Blocking Gate Default Changed** | `EVIDENCE_CHAIN_BLOCKING` default unspecified or false | Now defaults to `"true"` | [`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py) | Appendix C env-var table |
 
 ### G1: NARROW/PAUSE Governance Decisions
 
@@ -486,8 +486,8 @@ unmitigated vulnerability" has been implemented as an opt-in defense mechanism.
   by checking against a monotonic sequence counter and cryptographic binding
 
 **Evidence:**
-- [`cbf.py`](../../src/gateway/governance/cbf.py) — replay defense integration point
-- [`reconciliation_worker.py`](../../src/compliance_bridge/reconciliation_worker.py) —
+- [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) — replay defense integration point
+- [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py) —
   sequence validation logic
 
 **Paper impact:** §7.2 and §7.3 must be updated to reflect that this is now an
@@ -504,7 +504,7 @@ compliance evidence is durably recorded before the governance decision is return
 This trades latency for auditability.
 
 **Evidence:**
-- [`evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py) — default
+- [`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py) — default
   value changed in `os.getenv("EVIDENCE_CHAIN_BLOCKING", "true")`
 
 **Paper impact:** Appendix C environment variable table must reflect the new default.
@@ -520,7 +520,7 @@ mirrored in:
   if NARROW/PAUSE are modeled as distinct terminal/intermediate states
 - [`docs/technical-report/10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md) —
   reachable-state tables
-- [`CAGE_ARXIV.MD`](../../tmp/CAGE_ARXIV.md) — abstract decision-count claim, §4.4 proof,
+- ``CAGE_ARXIV.MD`` — abstract decision-count claim, §4.4 proof,
   Appendix A state enumeration
 
 **Specific verification required:**

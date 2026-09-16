@@ -18,7 +18,7 @@
 - `src/gateway/governance/authorization_claim_detector.py`: escalation_with_assertion_reversed pattern
 - `config/rails/actions.py`: output rail safe_indicators fix
 - `src/governed_financial_advisor/graph/nodes/safety_node.py`: deterministic amount=quantity×price
-- `src/governed_financial_advisor/governance/policy/trade_governance.rego`: fail-closed DENY for auth-claim+zero-amount
+- `src/cage_finance/opa/trade_governance.rego`: fail-closed DENY for auth-claim+zero-amount
 - `scripts/measure_paper_metrics.py`: retry logic, empty-body guard, crash-rate gate, error_type_counts logging
 
 ## Measurement command

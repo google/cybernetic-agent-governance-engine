@@ -87,7 +87,7 @@ This section documents the formal mathematical invariants enforced by the CAGE g
 
 ### 5.1. Control Barrier Functions (CBF)
 
-**Source:** [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py)
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py)
 
 The CBF enforces fiscal safety as a forward-invariance condition on the system state space.
 
@@ -125,7 +125,7 @@ A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation 
 
 ### 5.4. Causal Marginal Risk Boundary
 
-**Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py)
+**Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py)
 
 The causal gatekeeper applies a marginal risk boundary to prevent trades whose causal effect estimate pushes the system into an unsafe region:
 
@@ -156,7 +156,7 @@ Every request traversing the governance gateway must carry a valid HMAC-SHA256 r
 
 ### 5.6. Fiscal Limit Guard Parameters
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../../src/gateway/governance/fiscal_limit_guard.py)
+**Source:** [`src/gateway/governance/safety/resource_guard.py`](../../../src/gateway/governance/safety/resource_guard.py)
 
 The `FiscalLimitGuard` enforces a hard daily spending cap using Redis atomic operations:
 

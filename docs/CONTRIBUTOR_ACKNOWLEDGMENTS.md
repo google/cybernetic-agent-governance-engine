@@ -13,7 +13,7 @@ This document recognizes external contributors who have identified security issu
 #### PR #93: Zero Balance Masking Bug
 **Severity:** CRITICAL correctness issue
 
-Discovered that the truthiness test `if not balance_value` in [`src/compliance_bridge/reconciliation_worker.py`](../src/compliance_bridge/reconciliation_worker.py) treated legitimate `0.0` balances as missing data, causing drained accounts to receive fallback balances. This would have allowed the CBF barrier `h(x) = cash - min_cash` to clear trades against empty accounts, silently undermining POAM-2026-023 reconciliation enforcement.
+Discovered that the truthiness test `if not balance_value` in [`src/gateway/governance/reconciliation/daemon.py`](../src/gateway/governance/reconciliation/daemon.py) treated legitimate `0.0` balances as missing data, causing drained accounts to receive fallback balances. This would have allowed the CBF barrier `h(x) = cash - min_cash` to clear trades against empty accounts, silently undermining POAM-2026-023 reconciliation enforcement.
 
 **Fix:** Modified `GcsLedgerProvider` and `ObjectStoreLedgerProvider` to use explicit `is None` checks, ensuring accurate 0.0 balances are returned.
 
@@ -22,7 +22,7 @@ Discovered that the truthiness test `if not balance_value` in [`src/compliance_b
 #### PR #94: SPIFFE ID Keying Collision
 **Severity:** HIGH — permission confusion vulnerability
 
-Discovered that [`src/gateway/governance/opa.py`](../src/gateway/governance/opa.py) keyed the agent catalog on the last path segment of SPIFFE IDs instead of full identities. Two agents with SPIFFE IDs sharing a trailing segment (e.g., `spiffe://trust-domain-a/sa/trader-agent` and `spiffe://trust-domain-b/sa/trader-agent`) would collapse onto the same key, allowing the second entry to overwrite the first agent's permissions.
+Discovered that [`src/gateway/core/policy.py`](../src/gateway/core/policy.py) keyed the agent catalog on the last path segment of SPIFFE IDs instead of full identities. Two agents with SPIFFE IDs sharing a trailing segment (e.g., `spiffe://trust-domain-a/sa/trader-agent` and `spiffe://trust-domain-b/sa/trader-agent`) would collapse onto the same key, allowing the second entry to overwrite the first agent's permissions.
 
 **Attack Vector:** An attacker could register an agent with a carefully chosen SPIFFE ID suffix to inherit another agent's grants.
 
@@ -52,7 +52,7 @@ Discovered that `LUA_ATOMIC_CBF` read `safety:current_cash` directly instead of 
 
 **Remediation:** Created `_resolve_ground_truth_balance()` seam for KMS-verified balance resolution, modified `LUA_ATOMIC_CBF` to accept ground truth balance, added fence-epoch validation and local debit tracking on commit path.
 
-**Test Coverage:** 5 new test cases in [`tests/test_cbf_reconciliation.py`](../tests/test_cbf_reconciliation.py).
+**Test Coverage:** 5 new test cases in [`tests/test_reconciliation_daemon.py`](../tests/test_cbf_chaos.py).
 
 ---
 
@@ -77,7 +77,7 @@ CAGE was created as a concrete open-source implementation of the architecture in
 
 2. **Fail-Open Evidence Decoupling (Evidence Sufficiency):**
    Discovered that the audit sink was fail-open and uncoupled from routing seal issuance, meaning in-memory HMAC seals allowed tool actuation to proceed without durable evidence writes to the hash-chain.
-   - **Remediation:** Defaulted `EVIDENCE_CHAIN_BLOCKING=true`, updated [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) to block seal release on chain commit (`generate_seal_with_evidence()`), and added fast-fail startup preconditions in [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py).
+   - **Remediation:** Defaulted `EVIDENCE_CHAIN_BLOCKING=true`, updated [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) to block seal release on chain commit (`generate_seal_with_evidence()`), and added fast-fail startup preconditions in [`src/gateway/governance/evidence/stream.py`](../src/gateway/governance/evidence/stream.py).
 
 3. **Governor Automaton Proof Scoping (Mediation Coverage):**
    Identified that `model.py` verified single-request slot commutativity without modeling distributed cross-agent Redis contention or live actuator refinement.

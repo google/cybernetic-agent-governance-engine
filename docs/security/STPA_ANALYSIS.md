@@ -146,7 +146,7 @@ Agent B: GET remaining=$200k → OPA: ALLOW → executes $200k  ✓ (but cap is 
 
 ### Solution: Pre-Reservation
 
-`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) atomically reserves a spend slice in Redis **before** OPA evaluation using `WATCH/MULTI/EXEC` optimistic locking:
+`FiscalLimitGuard` (`src/gateway/governance/safety/resource_guard.py`) atomically reserves a spend slice in Redis **before** OPA evaluation using `WATCH/MULTI/EXEC` optimistic locking:
 
 ```
 Agent A: reserve($200k) → ATOMIC: OK, remaining=$0
@@ -186,11 +186,11 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 | `config/stpa_control_structure.yaml` | Single source of truth for all UCA definitions, conditions, and enforcement targets |
 | `src/gateway/governance/stpa_compiler.py` | Compiler CLI; ingests YAML; emits OPA/NeMo/Python/LangGraph artifacts |
 | `src/gateway/governance/generated_stpa_validator.py` | **Primary** auto-generated Python validator — `GeneratedSTPAValidator` with `validate()` entry-point and `_check_uca_*()` per-UCA methods (do not edit; re-run compiler to regenerate) |
-| ~~`src/gateway/governance/stpa_validator.py`~~ | **v3.0.1:** Removed (deprecated shim). Import `GeneratedSTPAValidator` directly from `generated_stpa_validator.py`. |
+| ~~`src/gateway/governance/generated_stpa_validator.py`~~ | **v3.0.1:** Removed (deprecated shim). Import `GeneratedSTPAValidator` directly from `generated_stpa_validator.py`. |
 | `config/opa/generated_stpa_policy.rego` | Auto-generated OPA Rego rules (do not edit) |
 | `config/rails/generated_stpa_rails.co` | Auto-generated NeMo Colang rails (do not edit) |
 | `src/gateway/governance/generated_saga_nodes.py` | Auto-generated LangGraph Saga nodes (do not edit) |
-| `src/gateway/governance/fiscal_limit_guard.py` | Multi-agent pre-reservation guard (Redis WATCH/MULTI/EXEC) |
+| `src/gateway/governance/safety/resource_guard.py` | Multi-agent pre-reservation guard (Redis WATCH/MULTI/EXEC) |
 | `src/governed_financial_advisor/graph/state.py` | `AgentState` with WAL ledger (`completed_transactions`) |
 | `src/governed_financial_advisor/utils/langfuse_utils.py` | `SagaCallbackHandler` OTel interceptor |
 | `src/gateway/governance/ontology.py` | Trading Knowledge Graph; `ISO_CONTROL_MAP` short-form alias |
@@ -243,7 +243,7 @@ All four predicates are also expressed as OPA Rego rules in `config/opa/generate
 
 ## 8. CBF Safety Guarantee
 
-The Control Barrier Function (CBF) in [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) provides a **formal mathematical safety guarantee** for the STPA control structure: it proves that the system state can never leave the safe set `S` as long as the CBF condition holds at every time step.
+The Control Barrier Function (CBF) in [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) provides a **formal mathematical safety guarantee** for the STPA control structure: it proves that the system state can never leave the safe set `S` as long as the CBF condition holds at every time step.
 
 ### 8.1 Safe Set
 

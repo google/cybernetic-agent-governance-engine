@@ -323,7 +323,7 @@ These were genuine defects, both fixed in this session (see Section 4):
 
 | Test                       | Failure Description                                       | Fix Applied   |
 | -------------------------- | --------------------------------------------------------- | ------------- |
-| `tests/test_consensus_engine.py` | `assert 'APPROVE' in result['reason']` — wrong case match | Fixed (§ 4.3) |
+| `tests/test_symbolic_governor.py` | `assert 'APPROVE' in result['reason']` — wrong case match | Fixed (§ 4.3) |
 | `tests/test_optimistic_graph.py` | `ValueError` unpacking 3-tuple edges as 2-tuple           | Fixed (§ 4.4) |
 
 ### 3.3 Setup Errors (8 errors)
@@ -385,7 +385,7 @@ import os
 
 ---
 
-### 4.3 Fixed Assertion Text Mismatch in [`tests/test_consensus_engine.py`](../../tests/test_consensus_engine.py)
+### 4.3 Fixed Assertion Text Mismatch in [`tests/test_symbolic_governor.py`](../../tests/test_symbolic_governor.py)
 
 **Problem:** The consensus engine returns approval decisions with the reason string in lowercase (e.g., `"approval granted by consensus"`). The assertion used uppercase `'APPROVE'`, which never matched.
 
@@ -482,7 +482,7 @@ cachetools>=5.5.0
 | --- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------ |
 | 1   | [`tests/test_opa_client.py`](../../tests/test_opa_client.py)                                                                     | Added `import respx`                                     | Missing import     |
 | 2   | [`tests/test_deployment_verification.py`](../../tests/test_deployment_verification.py)                                           | Added `import os`                                        | Missing import     |
-| 3   | [`tests/test_consensus_engine.py`](../../tests/test_consensus_engine.py)                                                         | Changed `'APPROVE'` to `'approval'` + `.lower()`         | Assertion bug      |
+| 3   | [`tests/test_symbolic_governor.py`](../../tests/test_symbolic_governor.py)                                                         | Changed `'APPROVE'` to `'approval'` + `.lower()`         | Assertion bug      |
 | 4   | [`tests/test_optimistic_graph.py`](../../tests/test_optimistic_graph.py)                                                         | Changed `src, dst` to `src, dst, *_` edge unpacking      | Compatibility bug  |
 | 5   | [`src/governed_financial_advisor/governance/policy_loader.py`](../../src/governed_financial_advisor/governance/policy_loader.py) | Added module-scope `from google.cloud import storage`    | Import scope bug   |
 | 6   | [`src/gateway/infrastructure/redis_client.py`](../../src/gateway/infrastructure/redis_client.py)                                 | Replaced naive `split(':')` with `urllib.parse.urlparse` | URL parsing bug    |
@@ -867,7 +867,7 @@ The following source files were confirmed present and operational during the 202
 | `src/gateway/governance/defer_queue.py` | DEFER state machine (Redis db=1) |
 | `src/gateway/governance/iso_control.py` | ISO 42001 control stamping (`stamp_iso_control()`) |
 | `src/gateway/governance/normative_provider.py` | External normative provider + adaptive FRIA gate |
-| ~~`src/gateway/governance/stpa_validator.py`~~ | **v3.0.0:** Removed (deprecated shim); use `generated_stpa_validator.py` |
+| ~~`src/gateway/governance/generated_stpa_validator.py`~~ | **v3.0.0:** Removed (deprecated shim); use `generated_stpa_validator.py` |
 | `src/gateway/governance/telemetry_provider.py` | Telemetry provider for causal gatekeeper |
 | `src/gateway/governance/schemas/thresholds.py` | `GovernanceThresholds` Pydantic model |
 | `src/gateway/slm/mock_slm.py` | Mock SLM for testing (legacy SLM tier slot fully retired) |

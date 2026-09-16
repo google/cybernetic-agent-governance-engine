@@ -1746,7 +1746,7 @@ class NormativeProvider(Protocol):
 
 **Fail-closed semantics:** Network timeouts, HTTP errors, and parse failures return `admitted=False` with structured findings (`code="ENDPOINT_ERROR"`), never silent `admitted=True`.
 
-**Example: Provider 01 Implementation** ([`src/integrations/provider_01/adapter.py`](../../src/integrations/provider_01/adapter.py)):
+**Example: Provider 01 Implementation** ([`src/integrations/provider_01/provider.py`](../../src/integrations/provider_01/provider.py)):
 
 ```python
 class Provider01NormativeProvider:

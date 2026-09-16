@@ -78,8 +78,8 @@ All components listed below are in scope for AI 600-1. Components marked ★ car
 
 | Component | File | AI 600-1 Risk Category | Posture |
 |---|---|---|---|
-| ConsensusEngine ★ | `src/gateway/governance/consensus.py` | Confabulation, Human-AI Config | BOTH |
-| CausalGatekeeper ★ | `src/gateway/governance/causal_gatekeeper.py` | Information Security, Data Poisoning | BOTH |
+| ConsensusEngine ★ | `src/gateway/governance/consensus/engine.py` | Confabulation, Human-AI Config | BOTH |
+| CausalGatekeeper ★ | `src/gateway/governance/causal/gatekeeper.py` | Information Security, Data Poisoning | BOTH |
 | NeMo Guardrails | `src/gateway/governance/nemo/` | Harmful Bias, Obscene Content | BOTH |
 | Presidio PII Sanitizer | `src/gateway/governance/pii_sanitizer.py` | Data Privacy | BOTH |
 | OPA Policy Engine | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | Value Chain | BOTH |
@@ -318,7 +318,7 @@ no Langfuse scorer that records confabulation events for audit purposes.
        }
    ```
 
-2. Integrate `confabulation_scorer` into `src/gateway/governance/consensus.py`:
+2. Integrate `confabulation_scorer` into `src/gateway/governance/consensus/engine.py`:
    - After confidence check, emit a `ConfabulationEvent` to Langfuse via
      `src/governed_financial_advisor/utils/langfuse_utils.py`
    - Log blocked events to `src/gateway/governance/uca_logger.py`
@@ -435,7 +435,7 @@ manifests; AgentSight provenance chain active in prod.
 **POAM**: AI600-003 | **AI 600-1 ref**: §2.3 Data Poisoning / Prompt Injection
 **Controls**: `CausalGatekeeper`, `CTRL_WAL_002`
 
-**Current state**: `src/gateway/governance/causal_gatekeeper.py` performs causal
+**Current state**: `src/gateway/governance/causal/gatekeeper.py` performs causal
 reasoning checks but does not have a dedicated prompt injection detection layer.
 The Aho-Corasick text filter (`src/gateway/governance/text_filter.py`) catches
 keyword-based attacks but not semantic injection patterns.
@@ -483,7 +483,7 @@ keyword-based attacks but not semantic injection patterns.
        return InjectionResult(detected=False, pattern_matched=None, confidence=0.0)
    ```
 
-2. Integrate `detect_prompt_injection` into `src/gateway/governance/causal_gatekeeper.py`
+2. Integrate `detect_prompt_injection` into `src/gateway/governance/causal/gatekeeper.py`
    as a pre-check before causal reasoning. If injection detected, short-circuit and
    return a `BLOCKED` state with the pattern logged to `uca_logger`.
 
@@ -521,7 +521,7 @@ keyword-based attacks but not semantic injection patterns.
 
 **Prod tasks**:
 
-1. Deploy updated `src/gateway/governance/causal_gatekeeper.py` via Cloud Build:
+1. Deploy updated `src/gateway/governance/causal/gatekeeper.py` via Cloud Build:
    ```bash
    gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml \
      --substitutions _ENV=prod
@@ -578,7 +578,7 @@ keyword-based attacks but not semantic injection patterns.
 **POAM**: AI600-004 | **AI 600-1 ref**: §2.5 Human-AI Configuration
 **Controls**: `ConsensusEngine`, consensus threshold USD 10,000
 
-**Current state**: `ConsensusEngine` (`src/gateway/governance/consensus.py`) enforces
+**Current state**: `ConsensusEngine` (`src/gateway/governance/consensus/engine.py`) enforces
 the USD 10,000 consensus threshold from `config/thresholds/US_FED_BASELINE.json`.
 However, there is no formal human-in-the-loop (HITL) escalation path — when the
 threshold is exceeded, the request is blocked but not routed to a human reviewer.
@@ -627,7 +627,7 @@ threshold is exceeded, the request is blocked but not routed to a human reviewer
        }
    ```
 
-2. Integrate `hitl_escalator` into `src/gateway/governance/consensus.py`:
+2. Integrate `hitl_escalator` into `src/gateway/governance/consensus/engine.py`:
    - When `amount_usd > 10000`, call `escalate_to_human` with
      `reason=EscalationReason.CONSENSUS_THRESHOLD`
    - Write escalation record to `defer_queue`
@@ -781,7 +781,7 @@ layer propagate to the governed system. This requires a dedicated mitigation.
 
 **Dev tasks**:
 
-1. Add a `governance_layer_confidence_check` to `src/gateway/governance/consensus.py`:
+1. Add a `governance_layer_confidence_check` to `src/gateway/governance/consensus/engine.py`:
    - The ConsensusEngine's own LLM call must also pass the `CONFIDENCE_MIN_SCORE`
      threshold (currently only the advisor's LLM call is checked)
    - If the governance LLM call has `confidence < 0.95`, escalate to HITL
@@ -1229,7 +1229,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 **Prod tasks**:
 
-1. Deploy updated `src/gateway/governance/consensus.py` and new
+1. Deploy updated `src/gateway/governance/consensus/engine.py` and new
    `src/gateway/governance/hitl_escalator.py` via Cloud Build.
 
 2. Configure `defer_queue` to route escalations to a Pub/Sub topic

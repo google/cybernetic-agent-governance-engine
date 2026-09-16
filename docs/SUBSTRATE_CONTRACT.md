@@ -164,10 +164,10 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 | **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
 | Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
 | Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
-| Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/cbf.py), OPA `system_authz.rego` |
-| Tier 3 | Fiscal Limit Pre-Reservation | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
-| Tier 5 | Multi-Agent Consensus | [`consensus.py`](../src/gateway/governance/consensus.py) |
-| Tier 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
+| Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/safety/cbf_engine.py), OPA `system_authz.rego` |
+| Tier 3 | Fiscal Limit Pre-Reservation | [`fiscal_limit_guard.py`](../src/gateway/governance/safety/resource_guard.py) |
+| Tier 5 | Multi-Agent Consensus | [`consensus.py`](../src/gateway/governance/consensus/engine.py) |
+| Tier 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
 | Tier 6b | Adaptive FRIA Enforcement | [`normative_provider.py`](../src/gateway/governance/normative_provider.py) |
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules invoked outside `_run_checks()` — PII sanitization runs on audit records inside `uca_logger.py`, and confabulation scoring is a Langfuse observability metric.

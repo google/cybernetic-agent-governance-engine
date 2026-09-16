@@ -27,7 +27,7 @@ perform the following actions on behalf of authenticated users:
 The authorized action space is enforced at three independent layers:
 
 1. **OPA Policy Engine** (`src/gateway/governance/langgraph_harness/opa_node_factory.py`):
-   Evaluates every tool call against `src/governed_financial_advisor/governance/policy/trade_governance.rego`
+   Evaluates every tool call against `src/cage_finance/opa/trade_governance.rego`
    (package `trade.governance`). Any tool not explicitly listed in the `allowed_roles` set is
    denied with a `GovernanceError`. System-level authorization is enforced by `deployment/system_authz.rego`.
 
@@ -36,7 +36,7 @@ The authorized action space is enforced at three independent layers:
    (`GOVERNANCE_SALT` key, ≥64 chars). Downstream actuators MUST verify the seal
    before executing any action. Seal TTL: 30 seconds (`GOVERNANCE_SEAL_TTL_S`).
 
-3. **CausalGatekeeper** (`src/gateway/governance/causal_gatekeeper.py`):
+3. **CausalGatekeeper** (`src/gateway/governance/causal/gatekeeper.py`):
    Performs DoWhy causal inference + placebo refutation before any high-stakes action.
    Fails closed when the world-model is untrustworthy (p-value < 0.05 or placebo
    effect > 0.2).
@@ -50,7 +50,7 @@ The authorized action space is enforced at three independent layers:
 Per `config/governance_thresholds.json` → `consensus.threshold_usd`:
 
 - **Threshold**: USD 10,000
-- **Enforcement**: `ConsensusEngine` (`src/gateway/governance/consensus.py`)
+- **Enforcement**: `ConsensusEngine` (`src/gateway/governance/consensus/engine.py`)
 - **Behavior**: Any advisory action involving amounts > USD 10,000 triggers a
   two-critic consensus check (Risk Manager + Compliance Officer personas on
   distinct model backends). A split vote or unanimous ERROR escalates to HITL.
@@ -150,12 +150,12 @@ of unverified inter-agent trust propagation.
 | Mechanism | File | NIST AI 600-1 Control |
 |---|---|---|
 | OPA policy evaluation | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | §2.5.1 |
-| Trade governance policy | `src/governed_financial_advisor/governance/policy/trade_governance.rego` | §2.5.1 |
+| Trade governance policy | `src/cage_finance/opa/trade_governance.rego` | §2.5.1 |
 | Routing seal verification | `src/gateway/governance/routing_seal.py` | §2.5.4 |
-| CausalGatekeeper | `src/gateway/governance/causal_gatekeeper.py` | §2.3 |
-| ConsensusEngine threshold | `src/gateway/governance/consensus.py` | §2.5.2 |
+| CausalGatekeeper | `src/gateway/governance/causal/gatekeeper.py` | §2.3 |
+| ConsensusEngine threshold | `src/gateway/governance/consensus/engine.py` | §2.5.2 |
 | HITL escalator | `src/gateway/governance/hitl_escalator.py` | §2.5.2 |
-| Control Barrier Function | `src/gateway/governance/cbf.py` | §2.5.4 |
+| Control Barrier Function | `src/gateway/governance/safety/cbf_engine.py` | §2.5.4 |
 | Confabulation scorer | `src/gateway/governance/confabulation_scorer.py` | §2.1 |
 | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` | §2.3 |
 | NeMo CBRN rails | `src/gateway/governance/nemo/colang/cbrn_rails.co` | §2.6 |

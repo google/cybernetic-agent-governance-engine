@@ -107,7 +107,7 @@ The following components are essential infrastructure but are **not** numbered g
 | `junior` | $5,000      | $5,001 – $10,000      | > $10,000    |
 | `senior` | $500,000    | $500,001 – $1,000,000 | > $1,000,000 |
 
-- **Canonical policy:** `src/governed_financial_advisor/governance/policy/trade_governance.rego` (package `trade.governance`).
+- **Canonical policy:** `src/cage_finance/opa/trade_governance.rego` (package `trade.governance`).
 - **System authorization:** `deployment/system_authz.rego` — enforces SR 26-2 §IV.B `confidence_sufficient ≥ 0.95` for agentic trade execution (OPA is sole enforcer; Python check is a fast-fail pre-check only).
 - **Infrastructure:** OPA runs as a standalone service in the `default` namespace; the gateway calls it via the `OPAClient` with a `CircuitBreaker` (5 failures → 30s open-circuit; DENY-on-open).
 
@@ -188,7 +188,7 @@ where γ = 0.5 (from `config/governance_thresholds.json` → `cbf.gamma`), `min_
 
 > **Implementation note (intra-window double-spend prevention):** CBF tracks `_local_debits` locally; `effective_balance = snapshot_balance - _local_debits` is used for all checks to prevent double-spend within the KMS snapshot refresh window. Call `reset_local_debits()` on each successful reconciliation cycle.
 
-> **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+> **Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)
 
 ### Confabulation Risk Score — Langfuse Observability Metric (not a pipeline tier)
 
@@ -210,7 +210,7 @@ The causal gatekeeper blocks a trade when the estimated marginal effect of `trad
 
 Additionally, the Placebo Treatment Refuter (50 simulations) must confirm the world-model is trustworthy: if the placebo still detects a significant effect (p < 0.05 **or** |effect| > 0.2), the model is deemed unreliable and the trade is blocked.
 
-> **Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
+> **Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)
 
 ### FRIA Zone Boundaries — Tier 6b
 

@@ -159,7 +159,7 @@ created a hard dependency on GKE and GCS-native APIs.
 
 **Decision:** Replace GCS Fuse CSI with vLLM's native `--load-format tensorizer`
 pointed at MinIO (in-cluster S3-compatible store, `governance-stack` namespace).
-A one-time GPU Job ([`deployment/k8s/tensorize-job.yaml`](../k8s/tensorize-job.yaml))
+A one-time GPU Job (``deployment/k8s/tensorize-job.yaml``)
 serialises HuggingFace weights to TensorSerializer format and uploads them to the
 MinIO `vllm-models` bucket.
 
@@ -178,7 +178,7 @@ kubectl wait --for=condition=complete job/tensorize-weights \
 - MinIO must be operational before vLLM pods start
 
 > **Note:** GCS (`gs://`) is the **primary** model artifact store for initial
-> upload. See [`deployment/scripts/upload_to_gcs.py`](../scripts/upload_to_gcs.py)
+> upload. See ``deployment/scripts/upload_to_gcs.py``
 > for artifact upload. MinIO is used for in-cluster vLLM streaming and
 > Langfuse event storage.
 
@@ -195,7 +195,7 @@ portability across cloud providers.
 **Decision:** Replace proprietary extensions with portable equivalents:
 
 - `gke-l7-gxlb` GatewayClass → `nginx`
-  ([`deployment/k8s/inference-gateway/gateway.yaml`](../k8s/inference-gateway/gateway.yaml))
+  (``deployment/k8s/inference-gateway/gateway.yaml``)
 - `kubernetes.io/ingress.class: gce` → `nginx` in AgentSight ingress
 - `cloud.google.com/gke-accelerator: nvidia-l4` node selectors →
   `nvidia.com/gpu.product: NVIDIA-L4` across all vLLM manifests

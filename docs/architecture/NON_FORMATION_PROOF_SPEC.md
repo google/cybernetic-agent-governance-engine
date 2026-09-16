@@ -16,7 +16,7 @@
 ## 1. Framing: Non-Formation vs. Rollback
 
 CAGE already implements **rollback** correctly — e.g.
-[`ControlBarrierFunction.rollback_state()`](../../src/gateway/governance/cbf.py:1230)
+[`ControlBarrierFunction.rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py:1230)
 compensates a committed Redis balance debit when a downstream tier fails
 *after* the CBF commit succeeded (Saga pattern, §7.3 of the CAGE paper). That is
 "X happened, then X was undone."
@@ -196,7 +196,7 @@ the evidence stream is itself the "no-bind" evidence (§6.5, §4 proof element
 
 ### 2.10 `cbf.py` — the atomicity boundary the receipt must reference
 
-[`atomic_verify_and_commit()`](../../src/gateway/governance/cbf.py:1230)
+[`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1230)
 collapses the CBF safety check and the Redis balance debit into a single Lua
 script — eliminating the TOCTOU window between "checked safe" and
 "committed". For non-formation to hold, the receipt must record which side
@@ -502,7 +502,7 @@ here for readability is, in the actual wire format, the envelope's own
   - `FORMED_AND_ROLLED_BACK` — refusal occurred in Phase 2 *after*
     `atomic_verify_and_commit()` succeeded but a later tier (e.g. Fiscal)
     failed, triggering
-    [`rollback_state()`](../../src/gateway/governance/cbf.py:1230). The
+    [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py:1230). The
     `rollback_reference` field then points to the Redis
     `audit:state_ledger` entry proving the compensating transaction
     completed (§2.10).
@@ -581,7 +581,7 @@ here for readability is, in the actual wire format, the envelope's own
   prove a seal **exists and is valid**. There is no existing negative-proof
   mechanism. The new `no_bind_proof` is built by querying the same
   hash-chained evidence stream
-  ([`evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py))
+  ([`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py))
   that `routing_seal.py`'s
   [evidence-binding call](../../src/gateway/governance/routing_seal.py:334)
   writes to on **successful** seal issuance — for a refusal, the equivalent
@@ -682,7 +682,7 @@ exact convention already documented for provenance records
 (`provenance/<date>/<trace_id>.json`, see
 [`provenance_chain.py:22`](../../src/gateway/governance/provenance_chain.py:22))
 and evidence-stream batches
-([`evidence_stream.py`'s `_upload_to_gcs()`](../../src/compliance_bridge/evidence_stream.py:1282)).
+([`evidence_stream.py`'s `_upload_to_gcs()`](../../src/gateway/governance/evidence/stream.py:1282)).
 No new storage backend is introduced — this is a new object-key prefix
 within the existing `src/compliance_bridge/storage.py` GCS/S3 abstraction
 ([`upload_artifact()`](../../src/compliance_bridge/storage.py:281)), giving
@@ -779,7 +779,7 @@ artifacts.
 | Signing | Non-repudiation — CAGE application code cannot forge a valid signature | Asymmetric HSM signing, private key never exported ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py:391)) |
 | Key distribution | Any external party can independently verify without trusting CAGE's runtime | Public JWKS endpoint ([`jwks.py`](../../src/gateway/governance/jwks.py:363)) |
 | Persistence | Immutability — receipt cannot be altered or deleted post-write | CMEK-encrypted GCS WORM bucket ([`storage.py`](../../src/compliance_bridge/storage.py:281), [`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:29)) |
-| No-bind evidence | Absence of a seal is itself cryptographically provable | Hash-chained append-only evidence stream range-scan ([`evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py)) |
+| No-bind evidence | Absence of a seal is itself cryptographically provable | Hash-chained append-only evidence stream range-scan ([`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py)) |
 | Rule provenance | Rule value at refusal time is frozen and independently auditable | Content-addressed `rule_digest` decoupled from receipt signature ([`constants.py`](../../src/gateway/governance/constants.py:253)) |
 | Containment | System-wide absence of alternate execution routes | Static BFS exhaustive proof, referenced by digest ([`proof/model.py`](../../proof/model.py:42)) |
 

@@ -779,7 +779,7 @@ GROUP BY bucket_5m, chain_id, event_type, control_id, schema_version;
 mechanism is a `prometheus` handler bound to parameterised queries in
 `config.xml`, scraped by the existing `ServiceMonitor` pattern used elsewhere in
 CAGE (see
-[`deployment/k8s/compliance-bridge-servicemonitor.yaml`](../../deployment/k8s/compliance-bridge-servicemonitor.yaml)):
+``deployment/k8s/compliance-bridge-servicemonitor.yaml``):
 
 ```xml
 <clickhouse>
@@ -1119,7 +1119,7 @@ alert from `system.session_log`.
 
 The sink is a new module,
 `src/compliance_bridge/clickhouse_sink.py`, consumed by
-[`evidence_consumer.py`](../../src/compliance_bridge/evidence_consumer.py). This
+[`evidence_consumer.py`](../../src/compliance_bridge/main.py). This
 respects the CAGE three-layer split:
 
 - **Layer 1 (`src/gateway/`) is untouched.** The kernel publishes to the event
@@ -1284,7 +1284,7 @@ round-trip in this path is a defect.
 ### 8.7 PII and residency
 
 Records are already scrubbed by
-[`PIIScrubber.scrub()`](../../src/compliance_bridge/pii_scrubber.py) *before*
+[`PIIScrubber.scrub()`](../../src/gateway/governance/pii_sanitizer.py) *before*
 they enter the evidence stream, so the sink inherits a clean payload and
 performs **no** scrubbing of its own — re-scrubbing would alter the hashed bytes
 and destroy verifiability. ClickHouse is deployed per-jurisdiction in the same
@@ -1375,7 +1375,7 @@ additive evolution is compatible with WORM while `MODIFY COLUMN` is not.
 **The erasure trade-off, stated plainly:** immutability and granular erasure are
 fundamentally in tension. This design chooses immutability and discharges the
 erasure obligation *upstream* by never admitting personal data to the store. That
-choice only holds if [`PIIScrubber`](../../src/compliance_bridge/pii_scrubber.py)
+choice only holds if [`PIIScrubber`](../../src/gateway/governance/pii_sanitizer.py)
 holds; scrubber coverage is therefore a load-bearing GDPR control, not a
 best-effort nicety.
 
@@ -1557,8 +1557,8 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov \
 
 ### Code
 - [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py) — schema, `_link_hash()`, `verify_record()`
-- [`src/compliance_bridge/evidence_consumer.py`](../../src/compliance_bridge/evidence_consumer.py) — consumer to extend with the sink
-- [`src/compliance_bridge/pii_scrubber.py`](../../src/compliance_bridge/pii_scrubber.py) — upstream PII control
+- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py) — consumer to extend with the sink
+- [`src/gateway/governance/pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) — upstream PII control
 - [`src/compliance_bridge/metrics.py`](../../src/compliance_bridge/metrics.py) — Prometheus registry
 - [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql) — the DDL artifact
 

@@ -156,7 +156,7 @@ for automated validation workflow.
 
 ## Cloud Build Configuration Files
 
-All Cloud Build configs live under [`deployment/docker/`](../docker/).
+All Cloud Build configs live under ``deployment/docker/``.
 `scripts/build_images.sh` generates ephemeral Cloud Build configs for most
 services and submits them in parallel; the pre-built configs below are used for
 direct `gcloud builds submit` invocations.
@@ -220,7 +220,7 @@ Background deployments write logs to `/tmp/cage-deploy-*.log` and their PIDs to
   `scripts/gen_tfvars.py`) — never in committed `.tf` files.
 - Active IaC lives under `infra/targets/`. The removed `deployment/terraform/`
   directory is historical reference only (see
-  [`deployment/TERRAFORM_MIGRATION.md`](../TERRAFORM_MIGRATION.md)).
+  ``deployment/TERRAFORM_MIGRATION.md``).
 
 ### Terraform state backends
 

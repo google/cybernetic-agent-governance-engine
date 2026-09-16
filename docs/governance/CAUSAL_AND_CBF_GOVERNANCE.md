@@ -10,7 +10,7 @@ These features bridge the gap between probabilistic AI output and deterministic 
 
 ## 1. Structural Causal Models (SCM) & Causal Gatekeeper
 
-The Causal Gatekeeper (`src/gateway/governance/causal_gatekeeper.py`) acts as the "Lock" on the CAGE system. It uses Microsoft DoWhy's causal inference framework to validate the integrity of the system's "world-model" before allowing any high-stakes actions (such as `execute_trade`).
+The Causal Gatekeeper (`src/gateway/governance/causal/gatekeeper.py`) acts as the "Lock" on the CAGE system. It uses Microsoft DoWhy's causal inference framework to validate the integrity of the system's "world-model" before allowing any high-stakes actions (such as `execute_trade`).
 
 ### Purpose
 Generative AI models can hallucinate or degrade in unstable environments. The Gatekeeper ensures that the causal assumptions underpinning an action are sound. If a placebo refutation detects a spurious or hallucinated effect, the Gatekeeper blocks the trade, assuming the underlying reasoning is flawed.
@@ -55,7 +55,7 @@ graph TD
 
 ### Named Constants
 
-The following module-level constants in [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) define the three conditions that trigger a **CAUSAL LOCK** (i.e. `causal_safety_check()` returns `False`, blocking the trade):
+The following module-level constants in [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) define the three conditions that trigger a **CAUSAL LOCK** (i.e. `causal_safety_check()` returns `False`, blocking the trade):
 
 | Constant | Default | Override |
 |----------|---------|----------|
@@ -111,9 +111,9 @@ When `CAUSAL_GATEKEEPER_STRICT_MODE=true`, missing trace_id fields cause immedia
 
 ## 2. Control Barrier Functions (CBF)
 
-The CBF layer (`src/gateway/governance/cbf.py`) provides a discrete-time, mathematically rigorous enforcement of safety limits (like budget caps and drawdown constraints), guaranteeing the agent cannot enter an unsafe state.
+The CBF layer (`src/gateway/governance/safety/cbf_engine.py`) provides a discrete-time, mathematically rigorous enforcement of safety limits (like budget caps and drawdown constraints), guaranteeing the agent cannot enter an unsafe state.
 
-> **v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` and `safety_filter` directly from [`cbf.py`](../../src/gateway/governance/cbf.py), and `ac_keyword_scan` from [`text_filter.py`](../../src/gateway/governance/text_filter.py).
+> **v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` and `safety_filter` directly from [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), and `ac_keyword_scan` from [`text_filter.py`](../../src/gateway/governance/text_filter.py).
 
 ### Purpose
 To provide deterministic, hard boundary guarantees on continuous state variables, ensuring that subsequent states resulting from an agent's actions remain within the defined "safe set."
@@ -159,7 +159,7 @@ where:
 
 `ControlBarrierFunction._read_cbf_state_atomic()` reads the cash balance in the following priority order:
 
-1. **`reconciliation:verified_balance`** — written by the isolated reconciliation-worker daemon (`src/compliance_bridge/reconciliation_worker.py`), KMS-signed, TTL-gated. When present and KMS-signature-valid, this is the authoritative balance (source: `"reconciled"`).
+1. **`reconciliation:verified_balance`** — written by the isolated reconciliation-worker daemon (`src/gateway/governance/reconciliation/daemon.py`), KMS-signed, TTL-gated. When present and KMS-signature-valid, this is the authoritative balance (source: `"reconciled"`).
 2. **`safety:current_cash`** — self-reported by the execution system. Used only as fallback when the reconciled balance is absent, unsigned in production, or has an invalid KMS signature. A `CRITICAL` audit log (`CBF_USING_SELF_REPORTED_BALANCE`) is emitted so the fallback is always visible in Langfuse and SIEM.
 
 In production, `RECONCILIATION_PROVIDER=stub` raises `RuntimeError` at startup (enforced by `symbolic_governor.py` CAGE-SEC-007 guard). Set `RECONCILIATION_PROVIDER` to `gcs`, `s3` (alias: `object-store`), `plaid`, or `anchorage` to enable external ground truth.
@@ -168,7 +168,7 @@ Every `verify_action()` decision is stamped with a `safety.balance.source` OTel 
 
 ### Lua Atomic Script (`atomic_verify_and_commit`)
 
-For the highest-assurance path, [`cbf.py`](../../src/gateway/governance/cbf.py) provides `atomic_verify_and_commit()`, which collapses the CBF check and state commit into a **single Redis Lua hop** (`LUA_ATOMIC_CBF`), eliminating the TOCTOU window between `verify_action()` (read-only governance check) and `update_state()` (write, MCP tool handler):
+For the highest-assurance path, [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) provides `atomic_verify_and_commit()`, which collapses the CBF check and state commit into a **single Redis Lua hop** (`LUA_ATOMIC_CBF`), eliminating the TOCTOU window between `verify_action()` (read-only governance check) and `update_state()` (write, MCP tool handler):
 
 ```lua
 -- KEYS[1]: safety:current_cash   KEYS[2]: audit:state_ledger
@@ -202,7 +202,7 @@ CBF (`atomic_verify_and_commit()`) and OPA run **concurrently** via `asyncio.gat
 
 ## 3. FiscalLimitGuard — Saga-Atomicity Gap Remediation
 
-`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit when a downstream tier fails after Tier 3a commitment.
+`FiscalLimitGuard` (`src/gateway/governance/safety/resource_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit when a downstream tier fails after Tier 3a commitment.
 
 ### Key Implementation Details
 
@@ -269,7 +269,7 @@ confidence < CONFIDENCE_THRESHOLD  # i.e. risk_score > 0.05
 
 ## 5. Consensus Protocol
 
-**Source:** [`src/gateway/governance/consensus.py`](../../src/gateway/governance/consensus.py)
+**Source:** [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)
 
 The Consensus Engine implements a heterogeneous multi-model critic check for high-stakes financial decisions. It satisfies **AARM-V9** (Privilege Escalation neutralization) by ensuring that a single model cannot validate its own compliance decisions.
 

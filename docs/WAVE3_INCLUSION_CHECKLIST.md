@@ -2,7 +2,7 @@
 
 > **Purpose:** This checklist supersedes the "defer to v3.1.0/v4.0.0" default
 > outcome for CR-1, CR-2, and CR-3 documented in
-> [`docs/MAJOR_VERSION_CLEANUP_PLAN.md`](MAJOR_VERSION_CLEANUP_PLAN.md) §2.3,
+> ``docs/MAJOR_VERSION_CLEANUP_PLAN.md`` §2.3,
 > §3 (Wave 3), and §6 (Wave 3 Implementation Checklist), and in
 > [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.1]` entry ("Deprecated" section,
 > which currently lists all three items as deferred). It documents the
@@ -51,7 +51,7 @@ unaffected and still apply per [`AGENTS.md`](../AGENTS.md) — only the
 CR-1's original gate was a **data-migration completeness precondition**: "a
 documented, executed migration of all production evidence chains from v1.0 →
 v1.1 ... must complete and be verified *before* the v1.0 code path is
-deleted" ([`MAJOR_VERSION_CLEANUP_PLAN.md:116`](MAJOR_VERSION_CLEANUP_PLAN.md:116)).
+deleted" (``MAJOR_VERSION_CLEANUP_PLAN.md:116``).
 
 Because CAGE has never been deployed to production, **no production evidence
 chains exist and none have ever been persisted outside of test fixtures and
@@ -59,9 +59,9 @@ local/dev Redis instances.** The data-migration gate is therefore vacuously
 satisfied — there is nothing to migrate. This is confirmed by:
 - No CLI/operational tooling for exporting or auditing live evidence chains
   exists outside the `--audit-schema-versions` placeholder flagged as
-  "illustrative" in [`MAJOR_VERSION_CLEANUP_PLAN.md:415`](MAJOR_VERSION_CLEANUP_PLAN.md:415).
+  "illustrative" in ``MAJOR_VERSION_CLEANUP_PLAN.md:415``.
 - All `schema_version == "1.0"` exercise paths found in the codebase are
-  confined to [`tests/test_dual_schema_verification.py`](../tests/test_dual_schema_verification.py:1)
+  confined to ``tests/test_dual_schema_verification.py``
   fixtures constructing synthetic v1.0 dicts in-memory — see
   [Prerequisites](#prerequisites) below for the exact verification method.
 
@@ -82,7 +82,7 @@ into the main `v3.0.1` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
 
 ## CR-1: Evidence Stream Schema Consolidation
 
-**Source:** [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py)
+**Source:** [`src/gateway/governance/evidence/stream.py`](../src/gateway/governance/evidence/stream.py)
 
 ### Prerequisites
 
@@ -94,10 +94,10 @@ into the main `v3.0.1` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
       a real evidence-chain export or audit query having been run
 - [x] Document v1.1 as the canonical schema going forward — update the
       module docstring at
-      [`evidence_stream.py:15-73`](../src/compliance_bridge/evidence_stream.py:15)
+      [`evidence_stream.py:15-73`](../src/gateway/governance/evidence/stream.py:15)
       to state v1.1 is the only supported live-write schema
 - [x] Confirm the genesis-hash/cutover-seeding logic
-      ([`get_last_v1_0_hash()`](../src/compliance_bridge/evidence_stream.py:683))
+      ([`get_last_v1_0_hash()`](../src/gateway/governance/evidence/stream.py:683))
       is retained as a standalone archival utility
 
 ### Code Changes Required
@@ -105,23 +105,23 @@ into the main `v3.0.1` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
 Remove the v1.0-specific branches while preserving the v1.1 hashing/verification
 path as the sole live-write mechanism:
 
-- [x] [`_link_hash_versioned()`](../src/compliance_bridge/evidence_stream.py:415-479) —
+- [x] [`_link_hash_versioned()`](../src/gateway/governance/evidence/stream.py:415-479) —
       removed the `if schema_version == "1.0":` branch;
       collapsed to always compute the v1.1 (sparse-inclusion) header
-- [x] [`_detect_schema_version()`](../src/compliance_bridge/evidence_stream.py:482-502) —
+- [x] [`_detect_schema_version()`](../src/gateway/governance/evidence/stream.py:482-502) —
       simplified: removed `"1.0"` fallback branch and treat records missing
       explicit markers as invalid
-- [x] [`verify_record()`](../src/compliance_bridge/evidence_stream.py:505-611) —
+- [x] [`verify_record()`](../src/gateway/governance/evidence/stream.py:505-611) —
       removed dual-path branching; streamlined verification
-- [x] [`EvidenceRecord.from_dict()`](../src/compliance_bridge/evidence_stream.py:232-258) —
+- [x] [`EvidenceRecord.from_dict()`](../src/gateway/governance/evidence/stream.py:232-258) —
       standardized on `"1.1"`
-- [x] [`migrate_record_1_0_to_1_1()`](../src/compliance_bridge/evidence_stream.py:614-680) —
+- [x] [`migrate_record_1_0_to_1_1()`](../src/gateway/governance/evidence/stream.py:614-680) —
       retained in archival/legacy section
 - [x] `_SCHEMA_1_0` constant — retained for archival migration utilities
 
 ### Migration Path for Test Fixtures Using v1.0
 
-- [x] [`tests/test_dual_schema_verification.py`](../tests/test_dual_schema_verification.py:1) —
+- [x] ``tests/test_dual_schema_verification.py`` —
       this file's entire purpose is dual-schema testing. Reclassified its
       v1.0-specific test classes (`TestEvidenceRecordDataclass`'s v1.0
       detection tests, `TestDualSchemaVerifyRecord`'s v1.0 verify tests,
@@ -158,7 +158,7 @@ path as the sole live-write mechanism:
       Stream v1.0 schema support marked for removal in v4.0.0 (CR-1
       deferred)" from **Deprecated** to **Breaking Changes**, since it is now
       shipping in this release
-- [x] Update [`docs/MIGRATION_GUIDE_v3.md`](MIGRATION_GUIDE_v3.md) step 4
+- [x] Update ``docs/MIGRATION_GUIDE_v3.md`` step 4
       ("If you operate a live evidence chain...") to reflect that CR-1 has
       shipped, not deferred
 
@@ -198,7 +198,7 @@ path as the sole live-write mechanism:
 
 ## CR-3: CBF `update_state()` Resolution
 
-**Source:** [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py) —
+**Source:** [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) —
 `update_state()`, `atomic_verify_and_commit()`.
 
 ### Recommendation
@@ -227,7 +227,7 @@ path as the sole live-write mechanism:
 
 - [x] [`docs/BREAKING_CHANGES_v3.md:65,83`](BREAKING_CHANGES_v3.md:65) — definitive
       documentation that `update_state()` is renamed to `_update_state_unsafe()`
-- [x] [`docs/MIGRATION_GUIDE_v3.md`](MIGRATION_GUIDE_v3.md) — updated
+- [x] ``docs/MIGRATION_GUIDE_v3.md`` — updated
       documentation for `atomic_verify_and_commit()`
 - [x] [`CHANGELOG.md`](../CHANGELOG.md) — moved to **Breaking Changes**
 - [x] Recorded design decision in architecture & migration docs
@@ -238,7 +238,7 @@ path as the sole live-write mechanism:
 
 For a reference implementation, this replaces the original
 Compliance/Security/regulatory-owner sign-off gates in
-[`MAJOR_VERSION_CLEANUP_PLAN.md:432-437`](MAJOR_VERSION_CLEANUP_PLAN.md:432):
+``MAJOR_VERSION_CLEANUP_PLAN.md:432-437``:
 
 - [x] **Technical lead sign-off (risk assessment)** — technical lead reviewed
       and accepted the [Reference Implementation
@@ -292,7 +292,7 @@ flowchart TD
    of a release-branch commit, and complete every box in the [Approval
    Checklist](#approval-checklist) above.
 5. Proceed to Wave 4 (Flag Graduation & Env Consolidation) per
-   [`MAJOR_VERSION_CLEANUP_PLAN.md`](MAJOR_VERSION_CLEANUP_PLAN.md) §3, which
+   ``MAJOR_VERSION_CLEANUP_PLAN.md`` §3, which
    is otherwise unaffected by this checklist's scope.
 
 **Note on versioning:** [`pyproject.toml:3`](../pyproject.toml:3) and

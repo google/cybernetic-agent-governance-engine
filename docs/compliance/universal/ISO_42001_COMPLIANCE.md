@@ -37,7 +37,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
   - **Code:** [`src/gateway/server/governance_middleware.py`](../../../src/gateway/server/governance_middleware.py)
 - **8.2 AI Risk Assessment:**
   - **Implementation:** The **8-tier governance pipeline** (FTRA + 7 in-pipeline tiers) performs real-time risk assessment (STPA, CBF, causal SCM) on every tool call. OPA Rego policies enforce fiscal limits and RBAC. The Control Barrier Function provides a formal mathematical safety guarantee via `h(S(t+1)) ≥ (1−γ)·h(S(t))`.
-  - **Code:** [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../../src/governed_financial_advisor/governance/policy/trade_governance.rego), [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py)
+  - **Code:** [`src/cage_finance/opa/trade_governance.rego`](../../../src/cage_finance/opa/trade_governance.rego), [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py)
 
 ### Clause 9: Performance Evaluation
 
@@ -87,7 +87,7 @@ This section documents the formal mathematical foundations of the CAGE governanc
 
 ### CBF Condition and Barrier Function (A.6.1 — Risk Assessment)
 
-The Control Barrier Function ([`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py)) provides a formal proof of safety for the financial state machine:
+The Control Barrier Function ([`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py)) provides a formal proof of safety for the financial state machine:
 
 - **Safe set:** `S = {x ∈ ℝⁿ : h(x) ≥ 0}`
 - **Barrier function:** `h(x) = cash_balance − min_cash_balance`
@@ -131,7 +131,7 @@ A `risk_score` above the configured threshold triggers a `DEFER` (HITL escalatio
 
 ### Causal Marginal Risk Boundary (A.6.1)
 
-The causal gatekeeper ([`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py)) applies a marginal risk boundary:
+The causal gatekeeper ([`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py)) applies a marginal risk boundary:
 
 ```
 (0.5 + estimate.value × amount) > 0.95  →  DENY
@@ -143,7 +143,7 @@ The `PlaceboTreatmentRefuter` runs 50 simulations with significance threshold p 
 
 | Parameter | Value | Enforcement |
 |-----------|-------|-------------|
-| Daily cap | $500,000 USD (integer cents) | [`fiscal_limit_guard.py`](../../../src/gateway/governance/fiscal_limit_guard.py) |
+| Daily cap | $500,000 USD (integer cents) | [`fiscal_limit_guard.py`](../../../src/gateway/governance/safety/resource_guard.py) |
 | Window | 86,400 seconds | Redis key TTL |
 | Retry policy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | Atomic WATCH/MULTI/EXEC |
 | Fail mode | Fail-closed | Redis error → rejected token |

@@ -37,7 +37,7 @@
 **Current State:**
 
 - `deployment/system_authz.rego` implements a token-based allow/deny with a single `data.auth_token` comparison. Deny-by-default posture is established (`default allow = false`). This is a flat shared-secret check with no role differentiation.
-- `src/governed_financial_advisor/governance/policy/trade_governance.rego` implements RBAC at the trade action layer: `allowed_roles := {"junior", "senior"}` with fiscal thresholds ($5k/$10k for junior, $500k/$1M for senior). Fail-closed default (`default allow = "DENY"`). Prompt injection is blocked via `allow = "GOVERNANCE_VIOLATION"` on `prompt_injection_check`.
+- `src/cage_finance/opa/trade_governance.rego` implements RBAC at the trade action layer: `allowed_roles := {"junior", "senior"}` with fiscal thresholds ($5k/$10k for junior, $500k/$1M for senior). Fail-closed default (`default allow = "DENY"`). Prompt injection is blocked via `allow = "GOVERNANCE_VIOLATION"` on `prompt_injection_check`.
 - `deployment/terraform/iam.tf` defines only two GCP service accounts (`financial-advisor-sa`, `agentsight-ui-sa`) bound with `roles/iam.workloadIdentityUser`. No additional IAM role bindings are provisioned; principle of least privilege is not demonstrably constrained in Terraform.
 - `deployment/opa_config.yaml` configures decision logs to stdout and sets a `default_decision` of `/finance/decision`. No remote bundle server or OPA management API token is configured.
 
@@ -221,7 +221,7 @@
 
 - `docs/STPA_ANALYSIS.md` documents the System-Theoretic Process Analysis for the Financial Advisor module: control structure (Controller: AI Agent, Actuators: Gateway Tools, Controlled Process: Markets), 5 Unsafe Control Actions (UCA-1 through UCA-5), and their code implementations.
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) implements deterministic UCA constraint checking for `execute_trade` actions: SC-1 (approval token), FIN-1 (max sell fraction), FIN-2 (latency), UCA-5 (drawdown), UCA-6 (slippage/sequence). All thresholds sourced from `config/governance_thresholds.json`. (**v3.0.1:** deprecated `stpa_validator.py` shim removed)
-- [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py) implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1). (**v3.0.1:** `safety.py` removed)
+- [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1). (**v3.0.1:** `safety.py` removed)
 - No `docs/proposals/004_risk_remediation_plan.md` exists in the repository — that path was checked and not found.
 
 **Gaps:**
@@ -249,10 +249,10 @@
 **Current State:**
 
 - `deployment/k8s/network-policy.yaml` implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
-- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. [`deployment/k8s/cilium-egress-lockdown.yaml`](../../../deployment/k8s/cilium-egress-lockdown.yaml) enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
+- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. ``deployment/k8s/cilium-egress-lockdown.yaml`` enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
 - `deployment/terraform/networking.tf` provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
 - `src/gateway/server/governance_middleware.py` enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
-- [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py) implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans). (**v3.0.1:** `safety.py` removed)
+- [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans). (**v3.0.1:** `safety.py` removed)
 
 **Gaps:**
 

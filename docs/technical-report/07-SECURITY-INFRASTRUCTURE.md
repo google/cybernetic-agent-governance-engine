@@ -510,7 +510,7 @@ OTel Telemetry Export
 - Input scan (`nemo_input_scan`): blocks PII-containing prompts before LLM inference
 - Output rail (`nemo_output_rail`): masks PII in LLM responses
 - ISO 42001 mapping: A.9.2 (data minimization) and A.5.2 (privacy by design)
-- Implementation: [`src/governed_financial_advisor/utils/privacy.py`](../../src/governed_financial_advisor/utils/privacy.py)
+- Implementation: [`src/governed_financial_advisor/utils/privacy.py`](../../src/gateway/governance/pii_sanitizer.py)
 
 ### Layer 2 — Telemetry Redaction
 

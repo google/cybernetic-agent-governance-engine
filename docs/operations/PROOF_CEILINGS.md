@@ -38,7 +38,7 @@ This document defines the **proof ceiling** — the maximum scope of what each t
 #### ✅ NARROW Monotonicity (CBF Logic Structure)
 - **Invariant:** Control Barrier Function (CBF) gradient never decreases for valid state transitions
 - **Proof Method:** Symbolic gradient inspection on synthetic trajectories
-- **Example:** [`test_cbf_narrow_monotonicity()`](../../tests/test_cbf_engine.py)
+- **Example:** [`test_cbf_narrow_monotonicity()`](../../tests/test_fence_epoch.py)
 - **Guarantees:** Safety boundary logic is structurally sound (does not prove physical enforcement)
 
 #### ✅ Authority Extinction (DEFER Immutability)

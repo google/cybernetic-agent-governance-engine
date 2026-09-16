@@ -223,7 +223,7 @@ The principles of this specification directly reflect and extend the architectur
 ### 5.4 State Concurrency & TOCTOU Resolution
 
 * Out-of-process adapters must never execute uncoordinated read-then-write operations on shared state.
-* CAGE eliminates Time-of-Check to Time-of-Use (TOCTOU) windows by executing atomic state transitions inside Redis via Lua scripts ([`LUA_ATOMIC_CBF`](../../src/gateway/governance/cbf.py)) and atomic pre-reservations ([`FiscalLimitGuard`](../../src/gateway/governance/fiscal_limit_guard.py)).
+* CAGE eliminates Time-of-Check to Time-of-Use (TOCTOU) windows by executing atomic state transitions inside Redis via Lua scripts ([`LUA_ATOMIC_CBF`](../../src/gateway/governance/safety/cbf_engine.py)) and atomic pre-reservations ([`FiscalLimitGuard`](../../src/gateway/governance/safety/resource_guard.py)).
 
 ### 5.5 Compliance Assessment & Four-State Semantics
 
