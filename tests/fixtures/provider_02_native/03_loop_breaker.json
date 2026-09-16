@@ -3,7 +3,7 @@
   "threadId": "thread-loop-breaker-003",
   "steps": [
     {
-      "stepId": "step-2001-0000-0000-000000000001",
+      "stepId": "00000003-0000-4000-8000-000000000001",
       "nodeName": "query_planner",
       "parentStepIds": [],
       "timestampUtc": "2026-09-14T12:15:00.000Z",
@@ -19,9 +19,9 @@
       "stateHash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
     },
     {
-      "stepId": "step-2002-0000-0000-000000000002",
+      "stepId": "00000003-0000-4000-8000-000000000002",
       "nodeName": "executor",
-      "parentStepIds": ["step-2001-0000-0000-000000000001"],
+      "parentStepIds": ["00000003-0000-4000-8000-000000000001"],
       "timestampUtc": "2026-09-14T12:15:00.145Z",
       "durationMs": 234.5,
       "signals": {
@@ -36,9 +36,9 @@
       "stateHash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
     },
     {
-      "stepId": "step-2003-0000-0000-000000000003",
+      "stepId": "00000003-0000-4000-8000-000000000003",
       "nodeName": "query_planner",
-      "parentStepIds": ["step-2002-0000-0000-000000000002"],
+      "parentStepIds": ["00000003-0000-4000-8000-000000000002"],
       "timestampUtc": "2026-09-14T12:15:00.425Z",
       "durationMs": 98.7,
       "signals": {
@@ -51,9 +51,9 @@
       "stateHash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
     },
     {
-      "stepId": "step-2004-0000-0000-000000000004",
+      "stepId": "00000003-0000-4000-8000-000000000004",
       "nodeName": "executor",
-      "parentStepIds": ["step-2003-0000-0000-000000000003"],
+      "parentStepIds": ["00000003-0000-4000-8000-000000000003"],
       "timestampUtc": "2026-09-14T12:15:00.565Z",
       "durationMs": 189.2,
       "signals": {
@@ -68,9 +68,9 @@
       "stateHash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
     },
     {
-      "stepId": "step-2005-0000-0000-000000000005",
+      "stepId": "00000003-0000-4000-8000-000000000005",
       "nodeName": "query_planner",
-      "parentStepIds": ["step-2004-0000-0000-000000000004"],
+      "parentStepIds": ["00000003-0000-4000-8000-000000000004"],
       "timestampUtc": "2026-09-14T12:15:00.785Z",
       "durationMs": 87.3,
       "signals": {
@@ -83,9 +83,9 @@
       "stateHash": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
     },
     {
-      "stepId": "step-2006-0000-0000-000000000006",
+      "stepId": "00000003-0000-4000-8000-000000000006",
       "nodeName": "loop_breaker",
-      "parentStepIds": ["step-2005-0000-0000-000000000005"],
+      "parentStepIds": ["00000003-0000-4000-8000-000000000005"],
       "timestampUtc": "2026-09-14T12:15:00.900Z",
       "durationMs": 12.4,
       "signals": {

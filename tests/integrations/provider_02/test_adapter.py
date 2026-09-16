@@ -291,10 +291,10 @@ class TestCallbackHandler:
         cb.on_chain_start("evaluator", state)
         cb.on_chain_end("evaluator", _approved_state())
 
-        # evaluator's parent should be execution_analyst's step_id
+        # evaluator's parent contracts upstream through non-attestation nodes to nemo_guardrail
         evaluator_step = [s for s in cb._steps if s.node_name == "evaluator"][0]
-        execution_analyst_id = cb._step_id_by_node["execution_analyst"]
-        assert execution_analyst_id in evaluator_step.parent_step_ids
+        nemo_guardrail_id = cb._step_id_by_node["nemo_guardrail"]
+        assert nemo_guardrail_id in evaluator_step.parent_step_ids
 
     def test_hitl_interrupt_recorded(self):  # type: ignore[no-untyped-def]
         """HITL interrupt produces a step with approval signals."""
@@ -363,8 +363,12 @@ class TestLoopUnrolling:
         evaluator_steps = [s for s in cb._steps if s.node_name == "evaluator"]
         assert len(evaluator_steps) == 3
 
-        # Each evaluator step should have a parent from execution_analyst
-        for step in evaluator_steps:
+        # Root evaluator step in isolated loop test has no prior recorded ancestor
+        assert evaluator_steps[0].parent_step_ids == []
+        # Subsequent iterations link sequentially to previous evaluator iteration
+        assert evaluator_steps[1].parent_step_ids == [evaluator_steps[0].step_id]
+        assert evaluator_steps[2].parent_step_ids == [evaluator_steps[1].step_id]
+        for step in evaluator_steps[1:]:
             assert len(step.parent_step_ids) >= 1
 
     def test_loop_breaker_at_count_3(self):  # type: ignore[no-untyped-def]

@@ -383,6 +383,228 @@ class TestBindReceipt:
 
 
 # ---------------------------------------------------------------------------
+# Action Context Collision Tests (Invariant I-07)
+# ---------------------------------------------------------------------------
+
+
+class TestActionContextCollision:
+    """Tests for Invariant I-07 action context collision handling.
+    
+    Invariant I-07 requires that any collision between configured `src_key` and
+    `dest_key` inside `action_context` immediately short-circuits with
+    `admitted=False`, produces a `MAPPING_COLLISION` finding, and completely
+    prevents wire dispatch.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_collision_rejects_without_dispatch(self) -> None:
+        """Collision between src_key and dest_key blocks dispatch entirely."""
+        adapter = Provider03NormativeProvider(
+            endpoint="http://localhost:8080",
+            action_context_field_map={"amount": "magnitude"},
+        )
+
+        # Payload with BOTH legacy key 'amount' and canonical key 'magnitude'
+        payload = {
+            "action": "test_action",
+            "action_context": {
+                "amount": 1000,
+                "magnitude": 2000,
+            },
+        }
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(payload)
+
+            # Assert HTTP client was NEVER invoked (short-circuit before dispatch)
+            client_instance.post.assert_not_called()
+
+        # Assert fail-closed with MAPPING_COLLISION
+        assert result.admitted is False
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == "MAPPING_COLLISION"
+        assert result.findings[0]["severity"] == "blocked"
+        assert "amount" in result.findings[0]["message"]
+        assert "magnitude" in result.findings[0]["message"]
+        assert result.findings[0]["source_key"] == "amount"
+        assert result.findings[0]["destination_key"] == "magnitude"
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_collision_rejects_even_if_values_match(self) -> None:
+        """Collision fails closed even when src and dest values are identical.
+        
+        Value equality must not bypass schema determinism — the presence of both
+        keys itself violates the invariant.
+        """
+        adapter = Provider03NormativeProvider(
+            endpoint="http://localhost:8080",
+            action_context_field_map={"amount": "magnitude"},
+        )
+
+        # Payload where both keys exist with IDENTICAL values
+        payload = {
+            "action": "test_action",
+            "action_context": {
+                "amount": 1000,
+                "magnitude": 1000,  # Same value as 'amount'
+            },
+        }
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(payload)
+
+            # Assert HTTP client was NEVER invoked
+            client_instance.post.assert_not_called()
+
+        # Assert fail-closed with MAPPING_COLLISION (value equality is irrelevant)
+        assert result.admitted is False
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == "MAPPING_COLLISION"
+        assert result.findings[0]["severity"] == "blocked"
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_mapping_succeeds_when_only_legacy_key_present(self) -> None:
+        """Field mapping proceeds when only src_key is present (no collision)."""
+        adapter = Provider03NormativeProvider(
+            endpoint="http://localhost:8080",
+            action_context_field_map={"amount": "magnitude"},
+        )
+
+        # Payload with ONLY legacy key 'amount' (canonical key 'magnitude' absent)
+        payload = {
+            "action": "test_action",
+            "action_context": {
+                "amount": 1000,
+            },
+        }
+
+        mock_response = _mock_response(
+            {
+                "verdict": "APPROVED",
+                "findings": [],
+            }
+        )
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(payload)
+
+            # Assert HTTP client was invoked exactly once
+            client_instance.post.assert_called_once()
+
+            # Inspect the dispatched payload
+            call_args = client_instance.post.call_args
+            dispatched_payload = call_args.kwargs["json"]
+
+            # Assert 'amount' was mapped to 'magnitude' and 'amount' was removed
+            assert "magnitude" in dispatched_payload["action_context"]
+            assert dispatched_payload["action_context"]["magnitude"] == 1000
+            assert "amount" not in dispatched_payload["action_context"]
+
+        # Assert admission succeeded
+        assert result.admitted is True
+        assert result.findings == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_mapping_succeeds_when_only_canonical_key_present(self) -> None:
+        """Dispatch proceeds normally when only dest_key is present (no mapping needed)."""
+        adapter = Provider03NormativeProvider(
+            endpoint="http://localhost:8080",
+            action_context_field_map={"amount": "magnitude"},
+        )
+
+        # Payload with ONLY canonical key 'magnitude' (legacy key 'amount' absent)
+        payload = {
+            "action": "test_action",
+            "action_context": {
+                "magnitude": 1000,
+            },
+        }
+
+        mock_response = _mock_response(
+            {
+                "verdict": "APPROVED",
+                "findings": [],
+            }
+        )
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(payload)
+
+            # Assert HTTP client was invoked
+            client_instance.post.assert_called_once()
+
+            # Inspect the dispatched payload
+            call_args = client_instance.post.call_args
+            dispatched_payload = call_args.kwargs["json"]
+
+            # Assert 'magnitude' remains unchanged (no mapping applied)
+            assert "magnitude" in dispatched_payload["action_context"]
+            assert dispatched_payload["action_context"]["magnitude"] == 1000
+            assert "amount" not in dispatched_payload["action_context"]
+
+        # Assert admission succeeded
+        assert result.admitted is True
+        assert result.findings == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_field_map_identity_no_op(self) -> None:
+        """Identity mapping (src_key == dest_key) does NOT trigger self-collision."""
+        adapter = Provider03NormativeProvider(
+            endpoint="http://localhost:8080",
+            action_context_field_map={"currency": "currency"},  # Identity mapping
+        )
+
+        # Payload with identity-mapped key
+        payload = {
+            "action": "test_action",
+            "action_context": {
+                "currency": "USD",
+            },
+        }
+
+        mock_response = _mock_response(
+            {
+                "verdict": "APPROVED",
+                "findings": [],
+            }
+        )
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(payload)
+
+            # Assert HTTP client was invoked (no collision detected)
+            client_instance.post.assert_called_once()
+
+        # Assert admission succeeded (identity mapping is a no-op, not a collision)
+        assert result.admitted is True
+        assert result.findings == []
+        assert result.error is None
+
+
+# ---------------------------------------------------------------------------
 # Factory Registration Tests
 # ---------------------------------------------------------------------------
 

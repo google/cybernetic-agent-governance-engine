@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator, RefResolver, ValidationError
+from jsonschema import Draft202012Validator, FormatChecker, RefResolver, ValidationError
 
 # Marker contract (fail-closed)
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -81,8 +81,10 @@ def test_fixture_validates_against_schema(fixture_name, attestation_schema):
     # Load the fixture
     fixture_data = load_fixture(fixture_path)
 
-    # Create validator with resolver for $ref support
-    validator = Draft202012Validator(schema, resolver=resolver)
+    # Create validator with resolver for $ref support and format checker for RFC 4122 UUID validation
+    validator = Draft202012Validator(
+        schema, resolver=resolver, format_checker=Draft202012Validator.FORMAT_CHECKER
+    )
 
     # Validate and collect errors
     errors = list(validator.iter_errors(fixture_data))
@@ -153,10 +155,14 @@ if __name__ == "__main__":
     attestation_schema = load_schema(schema_path)
     step_schema = load_schema(step_schema_path)
 
-    # Create resolver
+    # Create resolver and validator with format checking enabled
     store = {"urn:cage:governance:v1:step-entry": step_schema}
     resolver = RefResolver.from_schema(attestation_schema, store=store)
-    validator = Draft202012Validator(attestation_schema, resolver=resolver)
+    validator = Draft202012Validator(
+        attestation_schema,
+        resolver=resolver,
+        format_checker=Draft202012Validator.FORMAT_CHECKER,
+    )
 
     # Validate each fixture
     fixtures = sorted(FIXTURES_DIR.glob("*.json"))

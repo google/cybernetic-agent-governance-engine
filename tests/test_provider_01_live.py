@@ -41,8 +41,8 @@ pytestmark = [
 ]
 
 
-def _get_live_credentials() -> tuple[str, str]:
-    """Retrieve endpoint and api key from environment variables."""
+def _get_live_credentials() -> tuple[str, str, str]:
+    """Retrieve endpoint, api key, and optional Google ID token from environment variables."""
     endpoint = (
         (
             os.environ.get("PROVIDER_01_ENDPOINT")
@@ -63,17 +63,27 @@ def _get_live_credentials() -> tuple[str, str]:
         .strip()
     )
 
-    return endpoint, api_key
+    gcp_id_token = (
+        (
+            os.environ.get("PROVIDER_01_GCP_ID_TOKEN")
+            or os.environ.get("CAGE_NORMATIVE_GCP_ID_TOKEN", "")
+        )
+        .split("#")[0]
+        .strip()
+    )
+
+    return endpoint, api_key, gcp_id_token
 
 
 @pytest.fixture
 def live_provider() -> FlowSignalNormativeProvider:
-    endpoint, api_key = _get_live_credentials()
+    endpoint, api_key, gcp_id_token = _get_live_credentials()
     if not api_key:
         pytest.skip("FlowSignal API key not configured")
     return FlowSignalNormativeProvider(
         endpoint=endpoint,
         api_key=api_key,
+        gcp_id_token=gcp_id_token,
         timeout=10.0,
     )
 

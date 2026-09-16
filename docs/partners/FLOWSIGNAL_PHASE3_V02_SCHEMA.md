@@ -1,9 +1,14 @@
 # FlowSignal Phase 3 v0.2 Canonical Schema Mapping
 
+> **Canonical Specification Notice:** This schema document is consolidated into the authoritative
+> [**FlowSignal Partner Integration Specification & Runbook**](FLOWSIGNAL_PARTNER_SPECIFICATION.md).
+> Refer to that document for full 37-field schema definitions, Cloud Run DRS dual-header authentication,
+> and the 7-vector hostile validation test plan. §1 below preserves the superseded draft for historical context only.
+
 **Document Version:** 0.2
 **Integration Phase:** 3 — Schema Reconciliation & Endpoint Cutover
-**Status:** Candidate v0.2 Extracted
-**Last Updated:** 2026-09-15
+**Status:** Consolidated — see [`FLOWSIGNAL_PARTNER_SPECIFICATION.md`](FLOWSIGNAL_PARTNER_SPECIFICATION.md)
+**Last Updated:** 2026-09-16
 
 ---
 

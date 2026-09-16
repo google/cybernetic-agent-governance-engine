@@ -41,7 +41,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Final
 from urllib.parse import quote
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
@@ -60,7 +60,8 @@ _TIMEOUT_SECONDS: float = float(
 )
 
 # Finding code for endpoint errors (consistent with provider_01 and provider_06)
-FINDING_CODE_ENDPOINT_ERROR = "ENDPOINT_ERROR"
+FINDING_CODE_ENDPOINT_ERROR: Final[str] = "ENDPOINT_ERROR"
+FINDING_CODE_MAPPING_COLLISION: Final[str] = "MAPPING_COLLISION"
 
 
 class Provider03NormativeProvider:
@@ -187,6 +188,36 @@ class Provider03NormativeProvider:
             # (e.g., finance domain maps 'amount' → 'magnitude', 'symbol' → 'context')
             action_context = payload.get("action_context")
             if self._field_map and isinstance(action_context, dict):
+                # VERITAS / CAGE Phase 4 Invariant I-07: Action Context Collision Guard
+                # Fail closed if both legacy and canonical keys are present
+                for src_key, dest_key in self._field_map.items():
+                    if (
+                        src_key != dest_key
+                        and src_key in action_context
+                        and dest_key in action_context
+                    ):
+                        logger.error(
+                            "[Provider03] Action context collision detected: "
+                            "legacy key '%s' and canonical key '%s' both present",
+                            src_key,
+                            dest_key,
+                        )
+                        return ValidationResult(
+                            admitted=False,
+                            error=f"Action context collision: both '{src_key}' and '{dest_key}' present",
+                            findings=[
+                                {
+                                    "code": FINDING_CODE_MAPPING_COLLISION,
+                                    "severity": "blocked",
+                                    "message": f"Action context collision: legacy key '{src_key}' and canonical key '{dest_key}' are both present",
+                                    "source_key": src_key,
+                                    "destination_key": dest_key,
+                                }
+                            ],
+                        )
+
+                # No collision detected — proceed with field normalization
+                # Use defensive copy to preserve original payload
                 normalized_context = dict(action_context)
                 for src_key, dest_key in self._field_map.items():
                     if src_key in normalized_context:

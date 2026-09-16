@@ -3,7 +3,7 @@
   "threadId": "thread-nemo-block-004",
   "steps": [
     {
-      "stepId": "step-3001-0000-0000-000000000001",
+      "stepId": "00000004-0000-4000-8000-000000000001",
       "nodeName": "request_intake",
       "parentStepIds": [],
       "timestampUtc": "2026-09-14T13:45:00.000Z",
@@ -19,9 +19,9 @@
       "stateHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     },
     {
-      "stepId": "step-3002-0000-0000-000000000002",
+      "stepId": "00000004-0000-4000-8000-000000000002",
       "nodeName": "nemo_guardrails_check",
-      "parentStepIds": ["step-3001-0000-0000-000000000001"],
+      "parentStepIds": ["00000004-0000-4000-8000-000000000001"],
       "timestampUtc": "2026-09-14T13:45:00.085Z",
       "durationMs": 245.8,
       "signals": {
@@ -39,9 +39,9 @@
       "stateHash": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
     },
     {
-      "stepId": "step-3003-0000-0000-000000000003",
+      "stepId": "00000004-0000-4000-8000-000000000003",
       "nodeName": "policy_enforcement",
-      "parentStepIds": ["step-3002-0000-0000-000000000002"],
+      "parentStepIds": ["00000004-0000-4000-8000-000000000002"],
       "timestampUtc": "2026-09-14T13:45:00.345Z",
       "durationMs": 34.5,
       "signals": {

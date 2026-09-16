@@ -35,15 +35,20 @@ See: docs/partners/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2 for complete schema.
 
 Authentication
 --------------
-API key passed as ``Authorization: Bearer {key}`` header.
+Dual-header authentication supported for Cloud Run DRS ingress:
+  - Authorization: Bearer {key} (FlowSignal application API key)
+  - X-Serverless-Authorization: Bearer {token} (Google Cloud IAM identity token)
+
 Key sourced from CAGE_NORMATIVE_API_KEY_SECRET (direct value or
 Secret Manager path — Secret Manager resolution is deferred to
 container init via Workload Identity).
+GCP identity token sourced from CAGE_NORMATIVE_GCP_ID_TOKEN.
 
 Environment variables
 ---------------------
   CAGE_NORMATIVE_ENDPOINT               — Base URL (required)
   CAGE_NORMATIVE_API_KEY_SECRET         — API key or Secret Manager path
+  CAGE_NORMATIVE_GCP_ID_TOKEN           — Google IAM identity token for Cloud Run DRS (optional)
   CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS   — Per-request timeout (default: 5)
   CAGE_NORMATIVE_VALIDATE_PATH          — Validation endpoint path (default: /cage/validate)
 
@@ -75,6 +80,9 @@ logger = logging.getLogger("cage.integrations.provider_01")
 _ENDPOINT: str = os.environ.get("CAGE_NORMATIVE_ENDPOINT", "").split("#")[0].strip()
 _API_KEY_SECRET: str = (
     os.environ.get("CAGE_NORMATIVE_API_KEY_SECRET", "").split("#")[0].strip()
+)
+_GCP_ID_TOKEN: str = (
+    os.environ.get("CAGE_NORMATIVE_GCP_ID_TOKEN", "").split("#")[0].strip()
 )
 _GATE_TIMEOUT_SECONDS: float = float(
     os.environ.get("CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS", "5").split("#")[0].strip()
@@ -277,9 +285,11 @@ class FlowSignalNormativeProvider:
         endpoint: str = "",
         api_key: str = "",
         timeout: float = _GATE_TIMEOUT_SECONDS,
+        gcp_id_token: str = "",
     ) -> None:
         self._endpoint = (endpoint or _ENDPOINT).rstrip("/")
         self._api_key = api_key or _API_KEY_SECRET
+        self._gcp_id_token = gcp_id_token or _GCP_ID_TOKEN
         self._timeout = timeout
 
         if not self._endpoint:
@@ -289,16 +299,19 @@ class FlowSignalNormativeProvider:
             )
 
         logger.info(
-            "[FlowSignal] Initialised: endpoint=%s timeout=%.1fs",
+            "[FlowSignal] Initialised: endpoint=%s timeout=%.1fs gcp_iam=%s",
             self._endpoint or "(not set)",
             self._timeout,
+            "configured" if self._gcp_id_token else "none",
         )
 
     def _headers(self) -> dict[str, str]:
-        """Construct authorization headers."""
+        """Construct authorization headers supporting Cloud Run DRS dual-header auth."""
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        if self._gcp_id_token:
+            headers["X-Serverless-Authorization"] = f"Bearer {self._gcp_id_token}"
         return headers
 
     async def fetch_baseline(self, region: str):  # type: ignore[no-untyped-def]

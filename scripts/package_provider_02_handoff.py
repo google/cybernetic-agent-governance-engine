@@ -34,7 +34,7 @@ from typing import Any
 
 try:
     import jsonschema
-    from jsonschema import Draft7Validator, RefResolver
+    from jsonschema import Draft202012Validator, FormatChecker, RefResolver
 except ImportError:
     print("ERROR: jsonschema package not found. Install with: pip install jsonschema")
     sys.exit(1)
@@ -110,10 +110,12 @@ def validate_fixtures(schema_path: Path, fixtures_dir: Path) -> bool:
         except Exception as e:
             print(f"WARNING: Failed to load schema {schema_file}: {e}")
 
-    # Create validator with custom resolver for URN references
+    # Create validator with custom resolver for URN references and format checker for RFC 4122 UUID validation
     try:
         resolver = RefResolver.from_schema(schema, store=schema_store)
-        validator = Draft7Validator(schema, resolver=resolver)
+        validator = Draft202012Validator(
+            schema, resolver=resolver, format_checker=FormatChecker()
+        )
     except Exception as e:
         print(f"ERROR: Invalid schema: {e}")
         return False

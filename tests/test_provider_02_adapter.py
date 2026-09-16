@@ -30,15 +30,21 @@ Marks
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
+
+# Base paths for fixtures
+REPO_ROOT = Path(__file__).parent.parent
+FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "provider_02_native"
 
 # ---------------------------------------------------------------------------
 # Tests: adapter.py — data contracts and helper functions
@@ -296,6 +302,77 @@ class TestHelperFunctions:
             f"Expected 'loop_breaker' for loopCount >= 3, got {result!r}"
         )
 
+    @pytest.mark.parametrize(
+        "fixture_name,expected_terminal_path",
+        [
+            ("01_single_path_happy.json", "happy_path"),
+            ("02_cbf_block.json", "cbf_block"),
+            ("03_loop_breaker.json", "loop_breaker"),
+            ("04_nemo_policy_block.json", "nemo_block"),
+            ("05_large_dag.json", "happy_path"),
+        ],
+    )
+    def test_classify_terminal_path_from_native_fixtures(
+        self, fixture_name: str, expected_terminal_path: str
+    ) -> None:
+        """Verify _classify_terminal_path correctly classifies all native Provider 02 fixtures.
+        
+        This test validates the refactored precedence ladder against real fixture data
+        to ensure heuristic-free classification aligned with fixture conventions.
+        """
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+        from src.integrations.provider_02.adapter import (
+            ProjectBundleStepEntry,
+            _classify_terminal_path,
+        )
+
+        # Load fixture data
+        fixture_path = FIXTURES_DIR / fixture_name
+        with open(fixture_path, encoding="utf-8") as f:
+            fixture_data = json.load(f)
+
+        # Convert fixture steps to ProjectBundleStepEntry objects
+        steps = []
+        for step_dict in fixture_data["steps"]:
+            step = ProjectBundleStepEntry(
+                step_id=step_dict["stepId"],
+                node_name=step_dict["nodeName"],
+                parent_step_ids=step_dict["parentStepIds"],
+                timestamp_utc=step_dict["timestampUtc"],
+                duration_ms=step_dict["durationMs"],
+                signals=step_dict.get("signals", {}),
+                metadata=step_dict.get("metadata", {}),
+                state_hash=step_dict["stateHash"],
+            )
+            steps.append(step)
+
+        # Collect all unique node names from the fixture
+        node_names = {s.node_name for s in steps}
+        
+        # Build a minimal synthetic topology that includes all fixture nodes
+        # Use the last step's node as terminal for happy_path fixtures
+        terminal_node = (
+            fixture_data["steps"][-1]["nodeName"]
+            if expected_terminal_path == "happy_path"
+            else "__synthetic_terminal__"
+        )
+        
+        topology = GraphTopology(
+            nodes=node_names | {terminal_node},
+            attestation_nodes=node_names,
+            parent_edges={},  # Not needed for classification
+            terminal_node=terminal_node,
+        )
+
+        # Classify the terminal path
+        result = _classify_terminal_path(steps, topology)
+
+        # Assert matches expected classification
+        assert result == expected_terminal_path, (
+            f"Fixture {fixture_name} classified as {result!r}, expected {expected_terminal_path!r}. "
+            f"Nodes: {sorted(node_names)}, Signals: {[s.signals for s in steps]}"
+        )
+
 
 @pytest.mark.local
 class TestProvider02AttestationCallback:
@@ -389,6 +466,11 @@ class TestProvider02AttestationCallback:
         cb = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
         )
+        # Execute several attestation nodes before the interrupt to establish recorded ancestors
+        for node in ["nemo_guardrail", "evaluator", "safety_check"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {"risk_status": "APPROVED"})
+        
         state = {
             "approval_required": True,
             "approval_decision": {
@@ -400,12 +482,222 @@ class TestProvider02AttestationCallback:
         }
         cb.handle_hitl_interrupt(state)
 
-        assert cb.step_count == 1, (
-            f"Expected step_count=1 after HITL interrupt, got {cb.step_count}"
+        assert cb.step_count == 4, (
+            f"Expected step_count=4 (3 nodes + interrupt), got {cb.step_count}"
         )
-        step = cb._steps[0]
-        assert step.node_name == "hitl_interrupt"
-        assert step.signals.get("interruptType") == "HITL_MANUAL_REVIEW"
+        interrupt_step = cb._steps[-1]  # Last step should be the interrupt
+        assert interrupt_step.node_name == "hitl_interrupt"
+        assert interrupt_step.signals.get("interruptType") == "HITL_MANUAL_REVIEW"
+
+    def test_dag_closure_validation(self) -> None:
+        """DAG closure: every parent_step_id must exist in bundle.steps."""
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
+
+        # Synthetic topology with all nodes as attestation nodes
+        topology = GraphTopology(
+            nodes={"A", "B", "C", "D"},
+            attestation_nodes={"A", "B", "C", "D"},
+            parent_edges={
+                "A": [],
+                "B": ["A"],
+                "C": ["B"],
+                "D": ["C"],
+            },
+            terminal_node="D",
+        )
+
+        cb = Provider02AttestationCallback(topology=topology, thread_id="dag-test")
+
+        # Execute nodes in order
+        for node in ["A", "B", "C", "D"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {})
+
+        bundle = cb.get_bundle()
+
+        # Closure validation: collect all step IDs present in the bundle
+        step_ids_in_bundle = {step.step_id for step in bundle.steps}
+
+        # Validate: every parent_step_id must exist in step_ids_in_bundle
+        for step in bundle.steps:
+            for parent_id in step.parent_step_ids:
+                assert parent_id in step_ids_in_bundle, (
+                    f"Step {step.node_name!r} (step_id={step.step_id[:8]}) has "
+                    f"parent_step_id {parent_id[:8]} which does not exist in bundle.steps. "
+                    f"This violates DAG closure invariant."
+                )
+
+    def test_ancestor_contraction_skipped_intermediate_nodes(self) -> None:
+        """Ancestor contraction: A (attested) -> B (skipped) -> C (skipped) -> D (attested).
+        
+        D.parent_step_ids must contract to [A.step_id], skipping B and C.
+        """
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
+
+        # Only A and D are attestation nodes; B and C are skipped
+        topology = GraphTopology(
+            nodes={"A", "B", "C", "D"},
+            attestation_nodes={"A", "D"},  # B and C are NOT attestation nodes
+            parent_edges={
+                "A": [],
+                "B": ["A"],
+                "C": ["B"],
+                "D": ["C"],
+            },
+            terminal_node="D",
+        )
+
+        cb = Provider02AttestationCallback(topology=topology, thread_id="contraction-test")
+
+        # Execute all nodes (on_chain_end will skip B and C as non-attestation nodes)
+        for node in ["A", "B", "C", "D"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {})
+
+        bundle = cb.get_bundle()
+
+        # Bundle should contain only A and D
+        assert len(bundle.steps) == 2, f"Expected 2 steps (A, D), got {len(bundle.steps)}"
+        
+        step_a = next(s for s in bundle.steps if s.node_name == "A")
+        step_d = next(s for s in bundle.steps if s.node_name == "D")
+
+        # A has no parents
+        assert step_a.parent_step_ids == [], (
+            f"Step A should have no parents, got {step_a.parent_step_ids}"
+        )
+
+        # D should have A as parent (contracted through B and C)
+        assert step_d.parent_step_ids == [step_a.step_id], (
+            f"Step D should have parent [A.step_id], got {step_d.parent_step_ids}. "
+            f"Expected ancestor contraction to skip unrecorded nodes B and C."
+        )
+
+    def test_ancestor_contraction_branched_dag(self) -> None:
+        """Branched DAG: A -> B -> D and A -> C -> D, where B and C are skipped.
+        
+        D.parent_step_ids must contract to [A.step_id] without duplicates.
+        """
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
+
+        # A and D are attestation nodes; B and C are skipped intermediate nodes
+        topology = GraphTopology(
+            nodes={"A", "B", "C", "D"},
+            attestation_nodes={"A", "D"},
+            parent_edges={
+                "A": [],
+                "B": ["A"],
+                "C": ["A"],
+                "D": ["B", "C"],  # D has two parents: B and C
+            },
+            terminal_node="D",
+        )
+
+        cb = Provider02AttestationCallback(topology=topology, thread_id="branch-test")
+
+        # Execute all nodes
+        for node in ["A", "B", "C", "D"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {})
+
+        bundle = cb.get_bundle()
+
+        # Bundle should contain only A and D
+        assert len(bundle.steps) == 2, f"Expected 2 steps (A, D), got {len(bundle.steps)}"
+        
+        step_a = next(s for s in bundle.steps if s.node_name == "A")
+        step_d = next(s for s in bundle.steps if s.node_name == "D")
+
+        # D should contract both branches (B and C) to A, deduplicated
+        assert step_d.parent_step_ids == [step_a.step_id], (
+            f"Step D should have parent [A.step_id] (deduplicated), got {step_d.parent_step_ids}. "
+            f"Expected ancestor contraction to merge both branches through B and C to A."
+        )
+
+    def test_ancestor_contraction_partial_skipped_path(self) -> None:
+        """Mixed attestation: A (attested) -> B (skipped) -> C (attested) -> D (attested).
+        
+        C.parent_step_ids should contract to [A.step_id], and D.parent_step_ids should be [C.step_id].
+        """
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
+
+        topology = GraphTopology(
+            nodes={"A", "B", "C", "D"},
+            attestation_nodes={"A", "C", "D"},  # B is skipped
+            parent_edges={
+                "A": [],
+                "B": ["A"],
+                "C": ["B"],
+                "D": ["C"],
+            },
+            terminal_node="D",
+        )
+
+        cb = Provider02AttestationCallback(topology=topology, thread_id="partial-test")
+
+        for node in ["A", "B", "C", "D"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {})
+
+        bundle = cb.get_bundle()
+
+        # Bundle should contain A, C, D (B is skipped)
+        assert len(bundle.steps) == 3, f"Expected 3 steps (A, C, D), got {len(bundle.steps)}"
+        
+        step_a = next(s for s in bundle.steps if s.node_name == "A")
+        step_c = next(s for s in bundle.steps if s.node_name == "C")
+        step_d = next(s for s in bundle.steps if s.node_name == "D")
+
+        # C should contract through B to A
+        assert step_c.parent_step_ids == [step_a.step_id], (
+            f"Step C should have parent [A.step_id], got {step_c.parent_step_ids}"
+        )
+
+        # D should have C as direct parent (C is an attestation node)
+        assert step_d.parent_step_ids == [step_c.step_id], (
+            f"Step D should have parent [C.step_id], got {step_d.parent_step_ids}"
+        )
+
+    def test_cycle_detection_in_parent_resolution(self) -> None:
+        """Cycle detection: graph with a cycle should raise ValueError during parent resolution."""
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
+
+        # Create a cyclic topology where the cycle doesn't include the target node:
+        # A (attested) -> B -> D -> B (cycle among unrecorded nodes B and D)
+        #              -> C (attested, depends on B which leads to cycle)
+        topology = GraphTopology(
+            nodes={"A", "B", "D", "C"},
+            attestation_nodes={"A", "C"},  # B and D are unrecorded intermediate nodes
+            parent_edges={
+                "A": [],
+                "B": ["A", "D"],  # B depends on A and D, creating cycle with D
+                "D": ["B"],       # D depends on B, completing the cycle B <-> D
+                "C": ["B"],       # C depends on B, which is part of the cycle
+            },
+            terminal_node="C",
+        )
+
+        cb = Provider02AttestationCallback(topology=topology, thread_id="cycle-test")
+
+        # Execute A (no issue)
+        cb.on_chain_start("A", {})
+        cb.on_chain_end("A", {})
+
+        # Execute B and D (both skipped as non-attestation nodes)
+        for node in ["B", "D"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {})
+
+        # Execute C - this should trigger cycle detection when resolving parents through B <-> D
+        cb.on_chain_start("C", {})
+        
+        with pytest.raises(ValueError, match=r"Cycle detected in graph topology"):
+            cb.on_chain_end("C", {})
 
 
 # ---------------------------------------------------------------------------

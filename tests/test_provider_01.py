@@ -745,3 +745,71 @@ class TestConsequenceTokenMinting:
         assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
         assert "authority_record_id missing" in result.findings[0]["message"]
         mock_signer.sign_raw.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Cloud Run DRS Dual-Header Authentication Tests
+# ---------------------------------------------------------------------------
+
+
+class TestDualHeaderAuthentication:
+    """Tests for Cloud Run DRS dual-header authentication (X-Serverless-Authorization)."""
+
+    def test_headers_standard_bearer_only(self) -> None:
+        """Adapter sets standard Authorization header when only API key is provided."""
+        provider = FlowSignalNormativeProvider(
+            endpoint="http://localhost:8080",
+            api_key="flowsignal-app-key-123",
+            gcp_id_token="",
+        )
+        headers = provider._headers()
+        assert headers == {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer flowsignal-app-key-123",
+        }
+        assert "X-Serverless-Authorization" not in headers
+
+    def test_headers_dual_header_cloud_run_drs(self) -> None:
+        """Adapter sets both X-Serverless-Authorization and Authorization when gcp_id_token is set."""
+        provider = FlowSignalNormativeProvider(
+            endpoint="https://flowsignal-staging.a.run.app",
+            api_key="flowsignal-app-key-123",
+            gcp_id_token="google-oidc-identity-token-xyz",
+        )
+        headers = provider._headers()
+        assert headers == {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer flowsignal-app-key-123",
+            "X-Serverless-Authorization": "Bearer google-oidc-identity-token-xyz",
+        }
+
+    def test_headers_gcp_id_token_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Adapter reads CAGE_NORMATIVE_GCP_ID_TOKEN from environment when not passed explicitly."""
+        import src.integrations.provider_01.provider as prov_mod
+
+        monkeypatch.setattr(prov_mod, "_GCP_ID_TOKEN", "env-google-oidc-token")
+
+        provider = FlowSignalNormativeProvider(
+            endpoint="https://flowsignal-staging.a.run.app",
+            api_key="flowsignal-app-key-123",
+        )
+        headers = provider._headers()
+        assert headers["X-Serverless-Authorization"] == "Bearer env-google-oidc-token"
+        assert headers["Authorization"] == "Bearer flowsignal-app-key-123"
+
+    def test_headers_empty_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Adapter emits only Content-Type when credentials are omitted."""
+        import src.integrations.provider_01.provider as prov_mod
+
+        monkeypatch.setattr(prov_mod, "_API_KEY_SECRET", "")
+        monkeypatch.setattr(prov_mod, "_GCP_ID_TOKEN", "")
+
+        provider = FlowSignalNormativeProvider(
+            endpoint="http://localhost:8080",
+            api_key="",
+            gcp_id_token="",
+        )
+        headers = provider._headers()
+        assert headers == {"Content-Type": "application/json"}
+
+

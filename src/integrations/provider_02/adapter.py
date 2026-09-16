@@ -294,19 +294,24 @@ def _classify_terminal_path(
 ) -> str:
     """Classify the terminal path from the collected steps.
 
+    Uses a strict precedence ladder to determine the terminal path type:
+    
+    1. Priority 1 (Happy Path): Terminal node reached
+    2. Priority 2 (CBF Invariant Block): CBF safety violation detected
+    3. Priority 3 (Loop Breaker): Iteration limit or loop detection
+    4. Priority 4 (Policy Block): NeMo guardrail or policy violation
+    5. Priority 5 (Unknown): Unrecognized pattern (fail-closed)
+
     Args:
         steps: Collected graph execution steps
         topology: Graph topology defining terminal/interrupt nodes
 
     Returns:
         One of: "happy_path", "nemo_block", "cbf_block", "loop_breaker", "unknown"
-
-    TC-ERR-03 remediation: Returns "unknown" instead of raising ValueError for
-    unrecognized terminal paths, allowing graceful degradation.
     """
     node_names = [s.node_name for s in steps]
 
-    # TC-ERR-03: Allow unrecognized nodes, return "unknown" instead of raising
+    # TC-ERR-03: Allow unrecognized nodes, return "unknown" instead of raising or misclassifying
     unrecognized = set(node_names) - topology.nodes
     if unrecognized:
         logger.warning(
@@ -317,39 +322,57 @@ def _classify_terminal_path(
         )
         return "unknown"
 
-    # Happy path: terminal node was reached
+    # Priority 1 (Happy Path): Terminal node was reached
     if topology.terminal_node in node_names:
         return "happy_path"
 
-    # Safety fail-closed: check for explicit BLOCKED signal
-    # (Generic pattern — not finance-specific; safety_check may exist in any domain)
+    # Priority 2 (CBF Invariant Block): Check for CBF safety violations
     for step in steps:
+        # Check modern cbf_verdict signal (canonical convention)
+        cbf_verdict = step.signals.get("cbf_verdict")
+        if cbf_verdict in ("BLOCK", "BLOCKED"):
+            return "cbf_block"
+        
+        # Fallback: Legacy safetyStatus signal (backward compatibility)
         if step.signals.get("safetyStatus") == "BLOCKED":
             return "cbf_block"
 
-    # Loop breaker: check for explicit loop count signal first (highest priority)
+    # Priority 3 (Loop Breaker / Iteration Limit): Check for loop termination
     for step in steps:
+        # Check explicit iteration_limit_reached signal
+        if step.signals.get("iteration_limit_reached") is True:
+            return "loop_breaker"
+        
+        # Check loop_breaker metadata flag
+        if step.metadata.get("loop_breaker") is True:
+            return "loop_breaker"
+        
+        # Check loopCount threshold (3+ iterations)
         if step.signals.get("loopCount", 0) >= 3:
             return "loop_breaker"
-
-    # Loop breaker: check for pattern (evaluator → explainer without terminal)
-    # Pattern: evaluator → explainer path without reaching safety/terminal (iteration limit)
-    # This is domain-neutral: any graph with these node names in topology
+    
+    # Fallback: Legacy topology pattern for loop detection
+    # Pattern: evaluator → explainer path without reaching terminal (iteration limit)
     if "evaluator" in topology.nodes and "explainer" in topology.nodes:
         has_evaluator = "evaluator" in node_names
         has_explainer = "explainer" in node_names
         if has_evaluator and has_explainer:
-            # This pattern indicates loop limit reached without safety check
             return "loop_breaker"
 
-    # Early block: short traversal indicates guardrail rejection
-    # (NeMo block for finance; analogous early exit for other domains)
-    # Check this AFTER loop_breaker to avoid false positives
+    # Priority 4 (Policy / NeMo Guardrail Block): Check for policy violations
+    for step in steps:
+        # Check explicit nemo_verdict signal
+        nemo_verdict = step.signals.get("nemo_verdict")
+        if nemo_verdict in ("BLOCK", "BLOCKED"):
+            return "nemo_block"
+    
+    # Fallback: Legacy structural heuristic for early exit (NeMo block pattern)
+    # Short traversal (≤2 nodes) indicates guardrail rejection at entry
     first_node = node_names[0] if node_names else None
     if len(node_names) <= 2 and first_node in topology.nodes:
         return "nemo_block"
 
-    # TC-ERR-03: Unclassifiable path → return "unknown" instead of raising
+    # Priority 5 (Unknown / Fail-Closed): Unrecognized pattern
     if node_names:
         logger.warning(
             "[Provider02Adapter] Unable to classify terminal path for nodes %s. "
@@ -358,8 +381,7 @@ def _classify_terminal_path(
             node_names,
             topology.terminal_node,
         )
-        return "unknown"
-
+    
     return "unknown"
 
 
@@ -478,17 +500,96 @@ class Provider02AttestationCallback:
         )
 
     def _build_parent_step_ids(self, node_name: str) -> list[str]:
-        """Resolve parent step IDs from the graph topology.
+        """Resolve parent step IDs from the graph topology with ancestor contraction.
 
-        Looks up the possible parents for this node in the topology and
-        returns the step IDs of parents that were actually executed in this run.
+        If an immediate parent is not an attestation node (not present in self._steps),
+        traverses upstream recursively through parent edges until finding the nearest
+        recorded ancestor nodes.
+
+        Args:
+            node_name: The node name to build parent IDs for
+
+        Returns:
+            Deduplicated list of step IDs from recorded ancestor nodes
+
+        Raises:
+            ValueError: If infinite recursion is detected during ancestor traversal
         """
+        def _find_recorded_ancestors(
+            current_node: str,
+            visited: set[str],
+            target_node: str
+        ) -> list[str]:
+            """Recursively find recorded ancestors, with cycle detection.
+            
+            Cycle detection only triggers if we visit the same unrecorded node twice
+            in a single path, indicating infinite traversal. Topological cycles in
+            the graph (like execution_analyst -> evaluator -> execution_analyst) are
+            allowed if at least one node in the cycle is recorded.
+            
+            Args:
+                current_node: The node being examined
+                visited: Set of nodes visited in this traversal path
+                target_node: The node we're building parents for (cannot be its own ancestor)
+            """
+            # Check if this node is an attestation node that has been recorded.
+            # _step_id_by_node tracks ALL nodes (attestation and non-attestation),
+            # but only attestation nodes are actually recorded in self._steps.
+            # We must return the step_id ONLY for attestation nodes.
+            # For unrolled loops, if target_node itself was recorded in a prior
+            # iteration, that prior iteration is a valid sequential ancestor.
+            if (current_node in self._topology.attestation_nodes and
+                current_node in self._step_id_by_node):
+                return [self._step_id_by_node[current_node]]
+
+            # Boundary condition: if we've reached the target node during traversal
+            # and it has not been recorded previously (e.g. first iteration),
+            # stop (a node cannot be its own ancestor on first execution).
+            # This naturally breaks cycles that include the unrecorded target node.
+            if current_node == target_node:
+                return []
+
+            # Node is not recorded. Check for traversal cycle (infinite loop).
+            # This prevents infinite recursion when traversing through unrecorded nodes.
+            if current_node in visited:
+                raise ValueError(
+                    f"Cycle detected in graph topology at node {current_node!r}. "
+                    f"Visited path: {sorted(visited)}. "
+                    f"All nodes in this cycle are unrecorded (not attestation nodes), "
+                    f"creating infinite traversal."
+                )
+
+            visited.add(current_node)
+
+            # Traverse upstream to find recorded ancestors
+            possible_parents = self._topology.parent_edges.get(current_node, [])
+            if not possible_parents:
+                # No parents; this is a root node that wasn't recorded
+                return []
+
+            # Recursively collect ancestors from all parents
+            ancestor_ids = []
+            for parent in possible_parents:
+                # Create a new visited set for each branch to allow DAG convergence
+                branch_visited = visited.copy()
+                ancestor_ids.extend(_find_recorded_ancestors(parent, branch_visited, target_node))
+
+            return ancestor_ids
+
+        # Start the search from the immediate parents of the target node
         possible_parents = self._topology.parent_edges.get(node_name, [])
-        parent_ids = []
+        all_ancestor_ids = []
+
         for parent in possible_parents:
-            if parent in self._step_id_by_node:
-                parent_ids.append(self._step_id_by_node[parent])
-        return parent_ids
+            visited: set[str] = set()
+            all_ancestor_ids.extend(_find_recorded_ancestors(parent, visited, node_name))
+
+        # Deduplicate while preserving order
+        seen: dict[str, None] = {}
+        for step_id in all_ancestor_ids:
+            seen[step_id] = None
+
+        return list(seen.keys())
 
     def handle_hitl_interrupt(self, state: dict[str, Any]) -> None:
         """Explicitly record the HITL interrupt as a paused DAG step.

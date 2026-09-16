@@ -1,9 +1,13 @@
 # FlowSignal Integration Hostile Test Plan
 
-**Status:** READY FOR EXECUTION  
+> **Canonical Specification Notice:** This hostile test plan is consolidated into the authoritative
+> [**FlowSignal Partner Integration Specification & Runbook**](../docs/partners/FLOWSIGNAL_PARTNER_SPECIFICATION.md).
+> Refer to that document for the complete specification combining schema, Cloud Run DRS dual-header auth, and hostile validation.
+
+**Status:** READY FOR EXECUTION (Consolidated into [`FLOWSIGNAL_PARTNER_SPECIFICATION.md`](../docs/partners/FLOWSIGNAL_PARTNER_SPECIFICATION.md))  
 **Target Invariant:** `EXECUTED ⟹ CAGE_GOVERNANCE_ALLOW ∧ FLOWSIGNAL_RUNTIME_AUTHORITY_ALLOW`  
 **Phase:** 3 (Hostile Interoperability Validation)  
-**Last Updated:** 2026-09-14
+**Last Updated:** 2026-09-16
 
 ---
 

@@ -287,27 +287,37 @@ const canonical = canonicalize(data);
 ### 3.4 Hashing Invariants
 
 **Node-Level State Hash (`stateHash` field):**
-- Compute SHA-256 digest of JCS-canonicalized node state snapshot
-- State snapshot includes: `stepId`, `nodeName`, `timestampUtc`, `signals`, `metadata`
+
+The `stateHash` field is a **producer-supplied cryptographic commitment** over the private JCS-canonicalized (RFC 8785) `AgentState` snapshot at the time of node execution. This hash is computed by CAGE (the producer) and submitted as an opaque, unforgeable commitment within each [`ProjectBundleStepEntry`](../../src/integrations/provider_02/adapter.py:104).
+
+**Critical Invariant:** `stateHash` is **NOT recomputed by NexArt**. NexArt records the `stateHash` value as-is, treating it as an unforgeable producer commitment. The state snapshot used to compute `stateHash` is private to CAGE and is never transmitted to NexArt.
+
+**Producer Computation (CAGE Responsibility):**
+- Compute SHA-256 digest of JCS-canonicalized `AgentState` snapshot
+- State snapshot includes: `stepId`, `nodeName`, `timestampUtc`, `signals`, `metadata`, plus private internal state fields not transmitted to NexArt
 - Exclude `parentStepIds` and `durationMs` from state hash (these are DAG metadata, not state)
 - **Format:** 64-character lowercase hexadecimal string
 
-**Example State Hash Computation:**
+**Example State Hash Computation (CAGE Internal):**
 ```python
 import jcs
 import hashlib
 
+# Private AgentState snapshot (not transmitted to NexArt)
 state = {
     "stepId": "c9bf9e57-1685-4c89-bafb-ff5af830be8a",
     "nodeName": "safety_check",
     "timestampUtc": "2026-09-14T12:00:00.500Z",
     "signals": {"opa_verdict": "ALLOW"},
     "metadata": {"policy": "OPA_PRE_TRADE_001"},
+    # Additional private fields (e.g., internal graph state, model weights)
+    # may be included in hash computation but NOT transmitted
 }
 
 canonical = jcs.canonicalize(state)
 state_hash = hashlib.sha256(canonical).hexdigest()
 # Result: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+# This hash is submitted to NexArt as an opaque commitment
 ```
 
 **Bundle-Level CER Digest (NexArt responsibility):**
@@ -319,22 +329,50 @@ state_hash = hashlib.sha256(canonical).hexdigest()
 
 **NexArt Ingestion Pipeline MUST:**
 1. Parse incoming `AttestationBundle` JSON
-2. Re-canonicalize each `ProjectBundleStepEntry.signals` and `.metadata` per RFC 8785
-3. Recompute `stateHash` and verify against submitted value
-4. Reject bundles with hash mismatches (fail-closed)
+2. **Record `stateHash` as an unforgeable producer commitment** (do NOT recompute or verify against any derived value)
+3. Re-canonicalize each `ProjectBundleStepEntry` (excluding `stateHash`) per RFC 8785 to produce deterministic CER digest inputs
+4. Verify the provider's cryptographic signature over the canonicalized `ProjectBundleStepEntry` payload
 5. Preserve original `signals`/`metadata` content after validation
 
 **CAGE Submission Pipeline MUST:**
-1. Apply JCS canonicalization to all extension point data before computing `stateHash`
-2. Never submit non-canonicalized JSON to NexArt
-3. Validate local hash computation matches NexArt's recomputed hash
+1. Apply JCS canonicalization to private `AgentState` snapshot before computing `stateHash`
+2. Submit `stateHash` as an opaque commitment (never transmit the private state snapshot to NexArt)
+3. Sign the canonicalized `ProjectBundleStepEntry` payload with CAGE's private key
+
+**Signature Verification (NexArt):**
+- Resolve CAGE's public key by `kid` from an independently-fetched key manifest (never trust an embedded key)
+- Verify the provider signature over the JCS-canonicalized `ProjectBundleStepEntry` payload
+- Fail closed on unknown `kid` or signature verification failure
+- Successful signature verification proves the step entry originated from CAGE and was not tampered with
 
 ---
 ## 4. DAG Topological Invariants
 
-### 4.1 Parent/Child Step ID Referencing Rules
+### 4.1 Parent/Child Step ID Referencing Rules & Ancestor Contraction
 
 **Core Invariant:** All `parentStepIds` in a [`ProjectBundleStepEntry`](../../src/integrations/provider_02/adapter.py:104) MUST reference steps that appear earlier in the `AttestationBundle.steps` array.
+
+**DAG Ancestor Contraction Algorithm:**
+
+CAGE's governance workflow may execute intermediate nodes that are not explicitly recorded in the final `AttestationBundle.steps` array (e.g., transient refinement loops, internal checkpoints). When a recorded step has unrecorded intermediate ancestors, CAGE applies a **DAG ancestor contraction** algorithm to compute valid `parentStepIds` that reference only recorded steps.
+
+**Contraction Rules:**
+1. **Direct Recorded Parent:** If a step's immediate parent was recorded, reference it directly in `parentStepIds`.
+2. **Unrecorded Intermediate Parent:** If a step's immediate parent was NOT recorded, traverse backward through the execution DAG to find the nearest recorded ancestor(s).
+3. **Multiple Paths:** If multiple paths exist through unrecorded intermediates to different recorded ancestors, include ALL reachable recorded ancestors in `parentStepIds` (this produces multi-parent convergence).
+4. **Topological Ordering Preservation:** The contraction MUST preserve the original DAG's reachability properties: if node A could reach node B in the full execution graph, the contracted graph MUST preserve this reachability.
+
+**Example Contraction:**
+```
+Full Execution Graph (some nodes unrecorded):
+  [R1: nemo_check] → [U1: internal_state] → [U2: internal_refinement] → [R2: safety_check]
+                   ↘ [U3: parallel_branch] ↗
+
+Contracted Graph (only recorded nodes in AttestationBundle):
+  [R1: nemo_check] → [R2: safety_check]
+  
+  R2.parentStepIds = [R1.stepId]  # U1, U2, U3 contracted away
+```
 
 **Validation Algorithm:**
 ```python
@@ -362,6 +400,11 @@ def validate_parent_references(bundle: AttestationBundle) -> bool:
 **Leaf Node Convention:**
 - Leaf nodes have no children (no other step references them as parent)
 - Terminal path classification depends on which leaf node(s) were reached
+
+**NexArt Verification:**
+- NexArt MUST validate that all `parentStepIds` reference earlier steps in the `steps` array
+- NexArt does NOT need to know about unrecorded intermediate nodes (they are abstracted away by contraction)
+- The contracted DAG preserves all governance-relevant execution paths
 
 ### 4.2 Monotonic Non-Decreasing Timestamp Constraints
 
