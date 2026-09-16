@@ -314,12 +314,16 @@ def call_backend(query: str, session_id: str) -> str:
     # resumes from the previous query's checkpoint — including any interrupted
     # state at interrupt_before=["governed_trader"] — causing HTTP 500 errors.
     payload = {"prompt": query, "user_id": session_id, "thread_id": session_id}
+    headers = {"Content-Type": "application/json"}
+    cage_api_key = os.environ.get("CAGE_API_KEY", "")
+    if cage_api_key:
+        headers["Authorization"] = f"Bearer {cage_api_key}"
     try:
         resp = requests.post(
             f"{BACKEND_URL}/agent/query",
             json=payload,
             timeout=_EVAL_QUERY_TIMEOUT,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         resp.raise_for_status()
         data = resp.json()
