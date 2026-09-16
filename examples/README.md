@@ -23,7 +23,7 @@ Runs three adversarial attack scenarios through the **real** CAGE governance pip
 | 1 | Agentic Confidence Threshold | SR 26-2 §IV.B check against `governance_thresholds.json` |
 | 2 | OPA Rego Emulator | Mirrors `config/opa/generated_stpa_policy.rego` logic inline |
 | 3 | Prompt Injection Scanner | Tier-1 keywords from `governance_thresholds.json` |
-| 4 | Cilium L7 Egress | Emulates `deployment/k8s/cilium-egress-lockdown.yaml` FQDN rules |
+| 4 | Cilium L7 Egress | Emulates `deployment/k8s/cilium/egress-lockdown.yaml` FQDN rules |
 
 ## Quick Start
 
@@ -106,7 +106,7 @@ uv run python -m src.gateway.governance.stpa_compiler compile
 
 # Deploy to governance-stack
 kubectl apply -f deployment/k8s/linkerd-mtls-policy.yaml
-kubectl apply -f deployment/k8s/cilium-egress-lockdown.yaml
+kubectl apply -f deployment/k8s/cilium/egress-lockdown.yaml
 
 # Verify governance edges
 linkerd viz authz deployment/opa-service -n governance-stack

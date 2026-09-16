@@ -52,7 +52,7 @@ For any historical governance decision, MAS auditors can reconstruct:
 
 ### 2.3 Retention
 
-See `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` — APAC_MAS retention periods:
+See `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — APAC_MAS retention periods:
 - OTel spans: 5 years
 - WORM UCA records: 7 years
 - Lula results: 3 years
@@ -76,13 +76,13 @@ The following materials should be provided to the MAS-accredited auditor:
 
 | Document | Location | Description |
 |---|---|---|
-| System architecture | `docs/AGENT_OPS_ARCHITECTURE.md` | Full system component diagram |
-| Governance overview | `docs/GOVERNANCE_OVERVIEW.md` | AI governance enforcement stack |
-| Audit log schema | `docs/AUDIT_LOG_SCHEMA.md` | OTel span schema and WORM UCA record format |
-| Retention schedule | `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` | Retention periods per log category |
-| HITL scope | `docs/HUMAN_OVERSIGHT_SCOPE.md` | Human oversight gate and SLAs |
-| Model card | `docs/MODEL_CARD_REVIEW.md` | Model provenance and integrity |
-| MAS FEAT T1 report | `docs/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` | Explainability and decision process |
+| System architecture | `docs/architecture/AGENT_OPS_ARCHITECTURE.md` | Full system component diagram |
+| Governance overview | `docs/governance/GOVERNANCE_OVERVIEW.md` | AI governance enforcement stack |
+| Audit log schema | `docs/architecture/AUDIT_LOG_SCHEMA.md` | OTel span schema and WORM UCA record format |
+| Retention schedule | `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` | Retention periods per log category |
+| HITL scope | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | Human oversight gate and SLAs |
+| Model card | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | Model provenance and integrity |
+| MAS FEAT T1 report | `compliance/apac_mas/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` | Explainability and decision process |
 
 ### Compliance Evidence
 
@@ -149,8 +149,8 @@ The auditor will:
 
 ## Related Documents
 
-- `docs/AUDIT_LOG_SCHEMA.md` — Audit record schema
-- `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` — Retention periods
-- `docs/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` — MAS FEAT T1 transparency
-- `docs/AI_FAIRNESS_ASSESSMENT.md` — MAS FEAT F2 fairness metrics
-- `docs/POAM_APAC_MAS.md` — MAS-002 POAM item
+- `docs/architecture/AUDIT_LOG_SCHEMA.md` — Audit record schema
+- `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — Retention periods
+- `compliance/apac_mas/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` — MAS FEAT T1 transparency
+- `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` — MAS FEAT F2 fairness metrics
+- `compliance/apac_mas/POAM_APAC_MAS.md` — MAS-002 POAM item

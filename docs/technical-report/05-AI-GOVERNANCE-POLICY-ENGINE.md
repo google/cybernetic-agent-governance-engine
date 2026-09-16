@@ -35,14 +35,14 @@ The AI Governance & Policy Engine is the most complex and safety-critical compon
 
 ## 1. Governance Philosophy
 
-CAGE implements neuro-symbolic hybrid governance (see [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)) — a defense-in-depth approach grounded in two complementary paradigms:
+CAGE implements neuro-symbolic hybrid governance (see [`docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)) — a defense-in-depth approach grounded in two complementary paradigms:
 
 - **Neural (semantic)**: LLM consensus critics in `ConsensusEngine` provide contextual judgment for high-value trades, detecting nuanced compliance violations that symbolic rules cannot express.
 - **Symbolic (deterministic)**: STPA/STAMP unsafe control action checks, Control Barrier Functions, Aho-Corasick keyword scans, and OPA Rego policies enforce hard constraints regardless of LLM state.
 
 Neither paradigm alone is sufficient. Neural systems can hallucinate; symbolic systems cannot reason over context. The pipeline requires both.
 
-**Four Governance Automation Patterns** (see [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md)):
+**Four Governance Automation Patterns** (see [`compliance/cross-region/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md)):
 
 | Pattern                      | Mechanism                                                     |
 | ---------------------------- | ------------------------------------------------------------- |
@@ -217,7 +217,7 @@ The [`_is_governed_action()`](../../src/gateway/governance/symbolic_governor.py:
 
 ## 3. STPA/STAMP Safety Analysis — Tier 1
 
-Full analysis: [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
+Full analysis: [`docs/security/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
 
 [`GeneratedSTPAValidator`](../../src/gateway/governance/generated_stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 
@@ -333,7 +333,7 @@ To prevent Time-Of-Check to Time-Of-Use (TOCTOU) exploits and drift under volati
 
 ## 5. OPA Policy Engine — Tier 4
 
-[`OPAClient`](../../src/gateway/core/policy.py) is an HTTP client to the OPA REST API with integrated `CircuitBreaker`:
+[`OPAClient`](../src/gateway/core/policy.py) is an HTTP client to the OPA REST API with integrated `CircuitBreaker`:
 
 - **Circuit breaker**: 5 consecutive failures → open; 30-second recovery window
 - **Fail-closed**: when circuit is open, decision defaults to DENY
@@ -496,7 +496,7 @@ All functions are **fail-closed**: missing required fields return `False` (block
 
 ## 7. Multi-Agent Consensus Engine — Tier 5
 
-[`ConsensusEngine`](../../src/gateway/governance/consensus/engine.py) (line 71) implements a multi-agent "Critic" voting mechanism for high-value trade decisions. Two independent LLM-backed personas — a **Risk Manager** and a **Compliance Officer** — are queried concurrently and must reach consensus before a trade above the activation threshold can proceed.
+[`ConsensusEngine`](../src/gateway/governance/consensus/engine.py) (line 71) implements a multi-agent "Critic" voting mechanism for high-value trade decisions. Two independent LLM-backed personas — a **Risk Manager** and a **Compliance Officer** — are queried concurrently and must reach consensus before a trade above the activation threshold can proceed.
 
 ### 7.1 Activation Threshold & Regional Calibration
 
@@ -892,15 +892,15 @@ The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`,
 
 | Module | Role |
 |---|---|
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name (via a compiled `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`. Fail-closed: unregistered actions default to `IRREVERSIBLE_TERMINAL`. |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute reachable terminals and the critical path |
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` (`worst_case_classification`, `reachable_terminals`, `critical_path`, `verdict`, `confidence_at_analysis`) |
+| [`src/gateway/governance/ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name (via a compiled `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`. Fail-closed: unregistered actions default to `IRREVERSIBLE_TERMINAL`. |
+| [`src/gateway/governance/ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute reachable terminals and the critical path |
+| [`src/gateway/governance/ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` (`worst_case_classification`, `reachable_terminals`, `critical_path`, `verdict`, `confidence_at_analysis`) |
 | [`ftra/semantic_validator.py`](../../src/gateway/governance/ftra/semantic_validator.py) | `SemanticValidator` — ensures execution payloads conform to FTRA boundaries (e.g., parameter smuggling checks, bounds checks, schema validation) before execution. |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge routing function reading `ftra_status` from `AgentState` |
+| [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge routing function reading `ftra_status` from `AgentState` |
 
 **Verdict routing:** `CLEAR` → proceed to the `safety_check` OPA gate. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ `FRIA_ZONE_DEFER` = 0.70) → park in DeferQueue `db=1` pending human clearance. `BLOCKED` (irreversible terminal reachable, confidence < 0.70) → route to `explainer`; plan halted outright. All construction/traversal errors fail closed to `HITL_REQUIRED`/`BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern.
 
-> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It was never imported by `SymbolicGovernor` or any production code path — the actual Pre-Pipeline Boundary Gate has always been `ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
+> **Removed scaffold:** `src/gateway/governance/ftra/graph_analyzer.py` was a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It was never imported by `SymbolicGovernor` or any production code path — the actual Pre-Pipeline Boundary Gate has always been `src/gateway/governance/ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
 
 ### Compliance Mapping
 
@@ -1171,7 +1171,7 @@ All four implementation phases are complete as of v2.1.0:
 | Phase 0 — Foundation | Agentic scope statement, Lula manifest scaffolding, SBOM CI gate | ✅ Complete |
 | Phase 1 — Quick Wins | Confabulation scorer (§15.1), PII audit log hardening | ✅ Complete |
 | Phase 2 — Core Hardening | Prompt injection detector (§15.3), HITL enforcement (§15.2), provenance chain (§15.4) | ✅ Complete |
-| Phase 3 — Architectural Uplift | NeMo CBRN rail (§6 + `colang/cbrn_rails.co`), recursive governance risk mitigation | ✅ Complete |
+| Phase 3 — Architectural Uplift | NeMo CBRN rail (§6 + `src/gateway/governance/nemo/colang/cbrn_rails.co`), recursive governance risk mitigation | ✅ Complete |
 
 ### 15.5 NIST AI 600-1 Module Summary **[US_FED only]**
 
@@ -1261,7 +1261,7 @@ Where the named constants are:
 
 ### 16.5 Consensus Boolean Logic
 
-The [`ConsensusEngine`](../../src/gateway/governance/consensus/engine.py) activates only for trades exceeding the regional `consensus_threshold_usd`. The two LLM critic personas are dispatched concurrently via `asyncio.gather` with a **10-second timeout** (`_CRITIC_TIMEOUT_S = 10.0`):
+The [`ConsensusEngine`](../src/gateway/governance/consensus/engine.py) activates only for trades exceeding the regional `consensus_threshold_usd`. The two LLM critic personas are dispatched concurrently via `asyncio.gather` with a **10-second timeout** (`_CRITIC_TIMEOUT_S = 10.0`):
 
 ```
 consensus_required = (amount > consensus_threshold_usd)

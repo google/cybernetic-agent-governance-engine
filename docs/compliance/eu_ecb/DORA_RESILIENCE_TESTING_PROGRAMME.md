@@ -84,7 +84,7 @@ DORA Art. 12 requires financial entities to establish, maintain, and review a **
 1. Aho-Corasick keyword filter evasion (character substitution, encoding tricks) — pre-pipeline scan
 2. NeMo Guardrails Colang rail evasion (paraphrase attacks) — pre-pipeline scan. The legacy SLM semantic-similarity sidecar has been fully retired (`slm_available=False` permanent sentinel); OPA now applies an elevated confidence threshold (0.97) unconditionally as a replacement mitigation.
 3. OPA policy bypass attempts (malformed input, type coercion) — Tier 4 of the SymbolicGovernor pipeline
-4. Indirect injection via MCP tool responses (see `docs/PII_SCRUBBING_POLICY.md`)
+4. Indirect injection via MCP tool responses (see `compliance/universal/PII_SCRUBBING_POLICY.md`)
 5. HITL bypass attempts (TOCTOU attack simulation)
 
 **Pass criteria:** All adversarial inputs blocked or escalated to MANUAL_REVIEW. Zero governance violations reaching the trade execution layer.
@@ -135,7 +135,7 @@ All test results must be:
 
 ## Related Documents
 
-- `docs/POAM_EU_ECB.md` — EU-002 POAM item
-- `docs/FRIA_ATTESTATION.md` — EU-001 FRIA document
-- `docs/HUMAN_OVERSIGHT_SCOPE.md` — HITL SLA definitions
-- `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` — Audit evidence retention
+- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-002 POAM item
+- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU-001 FRIA document
+- `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL SLA definitions
+- `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — Audit evidence retention

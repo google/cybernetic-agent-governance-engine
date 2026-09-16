@@ -44,7 +44,7 @@ exporter would not fix the emission gap.
 
 **(c) It names the wrong provider.** `provider_06.submit_evidence()` returns an
 `EvidenceSeal` whose `seal_hash` comes from a `receiptDigest`
-([`provider_06/adapter.py:430`](../src/integrations/provider_06/adapter.py:430)) —
+([`src/integrations/provider_06/adapter.py:430`](../src/integrations/provider_06/adapter.py:430)) —
 that is the Agent Integrity provider, a different trust service. NexArt CER hashes
 come from `provider_02`. Conflating them would wire the wrong digest into the
 `link[rel="evidence"]` href.

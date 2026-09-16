@@ -172,7 +172,7 @@ Add the following lifecycle rules to the CAGE audit GCS bucket (`gs://$CAGE_AUDI
 
 ## Related Documents
 
-- `docs/GDPR_DPIA.md` — GDPR Art. 35 DPIA
-- `docs/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
-- `docs/DORA_RESILIENCE_TESTING_PROGRAMME.md` — DORA Art. 12 resilience testing
-- `docs/POAM_EU_ECB.md` — EU-005 POAM item
+- `compliance/eu_ecb/GDPR_DPIA.md` — GDPR Art. 35 DPIA
+- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
+- `compliance/eu_ecb/DORA_RESILIENCE_TESTING_PROGRAMME.md` — DORA Art. 12 resilience testing
+- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-005 POAM item

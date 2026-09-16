@@ -8,7 +8,7 @@ This document describes the architectural fix for the **Ghost-State TOCTOU vulne
 **STPA Reference:** UCA-2 (Wrong Timing — stale market data at execution)
 **ISO 42001:** A.8.4 (AI System Operation Controls), A.7.2 (Accountability)
 
-> **Note — Two distinct TOCTOU mechanisms:** This document covers the **HITL stale-state TOCTOU** (price drift between approval and execution). A separate TOCTOU race — concurrent multi-agent fiscal overspend — is closed by the **FiscalLimitGuard** (Step 3 in `SymbolicGovernor`) using atomic `WATCH/MULTI/EXEC` Redis pre-reservation against `fiscal:daily_limit:{YYYY-MM-DD}`. `ControlBarrierFunction.verify_action()` is **read-only** and does not close that race. See `docs/CAUSAL_AND_CBF_GOVERNANCE.md §3` and `docs/STPA_ANALYSIS.md §5`.
+> **Note — Two distinct TOCTOU mechanisms:** This document covers the **HITL stale-state TOCTOU** (price drift between approval and execution). A separate TOCTOU race — concurrent multi-agent fiscal overspend — is closed by the **FiscalLimitGuard** (Step 3 in `SymbolicGovernor`) using atomic `WATCH/MULTI/EXEC` Redis pre-reservation against `fiscal:daily_limit:{YYYY-MM-DD}`. `ControlBarrierFunction.verify_action()` is **read-only** and does not close that race. See `docs/CAUSAL_AND_CBF_GOVERNANCE.md §3` and `docs/security/STPA_ANALYSIS.md §5`.
 
 ---
 

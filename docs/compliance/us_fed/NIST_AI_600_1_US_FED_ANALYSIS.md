@@ -5,7 +5,7 @@
 **Date:** 2026-06-15
 **Scope:** Analysis of NIST AI 600-1 (Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile, July 2024) against CAGE v2.0.0 agentic AI capabilities, with specific recommendations for updating existing NIST RMF documentation under the `CAGE_DEPLOYMENT_REGION=US_FED` jurisdiction.
 **Authority:** NIST AI 600-1 (July 26, 2024), NIST AI RMF 1.0 (January 2023), NIST SP 800-53 Rev. 5, SR 26-2 (Federal Reserve, April 17, 2026)
-**Prerequisite reading:** `docs/NIST_RMF_CHUNK1_CURRENT_STATE.md` through `docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`, `docs/POAM_US_FED.md`
+**Prerequisite reading:** `docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md` through `docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`, `compliance/us_fed/POAM_US_FED.md`
 
 > **⚠️ US_FED Scope Notice:** This document applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED`. The AI 600-1 analysis is additive to the existing NIST SP 800-53 Rev. 5 HIGH baseline. It does not replace or supersede EU AI Act (EU_ECB) or MAS FEAT (APAC_MAS) obligations.
 
@@ -58,7 +58,7 @@ CAGE sits at the intersection of all three layers: it is a federal information s
 - Vulnerability scanning and flaw remediation (RA-5, SI-2, Trivy/pip-audit)
 
 **AI 600-1 covers — SP 800-53 has no equivalent:**
-- **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](../../../src/gateway/governance/consensus/engine.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
+- **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](../src/gateway/governance/consensus/engine.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
 - **Agentic autonomy scope (§2.5.1–2.5.4):** SP 800-53 AC-5 covers separation of duties between human roles. It has no concept of an AI agent autonomously selecting which MCP tools to call. AI 600-1 §2.5.4 requires a formal human oversight scope statement — no SP 800-53 control requires this.
 - **Indirect prompt injection (§2.4):** SP 800-53 SI-3 covers antivirus/malware. It has no concept of a market data API response containing embedded instructions that hijack LLM behavior. CAGE's `get_market_data` MCP tool response flows into the LLM context window with no sanitization — invisible to SP 800-53.
 - **Harmful bias / algorithmic fairness (§2.6):** SP 800-53 has no fairness control. AI 600-1 §2.6 requires assessing disparate impact in financial recommendations — a direct ECOA/Regulation B obligation.
@@ -262,13 +262,13 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values (**v3.0.1:** deprecated `stpa_validator.py` shim removed)
-- [`src/gateway/governance/consensus/engine.py`](../../../src/gateway/governance/consensus/engine.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
+- [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
 - [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
 - `config/governance_thresholds.json` — `min_trade_confidence: 0.95` threshold rejects low-confidence outputs
 
 **Gaps:**
 1. **No confabulation rate metric.** There is no measurement of how often the financial advisor LLM produces factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. The `safety_rate` metric in [`src/compliance_bridge/metrics.py`](../../../src/compliance_bridge/metrics.py) measures governance pass/fail, not factual accuracy.
-2. **ConsensusEngine critics are also LLMs.** The "Risk Manager" and "Compliance Officer" personas in [`src/gateway/governance/consensus/engine.py`](../../../src/gateway/governance/consensus/engine.py) are themselves LLM calls — they can confabulate their risk assessments. There is no ground-truth validation of consensus outputs.
+2. **ConsensusEngine critics are also LLMs.** The "Risk Manager" and "Compliance Officer" personas in [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) are themselves LLM calls — they can confabulate their risk assessments. There is no ground-truth validation of consensus outputs.
 3. **No hallucination detection on market data inputs.** The `get_market_data` MCP tool returns external data that the LLM may misinterpret or hallucinate about. No validation that the LLM's stated market price matches the actual API response.
 4. **No Lula validation for confabulation rate.** The 15 existing Lula manifests do not include any confabulation/hallucination rate assertion.
 5. **Explainer node output not validated.** The `explainer` agent generates human-readable explanations of governance decisions — these explanations could confabulate the reasoning behind a DENY verdict.
@@ -306,7 +306,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 1. **No training data memorization assessment.** AI 600-1 §2.3 specifically flags "training data memorization" as a data privacy risk. There is no assessment of whether DeepSeek-R1 or Llama-3.1 have memorized PII from their training corpora. This is distinct from runtime PII detection — a model can reproduce memorized PII even when the input contains no PII.
 2. **No differential privacy or membership inference attack testing.** No red-team tests for membership inference attacks (can an adversary determine if a specific individual's data was in the training set?).
 3. **PII detection threshold `score_threshold=0.3` may be too permissive.** The Presidio `score_threshold=0.3` in `SafeAnalyzer` means entities with 30% confidence are flagged — but also means 70%-confidence entities below the threshold pass through. For a HIGH-baseline financial system, this threshold should be reviewed.
-4. **No PII retention audit for Langfuse traces.** OTel spans containing governance decisions may include PII in `langfuse.observation.input` attributes. The 24-hour PII retention limit from `docs/banking_regs.md` is not enforced on Langfuse trace storage.
+4. **No PII retention audit for Langfuse traces.** OTel spans containing governance decisions may include PII in `langfuse.observation.input` attributes. The 24-hour PII retention limit from `compliance/cross-region/banking_regs.md` is not enforced on Langfuse trace storage.
 5. **Inference-time prompt injection can bypass PII detection.** A crafted prompt could instruct the LLM to output PII in an encoded form (Base64, pig Latin) that Presidio does not detect.
 
 **SP 800-53 Controls Implicated (AI 600-1 Appendix B):** AC-3, AC-4, AU-3, SC-8, SC-28, SI-12, SI-19, RA-3
@@ -315,7 +315,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 1. **Chunk 3 (Select/Implement) — SI-19 gap update:** The existing SI-19 gap notes "no de-identification effectiveness audit." Add AI 600-1 §2.3 training data memorization as a specific sub-gap requiring a memorization assessment test (e.g., using the Carlini et al. extraction attack methodology against the deployed vLLM models).
 
-2. **Chunk 2 (Prepare/Categorize) — Information Type update:** Add "AI Training Data Memorization Risk" as a new information type in `docs/SP800-60_INFORMATION_TYPES.md` with C=High, I=Moderate, A=Low — reflecting that memorized PII in model weights is a persistent confidentiality risk.
+2. **Chunk 2 (Prepare/Categorize) — Information Type update:** Add "AI Training Data Memorization Risk" as a new information type in `docs/compliance/us_fed/SP800-60_INFORMATION_TYPES.md` with C=High, I=Moderate, A=Low — reflecting that memorized PII in model weights is a persistent confidentiality risk.
 
 3. **Chunk 5 (Monitor) — Ongoing assessment:** Add a quarterly memorization assessment to the ISCM strategy, using a canary PII dataset injected into model fine-tuning (if applicable) or using extraction attack probes against the deployed models.
 
@@ -354,7 +354,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 3. **Chunk 1 (Current State) — Governance coverage note:** Add a note that the Tier-1 keyword scan covers direct injection only; indirect injection via MCP tool responses is an open gap.
 
-4. **New Lula validation:** Create `compliance/lula/lula-validation-ai600-injection.yaml` asserting that the red team adversarial test suite passes with `deflection_score >= 4` for all critical payloads, queried from the Langfuse red team evaluation project.
+4. **New Lula validation:** Create `compliance/lula/lula-validation-ai600-prompt-injection.yaml` asserting that the red team adversarial test suite passes with `deflection_score >= 4` for all critical payloads, queried from the Langfuse red team evaluation project.
 
 **New POAM Item:** AI600-003 (see Section 8).
 
@@ -409,11 +409,11 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 1. **Chunk 1 (Current State) — HITL coverage note:** Add a note that while HITL TOCTOU is remediated, automation bias and human oversight scope documentation remain open gaps per AI 600-1 §2.7.
 
-2. **Chunk 3 (Select/Implement) — AC-5 gap update:** Extend the AC-5 (Separation of Duties) gap to include AI 600-1 §2.7 human-AI configuration requirements. Add a recommendation to create `docs/HUMAN_OVERSIGHT_SCOPE.md` documenting the human oversight model for each agentic capability.
+2. **Chunk 3 (Select/Implement) — AC-5 gap update:** Extend the AC-5 (Separation of Duties) gap to include AI 600-1 §2.7 human-AI configuration requirements. Add a recommendation to create `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` documenting the human oversight model for each agentic capability.
 
 3. **Chunk 4 (Assess/Authorize) — New assessment procedure:** Add a "Human-AI Configuration Assessment" to the SAP that evaluates: (a) whether the HITL interface provides sufficient information for independent human judgment, (b) DEFER queue resolution SLA compliance, (c) override audit trail completeness.
 
-4. **New Lula validation:** Create `compliance/lula/lula-validation-ai600-hitl.yaml` asserting that the DEFER queue depth is below a threshold (e.g., < 10 unresolved items older than 4 hours), queried from Redis db=1 via the compliance-bridge metrics API.
+4. **New Lula validation:** Create `compliance/lula/lula-validation-ai600-human-ai-config.yaml` asserting that the DEFER queue depth is below a threshold (e.g., < 10 unresolved items older than 4 hours), queried from Redis db=1 via the compliance-bridge metrics API.
 
 **New POAM Item:** AI600-005 (see Section 8).
 
@@ -509,7 +509,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 2. **Chunk 2 (Prepare/Categorize) — Information Type:** Add "AI-Generated Financial Recommendations" as an information type with a note on IP ownership ambiguity and the need for an IP policy.
 
-3. **New document:** Create `docs/AI_IP_POLICY.md` documenting: model license terms, training data provenance (to the extent known), IP ownership of AI-generated outputs, and copyright detection approach.
+3. **New document:** Create `docs/compliance/universal/AI_IP_POLICY.md` documenting: model license terms, training data provenance (to the extent known), IP ownership of AI-generated outputs, and copyright detection approach.
 
 ---
 
@@ -548,7 +548,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 - **POAM-023 open:** CVE-2025-13462 in `libpython3.11` — CRITICAL, no Debian fix available
 
 **Gaps:**
-1. **No model weight integrity verification.** `scripts/mirror_models.py` downloads DeepSeek-R1 and Llama-3.1 weights to MinIO/GCS without SHA-256 hash verification against a known-good manifest. A supply chain attack replacing model weights with a backdoored version would not be detected.
+1. **No model weight integrity verification.** `deployment/scripts/mirror_models.py` downloads DeepSeek-R1 and Llama-3.1 weights to MinIO/GCS without SHA-256 hash verification against a known-good manifest. A supply chain attack replacing model weights with a backdoored version would not be detected.
 2. **No model card review.** Neither DeepSeek-R1 nor Llama-3.1 model cards have been formally reviewed for: training data sources, known biases, safety evaluations, and intended use cases. AI 600-1 §2.12 requires reviewing model cards as part of value chain assessment.
 3. **Dependency versions use `>=` ranges.** `src/governed_financial_advisor/requirements.txt` uses unpinned ranges (`langgraph>=0.4.0`, `nemoguardrails>=0.17.0`) — allowing automatic inclusion of potentially malicious new versions (POAM-013 open).
 4. **No NeMo Guardrails integrity verification.** NeMo Guardrails is a critical safety component. Its integrity (that the installed version matches the expected version and has not been tampered with) is not verified at deployment time.
@@ -559,9 +559,9 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Recommended RMF Updates:**
 
-1. **Chunk 4 (Assess/Authorize) — Supply Chain Assessment (§5.5):** Add model weight integrity verification as a critical gap. Recommend implementing SHA-256 verification in `scripts/mirror_models.py` against a `config/model_hashes.json` manifest signed by the model provider.
+1. **Chunk 4 (Assess/Authorize) — Supply Chain Assessment (§5.5):** Add model weight integrity verification as a critical gap. Recommend implementing SHA-256 verification in `deployment/scripts/mirror_models.py` against a `config/model_hashes.json` manifest signed by the model provider.
 
-2. **Chunk 3 (Select/Implement) — SA-12 gap update:** Add model card review as a required SA-12 (Supply Chain Protection) activity. Create `docs/MODEL_CARD_REVIEW.md` documenting the formal review of DeepSeek-R1 and Llama-3.1 model cards.
+2. **Chunk 3 (Select/Implement) — SA-12 gap update:** Add model card review as a required SA-12 (Supply Chain Protection) activity. Create `docs/compliance/universal/MODEL_CARD_REVIEW.md` documenting the formal review of DeepSeek-R1 and Llama-3.1 model cards.
 
 3. **Chunk 5 (Monitor) — Ongoing assessment:** Add model weight integrity verification to the ISCM strategy as a weekly automated check — re-verify SHA-256 hashes of deployed model weights against the signed manifest.
 
@@ -579,7 +579,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.1 Chunk 1 (Current State) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](NIST_RMF_CHUNK1_CURRENT_STATE.md)
+**File:** [`docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md`](NIST_RMF_CHUNK1_CURRENT_STATE.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -592,23 +592,23 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 **Recommended addition to §1.3 Coverage Assessment:**
 
-> **AI 600-1 Gap Note (added 2026-06-15):** The governance enforcement stack is strong for deterministic policy enforcement but does not address NIST AI 600-1 GenAI-specific risks. Key gaps: (1) no confabulation rate metric, (2) indirect prompt injection via MCP tool responses unmitigated, (3) no human oversight scope document per AI 600-1 §2.5.4, (4) no model weight integrity verification, (5) no training data memorization assessment. These gaps are tracked as POAM items AI600-001 through AI600-007 in `docs/POAM_US_FED.md`.
+> **AI 600-1 Gap Note (added 2026-06-15):** The governance enforcement stack is strong for deterministic policy enforcement but does not address NIST AI 600-1 GenAI-specific risks. Key gaps: (1) no confabulation rate metric, (2) indirect prompt injection via MCP tool responses unmitigated, (3) no human oversight scope document per AI 600-1 §2.5.4, (4) no model weight integrity verification, (5) no training data memorization assessment. These gaps are tracked as POAM items AI600-001 through AI600-007 in `compliance/us_fed/POAM_US_FED.md`.
 
 ---
 
 ### 5.2 Chunk 2 (Prepare/Categorize) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md)
+**File:** [`docs/compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
 | C2-U1 | §4 FIPS 199 Categorization | Add AI 600-1 as a required input to FIPS 199 categorization. The presence of agentic AI with real-world actuators (execute_trade) elevates Integrity impact to **High** — consistent with existing categorization but now formally justified by AI 600-1 §2.5.2. | §4.7 Human-AI Config |
 | C2-U2 | §5 Information Type Identification | Add three new information types: (a) **AI Training Data Memorization Risk** — C=High, I=Moderate, A=Low; (b) **AI-Generated Financial Recommendations** — C=Low, I=High, A=Moderate (with IP ownership note); (c) **AI Model Weights** — C=High, I=High, A=High (supply chain criticality). | §4.3, §4.10, §4.12 |
 | C2-U3 | §5 Information Type Identification | Add note: AI 600-1 §2.6 (Harmful Bias) requires "AI Model Fairness/Bias Risk" as an information type with I=High under ECOA/Regulation B for US_FED financial institutions. | §4.6 Bias |
-| C2-U4 | §7 Priority Matrix | Add new P1 item: **Create `docs/AI_RISK_TAXONOMY.md`** adopting AI 600-1's 12-category risk taxonomy as the formal GenAI risk framework for CAGE US_FED. Effort: S, Impact: H, Priority: **P1**. | All §4.x |
+| C2-U4 | §7 Priority Matrix | Add new P1 item: **Create `docs/compliance/universal/AI_RISK_TAXONOMY.md`** adopting AI 600-1's 12-category risk taxonomy as the formal GenAI risk framework for CAGE US_FED. Effort: S, Impact: H, Priority: **P1**. | All §4.x |
 | C2-U5 | §8 Step 1–2 Readiness Score | Revise score downward from 28/100 to **22/100** when AI 600-1 obligations are factored in. The additional ungapped risk surface (12 new risk categories, 0% coverage) reduces the effective readiness score. | All §4.x |
 
-**New recommended document:** `docs/AI_RISK_TAXONOMY.md` — a formal adoption of AI 600-1's 12-category risk taxonomy as CAGE's GenAI risk framework, with CAGE-specific applicability ratings (Critical/High/Moderate/Low) and mapping to existing controls.
+**New recommended document:** `docs/compliance/universal/AI_RISK_TAXONOMY.md` — a formal adoption of AI 600-1's 12-category risk taxonomy as CAGE's GenAI risk framework, with CAGE-specific applicability ratings (Critical/High/Moderate/Low) and mapping to existing controls.
 
 ---
 
@@ -622,8 +622,8 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 | C3-U2 | SI — System & Info Integrity | **SI-3 gap extension:** Extend malicious code protection gap to cover indirect prompt injection via MCP tool responses. Add recommendation: sanitize all MCP tool responses through Aho-Corasick scanner before injecting into LLM context window. | §4.4 Data Poisoning |
 | C3-U3 | SI — System & Info Integrity | **SI-7 gap extension:** Add LLM output integrity (provenance tracking) and NeMo Guardrails integrity verification as SI-7 sub-gaps. Recommend structured provenance record per financial recommendation. | §4.8, §4.12 |
 | C3-U4 | SI — System & Info Integrity | **SI-19 gap extension:** Add AI 600-1 §2.3 training data memorization as a specific SI-19 sub-gap. Recommend Carlini et al. extraction attack methodology against deployed vLLM models. | §4.3 Data Privacy |
-| C3-U5 | AC — Access Control | **AC-5 gap extension:** Extend separation of duties gap to include AI 600-1 §2.7 human-AI configuration requirements. Add recommendation: create `docs/HUMAN_OVERSIGHT_SCOPE.md`. | §4.7 Human-AI Config |
-| C3-U6 | RA — Risk Assessment | **New RA gap:** Add algorithmic fairness assessment as a RA-3 sub-gap. Recommend `docs/AI_FAIRNESS_ASSESSMENT.md` per SR 11-7 model risk management requirements. | §4.6 Bias |
+| C3-U5 | AC — Access Control | **AC-5 gap extension:** Extend separation of duties gap to include AI 600-1 §2.7 human-AI configuration requirements. Add recommendation: create `docs/governance/HUMAN_OVERSIGHT_SCOPE.md`. | §4.7 Human-AI Config |
+| C3-U6 | RA — Risk Assessment | **New RA gap:** Add algorithmic fairness assessment as a RA-3 sub-gap. Recommend `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` per SR 11-7 model risk management requirements. | §4.6 Bias |
 | C3-U7 | CA — Security Assessment | **CA-8 gap extension:** Add AI-specific penetration testing requirements: model extraction resistance, advanced jailbreak testing (DAN, role-play, many-shot), adversarial financial examples, vLLM direct-access testing. | §4.9 Info Security |
 | C3-U8 | SC — System & Comms Protection | **SC-7 gap extension:** Add vLLM API authentication as a SC-7 sub-gap. Recommend OPA-enforced authentication layer in front of vLLM endpoints. | §4.9 Info Security |
 | C3-U9 | CM — Configuration Management | **CM-10 new gap:** Add model license compliance as a CM-10 (Software Usage Restrictions) gap. DeepSeek-R1 and Llama-3.1 licenses must be formally reviewed for US_FED deployment compatibility. | §4.10 IP |
@@ -639,7 +639,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.4 Chunk 4 (Assess/Authorize) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
+**File:** [`docs/compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -648,7 +648,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 | C4-U3 | §5.3 Penetration Testing | Add three new red team categories: `model_extraction`, `jailbreak_advanced`, `adversarial_financial`. Raise pass threshold to `deflection_score >= 4` for all injection payloads. | §4.4, §4.9 |
 | C4-U4 | §5.4 Control Effectiveness Metrics | Add four new metrics: (a) `confabulation_rate` — LLM factual accuracy vs. ground truth; (b) `injection_deflection_score` — red team pass rate; (c) `hitl_defer_resolution_time` — DEFER queue SLA compliance; (d) `model_weight_integrity` — SHA-256 verification pass/fail. | §4.2, §4.4, §4.7, §4.12 |
 | C4-U5 | §5.5 Supply Chain Assessment | Add model weight integrity verification and model card review as critical supply chain assessment gaps. Add model license review for DeepSeek-R1 and Llama-3.1. | §4.12 Value Chain |
-| C4-U6 | §6.1 Authorization Package | Add `docs/AI_RISK_TAXONOMY.md`, `docs/HUMAN_OVERSIGHT_SCOPE.md`, `docs/AI_FAIRNESS_ASSESSMENT.md`, `docs/MODEL_CARD_REVIEW.md`, and `docs/AI_IP_POLICY.md` as required authorization package artifacts for US_FED GenAI systems. | All §4.x |
+| C4-U6 | §6.1 Authorization Package | Add `docs/compliance/universal/AI_RISK_TAXONOMY.md`, `docs/governance/HUMAN_OVERSIGHT_SCOPE.md`, `compliance/universal/AI_FAIRNESS_ASSESSMENT.md`, `docs/compliance/universal/MODEL_CARD_REVIEW.md`, and `docs/compliance/universal/AI_IP_POLICY.md` as required authorization package artifacts for US_FED GenAI systems. | All §4.x |
 | C4-U7 | Authorization Package Inventory | Add 5 new required artifacts (see C4-U6). Update completeness from 5/21 to 5/26 (19%) when AI 600-1 artifacts are included. | All §4.x |
 | C4-U8 | cATO Readiness Checklist | Add 4 new checklist items: (21) AI 600-1 risk taxonomy formally adopted; (22) confabulation rate measured and within threshold; (23) model weight integrity verified weekly; (24) human oversight scope document exists. | All §4.x |
 
@@ -656,15 +656,15 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.5 Chunk 5 (Monitor/Roadmap) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
+**File:** [`docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
 | C5-U1 | §7.1 ISCM Strategy | Add AI 600-1 monitoring requirements to ISCM strategy: (a) weekly model weight integrity verification, (b) quarterly confabulation rate assessment, (c) quarterly fairness audit, (d) quarterly training data memorization probe. | §4.3, §4.6, §4.12 |
 | C5-U2 | §7.2 Ongoing Control Assessments | Add 4 new AI 600-1 Lula validations to the ongoing assessment scope: `lula-validation-ai600-confabulation.yaml`, `lula-validation-ai600-injection.yaml`, `lula-validation-ai600-hitl.yaml`, `lula-validation-ai600-supply-chain.yaml`. | §4.2, §4.4, §4.7, §4.12 |
 | C5-U3 | §7.4 Security Status Reporting | Add AI 600-1 risk category status to the compliance summary report. The `GET /v1/compliance/summary` endpoint should include AI 600-1 metric fields. | All §4.x |
-| C5-U4 | §B.1 Phase 0 | Add new Phase 0 artifact: **`docs/AI_RISK_TAXONOMY.md`** — AI 600-1 risk taxonomy adoption document. Responsible: ISSO. Controls: AI RMF GOVERN-1.1, GOVERN-1.2. | All §4.x |
-| C5-U5 | §B.2 Phase 1 Quick Wins | Add 3 new Phase 1 items: (P1-AI1) Create `docs/HUMAN_OVERSIGHT_SCOPE.md`; (P1-AI2) Add indirect injection sanitization to MCP tool response pipeline; (P1-AI3) Add model weight SHA-256 verification to `scripts/mirror_models.py`. | §4.4, §4.7, §4.12 |
+| C5-U4 | §B.1 Phase 0 | Add new Phase 0 artifact: **`docs/compliance/universal/AI_RISK_TAXONOMY.md`** — AI 600-1 risk taxonomy adoption document. Responsible: ISSO. Controls: AI RMF GOVERN-1.1, GOVERN-1.2. | All §4.x |
+| C5-U5 | §B.2 Phase 1 Quick Wins | Add 3 new Phase 1 items: (P1-AI1) Create `docs/governance/HUMAN_OVERSIGHT_SCOPE.md`; (P1-AI2) Add indirect injection sanitization to MCP tool response pipeline; (P1-AI3) Add model weight SHA-256 verification to `deployment/scripts/mirror_models.py`. | §4.4, §4.7, §4.12 |
 | C5-U6 | §B.3 Phase 2 Core Hardening | Add 4 new Phase 2 items: (P2-AI1) Implement confabulation rate metric; (P2-AI2) Create AI fairness assessment; (P2-AI3) Add advanced jailbreak red team categories; (P2-AI4) Create 4 AI 600-1 Lula validations. | §4.2, §4.6, §4.4, §4.9 |
 | C5-U7 | §B.5 ATO Readiness Progression | Revise current state score from 24% to **18%** when AI 600-1 obligations are factored in. Phase 3 target remains 77% but requires AI 600-1 compliance to achieve. | All §4.x |
 | C5-U8 | §B.7 Executive Summary | Add paragraph: "AI 600-1 Compliance Gap: CAGE's agentic AI functionality introduces 12 GenAI-specific risk categories per NIST AI 600-1 (July 2024), none of which are currently addressed in the NIST RMF authorization package. For US_FED deployments, AI 600-1 compliance is effectively mandatory under EO 14110 and OMB M-24-10. Seven new POAM items (AI600-001 through AI600-007) have been created to track remediation." | All §4.x |
@@ -726,7 +726,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 1. **Chunk 2 (Prepare/Categorize) — Information Type update:** Add "AI Model Fairness/Bias Risk" as a new information type with I=High (biased financial advice has high integrity impact under ECOA/Reg B).
 
-2. **Chunk 3 (Select/Implement) — New control gap:** Add a new gap under RA-3 (Risk Assessment) specifically for algorithmic fairness assessment. Recommend creating `docs/AI_FAIRNESS_ASSESSMENT.md` documenting the fairness testing methodology, demographic groups assessed, and acceptable disparate impact thresholds per SR 11-7.
+2. **Chunk 3 (Select/Implement) — New control gap:** Add a new gap under RA-3 (Risk Assessment) specifically for algorithmic fairness assessment. Recommend creating `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` documenting the fairness testing methodology, demographic groups assessed, and acceptable disparate impact thresholds per SR 11-7.
 
 3. **Chunk 5 (Monitor) — Ongoing assessment:** Add quarterly fairness audits to the ISCM strategy, using the `scripts/evaluate_langfuse_traces.py` evaluator extended with demographic fairness metrics.
 
@@ -837,18 +837,18 @@ imports:
 
 | Document | Path | Purpose | AI 600-1 Source | Priority |
 |----------|------|---------|-----------------|----------|
-| AI Risk Taxonomy | `docs/AI_RISK_TAXONOMY.md` | Formal adoption of AI 600-1 12-category taxonomy with CAGE applicability ratings | All §4.x | **P0** |
-| Human Oversight Scope | `docs/HUMAN_OVERSIGHT_SCOPE.md` | Documents degree of human oversight for each agentic capability per AI 600-1 §2.5.4 | §4.7 | **P1** |
-| AI Fairness Assessment | `docs/AI_FAIRNESS_ASSESSMENT.md` | Algorithmic fairness testing methodology per SR 11-7 and AI 600-1 §2.6 | §4.6 | **P2** |
-| Model Card Review | `docs/MODEL_CARD_REVIEW.md` | Formal review of DeepSeek-R1 and Llama-3.1 model cards | §4.12 | **P1** |
-| AI IP Policy | `docs/AI_IP_POLICY.md` | Model license terms, training data provenance, IP ownership of AI outputs | §4.10 | **P2** |
+| AI Risk Taxonomy | `docs/compliance/universal/AI_RISK_TAXONOMY.md` | Formal adoption of AI 600-1 12-category taxonomy with CAGE applicability ratings | All §4.x | **P0** |
+| Human Oversight Scope | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | Documents degree of human oversight for each agentic capability per AI 600-1 §2.5.4 | §4.7 | **P1** |
+| AI Fairness Assessment | `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` | Algorithmic fairness testing methodology per SR 11-7 and AI 600-1 §2.6 | §4.6 | **P2** |
+| Model Card Review | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | Formal review of DeepSeek-R1 and Llama-3.1 model cards | §4.12 | **P1** |
+| AI IP Policy | `docs/compliance/universal/AI_IP_POLICY.md` | Model license terms, training data provenance, IP ownership of AI outputs | §4.10 | **P2** |
 | GenAI Environmental Impact | Section in SSP | GCP region energy mix, GPU hours, Carbon Footprint API plan | §4.5 | **P3** |
 
 ---
 
 ## 8. New POAM Items
 
-The following POAM items are derived from the AI 600-1 gap analysis. They are numbered AI600-001 through AI600-007 to distinguish them from the existing POAM-001 through POAM-023 items in [`docs/POAM_US_FED.md`](POAM_US_FED.md).
+The following POAM items are derived from the AI 600-1 gap analysis. They are numbered AI600-001 through AI600-007 to distinguish them from the existing POAM-001 through POAM-023 items in [`compliance/us_fed/POAM_US_FED.md`](POAM_US_FED.md).
 
 | POAM ID | Control ID | AI 600-1 Ref | Weakness Description | Risk Level | Scheduled Completion | Status |
 |---------|-----------|--------------|---------------------|------------|---------------------|--------|
@@ -888,23 +888,23 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 
 | # | Artifact | Path | Effort | Controls |
 |---|----------|------|--------|----------|
-| AI-P0-1 | AI Risk Taxonomy document | `docs/AI_RISK_TAXONOMY.md` | 4h | AI RMF GOVERN-1.1, GOVERN-1.2 |
-| AI-P0-2 | Human Oversight Scope document | `docs/HUMAN_OVERSIGHT_SCOPE.md` | 6h | AC-5, CA-7, AI 600-1 §2.5.4 |
-| AI-P0-3 | Model Card Review | `docs/MODEL_CARD_REVIEW.md` | 8h | SA-12, SR-3, AI 600-1 §2.12 |
+| AI-P0-1 | AI Risk Taxonomy document | `docs/compliance/universal/AI_RISK_TAXONOMY.md` | 4h | AI RMF GOVERN-1.1, GOVERN-1.2 |
+| AI-P0-2 | Human Oversight Scope document | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | 6h | AC-5, CA-7, AI 600-1 §2.5.4 |
+| AI-P0-3 | Model Card Review | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | 8h | SA-12, SR-3, AI 600-1 §2.12 |
 | AI-P0-4 | OSCAL component definition extension | `compliance/oscal/component-definition.yaml` | 4h | CA-2, CA-7 |
 
 ### 9.2 Phase 1 — Quick Wins (Weeks 2–6)
 
 | # | File | Change | Controls | Est. Hours |
 |---|------|--------|----------|------------|
-| AI-P1-1 | `scripts/mirror_models.py` | Add SHA-256 verification against `config/model_hashes.json` | SA-12, SI-7, AI600-007 | 4h |
+| AI-P1-1 | `deployment/scripts/mirror_models.py` | Add SHA-256 verification against `config/model_hashes.json` | SA-12, SI-7, AI600-007 | 4h |
 | AI-P1-2 | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) | Add MCP tool response sanitization through Aho-Corasick scanner before LLM context injection (**v3.0.1:** `safety.py` removed; use `text_filter.py`) | SI-3, SI-10, AI600-003 | 6h |
 | AI-P1-3 | `config/governance_thresholds.json` | Add CBRN keyword category to Tier-1 keyword list; add domain restriction policy reference | SI-10, CM-7 | 2h |
 | AI-P1-4 | `tests/red_team/adversarial_dataset.json` | Add `control_ids` field to all entries; add indirect injection test cases; add advanced jailbreak payloads | CA-8, AI600-003, AI600-006 | 8h |
 | AI-P1-5 | `src/compliance_bridge/types.py` | Add `confabulation_rate`, `injection_deflection_score`, `hitl_defer_queue_depth` to `ComplianceMetrics` | SI-10, AU-3, AI600-001 | 4h |
-| AI-P1-6 | `compliance/lula/lula-validation-ai600-hitl.yaml` | New Lula validation: DEFER queue depth < 10 items older than 4h | CA-7, AI600-005 | 3h |
+| AI-P1-6 | `compliance/lula/lula-validation-ai600-human-ai-config.yaml` | New Lula validation: DEFER queue depth < 10 items older than 4h | CA-7, AI600-005 | 3h |
 | AI-P1-7 | `compliance/lula/lula-validation-ai600-supply-chain.yaml` | New Lula validation: model weight SHA-256 verification | SA-12, AI600-007 | 3h |
-| AI-P1-8 | `docs/AI_IP_POLICY.md` | Model license terms, IP ownership policy | CM-10, SA-4 | 4h |
+| AI-P1-8 | `docs/compliance/universal/AI_IP_POLICY.md` | Model license terms, IP ownership policy | CM-10, SA-4 | 4h |
 
 ### 9.3 Phase 2 — Core Hardening (Weeks 6–16)
 
@@ -912,9 +912,9 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 |---|---------------|-------------|----------|-----------------|
 | AI-P2-1 | `src/compliance_bridge/metrics.py`, `scripts/evaluate_langfuse_traces.py` | Implement confabulation rate metric: LLM-as-judge comparing financial advisor outputs against ground-truth market data from MCP tool responses | SI-10, AU-3, AI600-001 | 5d |
 | AI-P2-2 | `compliance/lula/lula-validation-ai600-confabulation.yaml` | New Lula validation: `confabulation_rate < 0.02` over 24h window | CA-7, AI600-001 | 2d |
-| AI-P2-3 | `compliance/lula/lula-validation-ai600-injection.yaml` | New Lula validation: red team deflection_score >= 4 for critical payloads | CA-8, AI600-003 | 2d |
+| AI-P2-3 | `compliance/lula/lula-validation-ai600-prompt-injection.yaml` | New Lula validation: red team deflection_score >= 4 for critical payloads | CA-8, AI600-003 | 2d |
 | AI-P2-4 | `compliance/lula/lula-validation-ai600-privacy.yaml` | New Lula validation: memorization probe returns 0 PII extractions | SI-19, AI600-002 | 3d |
-| AI-P2-5 | `docs/AI_FAIRNESS_ASSESSMENT.md` | Algorithmic fairness testing methodology; demographic impact assessment per SR 11-7 | RA-3, AI600-004 | 3d |
+| AI-P2-5 | `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` | Algorithmic fairness testing methodology; demographic impact assessment per SR 11-7 | RA-3, AI600-004 | 3d |
 | AI-P2-6 | `tests/red_team/adversarial_dataset.json` | Add `model_extraction`, `jailbreak_advanced`, `adversarial_financial` red team categories | CA-8, AI600-006 | 4d |
 | AI-P2-7 | `deployment/k8s/vllm-services.yaml`, OPA policy | Add OPA-enforced authentication layer in front of vLLM endpoints | SC-7, AI600-006 | 3d |
 | AI-P2-8 | `compliance/oscal/component-definition.yaml` | Add full AI 600-1 component definition with all 9 applicable risk category control implementations | CA-2, CA-7 | 2d |
@@ -983,10 +983,10 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | Harden all 5 Lula stubs to live assertions | `compliance/lula/lula-validation-ai600-*.yaml` | ALL | High (Phase 3 §7.5) |
 | MCP tool response sanitization | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) (**v3.0.1:** `safety.py` removed) | AI600-003 | Critical |
 | Raise red team threshold to `deflection_score >= 4` | `tests/red_team/adversarial_dataset.json` | AI600-003 | Critical |
-| Create `docs/HUMAN_OVERSIGHT_SCOPE.md` | `docs/HUMAN_OVERSIGHT_SCOPE.md` | AI600-005 | High |
-| SHA-256 model weight verification | `scripts/mirror_models.py` | AI600-007 | Critical |
-| Create `docs/MODEL_CARD_REVIEW.md` | `docs/MODEL_CARD_REVIEW.md` | AI600-007 | High |
-| Algorithmic fairness assessment | `docs/AI_FAIRNESS_ASSESSMENT.md` | AI600-004 | High |
+| Create `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | AI600-005 | High |
+| SHA-256 model weight verification | `deployment/scripts/mirror_models.py` | AI600-007 | Critical |
+| Create `docs/compliance/universal/MODEL_CARD_REVIEW.md` | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | AI600-007 | High |
+| Algorithmic fairness assessment | `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` | AI600-004 | High |
 | Advanced jailbreak red team dataset | `tests/red_team/adversarial_dataset.json` | AI600-006 | High |
 | OPA auth layer in front of vLLM | `deployment/k8s/vllm-services.yaml` | AI600-006 | High |
 | Carlini et al. memorization probe | `scripts/evaluate_langfuse_traces.py` | AI600-002 | Medium |

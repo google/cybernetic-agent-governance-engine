@@ -22,7 +22,7 @@ This document records the AI Fairness Assessment (FIA) for the CAGE Governed Fin
 
 ## System Description
 
-The CAGE Governed Financial Advisor provides AI-assisted investment and financial planning advisory outputs. It does **not** make autonomous credit decisions. All outputs require HITL review for amounts > $10,000 USD (see `docs/HUMAN_OVERSIGHT_SCOPE.md`).
+The CAGE Governed Financial Advisor provides AI-assisted investment and financial planning advisory outputs. It does **not** make autonomous credit decisions. All outputs require HITL review for amounts > $10,000 USD (see `docs/governance/HUMAN_OVERSIGHT_SCOPE.md`).
 
 **Classification for ECOA purposes:** The system constitutes an "automated system" that influences financial recommendations. While it does not make final credit decisions, its outputs may influence downstream decisions and therefore fall within ECOA's scope of concern.
 
@@ -127,9 +127,9 @@ To measure fairness metrics, Langfuse traces must include `demographic_group` me
 ## Related Documents
 
 - `scripts/evaluate_langfuse_traces.py` — Fairness metric computation (`compute_fairness_metrics()`)
-- `docs/HUMAN_OVERSIGHT_SCOPE.md` — HITL controls
-- `docs/POAM_US_FED.md` — AI600-004 POAM item
-- `docs/MODEL_CARD_REVIEW.md` — Bias risk assessment per model
+- `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL controls
+- `compliance/us_fed/POAM_US_FED.md` — AI600-004 POAM item
+- `docs/compliance/universal/MODEL_CARD_REVIEW.md` — Bias risk assessment per model
 
 ---
 
@@ -193,12 +193,12 @@ Per MAS TRM Guidelines §6.3, CAGE's AI model governance must document:
 
 | Requirement | CAGE Implementation | Status |
 |---|---|---|
-| Model development documentation | `docs/MODEL_CARD_REVIEW.md` | ✅ Available |
+| Model development documentation | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | ✅ Available |
 | Model validation | DoWhy causal gatekeeper (CTRL_AGT_001) + quarterly FIA | ✅ Operational |
 | Model deployment controls | OPA policy, HITL gate, NeMo guardrails | ✅ Operational |
 | Model performance monitoring | Langfuse safety_rate, confabulation_rate metrics | ✅ Operational |
 | Drift detection | Quarterly FIA DPD/EOD trend analysis | 🟡 Q2 2026 baseline pending |
-| Model retirement/replacement criteria | `docs/MODEL_CARD_REVIEW.md` §5 | ✅ Defined |
+| Model retirement/replacement criteria | `docs/compliance/universal/MODEL_CARD_REVIEW.md` §5 | ✅ Defined |
 
 ### APAC_MAS FIA Procedure
 
@@ -220,6 +220,6 @@ Per MAS TRM Guidelines §6.3, CAGE's AI model governance must document:
 
 ### Additional APAC_MAS Documents
 
-- `docs/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` — Decision explainability (MAS FEAT T1)
-- `docs/MAS_NOTICE_655_CERTIFICATION.md` — Audit certification runbook (MAS-002)
-- `docs/POAM_APAC_MAS.md` — MAS-001 POAM item
+- `compliance/apac_mas/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` — Decision explainability (MAS FEAT T1)
+- `compliance/apac_mas/MAS_NOTICE_655_CERTIFICATION.md` — Audit certification runbook (MAS-002)
+- `compliance/apac_mas/POAM_APAC_MAS.md` — MAS-001 POAM item

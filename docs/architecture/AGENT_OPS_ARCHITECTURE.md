@@ -40,7 +40,7 @@ Define **why** and **when** agents should take actions. Establish cognitive boun
 | Component | Purpose | Example |
 |-----------|---------|---------|
 | **`.roo/rules`** | your AI assistant workspace rules | GKE deployment policy |
-| **`docs/DEPLOYMENT_RULES.md`** | Shared knowledge artifact | Comprehensive deployment matrix |
+| **`docs/operations/DEPLOYMENT_RULES.md`** | Shared knowledge artifact | Comprehensive deployment matrix |
 | **`docs/*.md`** | Domain-specific policies | Security, compliance, architecture |
 
 ### Example Policy
@@ -343,7 +343,7 @@ This architecture can be applied to any agent operation:
 
 | Operation | Policy Document | MCP Tool |
 |-----------|----------------|----------|
-| **Deployments** | `docs/DEPLOYMENT_RULES.md` | `deploy_environment` |
+| **Deployments** | `docs/operations/DEPLOYMENT_RULES.md` | `deploy_environment` |
 | **Infrastructure changes** | `docs/INFRASTRUCTURE_POLICY.md` | `validate_terraform` |
 | **Security scanning** | `docs/SECURITY_POLICY.md` | `run_security_scan` |
 | **Compliance checks** | `docs/COMPLIANCE_POLICY.md` | `check_compliance` |

@@ -39,8 +39,8 @@ Summary:
 |---|---|---|---|
 | 1 | KMS digest-width mismatch + missing IAM role | `kms_signer.py` | `400 INVALID_ARGUMENT` on every signature |
 | 2 | Redis AUTH dropped when parsing `REDIS_URL` | `redis_client.py` | CBF fail-closed with `NOAUTH` |
-| 3 | vLLM guided_json BPE artifacts (Ġ/Ċ) | `execution_analyst/agent.py` | `json.loads()` failed at char 1 |
-| 4 | ExecutionPlan schema rejected valid Clarification Plans | `execution_analyst/agent.py` | FTRA `BLOCK` on 5 Pydantic errors |
+| 3 | vLLM guided_json BPE artifacts (Ġ/Ċ) | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | `json.loads()` failed at char 1 |
+| 4 | ExecutionPlan schema rejected valid Clarification Plans | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | FTRA `BLOCK` on 5 Pydantic errors |
 | 5 | MCP client returned string where dict expected | `evaluator/agent.py` | `AttributeError: 'str' object has no attribute 'get'` |
 
 Each defect was independently sufficient to crash 100% of execution-path

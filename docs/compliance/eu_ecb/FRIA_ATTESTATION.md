@@ -38,7 +38,7 @@ This document records the FRIA for the EU_ECB deployment profile.
 - AI-generated investment and portfolio allocation recommendations
 - Confidence-gated trade execution recommendations
 
-**Is the system making autonomous decisions?** No. All recommendations with confidence < 0.95 or amounts > €10,000 are routed to Human-in-the-Loop (HITL) review before action (see `docs/HUMAN_OVERSIGHT_SCOPE.md`).
+**Is the system making autonomous decisions?** No. All recommendations with confidence < 0.95 or amounts > €10,000 are routed to Human-in-the-Loop (HITL) review before action (see `docs/governance/HUMAN_OVERSIGHT_SCOPE.md`).
 
 ---
 
@@ -60,7 +60,7 @@ This document records the FRIA for the EU_ECB deployment profile.
 
 **Mitigation measures:**
 - DoWhy causal gatekeeper (CTRL_AGT_001) performs counterfactual fairness assessment on all recommendations
-- AI Fairness Assessment (DPD threshold ≤ 0.05) — see `docs/AI_FAIRNESS_ASSESSMENT.md`
+- AI Fairness Assessment (DPD threshold ≤ 0.05) — see `compliance/universal/AI_FAIRNESS_ASSESSMENT.md`
 - MAS FEAT F2 quantitative fairness metrics computed quarterly
 - HITL review required for all high-value recommendations
 
@@ -73,8 +73,8 @@ This document records the FRIA for the EU_ECB deployment profile.
 **Mitigation measures:**
 - Presidio PII sanitizer (`pii_sanitizer.py`) strips PII before Langfuse trace emission (score_threshold ≥ 0.5)
 - Langfuse EU_ECB project scoped to EU region (Frankfurt data centre)
-- Audit log retention schedule: see `docs/AUDIT_LOG_RETENTION_SCHEDULE.md`
-- GDPR Art. 35 DPIA: see `docs/GDPR_DPIA.md`
+- Audit log retention schedule: see `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md`
+- GDPR Art. 35 DPIA: see `compliance/eu_ecb/GDPR_DPIA.md`
 
 **Residual risk:** **Low** — Presidio PII scrubbing and GCS lifecycle rules implemented
 
@@ -204,9 +204,9 @@ The `normative_provider.py` module implements adaptive FRIA enforcement gating:
 
 ## Related Documents
 
-- `docs/GDPR_DPIA.md` — GDPR Art. 35 DPIA
-- `docs/AI_FAIRNESS_ASSESSMENT.md` — Fairness metrics (ECOA / Reg B / MAS FEAT F2)
-- `docs/HUMAN_OVERSIGHT_SCOPE.md` — HITL scope and SLAs
-- `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` — EU AI Act Art. 12 + GDPR Art. 5(1)(e) retention
+- `compliance/eu_ecb/GDPR_DPIA.md` — GDPR Art. 35 DPIA
+- `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` — Fairness metrics (ECOA / Reg B / MAS FEAT F2)
+- `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL scope and SLAs
+- `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — EU AI Act Art. 12 + GDPR Art. 5(1)(e) retention
 - `compliance/lula/lula-validation-eu-fria.yaml` — Lula validation manifest
-- `docs/POAM_EU_ECB.md` — EU-001 POAM item
+- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-001 POAM item

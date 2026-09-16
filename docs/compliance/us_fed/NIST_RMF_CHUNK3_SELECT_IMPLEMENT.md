@@ -53,7 +53,7 @@
 
 **Implementation Recommendations:**
 
-1. **Add AC-2 account management policy:** Create `docs/AC2_Account_Management_Procedure.md` documenting authorized service identities, token rotation schedule (≤90 days), and revocation procedure. Map `GOVERNANCE_SALT` / `OPA_AUTH_TOKEN` rotation to this policy.
+1. **Add AC-2 account management policy:** Create `docs/compliance/cross-region/ACCOUNT_MANAGEMENT_PROCEDURES.md` documenting authorized service identities, token rotation schedule (≤90 days), and revocation procedure. Map `GOVERNANCE_SALT` / `OPA_AUTH_TOKEN` rotation to this policy.
 2. **Implement AC-3 role-based enforcement at the API layer:** In `src/gateway/server/governance_middleware.py`, add a `require_role(request, allowed_roles)` dependency that extracts a JWT claim or Kubernetes service account name and validates it against an allow-list before reaching `enforce_governance()`.
 3. **Implement AC-5 duty separation via OPA:** Add a Rego rule in `deployment/system_authz.rego` that prevents the same principal that submits a trade from also approving it — require `input.submitter != input.approver` for `execute_trade` with `MANUAL_REVIEW` disposition.
 4. **Enforce AC-6 in Terraform:** In `deployment/terraform/iam.tf`, add scoped IAM bindings — e.g., `roles/storage.objectCreator` on the OSCAL bucket only, `roles/redis.viewer` for the financial-advisor SA — replacing implicit broad permissions.
@@ -219,7 +219,7 @@
 
 **Current State:**
 
-- `docs/STPA_ANALYSIS.md` documents the System-Theoretic Process Analysis for the Financial Advisor module: control structure (Controller: AI Agent, Actuators: Gateway Tools, Controlled Process: Markets), 5 Unsafe Control Actions (UCA-1 through UCA-5), and their code implementations.
+- `docs/security/STPA_ANALYSIS.md` documents the System-Theoretic Process Analysis for the Financial Advisor module: control structure (Controller: AI Agent, Actuators: Gateway Tools, Controlled Process: Markets), 5 Unsafe Control Actions (UCA-1 through UCA-5), and their code implementations.
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) implements deterministic UCA constraint checking for `execute_trade` actions: SC-1 (approval token), FIN-1 (max sell fraction), FIN-2 (latency), UCA-5 (drawdown), UCA-6 (slippage/sequence). All thresholds sourced from `config/governance_thresholds.json`. (**v3.0.1:** deprecated `stpa_validator.py` shim removed)
 - [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1). (**v3.0.1:** `safety.py` removed)
 - No `docs/proposals/004_risk_remediation_plan.md` exists in the repository — that path was checked and not found.
@@ -235,10 +235,10 @@
 
 **Implementation Recommendations:**
 
-1. **Create RA-3 Risk Assessment document:** Create `docs/Risk_Assessment.md` using NIST SP 800-30 Rev 1 format — threat sources, threat events, vulnerabilities, likelihood (1–5), impact (1–5), risk level matrix. Cover at minimum: prompt injection supply chain risk, model exfiltration, insider threat, cloud provider outage.
+1. **Create RA-3 Risk Assessment document:** Create `compliance/rar/RISK_ASSESSMENT_REPORT.md` using NIST SP 800-30 Rev 1 format — threat sources, threat events, vulnerabilities, likelihood (1–5), impact (1–5), risk level matrix. Cover at minimum: prompt injection supply chain risk, model exfiltration, insider threat, cloud provider outage.
 2. **Implement RA-5 vulnerability scanning:** Add `trivy image --exit-code 1 --severity CRITICAL` to the GitHub Actions workflow in `.github/` for all Dockerfiles. Add `pip audit` as a required CI check for Python dependencies.
 3. **Create RA-9 Supply Chain Risk Assessment:** Create `docs/Supply_Chain_Risk_Assessment.md` mapping CAGE third-party dependencies (Langfuse, vLLM, NeMo, Presidio, Lula, OPA) to NIST SP 800-161 controls — C-SCRM.
-4. **Document RA-2 formally:** Create `docs/FIPS199_Categorization.md` recording the formal categorization decision (C=Moderate, I=High, A=Moderate → HIGH), rationale, and signatures per SP 800-60 Volume II tables.
+4. **Document RA-2 formally:** Create `compliance/categorization/FIPS199_CATEGORIZATION.md` recording the formal categorization decision (C=Moderate, I=High, A=Moderate → HIGH), rationale, and signatures per SP 800-60 Volume II tables.
 
 ---
 
@@ -249,7 +249,7 @@
 **Current State:**
 
 - `deployment/k8s/network-policy.yaml` implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
-- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. ``deployment/k8s/cilium-egress-lockdown.yaml`` enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
+- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. ``deployment/k8s/cilium/egress-lockdown.yaml`` enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
 - `deployment/terraform/networking.tf` provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
 - `src/gateway/server/governance_middleware.py` enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
 - [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans). (**v3.0.1:** `safety.py` removed)
@@ -351,10 +351,10 @@
 | Pin container image digests in all Dockerfiles                                  | `Dockerfile`, `Dockerfile.nemo`, `Dockerfile.vllm` | CM-8, SI-7         |
 | Add CAGE_ROUTING_SEAL_SECRET enforcement — fail on missing secret in production | `src/gateway/server/governance_middleware.py:64`   | SC-12, AC-3        |
 | Add minimum entropy validation for secrets at startup                           | `config/settings.py:validate_required_settings()`  | IA-5(1)            |
-| Create `docs/FIPS199_Categorization.md`                                         | New file                                           | RA-2, CA-6         |
+| Create `compliance/categorization/FIPS199_CATEGORIZATION.md`                                         | New file                                           | RA-2, CA-6         |
 | Create `docs/POAM.md` with all gaps from Chunks 2–3                             | New file                                           | CA-5               |
 | Create `docs/Incident_Response_Plan.md`                                         | New file                                           | IR-8               |
-| Create `docs/AC2_Account_Management_Procedure.md`                               | New file                                           | AC-2               |
+| Create `docs/compliance/cross-region/ACCOUNT_MANAGEMENT_PROCEDURES.md`                               | New file                                           | AC-2               |
 | Create `docs/Continuous_Monitoring_Plan.md`                                     | New file                                           | CA-7               |
 | Add port/service inventory to `docs/Network_Architecture.md`                    | New file                                           | CM-7               |
 | Add Lula validation for SP 800-53 AC-3 (authz.rego mounted check)               | `compliance/lula/lula-validation-ac3.yaml`         | CA-7, AC-3         |
@@ -387,13 +387,13 @@
 | Action                                                                    | Files                                                                           | Controls Satisfied   |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------- |
 | Deploy Istio service mesh with mTLS PeerAuthentication policy             | `deployment/k8s/istio-peer-auth.yaml`, all pod specs                            | SC-8(1), IA-3, SC-23 |
-| Replace HMAC routing seal with ECDSA asymmetric signature                 | `src/gateway/server/governance_middleware.py`, new `src/gateway/crypto/` module | AU-10, SC-13         |
+| Replace HMAC routing seal with ECDSA asymmetric signature                 | `src/gateway/server/governance_middleware.py`, new `src/gateway/` module | AU-10, SC-13         |
 | Add Pod Security Admission (PSA) `securityContext` to all deployments     | All `deployment/k8s/*.yaml` deployment specs                                    | SC-39, CM-7          |
 | Implement GCP KMS-backed Secret Manager for all credentials               | `deployment/terraform/iam.tf`, new `deployment/terraform/kms.tf`                | SC-12, IA-5          |
 | Add GCS CMEK encryption for OSCAL artifacts bucket                        | `deployment/terraform/storage.tf`                                               | SC-28(1)             |
 | Implement secret rotation CronJob via GCP Secret Manager                  | `deployment/k8s/secret-rotation-cronjob.yaml`                                   | IA-5, AC-2           |
 | Implement Sigstore Cosign image signing in CI/CD                          | `.github/workflows/`, `deployment/deploy_sw.py`                                 | SI-7(1), SI-7(6)     |
-| Create formal NIST SP 800-30 Risk Assessment                              | `docs/Risk_Assessment.md`                                                       | RA-3, RA-3(1)        |
+| Create formal NIST SP 800-30 Risk Assessment                              | `compliance/rar/RISK_ASSESSMENT_REPORT.md`                                                       | RA-3, RA-3(1)        |
 | Create Supply Chain Risk Assessment (C-SCRM)                              | `docs/Supply_Chain_Risk_Assessment.md`                                          | RA-9                 |
 | Implement JWT-based identity with role claims (replace shared auth_token) | `deployment/system_authz.rego`, `src/gateway/server/governance_middleware.py`   | AC-2, AC-3, IA-4     |
 | Add Redis encryption at rest (Redis Enterprise TLS or GCP Memorystore)    | `deployment/k8s/redis-statefulset.yaml`, Terraform                              | SC-28, SC-28(1)      |

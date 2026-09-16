@@ -269,7 +269,7 @@ confidence < CONFIDENCE_THRESHOLD  # i.e. risk_score > 0.05
 
 ## 5. Consensus Protocol
 
-**Source:** [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)
+**Source:** [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py)
 
 The Consensus Engine implements a heterogeneous multi-model critic check for high-stakes financial decisions. It satisfies **AARM-V9** (Privilege Escalation neutralization) by ensuring that a single model cannot validate its own compliance decisions.
 

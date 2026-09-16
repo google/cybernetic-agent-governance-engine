@@ -39,7 +39,7 @@ Subpackages under [`src/gateway/governance/`](../src/gateway/governance/):
 | `ftra/` | `models.py`, `classifier.py`, `graph_analyzer.py`, `node_factory.py`, `bounding_contract.py` |
 | `ingress/` | 8 adapters (AAIF, ACS, OSCAL, Lula, AGP, policy translator, AGW, agent registry) |
 | `langgraph_harness/` | `nemo_node_factory.py`, `opa_node_factory.py`, `types.py` |
-| `nemo/` | `manager.py`, `actions.py`, `action_registry.py`, `server.py`, `vllm_client.py`, `prompt_fetcher.py`, `colang/cbrn_rails.co` |
+| `nemo/` | `manager.py`, `actions.py`, `action_registry.py`, `server.py`, `vllm_client.py`, `prompt_fetcher.py`, `src/gateway/governance/nemo/colang/cbrn_rails.co` |
 | `reconciliation/` | `daemon.py` |
 | `safety/` | `cbf_engine.py`, `resource_guard.py` |
 | `schemas/` | `thresholds.py` |
@@ -78,11 +78,11 @@ Every row below is a link or code reference in TR-01…TR-06 that points at a fi
 
 | Referenced path | Occurrences | Canonical path (per [`AGENTS.md`](../AGENTS.md)) |
 |---|---|---|
-| `src/gateway/governance/cbf.py` | [TR-02 §11.1](../docs/technical-report/02-ARCHITECTURE.md:686), [TR-05 §4](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:153) | `src/gateway/governance/safety/cbf_engine.py` |
+| `src/gateway/governance/safety/cbf_engine.py` | [TR-02 §11.1](../docs/technical-report/02-ARCHITECTURE.md:686), [TR-05 §4](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:153) | `src/gateway/governance/safety/cbf_engine.py` |
 | `src/gateway/governance/causal_gatekeeper.py` | [TR-02 §11.2](../docs/technical-report/02-ARCHITECTURE.md:710), TR-09 ×3 | `src/gateway/governance/causal/gatekeeper.py` |
 | `src/gateway/governance/fiscal_limit_guard.py` | [TR-02 §6.2](../docs/technical-report/02-ARCHITECTURE.md:400), [TR-05 §8.2](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:520) | `src/gateway/governance/safety/resource_guard.py` (`FiscalLimitGuard`) |
 | `src/compliance_bridge/reconciliation_worker.py` | [TR-05 §9](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:565) | `src/gateway/governance/reconciliation/daemon.py` |
-| `src/gateway/governance/safety_params.json` | [TR-02 §12.3](../docs/technical-report/02-ARCHITECTURE.md:834) | `config/safety_params.json` |
+| `config/safety_params.json` | [TR-02 §12.3](../docs/technical-report/02-ARCHITECTURE.md:834) | `config/safety_params.json` |
 | `src/governed_financial_advisor/governance/policy/trade_governance.rego` | [TR-05 §5](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:220), [TR-05 §5](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:297), [TR-06 §3.2](../docs/technical-report/06-COMPLIANCE-STANDARDS.md:124), [TR-04 §1](../docs/technical-report/04-AGENT-SYSTEM.md:16) | `src/cage_finance/opa/trade_governance.rego` (Layer 2) and `config/opa/trade_policy.rego` |
 | `src/governed_financial_advisor/graph/governance/trade_policy.rego` | [TR-05 §5](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md:222) — link text and link target already disagree | `config/opa/trade_policy.rego` |
 | `src/integrations/provider_04/` | [TR-03 §5](../docs/technical-report/03-TECHNOLOGY-STACK.md:169), TR-07 §…, README | **Package does not exist** — remove or re-scope |
@@ -102,7 +102,7 @@ TR-01 §9.1, TR-02 §6.1, TR-04 §13.2, and TR-05 §2 all present the same pictu
 
 > Tier 0 STPA → Tier 1 Confidence → Tier 2 CBF → Tier 2b/4 OPA → Tier 3 Fiscal → Tier 5 Consensus → Tier 6 Causal → Tier 6b FRIA
 
-TR-05 §2 additionally attributes tier implementations to kernel classes: "Tier 2 | `ControlBarrierFunction` in `cbf_engine.py`", "Tier 5 | `ConsensusEngine` in `consensus/engine.py`".
+TR-05 §2 additionally attributes tier implementations to kernel classes: "Tier 2 | `ControlBarrierFunction` in `cbf_engine.py`", "Tier 5 | `ConsensusEngine` in `src/gateway/governance/consensus/engine.py`".
 
 ### 3.2 What the code does
 
@@ -237,8 +237,8 @@ FTRA is the best-covered v3 addition: TR-04 §5a and TR-05 §12-ish both describ
 | Gap | Detail |
 |---|---|
 | **Two FTRA enforcement points, one documented** | TRs describe only the in-graph `ftra_node` (between `evaluator` and `safety_check`). The code *also* runs a mandatory kernel-side [`_ftra_boundary_check()`](../src/gateway/governance/symbolic_governor.py:1088) at the very top of `_run_checks()`, with explicit **bypass detection** (`detect_bypass=True`, `bypassed_ftra_node` flag) to catch direct HTTP hits on `/governance/validate-action` or ext_authz. This is an R-03 mitigation and a load-bearing security control. |
-| **`FtraBoundaryResult` undocumented** | [`models.py`](../src/gateway/governance/ftra/models.py:263) — `requires_hitl`, `irreversibility_score`, `classification`, `terminal_match`, `bypassed_ftra_node`. |
-| **Taxonomy incomplete in docs** | TR-04 §5a lists three classes (`IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, `READ_ONLY`). The code defines **four**, including [`EXTERNALLY_REVERSIBLE`](../src/gateway/governance/ftra/models.py:48) with score 0.8 and `requires_hitl=True`. AGENTS.md names the canonical set as `REVERSIBLE` / `IRREVERSIBLE` / `EXTERNALLY_REVERSIBLE` per OWASP AISVS C9 — reconcile all three vocabularies. |
+| **`FtraBoundaryResult` undocumented** | [`models.py`](../src/gateway/governance/src/gateway/governance/ftra/models.py:263) — `requires_hitl`, `irreversibility_score`, `classification`, `terminal_match`, `bypassed_ftra_node`. |
+| **Taxonomy incomplete in docs** | TR-04 §5a lists three classes (`IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, `READ_ONLY`). The code defines **four**, including [`EXTERNALLY_REVERSIBLE`](../src/gateway/governance/src/gateway/governance/ftra/models.py:48) with score 0.8 and `requires_hitl=True`. AGENTS.md names the canonical set as `REVERSIBLE` / `IRREVERSIBLE` / `EXTERNALLY_REVERSIBLE` per OWASP AISVS C9 — reconcile all three vocabularies. |
 | **Irreversibility scoring absent** | The 1.0 / 0.8 / 0.5 / 0.0 score map is nowhere in the TRs. |
 | **`ParseResult` / `ParseFailureClass` absent** | Defensive plan-parsing failure taxonomy (BUG-FTRA-SCHEMA-001, BUG-FTRA-JSON-001) — governs how malformed LLM output is handled at the gate. |
 | **Registry-integrity claim unverified in docs** | AGENTS.md states registries "must be signed using KMS/JCS canonicalization." No TR describes signing of [`config/ftra/terminal_registry.json`](../config/ftra/terminal_registry.json). Confirm whether this is implemented before documenting it. |
@@ -261,7 +261,7 @@ FTRA is the best-covered v3 addition: TR-04 §5a and TR-05 §12-ish both describ
 | "AgentState Fields: 25" | 33 fields in [`state.py`](../src/governed_financial_advisor/graph/state.py) (adds `ftra_status`, `ftra_result`, `ftra_defer_id`, `narrow_status`, `narrowed_params`, `pause_resume_token`, `pause_reason`, plus `confidence`) | Recount |
 | "Agent Nodes: 10 (LangGraph StateGraph)" | 12 nodes registered in [`graph.py`](../src/governed_financial_advisor/graph/graph.py:113) — adds `ftra_node` and `defer_node` | Recount |
 | "Lula Validation Manifests: 30 (6 Active, 24 Stub)" | 31 manifests on disk + `assessment-results.yaml`; [`compliance/lula/README.md`](../compliance/lula/README.md:76) tallies 7 Active (6 ALL + 1 US_FED) / 24 Stub | TR-06 §7 says "31 (plus 1 draft)" — README says 30. Reconcile |
-| Formalism table: CBF, causal, resource_guard paths | ✅ Correct (already uses `safety/cbf_engine.py`, `causal/gatekeeper.py`, `safety/resource_guard.py`) | Keep — use as the model for fixing TR-02/TR-05 |
+| Formalism table: CBF, causal, resource_guard paths | ✅ Correct (already uses `safety/cbf_engine.py`, `causal/gatekeeper.py`, `src/gateway/governance/safety/resource_guard.py`) | Keep — use as the model for fixing TR-02/TR-05 |
 | "Domain Coupling: None — kernel is domain-agnostic" | Broadly true, but [`ontology.py`](../src/gateway/governance/ontology.py) (`TradingKnowledgeGraph`, FIN-1/FIN-2) and `generated_stpa_validator.py` still live in the kernel with finance semantics | Qualify the claim, or note it as a known residual coupling |
 
 ### 7.2 `01-SYSTEM-OVERVIEW.md`
@@ -302,7 +302,7 @@ FTRA is the best-covered v3 addition: TR-04 §5a and TR-05 §12-ish both describ
 | §5.1 mount topology | Correct, but omits that `/tools/execute` enforcement lives in [`governance_middleware.py`](../src/gateway/server/governance_middleware.py) *and* that [`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py) exposes a second (ext_authz) entry point subject to the same FTRA boundary gate |
 | §5.2 | "enforces the X-CAGE-Routing-Seal **HMAC** header" — production is KMS-signed JWT (v3); HMAC is the dev fallback |
 | §6 heading "Symbolic Governor 8-Tier Pipeline" + §6.1 tier table | Stale per §3; the table attributes plugin tiers to kernel modules |
-| §6.2 "FiscalLimitGuard (`src/gateway/governance/fiscal_limit_guard.py`)" | Dead path; class now in `safety/resource_guard.py`, wrapped by `src/cage_finance/tiers/fiscal_tier.py` |
+| §6.2 "FiscalLimitGuard (`src/gateway/governance/fiscal_limit_guard.py`)" | Dead path; class now in `src/gateway/governance/safety/resource_guard.py`, wrapped by `src/cage_finance/tiers/fiscal_tier.py` |
 | §6.3 regional profiles | Does not mention per-plugin `<REGION>_OVERLAY.json` or `register_overlay_dir()` — the domain × jurisdiction composition mechanism |
 | §9.2 dual-project Langfuse | Accurate; but omits the compliance-pipeline port split (3000 app / 3001 compliance) that AGENTS.md treats as architectural |
 | §10 §10.1 "no human in the low-latency path" | Directly contradicts the §10 v3.0.0 CR-2 note *four lines above*, which says refinement "strictly requires human approval". Fix the ASCII diagram and the summary sentence |
@@ -310,7 +310,7 @@ FTRA is the best-covered v3 addition: TR-04 §5a and TR-05 §12-ish both describ
 | §11.1 "`verify_action()` is read-only; the actual debit is performed by `FiscalLimitGuard`" | Contradicts §6.1/§11.x elsewhere: the debit is performed by `atomic_verify_and_commit()` in the Lua hop. Stale v2 text |
 | §11.1 "Redis atomic implementation uses WATCH/MULTI/EXEC with `_MAX_RETRIES = 5`" | CBF now uses a Lua script (`LUA_ATOMIC_CBF`) plus replica `WAIT` and fence epoch; WATCH/MULTI/EXEC is the ResourceGuard pattern. The two are conflated |
 | §12 STPA UCA-5 | "`order_size > 0.1 × daily_volume`" here vs "drawdown > 4.5%" in TR-01 §Formalism and TR-05 §3. UCA-5 has two different definitions across the series |
-| §12.3 | `src/gateway/governance/safety_params.json` → `config/safety_params.json` |
+| §12.3 | `config/safety_params.json` → `config/safety_params.json` |
 
 ### 7.4 `03-TECHNOLOGY-STACK.md`
 
@@ -365,7 +365,7 @@ This is the document most damaged by the refactor — its central §2 tier table
 | §5 OPA | Both rego path references are dead/mismatched; the role matrix (junior/senior) should be identified as **finance-plugin policy**, not kernel policy |
 | §6 NeMo | Does not mention `action_registry.py` / `register_rail_provider()` — the mechanism by which plugins contribute rails |
 | §7 Consensus | Critic personas are now config-driven (`src/cage_{domain}/config/critics.yaml`); document the seam |
-| §7.3 priority ladder row 1 | "ALL critics `ERROR` → `APPROVE` (fail-open)" — **directly contradicts** TR-02 §11.4, TR-04 §13.3, and TR-01 §9.2, which all state unanimous ERROR → ESCALATE (fail-closed, DoS prevention). This is a safety-semantics contradiction and should be resolved against [`consensus/engine.py`](../src/gateway/governance/consensus/engine.py) before publication |
+| §7.3 priority ladder row 1 | "ALL critics `ERROR` → `APPROVE` (fail-open)" — **directly contradicts** TR-02 §11.4, TR-04 §13.3, and TR-01 §9.2, which all state unanimous ERROR → ESCALATE (fail-closed, DoS prevention). This is a safety-semantics contradiction and should be resolved against [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) before publication |
 | §8.2 | `fiscal_limit_guard.py` dead path |
 | §9 | Reconciliation worker path dead (`compliance_bridge/reconciliation_worker.py` → `gateway/governance/reconciliation/daemon.py`). Note also that [`kms_batch_signer.py`](../src/compliance_bridge/kms_batch_signer.py:44) contains a stale in-code reference to `config/compliance/reconciliation_worker.py`, as does [`normative_provider.py`](../src/gateway/governance/normative_provider.py:45) — code comments to fix alongside |
 | §9 | No coverage of `ConsequenceToken` JWS or `jwks.py` despite describing the signing architecture |
@@ -387,7 +387,7 @@ Structurally the healthiest of the six — most content is framework mapping tha
 | §7 three-region table | Claims per-region manifest **directories** (`compliance/lula/us_fed/`, `eu_ecb/`, `apac_mas/`). No such directories exist — manifests are flat with a `Region Scope` column in the README. **Factually wrong** |
 | §7 | No mention of [`compliance/lula/.stub-baseline`](../compliance/lula/.stub-baseline) or [`scripts/check_lula_stub_count.py`](../scripts/check_lula_stub_count.py), which enforce the stub-count gate in CI |
 | §6 OSCAL inventory | Lists 6 artifacts; [`compliance/lula/README.md`](../compliance/lula/README.md:93) references per-region SSPs (`system-security-plan-eu-ecb.yaml`, `-apac-mas.yaml`) absent from this table |
-| §14b AARM table | Paths are **correct and current** (`safety/cbf_engine.py`, `causal/gatekeeper.py`, `safety/resource_guard.py`) — use as the reference style |
+| §14b AARM table | Paths are **correct and current** (`safety/cbf_engine.py`, `causal/gatekeeper.py`, `src/gateway/governance/safety/resource_guard.py`) — use as the reference style |
 | §14b V1 row | Points at `src/governed_financial_advisor/graph/nodes/` for the context accumulator, while §5.2 points at `src/compliance_bridge/context_accumulator.py`. Inconsistent |
 | §14b evidence stream | Covers `evidence/stream.py`; omits `evidence/cold_store.py`, `evidence/residency.py`, `evidence/factory.py`, and the `storage_gcs`/`storage_s3` backends |
 | Missing: residency | [`config/compliance/residency.json`](../config/compliance/residency.json) + `evidence/residency.py` implement data-residency enforcement — highly material to §1's sovereignty framing, entirely absent |
@@ -404,7 +404,7 @@ These are cases where two or more TR documents assert incompatible facts. Each m
 
 | # | Contradiction | Documents | Resolution source |
 |---|---|---|---|
-| C1 | Consensus unanimous-ERROR → `APPROVE` (fail-open) vs `ESCALATE` (fail-closed) | TR-05 §7.3 vs TR-01 §9.2, TR-02 §11.4, TR-04 §13.3 | [`consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
+| C1 | Consensus unanimous-ERROR → `APPROVE` (fail-open) vs `ESCALATE` (fail-closed) | TR-05 §7.3 vs TR-01 §9.2, TR-02 §11.4, TR-04 §13.3 | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
 | C2 | FIN-1 / FIN-2 definitions | TR-05 §3 vs TR-01 Formalism, TR-02 §12.1 | [`ontology.py`](../src/gateway/governance/ontology.py), [`config/stpa/`](../config/stpa/) |
 | C3 | UCA-5 = drawdown 4.5% vs order_size > 10% daily volume | TR-05 §3, TR-01 vs TR-02 §12.2 | `generated_stpa_validator.py` |
 | C4 | Routing seal: 3-tuple v1 / 4-tuple v2 / JWT v3 | TR-01 §9.3 vs TR-01 §4 + TR-02 §11.7 vs TR-05 §9 | [`routing_seal.py`](../src/gateway/governance/routing_seal.py) |

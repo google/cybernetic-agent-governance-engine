@@ -1279,9 +1279,9 @@ graph LR
 | From | To | Stays in the plugin |
 |---|---|---|
 | [`cage_finance/safety/cbf.py`](../src/cage_finance/safety/cbf.py) (~1770 lines) | `gateway/governance/safety/cbf_engine.py` | Nothing — the whole engine moves; the *parameters* become declarative in Stage 2 |
-| [`cage_finance/safety/fiscal_limit_guard.py`](../src/cage_finance/safety/fiscal_limit_guard.py) | `gateway/governance/safety/resource_guard.py` | Nothing |
+| [`cage_finance/safety/fiscal_limit_guard.py`](../src/cage_finance/safety/fiscal_limit_guard.py) | `gateway/governance/src/gateway/governance/safety/resource_guard.py` | Nothing |
 | [`cage_finance/consensus/consensus.py`](../src/cage_finance/consensus/consensus.py) | `gateway/governance/consensus/engine.py` | Critic prompt templates → `cage_finance/config/critics.yaml` |
-| [`cage_finance/causal/causal_gatekeeper.py`](../src/cage_finance/causal/causal_gatekeeper.py) | `gateway/governance/causal/gatekeeper.py` | Causal graph column names → `cage_finance/config/causal_graph.yaml` |
+| [`cage_finance/causal/causal_gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) | `gateway/governance/causal/gatekeeper.py` | Causal graph column names → `cage_finance/config/causal_graph.yaml` |
 | [`cage_finance/compliance/reconciliation_worker.py`](../src/cage_finance/compliance/reconciliation_worker.py) | `gateway/governance/reconciliation/daemon.py` | `LedgerProvider` **implementations** (Plaid, Anchorage) → `cage_finance/ledger/` |
 
 **T-C1 — Move each module as a separate commit.**
@@ -1338,7 +1338,7 @@ declared `context_keys` — a template referencing an undeclared key raises,
 preventing accidental PII interpolation.
 
 *Causal graph* — the domain content of
-[`causal_safety_check()`](../src/cage_finance/causal/causal_gatekeeper.py:498) is
+[`causal_safety_check()`](../src/gateway/governance/causal/gatekeeper.py:498) is
 the DataFrame column names in the DoWhy graph.
 
 ```yaml

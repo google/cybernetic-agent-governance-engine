@@ -1122,7 +1122,7 @@ uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
 | Integration roadmap (phase/file manifest source of truth) | [`INTEGRATION_ROADMAP.md`](../local/integrations/flowsignal/INTEGRATION_ROADMAP.md) |
 | Plugin/adapter architecture standard | [`Secure Plugin & Adapter Architecture Specification.md`](../local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md) |
 | Redis atomic-pattern precedent | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
-| Tri-state mapping precedent | [`provider_06/adapter.py`](../src/integrations/provider_06/adapter.py) |
+| Tri-state mapping precedent | [`src/integrations/provider_06/adapter.py`](../src/integrations/provider_06/adapter.py) |
 | KMS signing | [`kms_signer.py`](../src/gateway/governance/kms_signer.py) |
 | HITL escalation | [`hitl_escalator.py`](../src/gateway/governance/hitl_escalator.py) |
 | DeferQueue | [`defer_queue.py`](../src/gateway/governance/defer_queue.py) |

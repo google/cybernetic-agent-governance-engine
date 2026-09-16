@@ -48,14 +48,14 @@ Art. 11 requires technical documentation covering:
 
 | Requirement | CAGE Reference | Status |
 |---|---|---|
-| General description of the AI system | `docs/GOVERNANCE_OVERVIEW.md` | ✅ Available |
-| Description of elements and development process | `docs/AGENT_OPS_ARCHITECTURE.md` | ✅ Available |
-| Monitoring, functioning and control | `docs/HUMAN_OVERSIGHT_SCOPE.md` | ✅ Available |
-| Risk management system | `docs/POAM_EU_ECB.md` + `docs/POAM_ISO42001.md` | ✅ Available |
-| Data governance and data management practices | `docs/GDPR_DPIA.md`, `docs/PII_SCRUBBING_POLICY.md` | ✅ Available |
-| Description of human oversight measures | `docs/HUMAN_OVERSIGHT_SCOPE.md` | ✅ Available |
+| General description of the AI system | `docs/governance/GOVERNANCE_OVERVIEW.md` | ✅ Available |
+| Description of elements and development process | `docs/architecture/AGENT_OPS_ARCHITECTURE.md` | ✅ Available |
+| Monitoring, functioning and control | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | ✅ Available |
+| Risk management system | `compliance/eu_ecb/POAM_EU_ECB.md` + `compliance/universal/POAM_ISO42001.md` | ✅ Available |
+| Data governance and data management practices | `compliance/eu_ecb/GDPR_DPIA.md`, `compliance/universal/PII_SCRUBBING_POLICY.md` | ✅ Available |
+| Description of human oversight measures | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | ✅ Available |
 | Description of changes throughout lifecycle | `CHANGELOG.md` | ✅ Available |
-| Fundamental Rights Impact Assessment | `docs/FRIA_ATTESTATION.md` | 🟡 Draft |
+| Fundamental Rights Impact Assessment | `compliance/eu_ecb/FRIA_ATTESTATION.md` | 🟡 Draft |
 | Post-market monitoring system | `docs/ISO42001_MANAGEMENT_REVIEW.md` | 🟡 Draft |
 
 **Action:** Consolidate technical documentation into a single Art. 11 Technical Documentation Package. Recommended location: `compliance/eu_ai_act/technical_documentation/`
@@ -118,7 +118,7 @@ After registration, the following obligations apply under the EU AI Act:
 
 ## Related Documents
 
-- `docs/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
-- `docs/GDPR_DPIA.md` — GDPR Art. 35 DPIA
-- `docs/POAM_EU_ECB.md` — EU-003 POAM item
-- `docs/GOVERNANCE_OVERVIEW.md` — Art. 11 general description
+- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
+- `compliance/eu_ecb/GDPR_DPIA.md` — GDPR Art. 35 DPIA
+- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-003 POAM item
+- `docs/governance/GOVERNANCE_OVERVIEW.md` — Art. 11 general description

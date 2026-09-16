@@ -128,7 +128,7 @@ The UCA record includes:
 - HITL escalation details (if triggered)
 - KMS governance signature (HSM-backed, asymmetric)
 
-**Retention:** 7 years (MAS FEAT A2; `docs/AUDIT_LOG_RETENTION_SCHEDULE.md`)
+**Retention:** 7 years (MAS FEAT A2; `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md`)
 
 ### 5.2 On-Demand MAS Audit Access
 
@@ -147,11 +147,11 @@ For MAS supervisory access, the following data is available on request:
 
 | Model | Purpose | Version | Card |
 |---|---|---|---|
-| Gemma 3 (primary) | Financial advisory reasoning | gemma-3-27b-it | `docs/MODEL_CARD_REVIEW.md` |
-| DeepSeek-R1 (reasoning) | Complex causal analysis | deepseek-r1-distill-qwen-7b | `docs/MODEL_CARD_REVIEW.md` |
+| Gemma 3 (primary) | Financial advisory reasoning | gemma-3-27b-it | `docs/compliance/universal/MODEL_CARD_REVIEW.md` |
+| DeepSeek-R1 (reasoning) | Complex causal analysis | deepseek-r1-distill-qwen-7b | `docs/compliance/universal/MODEL_CARD_REVIEW.md` |
 
 > [!NOTE]
-> DeepSeek-R1 is of PRC origin. As noted in `docs/MODEL_CARD_REVIEW.md`, this requires AO/legal review for US_FED deployments. For APAC_MAS, it requires assessment against MAS TRM Guidelines §6.3 (third-party model risk management).
+> DeepSeek-R1 is of PRC origin. As noted in `docs/compliance/universal/MODEL_CARD_REVIEW.md`, this requires AO/legal review for US_FED deployments. For APAC_MAS, it requires assessment against MAS TRM Guidelines §6.3 (third-party model risk management).
 
 ### 6.2 Model Limitations
 
@@ -165,7 +165,7 @@ Customers are informed that:
 
 ## 7. Fairness and Non-Discrimination (MAS FEAT F2)
 
-The CAGE system applies counterfactual fairness analysis (DoWhy causal gatekeeper) to all recommendations. Quantitative fairness metrics are computed quarterly — see `docs/AI_FAIRNESS_ASSESSMENT.md` for the methodology and `docs/POAM_APAC_MAS.md` (MAS-001) for the FIA schedule.
+The CAGE system applies counterfactual fairness analysis (DoWhy causal gatekeeper) to all recommendations. Quantitative fairness metrics are computed quarterly — see `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` for the methodology and `compliance/apac_mas/POAM_APAC_MAS.md` (MAS-001) for the FIA schedule.
 
 ---
 
@@ -189,8 +189,8 @@ This report is:
 
 ## Related Documents
 
-- `docs/AI_FAIRNESS_ASSESSMENT.md` — MAS FEAT F2 quantitative fairness metrics
-- `docs/HUMAN_OVERSIGHT_SCOPE.md` — HITL gate, 1-hour APAC_MAS SLA
-- `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` — 7-year WORM UCA retention
-- `docs/MODEL_CARD_REVIEW.md` — Model transparency and supply chain review
-- `docs/POAM_APAC_MAS.md` — MAS-004 POAM item
+- `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` — MAS FEAT F2 quantitative fairness metrics
+- `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL gate, 1-hour APAC_MAS SLA
+- `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — 7-year WORM UCA retention
+- `docs/compliance/universal/MODEL_CARD_REVIEW.md` — Model transparency and supply chain review
+- `compliance/apac_mas/POAM_APAC_MAS.md` — MAS-004 POAM item

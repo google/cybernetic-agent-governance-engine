@@ -1511,7 +1511,7 @@ carry a top-level `decision` field.
 
 > **`REVIEW` is not valid here.** `PASS` / `REVIEW` / `BLOCKED` is the
 > vocabulary of a *different* adapter
-> ([`provider_06/adapter.py`](../src/integrations/provider_06/adapter.py:87)).
+> ([`src/integrations/provider_06/adapter.py`](../src/integrations/provider_06/adapter.py:87)).
 > An endpoint emitting `REVIEW` on this contract is rejected as unrecognized.
 > If your upstream engine returns `REVIEW`, map it to `ESCALATE` before
 > responding — both mean "hold for a human", and `ESCALATE` reaches the same

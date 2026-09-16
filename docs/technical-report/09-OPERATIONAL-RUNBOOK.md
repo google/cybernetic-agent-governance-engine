@@ -558,7 +558,7 @@ httpx.ConnectError: [Errno -2] Name or service not known (nemo)
 | NeMo reachability          | `test_pii_integration`, `test_nemo_actions` (integration) | Port-forward nemo svc     |
 | Langfuse reachability      | `test_langfuse_evaluation`                                | Port-forward langfuse svc |
 | vLLM timeout from local    | `test_agent_performance`                                  | Port-forward vllm svc     |
-| Adversarial harness extras | `tests/red_teaming/test_adversarial.py`                   | Install red-team extras   |
+| Adversarial harness extras | `tests/red_team/test_adversarial.py`                   | Install red-team extras   |
 
 ---
 
@@ -992,26 +992,26 @@ This section provides a quick-reference table of all key governance thresholds f
 
 | Threshold | Value | Source Constant / Key | Component | Notes |
 | --------- | ----- | --------------------- | --------- | ----- |
-| CBF decay rate γ | `∈ (0,1)` — `0.5` (US_FED), `0.6` (EU_ECB), `0.55` (APAC_MAS) | `cbf.gamma` | [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) | Discrete-time CBF condition: `h(S(t+1)) ≥ (1−γ)·h(S(t))` |
-| CBF min cash balance | `1000.0` | `cbf.min_cash_balance` | [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) | Barrier function: `h(x) = cash_balance − 1000.0` |
+| CBF decay rate γ | `∈ (0,1)` — `0.5` (US_FED), `0.6` (EU_ECB), `0.55` (APAC_MAS) | `cbf.gamma` | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) | Discrete-time CBF condition: `h(S(t+1)) ≥ (1−γ)·h(S(t))` |
+| CBF min cash balance | `1000.0` | `cbf.min_cash_balance` | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) | Barrier function: `h(x) = cash_balance − 1000.0` |
 | `FRIA_ZONE_ALLOW` | `0.95` | `FRIA_ZONE_ALLOW` | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | `confidence ≥ 0.95` → autonomous clearance |
 | `FRIA_ZONE_DEFER` | `0.70` | `FRIA_ZONE_DEFER` | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | `0.70 ≤ confidence < 0.95` → synchronous FRIA gate |
 | Confabulation block threshold | `0.95` | `CONFIDENCE_THRESHOLD` | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | Block when `confidence < 0.95`; `risk_score = 1.0 − confidence` |
-| Causal risk boundary | `0.95` | `CAUSAL_LOCK_RISK_BOUNDARY` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Block when `(0.5 + estimate.value × amount) > 0.95` |
-| Causal p-value threshold | `0.05` | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | PlaceboTreatmentRefuter: block when `p_value < 0.05` |
-| Causal placebo effect magnitude | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Block when `|placebo_effect| > 0.2` |
-| PlaceboTreatmentRefuter simulations | `50` | hardcoded in `causal_safety_check()` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | 50 placebo simulations per causal check |
-| Consensus threshold (US_FED) | `$10,000` | `consensus.threshold_usd` | [`consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) | Trades `> $10k` require two-critic LLM consensus |
-| Consensus timeout | `10 seconds` per critic | `_CRITIC_TIMEOUT_S=10.0` | [`consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) | Both critics dispatched concurrently via `asyncio.gather`; each critic times out independently at 10s |
-| Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | Stored in integer cents; 86,400s rolling window |
-| Fiscal window | `86,400 seconds` | hardcoded rolling window | [`safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | 24-hour rolling window |
-| Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | Reclaims limits from crashed nodes |
+| Causal risk boundary | `0.95` | `CAUSAL_LOCK_RISK_BOUNDARY` | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Block when `(0.5 + estimate.value × amount) > 0.95` |
+| Causal p-value threshold | `0.05` | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | PlaceboTreatmentRefuter: block when `p_value < 0.05` |
+| Causal placebo effect magnitude | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Block when `|placebo_effect| > 0.2` |
+| PlaceboTreatmentRefuter simulations | `50` | hardcoded in `causal_safety_check()` | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | 50 placebo simulations per causal check |
+| Consensus threshold (US_FED) | `$10,000` | `consensus.threshold_usd` | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) | Trades `> $10k` require two-critic LLM consensus |
+| Consensus timeout | `10 seconds` per critic | `_CRITIC_TIMEOUT_S=10.0` | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) | Both critics dispatched concurrently via `asyncio.gather`; each critic times out independently at 10s |
+| Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | Stored in integer cents; 86,400s rolling window |
+| Fiscal window | `86,400 seconds` | hardcoded rolling window | [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | 24-hour rolling window |
+| Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py) | Reclaims limits from crashed nodes |
 | Routing seal TTL | `30 seconds` | hardcoded in `generate_seal()` | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) | v3 asymmetric JWT signed via Cloud KMS HSM (4-tuple HMAC fallback: `<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) |
-| Causal cache TTL | `60 seconds` | `_CAUSAL_CACHE_TTL_SECONDS` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Redis cache for DoWhy causal estimates |
+| Causal cache TTL | `60 seconds` | `_CAUSAL_CACHE_TTL_SECONDS` | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Redis cache for DoWhy causal estimates |
 | DEFER token TTL | `4 hours` | hardcoded in `defer_queue.py` | [`defer_queue.py`](../../src/gateway/governance/defer_queue.py) | Parked requests expire after 4h; auto-escalated |
-| Telemetry max staleness | `300 seconds` | `TELEMETRY_MAX_STALENESS_SECONDS` | [`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Stale telemetry → fail-closed `return False` |
-| OPA circuit breaker threshold | `5 failures` | hardcoded in `OPAClient` | [`core/policy.py`](../../src/gateway/core/policy.py) | 5 consecutive failures → circuit open; DENY on open |
-| OPA circuit recovery window | `30 seconds` | hardcoded in `OPAClient` | [`core/policy.py`](../../src/gateway/core/policy.py) | Circuit resets after 30s |
+| Telemetry max staleness | `300 seconds` | `TELEMETRY_MAX_STALENESS_SECONDS` | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) | Stale telemetry → fail-closed `return False` |
+| OPA circuit breaker threshold | `5 failures` | hardcoded in `OPAClient` | [`src/gateway/core/policy.py`](../src/gateway/core/policy.py) | 5 consecutive failures → circuit open; DENY on open |
+| OPA circuit recovery window | `30 seconds` | hardcoded in `OPAClient` | [`src/gateway/core/policy.py`](../src/gateway/core/policy.py) | Circuit resets after 30s |
 | NeMo action threshold cache TTL | `60 seconds` | hardcoded in advisor actions | [`nemo_actions.py`](../../src/governed_financial_advisor/governance/nemo_actions.py) | Hot-reload without service restart |
 
 ### 10.2 Region-Specific Threshold Overrides

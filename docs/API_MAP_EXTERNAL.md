@@ -813,7 +813,7 @@ breach thresholds.
 
 ---
 
-### 3.2 Tools Router — [`tools/api.py`](../src/governed_financial_advisor/tools/api.py)
+### 3.2 Tools Router — [`src/governed_financial_advisor/tools/api.py`](../src/governed_financial_advisor/tools/api.py)
 
 Mounted at `/tools`. All endpoints require `X-API-Key` header.
 
@@ -976,7 +976,7 @@ Every 200 response **must** include a top-level `decision`. The vocabulary is
 
 **`REVIEW` is not valid on this endpoint.** `PASS`/`REVIEW`/`BLOCKED` is
 `provider_06`'s vocabulary
-([`provider_06/adapter.py`](../src/integrations/provider_06/adapter.py:87)).
+([`src/integrations/provider_06/adapter.py`](../src/integrations/provider_06/adapter.py:87)).
 Map an upstream `REVIEW` to `ESCALATE` — both reach the `DeferQueue`.
 
 **Request example (`ALLOW`):**

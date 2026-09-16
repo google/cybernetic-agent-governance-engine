@@ -4,7 +4,7 @@
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
 > describes the breaking changes included in this release. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
-> ``docs/MAJOR_VERSION_CLEANUP_PLAN.md`` 1:1
+> ``local/plans/remediation/MAJOR_VERSION_CLEANUP_PLAN.md`` 1:1
 > so the two documents can be cross-referenced.
 >
 > **Release Scope:** `AGWEnvelope`/`AGWEnvelopeBuilder` removal, legacy provider

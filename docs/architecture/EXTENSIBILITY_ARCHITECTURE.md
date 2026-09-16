@@ -37,7 +37,7 @@ The following capabilities are implemented, tested, and operational in the CAGE 
 
 ### 1.1 The Domain-Agnostic Kernel
 
-The CBF engine ([`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) implements a pure mathematical invariant with no domain-specific logic. The barrier function is:
+The CBF engine ([`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) implements a pure mathematical invariant with no domain-specific logic. The barrier function is:
 
 ```mermaid
 flowchart TD
@@ -60,7 +60,7 @@ h(x) = cash_balance - min_cash_balance
 where `min_cash_balance = 1000.0` (sourced from `THRESHOLDS.cbf.min_cash_balance` in `config/governance_thresholds.json`).
 ## 3. State Machine & Lifecycle
 
-**v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
+**v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
 The core extensibility mechanic relies on generalizing the Control Barrier Function (CBF) and policy tiers:
 
 The enforcement boundary:
@@ -548,7 +548,7 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 | ControlRegistry (3 regions)        | [`constants.py`](../../src/gateway/governance/constants.py) L121-308                  | ✅ Production |
 | 7-Tier SymbolicGovernor            | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)            | ✅ Production |
 | Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)                         | ✅ Production |
-| Heterogeneous multi-model consensus | [`consensus.py`](../../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
+| Heterogeneous multi-model consensus | [`consensus.py`](../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
 | Fail-closed CBF enforcement        | `CBF_FAIL_OPEN=false` in `.env`                                                          | ✅ Verified   |
 | DoWhy causal gatekeeper            | [`causal_gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)            | ✅ Production |
 | STPA-to-Policy Compiler            | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)                    | ✅ Production |
@@ -619,7 +619,7 @@ NeMo Guardrails (`src/gateway/governance/nemo/`) is the neural component of the 
 | [`manager.py`](../../src/gateway/governance/nemo/manager.py) | Lifecycle management; hot-reload endpoint; Phase 4.2 async refactor |
 | [`actions.py`](../../src/gateway/governance/nemo/actions.py) | Gateway-internal NeMo action implementations (OPA check, CBF check, STPA check) |
 | [`server.py`](../../src/gateway/governance/nemo/server.py) | gRPC service exposing NeMo rails to external callers |
-| [`colang/cbrn_rails.co`](../../src/gateway/governance/nemo/colang/cbrn_rails.co) | CBRN keyword rail — NIST AI 600-1 §2.6 **[US_FED only]** |
+| [`src/gateway/governance/nemo/colang/cbrn_rails.co`](../../src/gateway/governance/nemo/colang/cbrn_rails.co) | CBRN keyword rail — NIST AI 600-1 §2.6 **[US_FED only]** |
 
 **Extension pattern**: A new safety rail is added by authoring a Colang 2.x flow file and registering it in `config/rails/config.yml`. The `NeMoNodeFactory` in the LangGraph harness (§4.1) automatically wraps the updated rail set as a typed governance node. No kernel changes are required.
 

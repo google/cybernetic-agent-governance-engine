@@ -107,7 +107,7 @@ Per ISO 42001 §9.3.3, the following decisions and actions result from this revi
 
 ## 5. Related Documents
 
-- `docs/POAM_US_FED.md` — US_FED POAM items
-- `docs/POAM_ISO42001.md` — ISO 42001 universal POAM items
-- `docs/AI_FAIRNESS_ASSESSMENT.md` — Fairness assessment (ISO 42001 §A.6)
+- `compliance/us_fed/POAM_US_FED.md` — US_FED POAM items
+- `compliance/universal/POAM_ISO42001.md` — ISO 42001 universal POAM items
+- `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` — Fairness assessment (ISO 42001 §A.6)
 - `compliance/oscal/component-definition.yaml` — OSCAL component mapping

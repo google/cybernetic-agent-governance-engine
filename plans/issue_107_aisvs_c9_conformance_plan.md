@@ -20,8 +20,8 @@ materially change the shape of the work relative to the draft plan.
 ### 1.1 `EXTERNALLY_REVERSIBLE` is already half-landed — and that is the danger
 
 The enum member **already exists** at
-[`models.py`](src/gateway/governance/ftra/models.py:48), and
-[`FtraBoundaryResult.from_classification()`](src/gateway/governance/ftra/models.py:314)
+[`models.py`](src/gateway/governance/src/gateway/governance/ftra/models.py:48), and
+[`FtraBoundaryResult.from_classification()`](src/gateway/governance/src/gateway/governance/ftra/models.py:314)
 already maps it to `score=0.8, requires_hitl=True`. The `Literal` in
 [`stpa_compiler.py`](src/gateway/governance/stpa_compiler.py:143) also lists it.
 
@@ -343,7 +343,7 @@ together and a partial fix could otherwise read as both.
 **Two framing corrections for PR #1:**
 
 1. *The enum member already exists* at
-   [`models.py:48`](src/gateway/governance/ftra/models.py:48), as does its
+   [`models.py:48`](src/gateway/governance/src/gateway/governance/ftra/models.py:48), as does its
    `FtraBoundaryResult` mapping and the compiler `Literal`. PR #1 is not
    "adding the 4th class" — it is **repairing the two severity maps that were
    never updated when it was added**, which today throw `KeyError` into a
@@ -364,7 +364,7 @@ catch reported as a reachability pass.
 ### Phase 1 — Fix the latent `KeyError` (highest priority)
 
 1. Add a single exhaustive `CLASSIFICATION_SEVERITY` mapping in
-   [`ftra/models.py`](src/gateway/governance/ftra/models.py) covering all four
+   [`src/gateway/governance/ftra/models.py`](src/gateway/governance/src/gateway/governance/ftra/models.py) covering all four
    classes per §7.1.
 2. Replace the local `_severity` dict in
    [`graph_analyzer.py:202`](src/gateway/governance/ftra/graph_analyzer.py:202)
@@ -385,9 +385,9 @@ catch reported as a reachability pass.
    Consequences to handle in the same PR — `reachable_terminals` no longer
    implies "irreversible":
    - Update the field description at
-     [`ReachabilityResult.reachable_terminals`](src/gateway/governance/ftra/models.py:98)
+     [`ReachabilityResult.reachable_terminals`](src/gateway/governance/src/gateway/governance/ftra/models.py:98)
      ("Step IDs of all reachable IRREVERSIBLE_TERMINAL nodes").
-   - Update [`critical_path`](src/gateway/governance/ftra/models.py:103), whose
+   - Update [`critical_path`](src/gateway/governance/src/gateway/governance/ftra/models.py:103), whose
      description asserts "Empty when worst_case_classification !=
      IRREVERSIBLE_TERMINAL" — no longer true.
    - Audit consumers of `reachable_terminals` and the

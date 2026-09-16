@@ -262,7 +262,7 @@ Execute Action    Human Review      Permanent Denial
 ## Integration Phases
 
 - **Phase 1 (This Document)**: Payload contracts and decision mapping specification
-- **Phase 2 (Future)**: `NormativeProvider` adapter implementation in [`src/integrations/flowsignal/`](../../src/integrations/)
+- **Phase 2 (Future)**: `NormativeProvider` adapter implementation in [`src/integrations/provider_01/`](../../src/integrations/)
 - **Phase 3 (Future)**: Live integration testing with FlowSignal sandbox environment
 - **Phase 4 (Future)**: Production readiness review and OSCAL control mapping
 

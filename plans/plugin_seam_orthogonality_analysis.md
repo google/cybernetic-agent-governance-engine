@@ -37,7 +37,7 @@ concrete coupling defects must be closed before PR 3.
 | [`attestation_provider.py`](../src/gateway/governance/attestation_provider.py) | `AttestationProvider` ABC, aggregator registration |
 | [`contracts.py`](../src/gateway/governance/contracts.py) | `SafetyFilter`, `ConsensusProvider`, `FiscalGuard`, `GovernanceTierFailure`, `RefusalReceipt` |
 | [`symbolic_governor.py:1405`](../src/gateway/governance/symbolic_governor.py:1405) | FRIA tier 6b call site and its trigger predicate |
-| [`cbf.py:1063`](../src/gateway/governance/cbf.py:1063) | `get_h()` — the barrier the `InvariantModel` protocol generalizes |
+| [`cbf.py:1063`](../src/gateway/governance/safety/cbf_engine.py:1063) | `get_h()` — the barrier the `InvariantModel` protocol generalizes |
 | [`integrations/__init__.py`](../src/integrations/__init__.py) | Vendor isolation rule and onboarding procedure |
 | Secure Plugin & Adapter Architecture Specification §5.1–§5.6 | Domain-agnostic kernel, vendor boundary, hot-path guarantee, TOCTOU rule |
 | CAGE Layered Refactoring plan v2 §1.2–§1.3, §3.2 | Proposed `CagePlugin`, `GovernanceTierPlugin`, `InvariantModel`, `DomainToolProvider` |
@@ -99,7 +99,7 @@ concrete coupling defects must be closed before PR 3.
   architecture specification §5.1 already describes in prose.
 - **Contract surface.** `state_keys()`, `barrier_value(state)`, `gamma`.
 - **Integration point.** The CBF engine, generalizing
-  [`get_h()`](../src/gateway/governance/cbf.py:1063).
+  [`get_h()`](../src/gateway/governance/safety/cbf_engine.py:1063).
 - **Latency class.** Innermost hot path — currently executed *inside a Redis
   Lua script* for atomicity (§5.4).
 
@@ -294,7 +294,7 @@ def barrier_value(self, state: dict[str, float]) -> float: ...
 ```
 
 The real barrier is not evaluated in Python. Per specification §5.4 and
-[`cbf.py`](../src/gateway/governance/cbf.py), the check `h_next >= (1-gamma)*h_t`
+[`cbf.py`](../src/gateway/governance/safety/cbf_engine.py), the check `h_next >= (1-gamma)*h_t`
 is executed **inside a Redis Lua script** (`LUA_ATOMIC_CBF`) precisely to close
 the TOCTOU window, together with fence-epoch validation and ground-truth
 reconciliation. A Python-callable `barrier_value()` cannot participate in that

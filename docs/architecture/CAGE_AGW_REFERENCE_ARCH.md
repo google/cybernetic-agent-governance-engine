@@ -270,9 +270,9 @@ For GKE targets, use Cloud Build (never `docker build` + `docker push`):
 ```bash
 # APPROVED for GKE
 ./deploy_all.sh --target gcp-gke --env dev
-gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml
+gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 ```
 
-The Cloud Build config at `deployment/docker/cloudbuild_gateway.yaml` builds
+The Cloud Build config at `deployment/docker/cloudbuild.gateway.yaml` builds
 and pushes the gateway image (which now includes the gRPC server on port 50051)
 to Artifact Registry and deploys to GKE.

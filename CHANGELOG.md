@@ -233,7 +233,7 @@ response = requests.post(
 - `AGENTS.md` — Parallel test isolation standards: added mandatory `--dist=loadfile` flag requirement and targeted test command reference matrix (`docs(tests)`)
 - `src/gateway/governance/symbolic_governor.py` — PAUSE handler in `validate_action()`: first-class runtime execution path returning `verdict: PAUSE`, pause token, resume endpoint, and retry metadata (`feat(governance)`)
 - `src/gateway/governance/routing_seal.py` — HMAC Routing Seal v2: 4-tuple format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash with fail-closed actuator enforcement (`feat(governance)`)
-- `src/gateway/governance/cbf.py` — Strict replication rollback & cold-start epoch seed: synchronous Redis `WAIT` verification with fail-closed automatic rollback on replica timeout, plus `_fetch_initial_fence_epoch_sync()` startup seeding (`feat(governance)`)
+- `src/gateway/governance/safety/cbf_engine.py` — Strict replication rollback & cold-start epoch seed: synchronous Redis `WAIT` verification with fail-closed automatic rollback on replica timeout, plus `_fetch_initial_fence_epoch_sync()` startup seeding (`feat(governance)`)
 - `src/compliance_bridge/evidence_stream.py` — Precondition validation: `validate_evidence_stream_preconditions()` halts startup in production if non-blocking evidence mode is configured (`fix(compliance)`)
 - `proof/model.py`, `proof/distributed_cbf_model.py` — Formal state model expansion: 57-state sequential and 66-state concurrent BFS models verifying NoDirectBind invariant across all paths, plus $N$-agent distributed barrier proofs (`test(formal)`)
 - `src/gateway/governance/pause_primitive.py`, `src/gateway/server/hybrid_server.py` — PAUSE primitive and resume endpoint: new `POST /v1/pause/{pause_token}/resume` and `GET /v1/pause/{pause_token}` endpoints for resumable execution suspension (`feat(governance)`)
@@ -241,8 +241,8 @@ response = requests.post(
 - `src/gateway/governance/symbolic_governor.py:_classify_violation()` — DEFER classification helper: five-way classification (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) with DeferQueue integration (`feat(governance)`)
 - `src/governed_financial_advisor/graph/state.py` — AgentState NARROW/PAUSE fields: added `narrow_status`, `narrowed_params`, `pause_resume_token`, `pause_reason` fields (`feat(governance)`)
 - `src/gateway/governance/symbolic_governor.py:_park_defer_context()` — DeferQueue integration: DEFER tokens now persisted via DeferQueue for client polling (`feat(governance)`)
-- `src/gateway/governance/cbf.py` — Redis fence epoch: `safety:fence_epoch` monotonic counter for failover safety (gated by `CAGE_REDIS_SYNCHRONOUS_REPLICATION`, default true) (`feat(governance)`)
-- `src/gateway/governance/cbf.py`, `src/compliance_bridge/reconciliation_worker.py` — Reconciliation replay defense: monotonic sequence numbers prevent payload replay attacks (gated by `CAGE_RECONCILIATION_REPLAY_DEFENSE`) (`feat(governance)`)
+- `src/gateway/governance/safety/cbf_engine.py` — Redis fence epoch: `safety:fence_epoch` monotonic counter for failover safety (gated by `CAGE_REDIS_SYNCHRONOUS_REPLICATION`, default true) (`feat(governance)`)
+- `src/gateway/governance/safety/cbf_engine.py`, `src/compliance_bridge/reconciliation_worker.py` — Reconciliation replay defense: monotonic sequence numbers prevent payload replay attacks (gated by `CAGE_RECONCILIATION_REPLAY_DEFENSE`) (`feat(governance)`)
 - `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
 - Threshold accessor functions in `src/gateway/governance/schemas/thresholds.py`
 - Region-aware control metadata accessors (`get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()`)
@@ -633,7 +633,7 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
 - FTRA Commencement Reachability Gate: graph-based transaction reachability
   analysis for FTRA commencement decisions (`feat(governance)`) —
   `src/gateway/governance/ftra/` (classifier, graph_analyzer, models,
-  node_factory), `src/gateway/governance/ftra_reachability.py`
+  node_factory), `src/gateway/governance/ftra/graph_analyzer.py`
 - CAGE-003 Agent Registry Integration: SPIFFE trust-domain agent catalog
   adapter (`feat(governance)`) —
   `src/gateway/governance/ingress/agent_registry_adapter.py`

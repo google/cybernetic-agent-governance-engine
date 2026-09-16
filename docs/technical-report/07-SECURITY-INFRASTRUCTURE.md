@@ -18,7 +18,7 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 | Cryptographic Integrity   | Cloud KMS HSM (primary) + HMAC-SHA256 (fallback) | KMS RSA-4096 governance signing + HMAC routing seal |
 | Policy Authorization      | OPA Rego RBAC                        | `trade.governance` package, fail-closed      |
 | Network Isolation         | Kubernetes NetworkPolicy             | 9 objects, default-deny ingress/egress       |
-| Causal Gatekeeper         | Microsoft DoWhy refutation (v2.0.0)  | `causal/gatekeeper.py`: halts on Placebo p < 0.05 or \|eff\| > 0.2 |
+| Causal Gatekeeper         | Microsoft DoWhy refutation (v2.0.0)  | `src/gateway/governance/causal/gatekeeper.py`: halts on Placebo p < 0.05 or \|eff\| > 0.2 |
 | External Normative Gate   | Adaptive FRIA enforcement (v2.1.0)   | `normative_provider.py`: confidence-mapped sync/async external validation (SA-9) |
 | Routing Seal              | Cryptographic execution gating       | `routing_seal.py`: 30s TTL asymmetric JWT (KMS HSM signed) binding action to evidence hash |
 | PII Protection            | NeMo Guardrails + Microsoft Presidio | Input/output scanning + anonymization        |
@@ -799,7 +799,7 @@ Source: [`tests/red_team/`](../../tests/red_team/), [`src/governed_financial_adv
 | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | [`tests/red_team/adversarial_dataset.json`](../../tests/red_team/adversarial_dataset.json)                                           | 290+ adversarial payloads across attack categories       |
 | [`src/governed_financial_advisor/agents/evaluator/red_agent.py`](../../src/governed_financial_advisor/agents/evaluator/red_agent.py) | Adversarial harness running the full governance pipeline |
-| [`tests/red_teaming/test_adversarial.py`](../../tests/red_team/test_adversarial.py)                                               | Automated adversarial test suite (CI-integrated)         |
+| [`tests/red_team/test_adversarial.py`](../../tests/red_team/test_adversarial.py)                                               | Automated adversarial test suite (CI-integrated)         |
 | [`tests/red_team/run_red_team.py`](../../tests/red_team/run_red_team.py)                                                             | Full red team execution script                           |
 
 ### Attack Categories Covered

@@ -24,7 +24,7 @@ Script run inside advisor pod via `kubectl exec`:
 ```
 BACKEND_URL=http://127.0.0.1:8080 \
 UNMOCKED=1 \
-ADVERSARIAL_JSON=/tmp/adversarial_dataset.json \
+ADVERSARIAL_JSON=tests/red_team/adversarial_dataset.json \
 BENIGN_JSON=/tmp/benign_dataset.json \
 python /tmp/measure_paper_metrics.py
 ```

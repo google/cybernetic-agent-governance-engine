@@ -161,7 +161,7 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 |---|---|---|
 | *(pre-pipeline)* | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`text_filter.py`](../src/gateway/governance/text_filter.py) |
 | *(pre-pipeline)* | NeMo Guardrails (incl. Presidio PII masking) | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
-| **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
+| **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`src/gateway/governance/ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`src/gateway/governance/ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`src/gateway/governance/ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
 | Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
 | Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
 | Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/safety/cbf_engine.py), OPA `system_authz.rego` |

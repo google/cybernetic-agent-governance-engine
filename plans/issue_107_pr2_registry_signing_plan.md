@@ -92,7 +92,7 @@ all-`IRREVERSIBLE_TERMINAL`**, breaking the compiler, the FTRA suite, and PR #1'
 A dedicated `FTRA_REGISTRY_REQUIRE_SIGNATURE` flag, defaulting **ON** in
 production and **OFF** in dev/test/ci, derived from `CAGE_ENV` when unset.
 
-Precedent exists: [`cbf_engine.py:426`](../src/gateway/governance/cbf.py:426)
+Precedent exists: [`cbf_engine.py:426`](../src/gateway/governance/safety/cbf_engine.py:426)
 does exactly this for Redis — *"proceeding with epoch=0. Set CAGE_ENV=prod to
 enforce fail-closed behavior."*
 

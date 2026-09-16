@@ -1,6 +1,6 @@
 <!--
   CAGE — NIST AI 600-1 Implementation Plan
-  Authority: docs/NIST_AI_600_1_US_FED_ANALYSIS.md, docs/POAM_US_FED.md
+  Authority: docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md, compliance/us_fed/POAM_US_FED.md
   Region:    US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
   Version:   1.0
   Date:      2026-06-15
@@ -21,8 +21,8 @@
 | Status | DRAFT |
 | Region | US_FED (`CAGE_DEPLOYMENT_REGION=US_FED`) |
 | Authority | NIST AI 600-1 (July 2024), EO 14110, OMB M-24-10, SR 26-2 |
-| Prerequisite | `docs/NIST_AI_600_1_US_FED_ANALYSIS.md` |
-| POAM Reference | `docs/POAM_US_FED.md` §AI600-001 – AI600-007 |
+| Prerequisite | `docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md` |
+| POAM Reference | `compliance/us_fed/POAM_US_FED.md` §AI600-001 – AI600-007 |
 | Baseline Configs | `config/compliance/US_FED_BASELINE.json`, `config/thresholds/US_FED_BASELINE.json` |
 
 ---
@@ -46,7 +46,7 @@
 
 This document provides a phased, actionable implementation plan for achieving NIST AI 600-1
 compliance in the CAGE US_FED deployment. It is the operational companion to
-`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`, which contains the gap analysis and POAM items
+`docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md`, which contains the gap analysis and POAM items
 AI600-001 through AI600-007.
 
 Every work item in this plan is tagged with one of three posture labels:
@@ -523,7 +523,7 @@ keyword-based attacks but not semantic injection patterns.
 
 1. Deploy updated `src/gateway/governance/causal/gatekeeper.py` via Cloud Build:
    ```bash
-   gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml \
+   gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml \
      --substitutions _ENV=prod
    ```
 
@@ -720,7 +720,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 1. Update `deployment/k8s/nemo.yaml` to mount the updated Colang path including
    `cbrn_rails.co`. Rebuild the NeMo container via Cloud Build:
    ```bash
-   gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml \
+   gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml \
      --substitutions _ENV=prod,_COMPONENT=nemo
    ```
 
@@ -1058,7 +1058,7 @@ is delayed beyond the phase timeline:
    Cat-S (standard pre-approved) change.
 
 2. **NeMo CBRN rails**: Rely on Tier-1 CBRN keyword list (Phase 0, §4.4) as
-   interim control. Document as compensating control in `docs/POAM_US_FED.md`
+   interim control. Document as compensating control in `compliance/us_fed/POAM_US_FED.md`
    under AI600-007.
 
 3. **OSCAL extension**: Submit a partial OSCAL update covering only the controls
@@ -1082,7 +1082,7 @@ Per `.roo/rules` §8.5, every Cat-N and Cat-M change in this plan requires a
 ---
 
 *Document end — CAGE AI 600-1 Implementation Plan v1.0*
-*Authority: `docs/NIST_AI_600_1_US_FED_ANALYSIS.md`, `docs/POAM_US_FED.md`*
+*Authority: `docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md`, `compliance/us_fed/POAM_US_FED.md`*
 *Next review: 2026-09-15 (quarterly) or upon any SR 26-2 amendment*
 
 ### 7.4 OSCAL AI 600-1 Component Extension `[BOTH]`
@@ -1423,7 +1423,7 @@ SBOM to the GCS WORM bucket and adding a Trivy vulnerability gate.
 
 **Prod tasks**:
 
-1. Add a Cloud Build step to `deployment/docker/cloudbuild_gateway.yaml`:
+1. Add a Cloud Build step to `deployment/docker/cloudbuild.gateway.yaml`:
    ```yaml
    - name: 'python:3.11'
      id: generate-sbom
@@ -1579,7 +1579,7 @@ documented stub implementation before any production work begins.
 The **prod posture** targets the GKE cluster in `us-central1` with
 `CAGE_DEPLOYMENT_REGION=US_FED`. It uses:
 
-- Cloud Build for all image builds (`deployment/docker/cloudbuild_gateway.yaml`)
+- Cloud Build for all image builds (`deployment/docker/cloudbuild.gateway.yaml`)
 - GKE with Workload Identity, Linkerd mTLS, and PSA `restricted` labels
 - Google Cloud KMS for signing (`src/gateway/governance/kms_signer.py`)
 - GCS WORM bucket for WAL (`CTRL_WAL_002` — `config/compliance/US_FED_BASELINE.json`)

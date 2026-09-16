@@ -52,7 +52,7 @@
 
 **Refactoring Recommendations:**
 
-1. Create `docs/SECURITY_ASSESSMENT_PLAN.md` (SAP) including: scope statement covering all SP 800-53 Rev 5 HIGH-baseline controls, assessment methodology (Lula for automated, manual interview/examination procedures for the remainder), assessor independence statement, schedule tied to the Lula CronJob cadence (every 6h automated; annual manual review), and evidence retention policy pointing to the `OSCAL_S3_BUCKET`.
+1. Create `docs/compliance/us_fed/SECURITY_ASSESSMENT_PLAN.md` (SAP) including: scope statement covering all SP 800-53 Rev 5 HIGH-baseline controls, assessment methodology (Lula for automated, manual interview/examination procedures for the remainder), assessor independence statement, schedule tied to the Lula CronJob cadence (every 6h automated; annual manual review), and evidence retention policy pointing to the `OSCAL_S3_BUCKET`.
 2. Add a NIST SP 800-53 profile import to `compliance/oscal/component-definition.yaml`: change `source:` from the ISO URL to `"https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline-resolved-profile_catalog.json"`. This unlocks OSCAL toolchain validation against the HIGH profile.
 3. Create a `compliance/lula/` subdirectory `sp800-53/` and add initial Lula validations for the 5 highest-risk controls: `lula-au12.yaml` (AU-12 audit record generation — verify OTel spans are emitted), `lula-sc8.yaml` (SC-8 — verify TLS on ingress), `lula-ac3.yaml` (AC-3 — verify OPA allow/deny decisions are logged), `lula-ra5.yaml` (RA-5 — verify trivy scan job exists in CI), `lula-ia3.yaml` (IA-3 — verify mTLS policy is present).
 4. Extend `compliance/oscal/component-definition.yaml` to add a fourth component representing the Lula audit infrastructure itself (the assessor), with its own `responsible-roles` entry carrying role-id `assessor` to establish documented assessor role separation.
@@ -93,7 +93,7 @@
 
 - [`tests/red_team/adversarial_red_team.py`](../../../tests/red_team/adversarial_red_team.py) is a comprehensive live-fire adversarial evaluation suite with 5 attack categories: `pii_injection`, `prompt_injection`, `rbac_escalation`, `harmful_financial`, `compound_attack`. It fires payloads at the gateway, uses an LLM judge (DeepSeek-R1) to score deflection (1–5 rubric), inspects Langfuse traces for PII leakage, and verifies NeMo Guardrails and OPA span markers. Scores are pushed back to Langfuse.
 - [`tests/red_team/adversarial_dataset.json`](../../../tests/red_team/adversarial_dataset.json) contains structured attack payloads (290 lines, metadata indicates v1.0.0 created 2026-02-23) including PII-001 through PII-004 (SSN, credit card, multi-PII, disguised SSN injection) and additional categories. Each payload carries `expected_behavior`, `severity` (critical/high), and PII ground truth values.
-- [`tests/red_teaming/test_adversarial.py`](../../../tests/red_team/test_adversarial.py) provides unit-level adversarial tests using `SymbolicGovernor` and `STPAValidator`: `test_red_agent_latency_attack` (UCA-2: stale data → trade block), `test_red_agent_authorization_attack` (UCA-1: missing approval_token → block), and `test_red_agent_random_attack_resilience` (5-iteration fuzzing). These use mocked OPA and consensus engines.
+- [`tests/red_team/test_adversarial.py`](../../../tests/red_team/test_adversarial.py) provides unit-level adversarial tests using `SymbolicGovernor` and `STPAValidator`: `test_red_agent_latency_attack` (UCA-2: stale data → trade block), `test_red_agent_authorization_attack` (UCA-1: missing approval_token → block), and `test_red_agent_random_attack_resilience` (5-iteration fuzzing). These use mocked OPA and consensus engines.
 - [`tests/governance/test_automated_loop.py`](../../../tests/governance/test_automated_loop.py) and [`test_nemo_refinements.py`](../../../tests/governance/test_nemo_refinements.py) cover NeMo action unit tests: slippage blocking/allowing, drawdown limits, approval token signature validation, data latency freshness/staleness, and atomic execution audit trail checks.
 
 **Gaps Identified:**
@@ -149,7 +149,7 @@
 - `src/governed_financial_advisor/requirements.txt` uses **unpinned ranges**: `langgraph>=0.4.0`, `langchain>=0.3.0`, `nemoguardrails>=0.17.0`, `pydantic>=2.0.0`, `opentelemetry-api>=1.39.1`. No lockfile (`requirements.lock` or `poetry.lock`) is referenced in this file — version drift is possible with every fresh install.
 - `src/compliance_bridge/requirements.txt` exists separately (referenced in Dockerfile). The compliance bridge has its own dependency tree not consolidated with the main project.
 - No `pyproject.toml` was found at project root — the project uses standalone `requirements.txt` files. This means no centralized dependency management tool (Poetry, PDM, pip-tools) is enforcing lock files.
-- The vLLM model supply chain (DeepSeek-R1-Distill-Llama-8B, Meta-Llama-3.1-8B-Instruct) is pulled via `scripts/mirror_models.py` to MinIO/GCS. There is no SBOM, model card verification, or cryptographic integrity check for the model weights.
+- The vLLM model supply chain (DeepSeek-R1-Distill-Llama-8B, Meta-Llama-3.1-8B-Instruct) is pulled via `deployment/scripts/mirror_models.py` to MinIO/GCS. There is no SBOM, model card verification, or cryptographic integrity check for the model weights.
 - `deployment/docker/` contains build configs (referenced in `deploy_all.sh`). No `cloudbuild.vllm.yaml` was found; the build config is `deployment/opa_config.yaml` and deploy scripts. No Trivy, Grype, or Snyk scan step was found in any CI/CD config.
 - `deployment/terraform/` manages GKE, IAM, networking, and secrets infrastructure. No SBOM or `terraform-providers-lock.hcl` pinning was observed in the file listing.
 
@@ -158,7 +158,7 @@
 1. **No Software Bill of Materials (SBOM).** Neither CycloneDX nor SPDX SBOMs exist for any container image. This is required by NIST SP 800-161r1 (Supply Chain Risk Management) and increasingly mandated for federal systems.
 2. **No container vulnerability scanning in CI.** There is no Trivy, Grype, Snyk, or equivalent scan in any CI/CD pipeline. For a HIGH-baseline system, RA-5 requires automated vulnerability scanning of all components.
 3. **Dependency versions are unpinned ranges** (`>=`). This permits automatic inclusion of newly released (potentially malicious or broken) package versions. Lock files (`requirements.lock` or `poetry.lock`) do not exist.
-4. **Model supply chain is undocumented.** The vLLM model weights (DeepSeek-R1-Distill-Llama-8B) are mirrored via `scripts/mirror_models.py` with no hash verification, model card reference, or attestation. A malicious model weight file would bypass all governance controls.
+4. **Model supply chain is undocumented.** The vLLM model weights (DeepSeek-R1-Distill-Llama-8B) are mirrored via `deployment/scripts/mirror_models.py` with no hash verification, model card reference, or attestation. A malicious model weight file would bypass all governance controls.
 5. **No third-party component risk assessment.** There is no documented assessment of the risk posed by critical third-party dependencies: NeMo Guardrails (NVIDIA), OPA (CNCF), Langfuse (startup), LangGraph (LangChain Inc.). For a HIGH-baseline system, SA-9 requires documented third-party component risk.
 
 **Refactoring Recommendations:**
@@ -166,7 +166,7 @@
 1. Add a `scripts/generate_sbom.sh` script using `syft` to generate CycloneDX SBOMs for all Docker images post-build. Store SBOMs in `compliance/sbom/` (e.g., `compliance/sbom/compliance-bridge-<version>.json`). Reference SBOM URIs in `compliance/oscal/component-definition.yaml` `back-matter.resources`.
 2. Add a Trivy scan step to the CI/CD pipeline (`.github/workflows/security-scan.yml` or `deployment/cloudbuild.yaml`): `trivy image --exit-code 1 --severity CRITICAL,HIGH <image>`. Block deployment on CRITICAL CVEs with no available fix.
 3. Convert `src/governed_financial_advisor/requirements.txt` and `src/compliance_bridge/requirements.txt` to pinned lockfiles using `pip-compile` (pip-tools). Add a CI step that fails if `requirements.txt` differs from the generated lockfile.
-4. Add SHA-256 verification to `scripts/mirror_models.py`: after downloading model weights, verify against a hardcoded expected hash in `config/model_hashes.json`. Log the verification result as an OTel span with attribute `supply_chain.model_integrity_verified=true/false`.
+4. Add SHA-256 verification to `deployment/scripts/mirror_models.py`: after downloading model weights, verify against a hardcoded expected hash in `config/model_hashes.json`. Log the verification result as an OTel span with attribute `supply_chain.model_integrity_verified=true/false`.
 5. Create `docs/SUPPLY_CHAIN_RISK_ASSESSMENT.md` documenting: the 5 highest-risk third-party dependencies (NeMo, OPA, Langfuse, LangGraph, vLLM), the risk rating for each, the mitigating controls (version pinning, SBOM, vulnerability scanning), and the escalation procedure if a critical CVE is found in a dependency.
 
 ---
@@ -177,8 +177,8 @@
 
 **Current State:**
 
-- [`docs/SYSTEM_DESCRIPTION_ISO_42001.md`](../universal/SYSTEM_DESCRIPTION_ISO_42001.md) provides a systems-theoretic description mapping CAGE components to the Viable System Model and ISO 42001 clauses. It contains an informal component description and control telemetry mapping but **is not a NIST-format System Security Plan (SSP)**. No security control summary tables, FIPS 199 categorization, or inheritance designations are present.
-- [`docs/DEPLOYMENT_DECISION_RECORD.md`](../../operations/DEPLOYMENT_DECISION_RECORD.md) contains two Architecture Decision Records (ADR-001: MinIO tensorizer, ADR-002: portability improvements) and infrastructure deployment decisions. This documents _implementation decisions_ but is not a risk assessment or authorization artifact.
+- [`compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md`](../universal/SYSTEM_DESCRIPTION_ISO_42001.md) provides a systems-theoretic description mapping CAGE components to the Viable System Model and ISO 42001 clauses. It contains an informal component description and control telemetry mapping but **is not a NIST-format System Security Plan (SSP)**. No security control summary tables, FIPS 199 categorization, or inheritance designations are present.
+- [`docs/operations/DEPLOYMENT_DECISION_RECORD.md`](../../operations/DEPLOYMENT_DECISION_RECORD.md) contains two Architecture Decision Records (ADR-001: MinIO tensorizer, ADR-002: portability improvements) and infrastructure deployment decisions. This documents _implementation decisions_ but is not a risk assessment or authorization artifact.
 - `docs/proposals/004_risk_remediation_plan.md` describes three proposed architectural improvements (dynamic policy injection, stateful risk memory, GitOps workflow). This is a _proposal document_ — it identifies risks (latency, statelessness, race conditions) but does not constitute a POA&M with tracking IDs, milestones, or resource estimates.
 - **No SSP exists.** No FIPS 199 categorization document exists. No POA&M with formal tracking exists. No Risk Assessment Report (RAR) exists. No authorization letter exists.
 - The `compliance/` directory contains OSCAL Component Definition and Lula validations — these support the SSP but are not substitutes for the full authorization package.
@@ -195,7 +195,7 @@
 
 **Refactoring Recommendations:**
 
-1. Create `compliance/ssp/SYSTEM_SECURITY_PLAN.md` using the FedRAMP SSP template as a baseline. Minimum viable SSP sections: system overview (from `SYSTEM_DESCRIPTION_ISO_42001.md`), FIPS 199 categorization, authorization boundary diagram (from `ARCHITECTURE.md`), control summary table referencing Lula validations for the 4 automated controls, and "planned" or "inherited" designations for remaining ~296 HIGH-baseline controls.
+1. Create `compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md` using the FedRAMP SSP template as a baseline. Minimum viable SSP sections: system overview (from `SYSTEM_DESCRIPTION_ISO_42001.md`), FIPS 199 categorization, authorization boundary diagram (from `ARCHITECTURE.md`), control summary table referencing Lula validations for the 4 automated controls, and "planned" or "inherited" designations for remaining ~296 HIGH-baseline controls.
 2. Create `compliance/categorization/FIPS199_CATEGORIZATION.md` with: system name, mission/business function, information types (financial data → I=High, audit logs → A=Moderate), NIST SP 800-60 Vol II mapping, and the resulting overall categorization. This must be signed by System Owner.
 3. Convert `docs/proposals/004_risk_remediation_plan.md` to a formal POA&M at `compliance/poam/POA_AND_M.md` using NIST SP 800-18 Appendix A format: finding ID (e.g., CAGE-2026-001 through CAGE-2026-010 covering all Chunk 3 identified gaps), weakness, responsible POC, scheduled completion, milestones, and resources.
 4. Create `compliance/rar/RISK_ASSESSMENT_REPORT.md` documenting: threat sources (insider threat, supply chain, adversarial AI prompt injection), threat events, vulnerabilities (the gaps from Chunks 1–4), likelihood determinations (L/M/H), impact determinations referencing FIPS 199 categorization, and overall risk ratings.
@@ -249,10 +249,10 @@
 
 **Refactoring Recommendations:**
 
-1. Create `docs/CONTINUOUS_MONITORING_STRATEGY.md` per NIST SP 800-137 Section 3: monitoring objectives (maintain ATO, detect control degradation), monitoring frequencies (Tier 3: every 6h for critical AI controls, daily for k8s runtime controls, quarterly for IAM/CM), reporting mechanisms (Langfuse compliance project + SSE dashboard), and ISCM program roles.
+1. Create `docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md` per NIST SP 800-137 Section 3: monitoring objectives (maintain ATO, detect control degradation), monitoring frequencies (Tier 3: every 6h for critical AI controls, daily for k8s runtime controls, quarterly for IAM/CM), reporting mechanisms (Langfuse compliance project + SSE dashboard), and ISCM program roles.
 2. Extend the Lula CronJob to cover SP 800-53 controls by adding new validation manifests for the top 10 automatable controls (AU-12, SC-8, AC-3, CM-6, RA-5, SI-4, IA-3, SC-7, CM-7, SA-9) to `compliance/lula/sp800-53/` and referencing them in the CronJob's `lula-validation-manifests` ConfigMap.
 3. Add a CI step that validates `${REGISTRY_URL}` substitution in `lula-cron.yaml` before deployment: `envsubst < deployment/k8s/lula-cron.yaml | kubectl apply --dry-run=client -f -`.
-4. Define alert response SLAs in `docs/CONTINUOUS_MONITORING_STRATEGY.md`: CRITICAL control failures (A.9.2 PII leak, SC-4 OPA offline) → acknowledge within 15 minutes, remediate within 4 hours; HIGH control failures → acknowledge within 1 hour, remediate within 24 hours.
+4. Define alert response SLAs in `docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md`: CRITICAL control failures (A.9.2 PII leak, SC-4 OPA offline) → acknowledge within 15 minutes, remediate within 4 hours; HIGH control failures → acknowledge within 1 hour, remediate within 24 hours.
 5. Audit `deployment/k8s/lula-rbac.yaml` to ensure the `lula-auditor` ServiceAccount has only `get` and `list` permissions on ConfigMaps in the `default` namespace (for SC-4) — not cluster-wide read access — implementing least privilege (AC-6).
 
 ---
@@ -288,9 +288,9 @@
 
 | Artifact                              | Required for ATO    | Status     | Location or Recommended Path                                                             |
 | ------------------------------------- | ------------------- | ---------- | ---------------------------------------------------------------------------------------- |
-| System Security Plan (SSP)            | ✅ Required         | ❌ Missing | `compliance/ssp/SYSTEM_SECURITY_PLAN.md`                                                 |
+| System Security Plan (SSP)            | ✅ Required         | ❌ Missing | `compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md`                                                 |
 | FIPS 199 Categorization               | ✅ Required         | ❌ Missing | `compliance/categorization/FIPS199_CATEGORIZATION.md`                                    |
-| Security Assessment Plan (SAP)        | ✅ Required         | ❌ Missing | `docs/SECURITY_ASSESSMENT_PLAN.md`                                                       |
+| Security Assessment Plan (SAP)        | ✅ Required         | ❌ Missing | `docs/compliance/us_fed/SECURITY_ASSESSMENT_PLAN.md`                                                       |
 | Security Assessment Report (SAR)      | ✅ Required         | ⚠️ Partial | Langfuse compliance project scores; `compliance/sar/SAR_<date>.md`                       |
 | Plan of Action & Milestones (POA&M)   | ✅ Required         | ⚠️ Partial | `docs/proposals/004_risk_remediation_plan.md` (informal); `compliance/poam/POA_AND_M.md` |
 | Risk Assessment Report (RAR)          | ✅ Required         | ❌ Missing | `compliance/rar/RISK_ASSESSMENT_REPORT.md`                                               |
@@ -302,11 +302,11 @@
 | Lula Validation Manifests (full SP 800-53 HIGH baseline) | Supporting | ❌ Partial | ~5% of ~300 required controls covered; `compliance/lula/sp800-53/` expansion needed |
 | Supply Chain Risk Assessment          | Supporting          | ❌ Missing | `docs/SUPPLY_CHAIN_RISK_ASSESSMENT.md`                                                   |
 | SBOM (CycloneDX/SPDX)                 | Supporting          | ❌ Missing | `compliance/sbom/<image>-<version>.json`                                                 |
-| Continuous Monitoring Strategy        | ✅ Required (cATO)  | ❌ Missing | `docs/CONTINUOUS_MONITORING_STRATEGY.md`                                                 |
+| Continuous Monitoring Strategy        | ✅ Required (cATO)  | ❌ Missing | `docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md`                                                 |
 | Risk Acceptance Statement             | ✅ Required         | ❌ Missing | `compliance/risk_acceptance/RISK_ACCEPTANCE_STATEMENT.md`                                |
 | Threshold Traceability Matrix         | Supporting          | ❌ Missing | `compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md`                            |
-| System Description (ISO 42001)        | Supporting          | ✅ Exists  | `docs/SYSTEM_DESCRIPTION_ISO_42001.md`                                                   |
-| Deployment Decision Records (ADRs)    | Supporting          | ✅ Exists  | `docs/DEPLOYMENT_DECISION_RECORD.md`                                                     |
+| System Description (ISO 42001)        | Supporting          | ✅ Exists  | `compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md`                                                   |
+| Deployment Decision Records (ADRs)    | Supporting          | ✅ Exists  | `docs/operations/DEPLOYMENT_DECISION_RECORD.md`                                                     |
 | Network Policy (machine-readable)     | Supporting          | ✅ Exists  | `deployment/k8s/network-policy.yaml`                                                     |
 | Privacy Impact Assessment             | ⚠️ If PII processed | ❌ Missing | `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`                                            |
 
@@ -373,7 +373,7 @@ The cybernetic-governance-engine demonstrates genuine technical sophistication i
 
 **v2.0.0 improvements since initial assessment:** Linkerd mTLS + Cilium L7 egress lockdown deployed (POAM-007 closed 2026-05-17); `outlines` CVE-2025-69872 remediated (POAM-016 closed 2026-05-29); SBOM/Trivy CI enforcement deployed (POAM-010 closed); AgentSight UI Phase 1 with eBPF observability deployed (POAM-021 closed); Cloud KMS HSM-backed asymmetric signing deployed; Lula manifests expanded from 4 to 15; SR 26-2 (Federal Reserve, April 17, 2026) adopted as primary agentic AI governance framework; CSA AARM v1.0 11-vector threat coverage integrated.
 
-**POAM Summary (authoritative source: [`docs/POAM_US_FED.md`](POAM_US_FED.md), dated 2026-06-08):**
+**POAM Summary (authoritative source: [`compliance/us_fed/POAM_US_FED.md`](POAM_US_FED.md), dated 2026-06-08):**
 
 | Metric          | Count |
 | --------------- | ----- |

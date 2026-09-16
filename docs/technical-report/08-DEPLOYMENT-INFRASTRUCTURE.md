@@ -326,7 +326,7 @@ Source: `generate_reasoning_manifest.py`, `deployment/k8s/vllm-inference-spot.ya
 
 ### Cold-Start Acceleration
 
-vLLM Tensorizer streams model weights directly from MinIO at pod startup. `deployment/k8s/tensorize-job.yaml` pre-converts weights to Tensorizer format. This eliminates the HuggingFace Hub download step from the critical path and reduces cold-start time significantly (documented in `docs/LATENCY_STRATEGY.md` as "The Enforcer" strategy on NVIDIA L4).
+vLLM Tensorizer streams model weights directly from MinIO at pod startup. `deployment/k8s/tensorize-job.yaml` pre-converts weights to Tensorizer format. This eliminates the HuggingFace Hub download step from the critical path and reduces cold-start time significantly (documented in `docs/architecture/LATENCY_STRATEGY.md` as "The Enforcer" strategy on NVIDIA L4).
 
 **Additional vLLM manifests**:
 
@@ -443,7 +443,7 @@ Nine `NetworkPolicy` objects are applied within the `governance-stack` namespace
 
 ## Latency Strategy
 
-Source: [`docs/LATENCY_STRATEGY.md`](../architecture/LATENCY_STRATEGY.md)
+Source: [`docs/architecture/LATENCY_STRATEGY.md`](../architecture/LATENCY_STRATEGY.md)
 
 ### 10.1 Latency as Currency Philosophy
 Every secure generation node in a multi-agent system incurs a "Governance Tax" (overhead):
@@ -472,10 +472,10 @@ The 200 ms SLA is enforced through 14 hardware, network, and software mitigation
 | # | Mechanism | Source | Detail | Latency Impact |
 | - | --------- | ------ | ------ | -------------- |
 | 6 | **Aho-Corasick O(n) Keyword Scan** | [`text_filter.py`](../../src/gateway/governance/text_filter.py) (**v3.0.0:** `safety.py` removed) | Tier-1 keyword detection uses a pre-built `pyahocorasick` automaton for single-pass O(n) scanning of all 14+ forbidden keywords, replacing the naïve O(n×m) `any()` loop. Automaton is built lazily on first invocation and cached for process lifetime. | Scan: **O(n)** vs O(n×m) |
-| 7 | **OPA Circuit Breaker** | [`policy.py`](../../src/gateway/core/policy.py) | Three-tier latency defense: (a) **Hard timeout**: 1.0s per OPA request; (b) **Soft ceiling warning**: cumulative `>2000ms` emits latency inflation warning; (c) **Bankruptcy protocol**: cumulative `>3000ms` → immediate DENY, bypassing remaining OPA evaluation | Hard cap: **3000ms** |
+| 7 | **OPA Circuit Breaker** | [`policy.py`](../src/gateway/core/policy.py) | Three-tier latency defense: (a) **Hard timeout**: 1.0s per OPA request; (b) **Soft ceiling warning**: cumulative `>2000ms` emits latency inflation warning; (c) **Bankruptcy protocol**: cumulative `>3000ms` → immediate DENY, bypassing remaining OPA evaluation | Hard cap: **3000ms** |
 | 8 | **SLM Sidecar Bypassed** | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | SLM similarity sidecar has been permanently deprecated and bypassed (0ms added). Bypassing is enforced by hardcoding the `"slm_available": false` sentinel, forcing OPA Rego policies to apply the elevated confidence threshold (`0.97` vs `0.95` default) | Bypassed: **0ms** (0ms added) |
-| 9 | **Consensus Parallel Critics** | [`consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) (Phase 4.4) | Two LLM critic votes (Risk Manager + Compliance Officer) dispatched via `asyncio.gather()` — **parallel**, not sequential. Replaces the original sequential `await` chain | 2 calls: **max(A,B)** not A+B |
-| 10 | **Consensus Background Audit Queue** | [`consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) (Phase 4.4) | Post-execution audit logging pushed to a non-blocking `asyncio.Queue(maxsize=1000)` drained by `_background_audit_worker()`. Audit I/O never blocks the governance hot-path | Audit: **0ms** on hot-path |
+| 9 | **Consensus Parallel Critics** | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) (Phase 4.4) | Two LLM critic votes (Risk Manager + Compliance Officer) dispatched via `asyncio.gather()` — **parallel**, not sequential. Replaces the original sequential `await` chain | 2 calls: **max(A,B)** not A+B |
+| 10 | **Consensus Background Audit Queue** | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) (Phase 4.4) | Post-execution audit logging pushed to a non-blocking `asyncio.Queue(maxsize=1000)` drained by `_background_audit_worker()`. Audit I/O never blocks the governance hot-path | Audit: **0ms** on hot-path |
 | 11 | **DEFER Queue Confidence-Starvation Bypass** | [`defer_queue.py`](../../src/gateway/governance/defer_queue.py) | Requests with confidence < 0.70 ("Confidence-Starvation Boundary") are routed to DEFER → Redis parking instead of MANUAL_REVIEW, preventing operational fatigue from low-confidence requests clogging the human review queue | HITL: **avoided** for junk |
 
 #### Data Loading & Caching Mitigations
@@ -530,7 +530,7 @@ Model weights are pre-serialized to TensorSerializer format via a one-time GKE J
 
 ## Deployment Decision Record
 
-Source: `docs/DEPLOYMENT_DECISION_RECORD.md`
+Source: `docs/operations/DEPLOYMENT_DECISION_RECORD.md`
 
 **ADR-002 — nginx GatewayClass for Kubernetes Inference Gateway**
 

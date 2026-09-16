@@ -363,7 +363,7 @@ Benign FPR: **25.0% (5/20)** — unchanged total. Category breakdown:
 
 ## Phase 0.2: Reconciliation Worker Documentation Corrections (2026-08-15)
 
-This correction pass addresses 4 stale claims in `tmp/CAGE_ARXIV.md` §7.2 and §7.3
+This correction pass addresses 4 stale claims in `docs/whitepapers/CAGE_TECHNICAL_PREPRINT.md` §7.2 and §7.3
 identified in ``CAGE_IMPLEMENTATION_SPECS.md` §2.8`.
 
 ### Background
@@ -393,7 +393,7 @@ didn't match any registered provider — both claims became stale after code upd
 
 ### Files modified
 
-- `tmp/CAGE_ARXIV.md` — §7.2 and §7.3 reconciliation worker claims corrected
+- `docs/whitepapers/CAGE_TECHNICAL_PREPRINT.md` — §7.2 and §7.3 reconciliation worker claims corrected
 - `scripts/_patch_paper.py` — 3 replacement blocks added (Phase 0.2 section)
 - `docs/paper/REVISION_TRACKER.md` — this section added
 
@@ -402,7 +402,7 @@ didn't match any registered provider — both claims became stale after code upd
 ## Phase 1: Core Governance Enhancements (2026-08-16)
 
 This phase documents v3.0 governance changes that affect the academic paper
-`tmp/CAGE_ARXIV.md`. These changes expand the governance decision space and
+`docs/whitepapers/CAGE_TECHNICAL_PREPRINT.md`. These changes expand the governance decision space and
 make previously optional security controls mandatory.
 
 ### Paper Corrections Required

@@ -111,7 +111,7 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 
 > **NIST SP 800-53 gates apply to US_FED deployments only.** EU_ECB stable releases are gated on EU AI Act compliance. APAC_MAS stable releases are gated on MAS FEAT compliance.
 
-**Sources:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md) through [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
+**Sources:** [`docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md) through [`docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 ### 3.1 Overall Readiness
 
@@ -137,7 +137,7 @@ The AU (Audit & Accountability) family is the strongest at 54%, driven by the ma
 
 ## 4. NIST RMF 7-Step Readiness
 
-**Sources:** [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) through [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
+**Sources:** [`docs/compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) through [`docs/compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
 
 ### 4.1 Step-by-Step Scores
 
@@ -152,7 +152,7 @@ No ATO (Authorization to Operate) has been granted. The security assessor determ
 
 ### 4.2 ATO Progression Roadmap
 
-**Source:** [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
+**Source:** [`docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 The phased roadmap targets continuous ATO posture over a 52-week horizon:
 
@@ -174,7 +174,7 @@ Phase 3  Weeks 16–52  →  +77%  Architectural uplift
 
 ## 5. ISO/IEC 42001:2023 AI Management System Compliance
 
-**Sources:** [`docs/ISO_42001_COMPLIANCE.md`](../compliance/universal/ISO_42001_COMPLIANCE.md), [`docs/SYSTEM_DESCRIPTION_ISO_42001.md`](../compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md)
+**Sources:** [`compliance/universal/ISO_42001_COMPLIANCE.md`](../compliance/universal/ISO_42001_COMPLIANCE.md), [`compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md`](../compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md)
 
 ### 5.1 Clause Mapping
 

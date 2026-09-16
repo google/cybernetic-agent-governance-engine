@@ -292,4 +292,4 @@ See [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitori
 - [`compliance/oscal/system-security-plan.yaml`](../oscal/system-security-plan.yaml) — US_FED SSP (NIST SP 800-53 Rev 5 HIGH)
 - [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../oscal/system-security-plan-eu-ecb.yaml) — EU_ECB SSP (EU AI Act / GDPR / DORA)
 - [`compliance/oscal/system-security-plan-apac-mas.yaml`](../oscal/system-security-plan-apac-mas.yaml) — APAC_MAS SSP (MAS FEAT / Notice 655 / TRM)
-- [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](../../docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md) — Phase 4 compliance artifact findings (CA-01 through CA-08)
+- [`compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](../../docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md) — Phase 4 compliance artifact findings (CA-01 through CA-08)

@@ -177,7 +177,7 @@ Add targeted documentation for kernel modules that currently have zero represent
 | [`authorization_claim_detector.py`](../src/gateway/governance/authorization_claim_detector.py), [`confidence_claim_detector.py`](../src/gateway/governance/confidence_claim_detector.py) | Claim-detection defense modules | TR-05 §12 (AI 600-1 table) |
 | [`execution_actuator.py`](../src/gateway/governance/execution_actuator.py) | Kernel actuator enforcing seal verification before execution | TR-02 §5.3; TR-04 §13.1 |
 | [`src/compliance_bridge/clickhouse_sink.py`](../src/compliance_bridge/clickhouse_sink.py), `cmek_guard.py` | Compliance Bridge telemetry persistence & CMEK key validation | TR-06 §14b |
-| [`ftra/models.py`](../src/gateway/governance/ftra/models.py) (`ParseResult`, `ParseFailureClass`) | Defensive plan parsing and LLM schema validation failure handling | TR-04 §5a; TR-05 §2.1 |
+| [`src/gateway/governance/ftra/models.py`](../src/gateway/governance/src/gateway/governance/ftra/models.py) (`ParseResult`, `ParseFailureClass`) | Defensive plan parsing and LLM schema validation failure handling | TR-04 §5a; TR-05 §2.1 |
 
 ---
 

@@ -10,7 +10,7 @@
 | nemo-guardrails pod | `nemo-guardrails-8679597b7f-nbs4r` (3/3 Running) |
 | GFA pod | `governed-financial-advisor-6665d96bd4-dg65p` |
 | BACKEND_URL | `http://localhost:8080` |
-| ADVERSARIAL_JSON | `/tmp/adversarial_dataset.json` (22 payloads) |
+| ADVERSARIAL_JSON | `tests/red_team/adversarial_dataset.json` (22 payloads) |
 | BENIGN_JSON | `/tmp/benign_dataset.json` (20 payloads) |
 
 ## Code Fixes Applied

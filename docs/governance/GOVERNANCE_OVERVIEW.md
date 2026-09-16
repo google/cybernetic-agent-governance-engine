@@ -32,7 +32,7 @@ This document describes the **Cybernetic Governance** framework that transforms 
 
 We utilize a **Hybrid Reasoning Architecture** to solve the "Recursive Paradox" of agent safety (High Variety vs. Low Safety). This architecture combines **deterministic workflow control** (LangGraph) with **LLM-powered reasoning** (native LangChain Runnables).
 
-We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mitigate Unsafe Control Actions (UCAs). See [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md) for the detailed hazard analysis.
+We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mitigate Unsafe Control Actions (UCAs). See [`docs/security/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md) for the detailed hazard analysis.
 
 - **Variety Attenuation:** Ashby's Law ($V_R \ge V_A$) is used to constrain the agent's infinite action space ($V_A$) into a manageable set of states verified by the governance stack ($V_R$).
 - **Explicit Routing (LangGraph):** Unlike standard "tool-use" agents that probabilistically choose tools, the **Supervisor Agent** (implemented in **LangGraph**) uses a deterministic `StateGraph` to transition between states. This forms the "hard logic" cage around the probabilistic "soft logic" of the LLM.
@@ -284,7 +284,7 @@ All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`
 | `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `symbolic_governor.py` — Step 6 FRIA normative boundary + attestation — **EU_ECB only** |
 | `CTRL_TQP_007` | THR-TQP-007 | ISO 42001 Annex A.4 | Agentic | `token_quota_proxy.py` — per-session token + step-count quota enforcement *(All Regions)* |
 | `CTRL_DFR_008` | THR-DFR-008 | CSA AARM-V7 / ISO 42001 §A.8.4 | AARM Primitive | `defer_queue.py` — DEFER State Machine *(All Regions)* |
-| `CTRL_FTRA_001` | — | ISO 42001 §A.9.4 | Agentic | `ftra/node_factory.py` — commencement reachability gate *(All Regions)* |
+| `CTRL_FTRA_001` | — | ISO 42001 §A.9.4 | Agentic | `src/gateway/governance/ftra/node_factory.py` — commencement reachability gate *(All Regions)* |
 
 Legacy citations (e.g. `SR 26-2 §IV.B`) are preserved as `legacy_citation` fields inside baseline profiles so SIEM consumers retain backward-compatible alert matching.
 
@@ -410,10 +410,10 @@ The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)**
 
 > **Note:** FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap.
 
-- **`ftra/classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`; fail-closed for unregistered actions
-- **`ftra/graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute the reachable terminals and critical path
-- **`ftra/models.py`** — `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` data models
-- **`ftra/node_factory.py`** — `create_ftra_node()` / `route_after_ftra()` — LangGraph node factory and conditional-edge routing, wired into `src/governed_financial_advisor/graph/graph.py`
+- **`src/gateway/governance/ftra/classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`; fail-closed for unregistered actions
+- **`src/gateway/governance/ftra/graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute the reachable terminals and critical path
+- **`src/gateway/governance/ftra/models.py`** — `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` data models
+- **`src/gateway/governance/ftra/node_factory.py`** — `create_ftra_node()` / `route_after_ftra()` — LangGraph node factory and conditional-edge routing, wired into `src/governed_financial_advisor/graph/graph.py`
 
 **Decision semantics:** `CLEAR` proceeds to the OPA `safety_check` node. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ 0.70) parks the thread in DeferQueue `db=1` with `DeferReason.FTRA_IRREVERSIBLE_TERMINAL` pending human clearance. `BLOCKED` (confidence < 0.70) routes to `explainer`, halting the plan before any further LLM inference.
 

@@ -42,7 +42,7 @@ CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 > **Note (2026-08-06):** Inside the Governed Financial Advisor pod, the
 > in-process `LLMRails` lifecycle was consolidated to a single module-level
 > singleton (`nemo_node_factory.py`), replacing a prior pattern where the
-> LangGraph guardrail nodes, `tools/api.py`, and `server.py` each built and
+> LangGraph guardrail nodes, `src/governed_financial_advisor/tools/api.py`, and `server.py` each built and
 > held their own independent `LLMRails` instance. Hot-reloads issued via
 > `POST /v1/nemo/approve-refinement/{id}` now propagate to every in-process
 > consumer atomically. This does not affect the standalone `nemo-service`

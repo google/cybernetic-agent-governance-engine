@@ -94,7 +94,7 @@ The processing is **necessary** for the stated purposes:
 Measures taken to limit data processing to what is necessary:
 - **Data minimisation (GDPR Art. 5(1)(c)):** Presidio PII sanitizer (`score_threshold ≥ 0.5`) strips client identity before Langfuse trace emission. Only financial parameters required for governance decision reach the OTel audit trail.
 - **Purpose limitation (GDPR Art. 5(1)(b)):** Client financial data is processed only for advisory recommendation purposes. The Langfuse compliance project (db=1) is segregated from the application project (db=0).
-- **Storage limitation (GDPR Art. 5(1)(e)):** See `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` for retention periods.
+- **Storage limitation (GDPR Art. 5(1)(e)):** See `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` for retention periods.
 
 ---
 
@@ -151,8 +151,8 @@ No high-residual-risk items were identified that require prior consultation with
 
 ## Related Documents
 
-- `docs/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
-- `docs/PII_SCRUBBING_POLICY.md` — Presidio PII scrubbing configuration
-- `docs/AUDIT_LOG_RETENTION_SCHEDULE.md` — GDPR Art. 5(1)(e) retention periods
-- `docs/HUMAN_OVERSIGHT_SCOPE.md` — HITL gate and Art. 22 safeguards
-- `docs/POAM_EU_ECB.md` — EU-004 POAM item
+- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
+- `compliance/universal/PII_SCRUBBING_POLICY.md` — Presidio PII scrubbing configuration
+- `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — GDPR Art. 5(1)(e) retention periods
+- `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL gate and Art. 22 safeguards
+- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-004 POAM item

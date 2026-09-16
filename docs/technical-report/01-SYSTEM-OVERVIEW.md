@@ -81,7 +81,7 @@ An adopter domain — manufacturing tolerance limits, logistics capacity, grid d
 
 CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes each organizational role and its primary accountability domain. All incumbent positions are designated **TBD** as of 2026-03-06 pending ATO approval.
 
-> **Note:** A standalone `docs/ROLES_AND_RESPONSIBILITIES.md` with a full RACI matrix and named incumbents was removed during a documentation-scope cleanup (2026-07) — CAGE is a reference architecture, not an operating organization, and a fictional roles document with placeholder `[TBD]` incumbents provided no engineering value. Adopters deploying CAGE in a real regulated environment should author their own RACI matrix naming real AO/ISSO/System Owner incumbents before pursuing an authorization package.
+> **Note:** A standalone `docs/governance/ROLES_AND_RESPONSIBILITIES.md` with a full RACI matrix and named incumbents was removed during a documentation-scope cleanup (2026-07) — CAGE is a reference architecture, not an operating organization, and a fictional roles document with placeholder `[TBD]` incumbents provided no engineering value. Adopters deploying CAGE in a real regulated environment should author their own RACI matrix naming real AO/ISSO/System Owner incumbents before pursuing an authorization package.
 
 | Role                                    | Abbreviation | Primary Accountability                                                    |
 | --------------------------------------- | ------------ | ------------------------------------------------------------------------- |
@@ -118,7 +118,7 @@ CAGE provides eight integrated capabilities. **Capabilities 2 and 4–8 are doma
 
 4. **Continuous Compliance Evidence Generation** — The Compliance Bridge service produces OSCAL component definitions, control implementation statements, and ISO 42001 evidence artifacts as a continuous byproduct of system operation. Evidence is archived to GCS for 7-year audit retention. OSCAL assessment state semantics follow NIST SP 800-53A §3.2 — four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, and `ERROR` (scanner failure — distinct from `NOT_APPLICABLE`).
 
-5. **Privacy-Preserving PII Detection and Masking** — Microsoft Presidio and NVIDIA NeMo Guardrails jointly detect and mask 10 PII entity types in both inbound prompts and outbound model responses. Masked data is subject to the 24-hour session retention limit enforced by Redis TTL policies. NeMo Guardrails (`src/gateway/governance/nemo/`) additionally enforces CBRN keyword rails (`colang/cbrn_rails.co`) under `US_FED` jurisdiction (NIST AI 600-1 §2.6). The LangGraph harness (`src/gateway/governance/langgraph_harness/`) wraps both NeMo and OPA as typed governance nodes composable into any StateGraph pipeline.
+5. **Privacy-Preserving PII Detection and Masking** — Microsoft Presidio and NVIDIA NeMo Guardrails jointly detect and mask 10 PII entity types in both inbound prompts and outbound model responses. Masked data is subject to the 24-hour session retention limit enforced by Redis TTL policies. NeMo Guardrails (`src/gateway/governance/nemo/`) additionally enforces CBRN keyword rails (`src/gateway/governance/nemo/colang/cbrn_rails.co`) under `US_FED` jurisdiction (NIST AI 600-1 §2.6). The LangGraph harness (`src/gateway/governance/langgraph_harness/`) wraps both NeMo and OPA as typed governance nodes composable into any StateGraph pipeline.
 
 6. **Red Team Adversarial Testing Harness** — A built-in evaluation harness with 290+ adversarial payloads tests governance robustness against prompt injection, jailbreak attempts, and governance bypass patterns. Red team results feed directly into the POA&M remediation cycle.
 
@@ -268,7 +268,7 @@ The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../
 | **1** | STPA UCA Validation | Kernel | Unsafe control action check | [`GeneratedSTPAValidator.validate()`](../../src/gateway/governance/generated_stpa_validator.py) |
 | **2** | Confidence Pre-check | Kernel | Agent confidence threshold | Inline logic in `_run_checks()` |
 | **—** | **Domain Tiers Phase 1 (read-only)** | **Plugin** | Registered tiers with `phase == 1`, sorted by `(phase, order)` | [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) |
-| **3b** | OPA Policy | Kernel | Rego policy evaluation | [`OPAClient.evaluate_policy()`](../../src/gateway/core/policy.py) |
+| **3b** | OPA Policy | Kernel | Rego policy evaluation | [`OPAClient.evaluate_policy()`](../src/gateway/core/policy.py) |
 | **—** | **Domain Tiers Phase 2 (mutating)** | **Plugin** | Registered tiers with `phase == 2`, LIFO rollback on failure | [`_run_domain_tiers()`](../../src/gateway/governance/symbolic_governor.py:944) + [`_rollback_committed()`](../../src/gateway/governance/symbolic_governor.py:909) |
 | **7** | FRIA Gate | Kernel | External normative provider (confidence-mapped) | [`enforce_fria_boundary()`](../../src/gateway/governance/normative_provider.py) |
 

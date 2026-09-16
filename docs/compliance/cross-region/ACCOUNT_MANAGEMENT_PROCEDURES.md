@@ -120,4 +120,4 @@ The compliance bridge and gateway use Langfuse API keys stored in the `advisor-s
 ## Related Documents
 
 - `infra/targets/gcp-gke/iam.tf` — Terraform IAM resource definitions
-- `docs/POAM_US_FED.md` — POAM-001 tracking item
+- `compliance/us_fed/POAM_US_FED.md` — POAM-001 tracking item

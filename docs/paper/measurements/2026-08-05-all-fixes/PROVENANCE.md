@@ -19,7 +19,7 @@
 | governed-financial-advisor pod | `governed-financial-advisor-66d96bb76d-rv2z8` (1/1 Running) |
 | Namespace | `governance-stack` |
 | BACKEND_URL | `http://localhost:8080` (in-pod exec) |
-| ADVERSARIAL_JSON | `/tmp/adversarial_dataset.json` (26 payloads) |
+| ADVERSARIAL_JSON | `tests/red_team/adversarial_dataset.json` (26 payloads) |
 | BENIGN_JSON | not run (benign dataset not staged; `benign_fpr: {}`) |
 | LATENCY_RUNS | 200 (in-process OTel span harvest) |
 | CAGE_SEAL_ENFORCEMENT | `enforce` (patched on governed-financial-advisor) |
@@ -95,7 +95,7 @@ confirm `UtteranceUserAction.Finished()` is present.
 ```bash
 kubectl exec -n governance-stack governed-financial-advisor-66d96bb76d-rv2z8 -- \
   env BACKEND_URL=http://localhost:8080 \
-      ADVERSARIAL_JSON=/tmp/adversarial_dataset.json \
+      ADVERSARIAL_JSON=tests/red_team/adversarial_dataset.json \
       PYTHONPATH=/app \
   /app/.venv/bin/python3 /tmp/measure_paper_metrics.py
 ```

@@ -148,7 +148,7 @@ The governance pipeline is an **8-tier symbolic governor** (FTRA pre-pipeline bo
 > **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
 | 0 | STPA Unsafe Control Action validation | UCA-* (from `config/stpa_control_structure.yaml`) | `generated_stpa_validator.py` |
 | 1 | Agentic model confidence threshold (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `symbolic_governor.py` |
-| 2/4 | Control Barrier Function (CBF) + OPA concurrent (`asyncio.gather`) | CBF: `h(x)≥0`, γ=0.5; OPA: `CTRL_OPA_005` | `cbf.py`, `core/policy.py` |
+| 2/4 | Control Barrier Function (CBF) + OPA concurrent (`asyncio.gather`) | CBF: `h(x)≥0`, γ=0.5; OPA: `CTRL_OPA_005` | `cbf.py`, `src/gateway/core/policy.py` |
 | 3 | Fiscal Limit Pre-Reservation (FiscalLimitGuard, daily cap $500k) | Redis atomic WATCH/MULTI/EXEC | `fiscal_limit_guard.py` |
 | 5 | Multi-agent consensus (≥$10,000 USD) | ISO 42001 A.8.4 | `consensus.py` |
 | 6 | DoWhy causal gatekeeper (placebo refutation, p<0.05) | `CTRL_MRM_004`, `CTRL_TEL_003` | `causal_gatekeeper.py` |

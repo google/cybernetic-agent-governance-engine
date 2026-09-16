@@ -140,7 +140,7 @@ The **compliance bridge** (`src/compliance_bridge/`) is a standalone FastAPI mic
 
 All Lula manifests include a cold-start grace period rule (< 6 hours post-deployment) that relaxes sample-size requirements while maintaining safety-rate thresholds.
 
-**Existing governance documentation**: `docs/GOVERNANCE_CROSSWALK.md`, `docs/ISO_42001_COMPLIANCE.md`, `docs/STPA_ANALYSIS.md`, and `docs/NEURO_SYMBOLIC_GOVERNANCE.md` provide architectural rationale and crosswalk tables.
+**Existing governance documentation**: `compliance/cross-region/GOVERNANCE_CROSSWALK.md`, `compliance/universal/ISO_42001_COMPLIANCE.md`, `docs/security/STPA_ANALYSIS.md`, and `docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md` provide architectural rationale and crosswalk tables.
 
 ### 2.2 Key Artifacts
 
@@ -177,7 +177,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 - Allow gateway ingress (port 8080) only from pods labeled `cage.io/role: orchestrator` or from the `ingress-nginx` namespace (policy 3)
 - Selective egress allows: OPA on 8181 (policy 4), Redis on 6379 (policy 5), DNS on 53 (policy 6), vLLM on 8000 (policy 7), OPA ingress health checks (policy 8), Langfuse OTLP on 3000 (policy 9) — **Note:** OTLP collector ports 4317/4318 removed; direct Langfuse OTLP ingestion used since 2026-05-31.
 
-**Linkerd mTLS + Cilium L7 egress lockdown** (v2.0.0, POAM-007 closed 2026-05-17): `deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. `deployment/k8s/cilium-egress-lockdown.yaml` enforces FQDN allowlist for all egress traffic, preventing lateral movement.
+**Linkerd mTLS + Cilium L7 egress lockdown** (v2.0.0, POAM-007 closed 2026-05-17): `deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. `deployment/k8s/cilium/egress-lockdown.yaml` enforces FQDN allowlist for all egress traffic, preventing lateral movement.
 
 **Terraform IAM** (`deployment/terraform/iam.tf`): GCP Workload Identity Federation for two service accounts:
 
@@ -203,7 +203,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 - Consensus: `threshold_usd: 10000.0`
 - Tier-1 keywords: 14 bypass/injection phrases
 
-**Safety params** (`src/gateway/governance/safety_params.json`): Minimal legacy file (`drawdown_limit: 0.05`) — superseded by the `THRESHOLDS` singleton.
+**Safety params** (`config/safety_params.json`): Minimal legacy file (`drawdown_limit: 0.05`) — superseded by the `THRESHOLDS` singleton.
 
 **OPA Rego policies** (active): Three policy packages in use:
 
@@ -304,7 +304,7 @@ The `tests/` directory contains **644 tests** across 28+ test files spanning uni
 
 **Adversarial / Red-team tests:**
 
-- `tests/red_team/adversarial_red_team.py` + `tests/red_teaming/test_adversarial.py`: Adversarial datasets and red-team execution scripts.
+- `tests/red_team/adversarial_red_team.py` + `tests/red_team/test_adversarial.py`: Adversarial datasets and red-team execution scripts.
 - `tests/red_team/adversarial_dataset.json`: Structured adversarial test case definitions.
 
 **Governance-specific tests:**

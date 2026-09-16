@@ -7,7 +7,7 @@
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
 | **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
-| **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
+| **Reference**        | `docs/architecture/GATEWAY_ARCHITECTURE.md`, `docs/architecture/GATEWAY_ARCHITECTURE.md`, `docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
 
@@ -410,10 +410,10 @@ flowchart TD
 | **2** | Kernel Gate | 1 | 2 | Agentic Confidence | Inline fast-fail check in `_run_checks()` | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (0.95 US / 0.97 EU) |
 | **—** | Domain Tier | 1 | 2 | Bounding Contracts (Finance) | `BoundingContractTierPlugin` in `cage_finance/tiers/bounding_tier.py` | Hard-block allowlist (instruments, venues, accounts) |
 | **3a** | Domain Tier | 2 | 3 | Control Barrier Function | `CBFTierPlugin` wrapping `cbf_engine.py` | `min_cash_balance=1000.0`, `gamma=0.5` (US) / `0.6` (EU) |
-| **3b** | Kernel Gate | 1 | 4 | OPA Policy Evaluation | `OPAClient` in `core/policy.py` + `CircuitBreaker` | Package `trade.governance`; 5 failures → open circuit |
-| **4** | Domain Tier | 2 | 4 | Fiscal Limit Pre-Reservation | `FiscalTierPlugin` wrapping `safety/resource_guard.py` | `FISCAL_DAILY_CAP_USD` ($500,000); 300s TTL |
-| **5** | Domain Tier | 1 | 5 | Multi-Agent Consensus | `ConsensusTierPlugin` wrapping `consensus/engine.py` | Threshold $10,000; fail-closed `ESCALATE` on error |
-| **6** | Domain Tier | 1 | 6 | Causal Gatekeeper | `CausalTierPlugin` wrapping `causal/gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; Placebo p < 0.05 or \|eff\| > 0.2 |
+| **3b** | Kernel Gate | 1 | 4 | OPA Policy Evaluation | `OPAClient` in `src/gateway/core/policy.py` + `CircuitBreaker` | Package `trade.governance`; 5 failures → open circuit |
+| **4** | Domain Tier | 2 | 4 | Fiscal Limit Pre-Reservation | `FiscalTierPlugin` wrapping `src/gateway/governance/safety/resource_guard.py` | `FISCAL_DAILY_CAP_USD` ($500,000); 300s TTL |
+| **5** | Domain Tier | 1 | 5 | Multi-Agent Consensus | `ConsensusTierPlugin` wrapping `src/gateway/governance/consensus/engine.py` | Threshold $10,000; fail-closed `ESCALATE` on error |
+| **6** | Domain Tier | 1 | 6 | Causal Gatekeeper | `CausalTierPlugin` wrapping `src/gateway/governance/causal/gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; Placebo p < 0.05 or \|eff\| > 0.2 |
 | **7** | Kernel Gate | 1 | 7 | Adaptive FRIA Gate | `enforce_fria_boundary()` in `normative_provider.py` | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
 
 > **Two-Phase Decoupling & Zero Budget Leakage:** All Phase 1 validation checks execute before any state mutation occurs. If any validation tier emits a violation, the pipeline terminates in Phase 1 without modifying Redis balances or reserving daily limits, structurally eliminating downstream budget leakage. If Phase 2 fails downstream, committed Phase 2 tiers are rolled back in LIFO order.
@@ -786,7 +786,7 @@ A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confab
 
 ### 11.4 Consensus Boolean Logic
 
-**Source:** [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)
+**Source:** [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py)
 
 Multi-model consensus is required for trades ≥ **$10,000 USD** (`consensus.threshold_usd` in `governance_thresholds.json`). Two heterogeneous critic personas are queried concurrently via `asyncio.gather()` with a **10-second timeout** per critic (`_CRITIC_TIMEOUT_S=10.0`):
 

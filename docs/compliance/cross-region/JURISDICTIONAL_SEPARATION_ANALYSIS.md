@@ -2,7 +2,7 @@
 
 **Report Date:** 2026-06-15  
 **Scope:** Full codebase — source code, deployment scripts, documentation, compliance artifacts  
-**Authority (at time of report):** `.roo/rules` Sections 1–14, `docs/GIT_WORKFLOW_STANDARDS.md`, `docs/DEPLOYMENT_RULES.md`
+**Authority (at time of report):** `.roo/rules` Sections 1–14, `docs/operations/GIT_WORKFLOW_STANDARDS.md`, `docs/operations/DEPLOYMENT_RULES.md`
 **Status:** FINDINGS ONLY — historical record; most HIGH/CRITICAL findings have since been remediated (see closure notes inline) or superseded by the current [`AGENTS.md`](../../../AGENTS.md), [`docs/operations/GIT_WORKFLOW_STANDARDS.md`](../../operations/GIT_WORKFLOW_STANDARDS.md), and [`docs/operations/DEPLOYMENT_RULES.md`](../../operations/DEPLOYMENT_RULES.md)
 
 ---
@@ -799,15 +799,15 @@ lifecycle {
 
 ---
 
-### DOC-03 ✅ CLOSED — `docs/IR_PLAN.md` presented NIST SP 800-61 as the universal IRP foundation
+### DOC-03 ✅ CLOSED — `docs/compliance/universal/IR_PLAN.md` presented NIST SP 800-61 as the universal IRP foundation
 
-> **Closed 2026-07:** `docs/security/IR_PLAN.md` (and the duplicate `docs/security/INCIDENT_RESPONSE_PLAN.md`) were deleted as part of a documentation-scope cleanup. CAGE is a reference architecture, not an operating organization — a fictional Incident Response Plan with placeholder `[TBD]` role incumbents and no real Authorizing Official provided no engineering value. Adopters deploying CAGE in a real regulated environment should author their own jurisdiction-aware IRP, using the compliance mapping in `docs/compliance/` as the control-traceability reference.
+> **Closed 2026-07:** `docs/security/IR_PLAN.md` (and the duplicate `docs/compliance/universal/IR_PLAN.md`) were deleted as part of a documentation-scope cleanup. CAGE is a reference architecture, not an operating organization — a fictional Incident Response Plan with placeholder `[TBD]` role incumbents and no real Authorizing Official provided no engineering value. Adopters deploying CAGE in a real regulated environment should author their own jurisdiction-aware IRP, using the compliance mapping in `docs/compliance/` as the control-traceability reference.
 
 **Original finding (for historical record):** The Incident Response Plan opened with NIST SP 800-61 as the foundational framework with no ISO 42001 baseline section. NIST SP 800-61 is a US federal standard. EU_ECB deployments are subject to DORA Art. 17-23 incident reporting; APAC_MAS to MAS TRM §11. A real IRP should add a "Universal Baseline (ISO 42001 A.10.1)" section as the opening section, and restructure with explicit `### US_FED (NIST SP 800-61)`, `### EU_ECB (DORA Art. 17-23)`, and `### APAC_MAS (MAS TRM §11)` subsections.
 
 ---
 
-### DOC-04 ✅ CLOSED — `docs/IR_PLAN.md` had no multi-jurisdiction incident notification structure
+### DOC-04 ✅ CLOSED — `docs/compliance/universal/IR_PLAN.md` had no multi-jurisdiction incident notification structure
 
 > **Closed 2026-07:** See DOC-03 — the source file was deleted.
 
@@ -845,11 +845,11 @@ lifecycle {
 
 ---
 
-### DOC-07 🟠 HIGH — `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` presents SR 26-2 as primary architectural driver
+### DOC-07 🟠 HIGH — `docs/architecture/GATEWAY_ARCHITECTURE.md` presents SR 26-2 as primary architectural driver
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `docs/INFERENCE_GATEWAY_ARCHITECTURE.md:3` |
+| **File** | `docs/architecture/GATEWAY_ARCHITECTURE.md:3` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -860,11 +860,11 @@ lifecycle {
 
 ---
 
-### DOC-08 🟡 MEDIUM — `docs/AUDIT_LOG_SCHEMA.md` regulatory mapping table has no jurisdiction column
+### DOC-08 🟡 MEDIUM — `docs/architecture/AUDIT_LOG_SCHEMA.md` regulatory mapping table has no jurisdiction column
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `docs/AUDIT_LOG_SCHEMA.md:180` |
+| **File** | `docs/architecture/AUDIT_LOG_SCHEMA.md:180` |
 | **Violation** | Type E — Ambiguous Universal vs. Jurisdictional Scope |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -875,11 +875,11 @@ lifecycle {
 
 ---
 
-### DOC-09 🟡 MEDIUM — `docs/LATENCY_STRATEGY.md` presents NIST as universal latency authority
+### DOC-09 🟡 MEDIUM — `docs/architecture/LATENCY_STRATEGY.md` presents NIST as universal latency authority
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `docs/LATENCY_STRATEGY.md:1` |
+| **File** | `docs/architecture/LATENCY_STRATEGY.md:1` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -905,11 +905,11 @@ lifecycle {
 
 ---
 
-### DOC-11 🟡 MEDIUM — `docs/DEPLOYMENT_RULES.md` deployment commands lack jurisdiction labels
+### DOC-11 🟡 MEDIUM — `docs/operations/DEPLOYMENT_RULES.md` deployment commands lack jurisdiction labels
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `docs/DEPLOYMENT_RULES.md:168` |
+| **File** | `docs/operations/DEPLOYMENT_RULES.md:168` |
 | **Violation** | Type H — Missing Explicit Labeling |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -950,7 +950,7 @@ lifecycle {
 
 ---
 
-### DOC-14 ✅ CLOSED — `docs/IR_PLAN.md` SR 26-2 HITL SLA presented as universal
+### DOC-14 ✅ CLOSED — `docs/compliance/universal/IR_PLAN.md` SR 26-2 HITL SLA presented as universal
 
 > **Closed 2026-07:** See DOC-03 — the source file was deleted. The correct universal-vs-regional HITL SLA callout pattern is preserved and enforced in [`docs/governance/HUMAN_OVERSIGHT_SCOPE.md`](../../governance/HUMAN_OVERSIGHT_SCOPE.md#sla-requirements-by-region).
 
@@ -961,17 +961,17 @@ lifecycle {
 | File | Findings | Highest Severity |
 |------|----------|-----------------|
 | `README.md` | 2 | 🟠 HIGH |
-| `docs/IR_PLAN.md` | 3 | ✅ CLOSED (file deleted) |
+| `docs/compliance/universal/IR_PLAN.md` | 3 | ✅ CLOSED (file deleted) |
 | `infra/modules/gcp_gke_cluster/NIST_CONTROLS.md` | 1 | 🟠 HIGH |
 | `infra/modules/gcp_gke_cluster/README.md` | 1 | 🟠 HIGH |
-| `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` | 1 | 🟠 HIGH |
-| `docs/AUDIT_LOG_SCHEMA.md` | 1 | 🟡 MEDIUM |
-| `docs/LATENCY_STRATEGY.md` | 1 | 🟡 MEDIUM |
+| `docs/architecture/GATEWAY_ARCHITECTURE.md` | 1 | 🟠 HIGH |
+| `docs/architecture/AUDIT_LOG_SCHEMA.md` | 1 | 🟡 MEDIUM |
+| `docs/architecture/LATENCY_STRATEGY.md` | 1 | 🟡 MEDIUM |
 | `docs/SECURITY_AUDIT_REPORT.md` | 1 | 🟡 MEDIUM |
-| `docs/DEPLOYMENT_RULES.md` | 1 | 🟡 MEDIUM |
+| `docs/operations/DEPLOYMENT_RULES.md` | 1 | 🟡 MEDIUM |
 | `COMPLIANCE.md` | 1 | 🟡 MEDIUM |
 | `infra/modules/k8s_namespace/README.md` | 1 | 🟡 MEDIUM |
-| `docs/IR_PLAN.md` (SR 26-2) | 1 | ✅ CLOSED (file deleted) |
+| `docs/compliance/universal/IR_PLAN.md` (SR 26-2) | 1 | ✅ CLOSED (file deleted) |
 
 ---
 
@@ -1295,11 +1295,11 @@ Findings are grouped into four priority tiers based on severity and deployment r
 | DEP-20 | Redis/PostgreSQL hardening only via `enable_nist_compliance` | `infra/targets/gcp-gke/main.tf` | M |
 | DOC-01 | `README.md` badge row presents NIST as co-equal with ISO 42001 | `README.md` | S |
 | DOC-02 | `README.md` compliance table has no "Jurisdiction" column | `README.md` | S |
-| DOC-03 | `docs/IR_PLAN.md` presents NIST SP 800-61 as universal IRP | `docs/IR_PLAN.md` | M |
-| DOC-04 | `docs/IR_PLAN.md` has no multi-jurisdiction notification structure | `docs/IR_PLAN.md` | M |
+| DOC-03 | `docs/compliance/universal/IR_PLAN.md` presents NIST SP 800-61 as universal IRP | `docs/compliance/universal/IR_PLAN.md` | M |
+| DOC-04 | `docs/compliance/universal/IR_PLAN.md` has no multi-jurisdiction notification structure | `docs/compliance/universal/IR_PLAN.md` | M |
 | DOC-05 | `NIST_CONTROLS.md` has no ISO 42001 universal baseline | `infra/modules/gcp_gke_cluster/NIST_CONTROLS.md` | M |
 | DOC-06 | GKE README uses "NIST Compliance" as synonym for "production" | `infra/modules/gcp_gke_cluster/README.md` | S |
-| DOC-07 | SR 26-2 presented as primary architectural driver | `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` | S |
+| DOC-07 | SR 26-2 presented as primary architectural driver | `docs/architecture/GATEWAY_ARCHITECTURE.md` | S |
 | DOC-08–13 | Remaining documentation labeling gaps | Various `docs/` files | S each |
 | CA-04 | AARM vectors universal file cross-references NIST in notes | `compliance/lula/lula-validation-aarm-vectors.yaml` | S |
 | CA-05 | AARM validation listed as both "Stub" and "Active" | `compliance/lula/README.md` | S |
@@ -1339,9 +1339,9 @@ nist-compliance-gate:
 ```
 Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `apac-mas-compliance-gate` jobs.
 
-### 9.6 Correctly Scoped POAM — `docs/POAM_US_FED.md`
+### 9.6 Correctly Scoped POAM — `compliance/us_fed/POAM_US_FED.md`
 
-[`docs/POAM_US_FED.md`](../us_fed/POAM_US_FED.md) demonstrates the correct pattern for jurisdiction-scoped documentation with explicit `region_scope: US_FED` frontmatter. Use this pattern as the template for all jurisdiction-specific documentation.
+[`compliance/us_fed/POAM_US_FED.md`](../us_fed/POAM_US_FED.md) demonstrates the correct pattern for jurisdiction-scoped documentation with explicit `region_scope: US_FED` frontmatter. Use this pattern as the template for all jurisdiction-specific documentation.
 
 ---
 
@@ -1386,18 +1386,18 @@ Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `a
 | DEP-25 | 🟢 LOW | Deployment | `.github/workflows/security-scan.yml:47` | R-8 |
 | DOC-01 | 🟠 HIGH | Documentation | `README.md:1` | R-8 |
 | DOC-02 | 🟠 HIGH | Documentation | `README.md:133` | R-8 |
-| DOC-03 | 🟠 HIGH | Documentation | `docs/IR_PLAN.md:27` | R-8 |
-| DOC-04 | 🟠 HIGH | Documentation | `docs/IR_PLAN.md:313` | R-8 |
+| DOC-03 | 🟠 HIGH | Documentation | `docs/compliance/universal/IR_PLAN.md:27` | R-8 |
+| DOC-04 | 🟠 HIGH | Documentation | `docs/compliance/universal/IR_PLAN.md:313` | R-8 |
 | DOC-05 | 🟠 HIGH | Documentation | `infra/modules/gcp_gke_cluster/NIST_CONTROLS.md:1` | R-8 |
 | DOC-06 | 🟠 HIGH | Documentation | `infra/modules/gcp_gke_cluster/README.md:57` | R-8 |
-| DOC-07 | 🟠 HIGH | Documentation | `docs/INFERENCE_GATEWAY_ARCHITECTURE.md:3` | R-8 |
-| DOC-08 | 🟡 MEDIUM | Documentation | `docs/AUDIT_LOG_SCHEMA.md:180` | R-8 |
-| DOC-09 | 🟡 MEDIUM | Documentation | `docs/LATENCY_STRATEGY.md:1` | R-8 |
+| DOC-07 | 🟠 HIGH | Documentation | `docs/architecture/GATEWAY_ARCHITECTURE.md:3` | R-8 |
+| DOC-08 | 🟡 MEDIUM | Documentation | `docs/architecture/AUDIT_LOG_SCHEMA.md:180` | R-8 |
+| DOC-09 | 🟡 MEDIUM | Documentation | `docs/architecture/LATENCY_STRATEGY.md:1` | R-8 |
 | DOC-10 | 🟡 MEDIUM | Documentation | `docs/SECURITY_AUDIT_REPORT.md:758` | R-8 |
-| DOC-11 | 🟡 MEDIUM | Documentation | `docs/DEPLOYMENT_RULES.md:168` | R-8 |
+| DOC-11 | 🟡 MEDIUM | Documentation | `docs/operations/DEPLOYMENT_RULES.md:168` | R-8 |
 | DOC-12 | 🟡 MEDIUM | Documentation | `COMPLIANCE.md:70` | R-8 |
 | DOC-13 | 🟡 MEDIUM | Documentation | `infra/modules/k8s_namespace/README.md:84` | R-8 |
-| DOC-14 | 🟢 LOW | Documentation | `docs/IR_PLAN.md:55` | R-8 |
+| DOC-14 | 🟢 LOW | Documentation | `docs/compliance/universal/IR_PLAN.md:55` | R-8 |
 | CA-01 | 🟠 HIGH | Compliance | `compliance/lula/lula-validation-sc4.yaml` | R-9 |
 | CA-02 | 🟠 HIGH | Compliance | `compliance/lula/lula-validation-ai600-*.yaml` | R-9 |
 | CA-03 | 🟠 HIGH | Compliance | `compliance/lula/README.md` | R-9 |

@@ -219,10 +219,10 @@ structural check**, not a one-time graph-compilation check.
 
 | Module | Role |
 |---|---|
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name via the compiled `config/ftra/terminal_registry.json`; fail-closed to `IRREVERSIBLE_TERMINAL` for unregistered actions |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over plan steps, runs DFS from step 0, returns a `ReachabilityResult` |
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` / `route_after_ftra()` — LangGraph node factory and conditional-edge routing |
+| [`src/gateway/governance/ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name via the compiled `config/ftra/terminal_registry.json`; fail-closed to `IRREVERSIBLE_TERMINAL` for unregistered actions |
+| [`src/gateway/governance/ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over plan steps, runs DFS from step 0, returns a `ReachabilityResult` |
+| [`src/gateway/governance/ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` |
+| [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` / `route_after_ftra()` — LangGraph node factory and conditional-edge routing |
 
 **Scope enforcement**: FTRA is a mandatory pre-condition for the
 `governed-financial-advisor` scope. Any plan where an irreversible terminal is
@@ -231,7 +231,7 @@ outright (`BLOCKED`, confidence < 0.70) before the authorized action space
 (§1) is evaluated further. Parked tokens use `DeferReason.FTRA_IRREVERSIBLE_TERMINAL`
 in the DeferQueue.
 
-> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a
+> **Removed scaffold:** `src/gateway/governance/ftra/graph_analyzer.py` was a
 > separate, standalone `FtraReachabilityGate` scaffold that was never called by
 > `SymbolicGovernor` or any production code path. The scaffold and its dedicated
 > test module were removed.
@@ -263,7 +263,7 @@ SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 | §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
 | §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `consensus.py`, `hitl_escalator.py` |
 | §2.5.3 Inter-agent trust | Gateway-only orchestration + CAGE-003 registry | `hybrid_server.py`, `agent_registry_adapter.py` |
-| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `causal_gatekeeper.py`, `ftra/node_factory.py` |
+| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `causal_gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
 | §4.1 Agent identity | SPIFFE SVID + Envoy ext_authz | `agent_registry_adapter.py` |

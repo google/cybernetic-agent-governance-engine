@@ -142,7 +142,7 @@ Inventory of [`src/cage_finance/`](../src/cage_finance/), classified:
 | [`safety/cbf.py`](../src/cage_finance/safety/cbf.py) | **Mostly generic, wrongly located** | ~1770 lines; see below |
 | [`safety/fiscal_limit_guard.py`](../src/cage_finance/safety/fiscal_limit_guard.py) | **Mostly generic, wrongly located** | Redis WATCH/MULTI/EXEC quota reservation |
 | [`consensus/consensus.py`](../src/cage_finance/consensus/consensus.py) | **Generic, wrongly located** | Multi-critic agreement; ISO 42001 A.9.2 |
-| [`causal/causal_gatekeeper.py`](../src/cage_finance/causal/causal_gatekeeper.py) | **Generic, wrongly located** | DoWhy placebo refutation |
+| [`causal/causal_gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) | **Generic, wrongly located** | DoWhy placebo refutation |
 | [`compliance/reconciliation_worker.py`](../src/cage_finance/compliance/reconciliation_worker.py) | **Split** | Daemon/KMS/sequence logic generic; `LedgerProvider` impls (Plaid, Anchorage) domain |
 
 ### 3.1 The misplacement is quantifiable
@@ -171,7 +171,7 @@ Four of the five heavyweight modules are **mechanism**, not **policy**:
   signature. The residual coupling is one prompt template that reads
   `context["amount"]` ([`consensus.py:244`](../src/cage_finance/consensus/consensus.py:244),
   with a TODO to move it to `cage_finance/config/critics.yaml`).
-- [`causal_safety_check()`](../src/cage_finance/causal/causal_gatekeeper.py:498) —
+- [`causal_safety_check()`](../src/gateway/governance/causal/gatekeeper.py:498) —
   DoWhy refutation over a telemetry DataFrame; the domain content is the column
   names in the causal graph.
 
@@ -596,7 +596,7 @@ test-parity assertion):
 | From | To |
 |---|---|
 | `cage_finance/safety/cbf.py` | `gateway/governance/safety/cbf_engine.py` |
-| `cage_finance/safety/fiscal_limit_guard.py` | `gateway/governance/safety/resource_guard.py` |
+| `cage_finance/safety/fiscal_limit_guard.py` | `gateway/governance/src/gateway/governance/safety/resource_guard.py` |
 | `cage_finance/consensus/consensus.py` | `gateway/governance/consensus/engine.py` |
 | `cage_finance/causal/causal_gatekeeper.py` | `gateway/governance/causal/gatekeeper.py` |
 | `cage_finance/compliance/reconciliation_worker.py` | `gateway/governance/reconciliation/daemon.py` (keep `LedgerProvider` *impls* in the plugin) |

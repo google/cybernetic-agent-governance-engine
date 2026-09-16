@@ -170,7 +170,7 @@ spec:
 > SDK dependency has been removed from the application. `ConfigManager` now
 > resolves secrets exclusively via env vars → default (two-tier).
 > See module docstring ADR in
-> `src/governed_financial_advisor/infrastructure/config_manager.py`.
+> `src/governed_financial_advisor/infrastructure/llm/config.py`.
 
 This option previously described calling the GCP Secret Manager SDK directly
 from application code. It was removed because:

@@ -74,7 +74,7 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
 
 - **Problem:** Storing secrets in `.env` files is insecure and hard to rotate.
 - **Solution:** A tiered strategy managed by `ConfigManager`
-  (`src/governed_financial_advisor/infrastructure/config_manager.py`).
+  (`src/governed_financial_advisor/infrastructure/llm/config.py`).
 
 > **ADR:** Google Secret Manager was removed in favour of Kubernetes-native
 > secret injection (env vars from `Secret` objects). No runtime dependency on

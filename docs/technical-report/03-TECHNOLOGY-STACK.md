@@ -7,7 +7,7 @@
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
 | **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
-| **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
+| **Reference**        | `docs/architecture/GATEWAY_ARCHITECTURE.md`, `docs/architecture/GATEWAY_ARCHITECTURE.md` |
 
 ---
 

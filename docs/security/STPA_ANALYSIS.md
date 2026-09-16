@@ -44,7 +44,7 @@ The compiler (`python -m src.gateway.governance.stpa_compiler compile --targets 
 
 | Target | Generated File | Enforcement Mechanism |
 | :--- | :--- | :--- |
-| `opa` | `config/opa/generated_stpa_policy.rego` | OPA Rego policy; fail-closed circuit breaker in `core/policy.py` |
+| `opa` | `config/opa/generated_stpa_policy.rego` | OPA Rego policy; fail-closed circuit breaker in `src/gateway/core/policy.py` |
 | `nemo` | `config/rails/generated_stpa_rails.co` | NeMo Colang 2.x flow; enforced by `nemo/manager.py` |
 | `python` | `src/gateway/governance/generated_stpa_validator.py` | `GeneratedSTPAValidator` Python class; invoked by `SymbolicGovernor` |
 | `langgraph` | `src/gateway/governance/generated_saga_nodes.py` | LangGraph WAL forward + compensating nodes + centralized router |

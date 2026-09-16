@@ -17,7 +17,7 @@
 | Namespace | `governance-stack` |
 | BACKEND_URL | `http://governed-financial-advisor.governance-stack.svc.cluster.local` |
 | UNMOCKED | `1` (all measurements use live GKE backend; no port-forward) |
-| ADVERSARIAL_JSON | `/tmp/adversarial_dataset.json` (22 payloads) |
+| ADVERSARIAL_JSON | `tests/red_team/adversarial_dataset.json` (22 payloads) |
 | BENIGN_JSON | `/tmp/benign_dataset.json` (20 payloads) |
 | REQUEST_TIMEOUT_S | `90` |
 | LATENCY_RUNS | `200` (skipped — UNMOCKED=1 bypasses mocked in-process latency) |
@@ -45,7 +45,7 @@ CBF_FAIL_OPEN=true \
 RECONCILIATION_PROVIDER=stub \
 UNMOCKED=1 \
 BACKEND_URL=http://governed-financial-advisor.governance-stack.svc.cluster.local \
-ADVERSARIAL_JSON=/tmp/adversarial_dataset.json \
+ADVERSARIAL_JSON=tests/red_team/adversarial_dataset.json \
 BENIGN_JSON=/tmp/benign_dataset.json \
 REQUEST_TIMEOUT_S=90 \
 LATENCY_RUNS=200 \

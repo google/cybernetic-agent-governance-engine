@@ -86,7 +86,7 @@ Documents the overlay contract:
   if GKE registers the CRDs, but no enforcement occurs.
 - Evidence commands (`cilium monitor --type l7`) return data only when `anetd` is running.
 
-#### [MOVE] [`cilium-egress-lockdown.yaml`](deployment/k8s/cilium-egress-lockdown.yaml) → [`deployment/k8s/cilium/egress-lockdown.yaml`](deployment/k8s/cilium/egress-lockdown.yaml)
+#### [MOVE] [`cilium-egress-lockdown.yaml`](deployment/k8s/cilium/egress-lockdown.yaml) → [`deployment/k8s/cilium/egress-lockdown.yaml`](deployment/k8s/cilium/egress-lockdown.yaml)
 
 Move unchanged except update the coexistence comment (lines 248–252) to reflect
 the correct GKE Dataplane V2 model:

@@ -2,7 +2,7 @@
 
 > **Purpose:** This checklist supersedes the "defer to v3.1.0/v4.0.0" default
 > outcome for CR-1, CR-2, and CR-3 documented in
-> ``docs/MAJOR_VERSION_CLEANUP_PLAN.md`` §2.3,
+> ``local/plans/remediation/MAJOR_VERSION_CLEANUP_PLAN.md`` §2.3,
 > §3 (Wave 3), and §6 (Wave 3 Implementation Checklist), and in
 > [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.1]` entry ("Deprecated" section,
 > which currently lists all three items as deferred). It documents the

@@ -119,5 +119,5 @@ These log entries constitute evidence for ISO 42001 §A.6 and AI 600-1 §2.2 com
 ## Related Documents
 
 - `src/gateway/governance/pii_sanitizer.py` — PIISanitizer implementation
-- `docs/AI_FAIRNESS_ASSESSMENT.md` — Bias assessment (ECOA/Reg B)
-- `docs/POAM_US_FED.md` — AI600-002 POAM item
+- `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` — Bias assessment (ECOA/Reg B)
+- `compliance/us_fed/POAM_US_FED.md` — AI600-002 POAM item

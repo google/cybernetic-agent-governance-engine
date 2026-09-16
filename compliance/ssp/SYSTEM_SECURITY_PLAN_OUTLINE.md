@@ -27,7 +27,7 @@ _This section provides the basic identifying information for the information sys
 
 **Authorization Boundary Narrative:**
 
-[ISSO to provide 1–2 paragraphs describing exactly what hardware, software, data, and communications are within the authorization boundary. Reference `ARCHITECTURE.md` and `docs/GATEWAY_ARCHITECTURE.md` for system topology. Explicitly state what is inherited from GCP/GKE (Common Control Provider) and what is system-specific.]
+[ISSO to provide 1–2 paragraphs describing exactly what hardware, software, data, and communications are within the authorization boundary. Reference `ARCHITECTURE.md` and `docs/architecture/GATEWAY_ARCHITECTURE.md` for system topology. Explicitly state what is inherited from GCP/GKE (Common Control Provider) and what is system-specific.]
 
 ---
 
@@ -157,7 +157,7 @@ _Describe the technical environment in which the system operates. Include hardwa
 
 3. **Financial Regulatory Environment:** System operates subject to SEC Rule 17a-4 (records retention), FINRA 4511 (books and records), and OFAC sanctions screening requirements. These regulatory obligations impose additional controls beyond the NIST SP 800-53 HIGH baseline.
 
-[ISSO to complete this section with specific GKE cluster configuration details, network topology (referencing `docs/GATEWAY_ARCHITECTURE.md`), and any additional special considerations identified during security categorization.]
+[ISSO to complete this section with specific GKE cluster configuration details, network topology (referencing `docs/architecture/GATEWAY_ARCHITECTURE.md`), and any additional special considerations identified during security categorization.]
 
 ---
 
@@ -338,20 +338,20 @@ _The following documents constitute the NIST RMF authorization package and relat
 
 | Document               | Location                                                                                         | Description                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| Current State Analysis | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md)           | Initial system security posture assessment                |
-| Prepare & Categorize   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) | RMF Prepare and Categorize step analysis                  |
+| Current State Analysis | [`docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md)           | Initial system security posture assessment                |
+| Prepare & Categorize   | [`docs/compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) | RMF Prepare and Categorize step analysis                  |
 | Select & Implement     | [`docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md)     | Control selection and implementation analysis             |
-| Assess & Authorize     | [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)     | Assessment and authorization readiness analysis           |
-| Monitor & Roadmap      | [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)       | Continuous monitoring strategy and implementation roadmap |
+| Assess & Authorize     | [`docs/compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)     | Assessment and authorization readiness analysis           |
+| Monitor & Roadmap      | [`docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)       | Continuous monitoring strategy and implementation roadmap |
 
 ### Architecture and Design Documents
 
 | Document             | Location                                                             | Description                                    |
 | -------------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
 | System Architecture  | [`ARCHITECTURE.md`](../../docs/architecture/ARCHITECTURE.md)                           | High-level system architecture                 |
-| Gateway Architecture | [`docs/GATEWAY_ARCHITECTURE.md`](../../docs/architecture/GATEWAY_ARCHITECTURE.md) | Inference gateway design                       |
-| Governance Crosswalk | [`docs/GOVERNANCE_CROSSWALK.md`](../../docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md) | Control crosswalk to governance implementation |
-| ISO 42001 Compliance | [`docs/ISO_42001_COMPLIANCE.md`](../../docs/compliance/universal/ISO_42001_COMPLIANCE.md) | ISO 42001 AI management system compliance      |
+| Gateway Architecture | [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../../docs/architecture/GATEWAY_ARCHITECTURE.md) | Inference gateway design                       |
+| Governance Crosswalk | [`compliance/cross-region/GOVERNANCE_CROSSWALK.md`](../../docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md) | Control crosswalk to governance implementation |
+| ISO 42001 Compliance | [`compliance/universal/ISO_42001_COMPLIANCE.md`](../../docs/compliance/universal/ISO_42001_COMPLIANCE.md) | ISO 42001 AI management system compliance      |
 
 ### OSCAL Artifacts
 

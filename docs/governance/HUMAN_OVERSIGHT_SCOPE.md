@@ -152,7 +152,7 @@ reviewer resolves it within the applicable SLA (see
 
 Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 5)
 before reaching the FRIA zone classifier. The consensus engine
-([`consensus.py`](../../src/gateway/governance/consensus/engine.py)) invokes multiple
+([`consensus.py`](../src/gateway/governance/consensus/engine.py)) invokes multiple
 LLM critics with a **30-second hard timeout** per critic call. Unanimity is
 required; a single dissenting critic escalates the decision to human review via
 the DeferQueue. Background audit logging for consensus decisions is handled by

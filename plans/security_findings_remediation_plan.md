@@ -289,7 +289,7 @@ boundary gate can classify actions at all.
 - [`tests/test_ftra_boundary_check.py`](tests/test_ftra_boundary_check.py) —
   registry verification failure results in fail-closed classification to
   `IRREVERSIBLE_TERMINAL`, which is the architecturally required behaviour
-  documented at [`models.py:374`](src/gateway/governance/ftra/models.py:374).
+  documented at [`models.py:374`](src/gateway/governance/src/gateway/governance/ftra/models.py:374).
 
 **Compatibility impact** — An adopter carrying the placeholder artifact will see
 the FTRA gate fail closed. That is the correct behaviour; the artifact must be
@@ -744,7 +744,7 @@ problem.
    unambiguously means deny-all and "no restriction" is a deliberate,
    visible declaration.
 2. Populate a genuine US_FED allowlist derived from the FQDNs already expressed
-   in [`cilium-egress-lockdown.yaml`](deployment/k8s/cilium-egress-lockdown.yaml),
+   in [`cilium-egress-lockdown.yaml`](deployment/k8s/cilium/egress-lockdown.yaml),
    so the two representations of the same intent cannot silently diverge.
 3. Unknown or unset region denies in restricted posture rather than defaulting
    to the permissive branch.
