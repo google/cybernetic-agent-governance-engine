@@ -7,13 +7,13 @@
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
 | **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
-| **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
+| **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/`, [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](../examples/governed-financial-advisor/ARCHITECTURE.md) |
 
 ---
 
 ## 1. Agent Orchestration Philosophy
 
-> **v2.1.0**: The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It demonstrates the full CAGE governance stack applied to a realistic financial advisory workflow. The LangGraph harness (`src/gateway/governance/langgraph_harness/`) provides the node-factory pattern used to compose governance checks into the graph. NeMo Guardrails (`src/gateway/governance/nemo/`) enforces CBRN and PII rails as typed LangGraph nodes. OPA policy evaluation (`src/cage_finance/opa/trade_governance.rego` and `config/opa/trade_policy.rego`) enforces role-based trade authorization at Tier 4.
+> **v2.1.0**: The Governed Financial Advisor (`src/governed_financial_advisor/`) is the **Layer 4 reference application** demonstrating the full CAGE governance stack applied to a realistic financial advisory workflow. See [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](../examples/governed-financial-advisor/ARCHITECTURE.md) for the complete reference application architecture. The LangGraph harness (`src/gateway/governance/langgraph_harness/`) provides the node-factory pattern used to compose governance checks into the graph. NeMo Guardrails (`src/gateway/governance/nemo/`) enforces CBRN and PII rails as typed LangGraph nodes. OPA policy evaluation (`src/cage_finance/opa/trade_governance.rego` and `config/opa/trade_policy.rego`) enforces role-based trade authorization at Tier 4.
 
 The demo applications (e.g., the Governed Financial Advisor) compose their multi-agent pipelines using LangGraph's `StateGraph`, producing a deterministic, fully auditable execution sequence. Every agent carries a single, well-defined responsibility; no agent performs work outside its declared scope. All inter-agent communication occurs through a shared, strongly typed `AgentState` TypedDict defined in the respective application (e.g., `src/governed_financial_advisor/graph/state.py`) — agents read fields they need and write only the fields they own.
 

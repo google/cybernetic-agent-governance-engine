@@ -45,7 +45,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SCHEMA_DIR = PROJECT_ROOT / "schemas" / "provider_02"
 FIXTURES_DIR = PROJECT_ROOT / "tests" / "fixtures" / "provider_02_native"
 ARCHITECTURE_SPEC = (
-    PROJECT_ROOT / "docs" / "architecture" / "provider_02_native_schema_spec.md"
+    PROJECT_ROOT / "docs" / "partners" / "nexart" / "NATIVE_SCHEMA_SPEC.md"
 )
 DIST_DIR = PROJECT_ROOT / "dist"
 ARCHIVE_BASENAME = "provider_02_native_schema_v1"

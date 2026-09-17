@@ -303,7 +303,7 @@ Generate an on-demand CSA AARM Conformance Report Card (11 threat vectors).
 
 Defined in [`server.py`](../src/governed_financial_advisor/server.py). Port from
 `Config.PORT`. Lifespan initializes the LangGraph agent graph and Redis
-checkpointer.
+checkpointer. See [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](examples/governed-financial-advisor/ARCHITECTURE.md) for the complete Layer 4 reference application architecture.
 
 ### 3.1 Core Endpoints — [`server.py`](../src/governed_financial_advisor/server.py)
 

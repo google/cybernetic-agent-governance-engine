@@ -57,9 +57,9 @@ For each schema, produce:
 
 ### 1.3 Deliverables
 
-Create in `docs/architecture/`:
+Create in `docs/partners/nexart/`:
 
-1. **`provider_02_native_schema_spec.md`**
+1. **`NATIVE_SCHEMA_SPEC.md`**
    - Comprehensive schema documentation
    - Usage examples
    - Invariant catalog

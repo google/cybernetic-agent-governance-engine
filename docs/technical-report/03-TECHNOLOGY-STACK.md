@@ -7,7 +7,7 @@
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
 | **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; 4,148 tests collected / 3,921 passed, 0 failed) |
-| **Reference**        | `docs/architecture/GATEWAY_ARCHITECTURE.md`, `docs/architecture/GATEWAY_ARCHITECTURE.md` |
+| **Reference**        | [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../architecture/GATEWAY_ARCHITECTURE.md) (Layer 1), [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](../examples/governed-financial-advisor/ARCHITECTURE.md) (Layer 4) |
 
 ---
 

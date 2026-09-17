@@ -159,8 +159,6 @@ Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](
 
 Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`), with Tiers 2 and 4 executing concurrently:
 
-**Note (v3 update):** Concurrent OPA/CBF execution was removed. The v3 architecture uses sequential two-phase evaluation to prevent budget leakage.
-
 | Stage | Name | Implementation |
 |---|---|---|
 | *(pre-pipeline)* | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`text_filter.py`](../src/gateway/governance/text_filter.py) |

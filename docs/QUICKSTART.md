@@ -181,7 +181,8 @@ Each posture resolves thresholds from `config/thresholds/<REGION>_BASELINE.json`
 ## Next Steps
 
 - **Deploy to GKE**: See [`infra/QUICK_START.md`](../infra/QUICK_START.md)
-- **Understand the architecture**: See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](architecture/GATEWAY_ARCHITECTURE.md)
+- **Understand Layer 1 kernel architecture**: See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](architecture/GATEWAY_ARCHITECTURE.md)
+- **Understand Layer 4 reference application**: See [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](examples/governed-financial-advisor/ARCHITECTURE.md)
 - **Configure governance policies**: See [`docs/governance/GOVERNANCE_OVERVIEW.md`](governance/GOVERNANCE_OVERVIEW.md)
 - **Connect an MCP client**: See [`docs/MCP_SETUP.md`](MCP_SETUP.md)
 - **Author a domain plugin**: See [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](architecture/EXTENSIBILITY_ARCHITECTURE.md)
