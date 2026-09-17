@@ -523,7 +523,7 @@ In dev may apply directly.
 
 ---
 
-## 4. gRPC Gateway Service — [`gateway.proto`](../src/agentsight-ui/gateway_protos/gateway.proto)
+## 4. gRPC Gateway Service — [`gateway.proto`](../src/gateway/protos/gateway.proto)
 
 **Package:** `gateway` · **Service:** `Gateway`
 

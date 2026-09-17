@@ -397,7 +397,8 @@ Source: [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/c
 A trade action is blocked when the causal slope is non-positive ($\beta \le 0 \implies \text{BLOCK}$) or when the bounded marginal risk expression exceeds the safety boundary:
 
 ```
-risk_score = min(1.0, max(0.0, 0.5 + estimate.value * amount))
+risk_score = min(1.0, max(0.0, 0.5 + estimate.value * amount / CAUSAL_NORMALIZATION_SCALE))
+where CAUSAL_NORMALIZATION_SCALE defaults to 10,000.0
 risk_score > 0.95  →  BLOCK (marginal risk exceeded)
 ```
 
@@ -592,7 +593,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ### Run Tests
 
 ```bash
-uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short   # 3,446 unit tests passing, 0 failed (96 skipped, 3,925 collected)
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short   # 3,921 unit tests passing, 0 failed (82 skipped, 4,148 collected)
 ```
 
 ---
@@ -631,11 +632,11 @@ cybernetic-agent-governance-engine/
 │   │   │   ├── token_quota_proxy.py  #      Per-session step/token quota (ISO 42001 A.4)
 │   │   │   └── pii_sanitizer.py      #      Pre-ledger PII sanitization (ISO 42001 A.6)
 │   │   └── server/                   #      MCP tool server + inference proxy
-│   ├── compliance_bridge/            # [L1] OSCAL audit ingest + SSE event bus
+│   ├── compliance_bridge/            # [L3] OSCAL audit ingest + SSE event bus
 │   │   ├── context_accumulator.py    #      SHA-256 hash-chained Context Accumulator
 │   │   ├── aarm_mapper.py            #      AARM 11-vector static threat ledger
 │   │   └── audit_workflow.py         #      6-step compliance pipeline
-│   ├── integrations/                 # [L1] Vendor-isolated third-party adapters
+│   ├── integrations/                 # [L3] Vendor-isolated third-party adapters
 │   │   ├── provider_01/              #      External normative provider adapter
 │   │   ├── provider_02/              #      SDK attestation adapter
 │   │   └── provider_03/              #      JCS canonicalization adapter
@@ -673,7 +674,7 @@ cybernetic-agent-governance-engine/
 ├── deployment/k8s/                   # [L3] Kubernetes manifests
 │   ├── linkerd-mtls-policy.yaml      #      Linkerd mTLS enforcement
 │   └── cilium/                       #      Optional GKE Dataplane V2 L7 overlay
-├── tests/                            #      Full test suite (3,446 local unit passing, 3,925 collected)
+├── tests/                            #      Full test suite (3,921 local unit passing, 4,148 collected)
 │   ├── test_bare_kernel_portability.py #   Proves L1 kernel boots without vendor SDKs or domain coupling
 │   ├── test_cage_plugin_validation.py  #   Validates L2 plugin API contracts and isolation
 │   ├── test_healthcare_plugin.py       #   Proves second domain pluggability without kernel edits
@@ -697,13 +698,6 @@ cybernetic-agent-governance-engine/
 | [`docs/governance/GOVERNANCE_OVERVIEW.md`](docs/governance/GOVERNANCE_OVERVIEW.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/architecture/AUDIT_LOG_SCHEMA.md`](docs/architecture/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
-| [`compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
-| [`compliance/universal/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md)                                       | POA&M — ISO 42001 universal AIMS weaknesses (all regions, 6 items) |
-| [`compliance/us_fed/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md)                                           | POA&M — US_FED NIST SP 800-53 / ATO track (23 items; 6 closed)    |
-| [`compliance/eu_ecb/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md)                                           | POA&M — EU_ECB EU AI Act / DORA / GDPR (5 items)                  |
-| [`compliance/apac_mas/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md)                                       | POA&M — APAC_MAS MAS FEAT / Notice 655 / TRM (4 items)            |
-| [`docs/architecture/AUDIT_LOG_SCHEMA.md`](docs/architecture/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
-| [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
 | [`docs/compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
 | [`docs/compliance/universal/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md)                                       | POA&M — ISO 42001 universal AIMS weaknesses (all regions, 6 items) |
 | [`docs/compliance/us_fed/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md)                                           | POA&M — US_FED NIST SP 800-53 / ATO track (23 items; 6 closed)    |
@@ -717,8 +711,6 @@ cybernetic-agent-governance-engine/
 | [`docs/architecture/EVIDENCE_CHAIN.md`](docs/architecture/EVIDENCE_CHAIN.md) | Cryptographic hash chaining, streams, and cold store daemon |
 | [`docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md`](docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution |
 | [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md)| Extensibility architecture & domain plugin extension model — `CagePlugin` contract, `cage.plugins` entry points, tier/barrier/rail/tool seams, finance vs. healthcare |
-| [`docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
-| [`docs/security/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
 | [`docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
 | [`docs/security/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
 | [`tests/`](tests/)                                                                     | Automated unit, integration, and red-team test suites              |
@@ -755,15 +747,15 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 > **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
 >
-> See [What's New in v2.1.1](#whats-new-in-v211) above for the latest additions.
+> See [What's New in v3.0.1](#whats-new-in-v301) above for the latest additions.
 
 ### Bug Fixes
 
 - **`fix(governance)`: `GeneratedSTPAValidator.validate()` missing method** — Call-sites that invoke `.validate()` directly on `GeneratedSTPAValidator` (e.g. `opa_node_factory` safety check) raised `AttributeError` because only `validate_generated()` existed. Added `validate()` as a public entry-point that delegates to `validate_generated()`, making `GeneratedSTPAValidator` a drop-in replacement for the deprecated `STPAValidator` shim. Verified: `test_senior_trade_below_500k_approved_by_opa` PASSED on live GKE cluster under `EU_ECB` posture (Cloud Build `sha256:1849f966`).
 
-- **`fix(gateway)`: Production seal enforcement activated (D-04)** — `GOVERNANCE_SALT` is now sourced from `advisor-secrets` K8s Secret rather than an env override. Unsigned requests now return HTTP 403. Added `trivy-egress-policy.yaml` for security scanner egress. Fixed `sbom-cronjob.yaml` `secretRef → secretKeyRef`. Fixed `test_kms_signer_security.py` to remove stale `legacy_salt` param (HMAC fallback removed in D-01 remediation; tests now assert `RuntimeError`). Fixed `test_langfuse_smoke.py` to skip on `ReadTimeout` when port-forward is absent.
+- **`fix(gateway)`: Production seal enforcement activated (D-04)** — `GOVERNANCE_SALT` is now sourced from `advisor-secrets` K8s Secret rather than an env override. Unsigned requests now return HTTP 403. Added `trivy-egress-fqdn.yaml` for security scanner egress. Fixed `sbom-cronjob.yaml` `secretRef → secretKeyRef`. Fixed `test_kms_signer_security.py` to remove stale `legacy_salt` param (HMAC fallback removed in D-01 remediation; tests now assert `RuntimeError`). Fixed `test_langfuse_smoke.py` to skip on `ReadTimeout` when port-forward is absent.
 
-- **`fix(infra)`: P0 blocker remediation (D-01, D-02, D-04, D-06, D-07)** — PodSecurity `restricted`-compliant `securityContext` applied to all 6 app deployment manifests (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`). Security-scan CronJob deployed (closes D-06 / POAM-010 RA-5 dependency). PSA labels applied via Terraform (`enable_pod_security_standards=true`). `GOVERNANCE_SALT` moved to `secretKeyRef` in `live_deployment.yaml`.
+- **`fix(infra)`: P0 blocker remediation (D-01, D-02, D-04, D-06, D-07)** — PodSecurity `restricted`-compliant `securityContext` applied to all 6 app deployment manifests (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`). Security-scan CronJob deployed (closes D-06 / POAM-010 RA-5 dependency). PSA labels applied via Terraform (`enable_pod_security_standards=true`). `GOVERNANCE_SALT` moved to `secretKeyRef`.
 
 - **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `tests/integrations/provider_02/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v2.0.0`).
 
@@ -793,11 +785,11 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 | **Closed (SP 800-53)** | **7** | POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4 |
 | Open (SP 800-53) | 12 | Includes POAM-023 SI-2 CVE-2025-13462 (opened 2026-06-08) |
 | In Progress (SP 800-53) | 4 | |
-| AI 600-1 Items | 7 | All Open — see [`compliance/us_fed/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md) §NIST AI 600-1 |
-| ISO 42001 Universal | 8 | All Open — see [`compliance/universal/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md) |
-| EU_ECB / APAC_MAS | 6 | All Open — see [`compliance/eu_ecb/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md), [`compliance/apac_mas/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md) |
+| AI 600-1 Items | 7 | All Open — see [`docs/compliance/us_fed/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md) §NIST AI 600-1 |
+| ISO 42001 Universal | 8 | All Open — see [`docs/compliance/universal/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md) |
+| EU_ECB / APAC_MAS | 6 | All Open — see [`docs/compliance/eu_ecb/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md), [`docs/compliance/apac_mas/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md) |
 
-See [`compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.
+See [`docs/compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.
 
 ---
 

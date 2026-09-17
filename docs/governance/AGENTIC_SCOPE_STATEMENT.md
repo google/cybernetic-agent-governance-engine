@@ -17,7 +17,7 @@ perform the following actions on behalf of authenticated users:
 | Generate advisory text | ✅ Authorized | Subject to NeMo guardrails and OPA policy |
 | Query portfolio state | ✅ Authorized | Read-only via `get_portfolio` tool |
 | Retrieve earnings reports | ✅ Authorized | Read-only via `get_market_data` tool |
-| Execute trades | ⛔ **NOT authorized** | No direct trade execution; advisory only |
+| Execute trades | ⛔ **NOT authorized** | ⛔ NOT authorized for autonomous agent execution. Note: `execute_trade` IS a supported governed action when invoked with human-in-the-loop approval via the governance pipeline. |
 | Transfer funds | ⛔ **NOT authorized** | Outside authorized action space |
 | Modify account settings | ⛔ **NOT authorized** | Outside authorized action space |
 | Access external APIs | ⛔ **NOT authorized** | Except pre-approved market data endpoints |
@@ -33,7 +33,7 @@ The authorized action space is enforced at three independent layers:
 
 2. **Routing Seal** (`src/gateway/governance/routing_seal.py`):
    Every approved governance decision is sealed with an HMAC-SHA256 token
-   (`GOVERNANCE_SALT` key, ≥64 chars). Downstream actuators MUST verify the seal
+   (`CAGE_ROUTING_SEAL_SECRET` key, ≥32 bytes). Downstream actuators MUST verify the seal
    before executing any action. Seal TTL: 30 seconds (`GOVERNANCE_SEAL_TTL_S`).
 
 3. **CausalGatekeeper** (`src/gateway/governance/causal/gatekeeper.py`):
@@ -231,10 +231,7 @@ outright (`BLOCKED`, confidence < 0.70) before the authorized action space
 (§1) is evaluated further. Parked tokens use `DeferReason.FTRA_IRREVERSIBLE_TERMINAL`
 in the DeferQueue.
 
-> **Removed scaffold:** `src/gateway/governance/ftra/graph_analyzer.py` was a
-> separate, standalone `FtraReachabilityGate` scaffold that was never called by
-> `SymbolicGovernor` or any production code path. The scaffold and its dedicated
-> test module were removed.
+> **Removed scaffold:** `graph_analyzer.py` was refactored into the FTRA subpackage at `src/gateway/governance/ftra/graph_analyzer.py` (not deleted).
 
 ---
 
@@ -261,9 +258,9 @@ SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 | SR 26-2 Requirement | CAGE Implementation | Evidence |
 |---|---|---|
 | §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
-| §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `consensus.py`, `hitl_escalator.py` |
+| §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `src/gateway/governance/consensus/engine.py`, `hitl_escalator.py` |
 | §2.5.3 Inter-agent trust | Gateway-only orchestration + CAGE-003 registry | `hybrid_server.py`, `agent_registry_adapter.py` |
-| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `causal_gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
+| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `src/gateway/governance/causal/gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
 | §4.1 Agent identity | SPIFFE SVID + Envoy ext_authz | `agent_registry_adapter.py` |

@@ -113,7 +113,7 @@ Following the v3.0.0 major release, a comprehensive stabilization and hardening 
 
 - **OSCAL S3 Dispatcher Consolidation (AW-3)** — Consolidated duplicate S3/GCS storage dispatch in `storage.py` into the unified `EvidenceColdStore` abstraction (`refactor(compliance)!`).
 
-- **Evidence Stream Promoted to Kernel (AW-4)** — Promoted `src/compliance_bridge/evidence_stream.py` to `src/gateway/governance/evidence/stream.py`. Severed all Layer 1 → Layer 3 imports. No backward compatibility shim is provided; stale imports fail loudly (`refactor(governance)!`).
+- **Evidence Stream Promoted to Kernel (AW-4)** — Promoted `src/gateway/governance/evidence/stream.py` to `src/gateway/governance/evidence/stream.py`. Severed all Layer 1 → Layer 3 imports. No backward compatibility shim is provided; stale imports fail loudly (`refactor(governance)!`).
 
 - **CBF Compatibility Shim Deleted (AW-5)** — Removed deprecated `src/cage_finance/safety/cbf.py` shim; canonical CBF engine resides in kernel (`refactor(governance)!`).
 
@@ -125,7 +125,7 @@ Following the v3.0.0 major release, a comprehensive stabilization and hardening 
 
 - **Legacy Trade Dispatch API Removed (PR #111)** — The deprecated trade dispatch API in `src/governed_financial_advisor/` has been removed as part of the GFA-kernel decoupling initiative. All trade execution now flows through the canonical execution actuator protocol. Legacy clients must migrate to the `/v1/execute` endpoint with proper governance envelope wrapping (`refactor(governance)!`).
 
-- **Compliance Bridge Escalation Authentication (PR #114)** — The [`POST /v1/defer/{defer_id}/escalate`](src/compliance_bridge/server.py) endpoint now requires an authenticated request body with a valid routing seal or governance envelope. Previously, this endpoint accepted unauthenticated escalation requests, creating a potential authorization bypass. Clients must now include proper authentication credentials in the request body (`feat(compliance)!`).
+- **Compliance Bridge Escalation Authentication (PR #114)** — The [`POST /v1/defer/{defer_id}/escalate`](src/compliance_bridge/main.py) endpoint now requires an authenticated request body with a valid routing seal or governance envelope. Previously, this endpoint accepted unauthenticated escalation requests, creating a potential authorization bypass. Clients must now include proper authentication credentials in the request body (`feat(compliance)!`).
 
 ### Added
 
@@ -205,7 +205,7 @@ response = requests.post(
 - **WORM/KMS Signing (BC-03)** — `uca_logger._sign_record()` migrated to JCS with no compatibility shim; previously-signed WORM records will not verify (`refactor(governance)!`)
 - **FlowSignal Decision Field (BC-04)** — `src/integrations/provider_01/provider.py`: FlowSignal `decision` field is now mandatory; a missing or unrecognized value fails closed with `code="cage.endpoint_error"` instead of falling back to the legacy binary `admitted`/`findings` shape. Closes a latent fail-open; POAM-2026-064 (`fix(governance)!`)
 - **Canonical Decisions (BC-05)** — `src/gateway/governance/provenance_chain.py`: `VALID_DECISIONS` narrowed from eight to the canonical six (`ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`); legacy `BLOCK`/`ESCALATE` rejected. POAM-2026-065 (`refactor(governance)!`)
-- **Fiscal Limit Rollback (BC-07)** — `src/gateway/governance/fiscal_limit_guard.py`: `rollback()` now raises `ValueError` without an explicit `window_key` or `token`, restoring the POAM-2026-058 cross-window guard the legacy fallback defeated. POAM-2026-067 (`fix(governance)!`)
+- **Fiscal Limit Rollback (BC-07)** — `src/gateway/governance/safety/resource_guard.py`: `rollback()` now raises `ValueError` without an explicit `window_key` or `token`, restoring the POAM-2026-058 cross-window guard the legacy fallback defeated. POAM-2026-067 (`fix(governance)!`)
 - **Regional Compliance Prerequisite (BC-08)** — `src/gateway/governance/constants.py`: a missing regional compliance profile now raises `RuntimeError` at startup instead of degrading to a `region="LEGACY"` profile; deployments must provision `config/compliance/{REGION}_BASELINE.json`. POAM-2026-068 (`fix(governance)!`)
 
 #### Removals & Deprecations (SR-1–SR-7, MR-1–MR-4, CR-1–CR-3)
@@ -234,7 +234,7 @@ response = requests.post(
 - `src/gateway/governance/symbolic_governor.py` — PAUSE handler in `validate_action()`: first-class runtime execution path returning `verdict: PAUSE`, pause token, resume endpoint, and retry metadata (`feat(governance)`)
 - `src/gateway/governance/routing_seal.py` — HMAC Routing Seal v2: 4-tuple format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash with fail-closed actuator enforcement (`feat(governance)`)
 - `src/gateway/governance/safety/cbf_engine.py` — Strict replication rollback & cold-start epoch seed: synchronous Redis `WAIT` verification with fail-closed automatic rollback on replica timeout, plus `_fetch_initial_fence_epoch_sync()` startup seeding (`feat(governance)`)
-- `src/compliance_bridge/evidence_stream.py` — Precondition validation: `validate_evidence_stream_preconditions()` halts startup in production if non-blocking evidence mode is configured (`fix(compliance)`)
+- `src/gateway/governance/evidence/stream.py` — Precondition validation: `validate_evidence_stream_preconditions()` halts startup in production if non-blocking evidence mode is configured (`fix(compliance)`)
 - `proof/model.py`, `proof/distributed_cbf_model.py` — Formal state model expansion: 57-state sequential and 66-state concurrent BFS models verifying NoDirectBind invariant across all paths, plus $N$-agent distributed barrier proofs (`test(formal)`)
 - `src/gateway/governance/pause_primitive.py`, `src/gateway/server/hybrid_server.py` — PAUSE primitive and resume endpoint: new `POST /v1/pause/{pause_token}/resume` and `GET /v1/pause/{pause_token}` endpoints for resumable execution suspension (`feat(governance)`)
 - `src/gateway/governance/decisions.py`, `src/gateway/governance/symbolic_governor.py` — NARROW primitive: new `NARROW` governance decision for partial-authority execution with clamped scope (gated by `CAGE_NARROW_ENABLED`) (`feat(governance)`)
@@ -242,14 +242,14 @@ response = requests.post(
 - `src/governed_financial_advisor/graph/state.py` — AgentState NARROW/PAUSE fields: added `narrow_status`, `narrowed_params`, `pause_resume_token`, `pause_reason` fields (`feat(governance)`)
 - `src/gateway/governance/symbolic_governor.py:_park_defer_context()` — DeferQueue integration: DEFER tokens now persisted via DeferQueue for client polling (`feat(governance)`)
 - `src/gateway/governance/safety/cbf_engine.py` — Redis fence epoch: `safety:fence_epoch` monotonic counter for failover safety (gated by `CAGE_REDIS_SYNCHRONOUS_REPLICATION`, default true) (`feat(governance)`)
-- `src/gateway/governance/safety/cbf_engine.py`, `src/compliance_bridge/reconciliation_worker.py` — Reconciliation replay defense: monotonic sequence numbers prevent payload replay attacks (gated by `CAGE_RECONCILIATION_REPLAY_DEFENSE`) (`feat(governance)`)
+- `src/gateway/governance/safety/cbf_engine.py`, `src/gateway/governance/reconciliation/daemon.py` — Reconciliation replay defense: monotonic sequence numbers prevent payload replay attacks (gated by `CAGE_RECONCILIATION_REPLAY_DEFENSE`) (`feat(governance)`)
 - `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
 - Threshold accessor functions in `src/gateway/governance/schemas/thresholds.py`
 - Region-aware control metadata accessors (`get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()`)
 
 ### Changed
 
-- `src/compliance_bridge/evidence_stream.py` — Evidence chain blocking default: `EVIDENCE_CHAIN_BLOCKING` now defaults to `"true"` (peer review Fix B) (`fix(compliance)`)
+- `src/gateway/governance/evidence/stream.py` — Evidence chain blocking default: `EVIDENCE_CHAIN_BLOCKING` now defaults to `"true"` (peer review Fix B) (`fix(compliance)`)
 - `src/gateway/governance/symbolic_governor.py:_ftra_boundary_check()` — FTRA boundary check mandatory: now runs unconditionally (flag `CAGE_FTRA_BOUNDARY_ENABLED` removed per POAM-2026-030-B) (`fix(governance)`)
 - `FtraNodeConfig` is now required for `create_ftra_node()` (no fallback extractors)
 - Threshold values loaded from config file with env var overrides
@@ -257,8 +257,8 @@ response = requests.post(
 
 ### Removed
 
-- `src/compliance_bridge/evidence_stream.py` — Evidence chain v1.0 schema support: removed deprecated `_SCHEMA_1_0`/`_SCHEMA_1_1` constants; only v1.1 supported (CR-1 from 3.0.0) (`refactor(compliance)`)
-- `src/compliance_bridge/evidence_stream.py` — Dual-schema machinery deleted: `_detect_schema_version()`, `migrate_record_1_0_to_1_1()`, `get_last_v1_0_hash()`, `_link_hash_v1_1()` (collapsed into `_link_hash()`), and the `EvidenceRecord.schema_version` field; `tests/test_dual_schema_verification.py` deleted. POAM-2026-062 (`refactor(compliance)!`)
+- `src/gateway/governance/evidence/stream.py` — Evidence chain v1.0 schema support: removed deprecated `_SCHEMA_1_0`/`_SCHEMA_1_1` constants; only v1.1 supported (CR-1 from 3.0.0) (`refactor(compliance)`)
+- `src/gateway/governance/evidence/stream.py` — Dual-schema machinery deleted: `_detect_schema_version()`, `migrate_record_1_0_to_1_1()`, `get_last_v1_0_hash()`, `_link_hash_v1_1()` (collapsed into `_link_hash()`), and the `EvidenceRecord.schema_version` field; `tests/test_dual_schema_verification.py` deleted. POAM-2026-062 (`refactor(compliance)!`)
 - `src/integrations/provider_03/provider.py` — Three backward-compatibility aliases removed (`fetch_legal_baseline()`, `validate_external_fria()`, `submit_evidence_chain()`); `validate_external_fria()` had returned a hardcoded `APPROVED`, a silent-bypass risk. POAM-2026-063 (`refactor(governance)!`)
 - `src/gateway/governance/decisions.py`, `symbolic_governor.py`, `src/gateway/server/agent_gateway_adapter.py` — Duplicated legacy DEFER response fields removed (`verdict`, `defer_id`, `missing_input_reason`); canonical fields are `decision`, `defer_token`, `classification_reason`. POAM-2026-066 (`refactor(governance)!`)
 - `src/gateway/governance/agw_envelope.py` (entire file) — `AGWEnvelope` and `AGWEnvelopeBuilder` backward-compatibility aliases; use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
@@ -306,7 +306,7 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
 - `ConsensusGate`: degraded-quorum routing (`ERROR + APPROVE → ESCALATE`) now explicitly handled before catch-all case.
 - `FiscalLimitGuard.rollback_state(amount, audit_id)`: Saga compensation stub — logs `[SAGA-ROLLBACK]`, reverses Redis debit, re-raises on failure.
 - `tests/test_provenance_chain.py`: `test_link_hash_is_deterministic` asserts hash stability across calls.
-- `src/compliance_bridge/reconciliation_worker.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
+- `src/gateway/governance/reconciliation/daemon.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
 - `deployment/k8s/reconciliation-worker.yaml` — new CronJob manifest running `ExternalLedgerReconciler` every 5 minutes; default `RECONCILIATION_PROVIDER` changed to `"s3"`; added `S3_RECONCILIATION_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` env vars; CiliumNetworkPolicy egress extended to `*.amazonaws.com`.
 - `docs/POAM.md` — added POAM-2026-038 through -042.
 
@@ -314,10 +314,10 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
 - `CausalGatekeeper`: Redis connection errors are now fail-closed (raise `RuntimeError`) rather than returning a zero-deflection sentinel (fail-open). Absent keys remain first-boot safe.
 - Terminology: "TOCTOU gap" for the rollback atomicity issue renamed to "saga-atomicity gap" throughout docs and paper.
 - Redis access model for gateway corrected in documentation: gateway has read-write access (Tier 4 FiscalLimitGuard uses `WATCH/MULTI/EXEC`), not read-only as previously documented.
-- `src/gateway/governance/fiscal_limit_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
+- `src/gateway/governance/safety/resource_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
 - `src/gateway/governance/routing_seal.py` — `generate_seal()` / `_canonical_payload()` sanitize dots (`.replace(".", "-")`) in the action slug to guarantee an unambiguous 3-part `.` split during `verify_seal()`.
 - `src/compliance_bridge/context_accumulator.py` — `_content_hash()` now passes `separators=(",", ":")` to `json.dumps()` for canonical, whitespace-free serialization.
-- `src/gateway/governance/causal_gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
+- `src/gateway/governance/causal/gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
 - `src/governed_financial_advisor/graph/nodes/safety_node.py` — replaced hardcoded zero sentinels for `drawdown`, `order_size`, `daily_vol` with `_fetch_live_risk_metrics()`, reading live values from Redis (`cbf:portfolio_drawdown:{account_id}`, `portfolio:daily_vol:{account_id}`) with 200 ms socket timeout and safe-sentinel fallback.
 - `scripts/measure_paper_metrics.py` — re-enabled `measure_ungoverned_baseline()`.
 - `scripts/measure_reconciliation_metrics.py` — `_make_sync_redis()` now honours `REDIS_PASSWORD`.
@@ -356,16 +356,16 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
 
 ### Added
 
-- `src/compliance_bridge/reconciliation_worker.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
+- `src/gateway/governance/reconciliation/daemon.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
 - `deployment/k8s/reconciliation-worker.yaml` — new CronJob manifest running `ExternalLedgerReconciler` every 5 minutes; default `RECONCILIATION_PROVIDER` changed to `"s3"`; added `S3_RECONCILIATION_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` env vars; CiliumNetworkPolicy egress extended to `*.amazonaws.com`.
 - `docs/POAM.md` — added POAM-2026-038 through -042.
 
 ### Fixed
 
-- `src/gateway/governance/fiscal_limit_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
+- `src/gateway/governance/safety/resource_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
 - `src/gateway/governance/routing_seal.py` — `generate_seal()` / `_canonical_payload()` sanitize dots (`.replace(".", "-")`) in the action slug to guarantee an unambiguous 3-part `.` split during `verify_seal()`.
 - `src/compliance_bridge/context_accumulator.py` — `_content_hash()` now passes `separators=(",", ":")` to `json.dumps()` for canonical, whitespace-free serialization.
-- `src/gateway/governance/causal_gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
+- `src/gateway/governance/causal/gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
 - `src/governed_financial_advisor/graph/nodes/safety_node.py` — replaced hardcoded zero sentinels for `drawdown`, `order_size`, `daily_vol` with `_fetch_live_risk_metrics()`, reading live values from Redis (`cbf:portfolio_drawdown:{account_id}`, `portfolio:daily_vol:{account_id}`) with 200 ms socket timeout and safe-sentinel fallback.
 - `scripts/measure_paper_metrics.py` — re-enabled `measure_ungoverned_baseline()`.
 - `scripts/measure_reconciliation_metrics.py` — `_make_sync_redis()` now honours `REDIS_PASSWORD`.
@@ -463,16 +463,16 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
 
 ### Added
 
-- `src/compliance_bridge/reconciliation_worker.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
+- `src/gateway/governance/reconciliation/daemon.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
 - `deployment/k8s/reconciliation-worker.yaml` — new CronJob manifest running `ExternalLedgerReconciler` every 5 minutes; default `RECONCILIATION_PROVIDER` changed to `"s3"`; added `S3_RECONCILIATION_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` env vars; CiliumNetworkPolicy egress extended to `*.amazonaws.com`.
 - `docs/POAM.md` — added POAM-2026-038 through -042.
 
 ### Fixed
 
-- `src/gateway/governance/fiscal_limit_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
+- `src/gateway/governance/safety/resource_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
 - `src/gateway/governance/routing_seal.py` — `generate_seal()` / `_canonical_payload()` sanitize dots (`.replace(".", "-")`) in the action slug to guarantee an unambiguous 3-part `.` split during `verify_seal()`.
 - `src/compliance_bridge/context_accumulator.py` — `_content_hash()` now passes `separators=(",", ":")` to `json.dumps()` for canonical, whitespace-free serialization.
-- `src/gateway/governance/causal_gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
+- `src/gateway/governance/causal/gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
 - `src/governed_financial_advisor/graph/nodes/safety_node.py` — replaced hardcoded zero sentinels for `drawdown`, `order_size`, `daily_vol` with `_fetch_live_risk_metrics()`, reading live values from Redis (`cbf:portfolio_drawdown:{account_id}`, `portfolio:daily_vol:{account_id}`) with 200 ms socket timeout and safe-sentinel fallback.
 - `scripts/measure_paper_metrics.py` — re-enabled `measure_ungoverned_baseline()`.
 - `scripts/measure_reconciliation_metrics.py` — `_make_sync_redis()` now honours `REDIS_PASSWORD`.
@@ -657,14 +657,14 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
   Lula manifests and pytest jurisdiction matrix (`feat(compliance)`)
 - CBF External Reconciliation Worker: POAM-023 closed; async external
   reconciliation loop (`feat(compliance)`) —
-  `src/compliance_bridge/reconciliation_worker.py`
+  `src/gateway/governance/reconciliation/daemon.py`
 - AARM Profile Mapper: AARM profile mapping and report generation
   (`feat(compliance)`) —
   `src/compliance_bridge/aarm_mapper.py`,
   `src/compliance_bridge/aarm_report_generator.py`
 - Evidence Chain Metadata Binding: evidence_stream with cryptographic
   provenance anchoring for audit trails (`feat(compliance)`) —
-  `src/compliance_bridge/evidence_stream.py`
+  `src/gateway/governance/evidence/stream.py`
 
 ### Added — Observability & Infrastructure
 

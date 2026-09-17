@@ -280,7 +280,7 @@ Execute the implementation phase using Claude 3.7 Sonnet as the mandatory daily 
      ```text
      Execute Step 1 of the implementation plan on src/gateway/governance/safety/cbf_engine.py. 
      Adhere strictly to AGENTS.md: do not scan unrelated folders or inject dynamic timestamps. 
-     Verify using only: uv run pytest tests/test_cbf_formal_properties.py::test_cbf_strict_invariance -v
+     Verify using only: uv run pytest tests/test_symbolic_governor_cbf_atomicity.py -v
      ```
 
 2. **Inner-Loop Test Execution (Turn-by-Turn):**

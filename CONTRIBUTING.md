@@ -2,6 +2,8 @@
 
 Thank you for contributing. This document describes the Git workflow, branch naming conventions, commit message standards, and pull request process for this project.
 
+See also: [AGENTS.md](AGENTS.md) for AI-agent contributor standards and [GIT_WORKFLOW_STANDARDS.md](docs/operations/GIT_WORKFLOW_STANDARDS.md) for detailed branch lifecycle.
+
 ---
 
 ## Table of Contents
@@ -45,6 +47,8 @@ This installs:
 | Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
 | Release candidate | `rc-v<semver>` | `rc-v3.0.1` |
 | Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
+| Dependency updates, tooling | `chore/<short-description>` | `chore/update-deps` |
+| Test additions | `test/<short-description>` | `test/cbf-chaos-suite` |
 
 **Rules:**
 - Use lowercase kebab-case only — no underscores, no uppercase
@@ -84,7 +88,7 @@ This project follows [Conventional Commits v1.0.0](https://www.conventionalcommi
 
 ### Scopes
 
-Use one of: `gateway`, `compliance`, `infra`, `governance`, `tests`, `docs`, `ci`, `agentsight`, `advisor`, `nemo`, `opa`
+Use one of: `gateway`, `compliance`, `infra`, `governance`, `tests`, `docs`, `ci`, `agentsight`, `advisor`, `nemo`, `opa`, `ftra`, `finance`, `healthcare`, `security`, `imports`
 
 ### Rules
 
@@ -93,7 +97,7 @@ Use one of: `gateway`, `compliance`, `infra`, `governance`, `tests`, `docs`, `ci
 - No period at end of subject line
 - Separate subject from body with a blank line
 - Body explains **what** and **why**, not how
-- Breaking changes: add `BREAKING CHANGE:` in footer or `!` after type
+- Breaking changes: `!` after type/scope, plus a `BREAKING CHANGE:` footer (both must be present together).
 
 ### Examples
 
@@ -116,7 +120,7 @@ derived from component name + system identifier.
 ```
 
 ```
-chore(ci): pin actions/checkout to SHA for supply-chain hardening
+chore(ci)!: pin actions/checkout to SHA for supply-chain hardening
 
 BREAKING CHANGE: Workflow callers must update their local cache.
 ```
@@ -211,8 +215,8 @@ rule is accidentally removed.
 
 1. **Settings → Branches → `main`:**
    - Require pull request (1 approval)
-   - Require review from Code Owners (activates `.github/CODEOWNERS`)
-   - Required status checks: `CI Gate — Lint & Tests`, `Secret Scanning (Gitleaks)`, `License Guard / license-check`
+   - Require review from Code Owners (CODEOWNERS file to be created)
+   - Required status checks: `Lint`, `Pytest Logic Tests`, `Squash Merge Guard`, `Branch Name Validator`, `Marker Contract Check`, `Secret Scanning (Gitleaks)`, `License Guard / license-check`
    - Require branches to be up to date
    - Require conversation resolution
    - Restrict who can push (maintainer only)
@@ -228,7 +232,7 @@ rule is accidentally removed.
    - Required to unblock the hard gate in `.github/workflows/dependency-review.yml`
 
 4. **Settings → Actions → General → Workflow permissions:**
-   - Read and write permissions (required for `ref_impl_signoff.yml` to create GitHub Releases)
+   - Read and write permissions (Releases are created manually via git tag and GitHub UI per GIT_WORKFLOW_STANDARDS.md.)
 
 See [`.github/branch-protection-rules.md`](.github/branch-protection-rules.md)
 for the complete settings table, required status check names, and a
@@ -261,11 +265,11 @@ Every per-service file enforces:
 
 ```bash
 # Rebuild compliance-bridge manually (uses the live GCP trigger config):
-gcloud builds submit --config=cloudbuild.compliance.yaml \
+gcloud builds submit --config=deployment/docker/cloudbuild.compliance.yaml \
   --project=<PROJECT_ID> .
 
 # Rebuild agentsight-ui manually:
-gcloud builds submit --config=cloudbuild.ui.yaml \
+gcloud builds submit --config=deployment/docker/cloudbuild.ui.yaml \
   --project=<PROJECT_ID> .
 ```
 
@@ -322,7 +326,7 @@ git clone https://github.com/google/cybernetic-agent-governance-engine.git
 cd cybernetic-agent-governance-engine
 
 # Install all dependencies including dev extras
-uv sync --group dev
+uv sync --all-groups --all-extras
 
 # Configure environment
 cp .env.example .env
@@ -332,23 +336,34 @@ cp .env.example .env
 ### Running Tests
 
 ```bash
-# Set up the test environment (installs fakeredis, sets CAGE_ENV=test, etc.)
+# Set up integration test environment (establishes kubectl port-forward tunnels to GKE — NOT for local unit testing)
 bash scripts/setup_test_env.sh
 
 # Run the full unit test suite
-python -m pytest tests/ -v
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith --tb=short
+# Or use: make test-fast
 
 # Run with integration tests (requires a live cluster)
-python -m pytest tests/ --run-integration -v --timeout=120
+uv run pytest tests/ --run-integration -v --timeout=120
 
 # Run a specific test file
-python -m pytest tests/test_defer_queue.py -v
+uv run pytest tests/test_defer_queue.py -v
 ```
+
+### Canonical Makefile Targets
+
+| Target | Purpose |
+|---|---|
+| `make test-fast` | Run local + unit tests across multiple workers |
+| `make test-coverage` | Run tests with coverage reporting (70% minimum) |
+| `make lint` | Ruff linting + lockfile check |
+| `make security` | Bandit SAST + pip-audit + Semgrep |
+| `make update-nemo-configmap` | Sync NeMo Guardrails config to K8s ConfigMap |
 
 ### Local Infrastructure (Docker Compose)
 
 ```bash
-# Start all services locally (OPA, Redis, NeMo, Langfuse, MinIO)
+# Start all services locally (OPA, SLM, Gateway, App)
 docker compose up
 
 # Start with hot-reload dev overlay (do NOT use in staging/production)
@@ -419,7 +434,7 @@ All new `.py`, `.ts`, `.tsx`, and `.js` files under `src/` must begin with the A
 Use `scripts/patch_license.py` to add missing headers automatically:
 
 ```bash
-python scripts/patch_license.py
+uv run python scripts/patch_license.py
 ```
 
 ---
@@ -469,7 +484,7 @@ New plugins extending the 8-tier symbolic governor must implement the `Governanc
 
 #### Phase 1: Read-Only Inspection
 Phase 1 tiers (`Tier 0` through `Tier 6b`) must be **strictly read-only**. They may inspect the request, query external systems, execute causal refutations, or require human approval, but they **must not** mutate state.
-- Return `ALLOW`, `DENY`, `DEFER`, `PAUSE`, or `REQUIRE_APPROVAL`.
+- `GovernanceTierPlugin.evaluate()` and `commit()` return `list[Violation]`. An empty list represents allowance; non-empty lists contain structured `Violation` objects. The `SymbolicGovernor` evaluates violations and determines the terminal governance decision.
 - Rejections in Phase 1 halt the pipeline immediately, ensuring no Phase 2 mutations occur.
 
 #### Phase 2: Atomic Mutation

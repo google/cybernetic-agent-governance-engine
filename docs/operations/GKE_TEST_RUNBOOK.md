@@ -296,7 +296,7 @@ terraform destroy -var-file=staging.tfvars -auto-approve
 ```
 
 **What staging validates** (ISO 42001 §A.5.3 CA-2 pre-production validation):
-- All 31 Lula validation gates pass at 1-replica scale
+- All 32 Lula validation gates pass at 1-replica scale
 - NIST SP 800-53 controls enforced without HA overhead
 - Cluster-scoped controls active (Binary Authorization, PSS restricted, CMEK, audit logs)
 - Regional compliance postures (US_FED, EU_ECB, APAC_MAS) validated
@@ -312,7 +312,7 @@ terraform destroy -var-file=staging.tfvars -auto-approve
 **Automation workflow** ([`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)):
 1. **Phase 1**: Provision staging with `./deploy_all.sh --env staging`
 2. **Phase 2**: Wait for cluster readiness (`kubectl wait --for=condition=Ready`)
-3. **Phase 3**: Lula validation (all 31 gates, exit on failure)
+3. **Phase 3**: Lula validation (all 32 gates, exit on failure)
 4. **Phase 4**: Region posture tests (`CAGE_DEPLOYMENT_REGION={US_FED,EU_ECB,APAC_MAS}`)
 5. **Phase 5**: Cluster-scoped control verification (BinAuthz, PSS, CMEK, audit logs)
 6. **Phase 6**: Teardown (`terraform destroy -var-file=staging.tfvars`)

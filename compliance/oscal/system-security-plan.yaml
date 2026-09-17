@@ -19,9 +19,9 @@ system-security-plan:
 
       Posture Scope: US Federal deployments only (CAGE_DEPLOYMENT_REGION=US_FED)
 
-      EU_ECB SSP: compliance/oscal/eu-ai-act-ssp.yaml (stub — not yet implemented)
+      EU_ECB SSP: compliance/oscal/system-security-plan-eu-ecb.yaml (stub — not yet implemented)
 
-      APAC_MAS SSP: compliance/oscal/mas-feat-ssp.yaml (stub — not yet implemented)
+      APAC_MAS SSP: compliance/oscal/system-security-plan-apac-mas.yaml (stub — not yet implemented)
 
       Note: This SSP is NOT applicable to EU_ECB or APAC_MAS deployments. Those regions
       use their own regional SSPs aligned to EU AI Act and MAS FEAT respectively.

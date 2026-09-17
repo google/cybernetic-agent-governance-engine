@@ -1,6 +1,6 @@
 # CAGE Compliance & Governance Posture Framework
 **CAGE Version:** v3.0.1
-**Last Evaluated:** 2026-08-28
+**Last Evaluated:** 2026-09-09
 
 ---
 
@@ -44,7 +44,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` |
 | **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** · **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` |
 
-> **Note:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles suppress SR 26-2 telemetry via the `_NO_LEGAL_FORCE_MARKER` sentinel (see `AGENTS.md` §8).
+> **Note:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles suppress SR 26-2 telemetry via the `_NO_LEGAL_FORCE_MARKER` sentinel (see docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md).
 
 ### 1.3 EU_ECB Only Controls (EU AI Act / GDPR / DORA)
 
@@ -226,7 +226,7 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   **Tamper-Proof Audit Logging:** All decisions and system exceptions generate a cryptographically hash-chained SHA-256 ledger (`cage-intent/1.0`) to satisfy strict non-repudiation and lifecycle logging policies.
 *   **Companion Documentation:** 
     *   For detail on the STPA control structure compiling to OPA/NeMo/Saga, see [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md).
-    *   For detailed symbolic governor and hybrid logic flow, see README_GOVERNANCE.md and [docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md).
+    *   For detailed symbolic governor and hybrid logic flow, see docs/governance/GOVERNANCE_OVERVIEW.md and [docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md).
 
 ### C. European Union AI Act, GDPR, and EBA Hard Law Baseline (EU_ECB Profile)
 *   **Status:** Technical Controls Mapped & Telemetry Attested.
@@ -239,13 +239,13 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
 ### D. Singapore MAS FEAT Principles Baseline (APAC_MAS Profile)
 *   **Status:** Technical Controls Mapped & Enforced.
 *   **Mechanism:**
-    *   **Fairness, Ethics, Accountability, Transparency (FEAT):** Restricts the agent's parameters to MAS FEAT boundaries, dynamically loading `config/thresholds/APAC_MAS_BASELINE.json` to enforce strict operational limits (e.g., SLA latency floor: `175ms`, Consensus: `$8,500`). Ensures full algorithmic accountability and trace transparency in the compliance project trace database.
+    *   **Fairness, Ethics, Accountability, Transparency (FEAT):** Restricts the agent's parameters to MAS FEAT boundaries, dynamically loading `config/compliance/APAC_MAS_BASELINE.json` to enforce strict operational limits (e.g., SLA latency floor: `175ms`, Consensus: `$8,500`). Ensures full algorithmic accountability and trace transparency in the compliance project trace database.
 
 ### E. NIST RMF & FedRAMP HIGH
 *   **Status:** **PARTIAL** (Technical Hardening Complete, Administrative ATO Pending).
 *   **Mechanism:**
     *   **Zero-Trust Network Hardening:** Deploys Linkerd SPIFFE/SVID mTLS for cryptographic workload validation (**POAM-007 / IA-3**, closed 2026-05-17) and Cilium Layer 7 network policies for default-deny egress lockdown (**POAM-011 / SC-8**, Open). Both controls are technically active in the `governance-stack` Kubernetes namespace; POAM-011 (SC-8) and POAM-012 (SC-12) remain Open pending formal assessment closure.
-    *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,330-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
+    *   **Programmatic Evidence:** The automated script `src/gateway/governance/oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,449-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
     *   **KMS Batch Signing for Audit Evidence:** All OSCAL findings and AARM conformance reports are asymmetrically signed via Google Cloud KMS HSM (`src/gateway/governance/kms_signer.py`) before GCS persistence. The private key never leaves the HSM; Cloud Audit Logs provide external, immutable attestation of every signing operation. This constitutes the audit evidence chain for FedRAMP HIGH AU-9 and AU-10.
 
     *   **KMS replay-attack closure:** `KmsSigner.sign()` now embeds `"signed_at": int(time.time())` in every signed payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > 300 s`. This closes the replay-attack vector where a compromised agent with Redis write access could reset the 300 s TTL indefinitely.
@@ -303,9 +303,9 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   [`docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md`](docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md) — gap analysis and control mapping
     *   [`compliance/lula/README.md`](compliance/lula/README.md) — full Lula validation status table including AI 600-1 stubs
 
-### H. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
+### H. Continuous Audit Event Loop & Compliance Bridge API (v3.0.1)
 *   **Status:** Implemented & Active.
-*   **Mechanism:** In CAGE v2.0.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
+*   **Mechanism:** In CAGE v2.0.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes sixteen REST endpoints:
     1.  `GET /health` — Kubernetes liveness probe.
     2.  `GET /v1/controls` — Discovery endpoint; returns the full registry of supported ISO 42001 / NIST controls.
     3.  `GET /v1/metrics/summary` — Aggregate compliance posture across all supported controls in a single response.
@@ -355,7 +355,7 @@ The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) lock
 To help you navigate the full regulatory documentation suite:
 
 *   **Executive Overview:** [docs/project/CAGE_ONE_PAGER.md](docs/project/CAGE_ONE_PAGER.md) — 1-page overview of the business case and architecture.
-*   **Detailed Governance Architecture:** README_GOVERNANCE.md — Walkthrough of the 15-tier SymbolicGovernor and the decoupled abstraction layer.
+*   **Detailed Governance Architecture:** docs/governance/GOVERNANCE_OVERVIEW.md — Walkthrough of the 7-tier + FTRA boundary gate SymbolicGovernor and the decoupled abstraction layer.
 *   **System Architecture Spec:** [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) — System-wide component structure, database schemas, and request-response pathways.
 *   **Security Posture & Milestones:** [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md) — Precise POAM checklists and NIST RMF coverage tracking.
 *   **STPA & Hazard Analysis:** [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md) — Breakdown of UCAs 1-9 and the STPA-to-Policy compiler specification.

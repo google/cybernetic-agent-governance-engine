@@ -265,23 +265,7 @@ PR is merged. Do not leave stale branches in the remote.
 
 ### 3.4 Branches that trigger CI
 
-The full CI suite (`.github/workflows/ci.yml`) triggers on push to the following
-branch patterns **and** on pull requests targeting `main`:
-
-| Branch pattern | Trigger type |
-|---|---|
-| `main` | `push` and `pull_request` |
-| `feature/**` | `push` |
-| `feat/**` | `push` |
-| `fix/**` | `push` |
-| `chore/**` | `push` |
-| `docs/**` | `push` |
-| `refactor/**` | `push` |
-| `ci/**` | `push` |
-| `hotfix/**` | `push` |
-
-CI runs on push to any of the above branches — it does not require an open PR
-to trigger. However, **all checks must be green on the PR before merge** is the
+The full CI suite (`.github/workflows/ci.yml`) triggers on pull requests targeting `main`, and push events trigger only on the `main` branch itself. However, **all checks must be green on the PR before merge** is the
 hard gate. Direct pushes to `main` bypass the PR review gate, which is why they
 are prohibited.
 

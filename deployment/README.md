@@ -22,7 +22,7 @@ CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 |-------------------|----------|------|-------|
 | Gateway (HTTP + gRPC) | `gateway` | 8080 (HTTP), 50051 (gRPC) | `gcr.io/<PROJECT>/gateway:latest` |
 | Governed Financial Advisor | `governed-financial-advisor` | 80 → 8080 | `gcr.io/<PROJECT>/governed-financial-advisor:latest` |
-| OPA policy engine | `opa-service` | 8181 (policy), 8282 (diag) | `openpolicyagent/opa:latest-static` |
+| OPA policy engine | `opa-service` | 8181 (policy), 8282 (diag) | `openpolicyagent/opa:0.68.0-static` |
 | NeMo Guardrails | `nemo-service` | 8000 | `gcr.io/<PROJECT>/nemo-guardrails:latest` |
 | Compliance Bridge | `compliance-bridge` | 80 → 3001 | `gcr.io/<PROJECT>/compliance-bridge:latest` |
 | Langfuse Web | `langfuse-web` | 80 → 3000 | `langfuse/langfuse:3` |
@@ -334,7 +334,7 @@ make advisor-status        # governed-financial-advisor pod status
 make advisor-rollback      # rollout undo
 make advisor-watch         # watch pod events
 make advisor-verify-env    # dump env vars in running pod
-make advisor-port-forward  # forward svc/governed-financial-advisor 8080:8080
+make advisor-port-forward  # forward svc/governed-financial-advisor 8080:80
 make advisor-health        # /health check
 make vllm-status           # vLLM pod status
 make vllm-verify-models    # list loaded models on both vLLM services

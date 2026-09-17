@@ -67,6 +67,8 @@ Full detail lives in [`CONTRIBUTING.md`](CONTRIBUTING.md#branch-naming-conventio
 | Documentation | `docs/<short-description>` | `docs/stpa-control-diagram` |
 | Refactor | `refactor/<short-description>` | `refactor/gateway-middleware` |
 | CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
+| Dependency/tooling update | `chore/<short-description>` | `chore/update-deps` |
+| Test addition | `test/<short-description>` | `test/cbf-chaos-suite` |
 | Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
 | Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
 | Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
@@ -136,7 +138,7 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
   gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
   ```
 - **Local/agnostic target**: `./deploy_all.sh --target agnostic --env dev`
-- Active IaC lives under `infra/`; `deployment/terraform/` is historical reference only.
+- `deployment/terraform/` was historical reference (directory has been removed from the repository); active IaC lives exclusively under `infra/`.
 
 ---
 
@@ -184,7 +186,7 @@ CAGE is an illustrative reference architecture. The optimization target is clean
 
 | Layer | Path | Role & Responsibilities | Invariants & Boundary Rules |
 |---|---|---|---|
-| **Layer 1: Kernel** | `src/gateway/` | **STERA Admissibility Engine**, core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from `src/cage_*` (Layer 2), `src/compliance_bridge/` (Layer 3), or `src/governed_financial_advisor/` (Layer 4). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `azure`, `langfuse`). Enforced in CI by Gate G3 (`scripts/check_import_boundaries.py`). |
+| **Layer 1: Kernel** | `src/gateway/` | **STERA Admissibility Engine**, core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from `src/cage_*` (Layer 2), `src/compliance_bridge/` (Layer 3), or `src/governed_financial_advisor/` (Layer 4). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `azure`, `langfuse`). Enforced in CI by Gate G3 (`scripts/check_import_boundaries.py`). **Note:** Gate G3 enforces these boundaries via allowlists for certain lazy, function-scoped imports. The `INTEGRATIONS_FACTORY_ALLOWLIST` permits runtime adapter loading from `src/integrations/` in factory modules (`execution_actuator.py`, `normative_provider.py`, `attestation_aggregator.py`, `evidence/factory.py`). The `COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST` permits `oscal_ssp_exporter.py` to lazy-import `AssurancePosture` from `src/compliance_bridge/`. Vendor SDK restrictions (`FORBIDDEN_VENDOR_SDKS`) are currently enforced only within `src/gateway/governance/evidence/`. |
 | **Layer 2: Domain Plugins** | `src/cage_{domain}/` (e.g. `src/cage_finance/`, `src/cage_healthcare/`) | Domain-specific tiers (`GovernanceTierPlugin`), domain action registries, ontologies, policies, and causal graphs. | Provides immutable domain tiers to the kernel via `SymbolicGovernor(domain_tiers=...)`. Encapsulates domain vocabulary without polluting the kernel. |
 | **Layer 3: Integrations & Rails** | `src/integrations/`, `src/cage_finance/rails/`, `src/compliance_bridge/` | External vendor normative/attestation adapters, durable sinks (ClickHouse, GCS, S3), NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture Specification. Communicates via canonical dataclasses. |
 

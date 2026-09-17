@@ -32,6 +32,8 @@ POST /governance/ingest-policy
 Content-Type: application/json
 ```
 
+> **Status: Specification Only.** This endpoint is not yet implemented in the gateway. The internal policy translation module exists at `src/gateway/governance/policy_translator.py` but no HTTP route has been created.
+
 Accepts any supported policy specification format and returns compiled enforcement
 artifacts plus a `policy_version_id` for pinning.
 
@@ -157,6 +159,8 @@ Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](
 
 Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`), with Tiers 2 and 4 executing concurrently:
 
+**Note (v3 update):** Concurrent OPA/CBF execution was removed. The v3 architecture uses sequential two-phase evaluation to prevent budget leakage.
+
 | Stage | Name | Implementation |
 |---|---|---|
 | *(pre-pipeline)* | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`text_filter.py`](../src/gateway/governance/text_filter.py) |
@@ -164,10 +168,10 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 | **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`src/gateway/governance/ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`src/gateway/governance/ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`src/gateway/governance/ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
 | Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
 | Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
-| Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/safety/cbf_engine.py), OPA `system_authz.rego` |
-| Tier 3 | Fiscal Limit Pre-Reservation | [`fiscal_limit_guard.py`](../src/gateway/governance/safety/resource_guard.py) |
-| Tier 5 | Multi-Agent Consensus | [`consensus.py`](../src/gateway/governance/consensus/engine.py) |
-| Tier 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
+| Tier 2 / 4 | CBF + OPA (concurrent) | [`safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), OPA `system_authz.rego` |
+| Tier 3 | Fiscal Limit Pre-Reservation | [`safety/resource_guard.py`](../src/gateway/governance/safety/resource_guard.py) |
+| Tier 5 | Multi-Agent Consensus | [`consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
+| Tier 6 | DoWhy Causal Gatekeeper | [`causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
 | Tier 6b | Adaptive FRIA Enforcement | [`normative_provider.py`](../src/gateway/governance/normative_provider.py) |
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules invoked outside `_run_checks()` — PII sanitization runs on audit records inside `uca_logger.py`, and confabulation scoring is a Langfuse observability metric.

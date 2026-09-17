@@ -1,6 +1,6 @@
 [project]
 name = "cybernetic-governance-engine"
-version = "3.0.0"
+version = "3.0.1"
 description = "CAGE — Cybernetic AI Governance Engine"
 authors = [{ name = "OSS Maintainer", email = "oss-maintainer@example.com" }]
 license = "Apache-2.0"
@@ -284,3 +284,4 @@ en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/dow
 
 [project.entry-points."cage.plugins"]
 finance = "cage_finance.plugin:FinanceCagePlugin"
+healthcare = "cage_healthcare.plugin:HealthcareCagePlugin"
