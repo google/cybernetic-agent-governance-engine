@@ -281,6 +281,16 @@ Every collected test must carry at least one selection marker (`local`, `unit`, 
 ### Live GKE Cluster & Staging Runbooks
 > **Live Cluster Testing:** For staging port-forwarding, GKE tunnel concurrency rules, and POAM-024 validation, refer to [`docs/operations/GKE_TEST_RUNBOOK.md`](docs/operations/GKE_TEST_RUNBOOK.md).
 
+#### Live Cluster Testing Invariants (Fail-Closed)
+- **Never use `-n auto` on tunnels**: `pytest.ini` defaults to `-n auto` (spawning 16+ workers), which exhausts port-forward TCP pools and triggers false `503 Service Unavailable` / Redis connection drops. Constrain concurrency strictly to `-n 2 --dist loadscope` or `-n0`:
+  ```bash
+  uv run pytest tests/ -m integration --run-integration -n 2 --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
+  ```
+- **Persistent Port-Forward Daemon**: Run tunnels via a detached daemon (`tmux new-session -d -s pf "bash scripts/port_forward_staging.sh --daemon"`). Verify reachability (`uv run python scripts/test_live_gke_services.py`) before executing test suites.
+- **Credential Synchronization**: Sync live cluster secrets (`kubectl get secret -n governance-stack <secret>`) into local `.env` (e.g. `REDIS_PASSWORD`, `LANGFUSE_COMPLIANCE_*`) prior to test runs. Never commit live cluster secrets to git.
+- **LLM / Agent Feedback Loop Latency**: End-to-end multi-agent governance benchmarks (`tests/test_agent_accuracy.py`) execute real GPU inference (vLLM DeepSeek-R1 / Qwen2.5) across multi-step cybernetic loops and require 6–8 minutes (`@pytest.mark.timeout(600)`). Monitor asynchronously; avoid aggressive polling loops.
+- **Partner Integration Isolation**: Third-party partner tests (`tests/integrations/provider_02/`) are tagged with `partner_integration` / `live_external`. They require external partner sandboxes (`PROVIDER_02_API_ENDPOINT`) and are excluded from standard internal GKE runs.
+
 ---
 
 ## Agent Governance & Cost Guardrails

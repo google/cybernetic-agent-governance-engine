@@ -137,7 +137,7 @@ fi
 if [[ "$ACTION" == "status" ]]; then
   echo "[port-forward] Checking port reachability for context $CURRENT_CONTEXT (env: $TARGET_ENV):"
   for port in 8181 3001 3000 8001 8000 8080 3002 8081 6379; do
-    if nc -z localhost "$port" 2>/dev/null; then
+    if nc -w 2 -z localhost "$port" 2>/dev/null; then
       echo "  ✅ localhost:$port reachable"
     else
       echo "  ❌ localhost:$port not reachable"
@@ -187,7 +187,7 @@ start_pf() {
 # ── Endpoint Check Helper ──────────────────────────────────────────────────
 has_endpoints() {
   local svc="$1"
-  kubectl get endpointslice -n "$NS" -l kubernetes.io/service-name="$svc" -o json 2>/dev/null | jq -e '.items[].endpoints | select(. != null) | length > 0' &>/dev/null
+  kubectl get endpointslice -n "$NS" -l kubernetes.io/service-name="$svc" --request-timeout=5s -o json 2>/dev/null | jq -e '.items[].endpoints | select(. != null) | length > 0' &>/dev/null
 }
 
 # ── Core Services Required by Tests ──────────────────────────────────────────
@@ -197,33 +197,37 @@ start_pf opa          opa                       8181  8181  # OPA policy engine
 start_pf langfuse     langfuse-web              3001  3000  # Langfuse API (LLM judge evaluation)
 start_pf langfuse-web langfuse-web              3000  3000  # Langfuse UI (NextAuth)
 
+HAS_VLLM_FAST=false
 if has_endpoints vllm-service; then
   start_pf vllm-fast    vllm-service              8001  8000  # Fast vLLM (Qwen2.5-7B) — primary (:8001)
   start_pf vllm-fast2   vllm-service             18081  8000  # Fast vLLM — VLLM_FAST_API_BASE (:18081)
+  HAS_VLLM_FAST=true
 else
   echo "[port-forward]   vllm-service has no active endpoints (GPU disabled) — skipping"
 fi
 
+HAS_VLLM_REASON=false
 if has_endpoints vllm-reasoning; then
   start_pf vllm-reason  vllm-reasoning            8000  8000  # Reasoning vLLM (DeepSeek R1) — primary (:8000)
   start_pf vllm-reason2 vllm-reasoning           18082  8000  # Reasoning vLLM — VLLM_REASONING_API_BASE (:18082)
+  HAS_VLLM_REASON=true
 else
   echo "[port-forward]   vllm-reasoning has no active endpoints (GPU disabled) — skipping"
 fi
 
 start_pf gateway      gateway                   8080  8080  # Gateway gRPC/HTTP
 
-if kubectl get svc -n "$NS" redis-master &>/dev/null; then
+if kubectl get svc -n "$NS" redis-master --request-timeout=5s &>/dev/null; then
   start_pf redis        redis-master              6379  6379  # Redis (redis-master svc)
 else
   start_pf redis        redis                     6379  6379  # Redis (redis svc)
 fi
 
-if kubectl get svc -n "$NS" compliance-bridge &>/dev/null; then
+if kubectl get svc -n "$NS" compliance-bridge --request-timeout=5s &>/dev/null; then
   start_pf compliance   compliance-bridge          3002    80  # Compliance bridge — BASE_URL (:3002)
 fi
 
-if kubectl get svc -n "$NS" governed-financial-advisor &>/dev/null; then
+if kubectl get svc -n "$NS" governed-financial-advisor --request-timeout=5s &>/dev/null; then
   start_pf backend      governed-financial-advisor 8081    80  # Governed Financial Advisor backend (:8081)
 fi
 
@@ -232,15 +236,15 @@ sleep 3
 
 echo "[port-forward] Status checks:"
 CHECK_PORTS=(8181 3001 3000 8080 3002 8081 6379)
-if has_endpoints vllm-service; then
+if [[ "$HAS_VLLM_FAST" == "true" ]]; then
   CHECK_PORTS+=(8001)
 fi
-if has_endpoints vllm-reasoning; then
+if [[ "$HAS_VLLM_REASON" == "true" ]]; then
   CHECK_PORTS+=(8000)
 fi
 
 for port in "${CHECK_PORTS[@]}"; do
-  if nc -z localhost "$port" 2>/dev/null; then
+  if nc -w 2 -z localhost "$port" 2>/dev/null; then
     echo "  ✅ localhost:$port reachable"
   else
     echo "  ⚠️  localhost:$port not reachable yet"
