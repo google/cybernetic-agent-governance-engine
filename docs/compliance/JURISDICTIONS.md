@@ -62,21 +62,20 @@ Governance events emitted by US_FED deployments that map to registered controls:
 
 ```bash
 # Generate US_FED OSCAL SSP
-uv run python -m src.gateway.governance.oscal_ssp_exporter export \
-  --region US_FED \
-  --ssp compliance/oscal/us_fed/system-security-plan.yaml
+CAGE_DEPLOYMENT_REGION=US_FED uv run python -m src.gateway.governance.oscal_ssp_exporter export \
+  --ssp compliance/oscal/system-security-plan.yaml
 
 # Validate with Lula
-lula validate -f compliance/lula/us_fed/component-validations.yaml
+lula validate -f compliance/lula/assessment-results.yaml
 ```
 
 ### Output Paths
 
 | Artifact | Path | Format |
 |----------|------|--------|
-| **System Security Plan** | `compliance/oscal/us_fed/system-security-plan.yaml` | OSCAL SSP |
-| **Component Definition** | `compliance/oscal/us_fed/component-definition.yaml` | OSCAL Component |
-| **Lula Validations** | `compliance/lula/us_fed/component-validations.yaml` | Lula OSCAL |
+| **System Security Plan** | `compliance/oscal/system-security-plan.yaml` | OSCAL SSP |
+| **Component Definition** | `compliance/oscal/component-definition.yaml` | OSCAL Component |
+| **Lula Validations** | `compliance/lula/lula-validation-*.yaml` | Lula OSCAL |
 | **POAM** | `docs/compliance/us_fed/POAM_US_FED.md` | Markdown |
 | **NIST AI 600-1 Plan** | `docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md` | Markdown |
 | **FedRAMP SSP Export** | Generated on-demand via exporter | OSCAL SSP |
@@ -128,21 +127,20 @@ Governance events emitted by EU_ECB deployments that map to registered controls:
 
 ```bash
 # Generate EU_ECB OSCAL SSP
-uv run python -m src.gateway.governance.oscal_ssp_exporter export \
-  --region EU_ECB \
-  --ssp compliance/oscal/eu_ecb/system-security-plan.yaml
+CAGE_DEPLOYMENT_REGION=EU_ECB uv run python -m src.gateway.governance.oscal_ssp_exporter export \
+  --ssp compliance/oscal/system-security-plan-eu-ecb.yaml
 
 # Validate with Lula
-lula validate -f compliance/lula/eu_ecb/component-validations.yaml
+lula validate -f compliance/lula/assessment-results.yaml
 ```
 
 ### Output Paths
 
 | Artifact | Path | Format |
 |----------|------|--------|
-| **System Security Plan** | `compliance/oscal/eu_ecb/system-security-plan.yaml` | OSCAL SSP |
-| **Component Definition** | `compliance/oscal/eu_ecb/component-definition.yaml` | OSCAL Component |
-| **Lula Validations** | `compliance/lula/eu_ecb/component-validations.yaml` | Lula OSCAL |
+| **System Security Plan** | `compliance/oscal/system-security-plan-eu-ecb.yaml` | OSCAL SSP |
+| **Component Definition** | `compliance/oscal/component-definition.yaml` | OSCAL Component |
+| **Lula Validations** | `compliance/lula/lula-validation-*.yaml` | Lula OSCAL |
 | **FRIA Attestation** | `docs/compliance/eu_ecb/FRIA_ATTESTATION.md` | Markdown |
 | **GDPR DPIA** | `docs/compliance/eu_ecb/GDPR_DPIA.md` | Markdown |
 | **DORA Resilience Plan** | `docs/compliance/eu_ecb/DORA_RESILIENCE_TESTING_PROGRAMME.md` | Markdown |
@@ -196,21 +194,20 @@ Governance events emitted by APAC_MAS deployments that map to registered control
 
 ```bash
 # Generate APAC_MAS OSCAL SSP
-uv run python -m src.gateway.governance.oscal_ssp_exporter export \
-  --region APAC_MAS \
-  --ssp compliance/oscal/apac_mas/system-security-plan.yaml
+CAGE_DEPLOYMENT_REGION=APAC_MAS uv run python -m src.gateway.governance.oscal_ssp_exporter export \
+  --ssp compliance/oscal/system-security-plan-apac-mas.yaml
 
 # Validate with Lula
-lula validate -f compliance/lula/apac_mas/component-validations.yaml
+lula validate -f compliance/lula/assessment-results.yaml
 ```
 
 ### Output Paths
 
 | Artifact | Path | Format |
 |----------|------|--------|
-| **System Security Plan** | `compliance/oscal/apac_mas/system-security-plan.yaml` | OSCAL SSP |
-| **Component Definition** | `compliance/oscal/apac_mas/component-definition.yaml` | OSCAL Component |
-| **Lula Validations** | `compliance/lula/apac_mas/component-validations.yaml` | Lula OSCAL |
+| **System Security Plan** | `compliance/oscal/system-security-plan-apac-mas.yaml` | OSCAL SSP |
+| **Component Definition** | `compliance/oscal/component-definition.yaml` | OSCAL Component |
+| **Lula Validations** | `compliance/lula/lula-validation-*.yaml` | Lula OSCAL |
 | **MAS FEAT Report** | `docs/compliance/apac_mas/MAS_FEAT_T1_TRANSPARENCY_REPORT.md` | Markdown |
 | **Notice 655 Cert** | `docs/compliance/apac_mas/MAS_NOTICE_655_CERTIFICATION.md` | Markdown |
 | **POAM** | `docs/compliance/apac_mas/POAM_APAC_MAS.md` | Markdown |
@@ -251,9 +248,8 @@ lula validate -f compliance/lula/apac_mas/component-validations.yaml
 
 ```bash
 # Placeholder (UK_DSIT not yet implemented)
-uv run python -m src.gateway.governance.oscal_ssp_exporter export \
-  --region UK_DSIT \
-  --ssp compliance/oscal/uk_dsit/system-security-plan.yaml
+CAGE_DEPLOYMENT_REGION=UK_DSIT uv run python -m src.gateway.governance.oscal_ssp_exporter export \
+  --ssp compliance/oscal/system-security-plan-uk-dsit.yaml
 ```
 
 ### Output Paths
