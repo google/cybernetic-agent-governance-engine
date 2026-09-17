@@ -86,7 +86,7 @@ All graph nodes share a single `AgentState` TypedDict ([`src/governed_financial_
 | **HITL Approval** | `approval_required`, `approval_granted`, `approval_decision` |
 | **Audit Trail** | `completed_transactions`, `uca_violations` |
 
-This contract is enforced by JSON Schema validation ([`compliance/schemas/agent_state_schema.json`](../../../compliance/schemas/agent_state_schema.json)) with CI drift detection ([`tests/test_agent_state_schema.py`](../../../tests/test_agent_state_schema.py)).
+This contract is enforced by JSON Schema validation ([`compliance/schemas/agent_state_schema.json`](../../../compliance/schemas/agent_state_schema.json)) with CI drift detection ([`tests/test_agent_state_schema.py`](../../../tests/test_agent_state_schema.py)). **Note:** Schema enforcement is specified in [`AGENT_STATE_SCHEMA_ENFORCEMENT.md`](../../architecture/AGENT_STATE_SCHEMA_ENFORCEMENT.md) (GAP-3 design specification, pending implementation).
 
 ---
 

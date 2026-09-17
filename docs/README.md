@@ -187,6 +187,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [DEFERRAL_QUEUE.md](architecture/DEFERRAL_QUEUE.md) | AARM deferral queue, Redis storage, and dual-control resolution |
 | [EVIDENCE_CHAIN.md](architecture/EVIDENCE_CHAIN.md) | Cryptographic hash chaining, streams, and cold store daemon |
 | [CRYPTOGRAPHIC_SIGNER_ENGINE.md](architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution |
+| [AGENT_STATE_SCHEMA_ENFORCEMENT.md](architecture/AGENT_STATE_SCHEMA_ENFORCEMENT.md) | **Specification (GAP-3, Planned)** — AgentState schema enforcement at API and node boundaries |
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |
 | [AUDIT_LOG_SCHEMA.md](architecture/AUDIT_LOG_SCHEMA.md) | Audit log schema |
 | [SUBSTRATE_MOAT_STRATEGY.md](architecture/SUBSTRATE_MOAT_STRATEGY.md) | Competitive positioning — CAGE vs MXC/ACS, AAIF, Google AGW |

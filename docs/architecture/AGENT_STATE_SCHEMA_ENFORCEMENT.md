@@ -1,9 +1,14 @@
 # GAP-3: AgentState Schema Enforcement Architecture
 
-**Status:** Approved for Implementation  
-**Date:** 2026-07-05  
-**Author:** Architecture Review  
-**Implements:** GAP-3 (Schema Enforcement at API and Node Boundaries)  
+> [!NOTE]
+> **Document Status**: Approved Design Specification (GAP-3) — Pending Implementation
+> **Implementation Target**: Layer 4 Reference Application ([`src/governed_financial_advisor/`](../../src/governed_financial_advisor/))
+> **Runtime Status**: Design artifact only. The schemas and route-level validations specified herein are planned and not currently enforced in the v3.0.x gateway runtime. The [`QueryResponse`](#3-queryresponse-pydantic-model-specification) model, route enforcement via `response_model`, and [`compliance/schemas/agent_state_schema.json`](#4-agentstateschema-json-schema-draft-07) are not yet merged in code.
+
+**Status:** Approved for Implementation
+**Date:** 2026-07-05
+**Author:** Architecture Review
+**Implements:** GAP-3 (Schema Enforcement at API and Node Boundaries)
 **Affected files:**
 - `src/governed_financial_advisor/server.py`
 - `src/gateway/governance/langgraph_harness/types.py`
