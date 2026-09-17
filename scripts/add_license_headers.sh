@@ -72,13 +72,15 @@ echo "Scanning for Python files missing Apache 2.0 header..."
 while IFS= read -r -d '' f; do
   prepend_header "$f" "$PY_HEADER"
 done < <(grep -rLZ "Apache License" --include="*.py" \
-  --exclude-dir=".venv" --exclude-dir="__pycache__" --exclude-dir=".git" . 2>/dev/null)
+  --exclude-dir=".venv" --exclude-dir="__pycache__" --exclude-dir=".git" \
+  --exclude-dir="third_party" --exclude-dir="node_modules" --exclude-dir="dist" . 2>/dev/null)
 
 echo "Scanning for YAML/YML files missing Apache 2.0 header..."
 while IFS= read -r -d '' f; do
   prepend_header "$f" "$YAML_HEADER"
 done < <(grep -rLZ "Apache License" --include="*.yaml" --include="*.yml" \
-  --exclude-dir=".venv" --exclude-dir=".git" . 2>/dev/null)
+  --exclude-dir=".venv" --exclude-dir=".git" \
+  --exclude-dir="third_party" --exclude-dir="node_modules" --exclude-dir="dist" . 2>/dev/null)
 
 if $CHECK_MODE; then
   if [[ ${#MISSING[@]} -gt 0 ]]; then

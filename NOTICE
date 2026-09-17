@@ -1,4 +1,5 @@
 Cybernetic AI Governance Engine (CAGE)
+Copyright 2026 Google LLC
 Copyright 2026 Cybernetic Agent Governance Engine Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +16,38 @@ limitations under the License.
 
 ---
 
-Third-Party Source Code Adapted Into This Repository
+Third-Party Source Code Adapted or Vendored Into This Repository
 
 ---
 
 LalaSkye / no-direct-bind — Copyright (c) LalaSkye contributors. Apache License 2.0.
   Source: https://github.com/LalaSkye/no-direct-bind/commit/7fe9ff99636798accd5e04136991e1d3d3079417
   Note: proof/model.py was adapted from the NoDirectBind BFS state-space enumerator.
-  Modifications: Extended for CAGE 7-tier governance architecture with Gap 2/3/4 sub-proofs.
+  Modifications: Extended for CAGE 8-tier governance architecture with Gap 1/2/3/4 sub-proofs.
+
+---
+
+Simran Pabla / agent-integrity — Copyright 2026 Simran Pabla. Apache License 2.0.
+  Source: https://github.com/SimranPabla/agent-integrity
+  Location: third_party/agent-integrity/
+  Note: Vendored verification engine and conformance test fixtures used by
+  the Tier-6 / Provider 06 integration (src/integrations/provider_06/).
+
+---
+
+Titusz Pan and Anders Rundgren / jcs — Copyright 2006-2019 WebPKI.org. Apache License 2.0.
+  Source: https://github.com/titusz/jcs
+  Location: src/gateway/governance/vendor/jcs/
+  Note: Vendored RFC 8785 JSON Canonicalization Scheme (JCS) reference implementation
+  used for deterministic hash-chain and routing seal serialization.
+
+---
+
+Envoy Project / envoy — Copyright (c) 2016-2024 Envoy Project Authors. Apache License 2.0.
+  Source: https://github.com/envoyproxy/envoy
+  Location: src/gateway/protos/envoy/
+  Note: Vendored protobuf interface definitions for external authorization (ext_authz)
+  used by CAGE AgentGatewayAdapter.
 
 ---
 

@@ -41,6 +41,8 @@ def patch_files():
                     "node_modules" in str(path)
                     or ".venv" in str(path)
                     or "dist" in str(path)
+                    or "third_party" in str(path)
+                    or "src/gateway/governance/vendor" in str(path)
                 ):
                     continue
                 if not path.is_file():

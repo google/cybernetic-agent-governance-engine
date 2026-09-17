@@ -9,7 +9,7 @@ Entries are grouped by runtime context and listed alphabetically within each
 section. Versions shown reflect the ranges declared in `pyproject.toml` or
 `package.json`; exact pinned versions are in `uv.lock` / `package-lock.json`.
 
-Last reviewed: 2026-07-02
+Last reviewed: 2026-09-17
 
 ---
 
@@ -49,6 +49,11 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **Homepage:** https://github.com/pallets/click/
 - **Usage:** CLI framework used transitively by uvicorn and typer.
 
+### clickhouse-connect ≥0.7
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/ClickHouse/clickhouse-connect
+- **Usage:** ClickHouse client for durable evidence sink storage in the compliance-bridge.
+
 ### cryptography ≥48.0
 - **License:** Apache-2.0 OR BSD-3-Clause
 - **Homepage:** https://github.com/pyca/cryptography
@@ -83,6 +88,16 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/aio-libs/frozenlist
 - **Usage:** Immutable list type used by aiohttp internals.
+
+### google-adk ≥1.28
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/google/adk-python
+- **Usage:** Google Agent Development Kit integration for the multi-agent advisor pipeline.
+
+### google-cloud-kms ≥2.24
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/googleapis/google-cloud-python/tree/main/packages/google-cloud-kms
+- **Usage:** Google Cloud KMS SDK for asymmetric HSM governance signing (CTRL_KMS_001).
 
 ### google-cloud-storage ≥2.0
 - **License:** Apache-2.0
@@ -309,6 +324,11 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **Homepage:** https://developers.google.com/protocol-buffers/
 - **Usage:** Protocol Buffers runtime for the gateway/NeMo gRPC interface and OTLP serialisation.
 
+### pyahocorasick ≥2.0
+- **License:** BSD-3-Clause
+- **Homepage:** https://github.com/WojciechMula/pyahocorasick
+- **Usage:** Fast string searching automaton used by the Tier-1 keyword scanner in the gateway.
+
 ### pydantic ≥2.10
 - **License:** MIT
 - **Homepage:** https://github.com/pydantic/pydantic
@@ -408,6 +428,11 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **License:** BSD-3-Clause
 - **Homepage:** https://github.com/encode/starlette
 - **Usage:** ASGI toolkit underlying FastAPI; used directly for middleware and routing.
+
+### tabulate ≥0.9
+- **License:** MIT
+- **Homepage:** https://github.com/astanin/python-tabulate
+- **Usage:** Plain-text table formatting used by the advisor response formatter.
 
 ### tenacity ≥9.0
 - **License:** Apache-2.0
@@ -623,6 +648,40 @@ and project Dockerfiles.
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/vllm-project/vllm
 - **Usage:** Official vLLM OpenAI-compatible inference server image extended with the RunAI GCS streamer.
+
+---
+
+## Vendored & Adapted Third-Party Software
+
+Source code and assets directly vendored into or adapted within this repository.
+
+### agent-integrity
+- **Author:** Simran Pabla
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/SimranPabla/agent-integrity
+- **Location:** `third_party/agent-integrity/`
+- **Usage:** Vendored verification engine, schemas, and conformance fixtures used by the Tier-6 / Provider 06 integration (`src/integrations/provider_06/`).
+
+### envoy-api (ext_authz protos)
+- **Author:** Envoy Project Authors
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/envoyproxy/envoy
+- **Location:** `src/gateway/protos/envoy/`
+- **Usage:** Protobuf service and message definitions for Envoy external authorization (`envoy.service.auth.v3.Authorization`) implemented by CAGE `AgentGatewayAdapter`.
+
+### jcs
+- **Author:** Titusz Pan and Anders Rundgren (WebPKI.org)
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/titusz/jcs
+- **Location:** `src/gateway/governance/vendor/jcs/`
+- **Usage:** Vendored RFC 8785 JSON Canonicalization Scheme (JCS) reference implementation used for deterministic serialization of hash-chains and routing seals.
+
+### no-direct-bind
+- **Author:** LalaSkye contributors
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/LalaSkye/no-direct-bind
+- **Location:** `third_party/no-direct-bind/`, `proof/model.py`
+- **Usage:** Algorithmic BFS state-space enumerator adapted into `proof/model.py` for formal verification of the NoDirectBind invariant.
 
 ---
 
