@@ -301,3 +301,8 @@ deploy-kill: scripts/deploy_bg.sh
 .PHONY: poam-drift-check
 poam-drift-check: ## Check that all closed POAM findings have a corresponding Lula assertion
 	python3 scripts/check_poam_lula_divergence.py
+
+.PHONY: check-agent-state-schema
+check-agent-state-schema: ## Verify AgentState schema freshness
+	@echo "==> Verifying AgentState schema freshness..."
+	@uv run python scripts/generate_agent_state_schema.py --check

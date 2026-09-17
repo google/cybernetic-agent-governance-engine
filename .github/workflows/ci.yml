@@ -309,6 +309,27 @@ jobs:
         run: |
           uv run pytest -p no:langsmith -p no:langsmith_plugin compliance/postures/eu_ecb/llm_eval/ -v --timeout=300
 
+  agent-state-schema-check:
+    name: "Agent State Schema Freshness Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Check agent_state_schema.json is synchronized
+        run: |
+          uv run python scripts/generate_agent_state_schema.py --check
+
   stpa-freshness-check:
     name: "STPA Artifact Freshness Check"
     runs-on: ubuntu-latest

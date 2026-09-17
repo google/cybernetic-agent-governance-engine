@@ -60,6 +60,7 @@ from src.gateway.observability.attributes import (
 )
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
+from src.governed_financial_advisor.models.query import QueryRequest, QueryResponse
 from src.governed_financial_advisor.tools.api import tools_router
 from src.governed_financial_advisor.utils.context import user_context
 
@@ -197,10 +198,6 @@ if (
 # Graph is now in app.state.graph
 
 
-class QueryRequest(BaseModel):
-    prompt: str
-    user_id: str = "default_user"
-    thread_id: str = "default_thread"
 
 
 class ApprovalResumeRequest(BaseModel):
@@ -309,7 +306,7 @@ def health_check():  # type: ignore[no-untyped-def]
     }
 
 
-@app.post("/agent/query")
+@app.post("/agent/query", response_model=QueryResponse)
 async def query_agent(  # type: ignore[no-untyped-def]
     req: QueryRequest,
     request: Request,
@@ -387,9 +384,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
                 current_span.set_attribute(OBSERVATION_OUTPUT, cached_response)
                 current_span.set_attribute("cache.hit", True)
 
-            return JSONResponse(
-                content={"response": final_response_text, "trace_id": trace_id}
-            )
+            return {"response": final_response_text, "trace_id": trace_id}
 
         # Cache miss or non-cacheable query - execute full graph
         logger.debug("Cache MISS or non-cacheable - executing full governance pipeline")
