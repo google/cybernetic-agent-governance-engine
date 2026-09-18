@@ -300,16 +300,21 @@ class TestHealthAndDiscovery:
         assert "controls" in data
         assert data["total"] >= 8
         ids = {c["control_id"] for c in data["controls"]}
-        for expected in (
+        universal_expected = [
             "A.5.2",
             "A.5.3",
             "A.6.2",
             "A.8.4",
             "A.9.2",
             "SC-4",
-            "SC-7",
-            "SC-8",
-        ):
+        ]
+        if _REGION == "EU_ECB":
+            expected_controls = universal_expected + ["Article 12", "Article 13"]
+        elif _REGION == "APAC_MAS":
+            expected_controls = universal_expected + ["MAS-FEAT-1"]
+        else:
+            expected_controls = universal_expected + ["SC-7", "SC-8"]
+        for expected in expected_controls:
             assert expected in ids, f"{expected} missing from /v1/controls"
 
     def test_controls_schema(self, session):

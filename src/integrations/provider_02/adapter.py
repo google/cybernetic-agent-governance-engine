@@ -515,6 +515,13 @@ class Provider02AttestationCallback:
         Raises:
             ValueError: If infinite recursion is detected during ancestor traversal
         """
+        # Dynamic binding: enforce causal parentage when resuming past an interruption
+        if (
+            node_name == self._topology.interrupt_node
+            and "hitl_interrupt" in self._step_id_by_node
+        ):
+            return [self._step_id_by_node["hitl_interrupt"]]
+        
         def _find_recorded_ancestors(
             current_node: str,
             visited: set[str],
@@ -600,6 +607,10 @@ class Provider02AttestationCallback:
         """
         from datetime import datetime, timezone
 
+        # Serialize state snapshot and compute RFC 8785 deterministic hash
+        state_snapshot = _serialize_state_snapshot(state)
+        state_hash = _hash_state(state_snapshot)
+
         signals = {}
         if approval := state.get("approval_decision"):
             signals["hitlApproval"] = {
@@ -612,22 +623,32 @@ class Provider02AttestationCallback:
         signals["approvalRequired"] = state.get("approval_required", False)
 
         interrupt_node = self._topology.interrupt_node or self._topology.terminal_node
+        
+        # Resolve parent step IDs with explicit awareness of "hitl_interrupt" in parent_edges
+        parent_step_ids = (
+            self._build_parent_step_ids("hitl_interrupt")
+            if "hitl_interrupt" in self._topology.parent_edges
+            else self._build_parent_step_ids(interrupt_node)
+        )
+        
         step = ProjectBundleStepEntry(
             node_name="hitl_interrupt",
-            parent_step_ids=self._build_parent_step_ids(interrupt_node),
+            parent_step_ids=parent_step_ids,
             timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
             signals=signals,
             metadata={
                 "threadId": self._thread_id,
                 "interruptNode": interrupt_node,
             },
+            state_hash=state_hash,
         )
 
         self._steps.append(step)
         self._step_id_by_node["hitl_interrupt"] = step.step_id
         logger.info(
-            "[Provider02Adapter] HITL interrupt recorded: step_id=%s",
+            "[Provider02Adapter] HITL interrupt recorded: step_id=%s state_hash=%s",
             step.step_id[:8],
+            state_hash[:8],
         )
 
     def get_bundle(self) -> AttestationBundle:

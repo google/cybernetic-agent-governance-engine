@@ -873,6 +873,12 @@ class KMSGovernanceSigner:
         except RuntimeError:
             raise
         except Exception as exc:
+            if self._public_key_pem:
+                logger.warning(
+                    "[KMSSigner] Remote KMS probe failed (%s), but valid local public key is loaded — proceeding in verification-only mode.",
+                    exc,
+                )
+                return
             raise RuntimeError(
                 f"KMS key version {self._key_version_name!r} is not reachable: {exc}"
             ) from exc

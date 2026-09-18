@@ -459,9 +459,21 @@ class TestProvider02AttestationCallback:
         assert len(bundle.steps) == 1
 
     def test_hitl_interrupt_records_interrupt_step(self) -> None:
-        """handle_hitl_interrupt() must record a hitl_interrupt step."""
+        """handle_hitl_interrupt() must record a hitl_interrupt step with RFC 8785 64-char hex stateHash,
+        linear causal DAG provenance, and terminal path classification for HITL resumption.
+        """
+        import re
+        import sys
+        from pathlib import Path
+
         from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
+
+        # Import validator for schema conformance
+        test_schema_module_path = Path(__file__).parent / "integrations" / "provider_02"
+        sys.path.insert(0, str(test_schema_module_path.parent))
+        from provider_02.test_native_schema_conformance import PROJECT_STEP_VALIDATOR
+        sys.path.pop(0)
 
         cb = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
@@ -470,6 +482,9 @@ class TestProvider02AttestationCallback:
         for node in ["nemo_guardrail", "evaluator", "safety_check"]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {"risk_status": "APPROVED"})
+        
+        # Capture safety_check step_id for DAG provenance validation
+        safety_check_step_id = cb._step_id_by_node["safety_check"]
         
         state = {
             "approval_required": True,
@@ -488,6 +503,59 @@ class TestProvider02AttestationCallback:
         interrupt_step = cb._steps[-1]  # Last step should be the interrupt
         assert interrupt_step.node_name == "hitl_interrupt"
         assert interrupt_step.signals.get("interruptType") == "HITL_MANUAL_REVIEW"
+        
+        # RFC 8785 64-char hex stateHash validation
+        assert interrupt_step.state_hash, "state_hash must be non-empty"
+        assert re.match(r"^[a-f0-9]{64}$", interrupt_step.state_hash), (
+            f"state_hash must be 64 lowercase hex chars (RFC 8785), got {interrupt_step.state_hash!r}"
+        )
+        
+        # Linear causal DAG provenance: interrupt_step.parent_step_ids == [safety_check_step_id]
+        assert interrupt_step.parent_step_ids == [safety_check_step_id], (
+            f"HITL interrupt must link to safety_check parent, "
+            f"expected [{safety_check_step_id}], got {interrupt_step.parent_step_ids}"
+        )
+        
+        # Simulate graph resumption through governed_trader
+        resumed_state = {
+            "approval_required": False,
+            "approval_decision": {
+                "approved": True,
+                "reviewer": "human-reviewer",
+                "rationale": "Approved after review",
+                "timestamp": "2026-01-01T00:05:00+00:00",
+            },
+            "risk_status": "APPROVED",
+        }
+        cb.on_chain_start("governed_trader", resumed_state)
+        cb.on_chain_end("governed_trader", resumed_state)
+        
+        # Terminal happy-path node
+        cb.on_chain_start("explainer", resumed_state)
+        cb.on_chain_end("explainer", resumed_state)
+        
+        # Validate governed_trader links to interrupt step
+        governed_trader_step = next(s for s in cb._steps if s.node_name == "governed_trader")
+        assert governed_trader_step.parent_step_ids == [interrupt_step.step_id], (
+            f"governed_trader must link to hitl_interrupt parent, "
+            f"expected [{interrupt_step.step_id}], got {governed_trader_step.parent_step_ids}"
+        )
+        
+        # Validate all generated step entries against PROJECT_STEP_VALIDATOR
+        for step in cb._steps:
+            try:
+                PROJECT_STEP_VALIDATOR.validate(step.to_dict())
+            except Exception as e:
+                pytest.fail(
+                    f"Step {step.node_name} failed schema validation: {e}\n"
+                    f"Step data: {step.to_dict()}"
+                )
+        
+        # Terminal path classification
+        bundle = cb.get_bundle()
+        assert bundle.terminal_path == "happy_path", (
+            f"Expected terminal_path='happy_path' for HITL resumption, got {bundle.terminal_path!r}"
+        )
 
     def test_dag_closure_validation(self) -> None:
         """DAG closure: every parent_step_id must exist in bundle.steps."""
