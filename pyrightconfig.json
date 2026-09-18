@@ -2,20 +2,34 @@
   "include": [
     "src",
     "scripts",
-    "examples"
+    "examples",
+    "config/rails/actions.py",
+    "packages/cage-client/src"
   ],
   "exclude": [
-    "tests",
-    "**/__pycache__",
-    "**/.venv*",
     "**/node_modules",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".hypothesis", "**/.*", ".venv", ".venv-1"
+    "**/__pycache__",
+    "**/.*",
+    "third_party",
+    ".venv*",
+    "tests",
+    "infra",
+    "deployment",
+    ".venv",
+    ".venv-1"
   ],
+  "stubPath": "typings",
+  "extraPaths": [
+    ".",
+    "src",
+    "typings"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
   "reportMissingTypeStubs": false,
   "reportGeneralTypeIssues": "warning",
   "reportOptionalMemberAccess": "warning",
   "pythonVersion": "3.12",
-  "pythonPlatform": "Linux"
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "strict"
 }

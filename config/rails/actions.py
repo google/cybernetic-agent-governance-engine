@@ -32,6 +32,7 @@ See: docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md §6
 
 import logging
 import os
+from typing import Any, Callable, TypeVar, cast
 
 import httpx
 from opentelemetry import trace as _otel_trace
@@ -42,13 +43,15 @@ from src.gateway.observability.attributes import (
     TRACE_METADATA_GUARDRAIL_ACTION,
 )
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
 # Import the ContextVar from manager.py so Stage-1/1'/1B/1C/1D deterministic
 # block verdicts can be signalled back to validate_with_nemo().  The import is
 # wrapped in a try/except so the action module remains importable in restricted
 # unit-test environments where the full gateway stack is not available.
 try:
     from src.gateway.governance.nemo.manager import (
-        _deterministic_verdict as _det_verdict,
+        _deterministic_verdict as _det_verdict,  # pyright: ignore[reportPrivateUsage]
     )
 
     def _mark_deterministic() -> None:
@@ -63,19 +66,19 @@ except ImportError:
 
 
 try:
-    from nemoguardrails.actions import action as _nemo_action
+    from nemoguardrails.actions import action as _nemo_action  # pyright: ignore[reportMissingTypeStubs]
 
-    def action(name: str):  # type: ignore[misc]
+    def action(name: str) -> Callable[[_F], _F]:  # pyright: ignore[reportRedeclaration]
         """Thin wrapper that delegates to nemoguardrails.actions.action."""
-        return _nemo_action(name=name)
+        return _nemo_action(name=name)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportUnknownArgumentType]
 except ImportError:
     # nemoguardrails not installed (e.g. in unit-test environments).
     # Provide a no-op decorator so the module can still be imported and
     # all action functions remain callable.
-    def action(name: str):  # type: ignore[misc]
+    def action(name: str) -> Callable[[_F], _F]:  # pyright: ignore[reportRedeclaration]
         """No-op decorator used when nemoguardrails is not installed."""
 
-        def decorator(fn):
+        def decorator(fn: _F) -> _F:
             return fn
 
         return decorator
@@ -92,7 +95,11 @@ _tracer = _otel_trace.get_tracer("config.rails.actions")
 
 
 @action(name="RetrieveKnowledgeAction")
-def retrieve_knowledge(events=None, context=None):
+def retrieve_knowledge(
+    events: list[dict[str, Any]] | None = None,
+    context: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
     """
     RetrieveKnowledgeAction: retrieves relevant knowledge for NeMo Guardrails flows.
     Reads KNOWLEDGE_BASE_URL from environment. Falls back to empty list with a warning
@@ -118,10 +125,19 @@ def retrieve_knowledge(events=None, context=None):
             query = ""
             if events:
                 last = events[-1] if events else {}
-                query = last.get("content", "") if isinstance(last, dict) else str(last)
+                query = last.get("content", "") if isinstance(last, dict) else str(last)  # pyright: ignore[reportUnnecessaryIsInstance]
             resp = httpx.get(f"{kb_url}/retrieve", params={"q": query}, timeout=5.0)
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
+            resp_data = cast(dict[str, Any], resp.json())
+            raw_results = resp_data.get("results")
+            results: list[dict[str, Any]] = (
+                [
+                    cast(dict[str, Any], item)
+                    for item in raw_results  # pyright: ignore[reportUnknownVariableType]
+                    if isinstance(item, dict)
+                ]
+                if isinstance(raw_results, list)
+                else []
+            )
             span.set_attribute("nemo.action.result_count", len(results))
             span.set_attribute("nemo.action.outcome", "SUCCESS")
             return results
@@ -149,8 +165,10 @@ def retrieve_knowledge(events=None, context=None):
 
 @action(name="MaskPIIAction")
 async def mask_pii_action(
-    context: dict | None = None, llm: object | None = None, **kwargs
-):
+    context: dict[str, Any] | None = None,
+    llm: Any | None = None,
+    **kwargs: Any,
+) -> str:
     """Mask PII in the text using Presidio.
 
     Called for both input and output rails:
@@ -168,7 +186,7 @@ async def mask_pii_action(
 
         logger.debug("MaskPIIAction called with kwargs keys: %s", list(kwargs.keys()))
         ctx = context or {}
-        text = (
+        text = str(
             kwargs.get(
                 "text"
             )  # Explicit argument — highest priority (input AND output callers)
@@ -202,7 +220,7 @@ async def mask_pii_action(
 
         try:
             # Configure Presidio to use the installed en_core_web_sm model
-            configuration = {
+            configuration: dict[str, Any] = {
                 "nlp_engine_name": "spacy",
                 "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
             }
@@ -213,7 +231,7 @@ async def mask_pii_action(
             anonymizer = AnonymizerEngine()
             results = analyzer.analyze(text=text, language="en")
             if results:
-                anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+                anonymized = anonymizer.anonymize(text=text, analyzer_results=results)  # pyright: ignore[reportArgumentType]
                 entity_count = len(results)
                 logger.debug(
                     "MaskPIIAction: masked %d PII entity/entities.", entity_count
@@ -243,8 +261,10 @@ async def mask_pii_action(
 
 @action(name="CustomSelfCheckInputAction")
 async def custom_self_check_input(
-    context: dict | None = None, llm: object | None = None, **kwargs
-):
+    context: dict[str, Any] | None = None,
+    llm: Any | None = None,
+    **kwargs: Any,
+) -> bool:
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
     Stage order (ORDER IS SECURITY-CRITICAL — do not reorder without a
@@ -322,7 +342,7 @@ async def custom_self_check_input(
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         ctx = context or {}
-        text = (ctx.get("last_user_message") or kwargs.get("content") or "").lower()
+        text = str(ctx.get("last_user_message") or kwargs.get("content") or "").lower()
 
         if not text:
             span.set_attribute("nemo.action.stage", "EMPTY")
@@ -613,15 +633,17 @@ async def custom_self_check_input(
 
         # Use NeMo's built-in self-check with financial-domain-aware prompt
         try:
-            from nemoguardrails.library.self_check.input_check.actions import (
+            from nemoguardrails.library.self_check.input_check.actions import (  # pyright: ignore[reportMissingTypeStubs, reportAttributeAccessIssue]
                 self_check_input as nemo_self_check,
             )
 
             # Invoke with LLM (NeMo will use the configured vLLM model)
-            is_safe = await nemo_self_check(context=context, llm=llm)
+            is_safe = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                context=context, llm=llm
+            )
             logger.info("HybridSelfCheckInput: LLM judge result = %s", is_safe)
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
-            return is_safe
+            return bool(is_safe)
         except Exception as e:
             # On LLM failure, fail CLOSED (block input) — an attacker inducing
             # timeouts or errors must not receive an automatic ALLOW. The OPA
@@ -639,8 +661,10 @@ async def custom_self_check_input(
 
 @action(name="CustomSelfCheckOutputAction")
 async def custom_self_check_output(
-    context: dict | None = None, llm: object | None = None, **kwargs
-):
+    context: dict[str, Any] | None = None,
+    llm: Any | None = None,
+    **kwargs: Any,
+) -> bool:
     """Hybrid self-check for financial domain outputs - PHASE 2 UPGRADE.
 
     Three-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02 fix,
@@ -664,7 +688,7 @@ async def custom_self_check_output(
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         ctx = context or {}
-        text = (
+        text = str(
             ctx.get("bot_message")
             or ctx.get("last_bot_message")
             or kwargs.get("content")
@@ -744,14 +768,16 @@ async def custom_self_check_output(
         span.set_attribute("nemo.action.stage", "LLM_JUDGE")
 
         try:
-            from nemoguardrails.library.self_check.output_check.actions import (
+            from nemoguardrails.library.self_check.output_check.actions import (  # pyright: ignore[reportMissingTypeStubs, reportAttributeAccessIssue]
                 self_check_output as nemo_self_check,
             )
 
-            is_safe = await nemo_self_check(context=context, llm=llm)
+            is_safe = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                context=context, llm=llm
+            )
             logger.info("HybridSelfCheckOutput: LLM judge result = %s", is_safe)
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
-            return is_safe
+            return bool(is_safe)
         except Exception as e:
             # On LLM failure, fail CLOSED (block output to be safe)
             logger.error(
@@ -782,7 +808,9 @@ async def custom_self_check_output(
 
 
 @action(name="CheckApprovalTokenAction")
-async def check_approval_token_action(context: dict | None = None, **kwargs) -> bool:
+async def check_approval_token_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — approval-token enforcement owned by OPA safety_check_node.
 
     Financial policy (SC-1) is enforced by the safety_check_node → OPA path
@@ -803,7 +831,9 @@ async def check_approval_token_action(context: dict | None = None, **kwargs) -> 
 
 
 @action(name="CheckDataLatencyAction")
-async def check_data_latency_action(context: dict | None = None, **kwargs) -> bool:
+async def check_data_latency_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — market data latency enforcement owned by OPA safety_check_node.
 
     Financial policy (FIN-2) is enforced by the safety_check_node → OPA path.
@@ -822,7 +852,9 @@ async def check_data_latency_action(context: dict | None = None, **kwargs) -> bo
 
 
 @action(name="CheckDrawdownLimitAction")
-async def check_drawdown_limit_action(context: dict | None = None, **kwargs) -> bool:
+async def check_drawdown_limit_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — drawdown limit enforcement owned by OPA safety_check_node.
 
     Financial policy (UCA-5) is enforced by the safety_check_node → OPA path.
@@ -841,7 +873,9 @@ async def check_drawdown_limit_action(context: dict | None = None, **kwargs) -> 
 
 
 @action(name="CheckSlippageRiskAction")
-async def check_slippage_risk_action(context: dict | None = None, **kwargs) -> bool:
+async def check_slippage_risk_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — slippage risk enforcement owned by OPA safety_check_node.
 
     Financial policy (UCA-6) is enforced by the safety_check_node → OPA path.
@@ -860,7 +894,9 @@ async def check_slippage_risk_action(context: dict | None = None, **kwargs) -> b
 
 
 @action(name="CheckAtomicExecutionAction")
-async def check_atomic_execution_action(context: dict | None = None, **kwargs) -> bool:
+async def check_atomic_execution_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Pass-through stub — atomic execution enforcement owned by OPA safety_check_node.
 
     Multi-leg trade atomicity (UCA-4) is enforced by the LangGraph Saga WAL path.
@@ -881,7 +917,9 @@ async def check_atomic_execution_action(context: dict | None = None, **kwargs) -
 
 
 @action(name="LogSafetyAuditAction")
-async def log_safety_audit_action(context: dict | None = None, **kwargs) -> bool:
+async def log_safety_audit_action(
+    context: dict[str, Any] | None = None, **kwargs: Any
+) -> bool:
     """Explicit no-op audit log stub (declared in definitions.co).
 
     Declared in config/rails/definitions.co as ``action LogSafetyAuditAction``.
@@ -893,7 +931,9 @@ async def log_safety_audit_action(context: dict | None = None, **kwargs) -> bool
         span.set_attribute("iso42001.control_id", "A.6.2.8")
         span.set_attribute("nemo.action.outcome", "LOGGED")
         event_type = (
-            (context or {}).get("event_type", "unknown") if context else "unknown"
+            str((context or {}).get("event_type", "unknown"))
+            if context
+            else "unknown"
         )
         logger.info(
             "LogSafetyAuditAction: safety event logged (event_type=%s)", event_type
