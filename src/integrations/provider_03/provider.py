@@ -62,6 +62,7 @@ _TIMEOUT_SECONDS: float = float(
 # Finding code for endpoint errors (consistent with provider_01 and provider_06)
 FINDING_CODE_ENDPOINT_ERROR: Final[str] = "ENDPOINT_ERROR"
 FINDING_CODE_MAPPING_COLLISION: Final[str] = "MAPPING_COLLISION"
+FINDING_CODE_PARSE_ERROR: Final[str] = "PARSE_ERROR"
 
 
 class Provider03NormativeProvider:
@@ -231,11 +232,51 @@ class Provider03NormativeProvider:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
-                data = resp.json()
+                
+                # Fail-closed JSON parsing
+                try:
+                    data = resp.json()
+                except (json.JSONDecodeError, ValueError) as exc:
+                    logger.error(
+                        "[Provider03] validate_fria JSON parse error: %s %s",
+                        url,
+                        exc,
+                    )
+                    return ValidationResult(
+                        admitted=False,
+                        error=f"Malformed JSON response: {exc}",
+                        findings=[
+                            {
+                                "code": FINDING_CODE_PARSE_ERROR,
+                                "severity": "blocked",
+                                "message": f"Provider 03 response could not be decoded as JSON: {exc}",
+                            }
+                        ],
+                    )
+                
+                # Enforce response schema structure
+                if not isinstance(data, dict):
+                    logger.error(
+                        "[Provider03] validate_fria invalid schema: expected dict, got %s",
+                        type(data).__name__,
+                    )
+                    return ValidationResult(
+                        admitted=False,
+                        error=f"Invalid response schema: expected JSON object, got {type(data).__name__}",
+                        findings=[
+                            {
+                                "code": FINDING_CODE_PARSE_ERROR,
+                                "severity": "blocked",
+                                "message": f"Provider 03 response is not a valid JSON object: {type(data).__name__}",
+                            }
+                        ],
+                    )
 
-            # Map Provider 03's verdict to CAGE semantics
-            verdict = data.get("verdict", "").upper()
-            findings = data.get("findings", [])
+            # Defensive field extraction
+            raw_verdict = data.get("verdict")
+            verdict = str(raw_verdict).upper() if raw_verdict is not None else ""
+            raw_findings = data.get("findings")
+            findings = raw_findings if isinstance(raw_findings, list) else []
 
             if verdict == "APPROVED":
                 return ValidationResult(
@@ -298,6 +339,19 @@ class Provider03NormativeProvider:
                     }
                 ],
             )
+        except Exception as exc:
+            logger.error("[Provider03] validate_fria unexpected error: %s %s", url, exc)
+            return ValidationResult(
+                admitted=False,
+                error=str(exc),
+                findings=[
+                    {
+                        "code": FINDING_CODE_ENDPOINT_ERROR,
+                        "severity": "blocked",
+                        "message": f"Provider 03 unexpected error: {exc}",
+                    }
+                ],
+            )
 
     async def submit_evidence(self, thread_id: str, evidence_hash: str):  # type: ignore[no-untyped-def]
         """Submit post-execution attestation evidence to Provider 03.
@@ -322,7 +376,32 @@ class Provider03NormativeProvider:
                     headers=self._headers(),
                 )
                 resp.raise_for_status()
-                data = resp.json()
+                
+                # Fail-closed JSON parsing
+                try:
+                    data = resp.json()
+                except (json.JSONDecodeError, ValueError) as exc:
+                    logger.error(
+                        "[Provider03] submit_evidence JSON parse error: %s %s",
+                        url,
+                        exc,
+                    )
+                    return EvidenceSeal(
+                        thread_id=thread_id,
+                        error=f"Invalid JSON response: {exc}",
+                    )
+                
+                # Verify response is a dict
+                if not isinstance(data, dict):
+                    logger.error(
+                        "[Provider03] submit_evidence invalid schema: expected dict, got %s",
+                        type(data).__name__,
+                    )
+                    return EvidenceSeal(
+                        thread_id=thread_id,
+                        error=f"Invalid response format: expected JSON object, got {type(data).__name__}",
+                    )
+                
                 return EvidenceSeal(
                     thread_id=thread_id,
                     seal_hash=data.get("seal_hash", data.get("receipt_hash", "")),
@@ -339,6 +418,9 @@ class Provider03NormativeProvider:
             )
         except httpx.RequestError as exc:
             logger.error("[Provider03] submit_evidence request error: %s %s", url, exc)
+            return EvidenceSeal(thread_id=thread_id, error=str(exc))
+        except Exception as exc:
+            logger.error("[Provider03] submit_evidence unexpected error: %s %s", url, exc)
             return EvidenceSeal(thread_id=thread_id, error=str(exc))
 
     def ingest_bind_receipt(self, receipt: dict[str, Any]) -> str:

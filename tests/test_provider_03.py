@@ -32,6 +32,7 @@ import pytest
 
 from src.integrations.provider_03.provider import (
     FINDING_CODE_ENDPOINT_ERROR,
+    FINDING_CODE_PARSE_ERROR,
     Provider03NormativeProvider,
 )
 
@@ -354,6 +355,195 @@ class TestErrorHandling:
         assert result.admitted is False
         assert len(result.findings) == 1
         assert result.findings[0]["code"] == FINDING_CODE_ENDPOINT_ERROR
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_json_decode_error_on_validate_fria_returns_parse_error_finding(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """JSONDecodeError on validate_fria returns PARSE_ERROR finding."""
+        import json
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.side_effect = json.JSONDecodeError(
+                "Expecting value", "doc", 0
+            )
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        assert result.admitted is False
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == FINDING_CODE_PARSE_ERROR
+        assert result.findings[0]["severity"] == "blocked"
+        assert "could not be decoded as JSON" in result.findings[0]["message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_non_dict_response_on_validate_fria_returns_parse_error_finding(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """Non-dict response on validate_fria returns PARSE_ERROR finding."""
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            # Test with list response
+            mock_response.json.return_value = ["not", "a", "dict"]
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        assert result.admitted is False
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == FINDING_CODE_PARSE_ERROR
+        assert result.findings[0]["severity"] == "blocked"
+        assert "not a valid JSON object" in result.findings[0]["message"]
+
+        # Test with string response
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = "OK"
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        assert result.admitted is False
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == FINDING_CODE_PARSE_ERROR
+        assert result.findings[0]["severity"] == "blocked"
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_unexpected_exception_on_validate_fria_returns_endpoint_error(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """Unexpected exception on validate_fria returns ENDPOINT_ERROR."""
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.side_effect = RuntimeError("Unexpected connection drop")
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        assert result.admitted is False
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == FINDING_CODE_ENDPOINT_ERROR
+        assert result.findings[0]["severity"] == "blocked"
+        assert "unexpected error" in result.findings[0]["message"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_missing_or_non_string_verdict_fails_closed(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """Missing or non-string verdict fails closed without AttributeError."""
+        # Test with None verdict
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = _mock_response({"verdict": None})
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        assert result.admitted is False
+        # No AttributeError should be raised
+
+        # Test with integer verdict
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = _mock_response({"verdict": 12345})
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        assert result.admitted is False
+        # No AttributeError should be raised
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_non_list_findings_handled_safely(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """Non-list findings are handled gracefully without TypeError."""
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = _mock_response(
+                {"verdict": "ESCALATE", "findings": "not-a-list"}
+            )
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "test"})
+
+        # Should parse gracefully without TypeError
+        assert result.admitted is False
+        # Findings defaults to empty list when non-list value provided
+        # The escalate marker should still be injected
+        assert any(f["code"] == "provider_03.escalate" for f in result.findings)
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_submit_evidence_handles_json_decode_error(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """submit_evidence handles JSONDecodeError gracefully."""
+        import json
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.side_effect = json.JSONDecodeError(
+                "Expecting value", "doc", 0
+            )
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            seal = await adapter.submit_evidence("thread-789", "hash-abc")
+
+        assert seal.thread_id == "thread-789"
+        assert seal.error is not None
+        assert "Invalid JSON response" in seal.error
+        # No exception should leak
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_submit_evidence_handles_non_dict_response(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """submit_evidence handles non-dict response gracefully."""
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = ["seal123"]
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            seal = await adapter.submit_evidence("thread-789", "hash-abc")
+
+        assert seal.thread_id == "thread-789"
+        assert seal.error is not None
+        assert "expected JSON object" in seal.error
+        # No exception should leak
 
 
 # ---------------------------------------------------------------------------
