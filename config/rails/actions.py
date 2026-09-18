@@ -32,6 +32,7 @@ See: docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md
 
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any, Callable, TypeVar, cast
 
 import httpx
@@ -96,7 +97,7 @@ _tracer = _otel_trace.get_tracer("config.rails.actions")
 
 @action(name="RetrieveKnowledgeAction")
 def retrieve_knowledge(
-    events: list[dict[str, Any]] | None = None,
+    events: Sequence[dict[str, Any]] | None = None,
     context: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
@@ -210,6 +211,9 @@ async def mask_pii_action(
             from presidio_analyzer import AnalyzerEngine
             from presidio_analyzer.nlp_engine import NlpEngineProvider
             from presidio_anonymizer import AnonymizerEngine
+            from presidio_anonymizer.entities import (
+                RecognizerResult as AnonymizerResult,
+            )
         except ImportError:
             logger.warning(
                 "MaskPIIAction: presidio_analyzer / presidio_anonymizer not installed. "
@@ -231,7 +235,10 @@ async def mask_pii_action(
             anonymizer = AnonymizerEngine()
             results = analyzer.analyze(text=text, language="en")
             if results:
-                anonymized = anonymizer.anonymize(text=text, analyzer_results=results)  # pyright: ignore[reportArgumentType]
+                compat_results = cast(list[AnonymizerResult], results)
+                anonymized = anonymizer.anonymize(
+                    text=text, analyzer_results=compat_results
+                )
                 entity_count = len(results)
                 logger.debug(
                     "MaskPIIAction: masked %d PII entity/entities.", entity_count
