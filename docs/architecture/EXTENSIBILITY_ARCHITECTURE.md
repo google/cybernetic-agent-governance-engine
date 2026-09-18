@@ -799,7 +799,7 @@ For any private partner integration:
 | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md)       | Detailed CBF mathematical formulation and DoWhy design  |
 | [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md)                 | Full inference gateway architecture                     |
 | [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
-| [Technical Report Series](../technical-report/README.md)              | Complete 10-document engineering record                 |
+| [FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md)                      | Formal verification and completeness proofs             |
 | [config/compliance/README.md](../../README.md)   | Regional profile specification and authoring guide      |
 | [DUAL_PROJECT_ARCHITECTURE.md](DUAL_PROJECT_ARCHITECTURE.md)         | Dual-project telemetry isolation design and threat model |
 - **Compliance Baselines**: Profiles (`US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) dictate the active normative overlay.

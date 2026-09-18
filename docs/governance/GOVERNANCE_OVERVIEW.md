@@ -398,7 +398,7 @@ The architecture is designed for **Google Kubernetes Engine (GKE)** using the **
 - **Governance:** OPA in `default` namespace; NeMo Guardrails in `governance-stack` namespace; both accessed over intra-cluster DNS.
 - **Communication:** Intra-cluster HTTP/REST and gRPC.
 
-For detailed deployment instructions, see **[deployment/README.md](../../README.md)** and the [Technical Report — Deployment & Infrastructure](../technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md).
+For detailed deployment instructions, see **[DEPLOYMENT_RULES.md](../operations/DEPLOYMENT_RULES.md)** and **[ARCHITECTURE.md](../architecture/ARCHITECTURE.md)**.
 
 ---
 

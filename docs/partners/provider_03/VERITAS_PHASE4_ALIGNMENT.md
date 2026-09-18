@@ -219,7 +219,7 @@ Expected output:
 - **Provider Implementation:** [`src/integrations/provider_03/provider.py`](../../../src/integrations/provider_03/provider.py)
 - **Test Coverage:** [`tests/integrations/provider_03/test_provider_03.py`](../../../tests/integrations/provider_03/test_provider_03.py)
 - **NormativeProvider Seam:** [`src/gateway/governance/seams/normative.py`](../../../src/gateway/governance/seams/normative.py)
-- **Adapter Architecture:** [`docs/technical-report/11-ADAPTER-ARCHITECTURE.md`](../../technical-report/11-ADAPTER-ARCHITECTURE.md)
+- **Adapter Architecture:** [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](../../architecture/EXTENSIBILITY_ARCHITECTURE.md)
 
 ---
 

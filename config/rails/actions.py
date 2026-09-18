@@ -27,7 +27,7 @@ Alternative implementations (for reference/fallback only):
   - src.governed_financial_advisor.governance.nemo_actions — synchronous in-process fallbacks (testing)
   - src.gateway.governance.nemo.actions — async gateway singleton actions (gateway-internal use)
 
-See: docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md §6
+See: docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md
 """
 
 import logging

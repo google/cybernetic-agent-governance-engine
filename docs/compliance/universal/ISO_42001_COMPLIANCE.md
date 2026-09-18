@@ -48,7 +48,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
   - **Lula Manifests:** `compliance/lula/`
   - **Bridge Service:** `src/compliance_bridge/`
   - **Telemetry:** OpenTelemetry spans tagged with `iso42001.control_id` flow to Langfuse. The bridge aggregates them into a `safety_rate` per control over a 24-hour window with a 48-hour staleness guard and a configurable startup grace period.
-  - **Assessment State Integrity (CAGE v2.2.0):** Each OSCAL finding carries one of four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `ERROR`. A scanner/collector failure ("fetch failed", timeout) maps to `ERROR` — **never** to `NOT_APPLICABLE`. This distinction is required by NIST SP 800-53A §3.2: evaluation errors must be flagged as Incomplete/Unknown so auditors can investigate the evidence gap. `ERROR` findings on critical controls (SC-4, A.9.2, A.8.4) trigger the same Slack/PagerDuty alert as explicit `FAIL` findings and score `0.0` in Langfuse. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](../../technical-report/06-COMPLIANCE-STANDARDS.md) for the full state table.
+  - **Assessment State Integrity (CAGE v2.2.0):** Each OSCAL finding carries one of four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `ERROR`. A scanner/collector failure ("fetch failed", timeout) maps to `ERROR` — **never** to `NOT_APPLICABLE`. This distinction is required by NIST SP 800-53A §3.2: evaluation errors must be flagged as Incomplete/Unknown so auditors can investigate the evidence gap. `ERROR` findings on critical controls (SC-4, A.9.2, A.8.4) trigger the same Slack/PagerDuty alert as explicit `FAIL` findings and score `0.0` in Langfuse. See [`src/compliance_bridge/oscal_parser.py`](../../../src/compliance_bridge/oscal_parser.py) and [`GOVERNANCE_CROSSWALK.md`](../cross-region/GOVERNANCE_CROSSWALK.md) for the full state table.
 
 ### Clause 10: Improvement
 
@@ -70,7 +70,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 | **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../../../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   | **Yes** — CRITICAL_CONTROL |
 | **A.8.4** | AI System Operation Controls | HITL + Saga WAL; DEFER state machine | N/A (no manifest)                                                         | STPA UCA checks pass                | **Yes** — CRITICAL_CONTROL |
 
-> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL`. This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](../../technical-report/06-COMPLIANCE-STANDARDS.md) for the full four-state semantics table.
+> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL`. This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`src/compliance_bridge/oscal_parser.py`](../../../src/compliance_bridge/oscal_parser.py) and [`GOVERNANCE_CROSSWALK.md`](../cross-region/GOVERNANCE_CROSSWALK.md) for the full four-state semantics table.
 
 ---
 

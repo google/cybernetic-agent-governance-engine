@@ -275,7 +275,7 @@ Execute Action    Human Review      Permanent Denial
 
 ## Related Documentation
 
-- [Adapter Architecture Specification](../technical-report/11-ADAPTER-ARCHITECTURE.md) — Generic normative provider integration patterns
+- [Extensibility Architecture](../../architecture/EXTENSIBILITY_ARCHITECTURE.md) — Generic normative provider integration patterns
 - [Consequence Gateway](../../src/gateway/governance/consequence_gateway.py) — Fail-closed execution boundary
 - [Defer Queue](../../src/gateway/governance/defer_queue.py) — Escalation and deferral mechanism
 - [Evidence Stream](../../src/gateway/governance/evidence/stream.py) — Tamper-evident audit chain

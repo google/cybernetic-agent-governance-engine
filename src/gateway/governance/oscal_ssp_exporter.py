@@ -115,7 +115,7 @@ _FTRA_SI10_IMPL_UUID = "si100001-ftra-8000-validator00001"
 _FTRA_AC4_IMPL_UUID = "ac040001-ftra-8000-validator00001"
 
 # ---------------------------------------------------------------------------
-# Multi-jurisdiction SSP router — see docs/technical-report/06-COMPLIANCE-STANDARDS.md §15.7
+# Multi-jurisdiction SSP router — see docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md
 # ---------------------------------------------------------------------------
 
 # Maps CAGE_DEPLOYMENT_REGION values to OSCAL profile paths and framework metadata.

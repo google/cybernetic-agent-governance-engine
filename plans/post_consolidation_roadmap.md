@@ -538,8 +538,8 @@ have not caught up.
    governance modules that moved into Layer 1 and the domain code that moved to
    Layer 2. High-risk documents:
    [`docs/architecture/ARCHITECTURE.md`](../docs/architecture/ARCHITECTURE.md),
-   [`docs/technical-report/02-ARCHITECTURE.md`](../docs/technical-report/02-ARCHITECTURE.md),
-   [`docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md`](../docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md),
+   [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../docs/architecture/GATEWAY_ARCHITECTURE.md),
+   [`docs/architecture/FORMAL_VERIFICATION.md`](../docs/architecture/FORMAL_VERIFICATION.md),
    [`docs/governance/GOVERNANCE_OVERVIEW.md`](../docs/governance/GOVERNANCE_OVERVIEW.md).
 3. Verify STPA artifact freshness, since consolidation touched control structure:
    ```bash

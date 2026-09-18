@@ -94,4 +94,4 @@ This produces a `governance_pipeline.json` (KFP v2 IR spec) that can be uploaded
 ### Documentation
 
 For full architectural documentation of the cybernetic loop including the anti-flapping design, see:
-- [`docs/technical-report/02-ARCHITECTURE.md` §10](../../../docs/technical-report/02-ARCHITECTURE.md) — Langfuse Webhook Cybernetic Loop
+- [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../../../docs/architecture/GATEWAY_ARCHITECTURE.md) — Langfuse Webhook Cybernetic Loop

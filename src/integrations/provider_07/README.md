@@ -281,7 +281,7 @@ src/integrations/provider_07/
 
 - **Canonical Schema**: [`docs/partners/INFERTHETA_CANONICAL_SCHEMA.md`](../../../docs/partners/INFERTHETA_CANONICAL_SCHEMA.md)
 - **NormativeProvider Seam**: [`src/gateway/governance/normative_provider.py`](../../gateway/governance/normative_provider.py)
-- **Adapter Architecture**: [`docs/technical-report/11-ADAPTER-ARCHITECTURE.md`](../../../docs/technical-report/11-ADAPTER-ARCHITECTURE.md)
+- **Adapter Architecture**: [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](../../../docs/architecture/EXTENSIBILITY_ARCHITECTURE.md)
 - **Import Boundary Enforcement**: [`scripts/check_import_boundaries.py`](../../../scripts/check_import_boundaries.py)
 - **Vendor Brand Isolation**: [`scripts/check_vendor_brands.py`](../../../scripts/check_vendor_brands.py)
 - **RFC 8785**: [JSON Canonicalization Scheme (JCS)](https://datatracker.ietf.org/doc/html/rfc8785)

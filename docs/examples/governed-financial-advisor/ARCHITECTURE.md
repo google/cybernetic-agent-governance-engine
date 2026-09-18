@@ -274,6 +274,6 @@ All spans are tagged with:
 |---|---|
 | [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../../architecture/GATEWAY_ARCHITECTURE.md) | Layer 1 kernel architecture |
 | [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](../../architecture/EXTENSIBILITY_ARCHITECTURE.md) | Domain plugin contracts |
-| [`docs/technical-report/04-AGENT-SYSTEM.md`](../../technical-report/04-AGENT-SYSTEM.md) | Full agent system deep-dive |
+| [`docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`](../../architecture/AGENT_SYSTEM_ARCHITECTURE.md) | Full agent system deep-dive |
 | [`docs/API_MAP_EXTERNAL.md`](../../API_MAP_EXTERNAL.md) | Complete REST API reference |
 | [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../../security/HITL_TOCTOU_REMEDIATION.md) | TOCTOU mitigation strategy |

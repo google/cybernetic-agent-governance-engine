@@ -125,18 +125,16 @@ was previously not exercised by CI at all.
 
 Any change to the reachable-state count in `proof/model.py` must be mirrored in:
 
-- [`docs/technical-report/07-SECURITY-INFRASTRUCTURE.md`](../technical-report/07-SECURITY-INFRASTRUCTURE.md) line 139
-- [`docs/technical-report/10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md) lines 8, 208, 496
-- [`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md) line 406
+- [`docs/architecture/FORMAL_VERIFICATION.md`](../architecture/FORMAL_VERIFICATION.md)
+- [`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md)
 - ``CAGE_ARXIV.MD`` abstract, §4.4, Appendix A
 
 The VSM System 4 correction (ST4) must also be applied to
-[`docs/technical-report/10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md) line 50.
+[`docs/architecture/FORMAL_VERIFICATION.md`](../architecture/FORMAL_VERIFICATION.md).
 
 **Phase 1 blast-radius status:**
 
-- [x] `docs/technical-report/07-SECURITY-INFRASTRUCTURE.md` — Gap 1 row → 21 states
-- [x] `docs/technical-report/10-FORMAL-VERIFICATION.md` — status header, Step 7 scope note, tier table, proof output, Gap sub-proof table (Gap 1 row added), Overall Summary row 7, VSM System 4 claim
+- [x] `docs/architecture/FORMAL_VERIFICATION.md` — status header, Step 7 scope note, tier table, proof output, Gap sub-proof table (Gap 1 row added), Overall Summary row 7, VSM System 4 claim
 - [x] `docs/architecture/ARCHITECTURE.md` — footer state count
 - [x] `CAGE_ARXIV.MD` — abstract, §4.4, Appendix A (completed in 41f1d6c)
 
@@ -518,7 +516,7 @@ mirrored in:
 
 - [`proof/model.py`](../../proof/model.py) — state-count verification may need updating
   if NARROW/PAUSE are modeled as distinct terminal/intermediate states
-- [`docs/technical-report/10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md) —
+- [`docs/architecture/FORMAL_VERIFICATION.md`](../architecture/FORMAL_VERIFICATION.md) —
   reachable-state tables
 - ``CAGE_ARXIV.MD`` — abstract decision-count claim, §4.4 proof,
   Appendix A state enumeration

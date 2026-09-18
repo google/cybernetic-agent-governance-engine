@@ -297,7 +297,7 @@ User ──FastMCP over SSE──► Gateway Transport (:8080)
 
 An equivalent **Healthcare Clinical Agent demo** path traverses the identical substrate, substituting `dose_order` for `execute_trade`, `SerumConcentrationBarrier` for `CashBarrier`, and clinical critics for market critics — with **no kernel change**. Both reference applications demonstrate that CAGE's governance mechanisms are completely domain-agnostic. Any adopter domain follows the same substitution pattern.
 
-For full architectural detail, see [`docs/architecture/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md), the [Technical Report Series](docs/technical-report/README.md), and the [Extensibility Architecture](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) (domain-agnostic kernel design and multi-domain roadmap). Four subsystem deep-dives cover the enforcement substrate in detail: [Symbolic Governor Runtime](docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md), [Consequence Gateway](docs/architecture/CONSEQUENCE_GATEWAY.md), [FTRA Reachability Analyzer](docs/architecture/FTRA_REACHABILITY_ANALYZER.md), and [Cryptographic Signer Engine](docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md).
+For full architectural detail, see [`docs/architecture/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md), the [Technology Stack](docs/architecture/TECH_STACK.md), the [Multi-Agent System Architecture](docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md), and the [Extensibility Architecture](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) (domain-agnostic kernel design and multi-domain roadmap). Four subsystem deep-dives cover the enforcement substrate in detail: [Symbolic Governor Runtime](docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md), [Consequence Gateway](docs/architecture/CONSEQUENCE_GATEWAY.md), [FTRA Reachability Analyzer](docs/architecture/FTRA_REACHABILITY_ANALYZER.md), and [Cryptographic Signer Engine](docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md).
 
 ---
 
@@ -338,7 +338,7 @@ For full architectural detail, see [`docs/architecture/GATEWAY_ARCHITECTURE.md`]
 
 ## Mathematical Foundations & Formal Safety Guarantees
 
-CAGE's runtime safety properties are grounded in formal mathematical constructs implemented directly in source code. The following summarises the key formalisms; full derivations are in [`docs/technical-report/10-FORMAL-VERIFICATION.md`](docs/technical-report/10-FORMAL-VERIFICATION.md) and [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md).
+CAGE's runtime safety properties are grounded in formal mathematical constructs implemented directly in source code. The following summarises the key formalisms; full derivations are in [`docs/architecture/FORMAL_VERIFICATION.md`](docs/architecture/FORMAL_VERIFICATION.md) and [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md).
 
 ### Control Barrier Function (CBF)
 
@@ -716,7 +716,7 @@ cybernetic-agent-governance-engine/
 | [`tests/`](tests/)                                                                     | Automated unit, integration, and red-team test suites              |
 | [`examples/README.md`](examples/README.md)                                             | Chaos Agent Playground & Governance 3-Act Demo                     |
 | [`deployment/k8s/K8S_SECURITY_HARDENING.md`](deployment/k8s/K8S_SECURITY_HARDENING.md) | Pod Security Standards, network policy topology, Z3N verification  |
-| [`docs/technical-report/`](docs/technical-report/README.md)                            | 10-document technical report series                                |
+| [`docs/architecture/FORMAL_VERIFICATION.md`](docs/architecture/FORMAL_VERIFICATION.md) | Formal verification and completeness proofs                        |
 | [`infra/DEPLOYMENT_GUIDE.md`](infra/DEPLOYMENT_GUIDE.md)                               | Step-by-step infrastructure deployment guide                       |
 
 ---

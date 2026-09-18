@@ -90,7 +90,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 ## 2. Mathematical Safety Invariants
 
-The following formal invariants are implemented directly in source code and enforced at runtime on every governance evaluation. Full derivations are in [`docs/technical-report/10-FORMAL-VERIFICATION.md`](docs/technical-report/10-FORMAL-VERIFICATION.md) and [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md).
+The following formal invariants are implemented directly in source code and enforced at runtime on every governance evaluation. Full derivations are in [`docs/architecture/FORMAL_VERIFICATION.md`](docs/architecture/FORMAL_VERIFICATION.md) and [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md).
 
 ### 2.1 Control Barrier Function (CBF)
 
@@ -360,4 +360,4 @@ To help you navigate the full regulatory documentation suite:
 *   **Security Posture & Milestones:** [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md) — Precise POAM checklists and NIST RMF coverage tracking.
 *   **STPA & Hazard Analysis:** [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md) — Breakdown of UCAs 1-9 and the STPA-to-Policy compiler specification.
 *   **Causal & CBF Design:** [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md) — DoWhy regression kernel placebo refuter and discrete-time CBF mathematics.
-*   **Full Technical Report Series:** [docs/technical-report/README.md](docs/technical-report/README.md) — 10-document technical report series detailing individual domains.
+*   **Formal Verification:** [docs/architecture/FORMAL_VERIFICATION.md](docs/architecture/FORMAL_VERIFICATION.md) — Formal verification proofs, CBF invariance, and NoDirectBind proofs.

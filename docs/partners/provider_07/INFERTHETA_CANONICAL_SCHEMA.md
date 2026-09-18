@@ -341,7 +341,7 @@ Expected utility scores guide **counterfactual recommendations**:
 ## 8. References
 
 - [NormativeProvider Protocol](../../src/gateway/governance/normative_provider.py)
-- [Secure Plugin & Adapter Architecture](../../docs/technical-report/11-ADAPTER-ARCHITECTURE.md)
+- [Secure Plugin & Adapter Architecture](../../architecture/EXTENSIBILITY_ARCHITECTURE.md)
 - [Gate G8: Vendor Brand Isolation](../../AGENTS.md#architecture--design-standards)
 - [InferTheta Adapter README](../../src/integrations/provider_07/README.md)
 - [RFC 8785: JSON Canonicalization Scheme (JCS)](https://datatracker.ietf.org/doc/html/rfc8785)

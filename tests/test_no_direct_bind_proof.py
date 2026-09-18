@@ -16,7 +16,7 @@
 
 ``proof/model.py`` is cited in CAGE_ARXIV.MD §4.4 and Appendix A, and its
 reachable-state counts are quoted verbatim in the paper and in
-``docs/technical-report/``.  These tests pin those numbers so that a change to
+``docs/architecture/FORMAL_VERIFICATION.md``.  These tests pin those numbers so that a change to
 the tier list or the transition functions cannot silently invalidate the
 published figures.
 

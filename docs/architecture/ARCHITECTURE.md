@@ -204,15 +204,24 @@ Profiles dynamically alter operational confidence boundaries, latency budgets, a
 | `EU_ECB` | EU AI Act (Art. 29a FRIA), DORA, GDPR | 0.97 | 4.0% | 150ms |
 | `APAC_MAS` | MAS FEAT Principles, ISO 42001 | 0.95 | 5.0% | 100ms |
 
-### Dedicated Subsystem Documentation
+### Architecture & Design Index
 
-For deep-dive architectural specifications, refer to the corresponding subsystem records:
+For deep-dive architectural specifications, refer to the corresponding canonical documents:
 
-- **Symbolic Governor Runtime:** [SYMBOLIC_GOVERNOR_RUNTIME.md](SYMBOLIC_GOVERNOR_RUNTIME.md) — Dispatch loop, 2-phase commit, and interruption taxonomy.
-- **Consequence Gateway:** [CONSEQUENCE_GATEWAY.md](CONSEQUENCE_GATEWAY.md) — 6-step token evaluation, JWS verification, and authority store.
-- **Finite-Time Reachability Analysis:** [FTRA_REACHABILITY_ANALYZER.md](FTRA_REACHABILITY_ANALYZER.md) — Irreversibility classification and graph bounding.
-- **Deferral Queue State Machine:** [DEFERRAL_QUEUE.md](DEFERRAL_QUEUE.md) — AARM deferral queue, Redis storage, and dual-control resolution.
-- **Evidence Chain & Sinks:** [EVIDENCE_CHAIN.md](EVIDENCE_CHAIN.md) — Cryptographic hash chaining, streams, and cold store daemon.
-- **Cryptographic Signer Engine:** [CRYPTOGRAPHIC_SIGNER_ENGINE.md](CRYPTOGRAPHIC_SIGNER_ENGINE.md) — Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution.
-- **Gateway Server Topology:** [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md) — FastMCP server composition, SSE routing, and inference proxies.
-- **Extensibility Architecture:** [EXTENSIBILITY_ARCHITECTURE.md](EXTENSIBILITY_ARCHITECTURE.md) — CagePlugin contract and seam isolation.
+| # | Document | Title & Focus Area | Canonical Path |
+|---|---|---|---|
+| 1 | **Macro-Architecture** | System Macro-Architecture, Trust Boundaries & Layer Topology | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| 2 | **Gateway Architecture** | Layer 1 Gateway Kernel, STERA Dispatch Loop & Request Lifecycle | [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md) |
+| 3 | **Multi-Agent System** | 9-Agent Inventory, 25/33-Field AgentState Schema & HITL Workflow | [`AGENT_SYSTEM_ARCHITECTURE.md`](AGENT_SYSTEM_ARCHITECTURE.md) |
+| 4 | **Technology Stack** | Exhaustive 11-Domain Bill of Materials, Sovereign Stack & Dependencies | [`TECH_STACK.md`](TECH_STACK.md) |
+| 5 | **Formal Verification** | 11-Step Mathematical State-Space Proofs, CBF & NoDirectBind Invariants | [`FORMAL_VERIFICATION.md`](FORMAL_VERIFICATION.md) |
+| 6 | **Consequence Gateway** | 6-Step Token Evaluation, JWS Verification & Authority Store | [`CONSEQUENCE_GATEWAY.md`](CONSEQUENCE_GATEWAY.md) |
+| 7 | **Symbolic Governor** | Dispatch Loop, 2-Phase Commit & Interruption Taxonomy | [`SYMBOLIC_GOVERNOR_RUNTIME.md`](SYMBOLIC_GOVERNOR_RUNTIME.md) |
+| 8 | **FTRA Reachability** | Irreversibility Classification & Plan Graph Bounding | [`FTRA_REACHABILITY_ANALYZER.md`](FTRA_REACHABILITY_ANALYZER.md) |
+| 9 | **Deferral Queue** | AARM Deferral State Machine, Redis db=1 & Dual-Control Resolution | [`DEFERRAL_QUEUE.md`](DEFERRAL_QUEUE.md) |
+| 10 | **Evidence Chain** | Cryptographic Hash Chaining, Streams & Cold Store Daemon | [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) |
+| 11 | **Cryptographic Signer** | Cloud KMS HSM Provider, RFC 8785 JCS & Key Manifests | [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](CRYPTOGRAPHIC_SIGNER_ENGINE.md) |
+| 12 | **Extensibility Architecture** | GovernanceTierPlugin Contract, Seams & Vendor Neutrality | [`EXTENSIBILITY_ARCHITECTURE.md`](EXTENSIBILITY_ARCHITECTURE.md) |
+| 13 | **Dual-Project Architecture** | Sovereign Regional Langfuse Telemetry & Operational Isolation | [`DUAL_PROJECT_ARCHITECTURE.md`](DUAL_PROJECT_ARCHITECTURE.md) |
+| 14 | **Inference Gateway** | Split-Brain vLLM Serving Topology & Model Router | [`INFERENCE_GATEWAY_ARCHITECTURE.md`](INFERENCE_GATEWAY_ARCHITECTURE.md) |
+| 15 | **ClickHouse Evidence Sink** | High-Throughput WORM Audit Ingestion & Schema Contracts | [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) |

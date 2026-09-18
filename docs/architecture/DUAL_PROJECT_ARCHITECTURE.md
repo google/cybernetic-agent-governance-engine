@@ -284,7 +284,7 @@ This would be a Terraform infrastructure change, not a code change. The Python c
 
 | Document                                                                  | Relationship                                           |
 | ------------------------------------------------------------------------- | ------------------------------------------------------ |
-| [02-ARCHITECTURE.md §9.2](../technical-report/02-ARCHITECTURE.md)         | Brief mention of dual-project setup                    |
+| [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md)                        | Inference gateway architecture and telemetry setup     |
 | [NIST_RMF_CHUNK4](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)                | Documents the silent failure gap                       |
 | [EXTENSIBILITY_ARCHITECTURE.md §2.4](EXTENSIBILITY_ARCHITECTURE.md)      | References telemetry isolation as implementation requirement |
 | [infra/ENV_INTEGRATION.md](../../infra/ENV_INTEGRATION.md)                | Credential mapping for both projects                   |

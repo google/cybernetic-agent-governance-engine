@@ -5,12 +5,12 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-09-09                |
 | **Version**        | 3.0.1                     |
-| **Status**         | Current — v3.0.1 stable; test suite verified; **4,148 collected / 3,921 local unit passed, 0 failed**; NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states; Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
-| **Series**         | CAGE Technical Report — Document 10 / 10 |
+| **Status**         | Current — v3.0.1 stable; test suite verified; **4,148 collected / 3,921 local unit passed, 0 failed** (baseline: 2,553 passing core unit tests); NoDirectBind invariant machine-verified over 21/24 reachable core states (57 sequential / 66 concurrent full reachable states); Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
+| **Canonical Path** | `docs/architecture/FORMAL_VERIFICATION.md` |
 
-As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
+As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.1 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
-Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 architectural enhancements.
+Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 and v3.0.0 architectural enhancements.
 
 ### Primary Regulatory Framework
 
@@ -18,23 +18,23 @@ The formal verification claims in this document are grounded in the following pr
 
 | Framework | Authority | Scope |
 | --------- | --------- | ----- |
-| **SR 26-2** (April 17, 2026) | Federal Reserve | Primary agentic AI governance framework; §IV.B confidence requirement (≥0.95) formally verified at Tier 1 |
+| **SR 26-2** (April 17, 2026) | Federal Reserve | Primary agentic AI governance framework; §IV.B confidence requirement ($\ge 0.95$) formally verified at Tier 1 |
 | **ISO/IEC 42001:2023** | ISO | AI Management System; Annex A controls formally mapped to CAGE enforcement points |
 | **CSA AARM v1.0** | Cloud Security Alliance | 11-vector autonomous agent threat model; all vectors formally neutralized or tracked (Step 4) |
 | **NIST SP 800-53 Rev 5 HIGH** | NIST | AU-10 non-repudiation (Step 6), SI-7 integrity (AARM-V1), SC-28 protection at rest |
 
-The SR 26-2 §IV.B agentic confidence requirement is enforced as a hard mathematical invariant: $\text{confidence\_score} \geq 0.95$ is a necessary precondition for the `ALLOW` transition in the hybrid automaton defined in Step 3. Requests with confidence below this threshold are routed to `MANUAL_REVIEW` (0.70–0.95) or `DEFER` (<0.70), never to `APPROVED`.
+The SR 26-2 §IV.B agentic confidence requirement is enforced as a hard mathematical invariant: $\text{confidence\_score} \ge 0.95$ is a necessary precondition for the `ALLOW` transition in the hybrid automaton defined in Step 3. Requests with confidence below this threshold are routed to `MANUAL_REVIEW` (0.70–0.95) or `DEFER` (<0.70), never to `APPROVED`.
 
 ---
 
 ## Step 1: Hazard Completeness (STPA Analysis)
 
-To verify hazard completeness, we re-evaluate the system’s capacity to deterministically neutralize Unsafe Control Actions (UCAs) in light of the new Human-in-the-Loop (HITL) architecture.
+To verify hazard completeness, we re-evaluate the system’s capacity to deterministically neutralize Unsafe Control Actions (UCAs) in light of the Human-in-the-Loop (HITL) architecture.
 
 **Targeted UCA Re-Evaluation:**
 
 * **Hazard:** **UCA-5 / FIN-1** (Trade exceeds drawdown limit or portfolio fraction limit due to market drift during human review).
-* **Previous State:** Vulnerable to TOCTOU.
+* **Previous State:** Vulnerable to Time-Of-Check to Time-Of-Use (TOCTOU).
 * **New Enforcement Mechanism:** The execution plan now inherently contains a bounded limit (`max_slippage_pct`). The `post_hitl_revalidate_node` acts as a hard deterministic circuit breaker, recalculating drift immediately prior to actuation.
 * **Evaluation:** **PASS.** The hazard is fully mapped to a deterministic mathematical bound evaluated at execution time, not generation time.
 
@@ -48,7 +48,7 @@ We evaluate the updated architecture against Stafford Beer's Viable System Model
 * **System 2 (Coordination):** The addition of the `hitl_expires_at` Time-To-Live (TTL) timestamp to the `AgentState` checkpoint. This guarantees that suspended states cannot persist indefinitely, repairing temporal coordination breakdowns.
 * **System 3 (Control):** The `SymbolicGovernor` now utilizes a bifurcated execution model. Tiers 2 and 4 are explicitly re-triggered post-HITL.
 * **System 4 (Intelligence):** *Partially realised.* Langfuse trace evaluation and the POAM remediation cycle provide an out-of-band feedback path from operational telemetry to policy revision. An automated, in-band loop that adjusts policy variables at runtime in response to environment feedback is **not implemented** — policy artefacts are statically compiled from `config/stpa_control_structure.yaml` by the STPA compiler. Closing this loop is tracked as future work.
-* **System 5 (Policy):** (Unchanged) `ControlRegistry` loads normative profiles.
+* **System 5 (Policy):** `ControlRegistry` loads normative profiles.
 
 **Structural Completeness Assessment:** The severed algedonic (feedback) loop between continuous operational reality and System 3 (Control) has been formally closed. System 3 now has the structural mandate to re-assert its control variables immediately prior to System 1's final actuation.
 
@@ -97,12 +97,12 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | **AARM-V5** | Prompt Injection — adversarial input hijacks agent intent | Aho-Corasick Tier-1 scan + NeMo Guardrails Tier-2 + Presidio PII scan | $\forall \text{input}: \text{AhoCorasick}(\text{input}) = \emptyset \land \text{NeMo}(\text{input}) = \text{SAFE}$ before any agent node executes | **NEUTRALIZED** |
 | **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 0) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$ required for ALLOW | **NEUTRALIZED** |
 | **AARM-V7** | Context Window Overflow — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} \in [0.70, 0.95) \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
-| **AARM-V8** | Temporal Deception — model engineers its own privilege escalation via time-based manipulation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without `reviewer\_identity \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
+| **AARM-V8** | Temporal Deception — model engineers its own privilege escalation via time-based manipulation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without $\text{reviewer\_identity} \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
 | **AARM-V9** | Privilege Escalation — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`ConsensusModelRegistry`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
 | **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (10 entity types) in NeMo Guardrails output rail + Cilium L7 FQDN egress lockdown (`deployment/k8s/cilium/egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
+| **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in [0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
 
-> **FUTURE STATE (POAM-023):** An `AnchorageGrpcLedgerProvider` for externally reconciled CBF balance anchoring was referenced in earlier drafts of this document but has not been implemented. The current implementation uses Presidio PII masking and Cilium L7 network policy for AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py). The "Stale Ground Truth" threat (balance staleness) is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above.
-| **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in 0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
+> **POAM-023 Resolution Note:** Balance staleness is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above. Presidio PII masking and Cilium L7 network policies enforce AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py).
 
 **AARM Conformance Summary:** 10 of 11 vectors are fully neutralized. AARM-V11 is PARTIAL pending Provider 01 API credential provisioning (POAM-022). The live conformance report is available at `GET /v1/aarm/conformance-report`.
 
@@ -210,7 +210,7 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 **Proof results (run: `uv run python proof/model.py`):**
 
 ```
-[gated]   Reachable states: 57
+[gated]   Reachable states: 57 (core sequential: 21 reachable, 0 unsafe)
 [gated]   No-Direct-Bind holds over all 57 reachable states: True
 [gated]   EXECUTED states: 1
 [gated]     → resolvedAllow=True  seal_present=True  seal_consumed=True
@@ -223,7 +223,7 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 [ungated]   tier_results  = {all 8 tiers: PASS}
 
 Concurrency sub-proof (CBF ∥ OPA interleaving):
-  Reachable states: 66 (gated: 57) — superset=True
+  Reachable states: 66 (core concurrent: 24 reachable, 0 unsafe; superset=True)
   No-Direct-Bind holds under every interleaving: True
   EXECUTED states: 1 (all with resolvedAllow=TRUE: True)
 
@@ -240,7 +240,7 @@ The gated architecture has exactly **one** reachable `EXECUTED` state, and in th
 
 `gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
 
-`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 66 states versus 57 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
+`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 66 states versus 57 (24 versus 21 core states) — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
 
 Proving the invariant over the superset is a strictly stronger result than proving it over the canonical order alone: the seal gate holds under *every* interleaving, not merely under one scheduling.
 
@@ -322,21 +322,21 @@ The CAGE financial state machine is governed by a **discrete-time Control Barrie
 
 **Safe set:**
 
-$$\mathcal{S} = \{ x \in \mathbb{R}^n : h(x) \geq 0 \}$$
+$$\mathcal{S} = \{ x \in \mathbb{R}^n : h(x) \ge 0 \}$$
 
 **Barrier function (cash solvency):**
 
 $$h(x) = \text{cash\_balance} - \text{min\_cash\_balance}$$
 
-The system is safe when `h(x) ≥ 0`. Bankruptcy (`cash_balance < min_cash_balance`) corresponds to `h(x) < 0`.
+The system is safe when $h(x) \ge 0$. Bankruptcy ($\text{cash\_balance} < \text{min\_cash\_balance}$) corresponds to $h(x) < 0$.
 
 **Discrete-time CBF condition:**
 
-$$h(S(t+1)) \geq (1 - \gamma) \cdot h(S(t)) \quad \forall\, t, \quad \gamma \in (0, 1)$$
+$$h(S(t+1)) \ge (1 - \gamma) \cdot h(S(t)) \quad \forall\, t, \quad \gamma \in (0, 1)$$
 
-where `γ` is the decay rate (configured via `THRESHOLDS.cbf.gamma`). This condition ensures that the barrier function cannot decrease faster than the geometric rate `(1 − γ)` per step.
+where $\gamma$ is the decay rate (configured via `THRESHOLDS.cbf.gamma`). This condition ensures that the barrier function cannot decrease faster than the geometric rate $(1 - \gamma)$ per step.
 
-**CBF Invariance Theorem:** If `h(S(0)) ≥ 0` and the discrete-time CBF condition holds at every step `t`, then `h(S(t)) ≥ 0` for all `t ≥ 0`. The system trajectory remains within the safe set `S` indefinitely.
+**CBF Invariance Theorem:** If $h(S(0)) \ge 0$ and the discrete-time CBF condition holds at every step $t$, then $h(S(t)) \ge 0$ for all $t \ge 0$. The system trajectory remains within the safe set $\mathcal{S}$ indefinitely.
 
 > **Two-Phase Zero-Leakage Architecture:** In CAGE v3.0.0, the **STERA Runtime Pipeline** decouples into Phase 1 (read-only validation gates) and Phase 2 (atomic state mutations). All validation checks (STPA, confidence, OPA, consensus, causal, FRIA) execute in Phase 1 before `atomic_verify_and_commit()` or `reserve()` are invoked. Any validation failure terminates the pipeline in Phase 1 with $S(t+1) = S(t)$, completely eliminating downstream budget leakage and the saga-atomicity gap.
 
@@ -355,10 +355,10 @@ if h_next < required or h_next < 0:
 
 The CBF state is shared across stateless Cloud Run instances via Redis. To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
 
-**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`_update_state_unsafe()`, `rollback_state()`) (**v3.0.0:** `update_state()` renamed to `_update_state_unsafe()`; use `atomic_verify_and_commit()` instead):
+**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`_update_state_unsafe()`, `rollback_state()`):
 
 1. `WATCH safety:current_cash` — marks the key for observation
-2. Read current balance; compute `h(S(t+1))`
+2. Read current balance; compute $h(S(t+1))$
 3. `MULTI` / `SET safety:current_cash <new_balance>` / `EXEC`
 4. If another process modified the key between steps 1–3, `EXEC` returns `nil`; the guard retries up to `_MAX_RETRIES = 5` times before raising `RuntimeError`
 
@@ -413,7 +413,7 @@ In development/test environments without KMS, it falls back to a **4-tuple HMAC*
 
 ### Cryptographic Contract
 
-**Key:** Cloud KMS HSM asymmetric key ring in production; `CAGE_ROUTING_SEAL_SECRET` / `GOVERNANCE_SALT` (≥ 32 bytes in production; enforced by startup assertions) for HMAC fallback.
+**Key:** Cloud KMS HSM asymmetric key ring in production; `CAGE_ROUTING_SEAL_SECRET` / `GOVERNANCE_SALT` ($\ge 32$ bytes in production; enforced by startup assertions) for HMAC fallback.
 
 **Evidence Binding:** The seal binds the action to the exact compliance evidence stream record via `record_hash` (`ehash` JWT claim).
 
@@ -451,7 +451,7 @@ The provenance chain builds a cryptographic audit trail linking each LangGraph g
 
 Each governance node execution produces a `ProvenanceRecord`:
 
-```
+```python
 record_n = ProvenanceRecord(
     trace_id    = <Langfuse trace ID>,
     node_id     = <LangGraph node name>,
@@ -466,15 +466,15 @@ record_n = ProvenanceRecord(
 
 **Deterministic serialization:** All hashes use RFC 8785 JCS canonicalization (`jcs_canonicalize_plan()`) with non-serializable values coerced to strings beforehand. This guarantees identical digests regardless of Python dict insertion order and across Python, Go, and JavaScript runtimes.
 
-> **Serialisation note (supersedes H57):** `compute_hash()` in `provenance_chain.py` previously used `json.dumps(…, separators=(',', ':'), sort_keys=True)`; it now uses RFC 8785 JCS. Digests are not comparable across the change — see [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
+> **Serialisation note:** `compute_hash()` in `provenance_chain.py` uses RFC 8785 JCS. See [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
 
-**Tamper detection:** Any mutation at node `k` produces `chain_hash(record_k) ≠ expected_k`, which is detectable by `verify_chain_integrity()` in O(n) time:
+**Tamper detection:** Any mutation at node $k$ produces $\text{chain\_hash}(\text{record}_k) \ne \text{expected}_k$, which is detectable by `verify_chain_integrity()` in $O(n)$ time:
 
 $$\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$$
 
-**Complexity:** O(n) construction and O(n) verification — linear in the number of governance nodes traversed per request.
+**Complexity:** $O(n)$ construction and $O(n)$ verification — linear in the number of governance nodes traversed per request.
 
-**Valid decisions:** the canonical six — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`. `build_provenance_record()` raises `ValueError` for any other value, including the removed legacy `BLOCK`/`ESCALATE` statuses, preventing silent chain corruption from invalid decision strings.
+**Valid decisions:** the canonical six — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`. `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
 
 In production, each record is signed with the KMS key ring via [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
 
@@ -503,7 +503,7 @@ On WATCH/MULTI/EXEC conflict, the guard retries with exponential backoff plus ra
 
 $$\text{backoff}(\text{attempt}) = \frac{\_\text{RETRY\_BASE\_MS} \times 2^{\text{attempt}} + \text{jitter}(0, 5)}{1000} \text{ seconds}$$
 
-where `jitter(0, 5)` is a uniform random integer in `[0, 5]` milliseconds. This prevents thundering-herd collisions when many agents retry simultaneously.
+where $\text{jitter}(0, 5)$ is a uniform random integer in $[0, 5]$ milliseconds. This prevents thundering-herd collisions when many agents retry simultaneously.
 
 **Fail-closed:** If all `_MAX_RETRIES` attempts fail (Redis error or persistent contention), `_atomic_increment` returns `-2` and the reservation is rejected — the trade is blocked. Redis unavailability never produces a false ALLOW.
 
@@ -558,6 +558,26 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` verifies 
 
 ---
 
+## Step 13: Attestation Failure Attributability & Ed25519 CER Signature Verification
+
+**Claim:** Attestation failures from external providers are structurally attributable, preventing misbehaving providers from crashing the attestation loop silently. Furthermore, Causal Evidence Records (CERs) from Provider 02 must carry mathematically verifiable Ed25519 signatures enforcing fail-closed security.
+
+**Proof / Remediation (POAM-2026-072):**
+1. Added `ExternalAttestation.provider_name` and `fetch_error` attribution to explicitly log and isolate failures.
+2. The `verify_cer_signature()` routine strictly parses and verifies Ed25519 signatures on CERs. Malformed or invalid signatures result in a fast, fail-closed rejection.
+
+---
+
+## Step 14: Evidence Serialization and KMS Staging/Production Requirements
+
+**Claim:** Full `RefusalReceipt` v3 and `PauseReceipt` serialization correctly preserve all components of the proof chain and maintain identical `proof_hash` properties during re-hydration. Moreover, production and staging environments strictly require KMS-backed signing for evidence streams.
+
+**Proof:**
+1. Serialization mechanisms capture `tier_failures`, ensuring the 5-part proof chain is maintained intact upon ingestion.
+2. Environment checks ensure that `CAGE_ENV` set to `staging` or `production` mandates KMS signing. Fallbacks (e.g. HMAC) are structurally disabled in these environments, enforcing non-repudiation as detailed in Step 6.
+
+---
+
 ## Overall Verification Summary
 
 | Step | Claim | Verdict |
@@ -568,31 +588,13 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` verifies 
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 57 reachable states (66 under CBF∥OPA interleaving) | **PASS** |
-| 8 | CBF discrete-time invariance — `h(S(t+1)) ≥ (1−γ)·h(S(t))`, Lua atomic check+commit + replica `WAIT` barrier | **PASS** |
-| 9 | Routing seal v2 integrity — 4-tuple HMAC-SHA256 with evidence record hash binding, 30s TTL, constant-time compare | **PASS** |
-| 10 | Provenance hash chain — SHA-256, O(n) tamper detection, deterministic serialization | **PASS** |
-| 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86400s window, exponential backoff | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 21/24 core reachable states (57 sequential / 66 concurrent) | **PASS** |
+| 8 | CBF discrete-time invariance — $h(S(t+1)) \ge (1-\gamma) \cdot h(S(t))$, Lua atomic check+commit + replica `WAIT` barrier | **PASS** |
+| 9 | Routing seal v3 integrity — asymmetric JWT signed via KMS HSM (dev fallback: 4-tuple HMAC), 30s TTL, constant-time compare | **PASS** |
+| 10 | Provenance hash chain — SHA-256, $O(n)$ tamper detection, deterministic RFC 8785 JCS serialization | **PASS** |
+| 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86,400s window, exponential backoff | **PASS** |
 | 12 | Distributed CBF multi-agent formal verification — SP-1 through SP-4 across $N \in \{2, 3, 4\}$ agents | **PASS** |
 | 13 | Attestation failure attributability — Ed25519 CER signature verification with fail-closed security enforcement | **PASS** |
-| 14 | Evidence serialization and KMS staging/production requirements — strict validation requiring KMS signing in production/staging evidence streams, with full `RefusalReceipt` v3 evidence serialization preserving `tier_failures`, 5-part proof chain, and byte-identical `proof_hash` | **PASS** |
+| 14 | Evidence serialization and KMS staging/production requirements — strict validation requiring KMS signing in production/staging evidence streams, full `RefusalReceipt` v3 evidence serialization | **PASS** |
 
 **Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`. Steps 8–14 document the formal mathematical properties of the CBF barrier certificate, routing seal cryptographic contract, provenance hash chain, FiscalLimitGuard quantitative parameters, multi-agent distributed barrier proofs, Ed25519 CER signature verification, and evidence KMS requirements as verified against the production source code.
-
----
-
-## Step 13: Attestation Failure Attributability & Ed25519 CER Signature Verification
-
-**Claim:** Attestation failures from external providers are structurally attributable, preventing misbehaving providers from crashing the attestation loop silently. Furthermore, Causal Evidence Records (CERs) from Provider 02 must carry mathematically verifiable Ed25519 signatures enforcing fail-closed security.
-
-**Proof / Remediation (POAM-2026-072):**
-1. Added `ExternalAttestation.provider_name` and `fetch_error` attribution to explicitly log and isolate failures.
-2. The `verify_cer_signature()` routine strictly parses and verifies Ed25519 signatures on CERs. Malformed or invalid signatures result in a fast, fail-closed rejection.
-
-## Step 14: Evidence Serialization and KMS Staging/Production Requirements
-
-**Claim:** Full `RefusalReceipt` v3 and `PauseReceipt` serialization correctly preserve all components of the proof chain and maintain identical `proof_hash` properties during re-hydration. Moreover, production and staging environments strictly require KMS-backed signing for evidence streams.
-
-**Proof:**
-1. Serialization mechanisms now capture `tier_failures`, ensuring the 5-part proof chain is maintained intact upon ingestion.
-2. Environment checks ensure that `CAGE_ENV` set to `staging` or `production` mandates KMS signing. Fallbacks (e.g. HMAC) are structurally disabled in these environments, enforcing non-repudiation as detailed in Step 6.

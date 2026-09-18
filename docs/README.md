@@ -26,8 +26,7 @@ docs/
 ├── security/           ← Threat models, IR plans, audits
 ├── architecture/       ← System design & component architecture
 ├── operations/         ← Runbooks, deployment guides, process
-├── project/            ← Roadmaps, analysis, release planning
-└── technical-report/   ← Sequentially numbered technical report
+└── project/            ← Roadmaps, analysis, release planning
 ```
 
 ---
@@ -118,7 +117,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 
 | Document | Mathematical Formalism | Source Code Reference |
 |---|---|---|
-| [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal asymmetric proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
+| [architecture/FORMAL_VERIFICATION.md](architecture/FORMAL_VERIFICATION.md) | CBF safe-set definition, routing seal asymmetric proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 | [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
 | [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 8-tier symbolic governor pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
 | [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`get_fria_zone_allow()=0.95`, `get_fria_zone_defer()=0.70`), regional compliance invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
@@ -190,6 +189,9 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [AGENT_STATE_SCHEMA_ENFORCEMENT.md](architecture/AGENT_STATE_SCHEMA_ENFORCEMENT.md) | **Specification (GAP-3, Planned)** — AgentState schema enforcement at API and node boundaries |
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |
 | [AUDIT_LOG_SCHEMA.md](architecture/AUDIT_LOG_SCHEMA.md) | Audit log schema |
+| [FORMAL_VERIFICATION.md](architecture/FORMAL_VERIFICATION.md) | Formal verification — 11-step mathematical state-space proofs, CBF, NoDirectBind invariants |
+| [TECH_STACK.md](architecture/TECH_STACK.md) | Exhaustive 11-domain technology stack and bill of materials |
+| [AGENT_SYSTEM_ARCHITECTURE.md](architecture/AGENT_SYSTEM_ARCHITECTURE.md) | Multi-agent system architecture, 9-agent inventory, 25/33-field AgentState schema, HITL |
 | [SUBSTRATE_MOAT_STRATEGY.md](architecture/SUBSTRATE_MOAT_STRATEGY.md) | Competitive positioning — CAGE vs MXC/ACS, AAIF, Google AGW |
 
 ---
@@ -210,23 +212,3 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | File | Description |
 |---|---|
 | [CAGE_ONE_PAGER.md](project/CAGE_ONE_PAGER.md) | CAGE executive one-pager |
-
----
-
-## `technical-report/` — Technical Report Series
-
-The `technical-report/` directory contains the sequentially numbered technical report.
-See [technical-report/README.md](technical-report/README.md) for the full index.
-
-| File | Description |
-|---|---|
-| [01-SYSTEM-OVERVIEW.md](technical-report/01-SYSTEM-OVERVIEW.md) | System overview |
-| [02-ARCHITECTURE.md](technical-report/02-ARCHITECTURE.md) | Architecture |
-| [03-TECHNOLOGY-STACK.md](technical-report/03-TECHNOLOGY-STACK.md) | Technology stack |
-| [04-AGENT-SYSTEM.md](technical-report/04-AGENT-SYSTEM.md) | Agent system |
-| [05-AI-GOVERNANCE-POLICY-ENGINE.md](technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md) | AI governance & policy engine |
-| [06-COMPLIANCE-STANDARDS.md](technical-report/06-COMPLIANCE-STANDARDS.md) | Compliance standards |
-| [07-SECURITY-INFRASTRUCTURE.md](technical-report/07-SECURITY-INFRASTRUCTURE.md) | Security infrastructure |
-| [08-DEPLOYMENT-INFRASTRUCTURE.md](technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md) | Deployment infrastructure |
-| [09-OPERATIONAL-RUNBOOK.md](technical-report/09-OPERATIONAL-RUNBOOK.md) | Operational runbook |
-| [10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | Formal verification — **CBF, routing seal, provenance chain, fiscal limit** |

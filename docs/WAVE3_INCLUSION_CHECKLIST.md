@@ -33,8 +33,8 @@ governance engineering owner** sign-off for CR-1/CR-2/CR-3 — roles implying a
 staffed compliance/security organization reviewing a live system on behalf of
 real regulators (per [`AGENTS.md`](../AGENTS.md) Compliance Artifact
 Obligations). CAGE has no such organization; per
-[`docs/technical-report/07-SECURITY-INFRASTRUCTURE.md:814-816`](technical-report/07-SECURITY-INFRASTRUCTURE.md:814)
-and [`docs/README.md:137-139`](README.md:137), fictional role-incumbent
+[`docs/architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md)
+and [`docs/README.md`](README.md), fictional role-incumbent
 placeholders (`[TBD]` AO/ISSO) have already been deliberately removed from
 this repository as providing no engineering value. Requiring the same kind of
 formal sign-off artifact for CR-1–CR-3 would reintroduce that anti-pattern.

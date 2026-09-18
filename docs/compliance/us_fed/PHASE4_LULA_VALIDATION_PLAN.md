@@ -340,7 +340,7 @@ See [`compliance/lula/README.md`](../../../README.md) for the full validation co
 
 | Document | Purpose |
 |---|---|
-| [`docs/technical-report/09-OPERATIONAL-RUNBOOK.md`](../../technical-report/09-OPERATIONAL-RUNBOOK.md) | Operational runbook and verified recovery procedures (no standalone `RELEASE_RUNBOOK.md` / `RELEASE_PLAN.md` exists in this repository) |
+| [`docs/operations/DEPLOYMENT_RULES.md`](../../operations/DEPLOYMENT_RULES.md) | Deployment rules, procedures, and operational constraints |
 | [`docs/POAM.md`](../cross-region/POAM.md) | Plan of Action and Milestones |
 | [`compliance/lula/README.md`](../../../README.md) | Lula validation coverage and activation guide |
 | [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml) | CronJob manifest (lula-audit + lula-sc4-watch) |

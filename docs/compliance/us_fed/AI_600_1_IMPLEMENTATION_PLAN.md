@@ -1214,7 +1214,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 4. Run `lula validate` against all 5 manifests against the live GKE cluster
    as part of the release gate (`.roo/rules` §5.1 universal gates).
 
-5. Add AI 600-1 Lula results to the release checklist in [`docs/technical-report/09-OPERATIONAL-RUNBOOK.md`](../../technical-report/09-OPERATIONAL-RUNBOOK.md) (no standalone `RELEASE_RUNBOOK.md` exists in this repository).
+5. Add AI 600-1 Lula results to the release checklist in [`docs/operations/DEPLOYMENT_RULES.md`](../../operations/DEPLOYMENT_RULES.md).
 
 **Prod acceptance criteria**:
 - All 5 AI 600-1 Lula manifests pass in CI
