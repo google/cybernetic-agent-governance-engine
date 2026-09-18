@@ -43,7 +43,7 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 # Base paths for fixtures
-REPO_ROOT = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "provider_02_native"
 
 # ---------------------------------------------------------------------------
@@ -470,10 +470,7 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         # Import validator for schema conformance
-        test_schema_module_path = Path(__file__).parent / "integrations" / "provider_02"
-        sys.path.insert(0, str(test_schema_module_path.parent))
-        from provider_02.test_native_schema_conformance import PROJECT_STEP_VALIDATOR
-        sys.path.pop(0)
+        from tests.integrations.provider_02.test_native_schema_conformance import PROJECT_STEP_VALIDATOR
 
         cb = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"

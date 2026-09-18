@@ -30,8 +30,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BASE_COMMIT = "94e9d717be22bafcf6307efd9434fdb04754ac6a"
-REPO_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_ROOT = REPO_ROOT / "tests/fixtures/provider_06_conformance/project"
+REPO_ROOT = Path(__file__).resolve().parents[4]
+FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/project"
+ARTIFACT_PATH = Path(__file__).resolve().parents[1] / "artifacts/provider_06_agent_integrity_conformance_result.json"
+PROSE_PATH = REPO_ROOT / "docs/partners/provider_06/CONFORMANCE_RESULT.md"
 AGENT_INTEGRITY_ROOT = REPO_ROOT / "third_party/agent-integrity"
 CLI_PATH = AGENT_INTEGRITY_ROOT / "packages/cli/dist/cli.js"
 PROTECTED_PATHS = (

@@ -12,21 +12,24 @@
 
 ---
 
-## File map
+## 1. Summary of Changes
 
-Create:
+This plan specifies the implementation steps to execute the Provider 06 Agent
+Integrity conformance experiment defined in
+[`CONFORMANCE_DESIGN.md`](CONFORMANCE_DESIGN.md).
 
-- `tests/support/provider_06_agent_integrity_cli.py` — bounded subprocess wrapper for the vendored CLI.
-- `tests/test_provider_06_agent_integrity_conformance.py` — compatibility and mutation tests.
-- `tests/fixtures/provider_06_conformance/project/docs/source.md` — trusted source bytes.
-- `tests/fixtures/provider_06_conformance/project/integrity/decisions.yaml` — trusted decision registry.
-- `tests/fixtures/provider_06_conformance/project/integrity/policy.yaml` — trusted policy.
-- `tests/fixtures/provider_06_conformance/project/integrity/trusted-config.json` — trusted host configuration template.
-- `tests/fixtures/provider_06_conformance/project/request-pass.json` — PASS request.
-- `tests/fixtures/provider_06_conformance/project/request-review.json` — REVIEW request.
-- `tests/fixtures/provider_06_conformance/project/request-blocked.json` — BLOCKED request.
-- `docs/architecture/provider_06_agent_integrity_conformance_result.md` — observed experiment result.
-- `tests/artifacts/provider_06_agent_integrity_conformance_result.json` — machine-generated scenario evidence without response/source bytes.
+The change adds:
+- `tests/integrations/provider_06/support/provider_06_agent_integrity_cli.py` — subprocess wrapper and lock.
+- `tests/integrations/provider_06/fixtures/project/docs/source.md` — trusted source bytes.
+- `tests/integrations/provider_06/fixtures/project/integrity/decisions.yaml` — trusted decision registry.
+- `tests/integrations/provider_06/fixtures/project/integrity/policy.yaml` — trusted policy.
+- `tests/integrations/provider_06/fixtures/project/integrity/trusted-config.json` — trusted host configuration template.
+- `tests/integrations/provider_06/fixtures/project/request-pass.json` — PASS request.
+- `tests/integrations/provider_06/fixtures/project/request-review.json` — REVIEW request.
+- `tests/integrations/provider_06/fixtures/project/request-blocked.json` — BLOCKED request.
+- `docs/partners/provider_06/CONFORMANCE_RESULT.md` — observed experiment result.
+- `tests/integrations/provider_06/artifacts/provider_06_agent_integrity_conformance_result.json` — scenario table evidence.
+- `tests/integrations/provider_06/test_provider_06_agent_integrity_conformance.py` — pytest suite.
 
 Modify only if required by actual repository test discovery:
 

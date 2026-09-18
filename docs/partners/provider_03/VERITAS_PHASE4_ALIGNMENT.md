@@ -2,8 +2,8 @@
 
 **Version:** 1.0.0  
 **Evaluation Date:** 2026-09-16  
-**Specification Reference:** [`docs/partners/VERITAS _ CAGE Phase 4 — Invariant Review Specification.pdf`](VERITAS%20_%20CAGE%20Phase%204%20—%20Invariant%20Review%20Specification.pdf)  
-**Machine-Readable Manifest:** [`compliance/provider_03_invariants_manifest.json`](../../compliance/provider_03_invariants_manifest.json)
+**Specification Reference:** [VERITAS _ CAGE Phase 4 — Invariant Review Specification.pdf](VERITAS%20_%20CAGE%20Phase%204%20%E2%80%94%20Invariant%20Review%20Specification.pdf)  
+**Machine-Readable Manifest:** [`config/partners/provider_03/invariants_manifest.json`](../../../config/partners/provider_03/invariants_manifest.json)
 
 ---
 
@@ -19,9 +19,9 @@ One critical architectural finding emerged during the review: **Invariant I-07 (
 
 The Phase 4 review evaluated:
 
-- **Layer 1 (Kernel):** [`src/gateway/governance/seams/normative.py`](../../src/gateway/governance/seams/normative.py) — `NormativeProvider` protocol definition
-- **Layer 3 (Provider03 Adapter):** [`src/integrations/provider_03/provider.py`](../../src/integrations/provider_03/provider.py) — HTTP client implementation
-- **Test Coverage:** [`tests/test_provider_03.py`](../../tests/test_provider_03.py) — 6 test classes covering all 16 invariants
+- **Layer 1 (Kernel):** [`src/gateway/governance/seams/normative.py`](../../../src/gateway/governance/seams/normative.py) — `NormativeProvider` protocol definition
+- **Layer 3 (Provider03 Adapter):** [`src/integrations/provider_03/provider.py`](../../../src/integrations/provider_03/provider.py) — HTTP client implementation
+- **Test Coverage:** [`tests/integrations/provider_03/test_provider_03.py`](../../../tests/integrations/provider_03/test_provider_03.py) — 6 test classes covering all 16 invariants
 
 ---
 
@@ -111,7 +111,7 @@ for src_key, dest_key in self._field_map.items():
         )
 ```
 
-**Test Coverage:** [`tests/test_provider_03.py:390-605`](../../tests/test_provider_03.py#L390-L605) — `TestActionContextCollision`
+**Test Coverage:** [`tests/integrations/provider_03/test_provider_03.py:390-605`](../../../tests/integrations/provider_03/test_provider_03.py#L390-L605) — `TestActionContextCollision`
 
 The test class validates six collision scenarios:
 1. **Collision with different values** — rejects with `MAPPING_COLLISION`
@@ -214,22 +214,22 @@ Expected output:
 
 ## References
 
-- **Phase 4 Specification:** [`docs/partners/VERITAS _ CAGE Phase 4 — Invariant Review Specification.pdf`](VERITAS%20_%20CAGE%20Phase%204%20—%20Invariant%20Review%20Specification.pdf)
-- **Machine-Readable Manifest:** [`compliance/provider_03_invariants_manifest.json`](../../compliance/provider_03_invariants_manifest.json)
-- **Provider Implementation:** [`src/integrations/provider_03/provider.py`](../../src/integrations/provider_03/provider.py)
-- **Test Coverage:** [`tests/test_provider_03.py`](../../tests/test_provider_03.py)
-- **NormativeProvider Seam:** [`src/gateway/governance/seams/normative.py`](../../src/gateway/governance/seams/normative.py)
-- **Adapter Architecture:** [`docs/technical-report/11-ADAPTER-ARCHITECTURE.md`](../technical-report/11-ADAPTER-ARCHITECTURE.md)
+- **Phase 4 Specification:** [VERITAS _ CAGE Phase 4 — Invariant Review Specification.pdf](VERITAS%20_%20CAGE%20Phase%204%20%E2%80%94%20Invariant%20Review%20Specification.pdf)
+- **Machine-Readable Manifest:** [`config/partners/provider_03/invariants_manifest.json`](../../../config/partners/provider_03/invariants_manifest.json)
+- **Provider Implementation:** [`src/integrations/provider_03/provider.py`](../../../src/integrations/provider_03/provider.py)
+- **Test Coverage:** [`tests/integrations/provider_03/test_provider_03.py`](../../../tests/integrations/provider_03/test_provider_03.py)
+- **NormativeProvider Seam:** [`src/gateway/governance/seams/normative.py`](../../../src/gateway/governance/seams/normative.py)
+- **Adapter Architecture:** [`docs/technical-report/11-ADAPTER-ARCHITECTURE.md`](../../technical-report/11-ADAPTER-ARCHITECTURE.md)
 
 ---
 
 ## Compliance Artifact Obligations
 
-Per [`AGENTS.md`](../../AGENTS.md#compliance-artifact-obligations):
+Per [`AGENTS.md`](../../../AGENTS.md#compliance-artifact-obligations):
 
 - ✅ **POAM Update:** No POAM items require closure (all invariants passed first-time)
-- ✅ **OSCAL Component Update:** Provider 03 control mappings added to [`compliance/oscal/`](../../compliance/oscal/) (if applicable)
-- ✅ **Machine-Readable Manifest:** [`compliance/provider_03_invariants_manifest.json`](../../compliance/provider_03_invariants_manifest.json) published
+- ✅ **OSCAL Component Update:** Provider 03 control mappings added to [`compliance/oscal/`](../../../compliance/oscal/) (if applicable)
+- ✅ **Machine-Readable Manifest:** [`config/partners/provider_03/invariants_manifest.json`](../../../config/partners/provider_03/invariants_manifest.json) published
 
 ---
 

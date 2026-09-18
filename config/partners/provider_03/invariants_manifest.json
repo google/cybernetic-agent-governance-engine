@@ -1,0 +1,145 @@
+{
+  "title": "CAGE / VERITAS Phase 4 Invariant Verification Matrix",
+  "version": "1.0.0",
+  "specification_ref": "docs/partners/VERITAS _ CAGE Phase 4 — Invariant Review Specification.pdf",
+  "evaluated_at": "2026-09-16T20:15:33Z",
+  "status": "ALL_INVARIANTS_SATISFIED",
+  "architecture_scope": "Layer 1 Kernel + Layer 3 Provider03 Adapter",
+  "invariants": [
+    {
+      "invariant_id": "I-01",
+      "title": "NormativeProvider Protocol Compliance",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:108-159 (fetch_baseline), :161-300 (validate_fria), :302-342 (submit_evidence)",
+      "test_coverage": "tests/test_provider_03.py:81-193 (TestProtocolCompliance)",
+      "resolution_notes": "Provider03NormativeProvider implements all three canonical endpoints (fetch_baseline, validate_fria, submit_evidence) returning correctly-typed dataclasses (NormativeBaseline, ValidationResult, EvidenceSeal)."
+    },
+    {
+      "invariant_id": "I-02",
+      "title": "Fail-Closed Execution Boundary",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:172-183 (endpoint check), :186-217 (collision guard), :271-300 (error handling)",
+      "test_coverage": "tests/test_provider_03.py:268-357 (TestErrorHandling)",
+      "resolution_notes": "All error paths (missing endpoint, HTTPStatusError, RequestError) return admitted=False with rich ENDPOINT_ERROR findings. No execution bypass is possible."
+    },
+    {
+      "invariant_id": "I-03",
+      "title": "ESCALATE Verdict Semantic Mapping",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:245-263 (ESCALATE branch)",
+      "test_coverage": "tests/test_provider_03.py:200-261 (TestEscalateVerdictMapping)",
+      "resolution_notes": "Provider 03's ESCALATE verdict maps to CAGE's REVIEW/DEFER semantic via needs_human_review marker in findings. Admitted=False routing to DeferQueue confirmed."
+    },
+    {
+      "invariant_id": "I-04",
+      "title": "HTTP Client Timeout Enforcement",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:58-60 (timeout config), :86 (instance init), :125, :231, :318 (AsyncClient instantiation)",
+      "test_coverage": "tests/test_provider_03.py:47-53 (adapter fixture timeout=5.0)",
+      "resolution_notes": "Timeout configured via PROVIDER_03_NORMATIVE_TIMEOUT_SECONDS (default 5.0s) and enforced at httpx.AsyncClient construction across all endpoints."
+    },
+    {
+      "invariant_id": "I-05",
+      "title": "Authorization Header Propagation",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:101-106 (_headers method), :126, :232, :322 (header attachment)",
+      "test_coverage": "tests/test_provider_03.py:47-53 (adapter fixture api_key injection)",
+      "resolution_notes": "Bearer token constructed from PROVIDER_03_NORMATIVE_API_KEY_SECRET and attached to all HTTP requests via _headers() helper."
+    },
+    {
+      "invariant_id": "I-06",
+      "title": "JCS Canonical Hash for Bind Receipts",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:344-359 (ingest_bind_receipt using jcs_canonicalize_plan)",
+      "test_coverage": "tests/test_provider_03.py:364-383 (TestBindReceipt::test_ingest_bind_receipt_returns_canonical_hash)",
+      "resolution_notes": "Migrated to RFC 8785 JCS canonicalization (v3.1.0). Deterministic SHA-256 hash verified across repeated invocations."
+    },
+    {
+      "invariant_id": "I-07",
+      "title": "Action Context Field Collision Guard",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:188-217 (collision detection), src/integrations/provider_03/provider.py:64 (FINDING_CODE_MAPPING_COLLISION constant)",
+      "test_coverage": "tests/test_provider_03.py:390-605 (TestActionContextCollision with 6 collision scenarios)",
+      "resolution_notes": "Fail-closed collision detection: when action_context contains BOTH src_key and dest_key from field_map, validate_fria immediately returns admitted=False with MAPPING_COLLISION finding. HTTP dispatch is completely prevented. Value equality is irrelevant; presence of both keys violates schema determinism. Identity mappings (src_key == dest_key) correctly treated as no-op, not collision. See ADR entry in docs/partners/VERITAS_PHASE4_ALIGNMENT.md for normative fail-closed contract."
+    },
+    {
+      "invariant_id": "I-08",
+      "title": "Defensive Payload Copy During Field Normalization",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:221 (dict(action_context) defensive copy), :222-224 (pop-based normalization), :225 (spread-based payload reconstruction)",
+      "test_coverage": "tests/test_provider_03.py:475-518 (TestActionContextCollision::test_mapping_succeeds_when_only_legacy_key_present)",
+      "resolution_notes": "Field mapping uses defensive copy (normalized_context = dict(action_context)) to preserve original payload immutability. Normalized payload constructed via spread operator to avoid mutation side effects."
+    },
+    {
+      "invariant_id": "I-09",
+      "title": "ETag Propagation from Baseline Response",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:144 (etag extraction from response headers)",
+      "test_coverage": "tests/test_provider_03.py:86-110 (TestProtocolCompliance::test_fetch_baseline_returns_normative_baseline, line 109 asserts result.etag)",
+      "resolution_notes": "NormativeBaseline.etag populated from HTTP ETag response header for cache revalidation. Falls back to empty string if header absent."
+    },
+    {
+      "invariant_id": "I-10",
+      "title": "URL-Safe Region Encoding",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:123 (quote(region, safe='')), :316 (quote(thread_id, safe=''))",
+      "test_coverage": "Implicit via fetch_baseline and submit_evidence invocations with region/thread_id parameters",
+      "resolution_notes": "urllib.parse.quote ensures URL-safe encoding of region and thread_id path parameters, preventing injection via special characters."
+    },
+    {
+      "invariant_id": "I-11",
+      "title": "Rich Finding Propagation on HTTP Errors",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:271-287 (HTTPStatusError finding construction), :288-300 (RequestError finding construction)",
+      "test_coverage": "tests/test_provider_03.py:311-357 (TestErrorHandling HTTP and request error tests)",
+      "resolution_notes": "All HTTP errors return ValidationResult with ENDPOINT_ERROR finding containing status code, error message, and severity='blocked'. Original Provider 03 findings preserved when available."
+    },
+    {
+      "invariant_id": "I-12",
+      "title": "JSON Decode Error Graceful Degradation",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:128-140 (try-except JSONDecodeError in fetch_baseline)",
+      "test_coverage": "Implicit (error path tested via mock resp.json() exceptions)",
+      "resolution_notes": "Invalid JSON responses return NormativeBaseline with error='Invalid JSON response: <exception>' instead of crashing. Prevents provider outage from cascading into gateway failure."
+    },
+    {
+      "invariant_id": "I-13",
+      "title": "Logging at Integration Boundaries",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:54 (logger initialization), :95-99 (init logging), :132-135, :148-159 (fetch_baseline errors), :272-276, :289 (validate_fria errors), :331-334, :341 (submit_evidence errors), :354-358 (bind receipt logging)",
+      "test_coverage": "Implicit via logger invocations across all error paths",
+      "resolution_notes": "All HTTP errors, JSON decode failures, and bind receipt ingestions logged via 'cage.integrations.provider_03' logger with structured context (URL, status code, exception)."
+    },
+    {
+      "invariant_id": "I-14",
+      "title": "Endpoint Configuration Validation at Init",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:84 (endpoint assignment), :89-93 (warning on empty endpoint), :116-121, :172-183, :310-314 (endpoint guards in each method)",
+      "test_coverage": "tests/test_provider_03.py:273-308 (TestErrorHandling::test_no_endpoint_returns_error_*)",
+      "resolution_notes": "Missing PROVIDER_03_NORMATIVE_ENDPOINT triggers init warning. All endpoint methods return error dataclasses (not exceptions) when endpoint unconfigured, preserving fail-closed semantics."
+    },
+    {
+      "invariant_id": "I-15",
+      "title": "Verdict Normalization to Uppercase",
+      "status": "PASS",
+      "enforcement_mechanism": "src/integrations/provider_03/provider.py:237 (verdict.upper())",
+      "test_coverage": "tests/test_provider_03.py:114-166 (TestProtocolCompliance verdict assertions)",
+      "resolution_notes": "Provider 03 verdict strings normalized to uppercase before semantic mapping (APPROVED, ESCALATE, REJECTED), preventing case-sensitivity bugs."
+    },
+    {
+      "invariant_id": "I-16",
+      "title": "Factory Registration Completeness",
+      "status": "PASS",
+      "enforcement_mechanism": "src/gateway/governance/normative_provider.py (factory registration, not shown in current diff)",
+      "test_coverage": "tests/test_provider_03.py:612-631 (TestFactoryRegistration)",
+      "resolution_notes": "Provider 03 registered in normative provider factory. get_normative_provider('provider_03') instantiates Provider03NormativeProvider. Factory includes provider_03 in available providers list."
+    }
+  ],
+  "summary": {
+    "total_invariants": 16,
+    "passed": 16,
+    "failed": 0,
+    "critical_findings": "I-07 (Action Context Collision Guard) required fail-closed contract addition to prevent schema determinism violations. Enforcement mechanism added at src/integrations/provider_03/provider.py:188-217.",
+    "next_phase": "Phase 5 Runtime Prototype — live wire integration with VERITAS decision governance endpoints and bind receipt validation."
+  }
+}

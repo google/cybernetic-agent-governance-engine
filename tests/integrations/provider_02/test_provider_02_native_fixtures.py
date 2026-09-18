@@ -29,7 +29,7 @@ from jsonschema import Draft202012Validator, FormatChecker, RefResolver, Validat
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 # Base paths
-REPO_ROOT = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "provider_02_native"
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "provider_02"
 

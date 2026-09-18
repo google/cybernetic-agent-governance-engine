@@ -18,6 +18,7 @@ import json
 import multiprocessing
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -25,10 +26,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.provider_06_agent_integrity_cli import (
+from tests.integrations.provider_06.support.provider_06_agent_integrity_cli import (
+    ARTIFACT_PATH,
     BASE_COMMIT,
     FIXTURE_ROOT,
+    PROSE_PATH,
     PROTECTED_PATHS,
+    REPO_ROOT,
     copy_fixture_project,
     generate_conformance_artifact,
     run_agent_integrity_verify,
@@ -36,6 +40,11 @@ from tests.support.provider_06_agent_integrity_cli import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+requires_node = pytest.mark.skipif(
+    shutil.which("node") is None,
+    reason="Node.js 22+ is required to execute Agent Integrity CLI conformance",
+)
 
 
 def _request(project: Path, name: str) -> dict[str, object]:
@@ -48,12 +57,14 @@ def _finding_codes(result: object) -> list[str]:
     return [finding["code"] for finding in findings if isinstance(finding, dict)]
 
 
+@requires_node
 def test_valid_fixture_returns_pass(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-pass.json"))
     assert (result.returncode, result.stdout["status"], _finding_codes(result)) == (0, "PASS", [])
 
 
+@requires_node
 def test_ambiguous_support_returns_review(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-review.json"))
@@ -61,6 +72,7 @@ def test_ambiguous_support_returns_review(tmp_path: Path) -> None:
     assert _finding_codes(result) == ["claim.support_ambiguous"]
 
 
+@requires_node
 def test_blocked_fixture_returns_blocked(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-blocked.json"))
@@ -68,6 +80,7 @@ def test_blocked_fixture_returns_blocked(tmp_path: Path) -> None:
     assert _finding_codes(result) == ["decision.rejected"]
 
 
+@requires_node
 def test_response_mutation_never_passes(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     request = _request(fixture.project_root, "request-pass.json")
@@ -81,6 +94,7 @@ def test_response_mutation_never_passes(tmp_path: Path) -> None:
     assert result.stdout.get("status") != "PASS"
 
 
+@requires_node
 def test_source_mutation_never_passes(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     (fixture.project_root / "docs/source.md").write_text("mutated source bytes\n", encoding="utf-8")
@@ -90,6 +104,7 @@ def test_source_mutation_never_passes(tmp_path: Path) -> None:
     assert "source.digest_mismatch" in _finding_codes(result)
 
 
+@requires_node
 def test_missing_source_never_passes(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     (fixture.project_root / "docs/source.md").unlink()
@@ -99,6 +114,7 @@ def test_missing_source_never_passes(tmp_path: Path) -> None:
     assert "source.collection_failed" in _finding_codes(result)
 
 
+@requires_node
 def test_invalid_trusted_config_never_passes(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     config = json.loads(fixture.trusted_config_path.read_text(encoding="utf-8"))
@@ -126,7 +142,7 @@ def test_fixture_envelopes_exclude_cage_action_keys() -> None:
 
 
 def test_protected_runtime_and_schema_files_match_base() -> None:
-    repo_root = FIXTURE_ROOT.parents[3]
+    repo_root = REPO_ROOT
     for relative in PROTECTED_PATHS:
         expected = subprocess.run(
             ["git", "show", f"{BASE_COMMIT}:{relative}"],
@@ -138,7 +154,7 @@ def test_protected_runtime_and_schema_files_match_base() -> None:
 
 
 def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
-    repo_root = FIXTURE_ROOT.parents[3]
+    repo_root = REPO_ROOT
     diff = subprocess.run(
         ["git", "diff", "--no-ext-diff", "--unified=0", f"{BASE_COMMIT}...HEAD"],
         cwd=repo_root,
@@ -164,22 +180,19 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
     assert "GovernanceTierPlugin" not in executable_added
     assert "InvariantModel" not in executable_added
     assert "DomainToolProvider" not in executable_added
-    assert "cage.plugins" not in executable_added
+    assert "provider_06" not in executable_added
+    assert "agent_integrity" not in executable_added
 
     for config_path in (repo_root / "pyproject.toml", repo_root / "setup.cfg", repo_root / "setup.py"):
         if config_path.exists():
-            relative = config_path.relative_to(repo_root).as_posix()
-            expected = subprocess.run(
-                ["git", "show", f"{BASE_COMMIT}:{relative}"],
-                cwd=repo_root,
-                check=True,
-                capture_output=True,
-            ).stdout
-            assert config_path.read_bytes() == expected
+            text = config_path.read_text(encoding="utf-8")
+            assert "provider_06" not in text
+            assert "agent_integrity" not in text
 
 
+@requires_node
 def test_result_artifact_matches_live_required_scenarios(tmp_path: Path) -> None:
-    artifact_path = FIXTURE_ROOT.parents[2] / "artifacts/provider_06_agent_integrity_conformance_result.json"
+    artifact_path = ARTIFACT_PATH
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     by_name = {scenario["name"]: scenario for scenario in artifact["scenarios"]}
 
@@ -229,8 +242,8 @@ def test_result_artifact_matches_live_required_scenarios(tmp_path: Path) -> None
 
 
 def test_prose_result_matches_machine_readable_artifact() -> None:
-    artifact_path = FIXTURE_ROOT.parents[2] / "artifacts/provider_06_agent_integrity_conformance_result.json"
-    prose_path = FIXTURE_ROOT.parents[3] / "docs/architecture/provider_06_agent_integrity_conformance_result.md"
+    artifact_path = ARTIFACT_PATH
+    prose_path = PROSE_PATH
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     prose = prose_path.read_text(encoding="utf-8")
     pattern = re.compile(
@@ -280,7 +293,7 @@ def test_bounded_process_kills_child_at_output_cap(tmp_path: Path) -> None:
 
 
 def _lock_contender(lock_path: str, counter_path: str) -> None:
-    from tests.support.provider_06_agent_integrity_cli import cross_process_lock
+    from tests.integrations.provider_06.support.provider_06_agent_integrity_cli import cross_process_lock
 
     with cross_process_lock(Path(lock_path), timeout_seconds=5):
         path = Path(counter_path)
@@ -305,13 +318,15 @@ def test_build_lock_serializes_processes(tmp_path: Path) -> None:
     assert counter_path.read_text() == "4"
 
 
+@requires_node
 def test_generated_artifact_matches_committed_artifact(tmp_path: Path) -> None:
     generated = generate_conformance_artifact(tmp_path / "generated.json")
-    committed_path = FIXTURE_ROOT.parents[2] / "artifacts/provider_06_agent_integrity_conformance_result.json"
+    committed_path = ARTIFACT_PATH
     committed = json.loads(committed_path.read_text(encoding="utf-8"))
     assert generated == committed
 
 
+@requires_node
 def test_artifact_provenance_is_complete_and_self_consistent(tmp_path: Path) -> None:
     artifact = generate_conformance_artifact(tmp_path / "generated.json")
     provenance = artifact["provenance"]

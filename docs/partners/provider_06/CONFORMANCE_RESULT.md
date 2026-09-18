@@ -65,7 +65,7 @@ fixture imports the declared OIDC middleware dependency.
 - `invalid_trusted_config`: expected `3/BLOCKED`; actual `3/BLOCKED`; findings: `trusted.context_invalid`; passed.
 
 The machine-readable source for this table is
-`tests/artifacts/provider_06_agent_integrity_conformance_result.json`. It contains
+`tests/integrations/provider_06/artifacts/provider_06_agent_integrity_conformance_result.json`. It contains
 only scenario metadata, statuses, exit codes, finding codes, versions, and hashes.
 
 ## Protected boundary

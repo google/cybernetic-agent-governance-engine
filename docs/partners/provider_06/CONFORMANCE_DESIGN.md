@@ -149,7 +149,7 @@ or approved source bytes with truthful claims and evidence.
 ## Fixture project
 
 Add a self-contained project root under
-`tests/fixtures/provider_06_conformance/project/` containing:
+`tests/integrations/provider_06/fixtures/project/` containing:
 
 - `docs/source.md`: approved source bytes;
 - `integrity/decisions.yaml`: trusted decision-registry bytes;
@@ -224,10 +224,10 @@ Tests may assert a more specific status or finding only when it is stable in the
 vendored Agent Integrity contract.
 
 ## Result document
-
-Add `docs/architecture/provider_06_agent_integrity_conformance_result.md` during
+ 
+Add `docs/partners/provider_06/CONFORMANCE_RESULT.md` during
 implementation. It must report:
-
+ 
 - CAGE and Agent Integrity commit/package versions;
 - commands executed;
 - all required scenarios, actual exit codes, statuses, and finding codes;
@@ -235,8 +235,8 @@ implementation. It must report:
 - pass/fail/inconclusive verdict;
 - limitations and unsupported claims;
 - the predetermined next action.
-
-Add `tests/artifacts/provider_06_agent_integrity_conformance_result.json` as the
+ 
+Add `tests/integrations/provider_06/artifacts/provider_06_agent_integrity_conformance_result.json` as the
 machine-generated evidence source for the scenario table. It contains no response
 or source bytes.
 
