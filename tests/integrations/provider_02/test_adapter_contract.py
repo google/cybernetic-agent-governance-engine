@@ -470,7 +470,9 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         # Import validator for schema conformance
-        from tests.integrations.provider_02.test_native_schema_conformance import PROJECT_STEP_VALIDATOR
+        from tests.integrations.provider_02.test_native_schema_conformance import (
+            PROJECT_STEP_VALIDATOR,
+        )
 
         cb = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"

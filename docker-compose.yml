@@ -35,7 +35,7 @@ services:
       # within the Docker network uses the internal port directly (no host binding needed).
       - "127.0.0.1:8181:8181"
     healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8181/health" ]
+      test: [ "CMD", "/opa", "check", "/policies" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -46,7 +46,7 @@ services:
   slm:
     build:
       context: .
-      dockerfile: Dockerfile.slm
+      dockerfile: deployment/docker/Dockerfile.slm
     ports:
       - "5000:5000"
     environment:
@@ -88,6 +88,12 @@ services:
       - .env
     volumes:
       - opa_socket_vol:/tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       opa:
         condition: service_healthy

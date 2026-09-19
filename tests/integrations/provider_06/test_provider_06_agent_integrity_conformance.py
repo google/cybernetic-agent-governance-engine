@@ -293,7 +293,9 @@ def test_bounded_process_kills_child_at_output_cap(tmp_path: Path) -> None:
 
 
 def _lock_contender(lock_path: str, counter_path: str) -> None:
-    from tests.integrations.provider_06.support.provider_06_agent_integrity_cli import cross_process_lock
+    from tests.integrations.provider_06.support.provider_06_agent_integrity_cli import (
+        cross_process_lock,
+    )
 
     with cross_process_lock(Path(lock_path), timeout_seconds=5):
         path = Path(counter_path)

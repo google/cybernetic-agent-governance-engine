@@ -21,6 +21,7 @@ venv.bak/
 
 # Partner integration credentials (never commit)
 config/environments/partner-sandbox.env
+config/environments/local-dev.env
 source/
 deploy_*.txt
 deployment/artifacts/
@@ -226,6 +227,7 @@ coverage.xml
 .coverage
 htmlcov/
 pytest-results/
+reports/
 
 # Stale scratch/temp directories — canonical protos live in src/gateway/protos/
 temp_test/

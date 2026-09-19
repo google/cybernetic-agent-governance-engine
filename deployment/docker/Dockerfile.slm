@@ -28,6 +28,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra slm --no-install-project
 
 # Copy SLM sidecar source
+COPY src/__init__.py ./src/__init__.py
+COPY src/gateway/__init__.py ./src/gateway/__init__.py
 COPY src/gateway/slm/ ./src/gateway/slm/
 
 # Pre-download model weights during build to speed up container startup
@@ -35,6 +37,7 @@ COPY src/gateway/slm/ ./src/gateway/slm/
 # Use uv's virtualenv directly without installing the project
 ENV TRANSFORMERS_CACHE=/app/.cache/transformers
 ENV HF_HOME=/app/.cache/huggingface
+ENV PYTHONPATH=/app:/app/src
 
 RUN . .venv/bin/activate && \
     python -c "from sentence_transformers import SentenceTransformer; print('Downloading model...'); model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); print('Model cached successfully')"

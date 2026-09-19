@@ -107,7 +107,17 @@ def get_side_effect_topology() -> dict[str, dict]:
     }
 
 
-def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
+def _build_workflow() -> StateGraph:
+    """Build the pure graph topology without checkpointer or compilation.
+
+    This is the extracted workflow construction step used by both
+    create_graph() (Redis-checkpointed) and create_uncheckpointed_graph()
+    (LangGraph SDK delegated state). It defines the complete node set and
+    edge routing logic, returning an uncompiled StateGraph instance.
+
+    Returns:
+        StateGraph: Uncompiled workflow topology ready for .compile().
+    """
     workflow = StateGraph(AgentState)
 
     # 1. Add Nodes
@@ -237,6 +247,24 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     workflow.add_edge("explainer", "nemo_output_rail")
     workflow.add_edge("nemo_output_rail", END)
 
+    return workflow
+
+
+def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
+    """Create a compiled graph with Redis checkpointer (production/test mode).
+
+    This is the backward-compatible entry point used by existing tests and the
+    standalone server. It calls _build_workflow() to construct the topology,
+    then compiles with a Redis-backed checkpointer (or MemorySaver fallback).
+
+    Args:
+        redis_url: Optional Redis connection URL. Falls back to MemorySaver if None.
+
+    Returns:
+        Compiled graph with checkpointer and interrupt_before configuration.
+    """
+    workflow = _build_workflow()
+
     # ARCH-04: Use the Redis-backed checkpointer configured via get_checkpointer().
     # Falls back gracefully to MemorySaver when redis_url is None (local dev/test).
     checkpointer = get_checkpointer(redis_url)
@@ -266,3 +294,22 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     compiled._provider_02_callback = provider_02_callback  # type: ignore[attr-defined]
 
     return compiled
+
+
+def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
+    """Create a compiled graph without checkpointer for LangGraph SDK mode.
+
+    This entry point is used by the LangGraph SDK local development server
+    (langgraph.json). It delegates all state persistence to the LangGraph
+    Server's own in-memory or Redis-backed checkpointer, avoiding double
+    checkpointing. The compiled graph retains interrupt_before semantics
+    for the manual handshake gate at governed_trader.
+
+    Returns:
+        Compiled graph with interrupt_before but no checkpointer.
+    """
+    workflow = _build_workflow()
+
+    # Compile without checkpointer — LangGraph Server manages state persistence.
+    # Preserve interrupt_before for the manual handshake gate (Module 6).
+    return workflow.compile(interrupt_before=["governed_trader"])

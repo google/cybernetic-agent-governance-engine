@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "governed_advisor": "src.governed_financial_advisor.graph.graph:create_uncheckpointed_graph"
+  },
+  "env": "config/environments/local-dev.env",
+  "python_version": "3.12"
+}

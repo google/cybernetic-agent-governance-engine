@@ -1,0 +1,54 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Local Development Dockerfile for LangGraph SDK Server
+# Runs `langgraph dev` with hot-reload source mounts for rapid iteration.
+
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+ENV PYTHONPATH=/app:/app/src
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Create virtual environment
+RUN uv venv /app/.venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy dependency definitions
+COPY pyproject.toml uv.lock ./
+
+# Install locked dependencies with advisor, gateway, and langfuse extras.
+# --group dev pulls langgraph-cli[inmem] and other dev tools.
+RUN uv sync --frozen --group dev --extra advisor --extra gateway --extra langfuse --no-install-project
+
+# Copy project files (source mounts will override src/ at runtime)
+COPY . .
+
+# Expose LangGraph SDK port
+EXPOSE 2024
+
+# Run LangGraph dev server with hot-reload
+# Source mounts are configured in docker-compose.local-dev.yml
+CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "2024"]

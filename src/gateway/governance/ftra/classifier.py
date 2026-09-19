@@ -167,11 +167,11 @@ def _bust_cache(_signum: int, _frame: Any) -> None:
     )
 
 
-# Register SIGUSR1 handler for hot-reload (no-op on Windows where SIGUSR1 is absent).
+# Register SIGUSR1 handler for hot-reload (no-op on Windows or non-main threads).
 try:
     signal.signal(signal.SIGUSR1, _bust_cache)
-except (OSError, AttributeError):
-    pass  # Windows or restricted environment — hot-reload via env flag only
+except (OSError, AttributeError, ValueError):
+    pass  # Windows, worker threads, or restricted environment — hot-reload via env flag only
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,9 @@ dev = [
     "pytest-randomly>=3.15.0",
     "hypothesis>=6.100.0",
     "bandit>=1.7.0",
+    # langgraph-cli[inmem]: LangGraph SDK local development server with in-memory
+    # checkpointer. Used by the Local Docker Dev Posture for hot-reload debugging.
+    "langgraph-cli[inmem]>=0.1.0",
     # Security: pin transitive deps to versions that fix known CVEs
     # pyasn1 0.6.3: CVE-2026-59884/59885/59886 (DoS in BER/OID/Real decode) — fixed in 0.6.4
     "pyasn1>=0.6.4",

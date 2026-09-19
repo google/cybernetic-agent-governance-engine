@@ -1,0 +1,74 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Local Development Overlay: LangGraph SDK Hot-Reload Posture
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local-dev.yml up --build
+# Optional Redis checkpointer: --profile with-redis
+
+version: "3.8"
+
+services:
+  # LangGraph SDK server with hot-reload source mounts
+  graph-engine:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.local-dev
+    ports:
+      - "2024:2024"
+    volumes:
+      # Hot-reload mounts: changes to source files are reflected immediately
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./policies:/policies:ro
+      - ./langgraph.json:/app/langgraph.json:ro
+    env_file:
+      - config/environments/local-dev.env
+    extra_hosts:
+      # Allow container to reach host Ollama at localhost:11434
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      gateway:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    networks:
+      - cage-network
+
+  # Gateway: mount live source for parallel iteration
+  gateway:
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+    env_file:
+      - config/environments/local-dev.env
+
+  # Checkpoint store (Redis): gated under profile for optional persistence
+  checkpoint-store:
+    image: redis:7.2-alpine
+    ports:
+      - "6380:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - checkpoint-data:/data
+    networks:
+      - cage-network
+    profiles:
+      - with-redis
+
+networks:
+  cage-network:
+    driver: bridge
+
+volumes:
+  checkpoint-data:
