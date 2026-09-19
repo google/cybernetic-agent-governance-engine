@@ -301,6 +301,172 @@ For full architectural detail, see [`docs/architecture/GATEWAY_ARCHITECTURE.md`]
 
 ---
 
+## Using CAGE with LangGraph
+
+CAGE provides **governance-as-a-service for LangGraph applications** through the lightweight **`cage-client` SDK**. Install the client package, decorate your LangGraph nodes with `@cage_guard`, and all governance enforcement happens transparently.
+
+### Quick Start (3 Steps)
+
+#### 1. Install the Client SDK
+
+```bash
+pip install "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
+```
+
+Or with `uv`:
+```bash
+uv add "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
+```
+
+#### 2. Start CAGE Governance Services
+
+```bash
+# Clone CAGE repository (one-time setup)
+git clone https://github.com/google/cybernetic-agent-governance-engine.git
+cd cybernetic-agent-governance-engine
+
+# Start infrastructure: Gateway :8080, OPA :8181, Redis :6379
+docker compose up
+
+# Verify gateway health
+curl http://localhost:8080/health
+```
+
+#### 3. Decorate Your LangGraph Nodes
+
+```python
+from langgraph.graph import StateGraph
+from cage_client import CageClient
+from cage_client.adapters.langgraph import cage_guard
+
+# Initialize client (once at app startup)
+cage = CageClient(
+    gateway_url="http://localhost:8080",
+    routing_seal_secret="dev-secret-key"  # From .env
+)
+
+# Define your LangGraph workflow
+class AgentState(TypedDict):
+    query: str
+    proposed_action: dict  # Parameters for governed action
+    agent_id: str
+    result: str
+
+# Decorate high-stakes nodes with governance
+@cage_guard(client=cage, action="execute_trade")
+async def execute_trade_node(state: AgentState) -> AgentState:
+    # This node ONLY runs if CAGE Gateway returns ALLOW
+    trade = state["proposed_action"]
+    result = await execute_trade(**trade)
+    return {"result": f"Executed {trade}"}
+
+# Build graph (governance enforcement is transparent)
+graph = StateGraph(AgentState)
+graph.add_node("planner", plan_trade)
+graph.add_node("execute_trade", execute_trade_node)  # ← Governed node
+graph.add_edge("planner", "execute_trade")
+app = graph.compile()
+```
+
+**What happens at runtime:**
+1. LangGraph reaches the `execute_trade` node
+2. `@cage_guard` intercepts execution and calls `http://localhost:8080/v1/governance/validate`
+3. CAGE Gateway runs the 8-tier governance pipeline (STPA, OPA, CBF, Consensus, Causal, FRIA)
+4. **ALLOW** → Node executes; **DENY** → Raises [`PolicyViolationException`](packages/cage-client/src/cage_client/exceptions.py); **DEFER** → Raises [`DeferralPending`](packages/cage-client/src/cage_client/exceptions.py) for HITL parking
+
+### Architecture: Decoupled PEP/PDP Pattern
+
+```
+┌──────────────────────────────────┐
+│   Your LangGraph Application    │
+│   (pip install cage-client)      │
+│                                  │
+│   ┌──────────────────────────┐  │
+│   │ @cage_guard decorator    │──┼──► HTTP/2 ──► CAGE Gateway :8080
+│   │ (lightweight PEP client) │  │                (8-tier PDP pipeline)
+│   └──────────────────────────┘  │
+└──────────────────────────────────┘
+                                    
+         Dependencies installed via pip install cage-client[langgraph]
+         (httpx, pydantic, cryptography, langgraph)
+
+┌─────────────────────────────────────────────┐
+│  CAGE Governance Stack (docker compose up)  │
+│                                             │
+│  Gateway :8080  ──► OPA :8181               │
+│                 ──► NeMo Guardrails         │
+│                 ──► Redis :6379 (CBF)       │
+│                 ──► Langfuse (optional)     │
+└─────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- **Zero boilerplate:** No manual REST calls, no envelope parsing
+- **Fail-closed by default:** Network errors → action blocked
+- **Cryptographic seals:** HMAC routing seals validated transparently
+- **W3C tracing:** Propagates `traceparent` for distributed traces
+- **Exception-driven:** Governance denials surface as typed Python exceptions for LangGraph error handlers
+
+### Client SDK Error Handling
+
+```python
+from cage_client.exceptions import PolicyViolationException, DeferralPending
+
+@graph.on_error
+async def handle_governance_error(state, error):
+    if isinstance(error, PolicyViolationException):
+        # Action denied by policy → route to replanning
+        return {
+            "next_node": "replan",
+            "violation": error.violation_details,
+            "reason": error.reason_code
+        }
+    
+    elif isinstance(error, DeferralPending):
+        # Action requires HITL → park checkpoint
+        return {
+            "next_node": "__interrupt__",
+            "ticket_id": error.ticket_id,
+            "resume_after": error.expires_at
+        }
+    
+    raise error  # Re-raise non-governance errors
+```
+
+### Alternative Integration: Node Factories (Advanced)
+
+For users building governance **into** the CAGE monorepo itself (not consuming it as a library), node factories are available:
+
+```python
+from src.gateway.governance.langgraph_harness import create_opa_safety_node, create_nemo_guardrail_node
+
+graph.add_node("input_rail", create_nemo_guardrail_node(rail_type="input"))
+graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governance"))
+```
+
+**Use node factories when:** You're extending CAGE's kernel or building domain plugins ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/))
+
+**Use `cage-client` when:** You're building a standalone LangGraph app that consumes CAGE as a service (recommended for 95% of users)
+
+### Complete Examples
+
+| Example | Integration Method | Path |
+|---------|-------------------|------|
+| **Governed Financial Advisor** | Node factories (embedded in CAGE monorepo) | [`src/governed_financial_advisor/`](src/governed_financial_advisor/) · [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](docs/examples/governed-financial-advisor/ARCHITECTURE.md) |
+| **Standalone LangGraph App** | `cage-client` SDK (recommended) | [`packages/cage-client/README.md`](packages/cage-client/README.md) |
+| **Chaos Agent Playground** | Zero-infrastructure demo (no LangGraph) | [`examples/chaos_agent_playground.py`](examples/chaos_agent_playground.py) |
+
+### Learn More
+
+- **Client SDK Documentation:** [`packages/cage-client/README.md`](packages/cage-client/README.md)
+- **Quick Start Guide:** [`docs/guides/LANGGRAPH_QUICKSTART.md`](docs/guides/LANGGRAPH_QUICKSTART.md)
+- **Tutorial Notebook:** [`docs/guides/langgraph_governance_tutorial.ipynb`](docs/guides/langgraph_governance_tutorial.ipynb)
+- **Release Notes:** [client-v0.1.0](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.1.0)
+- **LangGraph Harness (Advanced):** [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md#41-langgraph-harness--governance-node-composition)
+- **HITL Interrupt Pattern:** [`docs/security/HITL_TOCTOU_REMEDIATION.md`](docs/security/HITL_TOCTOU_REMEDIATION.md)
+
+---
+
 ## Key Features
 
 - **Domain-Agnostic Governance Kernel (No Built-In Applications)** — Every enforcement mechanism operates on abstract action primitives. Domain semantics arrive exclusively through optional `cage.plugins` packages ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/), or adopter-authored), gated by `CAGE_ACTIVE_PLUGINS`. Proven by [`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py).
