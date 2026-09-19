@@ -1,0 +1,106 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Hermetic Test (No ML Dependencies)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/gateway/**'
+      - 'src/compliance_bridge/**'
+      - 'tests/test_symbolic_governor.py'
+      - 'tests/test_cbf_*.py'
+      - 'tests/test_routing_seal.py'
+      - 'tests/test_governance_*.py'
+      - 'pyproject.toml'
+      - '.github/workflows/test-hermetic.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  hermetic-test:
+    name: Hermetic Governance Pipeline Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install ONLY core governance dependencies (no ML)
+        run: |
+          # Install ONLY [gateway] and [compliance_bridge] extras
+          # Explicitly EXCLUDE [advisor] which pulls sentence-transformers
+          uv pip install --system -e ".[gateway,compliance_bridge]"
+          uv pip install --system pytest pytest-asyncio fakeredis respx httpx
+
+      - name: Verify ML packages are NOT installed
+        run: |
+          echo "::group::Verify torch is NOT installed"
+          if python -c "import torch" 2>/dev/null; then
+            echo "❌ FAIL: torch is installed (should be absent in hermetic mode)"
+            exit 1
+          fi
+          echo "✅ PASS: torch is NOT installed"
+          echo "::endgroup::"
+
+          echo "::group::Verify sentence-transformers is NOT installed"
+          if python -c "import sentence_transformers" 2>/dev/null; then
+            echo "❌ FAIL: sentence-transformers is installed (should be absent in hermetic mode)"
+            exit 1
+          fi
+          echo "✅ PASS: sentence-transformers is NOT installed"
+          echo "::endgroup::"
+
+      - name: Run hermetic governance pipeline tests
+        run: |
+          # Run core governance tests WITHOUT any ML dependencies
+          # This proves Stage 2.5 is truly optional
+          pytest tests/ \
+            -m "local or unit" \
+            -k "symbolic_governor or cbf or routing_seal or governance_envelope or consequence_gateway" \
+            --tb=short \
+            -v \
+            --no-cov \
+            -p no:langsmith
+
+      - name: Verify governance imports work without ML
+        run: |
+          # Ensure core governance modules import cleanly without torch/transformers
+          python -c "
+          from src.gateway.governance.symbolic_governor import SymbolicGovernor
+          from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
+          from src.gateway.governance.routing_seal import generate_seal, verify_seal
+          from src.gateway.governance.consequence_gateway import ConsequenceGateway
+          from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+          from src.compliance_bridge.context_accumulator import ContextAccumulator
+          print('✅ All core governance imports successful (hermetic mode)')
+          "
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "::notice::✅ Hermetic test suite PASSED — governance pipeline operates without ML dependencies"

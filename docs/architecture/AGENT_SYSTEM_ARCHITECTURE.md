@@ -206,7 +206,96 @@ Split votes or errors trigger HITL escalation, eliminating single-model blind sp
 ## 7. HITL Approval Workflow & Checkpointing
 
 ### 7.1 Interrupt Configuration
-Compiled with `interrupt_before=["governed_trader"]`. The graph suspends and persists state to Redis via `AsyncRedisSaver`. The `approval_node` exposes `max_slippage_pct` to the human reviewer, who may tighten slippage tolerance before resuming.
+
+The graph compiles with `interrupt_before=["governed_trader"]`, implementing the **LangGraph interrupt() pattern** for mandatory human approval gates. When the graph reaches the `governed_trader` node, execution suspends via the `.interrupt()` method, which:
+
+1. **Persists state** to Redis via `AsyncRedisSaver` (or `MemorySaver` fallback)
+2. **Returns control** to the calling context with interrupt metadata
+3. **Awaits explicit resume** via `Command(resume=decision)` passed to `.stream()` or `.invoke()`
+
+**interrupt() Example:**
+
+```python
+# In approval_node.py
+def approval_node(state: AgentState) -> Command[Literal["post_hitl_rehydrate", "rejection"]]:
+    """
+    Mandatory HITL gate using interrupt() pattern.
+    
+    Execution flow:
+    1. Graph reaches this node after safety_check passes
+    2. interrupt() suspends execution and returns interrupt payload
+    3. State persisted to Redis checkpoint
+    4. API endpoint polls for resume Command
+    5. Resume triggers continuation with approval_decision injected
+    """
+    if not state.get("approval_required"):
+        # No HITL needed - proceed directly
+        return Command(goto="post_hitl_rehydrate")
+    
+    # Build interrupt payload with metadata
+    interrupt_value = {
+        "thread_id": state.get("thread_id"),
+        "action": "execute_trade",
+        "amount": state.get("execution_plan_output", {}).get("amount"),
+        "ticker": state.get("data_analyst_ticker"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat(),
+        "max_slippage_pct": 2.0  # Default reviewer-facing slippage tolerance
+    }
+    
+    # interrupt() suspends here - returns interrupt_value to caller
+    # State is checkpointed; execution pauses until resume Command received
+    return Command(
+        update={
+            "hitl_expires_at": interrupt_value["expires_at"],
+            "approval_required": True
+        },
+        graph=interrupt(value=interrupt_value)
+    )
+```
+
+**Resume Example:**
+
+```python
+# In server.py FastAPI endpoint
+@app.post("/v1/approvals/{thread_id}/resume")
+async def resume_approval(
+    thread_id: str,
+    request: ApprovalResumeRequest
+) -> dict:
+    """
+    Resume suspended graph with human approval decision.
+    
+    The resume Command is passed to the graph's .stream() method,
+    triggering continuation from the interrupt point.
+    """
+    # Build resume payload
+    approval_decision = {
+        "approved": request.approved,
+        "reviewer": request.reviewer,
+        "rationale": request.rationale,
+        "max_slippage_pct": request.max_slippage_pct or 2.0
+    }
+    
+    # Resume graph execution via Command(resume=...)
+    config = {"configurable": {"thread_id": thread_id}}
+    async for chunk in graph.astream(
+        Command(resume=approval_decision),  # Resumes from interrupt point
+        config=config
+    ):
+        # Process resumed execution chunks
+        pass
+    
+    return {"status": "resumed", "thread_id": thread_id}
+```
+
+The `approval_node` exposes `max_slippage_pct` to the human reviewer, who may tighten slippage tolerance before resuming. The TTL guard (`hitl_expires_at`) enforces a 300-second approval window; expired resumes return `HTTP 410 Gone`.
+
+**Key Properties:**
+
+- **Deterministic Suspend/Resume:** interrupt() guarantees execution pauses at the exact node boundary
+- **Stateful Checkpointing:** Full AgentState persisted to Redis at interrupt point
+- **Type-Safe Resume:** Command(resume=...) payload is validated before continuation
+- **Audit Trail:** Interrupt and resume events emit OTel spans with reviewer identity
 
 ### 7.2 HITL API Endpoints
 - `POST /v1/approvals/{thread_id}/resume`: Resumes thread with `Command(resume=decision)`. Overridable `max_slippage_pct` flows into `approval_decision`.

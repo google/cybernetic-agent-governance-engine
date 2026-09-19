@@ -35,7 +35,7 @@ services:
     env_file:
       - config/environments/local-dev.env
     extra_hosts:
-      # Allow container to reach host Ollama at localhost:11434
+      # Allow container to reach host services at localhost
       - "host.docker.internal:host-gateway"
     depends_on:
       gateway:

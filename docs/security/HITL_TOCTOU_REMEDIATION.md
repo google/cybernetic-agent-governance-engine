@@ -2,7 +2,9 @@
 
 ## Overview
 
-This document describes the architectural fix for the **Ghost-State TOCTOU vulnerability** in the CAGE v2 Human-in-the-Loop (HITL) approval workflow. It includes a sequence diagram of the new bounded resumption flow and implementation notes.
+This document describes the architectural fix for the **Ghost-State TOCTOU vulnerability** in the CAGE Human-in-the-Loop (HITL) approval workflow, implemented using the **LangGraph interrupt() pattern**. It includes a sequence diagram of the new bounded resumption flow and implementation notes.
+
+**LangGraph interrupt() Pattern:** The HITL gate leverages LangGraph's native `interrupt()` primitive, which suspends graph execution at a designated node boundary and persists state to a durable checkpoint store (Redis). Execution resumes only when an explicit `Command(resume=decision)` is passed to the graph's `.stream()` or `.invoke()` method. This provides deterministic, type-safe suspend/resume semantics with full audit trail preservation.
 
 **CVF Classification:** Formally Unbounded → Bounded (post-remediation)
 **STPA Reference:** UCA-2 (Wrong Timing — stale market data at execution)
@@ -18,12 +20,16 @@ This document describes the architectural fix for the **Ghost-State TOCTOU vulne
 T=0   Data Analyst: AAPL @ $150.  CBF: SAFE.  OPA: ALLOW.
       Evaluator: APPROVED + governance_signature.
       safety_check_node: APPROVED.
-      → interrupt_before=["governed_trader"] fires.  Graph suspended.
+      → interrupt_before=["governed_trader"] fires.
+      → approval_node.interrupt() suspends graph.
+      → State checkpointed to Redis. Execution paused.
 
 T+Δ   AAPL crashes to $130 (–13%).  Drawdown > 4.5%.
 
       Reviewer calls POST /v1/approvals/{thread_id}/resume  {"approved": true}
-      → approval_node → goto="executor"   ← NO re-check.  GHOST STATE.
+      → Command(resume=decision) passed to graph.astream()
+      → Graph resumes from interrupt point
+      → approval_node returns goto="executor"   ← NO re-check.  GHOST STATE.
       → execute_trade called with STALE params.
 ```
 
@@ -61,7 +67,7 @@ sequenceDiagram
     participant Exec as executor_node
     participant Drift as drift_blocked_node
 
-    note over Reviewer,Drift: PRIOR STATE: Graph suspended at approval_node.interrupt()<br/>Interrupt payload includes expires_at timestamp.
+    note over Reviewer,Drift: PRIOR STATE: Graph suspended via approval_node.interrupt()<br/>Interrupt payload includes expires_at timestamp.<br/>State checkpointed to Redis.
 
     Reviewer->>API: POST /resume {approved, reviewer, rationale, max_slippage_pct}
     API->>TTL: Check interrupt payload.expires_at
@@ -71,8 +77,8 @@ sequenceDiagram
         API-->>Reviewer: HTTP 410 Gone — re-submit required
     else Window valid
         TTL-->>API: OK
-        API->>Approval: Command(resume={approved, max_slippage_pct, ...})
-        Approval->>Approval: interrupt() returns resume payload
+        API->>Approval: Command(resume={approved, max_slippage_pct, ...})<br/>via graph.astream()
+        Approval->>Approval: Resume from interrupt point
         Approval->>Approval: Build approval_decision<br/>(includes max_slippage_pct)
 
         alt Trade rejected
@@ -146,10 +152,10 @@ The default `max_slippage_pct` (2.0%) is the reviewer-facing default in `Approva
 | File | Change |
 |------|--------|
 | [`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) | +3 nodes (`post_hitl_rehydrate`, `post_hitl_revalidate`, `drift_blocked`); +3 state fields; updated graph wiring |
-| [`approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) | `goto="executor"` → `goto="post_hitl_rehydrate"`; `expires_at` added to interrupt payload; `max_slippage_pct` added to `approval_decision` |
+| [`approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) | Migrated to `interrupt()` pattern with `Command(graph=interrupt(value=...))` return; `goto="executor"` → `goto="post_hitl_rehydrate"`; `expires_at` added to interrupt payload; `max_slippage_pct` added to `approval_decision` |
 | [`agent_nodes.py`](../../src/governed_financial_advisor/graph/nodes/agent_nodes.py) | `data_analyst_ticker` forwarded to subgraph state |
-| [`server.py`](../../src/governed_financial_advisor/server.py) | `max_slippage_pct` field on `ApprovalResumeRequest`; TTL expiry guard on `/resume` returning HTTP 410 |
-| [`test_hitl_toctou_revalidation.py`](../../tests/test_hitl_toctou_revalidation.py) | [NEW] 10+ unit tests, no live services required |
+| [`server.py`](../../src/governed_financial_advisor/server.py) | Resume via `Command(resume=approval_decision)` passed to `graph.astream()`; `max_slippage_pct` field on `ApprovalResumeRequest`; TTL expiry guard on `/resume` returning HTTP 410 |
+| [`test_hitl_toctou_revalidation.py`](../../tests/test_hitl_toctou_revalidation.py) | [NEW] 10+ unit tests validating interrupt()/resume semantics, no live services required |
 
 ## DEFER Queue — Confidence-Starved Context Handling
 

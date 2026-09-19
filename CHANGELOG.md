@@ -7,6 +7,45 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Breaking Changes
+
+#### refactor(deps)! — LangGraph & Dependency Decoupling (v4.0.0 track)
+
+**Phase 1.1 (commit 70c99fa):** Removed `sentence-transformers` dependency
+- Removed `sentence-transformers` from `pyproject.toml` advisor optional dependencies
+- Eliminated embedding-based Stage 2.5 semantic verification tier
+- Stage 2.5 is now **truly optional** — governance pipeline functions without ML dependencies
+
+**Phase 1.2 (this commit):** Docker Compose cleanup
+- Removed false Ollama reference from `docker-compose.local-dev.yml` comment (line 38)
+- Verified service inventory: OPA (8181), Gateway (8080), Langfuse OTLP ingestion — no SLM sidecar, no Ollama
+
+**Phase 2 (commit 0ea86b1):** LangGraph interrupt() migration
+- Migrated HITL approval workflow from legacy `interrupt_before=["governed_trader"]` configuration to explicit `interrupt()` pattern
+- Updated [`approval_node.py`](src/governed_financial_advisor/graph/nodes/approval_node.py) to use `Command(graph=interrupt(value=...))` return type
+- Resume logic now passes `Command(resume=decision)` to `graph.astream()` for deterministic continuation
+- **Breaking:** Legacy `interrupt_before` graph configuration removed; all HITL gates must use the `interrupt()` primitive explicitly
+- See [`docs/security/HITL_TOCTOU_REMEDIATION.md`](docs/security/HITL_TOCTOU_REMEDIATION.md) for updated sequence diagrams
+
+**Phase 3 (this commit):** Documentation & hermetic CI
+- Added [`docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`](docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md) §7.1 with complete interrupt() pattern examples
+- Updated [`docs/security/HITL_TOCTOU_REMEDIATION.md`](docs/security/HITL_TOCTOU_REMEDIATION.md) to document LangGraph interrupt() semantics
+- Added `.github/workflows/test-hermetic.yml` — CI gate verifying governance pipeline operates without sentence-transformers or torch dependencies
+
+### Added
+
+- **Hermetic Test CI Gate** — New `.github/workflows/test-hermetic.yml` workflow installing ONLY core governance dependencies (excludes `sentence-transformers`, `torch`, all ML packages) and running governance pipeline tests to prove Stage 2.5 is truly optional (`ci(governance)`).
+
+### Changed
+
+- **docker-compose.local-dev.yml** — Removed misleading Ollama reference from line 38 comment; replaced with generic "host services" description (`docs(deployment)`).
+- **Architecture Documentation** — Added comprehensive interrupt() pattern examples and migration guide to [`docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`](docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md) §7.1 (`docs(architecture)`).
+- **HITL Remediation Documentation** — Clarified LangGraph interrupt()/resume semantics in [`docs/security/HITL_TOCTOU_REMEDIATION.md`](docs/security/HITL_TOCTOU_REMEDIATION.md) with updated sequence diagram annotations (`docs(security)`).
+
+---
+
 ## [3.0.1] - 2026-09-09
 
 > **Remediation & Hardening Release:** Post-v3.0.0 comprehensive test suite remediation,
