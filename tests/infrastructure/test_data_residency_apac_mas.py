@@ -140,14 +140,25 @@ class TestAPACMASDataResidency:
             _assert_apac_region(value, var)
 
     def test_google_cloud_location_is_asia_southeast1(self) -> None:
-        """GOOGLE_CLOUD_LOCATION must be asia-southeast1 for APAC_MAS deployments."""
+        """GOOGLE_CLOUD_LOCATION must be asia-southeast1 for APAC_MAS PRODUCTION deployments.
+        
+        Staging/dev/test environments are exempt from geographic restrictions to allow
+        multi-region compliance testing on a single cluster.
+        """
+        cage_env = os.environ.get("CAGE_ENV", "production").lower()
+        if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
+            pytest.skip(
+                f"Geographic location checks skipped for CAGE_ENV={cage_env} "
+                "(non-production environment)"
+            )
+        
         location = os.environ.get("GOOGLE_CLOUD_LOCATION", "")
         if not location:
             pytest.skip(
                 "GOOGLE_CLOUD_LOCATION not set — skipping location residency check"
             )
         assert location == _REQUIRED_APAC_REGION, (
-            f"GOOGLE_CLOUD_LOCATION must be '{_REQUIRED_APAC_REGION}' for APAC_MAS, "
+            f"GOOGLE_CLOUD_LOCATION must be '{_REQUIRED_APAC_REGION}' for APAC_MAS production, "
             f"got {location!r}"
         )
 

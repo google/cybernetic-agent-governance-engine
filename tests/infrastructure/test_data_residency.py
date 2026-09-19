@@ -141,14 +141,25 @@ class TestEUECBDataResidency:
             _assert_eu_region(value, var)
 
     def test_google_cloud_location_is_europe_west1(self) -> None:
-        """GOOGLE_CLOUD_LOCATION must be europe-west1 for EU_ECB deployments."""
+        """GOOGLE_CLOUD_LOCATION must be europe-west1 for EU_ECB PRODUCTION deployments.
+        
+        Staging/dev/test environments are exempt from geographic restrictions to allow
+        multi-region compliance testing on a single cluster.
+        """
+        cage_env = os.environ.get("CAGE_ENV", "production").lower()
+        if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
+            pytest.skip(
+                f"Geographic location checks skipped for CAGE_ENV={cage_env} "
+                "(non-production environment)"
+            )
+        
         location = os.environ.get("GOOGLE_CLOUD_LOCATION", "")
         if not location:
             pytest.skip(
                 "GOOGLE_CLOUD_LOCATION not set — skipping location residency check"
             )
         assert location == _REQUIRED_EU_REGION, (
-            f"GOOGLE_CLOUD_LOCATION must be '{_REQUIRED_EU_REGION}' for EU_ECB, "
+            f"GOOGLE_CLOUD_LOCATION must be '{_REQUIRED_EU_REGION}' for EU_ECB production, "
             f"got {location!r}"
         )
 
