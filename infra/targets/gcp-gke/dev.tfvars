@@ -93,7 +93,6 @@ force_redeploy = true
 enable_vllm              = true
 enable_compliance_bridge = true
 enable_nemo_guardrails   = true
-# SLM runs as a sidecar inside the governed-financial-advisor pod (no standalone module)
 
 # vLLM configuration — model names pulled from .env via TF_VAR_model_fast / TF_VAR_model_reasoning
 # DO NOT hardcode model names here — use .env MODEL_FAST and MODEL_REASONING instead

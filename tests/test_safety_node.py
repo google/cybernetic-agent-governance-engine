@@ -424,14 +424,12 @@ class TestSafetyNodeIntegration:
     @pytest.mark.timeout(120)
     async def test_senior_trade_below_500k_approved_by_opa(self, minimal_trade_state):
         """Senior trader with $200k trade must be approved (or escalated for human review
-        when the SLM sidecar is unavailable and consensus splits).
+        when consensus splits).
 
-        When the SLM sidecar is unreachable the SymbolicGovernor applies elevated
-        confidence requirements, which can cause a split consensus vote
-        (['APPROVE', 'ESCALATE']) that tips to ESCALATED instead of APPROVED.
-        Both outcomes are correct governance behaviour: the trade is neither
-        silently blocked nor silently executed — it is either approved or escalated
-        for human review.  A BLOCKED outcome (outright denial) is the only failure
+        Depending on model voting, a split consensus vote (['APPROVE', 'ESCALATE'])
+        tips to ESCALATED instead of APPROVED. Both outcomes are correct governance behaviour:
+        the trade is neither silently blocked nor silently executed — it is either approved
+        or escalated for human review. A BLOCKED outcome (outright denial) is the only failure
         mode this integration test guards against.
         """
         from src.gateway.governance.ftra.models import FtraBoundaryResult
@@ -470,8 +468,8 @@ class TestSafetyNodeIntegration:
             ),
         ):
             update = await safety_check_node(state)
-        # APPROVED: SLM available, OPA + consensus passed.
-        # ESCALATED: SLM unavailable → elevated consensus → split vote → human review.
+        # APPROVED: OPA + consensus passed unanimously.
+        # ESCALATED: Split vote → human review.
         # BLOCKED would indicate OPA denied the trade outright, which is wrong for a
         # valid senior trade under the $500k threshold.
         assert update["safety_status"] in ("APPROVED", "ESCALATED"), (

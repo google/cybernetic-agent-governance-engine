@@ -375,7 +375,6 @@ Services:
 | Service | Port | Description |
 |---------|------|-------------|
 | `opa` | 127.0.0.1:8181 | OPA policy engine |
-| `slm` | 5000 | Sentence-transformers sidecar (all-MiniLM-L6-v2) |
 | `gateway` | 8080 | Gateway (HTTP) |
 | `app` | 3000 | Main agent service |
 

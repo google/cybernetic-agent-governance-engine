@@ -223,7 +223,7 @@ def test_agent_workflow_accuracy():
         elif check_type == "contains_all":
             is_pass = all(exp in agent_response_lower for exp in expected)
         elif check_type == "semantic":
-            # Fallback to broad keyword match if slm not available
+            # Semantic check: fallback to intent keyword match
             is_pass = any(exp in agent_response_lower for exp in expected)
 
         if is_pass:

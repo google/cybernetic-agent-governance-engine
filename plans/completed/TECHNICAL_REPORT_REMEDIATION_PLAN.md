@@ -102,8 +102,7 @@ Adopt [`proof/model.py:128`](../proof/model.py#L128) `TIERS = ("ftra", "stpa", "
 - Document `execution_actuator.py` enforcing routing seal verification prior to MCP execution.
 
 ### 4.4 Update TR-06 §5.1 (ISO 42001 Clause 8 Mapping)
-- Remove the deprecated phrase: *"8-tier governance pipeline (FTRA + Tiers 0–6 + 6b): STPA → confidence → CBF → SLM (deprecated) → OPA → consensus → causal → FRIA"*.
-- Replace with: *"Two-phase governance pipeline comprising kernel boundary gates (FTRA 0.5, STPA 1, Confidence 2, OPA 3b, FRIA 7) and domain-registered tiers (Bounding, CBF, Fiscal, Consensus, Causal) with LIFO rollback."*
+- Replace legacy pipeline description with: *"Two-phase governance pipeline comprising kernel boundary gates (FTRA 0.5, STPA 1, Confidence 2, OPA 3b, FRIA 7) and domain-registered tiers (Bounding, CBF, Fiscal, Consensus, Causal) with LIFO rollback."*
 
 ---
 

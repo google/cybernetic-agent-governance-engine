@@ -234,7 +234,6 @@ The script maps the following ports:
 | `8181`     | `svc/opa`                        | OPA policy engine                   |
 | `8080`     | `svc/gateway`                    | Inference Gateway                   |
 | `6379`     | `svc/redis`                      | Redis cache                         |
-| ~~`5001`~~ | ~~`svc/governed-financial-advisor-slm`~~ | **SLM service is permanently deprecated (`slm_available=False`). Port 5001 is no longer forwarded.** |
 
 
 The script accepts `--namespace <ns>` and `--dry-run` flags:

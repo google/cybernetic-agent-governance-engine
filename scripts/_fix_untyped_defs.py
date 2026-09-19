@@ -66,8 +66,6 @@ TARGETS: dict[str, list[int]] = {
     "src/gateway/server/hybrid_server.py": [61, 263, 294],
     "src/gateway/server/inference_proxy.py": [64],
     "src/gateway/server/mcp_tool_server.py": [109, 169, 471, 518],
-    "src/gateway/slm/mock_slm.py": [49, 78],
-    "src/gateway/slm/slm_server.py": [49, 78],
     "src/governed_financial_advisor/agents/evaluator/red_agent.py": [28],
     "src/governed_financial_advisor/agents/execution_analyst/agent.py": [200],
     "src/governed_financial_advisor/demo/demo_observability.py": [34],

@@ -688,7 +688,7 @@ profile:
                 name: "cage-implementation-guidance"
                 prose: >
                   CAGE-SPECIFIC AI SUPPLY CHAIN REQUIREMENT: All AI models (LLM providers,
-                  embedding models, SLM classifiers) must have documented provenance including:
+                  embedding models, classifier heads) must have documented provenance including:
                   (1) model version identifier and SHA-256 hash of model weights,
                   (2) training data lineage documentation from provider,
                   (3) model card or equivalent risk documentation,

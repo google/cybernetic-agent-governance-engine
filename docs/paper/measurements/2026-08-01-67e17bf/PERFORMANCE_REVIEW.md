@@ -53,8 +53,8 @@ Table 2's mocked-I/O figures reproduced consistently:
    doesn't undermine that framing, but it's a reminder that the "sub-millisecond" framing
    is sensitive to co-located load and should ideally be measured on an idle pod.
 2. **`Confidence (Tier 2)` and `FRIA (Tier 7)` show "span not emitted" in every run.** This is
-   expected, documented behavior: Tier 2's legacy SLM sidecar was permanently deprecated
-   (`slm_available=false` sentinel), and Tier 7/FRIA's adaptive path is gated on
+   expected, documented behavior: Tier 2 emits no span (the agentic confidence pre-check is a
+   synchronous local check with no OTel instrumentation), and Tier 7/FRIA's adaptive path is gated on
    `CAGE_NORMATIVE_PROVIDER != "static"`, which is unset in this deployment (consistent with
    POAM-022 — Provider 01 credentials not yet provisioned). Neither is a new finding; both are
    already disclosed in the codebase and technical reports.

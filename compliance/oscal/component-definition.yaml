@@ -27,8 +27,8 @@ component-definition:
   - uuid: b2c3d4e5-f6a7-8901-bcde-f12345678901
     title: TypeScript Governance Gateway
     type: software
-    description: 'Mastra-based Express gateway enforcing three-tier semantic shielding:
-      Tier 1 Aho-Corasick heuristic, Tier 2 SLM semantic similarity, Tier 3 OPA policy
+    description: 'Mastra-based Express gateway enforcing multi-tier shielding:
+      Tier 1 Aho-Corasick heuristic, NeMo Guardrails, and Tier 3 OPA policy
       enforcement. All enforcement events are tagged with ISO 42001 control IDs and
       emitted as OTel spans to Langfuse.
 
@@ -47,7 +47,7 @@ component-definition:
       implemented-requirements:
       - uuid: d4e5f6a7-b8c9-0123-defa-234567890123
         control-id: A.5.2
-        description: 'Aho-Corasick Tier-1 and SLM Tier-2 block toxic/injected content
+        description: 'Aho-Corasick Tier-1 and NeMo Guardrails block toxic/injected content
           at ingress. All blocks are tagged iso42001.control_id=A.5.2 on OTel spans.
 
           '

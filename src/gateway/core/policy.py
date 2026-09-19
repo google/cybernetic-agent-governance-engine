@@ -77,7 +77,7 @@ _explain_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 # ---------------------------------------------------------------------------
 # OPA Decision Cache — short-TTL Redis cache for identical policy inputs
 # ---------------------------------------------------------------------------
-# Identical OPA inputs (same action+symbol+amount+slm_available) within a
+# Identical OPA inputs (same action+symbol+amount) within a
 # 10-second window return the cached decision without an HTTP round-trip.
 # TTL is intentionally short to avoid stale decisions under fast market moves.
 #

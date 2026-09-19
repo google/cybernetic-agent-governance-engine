@@ -160,11 +160,6 @@ langfuse = [
     "langfuse>=2.0.0",
 ]
 
-slm = [
-    # SLM Flask sidecar — moved from core mandatory deps
-    "flask>=3.0.0",
-    "sentence-transformers>=3.0.0",
-]
 
 lint = [
     "ruff>=0.4.6",

@@ -363,7 +363,7 @@ uv run pytest tests/test_defer_queue.py -v
 ### Local Infrastructure (Docker Compose)
 
 ```bash
-# Start all services locally (OPA, SLM, Gateway, App)
+# Start all services locally (OPA, Gateway, App)
 docker compose up
 
 # Start with hot-reload dev overlay (do NOT use in staging/production)

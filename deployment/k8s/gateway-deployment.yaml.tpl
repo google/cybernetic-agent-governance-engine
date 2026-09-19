@@ -84,8 +84,6 @@ spec:
             # OPA Configuration
             - name: OPA_URL
               value: "http://opa-service:8181/v1/data/trade/governance"
-            - name: SLM_BASE_URL
-              value: "http://governed-financial-advisor-slm:5000"
           resources:
             requests:
               cpu: "1000m"

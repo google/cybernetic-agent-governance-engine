@@ -47,7 +47,6 @@ This starts:
 - **Gateway** (`localhost:8080`) — Gateway: 8080 (REST Ingress / FastMCP over SSE / In-Process Tier Pipeline)
 - **Governed Application (`app`)** (`localhost:3000`) — Governed application service container
 - **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies
-- **SLM Sidecar** (`localhost:5000`) — Sentence-transformers similarity scoring service
 
 ## 3. Verify the gateway is running
 

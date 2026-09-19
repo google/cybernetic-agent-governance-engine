@@ -19,7 +19,6 @@ NS="${K8S_NAMESPACE:-governance-stack}"
 OUTPUT_FILE="${1:-/tmp/langfuse_eval_output.txt}"
 LOG_DIR=/tmp/cage-pf
 PF_PIDS_FILE=/tmp/pf_pids.txt
-SLM_PORT="${SLM_PORT:-5000}"
 
 # Maximum seconds to wait for pods / ports before aborting
 POD_WAIT_TIMEOUT=300   # 5 minutes — GPU pods can be slow to schedule
@@ -119,8 +118,6 @@ if [[ -f "${PF_PIDS_FILE}" ]]; then
   rm -f "${PF_PIDS_FILE}"
 fi
 pkill -f "kubectl port-forward" 2>/dev/null || true
-# Also stop any stale SLM sidecar from a previous run
-pkill -f "mock_slm\|slm_server" 2>/dev/null || true
 sleep 1
 
 mkdir -p "$LOG_DIR"
@@ -167,23 +164,9 @@ start_pf gateway     gateway                     8080 8080   best-effort
 start_pf vllm-fast   vllm-service                8001 8000   best-effort
 start_pf redis       redis                       6379 6379   best-effort
 
-# ── Step 3: start SLM sidecar ────────────────────────────────────────────────
+# ── Step 3: health-gate — wait for required services ─────────────────────────
 echo ""
-info "=== STEP 3: Starting local SLM sidecar (mock_slm) on localhost:${SLM_PORT} ==="
-
-if pgrep -f "mock_slm\|slm_server" &>/dev/null; then
-  ok "SLM sidecar already running — skipping."
-else
-  export SLM_PORT
-  uv run python -m src.gateway.slm.mock_slm \
-    >"${LOG_DIR}/slm.log" 2>&1 &
-  SLM_PID=$!
-  ok "SLM sidecar started (PID ${SLM_PID})  |  log: ${LOG_DIR}/slm.log"
-fi
-
-# ── Step 4: health-gate — wait for required services ─────────────────────────
-echo ""
-info "=== STEP 4: Health-gating required ports (timeout: ${PORT_WAIT_TIMEOUT}s each) ==="
+info "=== STEP 3: Health-gating required ports (timeout: ${PORT_WAIT_TIMEOUT}s each) ==="
 
 # Wait first with TCP so we know the port-forward tunnel is up, then use HTTP
 # for the services that support it to confirm the backend process is healthy.
@@ -253,7 +236,6 @@ check_service 8081 "Backend (governed-financial-advisor)" "http://localhost:8081
 check_service 8000 "vLLM reasoning (judge LLM)"          "http://localhost:8000/v1/models"
 check_service 8181 "OPA policy engine"                   "http://localhost:8181/health"
 check_service 3000 "Langfuse web"                        "http://localhost:3000"
-check_service "$SLM_PORT" "SLM sidecar"                  "http://localhost:${SLM_PORT}/health"
 
 if [[ ${#health_failures[@]} -gt 0 ]]; then
   err "One or more required services failed health checks:"
@@ -392,7 +374,6 @@ echo ""
 hr
 echo "  Full captured output:  ${OUTPUT_FILE}"
 echo "  Port-forward logs:     ${LOG_DIR}/"
-echo "  SLM sidecar log:       ${LOG_DIR}/slm.log"
 echo "  Stop all forwards:     xargs kill < ${PF_PIDS_FILE} 2>/dev/null; pkill -f 'kubectl port-forward' || true"
 hr
 echo ""

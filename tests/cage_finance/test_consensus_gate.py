@@ -194,8 +194,8 @@ async def test_consensus_engine_critic_error_returns_escalate(
     """If ALL critics return ERROR (LLM unavailable), result is APPROVE (fail-open for resilience).
 
     Design decision: when the consensus LLM critics are unreachable, the trade is not blocked
-    by consensus alone — OPA remains the primary enforcement gate.  This mirrors the SLM sidecar
-    fail-open pattern.  Mixed ERROR+REJECT votes still result in REJECT (one critic is reachable).
+    by consensus alone — OPA remains the primary enforcement gate.  Mixed ERROR+REJECT votes
+    still result in REJECT (one critic is reachable).
     """
     from src.gateway.governance.consensus.engine import ConsensusGate
 

@@ -380,7 +380,7 @@ Structurally the healthiest of the six — most content is framework mapping tha
 
 | Issue | Detail |
 |---|---|
-| §5.1 Clause 8 row | "8-tier governance pipeline (FTRA + Tiers 0–6 + 6b): STPA → confidence → CBF → **SLM (deprecated)** → OPA → consensus → causal → FRIA" — carries a deprecated tier in the canonical clause mapping. Rewrite per §3 |
+| §5.1 Clause 8 row | "8-tier governance pipeline (FTRA + Tiers 0–6 + 6b): STPA → confidence → CBF → OPA → consensus → causal → FRIA" |
 | §3.2 AC row | Dead rego path |
 | §7 "31-manifest inventory (plus 1 draft)" | [`compliance/lula/README.md`](../compliance/lula/README.md) tallies differently and the series README says 30. Reconcile the three |
 | §7 15-row excerpt | Omits the ✅ **Active** manifests `lula-validation-ftra.yaml`, `lula-validation-tqp007.yaml`, `lula-validation-iso001-token-quota.yaml`, `lula-validation-flowsignal.yaml`. An excerpt that omits four of the seven active gates is misleading |

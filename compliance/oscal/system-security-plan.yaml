@@ -155,8 +155,8 @@ system-security-plan:
     description: 'The Cybernetic Governance Engine (CAGE) is a HIGH-impact AI governance
       platform for financial services that enforces real-time, deterministic controls
       over large language model (LLM) inference. CAGE implements a three-tier semantic
-      shielding architecture: Tier 1 Aho-Corasick heuristic filtering, Tier 2 Small
-      Language Model (SLM) semantic classification, and Tier 3 Open Policy Agent (OPA)
+      shielding architecture: Tier 1 Aho-Corasick heuristic filtering, NeMo Guardrails
+      content shielding, and Tier 3 Open Policy Agent (OPA)
       Rego policy enforcement. All governance decisions are emitted as OpenTelemetry
       (OTel) spans stamped with ISO 42001 and NIST SP 800-53 control identifiers,
       providing a continuous, machine-verifiable audit trail aligned with SEC Rule
@@ -477,8 +477,8 @@ system-security-plan:
       type: software
       title: CAGE Gateway
       description: 'FastAPI/gRPC hybrid gateway serving as the primary ingress enforcement
-        layer. Implements three-tier semantic shielding: Tier 1 Aho-Corasick heuristic,
-        Tier 2 SLM semantic classification, Tier 3 OPA policy enforcement. Emits OTel
+        layer. Implements multi-tier semantic shielding: Tier 1 Aho-Corasick heuristic,
+        NeMo Guardrails, Tier 3 OPA policy enforcement. Emits OTel
         spans stamped with ISO 42001 and NIST SP 800-53 control identifiers.
 
         '

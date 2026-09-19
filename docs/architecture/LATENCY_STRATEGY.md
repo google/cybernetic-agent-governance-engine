@@ -76,7 +76,7 @@ The following mechanisms are implemented in code and actively reduce governance 
 
 ### 1. OPA Decision Cache (Redis, 10s TTL)
 
-[`src/gateway/core/policy.py`](../src/gateway/core/policy.py) implements a short-TTL Redis cache for OPA decisions. Identical OPA inputs (same action + symbol + amount + slm_available) within a **10-second window** return the cached decision without an HTTP round-trip.
+[`src/gateway/core/policy.py`](../src/gateway/core/policy.py) implements a short-TTL Redis cache for OPA decisions. Identical OPA inputs (same action + symbol + amount) within a **10-second window** return the cached decision without an HTTP round-trip.
 
 - **Key prefix:** `cage:opa:decision:` (SHA-256 of canonical JSON input, first 24 hex chars)
 - **TTL:** `_OPA_CACHE_TTL_SECONDS = 10` — intentionally short to avoid stale decisions under fast market moves
@@ -191,8 +191,3 @@ The `/inference/v1/chat/completions` endpoint applies governance checks in this 
 
 Backend routing is model-aware: requests with `"deepseek"` or `"reasoning"` in the model ID route to `VLLM_REASONING_API_BASE`; all others route to `VLLM_FAST_API_BASE` (see `_resolve_backend_url()`).
 
-## SLM Semantic Similarity Sidecar (Deprecated — Removed from Production)
-
-> **⚠️ DEPRECATED — REMOVED FROM PRODUCTION.** The SLM sidecar has been **completely deprecated and removed from the active governance pipeline** to optimize latency. `symbolic_governor.py` hardcodes `slm_available = False` as a **permanent sentinel** — this value is injected into every OPA payload and will never be `True` in production. The semantic similarity check no longer executes at runtime under any configuration.
-
-The sidecar code ([`src/gateway/slm/slm_server.py`](../../src/gateway/slm/slm_server.py)) and the `slm` service in `docker-compose.yml` remain in the repository for historical reference only and are **not active** in the governance pipeline. The `slm` optional dependency group in `pyproject.toml` (`flask`, `sentence-transformers`) is similarly retained but not installed in production images.

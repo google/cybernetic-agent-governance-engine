@@ -27,12 +27,6 @@ Architecture & Interruption Taxonomy:
     - ESCALATE: Quorum human-in-the-loop (HITL) routing.
     - PAUSE / NARROW: Dedicated execution branches retaining task liveness while
       constraining authorization scope (introduced in v3.1 per design review recommendations).
-
-Phase 4.3: If the external SLM sidecar times out or is unreachable, an
-explicit ``"slm_available": false`` sentinel is injected into the OPA
-payload instead of passing an undefined or zero score.  The Rego policy
-(system_authz.rego) is updated to require higher confidence from other tiers
-when this sentinel is present.
 """
 
 from __future__ import annotations
@@ -79,8 +73,6 @@ try:
     )
 except (ImportError, Exception):
     pass  # prometheus_client not installed or counter already registered
-
-# SLM sidecar has been completely deprecated to optimize latency.
 
 # ---------------------------------------------------------------------------
 # No-Direct-Bind startup assertions
@@ -1432,8 +1424,7 @@ class SymbolicGovernor:
 
         # ── POAM-TIER2-001: Tier 2 Confidence Self-Authentication Gap (partially mitigated) ──
         # RISK: The confidence score below is 100% agent-self-reported via params["confidence"].
-        # Since the SLM sidecar was deprecated (latency reduction), no independent verification
-        # mechanism existed to corroborate this value. An adversarial agent could unconditionally
+        # Without independent verification, an adversarial agent could unconditionally
         # report confidence=1.0 to suppress HITL escalation for any action.
         #
         # PARTIAL MITIGATION (deployed): A rule-based structural corroboration heuristic runs
@@ -1452,8 +1443,7 @@ class SymbolicGovernor:
         # ──────────────────────────────────────────────────────────────────────────────────────
 
         # 1. Confidence threshold — local pre-check (fast-fail before network I/O).
-        # The OPA Rego policy (system_authz.rego) also enforces confidence so that
-        # the dynamic SLM-degraded escalation (0.95→0.97) is applied consistently.
+        # The OPA Rego policy (system_authz.rego) also enforces confidence.
         # This local check fires first to avoid unnecessary CBF/OPA round-trips when
         # the confidence score is obviously below threshold.
         with tracer.start_as_current_span("cage.confidence_check") as conf_span:
@@ -1645,8 +1635,7 @@ class SymbolicGovernor:
         # Derive an independent confidence signal from Tier-1 STPA violations and
         # Tier-3 OPA decision margin.  This runs AFTER both tiers have resolved so
         # it can contradict a high self-reported confidence when structural evidence
-        # says otherwise — closing the self-authentication gap without reinstating
-        # the deprecated SLM sidecar.
+        # says otherwise — closing the self-authentication gap deterministically.
         #
         # Conservative treatment: if STPA or OPA results are unavailable (e.g. a tier
         # raised an exception and we have no result at all), treat as structural risk.

@@ -147,7 +147,6 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 | Component / Library | Status         | Rationale & Mitigation                                                                    |
 | ------------------- | -------------- | ----------------------------------------------------------------------------------------- |
 | ~~`outlines`~~      | **REMOVED**    | Critical CVE-2025-69872. Replaced with native vLLM FSM guided decoding.                   |
-| ~~SLM sidecar~~     | **DEPRECATED** | Retired to eliminate latency overhead; OPA payload receives permanent `slm_available=False`. |
 | ~~OTel Collector~~  | **DEPRECATED** | Removed in favor of direct OTLP gRPC export from application pods to Langfuse web service.|
 
 ---

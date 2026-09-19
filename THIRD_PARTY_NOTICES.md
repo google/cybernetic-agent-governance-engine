@@ -16,8 +16,7 @@ Last reviewed: 2026-09-17
 ## Python Runtime Dependencies
 
 Packages used by one or more of the Python services (`src/gateway`,
-`src/governed_financial_advisor`, `src/compliance_bridge`,
-`src/gateway/slm`). Declared in `pyproject.toml`.
+`src/governed_financial_advisor`, `src/compliance_bridge`). Declared in `pyproject.toml`.
 
 ### aiohttp ≥3.9
 - **License:** Apache-2.0 AND MIT
@@ -78,11 +77,6 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **License:** MIT
 - **Homepage:** https://github.com/fastapi/fastapi
 - **Usage:** ASGI web framework serving the gateway, compliance-bridge, and NeMo Guardrails HTTP APIs.
-
-### flask ≥3.0
-- **License:** BSD-3-Clause
-- **Homepage:** https://github.com/pallets/flask
-- **Usage:** Lightweight HTTP server for the SLM similarity-scoring sidecar (`src/gateway/slm`).
 
 ### frozenlist ≥1.4
 - **License:** Apache-2.0
@@ -212,7 +206,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 ### loguru ≥0.7
 - **License:** MIT
 - **Homepage:** https://github.com/Delgan/loguru
-- **Usage:** Structured logging library used by NeMo Guardrails and the SLM sidecar.
+- **Usage:** Structured logging library used by NeMo Guardrails.
 
 ### lark ≥1.3
 - **License:** MIT
@@ -242,7 +236,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 ### numpy ≥1.26
 - **License:** BSD-3-Clause
 - **Homepage:** https://numpy.org
-- **Usage:** Numerical array operations used by scikit-learn, scipy, and the SLM similarity scorer.
+- **Usage:** Numerical array operations used by scikit-learn and scipy.
 
 ### openai ≥1.0
 - **License:** Apache-2.0
@@ -393,11 +387,6 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **License:** BSD-3-Clause
 - **Homepage:** https://scikit-learn.org
 - **Usage:** Machine learning utilities used by the confabulation scorer and evaluation pipeline.
-
-### sentence-transformers ≥3.0
-- **License:** Apache-2.0
-- **Homepage:** https://www.sbert.net
-- **Usage:** Sentence embedding models used by the SLM sidecar for semantic similarity scoring (Tier-2 symbolic governor).
 
 ### simpleeval ≥1.0
 - **License:** MIT
@@ -632,7 +621,7 @@ and project Dockerfiles.
 ### python:3.12-slim (runtime base image)
 - **License:** PSF-2.0 / various (Debian packages)
 - **Homepage:** https://hub.docker.com/_/python
-- **Usage:** Base image for the gateway, compliance-bridge, SLM sidecar, and NeMo Guardrails containers.
+- **Usage:** Base image for the gateway, compliance-bridge, and NeMo Guardrails containers.
 
 ### runai-model-streamer (vLLM image add-on)
 - **License:** Apache-2.0

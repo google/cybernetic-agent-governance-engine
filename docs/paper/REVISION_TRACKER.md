@@ -66,7 +66,7 @@ response to the reviewer is grounded in code rather than in the analysis:
 | S2 | No un-governed baseline; no benign-prompt false-positive rate | 2, 4 | **FIXED** | §6.6 evaluation limitations added; `tests/red_team/benign_dataset.json` (20 prompts) + `measure_benign_fpr()` added |
 | S3 | §6.5 arithmetic uses undisclosed γ and `min_cash_balance` | 4 | **FIXED** | §6.5 explicit parameter disclosure added (γ=0.5, min_cash=1000) |
 | S4 | STPA compiler mechanism undefined | 4 | **FIXED** | §4.5 compiler mechanism paragraph added (template-based, Pydantic, generate_opa/nemo/python/langgraph) |
-| S5 | Tier 2 confidence derivation unspecified | 4 | **FIXED** | §4.2 Tier 2 description updated (payload field, SLM deprecated, OPA threshold 0.97) |
+| S5 | Tier 2 confidence derivation unspecified | 4 | **FIXED** | §4.2 Tier 2 description updated (payload field, OPA uniform confidence threshold 0.95; `EU_ECB` 0.97) |
 | S6 | Tier 5 critic pool and aggregation logic unspecified | 4 | **FIXED** | §4.2 Tier 5 paragraph rewritten with `ConsensusModelRegistry`, per-persona model routing, 10 s timeout, and full aggregation lattice (unanimous/degraded-quorum/split/ERROR handling), sourced from `consensus.py` |
 | S7 | Tier 6 causal graph, treatment/outcome, thresholds unspecified | 4 | **FIXED** | §4.2 Tier 6 paragraph rewritten with the fixed causal graph, treatment/outcome variables, `PlaceboTreatmentRefuter` (n=50, p<0.05, effect>0.2), and the marginal-risk boundary formula, sourced from `causal_gatekeeper.py` |
 | S8 | §6.4 confounded read-path baseline (`pipeline()` vs `get()`) | 4 | **FIXED** | §6.4 now has an explicit "Limitation — confounded baseline" paragraph naming the confound and proposing an architecturally-equivalent re-measurement as future work |

@@ -606,7 +606,7 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelope
 
 - Corrected pipeline tier numbering (CBF=2, Fiscal=3, OPA=4) across ~25 docs
   that had swapped or stale tier references; removed stale references to the
-  retired SLM tier and the fictional `governed_tool` decorator (`docs`)
+  fictional `governed_tool` decorator (`docs`)
 - Removed fictional v0.1.0/rc-v0.1.0 version references across ~40 files in a
   v2.0.0/v2.1.0 codebase (`docs`)
 - Deleted superseded planning and process-fiction documents (implementation

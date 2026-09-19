@@ -95,7 +95,7 @@ jobs:
           #   upstream as of 2026-06-08. torch is a dev/inference-only dependency; it
           #   is not included in the compliance-bridge or gateway production images.
           #   Suppressed pending an upstream patch release. Mitigation: torch is never
-          #   executed in production containers; only used locally for SLM fine-tuning
+          #   executed in production containers; only used locally for offline evaluation
           #   experiments. POAM item tracked under POAM-016.
           #
           # PYSEC-2026-3721 (pip 26.1.2): Wheel installation path traversal via doubly-encoded URLs.

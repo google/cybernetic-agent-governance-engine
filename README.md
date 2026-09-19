@@ -572,7 +572,7 @@ cp .env.example .env
 ./deploy_all.sh --target agnostic --env dev
 
 # Or start services locally with Docker Compose
-# This starts: OPA (127.0.0.1:8181), SLM (localhost:5000),
+# This starts: OPA (127.0.0.1:8181),
 # Gateway (localhost:8080), and App (localhost:3000)
 docker compose up
 

@@ -184,7 +184,7 @@ def stamp_iso_control(
                   immediately without raising.
         tier:     Integer enforcement tier.
                   1 = Tier-1 heuristic (Aho-Corasick)
-                  2 = Tier-2 semantic (SLM similarity)
+                  2 = Tier-2 agentic confidence / structural corroboration
                   3 = Tier-3 policy (OPA / NeMo)
         control:  ISO 42001 Annex A control identifier, e.g. ``"A.6.1.2"``.
         outcome:  Governance decision — one of ``"PASS"``, ``"BLOCK"``,
