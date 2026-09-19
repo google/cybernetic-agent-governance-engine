@@ -17,7 +17,7 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -42,6 +42,12 @@ from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 class DataAnalystState(TypedDict):
     messages: Annotated[list, add_messages]  # Inherited global conversation
     reasoning_output: str | None  # Local Thinker payload
+    
+    # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
+    agent_id: str  # Audit trail identifier
+    proposed_action: dict[str, Any] | None  # Parameters for governance validation
+    governance_envelope: dict[str, Any] | None  # Signed ALLOW decision from Gateway
+    governance_status: str | None  # "ALLOWED" | "DENIED" | "DEFERRED"
 
 
 # ---------------------------------------------------------------------------
@@ -51,13 +57,20 @@ class DataAnalystState(TypedDict):
 
 
 # ---------------------------------------------------------------------------
-# 3. Custom Tool Executor Node (Dynamic MCP)
+# 3. Custom Tool Executor Node (Dynamic MCP) — CAGE governance enforced
 # ---------------------------------------------------------------------------
-async def tool_executor_node(state: DataAnalystState):  # type: ignore[no-untyped-def]
-    """
-    Manually executes tools requested by the Doer node.
-    Bypasses langgraph.prebuilt.ToolNode due to Corporate Airlock versioning issues.
-    Dynamically loads tools from the MCP server to execute them.
+async def tool_executor_node(state: DataAnalystState) -> dict[str, Any]:
+    """Execute market data tools after CAGE governance validation.
+    
+    This node invokes get_market_data via MCP. While read-only (no financial
+    transactions), it still requires governance validation to:
+      - Enforce rate limits (prevent API quota exhaustion)
+      - Validate ticker symbols (prevent injection attacks)
+      - Log all data access for audit trail
+    
+    The @cage_guard decorator (applied in graph builder below) validates
+    state["proposed_action"] through Tier 0 (STPA), Tier 1 (confidence), and
+    Tier 6 (causal) before allowing tool execution.
     """
     from langchain_mcp_adapters.tools import load_mcp_tools
 
@@ -175,10 +188,15 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
 
 
 # ---------------------------------------------------------------------------
-# 5. Doer Node (Llama 3.1 + Dynamic MCP)
+# 5. Doer Node (Llama 3.1 + Dynamic MCP) — Populates proposed_action
 # ---------------------------------------------------------------------------
-async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped-def]
-    """Llama 3.1 dynamically loads MCP tools and translates reasoning into JSON."""
+async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
+    """Generate tool calls and populate proposed_action for governance.
+    
+    This node's LLM selects market data tools based on the thinker's reasoning.
+    It MUST populate state["proposed_action"] so the downstream tool_executor_node's
+    @cage_guard decorator can validate parameters before actual execution.
+    """
     tracer = get_tracer()
     reasoning = state["reasoning_output"]
 
@@ -281,7 +299,21 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
         )
         span.set_attribute(OBSERVATION_OUTPUT, output_str)
 
-        return {"messages": [response]}
+        # Extract proposed action parameters for downstream @cage_guard validation
+        proposed_action: dict[str, Any] = {}
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            first_call = response.tool_calls[0]
+            proposed_action = {
+                "tool_name": first_call["name"],
+                "arguments": first_call["args"],
+                # Flatten common parameters
+                "ticker": first_call["args"].get("ticker") or first_call["args"].get("symbol", "UNKNOWN"),
+            }
+
+        return {
+            "messages": [response],
+            "proposed_action": proposed_action,  # Consumed by @cage_guard
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -363,14 +395,26 @@ def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-d
 
 
 # ---------------------------------------------------------------------------
-# 7. Build Subgraph
+# 7. Build Subgraph — Apply CAGE governance to tool executor
 # ---------------------------------------------------------------------------
+from src.gateway.client.adapters.langgraph import cage_guard
+from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
+
+
+def _create_guarded_tool_executor():
+    """Lazy factory for @cage_guard decorator to defer env var validation until runtime."""
+    return cage_guard(
+        client=get_cage_client(),
+        action="fetch_market_data",
+    )(tool_executor_node)
+
+
 builder = StateGraph(DataAnalystState)
 
 # Add Nodes
 builder.add_node("thinker", analyst_thinker_node)
 builder.add_node("doer", analyst_doer_node)
-builder.add_node("execute_tool", tool_executor_node)
+builder.add_node("execute_tool", _create_guarded_tool_executor())  # CAGE governance enforced
 builder.add_node("reporter", analyst_reporter_node)
 
 # Edges

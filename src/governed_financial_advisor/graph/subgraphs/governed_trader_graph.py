@@ -80,6 +80,12 @@ class GovernedTraderState(TypedDict):
     data_analyst_ticker: str | None  # passed from parent graph for re-hydration
     rehydration_result: dict | None  # fresh market snapshot + drift metrics
     post_hitl_safety_status: str | None  # "APPROVED" | "BLOCKED" after re-validation
+    
+    # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
+    agent_id: str  # Audit trail identifier
+    proposed_action: dict[str, Any] | None  # Parameters for governance validation
+    governance_envelope: dict[str, Any] | None  # Signed ALLOW decision from Gateway
+    governance_status: str | None  # "ALLOWED" | "DENIED" | "DEFERRED"
 
 
 # ---------------------------------------------------------------------------
@@ -191,16 +197,30 @@ def route_approval(state: GovernedTraderState) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Executor nodes (unchanged from original)
+# Executor nodes (CAGE governance enforced)
 # ---------------------------------------------------------------------------
 
 
 @side_effect_node(kind="api_call", external_system="gateway_mcp")
-async def tool_executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-def]
-    """
-    Manually executes tools requested by the executor node.
-    Bypasses langgraph.prebuilt.ToolNode.
-    Dynamically loads tools from the MCP server to execute them.
+async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
+    """Execute trade tools after CAGE governance validation.
+    
+    CRITICAL SECURITY GATE: This node invokes execute_trade_action via MCP, which
+    triggers real financial transactions. The @cage_guard decorator (applied in
+    graph builder below) enforces pre-execution validation through the full 7-tier
+    governance pipeline (STPA, CBF, OPA, FTRA, consensus, causal) before ANY tool
+    executes.
+    
+    Governance Contract:
+        - Decorator extracts state["proposed_action"] (populated by executor_node)
+        - Submits to Gateway PDP: POST /v1/validate with action="execute_trade"
+        - On ALLOW: Injects state["governance_envelope"] and proceeds
+        - On DENY: Raises PolicyViolationException → routes to explainer
+        - On DEFER: Raises DeferralPending → routes to defer_node
+    
+    TOCTOU Closure: This node executes AFTER post_hitl_revalidate_node when
+    approval was required, ensuring fresh market data and slippage bounds are
+    validated at actuation time, not check time.
     """
     from langchain_mcp_adapters.tools import load_mcp_tools
 
@@ -250,8 +270,14 @@ async def tool_executor_node(state: GovernedTraderState):  # type: ignore[no-unt
     return {"messages": tool_outputs}
 
 
-async def executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-def]
-    """The fast reasoning executor that calls tools based on the plan."""
+async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
+    """Generate tool calls and populate proposed_action for governance.
+    
+    This node's LLM generates tool_calls based on the approved execution plan.
+    It MUST populate state["proposed_action"] with the extracted trade parameters
+    so the downstream tool_executor_node's @cage_guard decorator can validate
+    them before actual execution.
+    """
     tracer = get_tracer()
 
     with tracer.start_as_current_span("GovernedTrader: Executor") as span:
@@ -303,7 +329,24 @@ async def executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-
             OBSERVATION_OUTPUT, getattr(response, "content", "No content")
         )
 
-        return {"messages": [response]}
+        # Extract proposed action parameters for downstream @cage_guard validation
+        proposed_action: dict[str, Any] = {}
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            # Take the first tool call as the proposed action
+            first_call = response.tool_calls[0]
+            proposed_action = {
+                "tool_name": first_call["name"],
+                "arguments": first_call["args"],
+                # Flatten common trade parameters to top level for CBF/OPA
+                "symbol": first_call["args"].get("symbol", "UNKNOWN"),
+                "amount": first_call["args"].get("amount", 0),
+                "confidence": first_call["args"].get("confidence", 0.0),
+            }
+
+        return {
+            "messages": [response],
+            "proposed_action": proposed_action,  # Consumed by @cage_guard
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +750,18 @@ def route_post_revalidation(state: GovernedTraderState) -> str:
 # Build Graph
 # ---------------------------------------------------------------------------
 
+from src.gateway.client.adapters.langgraph import cage_guard
+from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
+
+
+def _create_guarded_tool_executor():
+    """Lazy factory for @cage_guard decorator to defer env var validation until runtime."""
+    return cage_guard(
+        client=get_cage_client(),
+        action="execute_trade",
+    )(tool_executor_node)
+
+
 builder = StateGraph(GovernedTraderState)
 
 # Nodes
@@ -720,7 +775,7 @@ builder.add_node(
 )  # TOCTOU: pre-actuation re-eval
 builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
 builder.add_node("executor", executor_node)
-builder.add_node("tools", tool_executor_node)
+builder.add_node("tools", _create_guarded_tool_executor())  # CAGE governance enforced
 
 # Entry: conditional — approval required or not
 builder.add_conditional_edges(

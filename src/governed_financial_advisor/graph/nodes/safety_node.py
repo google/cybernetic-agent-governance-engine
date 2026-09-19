@@ -41,11 +41,10 @@ infinite replanning loops.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
-from src.gateway.client.core import CageClient
 from src.gateway.client.exceptions import DeferralPending, PolicyViolationException
+from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
 from src.governed_financial_advisor.graph.state import AgentState
 
 # R-11 / POAM-024: In out-of-process PEP/PDP architecture, CageClient delegates
@@ -114,135 +113,107 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         "thread_id": str(state.get("thread_id", "unknown")),
     }
 
-    # Initialize CageClient (read gateway URL from environment)
-    gateway_url = os.environ.get(
-        "CAGE_GATEWAY_URL", "http://localhost:8080"
-    )
-    routing_seal_secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
+    # Use singleton CageClient for consistency across all LangGraph nodes
+    client = get_cage_client()
 
     try:
-        async with CageClient(
-            gateway_url=gateway_url,
-            routing_seal_secret=routing_seal_secret,
-            timeout_s=5.0,
-        ) as client:
-            try:
-                # Submit action for governance validation
-                envelope = await client.validate_action(
-                    action="execute_trade",
-                    parameters=parameters,
-                    agent_id="governed-financial-advisor",
-                    context=context,
-                )
+        try:
+            # Submit action for governance validation
+            envelope = await client.validate_action(
+                action="execute_trade",
+                parameters=parameters,
+                agent_id="governed-financial-advisor",
+                context=context,
+            )
 
-                # ALLOW path: Reset consecutive denials counter
-                logger.info(
-                    "✅ Safety Node: Action ALLOWED by governance (record_hash=%s)",
-                    envelope.subject.get("record_hash", "unknown"),
-                )
-                return {
-                    "safety_status": "APPROVED",
-                    "consecutive_denials": 0,  # Reset on ALLOW
-                    "last_violation": None,  # Clear previous violations
-                    "governance_signature": str(envelope.signature),  # Store envelope signature
-                }
+            # ALLOW path: Reset consecutive denials counter
+            logger.info(
+                "✅ Safety Node: Action ALLOWED by governance (record_hash=%s)",
+                envelope.subject.get("record_hash", "unknown"),
+            )
+            return {
+                "safety_status": "APPROVED",
+                "consecutive_denials": 0,  # Reset on ALLOW
+                "last_violation": None,  # Clear previous violations
+                "governance_signature": str(envelope.signature),  # Store envelope signature
+            }
 
-            except PolicyViolationException as exc:
-                # DENY path: Increment consecutive denials, check budget
-                current_denials = state.get("consecutive_denials", 0)
-                new_denials = current_denials + 1
+        except PolicyViolationException as exc:
+            # DENY path: Increment consecutive denials, check budget
+            current_denials = state.get("consecutive_denials", 0)
+            new_denials = current_denials + 1
 
-                logger.warning(
-                    "🚫 Safety Node: Action DENIED by governance (reason_code=%s, "
-                    "audit_id=%s, consecutive_denials=%d→%d, recoverable=%s)",
-                    exc.reason_code,
-                    exc.audit_id,
-                    current_denials,
+            logger.warning(
+                "🚫 Safety Node: Action DENIED by governance (reason_code=%s, "
+                "audit_id=%s, consecutive_denials=%d→%d, recoverable=%s)",
+                exc.reason_code,
+                exc.audit_id,
+                current_denials,
+                new_denials,
+                exc.recoverable,
+            )
+
+            # Check if replanning budget is exhausted
+            if new_denials >= MAX_CONSECUTIVE_DENIALS:
+                logger.error(
+                    "🛑 Safety Node: MAX_CONSECUTIVE_DENIALS exceeded (%d >= %d) — "
+                    "HARD_PAUSE_BUDGET_EXCEEDED (requires human review)",
                     new_denials,
-                    exc.recoverable,
+                    MAX_CONSECUTIVE_DENIALS,
                 )
-
-                # Check if replanning budget is exhausted
-                if new_denials >= MAX_CONSECUTIVE_DENIALS:
-                    logger.error(
-                        "🛑 Safety Node: MAX_CONSECUTIVE_DENIALS exceeded (%d >= %d) — "
-                        "HARD_PAUSE_BUDGET_EXCEEDED (requires human review)",
-                        new_denials,
-                        MAX_CONSECUTIVE_DENIALS,
-                    )
-                    return {
-                        "safety_status": "HARD_PAUSE_BUDGET_EXCEEDED",
-                        "consecutive_denials": new_denials,
-                        "last_violation": {
-                            "reason_code": exc.reason_code,
-                            "policy_rule": exc.violation_details.get(
-                                "policy_rule", "unknown"
-                            ),
-                            "evidence": exc.violation_details.get("evidence", ""),
-                            "audit_id": exc.audit_id,
-                            "recoverable": exc.recoverable,
-                        },
-                    }
-
-                # Within budget: Store violation and route to explainer for self-correction
                 return {
-                    "safety_status": "BLOCKED",
+                    "safety_status": "HARD_PAUSE_BUDGET_EXCEEDED",
                     "consecutive_denials": new_denials,
                     "last_violation": {
                         "reason_code": exc.reason_code,
-                        "policy_rule": exc.violation_details.get("policy_rule", "unknown"),
-                        "evidence": exc.violation_details.get("evidence", ""),
-                        "suggested_alternatives": exc.violation_details.get(
-                            "suggested_alternatives", []
+                        "policy_rule": exc.violation_details.get(
+                            "policy_rule", "unknown"
                         ),
+                        "evidence": exc.violation_details.get("evidence", ""),
                         "audit_id": exc.audit_id,
                         "recoverable": exc.recoverable,
                     },
                 }
 
-            except DeferralPending as exc:
-                # DEFER path: Store ticket and route to defer_node
-                logger.info(
-                    "⏸️ Safety Node: Action DEFERRED by governance (ticket_id=%s, "
-                    "expires_at=%s)",
-                    exc.ticket_id,
-                    exc.expires_at.isoformat(),
-                )
-                return {
-                    "safety_status": "DEFERRED",
-                    "deferral_ticket_id": exc.ticket_id,
-                    "deferral_reason": exc.defer_reason,
-                    # Do NOT reset consecutive_denials — deferral doesn't count as approval
-                }
+            # Within budget: Store violation and route to explainer for self-correction
+            return {
+                "safety_status": "BLOCKED",
+                "consecutive_denials": new_denials,
+                "last_violation": {
+                    "reason_code": exc.reason_code,
+                    "policy_rule": exc.violation_details.get("policy_rule", "unknown"),
+                    "evidence": exc.violation_details.get("evidence", ""),
+                    "suggested_alternatives": exc.violation_details.get(
+                        "suggested_alternatives", []
+                    ),
+                    "audit_id": exc.audit_id,
+                    "recoverable": exc.recoverable,
+                },
+            }
 
-            except Exception as exc:
-                # Fail-closed: Network errors, gateway errors, seal verification failures
-                logger.error(
-                    "❌ Safety Node: Unexpected error during governance validation — "
-                    "failing closed (error=%s: %s)",
-                    type(exc).__name__,
-                    str(exc),
-                    exc_info=True,
-                )
-                current_denials = state.get("consecutive_denials", 0)
-                new_denials = current_denials + 1
-                return {
-                    "safety_status": "BLOCKED",
-                    "consecutive_denials": new_denials,
-                    "last_violation": {
-                        "policy_rule": "GATEWAY_ERROR",
-                        "evidence": f"Failed to validate action due to {type(exc).__name__}: {exc!s}",
-                        "audit_id": None,
-                        "recoverable": False,
-                    },
-                }
+        except DeferralPending as exc:
+            # DEFER path: Store ticket and route to defer_node
+            logger.info(
+                "⏸️ Safety Node: Action DEFERRED by governance (ticket_id=%s, "
+                "expires_at=%s)",
+                exc.ticket_id,
+                exc.expires_at.isoformat(),
+            )
+            return {
+                "safety_status": "DEFERRED",
+                "deferral_ticket_id": exc.ticket_id,
+                "deferral_reason": exc.defer_reason,
+                # Do NOT reset consecutive_denials — deferral doesn't count as approval
+            }
 
-            # Defensive fail-closed return: Should never be reached, but ensures
-            # type safety and maintains fail-closed semantics if control flow
-            # somehow exits the try/except block without an explicit return
+        except Exception as exc:
+            # Fail-closed: Network errors, gateway errors, seal verification failures
             logger.error(
-                "❌ Safety Node: Unexpected control flow — no exception raised but no "
-                "approval returned. Failing closed."
+                "❌ Safety Node: Unexpected error during governance validation — "
+                "failing closed (error=%s: %s)",
+                type(exc).__name__,
+                str(exc),
+                exc_info=True,
             )
             current_denials = state.get("consecutive_denials", 0)
             new_denials = current_denials + 1
@@ -250,35 +221,17 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
                 "safety_status": "BLOCKED",
                 "consecutive_denials": new_denials,
                 "last_violation": {
-                    "policy_rule": "UNEXPECTED_CONTROL_FLOW",
-                    "evidence": "Internal error: validate_action completed without returning approval or raising exception",
+                    "policy_rule": "GATEWAY_ERROR",
+                    "evidence": f"Failed to validate action due to {type(exc).__name__}: {exc!s}",
                     "audit_id": None,
                     "recoverable": False,
                 },
             }
 
-        # Defensive fail-closed return after async with block: Should never be reached
-        logger.error(
-            "❌ Safety Node: Unexpected control flow — async with block exited "
-            "without returning. Failing closed."
-        )
-        current_denials = state.get("consecutive_denials", 0)
-        new_denials = current_denials + 1
-        return {
-            "safety_status": "BLOCKED",
-            "consecutive_denials": new_denials,
-            "last_violation": {
-                "policy_rule": "UNEXPECTED_CONTEXT_EXIT",
-                "evidence": "Internal error: CageClient context manager exited without returning a value",
-                "audit_id": None,
-                "recoverable": False,
-            },
-        }
-
     except Exception as exc:
-        # Fail-closed: CageClient initialization or context manager errors
+        # Fail-closed: Singleton initialization or network errors
         logger.error(
-            "❌ Safety Node: Failed to initialize CageClient — failing closed (error=%s: %s)",
+            "❌ Safety Node: Failed to access CageClient singleton — failing closed (error=%s: %s)",
             type(exc).__name__,
             str(exc),
             exc_info=True,

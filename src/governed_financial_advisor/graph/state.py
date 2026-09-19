@@ -184,3 +184,14 @@ class AgentState(TypedDict):
     #                     "High-value trade requires manual approval (value: $50,000)".
     deferral_ticket_id: str | None  # default None
     deferral_reason: str | None  # default None
+
+    # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
+    # These fields are populated by @cage_guard decorator on all governed nodes.
+    # agent_id:            Identifier for audit trail (default: "financial-advisor-v3")
+    # proposed_action:     Parameters extracted by upstream nodes for governance validation
+    # governance_envelope: Signed ALLOW decision from Gateway PDP (None until first guard)
+    # governance_status:   Tri-state: "ALLOWED" | "DENIED" | "DEFERRED" | None
+    agent_id: str  # default "financial-advisor-v3"
+    proposed_action: dict[str, Any] | None  # default None
+    governance_envelope: dict[str, Any] | None  # default None
+    governance_status: str | None  # default None
