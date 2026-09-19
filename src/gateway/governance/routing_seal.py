@@ -304,7 +304,7 @@ def assert_custom_salt_in_production() -> None:
     env = (
         os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
     ).lower()
-    non_production_envs = ("development", "dev", "test", "ci")
+    non_production_envs = ("development", "dev", "test", "ci", "staging", "uat", "preprod")
     if env in non_production_envs:
         return  # Non-production — default salt is acceptable
 

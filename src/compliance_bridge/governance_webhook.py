@@ -102,13 +102,28 @@ _REGION_ALLOWED_SUFFIXES: dict[str, list[str]] = {
     "EU_ECB": [
         ".europe-west1.",
         "europe-west1",
+        ".europe-west3.",
+        "europe-west3",
+        ".europe-west4.",
+        "europe-west4",
         # Allow internal/private endpoints within EU region
     ],
     "APAC_MAS": [
         ".asia-southeast1.",
         "asia-southeast1",
+        ".asia-southeast2.",
+        "asia-southeast2",
     ],
-    "US_FED": [],  # US_FED: no geographic restriction on endpoint URLs
+    "US_FED": [
+        ".us-central1.",
+        "us-central1",
+        ".us-east1.",
+        "us-east1",
+        ".us-east4.",
+        "us-east4",
+        ".us-west1.",
+        "us-west1",
+    ],
 }
 
 # Retry configuration
@@ -199,20 +214,26 @@ class WebhookRegistry:
     def _check_region_guard(self, endpoint_url: str) -> None:
         """Raise ValueError if the endpoint URL violates the region guard.
 
-        EU_ECB and APAC_MAS deployments must only register endpoints within
-        their respective GCP regions. Cross-region registrations are rejected.
+        Production environments (CAGE_ENV=prod): All regions enforce geographic
+        restrictions (US_FED, EU_ECB, APAC_MAS).
 
-        US_FED has no geographic restriction on endpoint URLs.
+        Staging/dev/test environments: Geographic restrictions are DISABLED to
+        allow multi-region compliance testing on a single staging cluster.
 
         HIGH-2 FIX: Parse and normalize URL before suffix matching to prevent
         URL-encoding bypass attacks (e.g., %2e for dots, punycode tricks).
         """
-        if self._region not in ("EU_ECB", "APAC_MAS"):
-            return  # US_FED: no restriction
+        # Bypass geographic checks for non-production environments
+        cage_env = os.environ.get("CAGE_ENV", "production").lower()
+        if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
+            return  # Geographic enforcement disabled for staging/dev/test
 
         allowed_suffixes = _REGION_ALLOWED_SUFFIXES.get(self._region, [])
         if not allowed_suffixes:
-            return  # No restriction configured
+            raise ValueError(
+                f"No geographic restrictions configured for region '{self._region}'. "
+                f"This is a configuration error for production deployments."
+            )
 
         # HIGH-2 FIX: Parse URL and normalize hostname to prevent encoding bypass
         parsed = urlparse(endpoint_url)

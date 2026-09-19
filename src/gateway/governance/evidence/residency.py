@@ -193,6 +193,16 @@ def resolve_cold_store_bucket(
     ):
         return candidate
 
+    # Bypass geographic validation for non-production environments
+    cage_env = os.environ.get("CAGE_ENV", "production").lower()
+    if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
+        logger.info(
+            "Geographic residency checks DISABLED for CAGE_ENV=%s. Region: %s, Bucket: %s",
+            cage_env, active_region, candidate
+        )
+        return candidate
+
+    # PRODUCTION: Enforce geographic residency
     # Validate Location if provided
     active_location = (
         location
