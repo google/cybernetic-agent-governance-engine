@@ -7,6 +7,22 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **provider_08 — Verdict runtime evidence `NormativeProvider`** (`src/integrations/provider_08/`):
+  synchronous adapter for https://verdict.systems/api/cage covering all three seam
+  endpoints (`/legal-baseline/{region}`, `/validate/fria`, `/evidence-chain/{thread_id}`),
+  tri-state ALLOW/REFUSE/ESCALATE mapping with kernel ConsequenceToken minting,
+  `EXTERNAL_HOLD` parking with provider-supplied `hold_ttl_seconds`, fail-closed
+  `ENDPOINT_ERROR`/`PARSE_ERROR` handling, optional `PROVIDER_08_REQUIRE_ANCHOR`
+  (refuse a seal whose Rekor anchor is deferred), factory aliases `verdict`/`p08`,
+  conformance-suite registration, hermetic respx tests and partner specification
+  (`docs/partners/provider_08/`).
+
+---
+
 ## [3.0.1] - 2026-09-09
 
 > **Remediation & Hardening Release:** Post-v3.0.0 comprehensive test suite remediation,

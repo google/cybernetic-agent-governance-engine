@@ -26,6 +26,7 @@ is a complete vendor integration boundary:
   ├── provider_03/  — Decision governance provider
   ├── provider_06/  — Agent integrity verification provider
   ├── provider_07/  — Bayesian causal suitability adapter
+  ├── provider_08/  — Runtime evidence normative provider
   └── actuator_01/  — Downstream execution actuator
 
 Vendor packages MUST NOT introduce imports into the CAGE kernel.

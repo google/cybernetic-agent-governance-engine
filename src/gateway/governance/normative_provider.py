@@ -49,7 +49,9 @@ This module mirrors the pattern proven in ``config/compliance/reconciliation_wor
 
 Environment variables
 ---------------------
-  CAGE_NORMATIVE_PROVIDER             — "static" (default), "provider_01", or "provider_02"
+  CAGE_NORMATIVE_PROVIDER             — "static" (default), "provider_01",
+                                         "provider_03", "provider_06",
+                                         "provider_07" or "provider_08"
   CAGE_NORMATIVE_ENDPOINT             — Provider base URL
   CAGE_NORMATIVE_POLL_INTERVAL_HOURS  — Background refresh interval (default: 6)
   CAGE_NORMATIVE_BOOT_TIMEOUT_SECONDS — Max wait at container init (default: 10)
@@ -801,6 +803,7 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         - "provider_03"  — Provider 03 JCS bind receipts & normative API
         - "provider_06"  — Provider 06 tri-state agent integrity verifier
         - "provider_07"  — Provider 07 Bayesian causal suitability oracle (alias: "infertheta")
+        - "provider_08"  — Provider 08 runtime evidence provider (alias: "verdict")
 
     Note: actuator_01 (see src/integrations/actuator_01/) implements the
     ExecutionActuator seam (KMS-signed envelope protocol), not NormativeProvider.
@@ -825,6 +828,9 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",
         "infertheta": "provider_07",
+        "p08": "provider_08",
+        "verdict": "provider_08",
+        "verdict_systems": "provider_08",
     }
     provider_name = alias_map.get(provider_name, provider_name)
 
@@ -860,6 +866,10 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         from src.integrations.provider_07 import Provider07NormativeProvider
 
         return Provider07NormativeProvider.from_env()
+    if provider_name == "provider_08":
+        from src.integrations.provider_08 import Provider08NormativeProvider
+
+        return Provider08NormativeProvider.from_env()
 
     valid = [
         *_PROVIDERS.keys(),
@@ -867,6 +877,7 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
         "provider_03",
         "provider_06",
         "provider_07",
+        "provider_08",
     ]
     raise ValueError(
         f"Unknown normative provider: {provider_name!r}. Available providers: {valid}. "
