@@ -67,6 +67,7 @@ from .nodes.agent_nodes import (
     execution_analyst_node,
     governed_trader_node,
 )
+from .nodes.approval_node import approval_node
 from .nodes.defer_node import defer_node
 from .nodes.evaluator_node import evaluator_node
 from .nodes.explainer_node import explainer_node
@@ -138,6 +139,8 @@ def _build_workflow() -> StateGraph:
     workflow.add_node("safety_check", safety_check_node)  # type: ignore[arg-type]  # R-11: OPA pre-trade gate
     # CAGE-REM-004: DeferQueue 4-state confidence router node
     workflow.add_node("defer_node", defer_node)
+    # Phase 2.1: Dynamic approval node with runtime interrupt() — inserted BEFORE governed_trader
+    workflow.add_node("approval_node", approval_node)
     workflow.add_node("governed_trader", governed_trader_node)
     workflow.add_node("explainer", explainer_node)
     # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path
@@ -221,12 +224,47 @@ def _build_workflow() -> StateGraph:
         """
         R-11 / CAGE-REM-004: Routes after the OPA pre-trade safety gate.
 
-        APPROVED / SKIPPED → proceed to governed_trader (trade is safe)
+        Phase 2.1: Conditional approval routing based on runtime thresholds:
+          - risk_score > 0.7 OR amount > 10000 → approval_node
+          - Otherwise → governed_trader (skip approval)
+
+        APPROVED / SKIPPED → check approval conditions
         DEFERRED / ESCALATED / MANUAL_REVIEW → defer_node (park in DeferQueue)
-        BLOCKED            → route to explainer (trade denied, explain to user)
+        BLOCKED → route to explainer (trade denied, explain to user)
         """
+        import json
+        
         status = state.get("safety_status")
         if status in ("APPROVED", "SKIPPED"):
+            # Phase 2.1: Runtime approval condition check
+            # Check risk_score from evaluation_result
+            eval_result_raw = state.get("evaluation_result")
+            try:
+                eval_result = (
+                    json.loads(eval_result_raw)
+                    if isinstance(eval_result_raw, str)
+                    else eval_result_raw or {}
+                )
+                risk_score = float(eval_result.get("risk_score", 0.0))
+                if risk_score > 0.7:
+                    return "approval_node"
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+            
+            # Check trade amount from execution_plan_output
+            plan_raw = state.get("execution_plan_output")
+            try:
+                plan = (
+                    json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw or {}
+                )
+                for step in plan.get("steps", []):
+                    amount = float(step.get("amount", 0))
+                    if amount > 10_000:
+                        return "approval_node"
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+            
+            # No approval needed - skip directly to governed_trader
             return "governed_trader"
         elif status in ("DEFERRED", "ESCALATED", "MANUAL_REVIEW"):
             return "defer_node"
@@ -285,10 +323,8 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
         except ImportError:
             pass  # provider_02 adapter not available — skip silently
 
-    compiled = workflow.compile(
-        checkpointer=checkpointer,
-        interrupt_before=["governed_trader"],  # Manual Handshake (Module 6)
-    )
+    # Phase 2.1: Removed static interrupt_before — approval_node uses dynamic interrupt()
+    compiled = workflow.compile(checkpointer=checkpointer)
 
     # Attach the callback for caller retrieval (does not affect graph execution)
     compiled._provider_02_callback = provider_02_callback  # type: ignore[attr-defined]
@@ -310,6 +346,5 @@ def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
     """
     workflow = _build_workflow()
 
-    # Compile without checkpointer — LangGraph Server manages state persistence.
-    # Preserve interrupt_before for the manual handshake gate (Module 6).
-    return workflow.compile(interrupt_before=["governed_trader"])
+    # Phase 2.1: Removed static interrupt_before — approval_node uses dynamic interrupt()
+    return workflow.compile()

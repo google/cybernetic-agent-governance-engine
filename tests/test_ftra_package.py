@@ -597,13 +597,8 @@ class TestCreateFtraNode:
         with a mocked Redis client, park() must actually be called with the
         DeferQueue-assigned defer_id (not a never-persisted fallback UUID).
 
-        NodeInterrupt is a subclass of Exception in LangGraph and is the
-        correct mechanism for suspending the thread for HITL review — it
-        must propagate out of ftra_node() rather than being swallowed into a
-        BLOCKED response (see the second regression test below for that
-        specific failure mode)."""
-        from langgraph.errors import NodeInterrupt
-
+        The interrupt() primitive is the LangGraph Command pattern mechanism
+        for suspending the thread for HITL review."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
@@ -628,7 +623,7 @@ class TestCreateFtraNode:
                 "src.gateway.governance.defer_queue.DeferQueue",
                 return_value=mock_queue_instance,
             ) as mock_defer_queue_cls:
-                with pytest.raises(NodeInterrupt) as exc_info:
+                with patch("src.gateway.governance.ftra.node_factory.interrupt") as mock_interrupt:
                     node(state)
 
         # The critical regression assertion: DeferQueue must be constructed
@@ -636,21 +631,21 @@ class TestCreateFtraNode:
         mock_defer_queue_cls.assert_called_once_with(mock_client)
         mock_queue_instance.park.assert_awaited_once()
         mock_from_url.assert_called_once()
-        # NodeInterrupt wraps its payload as a list of langgraph Interrupt
-        # objects: exc.args == ([Interrupt(value={...}), ...],)
-        interrupt_payload = exc_info.value.args[0][0].value
+        
+        # Verify interrupt() was called with the correct payload
+        mock_interrupt.assert_called_once()
+        interrupt_payload = mock_interrupt.call_args[0][0]
         assert interrupt_payload["defer_id"] == "persisted-defer-id-123"
         assert interrupt_payload["reason"] == "FTRA_IRREVERSIBLE_TERMINAL"
+        assert interrupt_payload["ctrl_id"] == "CTRL_FTRA_001"
 
     def test_hitl_required_falls_back_to_local_uuid_when_redis_unavailable(
         self, tmp_path
     ):
-        """When Redis is unreachable, parking must fail soft: the
-        NodeInterrupt still fires (thread still suspends for HITL), but the
-        defer_id embedded in the interrupt payload is a locally-generated
-        (unpersisted) UUID rather than a Redis-backed token."""
-        from langgraph.errors import NodeInterrupt
-
+        """When Redis is unreachable, parking must fail soft: interrupt()
+        still fires (thread still suspends for HITL), but the defer_id
+        embedded in the interrupt payload is a locally-generated (unpersisted)
+        UUID rather than a Redis-backed token."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
@@ -666,10 +661,12 @@ class TestCreateFtraNode:
         }
 
         with patch("redis.asyncio.from_url", side_effect=ConnectionError("redis down")):
-            with pytest.raises(NodeInterrupt) as exc_info:
+            with patch("src.gateway.governance.ftra.node_factory.interrupt") as mock_interrupt:
                 node(state)
 
-        interrupt_payload = exc_info.value.args[0][0].value
+        # Verify interrupt() was called and defer_id is a valid UUID
+        mock_interrupt.assert_called_once()
+        interrupt_payload = mock_interrupt.call_args[0][0]
         assert interrupt_payload["defer_id"] is not None
         import uuid as _uuid
 
@@ -1501,8 +1498,13 @@ class TestFtraIntegration:
         with patch(
             "redis.asyncio.from_url", side_effect=ConnectionError("redis unavailable")
         ):
-            with pytest.raises(Exception):  # NodeInterrupt expected
+            with patch("src.gateway.governance.ftra.node_factory.interrupt") as mock_interrupt:
                 node(state)
+        
+        # Verify interrupt() was called (HITL_REQUIRED verdict)
+        mock_interrupt.assert_called_once()
+        payload = mock_interrupt.call_args[0][0]
+        assert payload["reason"] == "FTRA_IRREVERSIBLE_TERMINAL"
 
     def test_ftra_node_passes_reversible_actions(self, tmp_path):
         """Verify reversible actions pass through with CLEAR status.

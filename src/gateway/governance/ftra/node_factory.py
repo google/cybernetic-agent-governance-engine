@@ -69,6 +69,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from langgraph.types import interrupt
+
 from src.gateway.governance.ftra.models import ParseFailureClass, ParseResult
 
 if TYPE_CHECKING:
@@ -225,14 +227,12 @@ def create_ftra_node(
                 extra_span_attrs=extra_span_attrs,
             )
         except Exception as exc:
-            # CRITICAL: NodeInterrupt (and its parent GraphInterrupt) are
-            # subclasses of Exception in LangGraph — they are the mechanism
-            # by which _raise_node_interrupt() suspends the thread for HITL
-            # review. They must propagate to the LangGraph runtime, not be
-            # swallowed here. A prior version of this handler caught them
-            # unconditionally, silently converting every HITL_REQUIRED
-            # verdict into a fail-closed BLOCKED response and defeating the
-            # DeferQueue human-in-the-loop pathway entirely.
+            # CRITICAL: GraphInterrupt exceptions propagate from interrupt()
+            # calls and must reach the LangGraph runtime to suspend execution
+            # for HITL review. They must NOT be swallowed here. A prior version
+            # of this handler caught them unconditionally, silently converting
+            # every HITL_REQUIRED verdict into a fail-closed BLOCKED response
+            # and defeating the DeferQueue human-in-the-loop pathway entirely.
             try:
                 from langgraph.errors import GraphInterrupt
 
@@ -492,10 +492,17 @@ def _run_ftra(
             plan.plan_id,
             defer_id,
         )
-        # Raise NodeInterrupt so LangGraph suspends the thread.
+        # Suspend the thread via interrupt() — LangGraph Command pattern.
         # The graph will resume when the human clears the defer token.
-        _raise_node_interrupt(defer_id, result_dict)
-        # Fallback (NodeInterrupt not available in this LangGraph version):
+        interrupt(
+            {
+                "reason": "FTRA_IRREVERSIBLE_TERMINAL",
+                "defer_id": defer_id,
+                "ctrl_id": _CTRL_FTRA_001,
+                "ftra_result": result_dict,
+            }
+        )
+        # Fallback return (unreachable in normal flow after interrupt):
         return {
             "ftra_status": "HITL_REQUIRED",
             "ftra_result": result_dict,
@@ -881,26 +888,3 @@ def _park_in_defer_queue(
         return token.defer_id
 
 
-def _raise_node_interrupt(defer_id: str, result_dict: dict[str, Any]) -> None:
-    """Raise a LangGraph NodeInterrupt to suspend the thread for HITL review.
-
-    Gracefully degrades if NodeInterrupt is not available in the installed
-    LangGraph version — the HITL_REQUIRED state patch still routes correctly
-    via ``route_after_ftra``.
-    """
-    try:
-        from langgraph.errors import NodeInterrupt
-
-        raise NodeInterrupt(
-            {
-                "reason": "FTRA_IRREVERSIBLE_TERMINAL",
-                "defer_id": defer_id,
-                "ctrl_id": _CTRL_FTRA_001,
-                "ftra_result": result_dict,
-            }
-        )
-    except ImportError:
-        logger.warning(
-            "FTRA: NodeInterrupt not available in this LangGraph version — "
-            "HITL_REQUIRED will be enforced via route_after_ftra state routing only."
-        )
