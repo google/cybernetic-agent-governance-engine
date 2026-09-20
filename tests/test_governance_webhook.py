@@ -316,7 +316,8 @@ class TestWebhookDispatch:
 
 
 class TestRegionGuard:
-    def test_eu_ecb_cross_region_endpoint_raises(self):
+    def test_eu_ecb_cross_region_endpoint_raises(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CAGE_ENV", "production")  # Force production validation
         registry = _make_registry(region="EU_ECB")
         with pytest.raises(ValueError, match="region guard"):
             asyncio.run(
@@ -362,7 +363,8 @@ class TestRegionGuard:
         )
         assert webhook_id is not None
 
-    def test_apac_mas_cross_region_endpoint_raises(self):
+    def test_apac_mas_cross_region_endpoint_raises(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CAGE_ENV", "production")  # Force production validation
         registry = _make_registry(region="APAC_MAS")
         with pytest.raises(ValueError, match="region guard"):
             asyncio.run(
@@ -396,7 +398,8 @@ class TestRegionGuard:
         )
         assert webhook_id is not None
 
-    def test_eu_ecb_embedded_region_token_rejected(self):
+    def test_eu_ecb_embedded_region_token_rejected(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CAGE_ENV", "production")  # Force production validation
         registry = _make_registry(region="EU_ECB")
         # "europe-west1" here is only part of a longer label, not a full label,
         # so the host is not in-region and must be rejected.
@@ -409,7 +412,8 @@ class TestRegionGuard:
                 )
             )
 
-    def test_apac_mas_embedded_region_token_rejected(self):
+    def test_apac_mas_embedded_region_token_rejected(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CAGE_ENV", "production")  # Force production validation
         registry = _make_registry(region="APAC_MAS")
         with pytest.raises(ValueError, match="region guard"):
             asyncio.run(
@@ -419,6 +423,76 @@ class TestRegionGuard:
                     secret="test-secret",
                 )
             )
+
+    def test_staging_eu_ecb_allows_cross_region_endpoint(self, monkeypatch: pytest.MonkeyPatch):
+        """Staging environments decouple jurisdictional posture from physical location.
+        
+        This allows a staging cluster in us-central1 to test EU_ECB and APAC_MAS
+        compliance postures without requiring geographically distributed infrastructure.
+        """
+        monkeypatch.setenv("CAGE_ENV", "staging")  # Non-production posture
+        registry = _make_registry(region="EU_ECB")
+        
+        # Should NOT raise in staging - jurisdictional posture decoupled
+        webhook_id = asyncio.run(
+            registry.register(
+                endpoint_url="https://us-central1.example.com/events",
+                event_types=["CBF_VIOLATION"],
+                secret="test-secret",
+            )
+        )
+        assert webhook_id is not None
+
+    def test_dev_apac_mas_allows_cross_region_endpoint(self, monkeypatch: pytest.MonkeyPatch):
+        """Dev environments allow cross-region webhooks for multi-jurisdiction testing."""
+        monkeypatch.setenv("CAGE_ENV", "dev")  # Non-production posture
+        registry = _make_registry(region="APAC_MAS")
+        
+        # Should NOT raise in dev - jurisdictional posture decoupled
+        webhook_id = asyncio.run(
+            registry.register(
+                endpoint_url="https://europe-west1.example.com/events",
+                event_types=["CBF_VIOLATION"],
+                secret="test-secret",
+            )
+        )
+        assert webhook_id is not None
+
+    def test_staging_us_fed_allows_asia_endpoint(self, monkeypatch: pytest.MonkeyPatch):
+        """Staging US_FED posture can register APAC endpoints for multi-region testing."""
+        monkeypatch.setenv("CAGE_ENV", "staging")
+        registry = _make_registry(region="US_FED")
+        
+        # US_FED in staging can register webhooks in any region
+        webhook_id = asyncio.run(
+            registry.register(
+                endpoint_url="https://asia-southeast1.example.com/events",
+                event_types=["CBF_VIOLATION"],
+                secret="test-secret",
+            )
+        )
+        assert webhook_id is not None
+
+    def test_test_env_all_jurisdictions_from_single_location(self, monkeypatch: pytest.MonkeyPatch):
+        """Test environments allow all three jurisdictional postures from single us-central1 cluster.
+        
+        This demonstrates the core decoupling principle: a single staging cluster
+        in us-central1 can test EU_ECB, APAC_MAS, and US_FED compliance postures.
+        """
+        monkeypatch.setenv("CAGE_ENV", "test")
+        base_url = "https://us-central1.staging.example.com/events"
+        
+        # All three jurisdictions can register us-central1 webhooks in test mode
+        for region in ["EU_ECB", "APAC_MAS", "US_FED"]:
+            registry = _make_registry(region=region)
+            webhook_id = asyncio.run(
+                registry.register(
+                    endpoint_url=base_url,
+                    event_types=["CBF_VIOLATION"],
+                    secret="test-secret",
+                )
+            )
+            assert webhook_id is not None, f"{region} failed to register us-central1 endpoint"
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

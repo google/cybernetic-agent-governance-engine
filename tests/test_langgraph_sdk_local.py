@@ -89,6 +89,7 @@ def test_langgraph_server_connectivity() -> None:
         )
 
 
+@pytest.mark.integration
 async def test_anti_mock_model_guard() -> None:
     """Execute a run and verify active model is NOT MockChatModel.
 
@@ -169,6 +170,7 @@ async def test_anti_mock_model_guard() -> None:
         )
 
 
+@pytest.mark.integration
 async def test_in_process_and_gateway_gates() -> None:
     """Send payload and verify traversal through NeMo, FTRA, safety_check, and interruption.
 

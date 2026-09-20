@@ -94,19 +94,36 @@ print(result["result"])
 
 1. LangGraph reaches `execute_trade_node`
 2. `@cage_guard` intercepts and calls `http://localhost:8080/v1/governance/validate`
-3. CAGE Gateway evaluates the action through its 8-tier pipeline:
+3. CAGE Gateway evaluates the action through its STERA 8-tier admissibility pipeline:
    - **Tier 0:** STPA/UCA validation
-   - **Tier 1:** Agent confidence threshold
-   - **Tier 2:** OPA policy evaluation
+   - **Tier 1:** Agent confidence threshold (4-State AARM):
+     - $\text{Conf} \ge 0.95$: **ALLOW / DENY** (autonomous clearance via `system_authz.rego`)
+     - $0.70 \le \text{Conf} < 0.95$: **MANUAL_REVIEW** (requires human sign-off $\to$ parked in `DeferQueue` $\to$ Two-Node HITL via `approval_node`)
+     - $\text{Conf} < 0.70$: **DEFER** (data starvation / missing context $\to$ automated hydration loop in Redis `db=1` to prevent operator fatigue)
+   - **Tier 2:** OPA policy evaluation (explicit UCA/CBF/policy violations $\to$ **DENY**)
    - **Tier 3:** Control Barrier Function (CBF)
    - **Tier 4:** Fiscal limit pre-reservation
    - **Tier 5:** Multi-model consensus
    - **Tier 6:** Causal gatekeeper
    - **Tier 6b:** Adaptive FRIA gate
 4. Decision returned:
-   - **ALLOW** → Node executes
-   - **DENY** → Raises `PolicyViolationException`
-   - **DEFER** → Raises `DeferralPending` (HITL required)
+   - **ALLOW** → Node executes (autonomous execution permitted)
+   - **DENY** → Raises `PolicyViolationException` (explicit UCA/CBF/policy violations)
+   - **MANUAL_REVIEW** → Raises `DeferralPending` (parked in `DeferQueue` for human sign-off via Two-Node HITL `approval_node`)
+   - **DEFER** → Routed to automated data-hydration loop in Redis `db=1` (context starvation)
+
+## Handling MANUAL_REVIEW Decisions (Two-Node HITL Pattern)
+
+In CAGE v3.0.1 (Decoupled PEP Architecture), checkpointing and execution suspension must happen at the state-machine boundary, not within the enforcement wrapper. The architectural decoupling ensures that `@cage_guard` validates out-of-process and raises `DeferralPending`. Therefore, the LangGraph dynamic `interrupt()` primitive belongs strictly in `approval_node`, not within the decorator.
+
+The canonical way to handle `MANUAL_REVIEW` is the **Two-Node HITL Pattern**, consisting of a 4-phase lifecycle:
+
+1. `@cage_guard` validates out-of-process and raises `DeferralPending` when the gateway returns a `MANUAL_REVIEW` decision.
+2. A graph conditional edge catches the exception (or checks state) and routes to an `approval_node`.
+3. The `approval_node` calls `interrupt(...)` to suspend the thread to the checkpointer.
+4. An external caller (e.g., UI or admin script) invokes `app.ainvoke(Command(resume=...), config=config)` to resume execution once approved.
+
+> **Example:** See [`examples/langgraph_cage_guard_demo.py`](../../examples/langgraph_cage_guard_demo.py) as the canonical reference implementation currently running in HEAD.
 
 ## Error Handling
 
