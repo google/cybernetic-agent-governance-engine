@@ -210,6 +210,7 @@ All imports and test mocks must use these canonical locations:
 - **Resolution Status Is Not Verification Status**: Successful fetch proves receipt exists, not signature validity. Return `UNVERIFIED` until cryptographic verification succeeds.
 - **Refusals Are Primary Evidence**: DENY and PAUSE receipts must enter the tamper-evident chain with the same completeness as ALLOW approvals.
 - **Generic in Code, Specific in Prose**: Layer 1 kernel and Layer 3 package paths use anonymized namespaces (`provider_01`, `actuator_01`); vendor brand names belong in prose and READMEs only.
+- **Over-the-Wire Conformance Mandate**: All external partner and vendor adapter validations must be executed over the physical wire against live staging or sandbox endpoints. In-memory mocks, synthetic HTTP stubs, or simulated transports are strictly prohibited for partner integration verification.
 
 ### Governance Gate Invariants (ADR-008 Enforcement)
 - **Fail-Closed Execution Boundary**: All domain tool execution paths (Layer 2) must route through [`ConsequenceGateway`](src/gateway/governance/consequence_gateway.py) evaluation and [`ActuatorRegistry`](src/gateway/governance/execution_actuator.py) dispatch (Layer 1). Direct invocation bypassing the gateway is strictly forbidden.
@@ -274,6 +275,7 @@ Always launch parallel test suites with `--dist loadscope` to isolate modules ac
 - **Attribute failures to the merge base**: Before characterizing a failure as pre-existing, verify against the merge base and quote the result.
 - **Grep after renaming**: After renaming any symbol crossing module boundaries, run `rg -n '<old_symbol>' src/` and require zero results before declaring done.
 - **Every fail-closed path needs a test observing it fail**: Happy-path tests prove mechanisms run, not that they block. Never leave placeholder tests (`pass # TODO`).
+- **Partner integration tests strictly over the wire**: Tests validating external partner integrations (`partner_integration`, `live_external`) must execute live over the wire. Mocking partner responses (via in-memory ASGI transports, `TestClient`, or response patches) in partner test suites is strictly forbidden; validation requires actual boundary transit and upstream trace generation.
 
 ### Pytest Marker Contract (fail-closed)
 Every collected test must carry at least one selection marker (`local`, `unit`, `integration`, `live_external`, `partner_integration`, `chaos`, `load`). Unmarked tests abort collection in CI via `tests/conftest.py`. Default for hermetic tests: `pytestmark = [pytest.mark.unit, pytest.mark.local]`.
@@ -289,7 +291,7 @@ Every collected test must carry at least one selection marker (`local`, `unit`, 
 - **Persistent Port-Forward Daemon**: Run tunnels via a detached daemon (`tmux new-session -d -s pf "bash scripts/port_forward_staging.sh --daemon"`). Verify reachability (`uv run python scripts/test_live_gke_services.py`) before executing test suites.
 - **Credential Synchronization**: Sync live cluster secrets (`kubectl get secret -n governance-stack <secret>`) into local `.env` (e.g. `REDIS_PASSWORD`, `LANGFUSE_COMPLIANCE_*`) prior to test runs. Never commit live cluster secrets to git.
 - **LLM / Agent Feedback Loop Latency**: End-to-end multi-agent governance benchmarks (`tests/test_agent_accuracy.py`) execute real GPU inference (vLLM DeepSeek-R1 / Qwen2.5) across multi-step cybernetic loops and require 6–8 minutes (`@pytest.mark.timeout(600)`). Monitor asynchronously; avoid aggressive polling loops.
-- **Partner Integration Isolation**: Third-party partner tests (`tests/integrations/provider_02/`) are tagged with `partner_integration` / `live_external`. They require external partner sandboxes (`PROVIDER_02_API_ENDPOINT`) and are excluded from standard internal GKE runs.
+- **Partner Integration Isolation & Over-the-Wire Invariant**: Third-party partner tests (`tests/integrations/provider_01/`, `tests/integrations/provider_02/`, etc.) are tagged with `partner_integration` and/or `live_external`. They require live external partner sandboxes/staging endpoints and are excluded from standard internal GKE runs and local hermetic runs (`make test-fast`). **Strict over-the-wire execution is mandatory: all partner integration tests must execute authentic network traffic over the wire (HTTPS/mTLS) against the live partner service. In-process mocks, ASGI test transports (`httpx.ASGITransport(app=...)`), Starlette/FastAPI `TestClient` harnesses, or synthetic stubs are strictly forbidden.** Every partner test run must produce and verify authentic external egress/ingress telemetry, including remote server headers and upstream trace identifiers (e.g., `x-cloud-trace-context`), to guarantee an unbroken mutual audit trail.
 
 ---
 
