@@ -146,6 +146,7 @@ except DeferralPending as e:
 - **HITL Workflow:** See [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../security/HITL_TOCTOU_REMEDIATION.md)
 - **Production Deployment:** See [`infra/DEPLOYMENT_GUIDE.md`](../../infra/DEPLOYMENT_GUIDE.md)
 - **Full Example:** Governed Financial Advisor at [`src/governed_financial_advisor/`](../../src/governed_financial_advisor/)
+- **Local Development Postures:** See [`LOCAL_DEVELOPMENT_POSTURES.md`](LOCAL_DEVELOPMENT_POSTURES.md) for running the LangGraph SDK server locally with hot-reload and host Ollama.
 - **Client SDK Reference:** [`packages/cage-client/README.md`](../../packages/cage-client/README.md)
 
 ## Troubleshooting

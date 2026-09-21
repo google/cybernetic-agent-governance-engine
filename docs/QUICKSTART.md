@@ -89,6 +89,8 @@ Navigate to `http://localhost:5173` to see:
 uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
 ```
 
+> **Local Development Postures:** For details on developing with the offline hermetic test loop vs. the full containerized LangGraph SDK runtime with host Ollama, see [`docs/guides/LOCAL_DEVELOPMENT_POSTURES.md`](guides/LOCAL_DEVELOPMENT_POSTURES.md).
+
 ## 7. Confirm the substrate is domain-independent
 
 ```bash

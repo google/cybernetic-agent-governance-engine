@@ -328,3 +328,41 @@ def test_uncheckpointed_graph_factory_exists() -> None:
     assert graph is not None
     assert hasattr(graph, "invoke"), "Compiled graph missing .invoke method"
     assert hasattr(graph, "stream"), "Compiled graph missing .stream method"
+
+
+def test_ollama_deployed_outside_container() -> None:
+    """Verify Ollama is deployed outside the container and connected via host bridge.
+
+    Validates:
+    1. docker-compose.local-dev.yml does NOT define an in-container 'ollama' service.
+    2. docker-compose.local-dev.yml has 'extra_hosts' mapping 'host.docker.internal:host-gateway'.
+    3. local-dev configuration points to host.docker.internal (host Ollama), not an internal container.
+    """
+    import yaml
+
+    repo_root = pathlib.Path(__file__).parent.parent
+    compose_path = repo_root / "docker-compose.local-dev.yml"
+    assert compose_path.exists(), f"Missing {compose_path}"
+
+    with open(compose_path) as f:
+        compose_cfg = yaml.safe_load(f)
+
+    services = compose_cfg.get("services", {})
+    assert "ollama" not in services, (
+        "Found 'ollama' service in docker-compose.local-dev.yml! "
+        "Ollama must be deployed on the host outside containers."
+    )
+
+    graph_engine = services.get("graph-engine", {})
+    extra_hosts = graph_engine.get("extra_hosts", [])
+    assert "host.docker.internal:host-gateway" in extra_hosts, (
+        "graph-engine missing 'host.docker.internal:host-gateway' extra_hosts mapping."
+    )
+
+    env_example = repo_root / "config" / "environments" / "local-dev.env.example"
+    with open(env_example) as f:
+        env_content = f.read()
+
+    assert "OLLAMA_BASE_URL=http://host.docker.internal:11434" in env_content
+    assert "VLLM_FAST_API_BASE=http://host.docker.internal:11434/v1" in env_content
+

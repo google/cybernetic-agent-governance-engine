@@ -56,21 +56,53 @@ if ! docker info &> /dev/null; then
     exit 1
 fi
 
-# Verify host Ollama is running and has qwen2.5:3b
-log_info "Verifying host Ollama at http://localhost:11434..."
+# Ensure host Ollama is running outside the container
+log_info "Ensuring host Ollama is running outside container (http://localhost:11434)..."
 if ! curl -s http://localhost:11434/api/tags &> /dev/null; then
-    log_error "Ollama is not running at http://localhost:11434."
-    log_error "Install Ollama from https://ollama.ai and run: ollama serve"
-    exit 1
+    log_warn "Ollama is not responding at http://localhost:11434. Deploying host service..."
+    if ! command -v ollama &> /dev/null; then
+        log_warn "Ollama binary not found on host. Attempting automatic host installation..."
+        if curl -fsSL https://ollama.com/install.sh | sh; then
+            log_info "Ollama installed on host."
+        else
+            log_error "Failed to install Ollama automatically. Install manually from https://ollama.ai"
+            exit 1
+        fi
+    fi
+
+    # Start Ollama directly on the host (outside container)
+    if command -v systemctl &> /dev/null && systemctl list-unit-files ollama.service &> /dev/null; then
+        log_info "Starting Ollama systemd service on host..."
+        sudo systemctl start ollama 2>/dev/null || systemctl --user start ollama 2>/dev/null || true
+    fi
+
+    if ! curl -s http://localhost:11434/api/tags &> /dev/null; then
+        log_info "Starting Ollama host daemon via background process..."
+        nohup ollama serve > /tmp/ollama_host.log 2>&1 &
+    fi
+
+    # Await readiness
+    OLLAMA_RETRIES=15
+    while ! curl -s http://localhost:11434/api/tags &> /dev/null; do
+        OLLAMA_RETRIES=$((OLLAMA_RETRIES - 1))
+        if [[ $OLLAMA_RETRIES -le 0 ]]; then
+            log_error "Host Ollama failed to start at http://localhost:11434 within timeout."
+            exit 1
+        fi
+        sleep 1
+    done
 fi
 
+log_info "Host Ollama is active and listening at http://localhost:11434 (external to containers)."
+
+# Verify target model is present on the host
 if ! curl -s http://localhost:11434/api/tags | grep -q "qwen2.5:3b"; then
-    log_warn "Model qwen2.5:3b not found in Ollama. Pulling now (this may take a few minutes)..."
+    log_warn "Model qwen2.5:3b not found in host Ollama. Pulling now (this may take a few minutes)..."
     if ! ollama pull qwen2.5:3b; then
-        log_error "Failed to pull qwen2.5:3b. Run manually: ollama pull qwen2.5:3b"
+        log_error "Failed to pull qwen2.5:3b on host. Run manually: ollama pull qwen2.5:3b"
         exit 1
     fi
-    log_info "Model qwen2.5:3b pulled successfully."
+    log_info "Model qwen2.5:3b ready on host."
 fi
 
 # Auto-create local-dev.env from .example if missing

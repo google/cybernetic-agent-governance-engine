@@ -175,6 +175,7 @@ graph.add_node("safety_check", create_opa_safety_node(policy_path="..."))
 - **Client SDK:** [packages/cage-client/](../../packages/cage-client/)
 
 ### For CAGE Contributors
+- **Local Dev Postures:** [docs/guides/LOCAL_DEVELOPMENT_POSTURES.md](LOCAL_DEVELOPMENT_POSTURES.md)
 - **Extensibility Guide:** [docs/architecture/EXTENSIBILITY_ARCHITECTURE.md](../architecture/EXTENSIBILITY_ARCHITECTURE.md)
 - **HITL Pattern:** [docs/security/HITL_TOCTOU_REMEDIATION.md](../security/HITL_TOCTOU_REMEDIATION.md)
 - **Agent Architecture:** [docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md](../architecture/AGENT_SYSTEM_ARCHITECTURE.md)
