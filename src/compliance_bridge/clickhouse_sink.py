@@ -48,6 +48,10 @@ import random
 import time
 from typing import Any
 
+from src.gateway.governance.evidence.stream import (
+    _SCHEMA_VERSION as _SCHEMA_VERSION,
+)
+
 from .metrics import (
     CLICKHOUSE_SINK_BATCH_DURATION_SECONDS,
     CLICKHOUSE_SINK_CIRCUIT_OPEN,
@@ -58,6 +62,12 @@ from .metrics import (
 )
 
 logger = logging.getLogger("cage.clickhouse_sink")
+
+# Wire contract. The kernel (Layer 1) owns the schema identifier it stamps on
+# every record; this sink (Layer 3) reads it rather than restating it, so the
+# emitter, this mapper, and the DDL cannot drift into three different opinions
+# about what "cage-audit/3.0" means.
+_SCHEMA_PREFIX = "cage-audit/"
 
 # Environment configuration
 CLICKHOUSE_ENABLED = os.environ.get("CLICKHOUSE_ENABLED", "false").lower() == "true"
@@ -447,10 +457,17 @@ class ClickHouseSink:
         Returns:
             ClickHouse row dict matching evidence_stream table schema
         """
-        # Extract schema version (strip "cage-audit/" prefix)
-        schema_version = record.get("schema", "cage-audit/3.0").replace(
-            "cage-audit/", ""
-        )
+        # Extract schema version (strip "cage-audit/" prefix).
+        # str.replace() was silently a no-op on any other prefix, so a record
+        # carrying e.g. "cage-evidence-stream/2.0" would reach ClickHouse whole
+        # and only fail at CONSTRAINT chk_schema_version, far from the cause.
+        raw_schema = record.get("schema", f"cage-audit/{_SCHEMA_VERSION}")
+        if not isinstance(raw_schema, str) or not raw_schema.startswith(_SCHEMA_PREFIX):
+            raise ValueError(
+                f"Unsupported evidence schema {raw_schema!r}: expected a "
+                f"{_SCHEMA_PREFIX!r} identifier. Refusing to guess a version."
+            )
+        schema_version = raw_schema[len(_SCHEMA_PREFIX) :]
 
         # Parse timestamp to datetime if string
         timestamp = record.get("timestamp_utc", "")
@@ -471,9 +488,9 @@ class ClickHouseSink:
         if kms_signature_algorithm == "":
             kms_signature_algorithm = None
 
-        # Extract sparse header members from payload
-        # These are inside the hash when present, so must be preserved
-        payload_dict = {}
+        # Sparse header members. cage-audit/3.0 carries these as top-level wire
+        # fields; the payload is only consulted for records predating that.
+        payload_dict: dict[str, Any] = {}
         payload_json = record.get("payload_json", "")
         if payload_json:
             try:
@@ -481,13 +498,20 @@ class ClickHouseSink:
             except Exception:
                 pass  # Keep as empty dict if parse fails
 
-        classification_reason = payload_dict.get("classification_reason")
-        narrowing_applied_raw = payload_dict.get("narrowing_applied")
-        # narrowing_applied is already JCS-canonicalized JSON, store as-is
-        narrowing_applied = (
-            json.dumps(narrowing_applied_raw) if narrowing_applied_raw else None
+        classification_reason = record.get("classification_reason") or payload_dict.get(
+            "classification_reason"
         )
-        pause_token = payload_dict.get("pause_token")
+        pause_token = record.get("pause_token") or payload_dict.get("pause_token")
+
+        narrowing_applied = record.get("narrowing_applied")
+        if narrowing_applied is None:
+            # Legacy leg: the payload holds a decoded object, not canonical text.
+            narrowing_applied_raw = payload_dict.get("narrowing_applied")
+            narrowing_applied = (
+                json.dumps(narrowing_applied_raw) if narrowing_applied_raw else None
+            )
+        # Otherwise it is already the canonical JSON text that was hashed —
+        # re-encoding it here would break mv_evidence_hash_verification.
 
         # Redis message ID from record context (may be None for non-Redis sources)
         redis_msg_id = record.get("redis_msg_id", "")

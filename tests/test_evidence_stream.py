@@ -74,6 +74,7 @@ def _make_redis_mock(xadd_return="1234567890-0"):
     mock.ping = AsyncMock(return_value=True)
     mock.xadd = AsyncMock(return_value=xadd_return)
     mock.xrange = AsyncMock(return_value=[])
+    mock.xrevrange = AsyncMock(return_value=[])
     mock.aclose = AsyncMock()
     return mock
 
@@ -111,24 +112,32 @@ class TestSha256Helpers:
         """_link_hash must be deterministic given the same inputs."""
         from src.gateway.governance.evidence.stream import _link_hash
 
-        h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"key": "val"}')
-        h2 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"key": "val"}')
+        h1 = _link_hash(
+            "prev", 0, "AUDIT_FINDING", "A.5.3", '{"key": "val"}', "chain-1", "trace-1"
+        )
+        h2 = _link_hash(
+            "prev", 0, "AUDIT_FINDING", "A.5.3", '{"key": "val"}', "chain-1", "trace-1"
+        )
         assert h1 == h2
 
     def test_link_hash_changes_on_sequence_change(self):
         """Changing sequence must produce a different record_hash (tamper detection)."""
         from src.gateway.governance.evidence.stream import _link_hash
 
-        h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", "{}")
-        h2 = _link_hash("prev", 1, "AUDIT_FINDING", "A.5.3", "{}")
+        h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", "{}", "chain-1", "trace-1")
+        h2 = _link_hash("prev", 1, "AUDIT_FINDING", "A.5.3", "{}", "chain-1", "trace-1")
         assert h1 != h2
 
     def test_link_hash_changes_on_payload_change(self):
         """Changing payload must change the record_hash (tamper detection)."""
         from src.gateway.governance.evidence.stream import _link_hash
 
-        h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"a": 1}')
-        h2 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{"a": 2}')
+        h1 = _link_hash(
+            "prev", 0, "AUDIT_FINDING", "A.5.3", '{"a": 1}', "chain-1", "trace-1"
+        )
+        h2 = _link_hash(
+            "prev", 0, "AUDIT_FINDING", "A.5.3", '{"a": 2}', "chain-1", "trace-1"
+        )
         assert h1 != h2
 
 
@@ -141,11 +150,11 @@ class TestEvidenceStreamSinkProperties:
     """Tests for EvidenceStreamSink properties and initial state."""
 
     def test_chain_root_is_genesis_hash(self):
-        """Initial chain_root must equal the hash of the genesis string."""
+        """Initial chain_root must be empty string before state restoration."""
         from src.gateway.governance.evidence.stream import EvidenceStreamSink, _sha256
 
         sink = _make_sink()
-        expected = _sha256("EVIDENCE_STREAM_GENESIS")
+        expected = ""
         assert sink.chain_root == expected
 
     def test_total_records_starts_at_zero(self):
@@ -399,7 +408,7 @@ class TestEvidenceStreamSinkLifecycle:
     async def test_ingest_redis_error_returns_none_and_does_not_raise(self):
         """If Redis xadd raises, ingest() must return None (not propagate exception)."""
         sink = _make_sink()
-        sink._redis = AsyncMock()
+        sink._redis = _make_redis_mock()
         sink._redis.xadd = AsyncMock(side_effect=ConnectionError("redis gone"))
 
         result = await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
@@ -728,3 +737,142 @@ class TestKmsSignatureFieldOmission:
         # Should not raise - kms_signature is ignored by hash verification
         result = verify_record(record, "0" * 64)
         assert isinstance(result.error, str) or result.error is None
+
+
+class TestEvidenceChainRestoration:
+    """Tests for fail-closed chain state restoration."""
+
+    @pytest.mark.asyncio
+    async def test_restore_from_non_empty_stream_resumes_chain(self):
+        """Restart with a non-empty stream -> chain_id preserved, resumes at seq+1."""
+        sink = _make_sink()
+        redis_mock = _make_redis_mock()
+        redis_mock.xrevrange.return_value = [
+            (
+                "12345-0",
+                {
+                    "chain_id": "test-chain-123",
+                    "record_hash": "a" * 64,
+                    "sequence": "42",
+                },
+            )
+        ]
+
+        with patch("redis.asyncio.from_url", return_value=redis_mock):
+            await sink.start()
+
+        assert sink._chain_id == "test-chain-123"
+        assert sink.chain_root == "a" * 64
+        assert sink._sequence == 43
+
+    @pytest.mark.asyncio
+    async def test_corrupted_last_entry_raises_does_not_regenesis(self):
+        """Corrupted last entry -> init raises EvidenceChainCorruptError, does not re-genesis."""
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        sink = _make_sink()
+        redis_mock = _make_redis_mock()
+        redis_mock.xrevrange.return_value = [
+            (
+                "12345-0",
+                {
+                    "chain_id": "test-chain-123",
+                    "record_hash": "short-hash",  # invalid length
+                    "sequence": "42",
+                },
+            )
+        ]
+
+        with patch("redis.asyncio.from_url", return_value=redis_mock):
+            with pytest.raises(
+                EvidenceChainCorruptError,
+                match="record_hash is not 64 lowercase hex chars",
+            ):
+                await sink.start()
+
+    @pytest.mark.asyncio
+    async def test_genesis_record_has_empty_prev_hash(self):
+        """Genesis record has prev_hash == '' (NULL in DB)."""
+        sink = _make_sink()
+        redis_mock = _make_redis_mock()
+
+        captured_entries = []
+
+        async def _capture_xadd(key, entry, **kwargs):
+            captured_entries.append(dict(entry))
+            return "1234-0"
+
+        redis_mock.xadd = _capture_xadd
+
+        with patch("redis.asyncio.from_url", return_value=redis_mock):
+            await sink.start()
+
+        await sink.ingest({"type": "TEST", "controlId": "A.5.3"})
+
+        assert captured_entries[0]["prev_hash"] == ""
+
+    @pytest.mark.asyncio
+    async def test_kernel_emitted_record_satisfies_constraints(self):
+        """A kernel-emitted record satisfies chk_schema_version and chk_trace_id_present."""
+        sink = _make_sink()
+        redis_mock = _make_redis_mock()
+
+        captured_entries = []
+
+        async def _capture_xadd(key, entry, **kwargs):
+            captured_entries.append(dict(entry))
+            return "1234-0"
+
+        redis_mock.xadd = _capture_xadd
+
+        with patch("redis.asyncio.from_url", return_value=redis_mock):
+            await sink.start()
+
+        await sink.ingest({"type": "TEST", "controlId": "A.5.3"})
+
+        entry = captured_entries[0]
+        assert entry["schema"].startswith("cage-audit/")
+        assert "trace_id" in entry
+        assert len(entry["trace_id"]) == 32
+
+
+class TestEvidenceStreamCanonicalization:
+    def test_link_hash_matches_ddl_view(self):
+        """Python _link_hash output matches a hand-built canonical header replicating the DDL view exactly."""
+        from src.gateway.governance.evidence.stream import (
+            _link_hash,
+            _sha256,
+            jcs_canonicalize_plan,
+        )
+
+        actual_hash = _link_hash(
+            prev_hash="a" * 64,
+            sequence=1,
+            event_type="TEST",
+            control_id="C.1",
+            payload_json='{"test": 1}',
+            chain_id="chain-123",
+            trace_id="trace-123" + "0" * 23,
+            classification_reason="reason",
+            narrowing_applied={"k": "v"},
+            pause_token="pause-1",
+        )
+
+        canonical_header = {
+            "canonicalization": "RFC8785",
+            "chain_id": "chain-123",
+            "classification_reason": "reason",
+            "control_id": "C.1",
+            "event_type": "TEST",
+            "hash_algorithm": "SHA-256",
+            "narrowing_applied": {"k": "v"},
+            "pause_token": "pause-1",
+            "schema": "cage-audit/3.0",
+            "sequence": 1,
+            "trace_id": "trace-123" + "0" * 23,
+        }
+
+        header_bytes = jcs_canonicalize_plan(canonical_header)
+        expected_hash = _sha256(b"a" * 64 + header_bytes + b'{"test": 1}')
+
+        assert actual_hash == expected_hash

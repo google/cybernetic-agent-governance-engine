@@ -174,6 +174,7 @@ class TestIngestSync:
         # Mock Redis client
         mock_redis = AsyncMock()
         mock_redis.xadd = AsyncMock(return_value="1234567890-0")
+        mock_redis.xrevrange = AsyncMock(return_value=[])
         sink._redis = mock_redis
 
         result = await sink.ingest_sync({"type": "TEST", "controlId": "TEST-001"})
@@ -201,6 +202,7 @@ class TestIngestSync:
 
         mock_redis = AsyncMock()
         mock_redis.xadd = slow_xadd
+        mock_redis.xrevrange = AsyncMock(return_value=[])
         sink._redis = mock_redis
 
         with pytest.raises(EvidenceChainUnavailableError) as exc_info:
@@ -230,6 +232,7 @@ class TestIngestSync:
         # Mock Redis client that raises
         mock_redis = AsyncMock()
         mock_redis.xadd = AsyncMock(side_effect=ConnectionError("Connection refused"))
+        mock_redis.xrevrange = AsyncMock(return_value=[])
         sink._redis = mock_redis
 
         with pytest.raises(EvidenceChainUnavailableError) as exc_info:

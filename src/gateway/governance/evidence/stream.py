@@ -78,6 +78,7 @@ import hashlib
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -233,6 +234,21 @@ class EvidenceChainUnavailableError(Exception):
         self.original_error = original_error
 
 
+class EvidenceChainCorruptError(EvidenceChainUnavailableError):
+    """Raised when Redis is reachable but the chain head cannot be parsed.
+
+    This is deliberately distinct from a cold start. An empty stream is a
+    legitimate genesis condition; a *non-empty* stream whose newest entry is
+    missing its chain fields, or carries a non-integer sequence, is evidence of
+    truncation or tampering. Re-seeding genesis in that situation would silently
+    fork the chain and destroy the only signal that something went wrong, so the
+    sink refuses to start instead.
+
+    Subclasses ``EvidenceChainUnavailableError`` so that callers already written
+    to fail closed on an unavailable chain also fail closed on a corrupt one.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Result Types
 # ---------------------------------------------------------------------------
@@ -259,10 +275,12 @@ class EvidenceCommitResult:
 
 @dataclass
 class EvidenceRecord:
-    """Structured evidence record using schema v1.1.
+    """Structured evidence record on the ``cage-audit/3.0`` wire schema.
 
     v3.0.0 Breaking Change: Schema v1.0 support has been removed.
-    All records now use v1.1 schema exclusively.
+    v3.2.0 Breaking Change: ``chain_id``, ``trace_id`` and ``sequence`` are now
+    first-class fields. All three are inside the record hash, so a record that
+    omits them cannot be verified or rebuilt.
 
     Core fields:
         evidence_id: Unique identifier for the evidence record.
@@ -270,9 +288,15 @@ class EvidenceRecord:
         timestamp: UTC timestamp when the decision was made.
         tool_name: Name of the tool that was governed.
         control_id: NIST/ISO control identifier (e.g., "A.5.3").
-        prev_hash: Hash of the previous record in the chain.
+        prev_hash: Hash of the previous record in the chain; ``""`` at genesis.
         record_hash: Hash of this record (computed from content).
         payload: Full decision payload (JSON-serializable dict).
+
+    cage-audit/3.0 chain identity:
+        chain_id: UUID of the chain this record belongs to. Inside the hash, so
+            records cannot be spliced from one chain into another.
+        trace_id: 32-hex-character OTel trace ID that produced the decision.
+        sequence: Monotonic position within ``chain_id``.
 
     v1.1 metadata fields:
         classification_reason: Human-readable reason for DEFER decisions.
@@ -290,6 +314,11 @@ class EvidenceRecord:
     record_hash: str
     payload: dict[str, Any]
 
+    # cage-audit/3.0 chain identity
+    chain_id: str = ""
+    trace_id: str = ""
+    sequence: int = 0
+
     # v1.1 metadata fields
     classification_reason: str | None = None
     narrowing_applied: dict[str, Any] | None = None
@@ -305,6 +334,9 @@ class EvidenceRecord:
             else self.timestamp,
             "tool_name": self.tool_name,
             "control_id": self.control_id,
+            "chain_id": self.chain_id,
+            "trace_id": self.trace_id,
+            "sequence": self.sequence,
             "prev_hash": self.prev_hash,
             "record_hash": self.record_hash,
             "payload": self.payload,
@@ -320,7 +352,7 @@ class EvidenceRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvidenceRecord:
-        """Deserialize from dict (v1.1 schema only)."""
+        """Deserialize from dict (cage-audit/3.0 schema)."""
         # Parse timestamp if it's a string
         timestamp = data.get("timestamp")
         if isinstance(timestamp, str):
@@ -328,12 +360,19 @@ class EvidenceRecord:
         elif timestamp is None:
             timestamp = datetime.now(tz=timezone.utc)
 
+        # Redis Streams stringify every field, so sequence arrives as a str.
+        sequence_raw = data.get("sequence", 0)
+        sequence = int(sequence_raw) if sequence_raw not in (None, "") else 0
+
         return cls(
             evidence_id=data.get("evidence_id", ""),
             decision=data.get("decision", ""),
             timestamp=timestamp,
             tool_name=data.get("tool_name", ""),
             control_id=data.get("control_id", ""),
+            chain_id=data.get("chain_id", ""),
+            trace_id=data.get("trace_id", ""),
+            sequence=sequence,
             prev_hash=data.get("prev_hash", ""),
             record_hash=data.get("record_hash", ""),
             payload=data.get("payload", {}),
@@ -419,7 +458,26 @@ _EVIDENCE_COMMIT_TIMEOUT_S: float = float(
 # v3.0.0 Breaking Change: Schema v1.0 support has been removed.
 # All new records use v1.1 schema exclusively.
 # v3.1.0 Breaking Change: Migrated to RFC 8785 JCS canonicalization.
-_SCHEMA = "cage-evidence-stream/2.0"
+#
+# v3.2.0 BREAKING: wire schema realigned to ``cage-audit/3.0``.
+# The kernel previously emitted ``cage-evidence-stream/2.0`` with no
+# ``chain_id`` and no ``trace_id``.  The durable sink and the ClickHouse DDL
+# (``deployment/clickhouse/evidence_stream_schema.sql``) require
+# ``schema_version IN ('3.0')`` and enforce ``length(trace_id) > 0``, so every
+# kernel-emitted record was rejected at INSERT.  The authoritative definition
+# of the hashed header is the ``mv_evidence_hash_verification`` materialized
+# view in that DDL; ``_link_hash()`` below mirrors it field for field.
+_SCHEMA_VERSION = "3.0"
+_SCHEMA = f"cage-audit/{_SCHEMA_VERSION}"
+
+# Header members that the ClickHouse rebuild view pins to constants. They are
+# inside the hash, so they cannot be silently changed on one side only.
+_HASH_ALGORITHM = "SHA-256"
+_CANONICALIZATION = "RFC8785"
+
+# Evidence emitted by the kernel is always GOVERNANCE class. The DDL's other
+# value, INFRA, is reserved for the compliance bridge's own operational rows.
+_EVIDENCE_CLASS = "GOVERNANCE"
 
 
 def validate_evidence_stream_preconditions() -> None:
@@ -594,12 +652,37 @@ def _sha256(data: str | bytes) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def current_trace_id() -> str:
+    """Return the active OTel trace ID as 32 lowercase hex characters.
+
+    The ClickHouse DDL enforces ``CONSTRAINT chk_trace_id_present CHECK
+    length(trace_id) > 0``, and ``trace_id`` is inside the hashed header, so an
+    empty value is not representable — a record with no trace would be rejected
+    at INSERT and could never be rebuilt.
+
+    When no valid span context is active (background daemons, tests, direct
+    library use) a random 128-bit value is generated instead. It is
+    deliberately random rather than a fixed sentinel: a constant would collapse
+    every untraced record onto one bloom-filter key and make ``idx_trace_id``
+    useless.
+    """
+    try:
+        span_context = trace.get_current_span().get_span_context()
+        if span_context.is_valid:
+            return f"{span_context.trace_id:032x}"
+    except (ImportError, AttributeError):  # pragma: no cover - defensive
+        pass
+    return uuid.uuid4().hex
+
+
 def _link_hash(
     prev_hash: str,
     sequence: int,
     event_type: str,
     control_id: str,
     payload_json: str,
+    chain_id: str,
+    trace_id: str,
     classification_reason: str | None = None,
     narrowing_applied: dict[str, Any] | None = None,
     pause_token: str | None = None,
@@ -612,12 +695,31 @@ def _link_hash(
 
     v3.0.0: Collapsed from _link_hash_v1_1 - all records now use v1.1 schema.
 
+    v3.2.0 BREAKING — ``cage-audit/3.0``: the header now mirrors the
+    ``mv_evidence_hash_verification`` materialized view in
+    ``deployment/clickhouse/evidence_stream_schema.sql``, which is the
+    authoritative rebuild definition. Members, in the lexicographic order JCS
+    produces and the view hardcodes:
+
+        canonicalization, chain_id, [classification_reason], control_id,
+        event_type, hash_algorithm, [narrowing_applied], [pause_token],
+        schema, sequence, trace_id
+
+    Bracketed members are sparse — emitted only when non-None, matching the
+    view's ``if(... IS NULL, '', ...)`` branches.
+
     Args:
-        prev_hash: Hash of the previous record in the chain.
+        prev_hash: Hash of the previous record in the chain. Must be ``""`` at
+            sequence 0; the DDL enforces ``(sequence = 0) = (prev_hash IS NULL)``
+            and the view hashes ``ifNull(prev_hash, '')``.
         sequence: Monotonic sequence number.
         event_type: Event type (e.g., "AUDIT_FINDING", "GOVERNANCE_DECISION").
         control_id: NIST/ISO control identifier.
-        payload_json: JSON-serialized event payload.
+        payload_json: JCS-canonical JSON payload. Hashed as opaque bytes and
+            never re-serialized.
+        chain_id: UUID identifying this chain. Inside the hash so records
+            cannot be spliced between chains.
+        trace_id: 32-hex-character OTel trace ID.
         classification_reason: Reason for DEFER decisions (optional).
         narrowing_applied: Narrowing constraints for NARROW decisions (optional).
         pause_token: Token for PAUSE decisions (optional).
@@ -625,16 +727,17 @@ def _link_hash(
     Returns:
         SHA-256 hex digest of the record.
     """
-    # v1.1: Include metadata fields in hash computation
-    # Only include non-None fields to maintain determinism
-    # v2.0: Migrated to RFC 8785 JCS canonicalization
     header_dict: dict[str, Any] = {
+        "canonicalization": _CANONICALIZATION,
+        "chain_id": chain_id,
+        "control_id": control_id,
+        "event_type": event_type,
+        "hash_algorithm": _HASH_ALGORITHM,
         "schema": _SCHEMA,
         "sequence": sequence,
-        "event_type": event_type,
-        "control_id": control_id,
+        "trace_id": trace_id,
     }
-    # Add v1.1 fields only if they have values (sparse inclusion)
+    # Sparse members — present only when set, mirroring the view's NULL branches.
     if classification_reason is not None:
         header_dict["classification_reason"] = classification_reason
     if narrowing_applied is not None:
@@ -648,17 +751,54 @@ def _link_hash(
     )
 
 
+def _extract_sparse_header(
+    event: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """Pull the three sparse ``cage-audit/3.0`` header members from an event.
+
+    ``classification_reason``, ``narrowing_applied`` and ``pause_token`` are
+    inside the record hash whenever they are present, and the ClickHouse table
+    stores each in its own nullable column. Both ingest paths must agree
+    exactly on how they are read, or the same event would hash differently
+    depending on which entry point produced it — so extraction lives here, once.
+
+    A ``narrowing_applied`` that is not a mapping is treated as absent: the
+    column is populated from canonical JSON object text, and a scalar there
+    could not be rebuilt by ``mv_evidence_hash_verification``.
+
+    Returns:
+        ``(classification_reason, narrowing_applied, pause_token)``, each None
+        when the member is absent.
+    """
+    classification_reason = event.get("classification_reason")
+    if classification_reason is not None:
+        classification_reason = str(classification_reason)
+
+    narrowing_applied = event.get("narrowing_applied")
+    if not isinstance(narrowing_applied, dict):
+        narrowing_applied = None
+
+    pause_token = event.get("pause_token")
+    if pause_token is not None:
+        pause_token = str(pause_token)
+
+    return classification_reason, narrowing_applied, pause_token
+
+
 def verify_record(
     record: EvidenceRecord | dict[str, Any], prev_hash: str
 ) -> VerifyResult:
-    """Verify evidence record hash (v1.1 schema only).
+    """Verify an evidence record hash against the ``cage-audit/3.0`` contract.
 
     v3.0.0 Breaking Change: Schema v1.0 support has been removed.
-    All records use v1.1 schema exclusively.
+    v3.2.0 Breaking Change: ``chain_id`` and ``trace_id`` are inside the hash.
+    A record that carries neither cannot be verified — the recomputation will
+    not match, and that is the correct outcome rather than a soft pass.
 
     Args:
-        record: EvidenceRecord dataclass or dict to verify.
-        prev_hash: Hash of the previous record in the chain.
+        record: EvidenceRecord dataclass or wire dict to verify.
+        prev_hash: Hash of the previous record in the chain. Pass ``""`` for
+            the genesis record, matching the DDL's ``ifNull(prev_hash, '')``.
 
     Returns:
         VerifyResult with verification status and diagnostic information.
@@ -668,6 +808,7 @@ def verify_record(
         >>> if not result.valid:
         ...     logger.error(f"Chain integrity violation: {result.error}")
     """
+    schema_version = _SCHEMA_VERSION
     try:
         # Normalize to dict for consistent field access
         if isinstance(record, EvidenceRecord):
@@ -675,12 +816,17 @@ def verify_record(
         else:
             record_dict = record
 
+        # Report the version the record actually claims, not the one we hope for.
+        raw_schema = record_dict.get("schema", _SCHEMA)
+        if isinstance(raw_schema, str) and raw_schema.startswith("cage-audit/"):
+            schema_version = raw_schema.split("/", 1)[1]
+
         # Extract common fields
         expected_hash = record_dict.get("record_hash", "")
         if not expected_hash:
             return VerifyResult(
                 valid=False,
-                schema_version="1.1",
+                schema_version=schema_version,
                 computed_hash="",
                 expected_hash="",
                 error="Record missing record_hash field",
@@ -695,6 +841,8 @@ def verify_record(
             "event_type", record_dict.get("decision", "UNKNOWN")
         )
         control_id = record_dict.get("control_id", "")
+        chain_id = record_dict.get("chain_id", "")
+        trace_id = record_dict.get("trace_id", "")
 
         # Extract payload - handle both wire format and internal format
         # v2.0: Migrated to JCS with pre-normalization
@@ -710,6 +858,11 @@ def verify_record(
         # v1.1 specific fields
         classification_reason = record_dict.get("classification_reason")
         narrowing_applied = record_dict.get("narrowing_applied")
+        # On the wire every Redis Stream field is a string, so narrowing_applied
+        # arrives as canonical JSON text. Re-inflate it: _link_hash canonicalizes
+        # the whole header, and feeding it a string would hash the quotes too.
+        if isinstance(narrowing_applied, str):
+            narrowing_applied = json.loads(narrowing_applied)
         pause_token = record_dict.get("pause_token")
 
         # Compute hash using current algorithm
@@ -719,6 +872,8 @@ def verify_record(
             event_type=event_type,
             control_id=control_id,
             payload_json=payload_json,
+            chain_id=chain_id,
+            trace_id=trace_id,
             classification_reason=classification_reason,
             narrowing_applied=narrowing_applied,
             pause_token=pause_token,
@@ -728,7 +883,7 @@ def verify_record(
         if computed_hash == expected_hash:
             return VerifyResult(
                 valid=True,
-                schema_version="1.1",
+                schema_version=schema_version,
                 computed_hash=computed_hash,
                 expected_hash=expected_hash,
                 error=None,
@@ -736,7 +891,7 @@ def verify_record(
         else:
             return VerifyResult(
                 valid=False,
-                schema_version="1.1",
+                schema_version=schema_version,
                 computed_hash=computed_hash,
                 expected_hash=expected_hash,
                 error=f"Hash mismatch: computed={computed_hash[:16]}... expected={expected_hash[:16]}...",
@@ -745,7 +900,7 @@ def verify_record(
     except Exception as exc:
         return VerifyResult(
             valid=False,
-            schema_version="1.1",
+            schema_version=schema_version,
             computed_hash="",
             expected_hash=str(
                 record.get("record_hash", "")
@@ -796,8 +951,15 @@ class EvidenceStreamSink:
         self._cold_store = cold_store
 
         self._redis = None  # Lazy-loaded redis.asyncio client
-        self._prev_hash: str = _sha256("EVIDENCE_STREAM_GENESIS")
+        # Chain state is NOT seeded here. Seeding genesis in __init__ meant
+        # every process restart silently restarted the chain at sequence 0 with
+        # a fresh prev_hash, forking the chain and producing SEQUENCE_GAP /
+        # GENESIS_VIOLATION rows downstream. ``start()`` now restores this from
+        # Redis and only falls back to genesis when the chain is provably empty.
+        self._chain_id: str = ""
+        self._prev_hash: str = ""
         self._sequence: int = 0
+        self._chain_restored = False
         self._running = False
         self._flush_task: asyncio.Task | None = None
         self._chain_lock = asyncio.Lock()
@@ -831,6 +993,18 @@ class EvidenceStreamSink:
             )
             self._redis = None
             return
+
+        # Recover chain state before accepting any writes. This is deliberately
+        # outside the connect try/except: an unreachable Redis degrades to a
+        # no-op sink, but a *reachable* Redis holding an unparseable chain head
+        # is a fail-closed condition and must abort start().
+        try:
+            async with self._chain_lock:
+                await self._ensure_chain_restored()
+        except EvidenceChainUnavailableError:
+            await self._redis.aclose()  # type: ignore[attr-defined]
+            self._redis = None
+            raise
 
         self._running = True
 
@@ -874,17 +1048,203 @@ class EvidenceStreamSink:
             self._sequence,
         )
 
+    # -- Chain state ------------------------------------------------------
+
+    async def _ensure_chain_restored(self) -> None:
+        """Restore chain state once, idempotently.
+
+        Callers must already hold ``self._chain_lock``. Both ingest paths call
+        this before reading chain state so that a sink handed a live Redis
+        client without going through ``start()`` still resumes the existing
+        chain rather than silently forking it.
+        """
+        if self._chain_restored:
+            return
+        await self._restore_chain_state()
+        self._chain_restored = True
+
+    async def _restore_chain_state(self) -> None:
+        """Recover ``chain_id`` / ``sequence`` / ``prev_hash`` from the stream.
+
+        The stream is the single source of truth. A separate chain-state key
+        would be a second copy of the same facts, and the only thing two copies
+        can add is the possibility of disagreeing.
+
+        Three outcomes, and only three:
+
+        * **Stream empty** — a genuine cold start. Mint a new ``chain_id`` and
+          begin at sequence 0 with ``prev_hash = ""`` (stored NULL), satisfying
+          the DDL's ``CONSTRAINT chk_genesis_prev_hash``.
+        * **Stream has a well-formed head** — resume at ``sequence + 1`` with
+          ``prev_hash`` set to that record's hash, under the same ``chain_id``.
+        * **Stream has a head we cannot parse** — raise. Redis answered, so this
+          is not a cold start; it is truncation or tampering, and re-genesising
+          would overwrite the only evidence that it happened.
+
+        Raises:
+            EvidenceChainUnavailableError: Redis client is absent, or the read
+                itself failed.
+            EvidenceChainCorruptError: The newest entry exists but is missing
+                or malforming the fields needed to continue the chain.
+        """
+        if self._redis is None:
+            raise EvidenceChainUnavailableError(
+                "Cannot restore evidence chain state: no Redis client."
+            )
+
+        try:
+            entries = await self._redis.xrevrange(
+                self._stream_key, max="+", min="-", count=1
+            )
+        except Exception as exc:
+            raise EvidenceChainUnavailableError(
+                f"Failed to read evidence chain head from {self._stream_key}: {exc}",
+                exc,
+            ) from exc
+
+        if not entries:
+            self._chain_id = str(uuid.uuid4())
+            self._prev_hash = ""
+            self._sequence = 0
+            logger.info(
+                "[EvidenceStream] Stream %s is empty — starting new chain %s at "
+                "sequence 0.",
+                self._stream_key,
+                self._chain_id,
+            )
+            return
+
+        _msg_id, fields = entries[0]
+
+        def _corrupt(detail: str) -> EvidenceChainCorruptError:
+            return EvidenceChainCorruptError(
+                f"Evidence chain head in {self._stream_key} is unusable: {detail}. "
+                "Refusing to start a new chain over an existing one — this is a "
+                "truncation or tampering signal, not a cold start."
+            )
+
+        chain_id = fields.get("chain_id") or ""
+        record_hash = fields.get("record_hash") or ""
+        sequence_raw = fields.get("sequence")
+
+        if not chain_id:
+            raise _corrupt("chain_id is missing or empty")
+        if len(record_hash) != 64 or any(
+            c not in "0123456789abcdef" for c in record_hash
+        ):
+            raise _corrupt(
+                f"record_hash is not 64 lowercase hex chars ({record_hash!r})"
+            )
+        if sequence_raw is None:
+            raise _corrupt("sequence is missing")
+        try:
+            last_sequence = int(sequence_raw)
+        except (TypeError, ValueError) as exc:
+            raise _corrupt(f"sequence {sequence_raw!r} is not an integer") from exc
+        if last_sequence < 0:
+            raise _corrupt(f"sequence {last_sequence} is negative")
+
+        self._chain_id = chain_id
+        self._prev_hash = record_hash
+        self._sequence = last_sequence + 1
+        logger.info(
+            "[EvidenceStream] Resumed chain %s at sequence %d (head=%s…).",
+            self._chain_id,
+            self._sequence,
+            record_hash[:16],
+        )
+
+    def _seal_record(
+        self,
+        event: dict[str, Any],
+        payload_json: str,
+        event_type: str,
+        control_id: str,
+        timestamp: datetime,
+    ) -> tuple[dict[str, str], str]:
+        """Build one ``cage-audit/3.0`` wire entry and its record hash.
+
+        Callers must hold ``self._chain_lock`` and must have restored chain
+        state first. This does **not** advance the chain: ``ingest()`` advances
+        eagerly while ``_ingest_with_result()`` advances only after Redis has
+        acknowledged the write, and that difference is theirs to keep.
+
+        Every field here is a string because Redis Streams store nothing else.
+
+        Returns:
+            ``(entry, record_hash)``.
+        """
+        classification_reason, narrowing_applied, pause_token = _extract_sparse_header(
+            event
+        )
+        trace_id = current_trace_id()
+
+        record_hash = _link_hash(
+            prev_hash=self._prev_hash,
+            sequence=self._sequence,
+            event_type=event_type,
+            control_id=control_id,
+            payload_json=payload_json,
+            chain_id=self._chain_id,
+            trace_id=trace_id,
+            classification_reason=classification_reason,
+            narrowing_applied=narrowing_applied,
+            pause_token=pause_token,
+        )
+
+        entry: dict[str, str] = {
+            "schema": _SCHEMA,
+            "chain_id": self._chain_id,
+            "sequence": str(self._sequence),
+            "timestamp_utc": timestamp.isoformat(),
+            "event_type": event_type,
+            "control_id": control_id,
+            "trace_id": trace_id,
+            "hash_algorithm": _HASH_ALGORITHM,
+            "canonicalization": _CANONICALIZATION,
+            "evidence_class": _EVIDENCE_CLASS,
+            # "" at genesis; the sink maps it to NULL to satisfy
+            # CONSTRAINT chk_genesis_prev_hash.
+            "prev_hash": self._prev_hash,
+            "record_hash": record_hash,
+            "payload_json": payload_json,
+        }
+
+        # Sparse members travel as top-level fields so the ClickHouse sink can
+        # populate its nullable columns without re-parsing the payload.
+        # narrowing_applied is stored as canonical JSON text — the exact bytes
+        # that went into the hash — so the rebuild view can concatenate it raw.
+        if classification_reason is not None:
+            entry["classification_reason"] = classification_reason
+        if narrowing_applied is not None:
+            entry["narrowing_applied"] = jcs_canonicalize_plan(
+                _normalize_for_jcs(narrowing_applied)
+            ).decode("utf-8")
+        if pause_token is not None:
+            entry["pause_token"] = pause_token
+
+        return entry, record_hash
+
     async def ingest(self, event: dict) -> str | None:
         """Ingest a governance event into the evidence stream.
 
         The event is hash-chained, optionally KMS-signed, and persisted
         to Redis Streams.
 
+        This is the fire-and-forget path: it advances chain state *before* the
+        Redis write, so a failed write leaves a sequence number consumed. Use
+        ``ingest_sync()`` wherever the commit must gate a downstream decision.
+
         Args:
             event: GovernanceEvent dict from the SSE event bus.
 
         Returns:
             The Redis Stream message ID, or None if Redis is unavailable.
+
+        Raises:
+            EvidenceChainUnavailableError: Chain state could not be restored.
+                Emitting into an unrestored chain would fork it, so this fails
+                closed rather than returning None.
         """
         if self._redis is None:
             return None
@@ -898,24 +1258,15 @@ class EvidenceStreamSink:
         control_id = event.get("controlId", "")
 
         async with self._chain_lock:
-            record_hash = _link_hash(
-                prev_hash=self._prev_hash,
-                sequence=self._sequence,
+            await self._ensure_chain_restored()
+
+            entry, record_hash = self._seal_record(
+                event=event,
+                payload_json=payload_json,
                 event_type=event_type,
                 control_id=control_id,
-                payload_json=payload_json,
+                timestamp=datetime.now(tz=timezone.utc),
             )
-
-            entry = {
-                "schema": _SCHEMA,
-                "sequence": str(self._sequence),
-                "event_type": event_type,
-                "control_id": control_id,
-                "prev_hash": self._prev_hash,
-                "record_hash": record_hash,
-                "payload_json": payload_json,
-                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
-            }
 
             # Only include KMS signature fields when signing is enabled
             if self._kms_sign:
@@ -1095,26 +1446,18 @@ class EvidenceStreamSink:
         control_id = event.get("controlId", "")
 
         async with self._chain_lock:
+            await self._ensure_chain_restored()
+
             current_sequence = self._sequence
-            record_hash = _link_hash(
-                prev_hash=self._prev_hash,
-                sequence=current_sequence,
+            commit_timestamp = datetime.now(tz=timezone.utc)
+
+            entry, record_hash = self._seal_record(
+                event=event,
+                payload_json=payload_json,
                 event_type=event_type,
                 control_id=control_id,
-                payload_json=payload_json,
+                timestamp=commit_timestamp,
             )
-
-            commit_timestamp = datetime.now(tz=timezone.utc)
-            entry = {
-                "schema": _SCHEMA,
-                "sequence": str(current_sequence),
-                "event_type": event_type,
-                "control_id": control_id,
-                "prev_hash": self._prev_hash,
-                "record_hash": record_hash,
-                "payload_json": payload_json,
-                "timestamp_utc": commit_timestamp.isoformat(),
-            }
 
             # Only include KMS signature fields when signing is enabled
             if _KMS_SIGN:
@@ -1294,12 +1637,31 @@ class EvidenceStreamSink:
 
     @property
     def chain_root(self) -> str:
-        """Current chain root hash (latest prev_hash)."""
+        """Current chain root hash — the ``prev_hash`` the next record will use.
+
+        Empty before chain state has been restored, and empty at genesis. It is
+        deliberately not a sentinel digest: the DDL requires ``prev_hash IS
+        NULL`` exactly when ``sequence = 0``.
+        """
         return self._prev_hash
 
     @property
+    def chain_id(self) -> str:
+        """UUID of the chain being appended to; empty until state is restored."""
+        return self._chain_id
+
+    @property
+    def chain_restored(self) -> bool:
+        """True once chain state has been recovered (or genesis established)."""
+        return self._chain_restored
+
+    @property
     def total_records(self) -> int:
-        """Total records ingested since start."""
+        """Next sequence number — i.e. records in the chain, across restarts.
+
+        This counts the whole chain, not this process's share of it, because
+        the sequence is recovered from the stream on start.
+        """
         return self._sequence
 
     @property

@@ -33,10 +33,12 @@ from .residency import (
 )
 from .stream import (
     ConfigurationError,
+    EvidenceChainCorruptError,
     EvidenceChainUnavailableError,
     EvidenceCommitResult,
     EvidenceRecord,
     EvidenceStreamSink,
+    current_trace_id,
     get_evidence_sink,
     is_evidence_chain_blocking,
     is_evidence_stream_enabled,
@@ -49,6 +51,7 @@ __all__ = [
     "ColdStoreHealth",
     "ColdStoreReceipt",
     "ConfigurationError",
+    "EvidenceChainCorruptError",
     "EvidenceChainUnavailableError",
     "EvidenceColdStore",
     "EvidenceCommitResult",
@@ -57,6 +60,7 @@ __all__ = [
     "MissingBucketConfigError",
     "NullColdStore",
     "ResidencyViolationError",
+    "current_trace_id",
     "get_cold_store",
     "get_evidence_sink",
     "is_evidence_chain_blocking",
