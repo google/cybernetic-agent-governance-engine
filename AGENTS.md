@@ -154,6 +154,7 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
 7. **langfuse-posture-check** — requires mock env vars in local environments. Fix: run `uv run python scripts/verify_langfuse_posture.py --dry-run --posture development`.
 8. **pytest** — address the failing test. Confirm no background `kubectl port-forward` tunnels are leaking live GKE state into local tests.
 9. **security-scan** — rotate credentials or address Bandit SAST / CVE findings; never suppress the scan.
+10. **doc-reference-check (Gate G9)** — a document cites a file path, link target, or Python symbol that does not exist at HEAD. Fix: run `make docs-check` (or `uv run python scripts/check_doc_references.py --path <scope>`) and correct the reference — never delete the gate's scope to make it pass. `CHANGELOG.md` and `docs/partners/**` are outside the gate's scope by design.
 
 **Never suggest disabling or skipping a CI check as a fix.**
 

@@ -44,6 +44,29 @@ All telemetry emitted by the kernel conforms strictly to the OpenTelemetry (OTEL
 - Telemetry backends (whether sovereign on-cluster Langfuse, Google Cloud Trace, AWS X-Ray, or Prometheus) ingest standard OTLP streams without requiring kernel code modifications.
 - Enforced in CI by Gate G7 (`scripts/check_telemetry_literals.py`).
 
+### 2.3 Vendor-Neutral Protocol Inventory
+
+Every boundary at which CAGE could otherwise acquire a vendor dependency is expressed as a kernel-side `Protocol` or abstract base class. The kernel holds the **contract only**; the concrete client — and therefore the vendor SDK — lives in Layer 3 and is injected at construction or resolved lazily through a factory.
+
+| Boundary | Kernel-side contract | Kernel location | Concrete implementations |
+|---|---|---|---|
+| Normative baselines / FRIA | `NormativeProvider`, `NormativeBaseline`, `ValidationResult` | [`seams/normative.py`](../../src/gateway/governance/seams/normative.py) | `src/integrations/provider_01/`, `src/integrations/provider_02/` |
+| External attestations | `AttestationProvider`, `ExternalAttestation`, `AttestationStatus` | [`seams/attestation.py`](../../src/gateway/governance/seams/attestation.py) | `src/integrations/provider_02/`, `src/integrations/provider_05/` |
+| Downstream execution | `ExecutionActuator`, `ExecutionClearance`, `ActuationReceipt` | [`seams/actuation.py`](../../src/gateway/governance/seams/actuation.py) | `src/integrations/actuator_01/` |
+| Graph topology inspection | `GraphTopology` | [`seams/graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | Domain agent workflows (Layer 2/4) |
+| **Outbound tool credentials** | `CredentialBrokerAdapter` plus `CredentialBrokerError` / `CredentialNotFound` / `CredentialAccessDenied` | [`seams/credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) | Deployment-supplied (vault, workload-identity exchange, cloud secret manager); injected into the actuator as `credential_broker` |
+| Evidence cold storage | `EvidenceColdStore`, `ColdStoreReceipt`, `ColdStoreHealth` | [`evidence/cold_store.py`](../../src/gateway/governance/evidence/cold_store.py) | GCS / S3 / null backends (§3) |
+
+#### Credential Broker: Protocol in Layer 1, Secrets Client in Layer 3
+
+The credential broker seam is the newest entry and the one most exposed to vendor gravity — every cloud offers its own secrets product. The invariant is therefore stated explicitly:
+
+- [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) contains **only** a `typing.Protocol` and three exception classes. Its entire import list is `from __future__ import annotations` and `from typing import Protocol`.
+- The kernel never imports a secrets SDK (`google-cloud-secret-manager`, `hvac`, `boto3`, `azure-keyvault-secrets`) and never constructs a broker. A broker instance arrives from outside, as the optional `credential_broker` argument to an actuator adapter.
+- The contract is expressed in vendor-free vocabulary: a SPIFFE SVID string, a canonical tool name, an optional scope string, and a plain `dict[str, str]` of HTTP headers. No vendor token type, client handle, or credential object crosses the boundary.
+- Consequently the seam adds no packaging extra and no import-boundary exception: a kernel built with zero cloud extras still imports and type-checks against `CredentialBrokerAdapter`.
+- Swapping secret backends is a deployment-time substitution of the injected object. No kernel file changes.
+
 ---
 
 ## 3. Evidence Cold Store Contract

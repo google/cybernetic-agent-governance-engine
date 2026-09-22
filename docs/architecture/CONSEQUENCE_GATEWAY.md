@@ -32,6 +32,50 @@ sequenceDiagram
     Gateway-->>Adapter: ConsequenceDecision.EXECUTE
 ```
 
+### 2.1 Pre-Dispatch Credential Authorization (ALLOW Path)
+
+`ConsequenceDecision.EXECUTE` authorizes the action; it does not yet grant the
+outbound identity needed to perform it. On the ALLOW path, the downstream
+actuator runs a further set of gates before any envelope is built or any byte
+leaves the process. In the reference actuator
+[`Actuator01Adapter.actuate()`](../../src/integrations/actuator_01/adapter.py)
+these are:
+
+| Gate | Check | Terminal finding on failure |
+|---|---|---|
+| 1 | `clearance.executor_id` matches `self.actuator_id` | `EXECUTOR_ID_MISMATCH` |
+| 2 | `clearance.target_route` matches the client egress base URL (or `*` / `local://default`) | `TARGET_ROUTE_MISMATCH` |
+| 3 | **Outbound credential authorization** via the credential broker seam | `CREDENTIAL_BROKER_FAILED` |
+
+Gate 3 is active only when a `CredentialBrokerAdapter` has been injected into the
+actuator (constructor argument `credential_broker`). When present, the actuator
+calls
+[`fetch_credential()`](../../src/gateway/governance/seams/credential_broker.py)
+with the agent identity and tool action taken directly from the clearance:
+
+- `agent_svid` ← `clearance.operator_urn`
+- `tool_name` ← `clearance.action`
+- `scope` ← `None` (the reference actuator does not currently narrow scope)
+
+The returned header mapping is forwarded to
+[`ActuatorHttpClient.submit_envelope()`](../../src/integrations/actuator_01/client.py)
+as `extra_headers` and merged into the wire headers immediately before the POST.
+It is held only in a local variable for the duration of the dispatch — nothing
+caches it, and it is never written into the signed envelope, the envelope
+digest, or the resulting `ActuationReceipt`.
+
+**Fail-closed:** any exception raised by the broker — including
+`CredentialAccessDenied` (SVID not authorized) and `CredentialNotFound` (no
+secret for the tool) — aborts the dispatch before envelope construction and
+returns `ActuationReceipt(accepted=False, retryable=False, envelope_digest=None)`
+carrying a single `TERMINAL` finding with code `CREDENTIAL_BROKER_FAILED`. No
+canonical envelope is built, no quorum signature is produced, and no HTTP
+request is issued. When no broker is configured the actuator dispatches without
+`extra_headers`; the broker is an opt-in hardening seam, not a mandatory gate.
+
+Behaviour is pinned by
+[`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py).
+
 ## 3. State Machine & Lifecycle
 
 The lifecycle revolves around the `ConsequenceToken` and its corresponding authority record:

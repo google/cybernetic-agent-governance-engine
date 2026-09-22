@@ -6,6 +6,8 @@
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
+**Last Updated:** 2026-09-22
+
 ## Architecture Pattern
 
 CAGE implements a **two-layer agent governance architecture** that combines policy with capability:
@@ -21,8 +23,9 @@ CAGE implements a **two-layer agent governance architecture** that combines poli
               └───────┬────────┘     └────────┬────────┘
                       │                       │
               ┌───────▼────────┐     ┌────────▼────────┐
-              │  .roo/rules   │     │  MCP Server     │
-              │  docs/*.md     │     │  Tools API      │
+              │  AGENTS.md     │     │  MCP Server     │
+              │  .roomodes     │     │  Tools API      │
+              │  docs/*.md     │     │                 │
               └────────────────┘     └─────────────────┘
                       │                       │
                       └───────┬───────────────┘
@@ -39,7 +42,8 @@ Define **why** and **when** agents should take actions. Establish cognitive boun
 
 | Component | Purpose | Example |
 |-----------|---------|---------|
-| **`.roo/rules`** | your AI assistant workspace rules | GKE deployment policy |
+| **[`AGENTS.md`](../../AGENTS.md)** | Tool-agnostic agent + contributor standards ingested natively by AI assistants | GKE deployment policy, merge strategy, test invariants |
+| **[`.roomodes`](../../.roomodes)** | Roo/Zoo Code mode definitions and cost guardrails | `orchestrator` / `ask` / `code` / `debug` mode boundaries |
 | **`docs/operations/DEPLOYMENT_RULES.md`** | Shared knowledge artifact | Comprehensive deployment matrix |
 | **`docs/*.md`** | Domain-specific policies | Security, compliance, architecture |
 
@@ -204,23 +208,27 @@ Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TO
 
 | Node | Purpose |
 |------|---------|
-| `hitl_gate` | Interrupts the LangGraph StateGraph; waits for human approval |
+| `approval` ([`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py)) | Suspends the LangGraph StateGraph by calling the dynamic `interrupt()` primitive (`langgraph.types.interrupt`) and surfaces the trade payload to a reviewer |
 | `post_hitl_rehydrate` | Fetches a live market quote at actuation time (yfinance `fast_info["last_price"]`); computes price drift vs. stale approval price |
-| `post_hitl_revalidate` | Re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** only with fresh market data and live cash balance; checks drift against reviewer's `max_slippage_pct` |
+| `post_hitl_revalidate` | Re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** with fresh market data and live cash balance; checks drift against reviewer's `max_slippage_pct` |
+| `drift_blocked` | Fail-closed terminal node reached when drift or re-validation blocks the trade |
+
+> [!IMPORTANT]
+> The graph is compiled **without** `interrupt_before`. Suspension is a runtime decision made inside `approval_node` via `interrupt()`, and resumption uses the LangGraph SDK `Command(resume={...})` pattern — there is no HTTP resume endpoint.
 
 ### Operational Flow
 ```
-hitl_gate interrupt
+approval_node calls interrupt(trade_payload) → graph suspends
         ↓
 Human reviews in AgentSight UI (HITL TTL countdown visible)
         ↓
-Human approves (with max_slippage_pct tolerance)
-        ↓
+Reviewer resumes the thread: Command(resume={"approved": true, "max_slippage_pct": ...})
+        ↓ (if not approved → rejection_node → END)
 post_hitl_rehydrate — fetch live price; compute drift_pct
-        ↓ (if drift_pct > max_slippage_pct → drift_blocked_node)
+        ↓ (if drift_pct > max_slippage_pct → drift_blocked)
 post_hitl_revalidate — re-run Tier 2 (CBF) + Tier 4 (OPA) with fresh params
-        ↓ (if governance violation → drift_blocked_node)
-executor_node — execute trade
+        ↓ (if governance violation → drift_blocked)
+executor — execute trade
 ```
 
 If `post_hitl_revalidate` fails (market conditions changed), the trade is blocked and the operator is notified.
@@ -258,7 +266,7 @@ An agent needs to deploy CAGE to GKE. Without governance, it might:
 
 ### The Solution
 
-**Policy Layer (.roo/rules):**
+**Policy Layer ([`AGENTS.md`](../../AGENTS.md) → Deployment Rules):**
 ```markdown
 When deploying to GKE, ALWAYS use Cloud Build.
 - Rationale: Platform consistency, security scanning, audit trail
@@ -312,7 +320,7 @@ async def deploy_environment(target: str, environment: str):
 
 When adding new agent capabilities:
 
-- [ ] **Define policy** in `.roo/rules` or `docs/*.md`
+- [ ] **Define policy** in `AGENTS.md`, `.roomodes`, or `docs/*.md`
   - [ ] What is allowed
   - [ ] What is prohibited
   - [ ] Why (rationale)
@@ -339,21 +347,25 @@ When adding new agent capabilities:
 
 ## Extending This Pattern
 
-This architecture can be applied to any agent operation:
+Each agent operation pairs a policy document with a typed MCP tool. The rows below
+are the pairings that exist today in [`mcp-servers/infrastructure`](../../mcp-servers/infrastructure/README.md);
+new operations follow the same shape.
 
 | Operation | Policy Document | MCP Tool |
 |-----------|----------------|----------|
-| **Deployments** | `docs/operations/DEPLOYMENT_RULES.md` | `deploy_environment` |
-| **Infrastructure changes** | `docs/INFRASTRUCTURE_POLICY.md` | `validate_terraform` |
-| **Security scanning** | `docs/SECURITY_POLICY.md` | `run_security_scan` |
-| **Compliance checks** | `docs/COMPLIANCE_POLICY.md` | `check_compliance` |
-| **Data access** | `docs/DATA_GOVERNANCE.md` | `query_data` |
+| **Deployments** | [`docs/operations/DEPLOYMENT_RULES.md`](../operations/DEPLOYMENT_RULES.md) | `deploy_environment` |
+| **Deployment target selection** | [`docs/operations/DEPLOYMENT_DECISION_RECORD.md`](../operations/DEPLOYMENT_DECISION_RECORD.md) | `list_available_targets` |
+| **Terraform validation** | [`AGENTS.md`](../../AGENTS.md) → Terraform Invariants | `validate_terraform` |
+| **Cluster inspection** | [`docs/operations/GKE_TEST_RUNBOOK.md`](../operations/GKE_TEST_RUNBOOK.md) | `check_cluster_status`, `get_deployment_info` |
+| **Scripted operations** | [`docs/operations/DEPLOYMENT_RULES.md`](../operations/DEPLOYMENT_RULES.md) | `run_deployment_script` |
 
 ## Related Documentation
 
-- [Deployment Rules](../operations/DEPLOYMENT_RULES.md) - Specific policies for CAGE deployment
-- MCP Integration Guide - Setting up MCP servers
-- [Infrastructure MCP Server](../../README.md) - Tool reference
+- [Deployment Rules](../operations/DEPLOYMENT_RULES.md) — Specific policies for CAGE deployment
+- [MCP Setup Guide](../MCP_SETUP.md) — Setting up MCP servers
+- [Infrastructure MCP Server](../../mcp-servers/infrastructure/README.md) — Tool reference
+- [Agent Identity Binding Spec](AGENT_IDENTITY_BINDING_SPEC.md) — Native SPIFFE/SVID identity extraction ([`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py)), which replaced the `X-Agent-ID` request header
+- [Git Workflow Standards](../operations/GIT_WORKFLOW_STANDARDS.md) — Branch lifecycle and squash-merge policy
 
 ## Conclusion
 

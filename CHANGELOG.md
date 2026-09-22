@@ -46,6 +46,42 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [3.1.0] - 2026-09-22
+
+> **Zero-Trust Identity & Egress Release:** Agent identity moves from the application
+> layer to the transport layer, and outbound credentials move from adapter-held secrets
+> to a brokered, SVID-scoped seam.
+
+### Breaking Changes
+
+#### feat(gateway)! — Native SPIFFE identity extraction replaces `X-Agent-ID`
+
+**BREAKING CHANGE:** Removed anonymous fallback and `X-Agent-ID` / `X-SPIFFE-ID` header parsing. Unauthenticated requests now fail closed with 401 on every ingress path.
+
+- Agent identity is extracted exclusively from the verified mTLS client certificate SAN via [`src/gateway/governance/spiffe_extractor.py`](src/gateway/governance/spiffe_extractor.py) (`extract_spiffe_uri_from_asgi_scope`, `extract_spiffe_uri_from_grpc_context`, `validate_spiffe_uri`).
+- Both ingress paths fail closed with **401** `authentication_required` and the message `Client certificate with valid SPIFFE URI required`: [`inference_proxy.py`](src/gateway/server/inference_proxy.py) on HTTP and [`agent_gateway_adapter.py`](src/gateway/server/agent_gateway_adapter.py) on ext_authz/gRPC. `403` remains reserved for governance denials and unparseable requests.
+- Body-derived identity (`body.get("agent_id")`) is no longer honoured anywhere on the ingress path.
+- Agent-to-Agent authorization is now declarative: subagents declare `authorized_parent_prefixes` in `config/agent_catalog.json`, evaluated by `startswith()` in [`config/opa/agent_catalog.rego`](config/opa/agent_catalog.rego). Prefix matching keeps ephemeral instance IDs out of policy bodies, eliminating spurious `POLICY_DRIFT_VIOLATION` on pod restart.
+- OSCAL AC-3, IA-2, and IA-3 control mappings updated in [`compliance/oscal/sp800-53-component-definition.yaml`](compliance/oscal/sp800-53-component-definition.yaml).
+- Canonical specification: [`docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md).
+
+**Migration:** Callers must present a mesh-issued mTLS client certificate carrying a SPIFFE URI SAN. Any client that authenticated by setting `X-Agent-ID` will now receive 401 `authentication_required` on both the HTTP and ext_authz/gRPC paths. There is no compatibility shim — this is intentional; the header was spoofable by any client able to craft a request.
+
+### Added
+
+- **Vendor-neutral egress credential broker seam** — [`src/gateway/governance/seams/credential_broker.py`](src/gateway/governance/seams/credential_broker.py) defines the `CredentialBrokerAdapter` Protocol plus `CredentialBrokerError`, `CredentialNotFound`, and `CredentialAccessDenied`. The Layer 1 seam holds the protocol only; the reference Layer 3 actuator [`Actuator01Adapter.actuate()`](src/integrations/actuator_01/adapter.py) invokes it as a pre-dispatch gate, keyed on `agent_svid` (from `clearance.operator_urn`) and `tool_name` (from `clearance.action`), then forwards the result to `submit_envelope(extra_headers=...)`. Both broker exceptions fail closed — no envelope is built, no signature is produced, and no HTTP request is issued. Credential values are masked (`value[:8] + "****"`) in logs and are absent from the audit record. OSCAL AC-2 and SC-17 updated in [`compliance/oscal/system-security-plan.yaml`](compliance/oscal/system-security-plan.yaml). Coverage: [`tests/test_execution_actuator_broker.py`](tests/test_execution_actuator_broker.py) (`feat(gateway)`).
+- **Vendor-neutral DPoP proof-of-possession validator** — `ProofOfPossessionValidator` Protocol and `DPoPValidator` (RFC 9449, pure Python, mTLS certificate thumbprint binding) in [`src/gateway/server/dpop_validator.py`](src/gateway/server/dpop_validator.py) (`feat(gateway)`).
+
+### Changed
+
+- **`ActuatorHttpClient.submit_envelope()`** now accepts an optional `extra_headers` argument so brokered credentials can be attached at dispatch time ([`src/integrations/actuator_01/client.py`](src/integrations/actuator_01/client.py)) (`feat(gateway)`).
+
+### Removed
+
+- **`src/integrations/provider_04/`** — orphaned package retired after the transition to `actuator_01`; zero residual references remain (`refactor(imports)`).
+
+---
+
 ## [3.0.1] - 2026-09-09
 
 > **Remediation & Hardening Release:** Post-v3.0.0 comprehensive test suite remediation,

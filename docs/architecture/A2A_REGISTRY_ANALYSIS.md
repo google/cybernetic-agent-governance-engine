@@ -4,6 +4,11 @@ The GitHub proposal discussion (**#741 Agent Registry - Proposal**) captures the
 
 When analyzed against **CAGE (Cybernetic Agent Governance Engine v3.0.1)**, this registry discussion provides external market validation for CAGE's core architectural thesis: **Discoverability is not authority, and catalog lookup is not runtime containment.**
 
+**Last Updated:** 2026-09-22
+
+> [!NOTE]
+> CAGE's agent identity model is now native SPIFFE-based (commit `e6c9219`, which replaced the previous `X-Agent-ID` header). The normative definition of the SPIFFE prefix-based A2A identity model — trust-domain layout, SVID path conventions, and the binding rules referenced throughout this analysis — lives in [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md). That spec is authoritative; this document only positions CAGE against the A2A registry proposal and does not restate it.
+
 ---
 
 ### 🏛️ Direct Comparative Architecture Matrix
@@ -24,7 +29,7 @@ When analyzed against **CAGE (Cybernetic Agent Governance Engine v3.0.1)**, this
 #### 1. Discoverability vs. Execution Authority ("Discoverability is not Permission")
 
 * **The Proposal's Evolution:** The community (notably `@musaabhasan`, `@carlesarnal`, `@chopmob-cloud`, and `@rhein1`) converged on the invariant: *“The registry observes; it never grants authority.”* They established a clean split between the self-described **Agent Card**, the registry's **Publication Record**, and the **Authorization Overlay**.
-* **The CAGE Posture:** CAGE operationalizes this exact separation at the infrastructure tier. Knowing that an agent exists and has the skill `executePayment` allows an orchestrator to construct a plan, but CAGE’s `@governed_tool` decorator, out-of-process GKE Container Network Interface (CNI) filters, and HSM routing seals (`verify_seal`) enforce that no transaction executes without active cryptographic admission.
+* **The CAGE Posture:** CAGE operationalizes this exact separation at the infrastructure tier. Knowing that an agent exists and has the skill `executePayment` allows an orchestrator to construct a plan, but CAGE’s `@cage_guard` decorator ([`src/gateway/client/adapters/langgraph.py`](../../src/gateway/client/adapters/langgraph.py)), out-of-process GKE Container Network Interface (CNI) filters, and HSM routing seals (`verify_seal`) enforce that no transaction executes without active cryptographic admission.
 
 #### 2. Native Registry Ingestion & Identity Binding (CAGE-003)
 

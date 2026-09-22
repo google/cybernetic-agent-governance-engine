@@ -46,6 +46,43 @@ The lifecycle of an evidence record spans multiple durability tiers:
 - **Fail-Open on Cold Store Flushing**: If the background flush daemon fails to reach GCS/S3, it safely backs off and leaves the records in the Redis Stream. The records are not acknowledged or dropped, preserving them for the next flush attempt.
 - **Vendor Decoupling**: The Layer 1 kernel is strictly decoupled from cloud SDKs (like `boto3` or `google-cloud-storage`). It operates entirely on raw bytes and relies on the `ColdStoreReceipt` contract for persistence verification.
 
+### 4.1 Actuation Refusals and Credential Denials — Current Status
+
+CAGE's stated standard is that refusals are primary evidence: a DENY carries the
+same evidentiary weight as an ALLOW. At the actuation edge this is **not yet
+wired**, and this document records the actual state rather than the intent.
+
+What is true today:
+
+- Credential-denial refusals are **terminal and fail-closed**. When the
+  credential broker seam raises — `CredentialAccessDenied`, `CredentialNotFound`,
+  or any other `CredentialBrokerError` — the reference actuator returns
+  `ActuationReceipt(accepted=False, retryable=False, envelope_digest=None)` with
+  a single `TERMINAL` finding coded `CREDENTIAL_BROKER_FAILED`, and performs no
+  envelope construction, no signing, and no network dispatch. See
+  [`adapter.py`](../../src/integrations/actuator_01/adapter.py) and
+  [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md).
+- The refusal is structured and attributable: the finding's `detail` carries the
+  broker's message, and the receipt is returned to the caller.
+
+What is **not** true today:
+
+- No code path passes an `ActuationReceipt` — accepted or refused — to
+  [`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py).
+  `CREDENTIAL_BROKER_FAILED` therefore does **not** appear as a hash-chained
+  record in `cage:evidence:stream`, and is not archived to the cold store.
+  The only production consumer of a receipt is
+  [`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py), which
+  converts a rejected receipt into a `SymbolicGovernorViolation` carrying the
+  formatted findings.
+- [`consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)
+  does not emit evidence records either; it returns a `ConsequenceDecision` and
+  leaves persistence to its caller.
+
+Closing this gap requires an explicit ingestion call on the refusal path. Until
+that exists, treat actuation refusals as *logged and propagated*, not as
+*tamper-evident chained evidence*.
+
 ## 5. Configuration Contracts & Runtime Matrix
 
 The Evidence Chain is driven by several environment parameters:

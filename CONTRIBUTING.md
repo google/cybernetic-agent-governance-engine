@@ -358,6 +358,7 @@ uv run pytest tests/test_defer_queue.py -v
 | `make test-coverage` | Run tests with coverage reporting (70% minimum) |
 | `make lint` | Ruff linting + lockfile check |
 | `make security` | Bandit SAST + pip-audit + Semgrep |
+| `make docs-check` | Documentation integrity gates — broken links, dangling paths, stale symbols, vendor brand and domain literal leakage (mirrors CI gate G9) |
 | `make update-nemo-configmap` | Sync NeMo Guardrails config to K8s ConfigMap |
 
 ### Local Infrastructure (Docker Compose)

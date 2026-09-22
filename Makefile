@@ -25,6 +25,7 @@ NAMESPACE ?= cage
         poam-drift-check \
         lint \
         security \
+        docs-check \
         test \
         test-fast \
         test-last-failed \
@@ -127,6 +128,23 @@ security:
 	@echo "==> Running Semgrep static analysis..."
 	@uv run --with semgrep semgrep scan --config=auto --error src/
 	@echo "✅ Security scans completed."
+
+## Run documentation integrity gates (mirrors CI gate G9)
+docs-check:
+	@echo "==> Checking documentation references (broken links, dangling paths, stale symbols)..."
+	@uv run python scripts/check_doc_references.py \
+		--path README.md \
+		--path AGENTS.md \
+		--path COMPLIANCE.md \
+		--path SECURITY.md \
+		--path CONTRIBUTING.md \
+		--path docs/architecture \
+		--path compliance
+	@echo "==> Checking vendor brand leakage into executable code..."
+	@uv run python scripts/check_vendor_brands.py --verbose
+	@echo "==> Checking domain literal leakage into kernel/integrations..."
+	@uv run python scripts/check_domain_literals.py --verbose
+	@echo "✅ Documentation integrity checks passed."
 
 # ---------------------------------------------------------------------------
 # Testing

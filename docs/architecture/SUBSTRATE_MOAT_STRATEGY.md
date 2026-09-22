@@ -4,6 +4,7 @@
 **Document type:** Architectural Strategy & Gap Analysis
 **Status:** DRAFT — For internal review
 **Date:** 2026-07-14
+**Last Updated:** 2026-09-22
 **Authority:** This document supplements `docs/architecture/` and is governed by `docs/operations/GIT_WORKFLOW_STANDARDS.md`
 
 > **Framing note:** CAGE's reference implementation uses a governed financial advisory workflow as its first production vertical. This document deliberately generalises the competitive analysis to the broader category of **high-reliability agentic AI** — systems where an autonomous agent can trigger consequential, difficult-to-reverse writes to authoritative state stores (ledgers, databases, control-plane APIs, actuator endpoints). The financial framing is retained only where it is the precise technical context (e.g. code identifiers, regulatory citations). All strategic claims apply equally to any high-stakes agentic deployment.
@@ -31,13 +32,13 @@ The analysis below shows that CAGE v2.0.0 already implements the substrate-tier 
 The comparative matrix claims CAGE enforces at the **container network interface (CNI) kernel edge and database commit tier**. The codebase confirms this at two levels:
 
 **Database commit tier (Redis atomic Lua):**
-[`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) collapses the CBF check and state commit into a single Redis Lua script execution. The Lua script (`LUA_ATOMIC_CBF`) evaluates `h(S(t+1)) >= (1-γ)*h(S(t))` and writes `safety:current_cash` atomically — no Python round-trip between check and write. This is the database commit tier enforcement described in the matrix. In the financial reference deployment `safety:current_cash` tracks cash balance; in other high-reliability deployments the same key tracks the domain-specific resource invariant (e.g. API call budget, actuator torque envelope, drug-dosage ceiling).
+[`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1632) collapses the CBF check and state commit into a single Redis Lua script execution. The Lua script (`LUA_ATOMIC_CBF`) evaluates `h(S(t+1)) >= (1-γ)*h(S(t))` and writes `safety:current_cash` atomically — no Python round-trip between check and write. This is the database commit tier enforcement described in the matrix. In the financial reference deployment `safety:current_cash` tracks cash balance; in other high-reliability deployments the same key tracks the domain-specific resource invariant (e.g. API call budget, actuator torque envelope, drug-dosage ceiling).
 
 **WATCH/MULTI/EXEC optimistic locking & Rollback:**  
 [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) and [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.1, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
 
 **No-Direct-Bind startup assertions:**  
-[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:64) raises `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production, and if `dowhy` is absent. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
+[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:91) raises `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production, and if `dowhy` is absent. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
 
 **Gap vs. matrix claim:** The matrix references "CNI kernel edge" enforcement. The current implementation enforces at the Redis database commit tier (application-layer substrate), not at the CNI/eBPF layer. This is a positioning gap, not a security gap — the Redis atomic Lua enforcement is functionally equivalent for any high-reliability state mutation use case, but the CNI framing implies network-level enforcement that does not yet exist.
 
@@ -51,14 +52,14 @@ The matrix claims CAGE uses **machine-readable hazard models compiled into hard 
 [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) ingests `config/stpa_control_structure.yaml` and emits deterministic OPA Rego policies (`config/opa/generated_stpa_policy.rego`), NeMo Colang rails, Python validators, and LangGraph Saga nodes. The UCAs are compiled — not interpreted at runtime — into hard Rego rules with `default stpa_allow = false` (fail-closed).
 
 **Control Barrier Function (math-backed):**  
-[`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py:22) implements the discrete-time CBF from Ames et al. (IEEE TAC 2017):
+[`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py:19) implements the discrete-time CBF from Ames et al. (IEEE TAC 2017):
 ```
 h(S(t+1)) >= (1 - γ) * h(S(t))   for all t, where γ ∈ (0,1)
 ```
 This is a formal mathematical safety certificate, not a text-based behavioral constraint.
 
 **Regional compliance registry:**  
-[`ControlRegistry`](../../src/gateway/governance/constants.py:177) resolves stable `CTRL_*` IDs to jurisdiction-specific regulatory citations at runtime from `config/compliance/{REGION}_BASELINE.json`. Policy primitives are decoupled from regulatory schedule changes — a framework update requires only a JSON profile update, not Python source changes.
+[`ControlRegistry`](../../src/gateway/governance/constants.py:229) resolves stable `CTRL_*` IDs to jurisdiction-specific regulatory citations at runtime from `config/compliance/{REGION}_BASELINE.json`. Policy primitives are decoupled from regulatory schedule changes — a framework update requires only a JSON profile update, not Python source changes.
 
 **Gap vs. matrix claim:** None material. The compiled AST invariant claim is fully substantiated by the codebase.
 
@@ -70,9 +71,9 @@ The matrix claims CAGE uses **Redis optimistic concurrency locking (WATCH/MULTI/
 
 This is confirmed by:
 - [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) — WATCH/MULTI/EXEC with retry (internal rollback/unsafe test utility)
-- [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) — Lua atomic check+commit (zero TOCTOU window)
+- [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1632) — Lua atomic check+commit (zero TOCTOU window)
 - [`FiscalLimitGuard.reserve()`](../../src/gateway/governance/safety/resource_guard.py) — atomic pre-reservation of the operational budget cap (daily fiscal cap in the financial deployment) before the consensus gate
-- [`DeferQueue.park()`](../../src/gateway/governance/defer_queue.py:167) and [`resolve()`](../../src/gateway/governance/defer_queue.py:215) — MULTI/EXEC pipeline for DEFER token state transitions
+- [`DeferQueue.park()`](../../src/gateway/governance/defer_queue.py:409) and [`_resolve()`](../../src/gateway/governance/defer_queue.py:462) — MULTI/EXEC pipeline for DEFER token state transitions
 
 The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic commit, creating an append-only tamper-evident log at the database tier.
 
@@ -85,16 +86,16 @@ The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic 
 The matrix claims CAGE uses a **4-state asymmetric router** where high-confidence paths (c ≥ 0.95) bypass blocking gates via async routines, while lower confidence tiers freeze and park.
 
 **4-state routing:**  
-[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:141) defines three zones:
+[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:202) defines three zones:
 - `FRIA_ZONE_ALLOW` (≥ 0.95): async fire-and-forget attestation — zero blocking latency on hot path
 - `FRIA_ZONE_DEFER` (0.70–0.95): synchronous blocking gate via `enforce_fria_boundary()`
 - `< 0.70`: hard local deny, no external call
 
-**Concurrent CBF+OPA:**  
-[`_run_checks()`](../../src/gateway/governance/symbolic_governor.py:171) runs CBF (Redis) and OPA (HTTP) concurrently via `asyncio.gather()`, bounding combined latency to `max(CBF_ms, OPA_ms)` instead of `CBF_ms + OPA_ms`.
+**Two-phase read/mutate ordering:**  
+[`_run_checks()`](../../src/gateway/governance/symbolic_governor.py:1305) evaluates the read-only tiers (OPA, structural corroboration, consensus, causal gatekeeper, adaptive FRIA) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after OPA. The concurrent gather survives on the post-approval revalidation path only.
 
 **DeferQueue parking:**  
-[`DeferQueue`](../../src/gateway/governance/defer_queue.py:147) parks tokens in Redis `db=1` (isolated, `noeviction` policy) with a 4-hour TTL. The three-phase replay flow (PARK → HYDRATE → REPLAY) allows automated data-hydration to re-admit parked tokens without human intervention.
+[`DeferQueue`](../../src/gateway/governance/defer_queue.py:377) parks tokens in Redis `db=1` (isolated, `noeviction` policy) with a 4-hour TTL. The three-phase replay flow (PARK → HYDRATE → REPLAY) allows automated data-hydration to re-admit parked tokens without human intervention.
 
 **Gap vs. matrix claim:** None material. The 4-state asymmetric router is fully implemented.
 
@@ -136,7 +137,7 @@ However, there is no **public substrate contract** — a versioned, documented A
 
 **What is missing:**
 1. A **Substrate Contract Specification** — a versioned OpenAPI/gRPC schema defining the ingress surface for external policy specifications.
-2. A **Policy Version Pinning API** — the `policy_version_id` parameter in [`validate_action()`](../../src/gateway/governance/symbolic_governor.py:837) already enforces version pinning against `ControlRegistry.active_hash`, but this is not exposed as a public contract that external policy authors can use to pin their ACS/AAIF specs to a specific CAGE baseline.
+2. A **Policy Version Pinning API** — the `policy_version_id` parameter in [`validate_action()`](../../src/gateway/governance/symbolic_governor.py:2238) already enforces version pinning against `ControlRegistry.active_hash`, but this is not exposed as a public contract that external policy authors can use to pin their ACS/AAIF specs to a specific CAGE baseline.
 3. A **Developer SDK** — a thin client library (Python, TypeScript) that wraps the governance endpoint and handles seal verification, making it trivial for any high-reliability agentic application to adopt CAGE as their execution substrate.
 
 ---
@@ -147,7 +148,7 @@ However, there is no **public substrate contract** — a versioned, documented A
 > "Purely handles structural consequence containment; it relies on integrations to pass down user intent."
 
 **Current state:**  
-The [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py:150) pipeline is structurally focused: CBF checks resource invariants (cash balance in the financial deployment; any continuous safety variable in other domains), OPA checks policy rules, STPA checks unsafe control actions. The [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) and [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) provide some semantic context, but they are not integrated into the main `_run_checks()` pipeline as first-class tiers.
+The [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py:830) pipeline is structurally focused: CBF checks resource invariants (cash balance in the financial deployment; any continuous safety variable in other domains), OPA checks policy rules, STPA checks unsafe control actions. The [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) and [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) provide some semantic context, but they are not integrated into the main `_run_checks()` pipeline as first-class tiers.
 
 **What is missing:**
 1. A **Semantic Intent Tier** — a governance tier (Tier 0 or Tier 8) that validates the semantic coherence of the agent's stated intent against the action being requested. This would use the existing NeMo Guardrails infrastructure ([`nemo/`](../../src/gateway/governance/nemo/)) to check that the action is semantically consistent with the declared user intent.
@@ -235,15 +236,15 @@ The following work items are ordered by strategic priority. Items marked **[BLOC
 
 The following capabilities are **fully implemented** in v2.0.0 and constitute genuine structural advantages that neither Microsoft MXC/ACS nor Red Hat/AAIF can replicate without fundamental architectural changes. They apply to any high-reliability agentic AI deployment — not only financial services:
 
-1. **Zero-TOCTOU Guarantee** — [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) collapses check and commit into a single Lua hop. Microsoft's synchronous validation blocks and Red Hat's trace-schema comparison both have TOCTOU windows between check and write.
+1. **Zero-TOCTOU Guarantee** — [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1632) collapses check and commit into a single Lua hop. Microsoft's synchronous validation blocks and Red Hat's trace-schema comparison both have TOCTOU windows between check and write.
 
 2. **Compiled Hazard Models** — [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) produces deterministic OPA Rego AST from STPA UCAs. The compiled artifacts are immutable at runtime — an agent cannot modify its own invariants even during a full container compromise.
 
 3. **Math-Backed Safety Certificate** — The discrete-time CBF (`h(S(t+1)) >= (1-γ)*h(S(t))`) provides a formal proof of safety that text-based behavioral constraints (ACS) and trace-schema comparison (AAIF) cannot provide.
 
-4. **Fail-Closed Startup Assertions** — The module-level `RuntimeError` on `CBF_FAIL_OPEN=true` in production ([`symbolic_governor.py:64`](../../src/gateway/governance/symbolic_governor.py:64)) means the governance substrate cannot be silently degraded. Competitors rely on application-tier hooks that can be bypassed.
+4. **Fail-Closed Startup Assertions** — The module-level `RuntimeError` on `CBF_FAIL_OPEN=true` in production ([`symbolic_governor.py:91`](../../src/gateway/governance/symbolic_governor.py:91)) means the governance substrate cannot be silently degraded. Competitors rely on application-tier hooks that can be bypassed.
 
-5. **Multi-Jurisdiction Compliance Registry** — [`ControlRegistry`](../../src/gateway/governance/constants.py:177) with `US_FED`, `EU_ECB`, and `APAC_MAS` profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. The registry is domain-agnostic: the same `CTRL_*` enum members and JSON profile mechanism extend to any regulated vertical (pharmaceutical GxP, critical infrastructure, autonomous systems). Neither competitor has a comparable multi-jurisdiction enforcement substrate.
+5. **Multi-Jurisdiction Compliance Registry** — [`ControlRegistry`](../../src/gateway/governance/constants.py:229) with `US_FED`, `EU_ECB`, and `APAC_MAS` profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. The registry is domain-agnostic: the same `CTRL_*` enum members and JSON profile mechanism extend to any regulated vertical (pharmaceutical GxP, critical infrastructure, autonomous systems). Neither competitor has a comparable multi-jurisdiction enforcement substrate.
 
 6. **Cryptographic Routing Seal** — [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) issues a short-lived HMAC-SHA256 seal after full 8-tier pipeline (FTRA + 7 in-pipeline tiers) approval. Downstream actuators cannot execute by ignoring the governance response — the seal must be verified before execution. This is a cryptographic enforcement contract that neither competitor implements.
 
@@ -253,7 +254,7 @@ The following capabilities are **fully implemented** in v2.0.0 and constitute ge
 
 2. **Developer Experience** — CAGE's governance pipeline is powerful but requires deep familiarity with the STPA/OPA/CBF stack. ACS and AAIF both offer simpler developer-facing abstractions. Without a thin SDK that hides the substrate complexity, enterprise adoption will be limited to teams with compliance engineering expertise.
 
-3. **Ecosystem Breadth** — Red Hat/AAIF's Linux Foundation backing provides cross-vendor interoperability in policy authoring. However, CAGE leverages the `NormativeProvider` and `AttestationProvider` protocols ([`normative_provider.py:271`](../../src/gateway/governance/normative_provider.py:271)) to function as the deterministic execution substrate ("Iron Shell") underneath these consortium standards. Currently, CAGE supports 6 registered vendor providers (`provider_01` through `provider_06`) across normative gating, execution guillotines, and evidence pack generation. <!-- Note: ensure this roster stays in sync with src/integrations/ -->
+3. **Ecosystem Breadth** — Red Hat/AAIF's Linux Foundation backing provides cross-vendor interoperability in policy authoring. However, CAGE leverages the `NormativeProvider` and `AttestationProvider` protocols ([`seams/normative.py:135`](../../src/gateway/governance/seams/normative.py:135), [`seams/attestation.py:100`](../../src/gateway/governance/seams/attestation.py:100)) to function as the deterministic execution substrate ("Iron Shell") underneath these consortium standards. Currently, CAGE supports 6 registered vendor providers (`provider_01`–`provider_03` and `provider_05`–`provider_07`) across normative gating, execution guillotines, and evidence pack generation. <!-- Note: ensure this roster stays in sync with src/integrations/ -->
 
 ---
 
@@ -263,12 +264,12 @@ The following claims from the competitive analysis are now technically substanti
 
 | Claim | Substantiation | File |
 |---|---|---|
-| "Immune to Prompt Breakouts" | `CBF_FAIL_OPEN=true` raises `RuntimeError` at startup in production | [`symbolic_governor.py:64`](../../src/gateway/governance/symbolic_governor.py:64) |
-| "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf.py:406`](../../src/gateway/governance/safety/cbf_engine.py:406) |
-| "Telco-Grade Velocity" | CBF+OPA run concurrently via `asyncio.gather()` | [`symbolic_governor.py:295`](../../src/gateway/governance/symbolic_governor.py:295) |
+| "Immune to Prompt Breakouts" | `CBF_FAIL_OPEN=true` raises `RuntimeError` at startup in production | [`symbolic_governor.py:91`](../../src/gateway/governance/symbolic_governor.py:91) |
+| "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf_engine.py:1632`](../../src/gateway/governance/safety/cbf_engine.py:1632) |
+| "Telco-Grade Velocity" | Asymmetric hot path — confidence ≥ `FRIA_ZONE_ALLOW` (0.95) contacts the normative provider fire-and-forget, never blocking the action | [`symbolic_governor.py:202`](../../src/gateway/governance/symbolic_governor.py:202) |
 | "Compiled AST Invariants" | STPA UCAs compiled to OPA Rego at build time | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
-| "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf.py:22`](../../src/gateway/governance/safety/cbf_engine.py:22) |
-| "Multi-Jurisdiction" | US_FED / EU_ECB / APAC_MAS regional profiles | [`constants.py:126`](../../src/gateway/governance/constants.py:126) |
+| "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf_engine.py:19`](../../src/gateway/governance/safety/cbf_engine.py:19) |
+| "Multi-Jurisdiction" | US_FED / EU_ECB / APAC_MAS regional profiles | [`constants.py:158`](../../src/gateway/governance/constants.py:158) |
 | "Cryptographic Seal" | HMAC-SHA256 routing seal, raises on verification failure | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
 
 The following claim requires correction or implementation before use in external materials:
@@ -333,14 +334,14 @@ AGW integrates with: Agent Registry (approved agent/tool catalog), Agent Identit
 | **Policy Primitives** | **Compiled AST Invariants:** STPA UCAs compiled to OPA Rego AST + math-backed CBF. Deterministic, immutable at runtime. | **Delegated Authorization:** IAM policies, Semantic Governance Policies, Model Armor, and Service Extensions. Policies are declarative and evaluated per-request by external GCP services. |
 | **State & Mutability Guard** | **Deterministic Lockbox:** Redis WATCH/MULTI/EXEC + Lua atomic check+commit. Zero TOCTOU window at the write point. | **Pre-execution Network Gate:** IAP validates agent identity and IAM permissions before the request reaches the agent runtime. No database-tier state guard — relies on application-tier enforcement downstream. |
 | **Latency & Performance** | **Asymmetric 4-State DEFER Router:** High-confidence paths bypass blocking gates via async routines. CBF+OPA run concurrently. | **Synchronous Network Interception:** Every request passes through IAP + optional Model Armor + optional Semantic Governance Policy evaluation. Latency scales with the number of delegated authorization services chained. |
-| **Identity Model** | **HMAC Routing Seal:** Short-lived cryptographic token issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers). Verifiable by any downstream actuator. | **SPIFFE ID + mTLS + DPoP:** Cryptographic agent identity enforced at the network layer. Context-Aware Access (CAA) provides end-to-end authentication. Stronger identity primitive than CAGE's HMAC seal. |
+| **Identity Model** | **Native SPIFFE + HMAC Routing Seal:** Since `e6c9219`, [`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) extracts the verified SPIFFE SVID from the client certificate SAN (HTTP) or the mesh-supplied `source.principal` (ext_authz), failing closed with `401 authentication_required` on both paths. The short-lived HMAC seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers) remains the downstream actuator contract. Identity is consumed in-process, not terminated at the network edge — see [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md). | **SPIFFE ID + mTLS + DPoP:** Cryptographic agent identity enforced at the network layer. Context-Aware Access (CAA) provides end-to-end authentication. Enforced at the network edge rather than in-process. |
 | **Multi-Jurisdiction** | **Regional Compliance Registry:** US_FED / EU_ECB / APAC_MAS profiles with jurisdiction-specific regulatory citations. `CAGE_DEPLOYMENT_REGION` guard on all shared modules. | **Regional Scope:** AGW is regional in scope (per-project, per-region). No built-in multi-jurisdiction compliance registry — regulatory mapping is the operator's responsibility. |
 | **Protocol Support** | **MCP + gRPC + HTTP:** Hybrid server supports MCP tool calls, gRPC streaming, and HTTP REST. | **All HTTP-based traffic:** MCP, A2A, REST, gRPC. MCP-specific attribute parsing for fine-grained tool-level authorization policies. |
 
 ### 9.3 Where Agent Gateway Outperforms CAGE
 
 **1. Network-Layer Identity Enforcement (Structural Advantage)**
-AGW enforces agent identity at the GCP network layer using SPIFFE IDs, mTLS, and DPoP — cryptographic primitives that are significantly stronger than CAGE's HMAC routing seal. An agent cannot impersonate another agent's identity at the network layer even if it has compromised the application tier. CAGE's routing seal is application-layer only and can be bypassed if the application container is fully compromised (though the Redis atomic Lua enforcement at the database tier remains intact).
+AGW enforces agent identity at the GCP network layer using SPIFFE IDs, mTLS, and DPoP. As of commit `e6c9219` CAGE consumes SPIFFE identity natively as well — [`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) replaced the previous `X-Agent-ID` header trust model, and extraction failure fails closed with `401 authentication_required`. The residual advantage is therefore one of **placement rather than primitive**: AGW terminates mTLS at the network edge, so an agent cannot impersonate another identity even with the application tier compromised, whereas CAGE's extraction runs in-process and depends on the mesh or load balancer having already verified the certificate. CAGE's HMAC routing seal remains the downstream actuator enforcement contract, and the Redis atomic Lua enforcement at the database tier is unaffected either way. See [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
 
 **2. MCP Prompt Injection at the Network Layer (Structural Advantage)**
 AGW integrates Model Armor at the network layer for both ingress and egress MCP traffic. This means prompt injection attacks are intercepted before they reach the agent runtime — not after the agent has already processed the malicious input. CAGE's [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) operates at the application tier, after the request has been received by the gateway process.
@@ -357,7 +358,7 @@ AGW's integration with Agent Registry provides a centralized catalog of approved
 ### 9.4 Where CAGE Outperforms Agent Gateway
 
 **1. Database Commit Tier Enforcement (Structural Advantage — Irreplaceable)**
-AGW enforces at the network layer — it can block a request from reaching the agent, but it cannot enforce invariants at the moment a state mutation is written to a database. If an agent passes AGW's network gate and then triggers a consequential write that violates a resource invariant (e.g. a cash balance floor, an API budget ceiling, an actuator torque limit), AGW has no mechanism to intercept the database write. CAGE's [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:406) enforces the CBF invariant atomically at the Redis write point — the invariant cannot be violated even if the agent has already passed all network-layer gates. This advantage is domain-agnostic: it applies to any high-reliability agentic system where the consequence of an action is a write to an authoritative state store.
+AGW enforces at the network layer — it can block a request from reaching the agent, but it cannot enforce invariants at the moment a state mutation is written to a database. If an agent passes AGW's network gate and then triggers a consequential write that violates a resource invariant (e.g. a cash balance floor, an API budget ceiling, an actuator torque limit), AGW has no mechanism to intercept the database write. CAGE's [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1632) enforces the CBF invariant atomically at the Redis write point — the invariant cannot be violated even if the agent has already passed all network-layer gates. This advantage is domain-agnostic: it applies to any high-reliability agentic system where the consequence of an action is a write to an authoritative state store.
 
 **2. Math-Backed Safety Certificates (Structural Advantage)**
 AGW's Semantic Governance Policies are declarative and evaluated by an external service — they are not formal mathematical safety certificates. CAGE's discrete-time CBF provides a provable safety guarantee: `h(S(t+1)) >= (1-γ)*h(S(t))` is a theorem, not a policy rule. For any regulated operator deploying high-reliability agentic AI (financial services under SR 26-2 MRM scope, pharmaceutical under 21 CFR Part 11, critical infrastructure under IEC 62443), a mathematical proof of safety is a compliance requirement that a declarative policy cannot satisfy.
@@ -366,13 +367,13 @@ AGW's Semantic Governance Policies are declarative and evaluated by an external 
 AGW's policies are evaluated at runtime by external GCP services. CAGE's STPA UCAs are compiled into immutable OPA Rego AST at build time — the compiled artifacts cannot be modified by a compromised agent at runtime. AGW's runtime policy evaluation creates a window where a sufficiently sophisticated attack could attempt to manipulate the policy evaluation context.
 
 **4. Multi-Jurisdiction Compliance Registry (Structural Advantage)**
-AGW has no built-in multi-jurisdiction compliance registry. CAGE's [`ControlRegistry`](../../src/gateway/governance/constants.py:177) with US_FED / EU_ECB / APAC_MAS profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. For any global operator deploying high-reliability agentic AI across jurisdictions — financial services, healthcare, critical infrastructure — this is a significant differentiator. The profile mechanism is domain-agnostic: adding a new vertical or jurisdiction requires only a JSON profile update, not Python source changes.
+AGW has no built-in multi-jurisdiction compliance registry. CAGE's [`ControlRegistry`](../../src/gateway/governance/constants.py:229) with US_FED / EU_ECB / APAC_MAS profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. For any global operator deploying high-reliability agentic AI across jurisdictions — financial services, healthcare, critical infrastructure — this is a significant differentiator. The profile mechanism is domain-agnostic: adding a new vertical or jurisdiction requires only a JSON profile update, not Python source changes.
 
 **5. Causal World-Model Validation (Unique Capability)**
-AGW has no equivalent to CAGE's DoWhy causal gatekeeper ([`causal_gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)). The placebo refutation check validates that the agent's world-model is causally trustworthy before allowing a high-stakes action — a capability that neither AGW, MXC/ACS, nor AAIF implements.
+AGW has no equivalent to CAGE's DoWhy causal gatekeeper ([`causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)). The placebo refutation check validates that the agent's world-model is causally trustworthy before allowing a high-stakes action — a capability that neither AGW, MXC/ACS, nor AAIF implements.
 
 **6. DEFER State Machine (Unique Capability)**
-AGW's authorization model is binary: allow or deny. CAGE's [`DeferQueue`](../../src/gateway/governance/defer_queue.py:147) implements a formal DEFER state for situational ambiguity — parking execution contexts in Redis `db=1` with a 4-hour TTL and a three-phase replay flow (PARK → HYDRATE → REPLAY). This prevents operational fatigue from forcing binary decisions on fundamentally incomplete context windows.
+AGW's authorization model is binary: allow or deny. CAGE's [`DeferQueue`](../../src/gateway/governance/defer_queue.py:377) implements a formal DEFER state for situational ambiguity — parking execution contexts in Redis `db=1` with a 4-hour TTL and a three-phase replay flow (PARK → HYDRATE → REPLAY). This prevents operational fatigue from forcing binary decisions on fundamentally incomplete context windows.
 
 ### 9.5 Strategic Implications — Agent Gateway Changes the Positioning
 
@@ -406,7 +407,7 @@ CAGE has no integration with Google Agent Gateway's Service Extensions mechanism
 **Full protocol and implementation analysis:** see the proposed implementation steps below.
 
 **Proposed implementation:**
-1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py:837), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.
+1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py:2238), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.
 2. A **Deployment Template** (`infra/agw/`, new) — a Terraform module (GCP-specific, optional) that registers the Service Extension with AGW and configures the callout to CAGE's endpoint with `fail_open = false` (fail-closed). Operators on other platforms should use the equivalent service mesh or API gateway extension mechanism.
 3. A **Joint Reference Architecture** (`docs/architecture/CAGE_AGW_REFERENCE_ARCH.md`, new) — describing the CAGE + AGW defense-in-depth stack for GCP-native deployments.
 
@@ -421,7 +422,7 @@ CAGE has no integration with Google Agent Gateway's Service Extensions mechanism
 | **Enforcement Layer** | Database commit tier (Redis Lua) + application seal | OS/application sandbox | API gateway proxy | Network infrastructure (mTLS + IAP) |
 | **Policy Primitives** | Compiled AST (OPA Rego) + math CBF | Text behavioral specs | Multi-layer routing rules | Delegated IAM + Semantic Governance |
 | **State Guard** | Atomic Lua (zero TOCTOU) | Pre-execution sandbox | Trace-schema delta | Pre-execution network gate |
-| **Identity Model** | HMAC routing seal (application) | Container identity | API gateway identity | SPIFFE ID + mTLS + DPoP (network) |
+| **Identity Model** | Native SPIFFE extraction + HMAC routing seal (application) | Container identity | API gateway identity | SPIFFE ID + mTLS + DPoP (network) |
 | **Latency** | Async hot path (≥0.95 confidence) | Synchronous validation | Sequential evaluation | Synchronous network interception |
 | **Multi-Jurisdiction** | US_FED / EU_ECB / APAC_MAS built-in | None | None | None (operator responsibility) |
 | **Causal Validation** | DoWhy placebo refutation | None | None | None |

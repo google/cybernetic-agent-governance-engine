@@ -7,7 +7,9 @@
 > Some domain-flavoured identifiers appear in older documents and in the finance reference application (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`). These belong to the **finance example domain**, not to the kernel. See [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md).
 >
 > **Jurisdictional compliance is likewise configuration.** `US_FED`, `EU_ECB`, and `APAC_MAS` are configurable postures selected with `CAGE_DEPLOYMENT_REGION`, layered over the universal ISO 42001 baseline. Adding a jurisdiction is a config-only operation — see the Jurisdiction Key below.
-**Last updated:** 2026-09-09
+**Last updated:** 2026-09-22
+
+> **v3.1.0 Update (2026-09-22):** Zero-Trust Identity & Egress. Agent identity is extracted exclusively from the verified mTLS client certificate SAN (`src/gateway/governance/spiffe_extractor.py`) — `X-Agent-ID` / `X-SPIFFE-ID` header parsing and the anonymous fallback are **removed** (breaking; fail-closed 401 on both ingress paths). Adds an RFC 9449 DPoP validator (`src/gateway/server/dpop_validator.py`, shipped but not yet wired into ingress), SPIFFE prefix-based A2A authorization (`config/opa/agent_catalog.rego`), and the egress `CredentialBrokerAdapter` seam (`src/gateway/governance/seams/credential_broker.py`). See [AGENT_IDENTITY_BINDING_SPEC.md](architecture/AGENT_IDENTITY_BINDING_SPEC.md) and [BREAKING_CHANGES_v3.md](BREAKING_CHANGES_v3.md).
 
 > **v3.0.1 Update (2026-09-09):** The documentation reflects the latest architectural refactorings including `src/gateway/governance/seams/` zero-kernel-import extraction, `DeferReason.EXTERNAL_HOLD` generalization, Full `RefusalReceipt` v3 evidence serialization, Attestation Failure Attributability (Ed25519 CER signature verification), and In-Kernel `ConsequenceToken` & `ContentAddress` primitives.
 
@@ -192,7 +194,16 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [FORMAL_VERIFICATION.md](architecture/FORMAL_VERIFICATION.md) | Formal verification — 11-step mathematical state-space proofs, CBF, NoDirectBind invariants |
 | [TECH_STACK.md](architecture/TECH_STACK.md) | Exhaustive 11-domain technology stack and bill of materials |
 | [AGENT_SYSTEM_ARCHITECTURE.md](architecture/AGENT_SYSTEM_ARCHITECTURE.md) | Multi-agent system architecture, 9-agent inventory, 25/33-field AgentState schema, HITL |
+| [AGENT_IDENTITY_BINDING_SPEC.md](architecture/AGENT_IDENTITY_BINDING_SPEC.md) | **Canonical identity spec (v3.1.0)** — SPIFFE SVID extraction from mTLS, DPoP double-binding (RFC 9449), namespace prefix policies, A2A delegation |
+| [VENDOR_NEUTRALITY_CONTRACT.md](architecture/VENDOR_NEUTRALITY_CONTRACT.md) | Vendor-neutrality obligations for the Layer 1 kernel and Layer 3 adapters |
+| [CAGE_AGW_REFERENCE_ARCH.md](architecture/CAGE_AGW_REFERENCE_ARCH.md) | Agent Gateway reference architecture and adapter surface |
+| [CLICKHOUSE_EVIDENCE_SINK.md](architecture/CLICKHOUSE_EVIDENCE_SINK.md) | ClickHouse durable evidence sink design specification |
+| [AUDIT_STREAM_MIGRATION_ANALYSIS.md](architecture/AUDIT_STREAM_MIGRATION_ANALYSIS.md) | Audit stream migration analysis |
+| [NON_FORMATION_PROOF_SPEC.md](architecture/NON_FORMATION_PROOF_SPEC.md) | Non-formation proof specification — refusal receipts and burden-of-proof mapping |
+| [GOVERNANCE_SUBSTRATE_DUALITY.md](architecture/GOVERNANCE_SUBSTRATE_DUALITY.md) | Governance substrate duality — mechanism vs. semantics separation |
+| [A2A_REGISTRY_ANALYSIS.md](architecture/A2A_REGISTRY_ANALYSIS.md) | Agent-to-agent registry analysis |
 | [SUBSTRATE_MOAT_STRATEGY.md](architecture/SUBSTRATE_MOAT_STRATEGY.md) | Competitive positioning — CAGE vs MXC/ACS, AAIF, Google AGW |
+
 
 ---
 

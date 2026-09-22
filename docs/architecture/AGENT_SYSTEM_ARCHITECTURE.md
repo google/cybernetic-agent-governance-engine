@@ -10,6 +10,8 @@
 | **Canonical Path**   | `docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`                                  |
 | **References**       | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/`, [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md) |
 
+**Last Updated:** 2026-09-22
+
 ---
 
 ## 1. Agent Orchestration Philosophy
@@ -19,6 +21,8 @@ The Governed Financial Advisor (`src/governed_financial_advisor/`) is the **Laye
 Multi-agent pipelines are composed using LangGraph's `StateGraph`, creating a deterministic, fully auditable execution sequence. Every agent carries a single, well-defined responsibility; no agent performs actions outside its declared scope. Inter-agent communication occurs strictly through a shared, strongly typed `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py` — agents read fields they require and write only the fields they own.
 
 CAGE governance checks are not advisory: they gate every state transition before execution can reach sensitive nodes (such as `governed_trader`). The pipeline guarantees that reasoning, data acquisition, plan generation, evaluation, and safety validation must all complete successfully before an action is executed, with human approval enforced as the final gate. No path exists from user instruction to execution that bypasses CAGE policy enforcement.
+
+Enforcement at the node boundary is applied by the `@cage_guard` decorator from the CAGE Client SDK (`src/gateway/client/adapters/langgraph.py`; standalone distribution in `packages/cage-client/`). Every tool executor is wrapped by `cage_guard(client=get_cage_client(), action=...)`, which submits the node's `proposed_action` to the Gateway PDP via `CageClient.validate_action()` before the node body runs. The client is a lazily initialized singleton (`src/governed_financial_advisor/graph/cage_client_singleton.py`) so that all governed nodes share uniform semantics. This is a pure client/server split — LangGraph nodes never call `SymbolicGovernor` in-process.
 
 ### 1.1 Primary Regulatory Framework: SR 26-2 (Federal Reserve)
 
@@ -52,7 +56,7 @@ The agent system is governed under **SR 26-2** (Federal Reserve Supervisory Guid
 | `ExecutionAnalystAgent` | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | `MODEL_REASONING`; guided JSON               | `ChatOpenAI` on `GATEWAY_API_BASE`             | `ExecutionPlan` (`PlanStep` list)                |
 | `EvaluatorAgent`        | `src/governed_financial_advisor/agents/evaluator/agent.py`         | `Qwen/Qwen2.5-1.5B-Instruct` via `VLLM_FAST`  | `create_tool_calling_agent`; 5 async MCP tools | `evaluation_result`, `opa_results`               |
 | `ExplainerAgent`        | `src/governed_financial_advisor/agents/explainer/agent.py`         | `MODEL_FAST`                                 | LangGraph node                                 | Compliance narrative                             |
-| `GovernedTrader`        | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | `MODEL_FAST` (execution)                     | LangGraph node; HITL interrupt point           | `execution_result`                               |
+| `GovernedTrader`        | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | `MODEL_FAST` (execution)                     | LangGraph subgraph; `@cage_guard` on tool executor | `execution_result`                               |
 | `RiskAnalystAgent`      | `src/governed_financial_advisor/agents/risk_analyst/agent.py`      | STAMP hazards from GCS; fallback H-1/H-2/H-3 | LangGraph node                                 | `ProposedUCA` structs                            |
 | `FinancialAdvisor`      | `src/governed_financial_advisor/agents/financial_advisor/prompt.py`| `MODEL_REASONING`                            | Prompt template only                           | Advisor framing prompt                           |
 
@@ -62,7 +66,7 @@ All agents reside in `src/governed_financial_advisor/agents/`. Import paths foll
 
 ## 3. AgentState TypedDict & Regression Locking
 
-All graph nodes share a single state object defined in `src/governed_financial_advisor/graph/state.py`. The TypedDict contains **25 baseline fields** locked against schema regression via `tests/test_agent_state_schema.py`, expandable to **33 fields** with advanced governance extensions:
+All graph nodes share a single state object defined in `src/governed_financial_advisor/graph/state.py`. The `AgentState` TypedDict declares **40 fields** at HEAD, locked against schema regression via `tests/test_agent_state_schema.py` and mirrored into the generated JSON Schema at `compliance/schemas/agent_state_schema.json` (freshness gate: `make check-agent-state-schema`). The **25 baseline fields** below constitute the original regression-locked core; the remainder are advanced governance extensions:
 
 | Field                   | Type / Notes                                       | Regression Locked | Owner(s)                      |
 | ----------------------- | -------------------------------------------------- | ----------------- | ----------------------------- |
@@ -86,19 +90,26 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `latency_stats`         | Per-node timing dictionary                         | Yes               | All nodes (append)            |
 | `completed_transactions`| `Annotated[list[LedgerEntry], add]` — Saga WAL     | Yes               | `GovernedTrader`              |
 | `approval_required`     | Boolean — whether HITL gate was triggered          | Yes               | `approval_node`               |
-| `approval_decision`     | `Optional[dict]` — structured human decision       | Yes               | HITL resume endpoint          |
+| `approval_decision`     | `dict \| None` — structured human decision          | Yes               | `approval_node` (via resume)  |
 | `hitl_expires_at`       | `str \| None` — TTL expiration timestamp           | Yes               | `approval_node`               |
 | `guardrail_blocked`     | Boolean — NeMo input rail gate                     | Yes               | `nemo_guardrail`              |
 | `guardrail_reason`      | Reason for NeMo input rail block                   | Yes               | `nemo_guardrail`              |
 | `output_rail_applied`   | Boolean — NeMo output rail tracking                | Yes               | `nemo_output_rail`            |
-| `ftra_status`           | `Literal["CLEAR", "HITL_REQUIRED", "BLOCKED"]`     | Extended          | `ftra_node`                   |
-| `ftra_result`           | `dict \| None` — Serialized `FtraBoundaryResult`   | Extended          | `ftra_node`                   |
+| `ftra_status`           | `str \| None` — `"CLEAR"` / `"HITL_REQUIRED"` / `"BLOCKED"` | Extended | `ftra_node`                   |
+| `ftra_result`           | `dict \| None` — Serialized FTRA reachability result | Extended        | `ftra_node`                   |
 | `ftra_defer_id`         | `str \| None` — Correlation UUID for DEFER requests| Extended          | `defer_node`                  |
-| `narrow_status`         | `Literal["NONE", "APPLIED", "REJECTED"]`           | Extended          | `SymbolicGovernor`            |
+| `narrow_status`         | `str \| None` — `"NARROWED"` / `"NOT_NARROWED"`     | Extended          | `SymbolicGovernor`            |
 | `narrowed_params`       | `dict \| None` — Clamped parameters from NARROW     | Extended          | `SymbolicGovernor`            |
 | `pause_resume_token`    | `str \| None` — Token for PAUSE resumption         | Extended          | `SymbolicGovernor`            |
 | `pause_reason`          | `str \| None` — Reason code for transient PAUSE    | Extended          | `SymbolicGovernor`            |
-| `confidence`            | `float` — Calibrated model confidence (0.0–1.0)    | Extended          | `evaluator`                   |
+| `consecutive_denials`   | `int` — Sequential DENY counter (reset on ALLOW)   | Extended          | `SymbolicGovernor`            |
+| `last_violation`        | `dict \| None` — Most recent structured violation   | Extended          | `SymbolicGovernor`            |
+| `deferral_ticket_id`    | `str \| None` — Ticket ID from `DeferralPending`   | Extended          | `@cage_guard` / `DeferQueue`  |
+| `deferral_reason`       | `str \| None` — Justification for the deferral     | Extended          | `@cage_guard` / `DeferQueue`  |
+| `agent_id`              | `str` — Identifier submitted to the Gateway PDP    | Extended          | Input / `@cage_guard`         |
+| `proposed_action`       | `dict \| None` — Parameters staged for validation   | Extended          | Upstream tool-planning nodes  |
+| `governance_envelope`   | `dict \| None` — Signed ALLOW decision from the PDP | Extended          | `@cage_guard`                 |
+| `governance_status`     | `str \| None` — `"ALLOWED"` / `"DENIED"` / `"DEFERRED"` | Extended      | `@cage_guard`                 |
 
 ### ExecutionPlan Pydantic Schema (TOCTOU Defense)
 
@@ -112,7 +123,7 @@ While `ExecutionAnalystAgent` defines the structural steps of the trade, `Evalua
 
 ## 4. Graph Topology & Routing
 
-The `StateGraph` is assembled in `src/governed_financial_advisor/graph/graph.py` via `create_graph(redis_url)`. **Twelve named nodes** are registered with fail-closed routing:
+The `StateGraph` topology is assembled by `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`, which is shared by `create_graph(redis_url)` (Redis-checkpointed) and `create_uncheckpointed_graph()` (LangGraph SDK delegated state). **Thirteen named nodes** are registered with fail-closed routing:
 
 ```mermaid
 flowchart TD
@@ -125,12 +136,18 @@ flowchart TD
     nemo_output_rail_da --> END_DA([END])
     doer_node --> execution_analyst
     execution_analyst --> evaluator
-    evaluator -->|APPROVED + sig| safety_check
+    evaluator -->|APPROVED + sig| ftra_node
     evaluator -->|loop_count >= 3| explainer
     evaluator -->|rejected / no sig| execution_analyst
+    ftra_node -->|CLEAR| safety_check
+    ftra_node -->|BLOCKED / HITL_REQUIRED| explainer
     safety_check --> route_after_safety{route_after_safety}
+    route_after_safety -->|risk_score > 0.7 or amount > 10000| approval_node
     route_after_safety -->|APPROVED or SKIPPED| governed_trader
-    route_after_safety -->|BLOCKED or ESCALATED| explainer
+    route_after_safety -->|DEFERRED / ESCALATED / MANUAL_REVIEW| defer_node
+    route_after_safety -->|BLOCKED| explainer
+    approval_node --> governed_trader
+    defer_node --> explainer
     governed_trader --> explainer
     explainer --> nemo_output_rail
     nemo_output_rail --> END([END])
@@ -138,36 +155,42 @@ flowchart TD
     style nemo_guardrail fill:#42a5f5,stroke:#1565c0
     style nemo_output_rail fill:#42a5f5,stroke:#1565c0
     style nemo_output_rail_da fill:#42a5f5,stroke:#1565c0
+    style approval_node fill:#f9a825,stroke:#e65100
     style governed_trader fill:#f9a825,stroke:#e65100
 ```
 
 ### Routing Functions
 
-All routing functions are inline closures inside `create_graph()` in `src/governed_financial_advisor/graph/graph.py`:
+`route_after_guardrail`, `route_supervisor`, `check_safety_signature` and `route_after_safety` are inline closures inside `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`; `route_after_ftra` is imported from `src.gateway.governance.ftra.node_factory`:
 - **`route_after_guardrail(state)`**: Reads `state["guardrail_blocked"]`. If True, routes immediately to `END` — no agent processes blocked input. Otherwise proceeds to `thinker_node`.
 - **`route_supervisor(state)`**: Reads `state["next_step"]` to determine early exits. If intent cannot be decomposed into a valid investment instruction, routes through `nemo_output_rail` to `END`.
-- **`check_safety_signature(state)`**: Validates HMAC-SHA256 signature in `state["governance_signature"]`. A signature mismatch routes back to `execution_analyst` for re-planning (capped at `loop_count >= 3` $\to$ `explainer`).
+- **`check_safety_signature(state)`**: Requires an `APPROVED` verdict in `state["evaluation_result"]` plus a non-empty `state["governance_signature"]` before routing to `ftra_node` (CTRL_FTRA_001, Tier 0.5). A missing verdict or signature routes back to `execution_analyst` for re-planning (capped at `loop_count >= 3` $\to$ `explainer`).
+- **`route_after_ftra(state)`**: Emitted by the FTRA node factory. `CLEAR` $\to$ `safety_check`; `BLOCKED` and `HITL_REQUIRED` fall back to `explainer`.
 - **`route_after_safety(state)`**: Reads `state["safety_status"]`:
-  - `APPROVED` or `SKIPPED` $\to$ `governed_trader` (subject to HITL interrupt)
-  - `BLOCKED` or `ESCALATED` $\to$ `explainer` (compliance narrative; no trade executed)
+  - `APPROVED` or `SKIPPED` $\to$ `approval_node` when `evaluation_result.risk_score` $> 0.7$ **or** any `execution_plan_output` step `amount` $> \$10{,}000$; otherwise directly to `governed_trader`
+  - `DEFERRED`, `ESCALATED` or `MANUAL_REVIEW` $\to$ `defer_node` (park in the DeferQueue)
+  - `BLOCKED` or rejected $\to$ `explainer` (compliance narrative; no trade executed)
 
 ---
 
 ## 5. Subgraph Designs
 
 ### 5.1 Data Analyst Subgraph
-Defined in `src/governed_financial_advisor/graph/subgraphs/data_analyst_graph.py`:
+Defined in `src/governed_financial_advisor/graph/subgraphs/data_analyst_graph.py` over `DataAnalystState`, with nodes `thinker` $\to$ `doer` $\to$ `execute_tool` $\to$ `reporter`:
 1. **Ticker Extraction**: Extracts ticker symbol from conversation history.
 2. **yfinance Fetch**: Retrieves 1-month OHLCV price history deterministically.
 3. **Latest Close**: Extracts latest market close price for downstream planning.
 4. **Top 3 News**: Fetches the 3 most recent news headlines for ticker context.
 
+The `execute_tool` node is the subgraph's `tool_executor_node` wrapped by `cage_guard(client=get_cage_client(), action="fetch_market_data")`. The upstream `doer` node stages the call parameters into `state["proposed_action"]`; the guard submits them to the Gateway PDP before the fetch runs.
+
 ### 5.2 Governed Trader Subgraph
-Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py`, executing strictly after HITL approval:
-1. **Continuous State Revalidation (`post_hitl_revalidate_node`)**: Fetches fresh market data immediately upon resume, calculates active price drift, asserts drift $\le$ `max_slippage_pct`, and re-runs Tier 2 (CBF) and Tier 4 (OPA) with fresh prices.
-2. **Signature Re-validation**: Re-checks `governance_signature` before execution.
-3. **Trade Dispatch**: Invokes `src/governed_financial_advisor/tools/trades.py`.
-4. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
+Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is conditional via `route_approval`: high-risk/high-value threads enter the `approval` node (the dynamic `interrupt()` gate of §7), all others go straight to `executor`.
+1. **HITL Gate (`approval`)**: `approval_node` suspends the subgraph via `interrupt()`; on resume it issues `Command(goto="post_hitl_rehydrate")` when approved or `Command(goto="rejection")` when refused.
+2. **State Rehydration (`post_hitl_rehydrate`)**: Restores the parked execution context after resume.
+3. **Continuous State Revalidation (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift, asserts drift $\le$ `max_slippage_pct`, and re-runs governance with fresh prices. On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`.
+4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `cage_guard(client=get_cage_client(), action="execute_trade")`, so no trade tool can fire without a signed ALLOW envelope from the Gateway PDP. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
+5. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
 
 ---
 
@@ -205,105 +228,81 @@ Split votes or errors trigger HITL escalation, eliminating single-model blind sp
 
 ## 7. HITL Approval Workflow & Checkpointing
 
-### 7.1 Interrupt Configuration
+### 7.1 Dynamic `interrupt()` Gate
 
-The graph compiles with `interrupt_before=["governed_trader"]`, implementing the **LangGraph interrupt() pattern** for mandatory human approval gates. When the graph reaches the `governed_trader` node, execution suspends via the `.interrupt()` method, which:
+HITL is implemented with the **LangGraph dynamic `interrupt()` primitive**, not with static graph configuration. Neither `create_graph()` nor `create_uncheckpointed_graph()` passes `interrupt_before` to `.compile()`; instead `approval_node` (`src/governed_financial_advisor/graph/nodes/approval_node.py`) calls `interrupt()` from `langgraph.types` at runtime. Whether the gate is reached at all is a routing decision (`route_after_safety` in the parent graph, `route_approval` in the governed-trader subgraph), so the approval condition is evaluated against live state rather than frozen at compile time.
 
-1. **Persists state** to Redis via `AsyncRedisSaver` (or `MemorySaver` fallback)
-2. **Returns control** to the calling context with interrupt metadata
-3. **Awaits explicit resume** via `Command(resume=decision)` passed to `.stream()` or `.invoke()`
+When `approval_node` executes it:
 
-**interrupt() Example:**
+1. **Builds the reviewer payload** — reason code, serialized `execution_plan_output`, `evaluation_result`, issue timestamp, and an `expires_at` derived from `HITL_APPROVAL_TTL_SECONDS` (default `300`).
+2. **Raises `GraphInterrupt` via `interrupt(payload)`** — the surrounding checkpointer persists the full state snapshot and the payload surfaces to the caller as a task interrupt.
+3. **Resumes in place** — on `Command(resume=decision)` the same `interrupt()` call *returns* the decision dict directly into the node body; there is no separate resume handler.
+
+**interrupt() Gate (`approval_node.py`):**
 
 ```python
-# In approval_node.py
-def approval_node(
-    state: AgentState,
-) -> Command[Literal["post_hitl_rehydrate", "rejection"]]:
-    """
-    Mandatory HITL gate using interrupt() pattern.
+from langgraph.types import Command, interrupt
 
-    Execution flow:
-    1. Graph reaches this node after safety_check passes
-    2. interrupt() suspends execution and returns interrupt payload
-    3. State persisted to Redis checkpoint
-    4. API endpoint polls for resume Command
-    5. Resume triggers continuation with approval_decision injected
-    """
-    if not state.get("approval_required"):
-        # No HITL needed - proceed directly
-        return Command(goto="post_hitl_rehydrate")
 
-    # Build interrupt payload with metadata
-    interrupt_value = {
-        "thread_id": state.get("thread_id"),
-        "action": "execute_trade",
-        "amount": state.get("execution_plan_output", {}).get("amount"),
-        "ticker": state.get("data_analyst_ticker"),
-        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat(),
-        "max_slippage_pct": 2.0,  # Default reviewer-facing slippage tolerance
+def approval_node(state: dict[str, Any]) -> Command:
+    ttl_seconds: int = int(os.getenv("HITL_APPROVAL_TTL_SECONDS", "300"))
+    trade_payload: dict[str, Any] = {
+        "reason": "trade_approval_required",
+        "trade": {
+            "execution_plan": state.get("execution_plan_output"),
+            "evaluation_result": state.get("evaluation_result"),
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (
+            datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        ).isoformat(),
     }
 
-    # interrupt() suspends here - returns interrupt_value to caller
-    # State is checkpointed; execution pauses until resume Command received
+    # Pause the graph here. On first invocation this raises GraphInterrupt.
+    # On resume it returns the value supplied via Command(resume={...}).
+    decision: dict[str, Any] = interrupt(trade_payload)
+
+    approval_decision: dict[str, Any] = {
+        "approved": bool(decision.get("approved", False)),
+        "reviewer": decision.get("reviewer", "unknown"),
+        "rationale": decision.get("rationale", ""),
+        "comment": decision.get("comment", ""),
+        "timestamp": decision.get("timestamp", ...),
+        "max_slippage_pct": float(decision.get("max_slippage_pct", 2.0)),
+    }
+
     return Command(
         update={
-            "hitl_expires_at": interrupt_value["expires_at"],
-            "approval_required": True,
+            "approval_decision": approval_decision,
+            "hitl_expires_at": trade_payload["expires_at"],
         },
-        graph=interrupt(value=interrupt_value),
+        goto="post_hitl_rehydrate" if approval_decision["approved"] else "rejection",
     )
 ```
 
-**Resume Example:**
+**Resumption** is performed natively by the LangGraph SDK — the caller streams `Command(resume=decision)` against the interrupted `thread_id`. The previous bespoke `POST /v1/approvals/{thread_id}/resume` endpoint was removed in commit `7ab1acd`; CAGE no longer owns a resume transport of its own.
 
-```python
-# In server.py FastAPI endpoint
-@app.post("/v1/approvals/{thread_id}/resume")
-async def resume_approval(thread_id: str, request: ApprovalResumeRequest) -> dict:
-    """
-    Resume suspended graph with human approval decision.
-
-    The resume Command is passed to the graph's .stream() method,
-    triggering continuation from the interrupt point.
-    """
-    # Build resume payload
-    approval_decision = {
-        "approved": request.approved,
-        "reviewer": request.reviewer,
-        "rationale": request.rationale,
-        "max_slippage_pct": request.max_slippage_pct or 2.0,
-    }
-
-    # Resume graph execution via Command(resume=...)
-    config = {"configurable": {"thread_id": thread_id}}
-    async for chunk in graph.astream(
-        Command(resume=approval_decision),  # Resumes from interrupt point
-        config=config,
-    ):
-        # Process resumed execution chunks
-        pass
-
-    return {"status": "resumed", "thread_id": thread_id}
-```
-
-The `approval_node` exposes `max_slippage_pct` to the human reviewer, who may tighten slippage tolerance before resuming. The TTL guard (`hitl_expires_at`) enforces a 300-second approval window; expired resumes return `HTTP 410 Gone`.
+The reviewer may supply `max_slippage_pct` in the resume payload to tighten slippage tolerance (default `2.0`), which flows into `approval_decision` and is re-checked by `post_hitl_revalidate`.
 
 **Key Properties:**
 
-- **Deterministic Suspend/Resume:** interrupt() guarantees execution pauses at the exact node boundary
-- **Stateful Checkpointing:** Full AgentState persisted to Redis at interrupt point
-- **Type-Safe Resume:** Command(resume=...) payload is validated before continuation
-- **Audit Trail:** Interrupt and resume events emit OTel spans with reviewer identity
+- **Deterministic Suspend/Resume:** `interrupt()` pauses at the exact node boundary and resumes by returning into the same call site.
+- **Stateful Checkpointing:** Full `AgentState` is persisted by the configured checkpointer at the interrupt point.
+- **Runtime Conditionality:** The approval condition (`risk_score > 0.7` or `amount > $10,000`) is evaluated against live state, not baked into the compiled graph.
+- **Fail-Closed Rejection:** A non-approved decision routes to `rejection_node`, which terminates the subgraph with an auditable rejection message carrying the reviewer identity and rationale.
 
 ### 7.2 HITL API Endpoints
-- `POST /v1/approvals/{thread_id}/resume`: Resumes thread with `Command(resume=decision)`. Overridable `max_slippage_pct` flows into `approval_decision`.
-- `GET /v1/approvals/pending`: Lists pending thread IDs from Redis.
+- `GET /v1/approvals/pending` (`src/governed_financial_advisor/server.py`): Enumerates checkpointer threads whose state snapshot has a pending `next` step and non-empty task interrupts, returning `{"pending": [{"thread_id", "interrupt_payload", "interrupted_at"}]}`.
+- Resumption is **not** an application endpoint. It is issued through the LangGraph SDK as `Command(resume=decision)`.
+
+> [!NOTE]
+> The `ApprovalResumeRequest` Pydantic model still exists in `server.py` and documents the expected resume payload shape (`ticket_id`, `approved`, `reviewer`, mandatory `rationale`, `comment`, `max_slippage_pct`), but no FastAPI route is bound to it at HEAD.
 
 ### 7.3 Decision Values & Audit Guarantees
-- `APPROVED`: Resumes into `governed_trader` continuous revalidation step.
-- `REJECTED`: Routes to `explainer` with rejection narrative.
-- **TTL Enforced Expiry**: Stamped `hitl_expires_at` timestamp (default: 300s). Expired resumes return `HTTP 410 Gone`.
+- `approved=True`: `Command(goto="post_hitl_rehydrate")` — enters the TOCTOU rehydrate/revalidate chain before the guarded `tools` executor.
+- `approved=False`: `Command(goto="rejection")` — `rejection_node` appends a reviewer-attributed rejection message and ends the subgraph.
+- **Mandatory rationale**: The reviewer rationale is recorded into `approval_decision` for ISO 42001 §A.7.2 accountability attribution; an empty rationale is logged as a compliance gap.
+- **TTL metadata**: `hitl_expires_at` is stamped from `HITL_APPROVAL_TTL_SECONDS` (default 300s) and surfaced to the reviewer in the interrupt payload. It is advisory metadata at HEAD — no server-side expiry rejection is implemented since the resume endpoint was removed.
 
 ### 7.4 Checkpointing Modes
 - **Primary**: `AsyncRedisSaver` storing full state snapshots at every node transition.

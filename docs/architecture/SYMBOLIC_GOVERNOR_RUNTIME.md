@@ -1,5 +1,7 @@
 # Symbolic Governor Runtime Architecture
 
+**Last Updated:** 2026-09-22
+
 ## 1. Architectural Role & Domain Boundary
 
 The `SymbolicGovernor` is the primary neuro-symbolic governance layer in the CAGE architecture, implementing the Governance/Reasoning Plane from Tallam's Five-Plane Reference Architecture. It sits below the request ingress and above the execution actuators.

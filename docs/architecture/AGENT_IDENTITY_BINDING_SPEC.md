@@ -1,9 +1,9 @@
 # AGENT_IDENTITY_BINDING_SPEC.md
 
-**Version:** 1.0.0  
-**Status:** CANONICAL  
+**Version:** 1.1.0  
+**Status:** CANONICAL — IMPLEMENTED  
 **Last Updated:** 2026-09-22  
-**Applies To:** CAGE Gateway v3.0+
+**Applies To:** CAGE Gateway v3.1.0+
 
 ---
 
@@ -72,25 +72,38 @@ def extract_spiffe_id_from_mtls(tls_peer_cert_der: bytes) -> str:
 
 ### 1.2 Layer 1 Integration Point
 
-The extraction occurs at the **outermost gateway middleware** ([`src/gateway/middleware/mtls_extractor.py`](src/gateway/middleware/mtls_extractor.py)), upstream of all governance decision logic:
+Extraction is implemented in [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) and is invoked at every ingress edge, upstream of all governance decision logic. The module exposes three functions:
+
+| Function | Transport | Raises |
+|---|---|---|
+| `extract_spiffe_uri_from_asgi_scope(scope)` | HTTP / ASGI (Starlette, FastAPI) | `SpiffeExtractionError` |
+| `extract_spiffe_uri_from_grpc_context(context)` | gRPC | `SpiffeExtractionError` |
+| `validate_spiffe_uri(uri)` | Shared | `SpiffeExtractionError` |
+
+URIs are validated against `_SPIFFE_URI_PATTERN` (`^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`) before any downstream consumption.
+
+**Call sites (both fail closed):**
 
 ```python
-# Middleware pseudocode (FastAPI/Starlette)
-async def mtls_identity_middleware(request: Request, call_next):
-    # Extract DER cert from request.scope["transport"]["peercert"]
-    peer_cert_der = request.scope.get("transport", {}).get("peercert")
-    
-    if not peer_cert_der:
-        raise Unauthorized("mTLS client certificate required")
-    
-    spiffe_id = extract_spiffe_id_from_mtls(peer_cert_der)
-    
-    # Inject into request state for downstream consumption
-    request.state.verified_spiffe_id = spiffe_id
-    request.state.tls_peer_cert = peer_cert_der
-    
-    return await call_next(request)
+# src/gateway/server/inference_proxy.py — HTTP ingress
+from src.gateway.governance.spiffe_extractor import (
+    extract_spiffe_uri_from_asgi_scope,
+)
+
+try:
+    agent_id = extract_spiffe_uri_from_asgi_scope(request.scope)
+except Exception as spiffe_exc:
+    # No verified client certificate → 401, no anonymous fallback.
+    return JSONResponse(
+        content={
+            "message": "Client certificate with valid SPIFFE URI required",
+            "detail": str(spiffe_exc),
+        },
+        status_code=401,
+    )
 ```
+
+The ext_authz / gRPC path in [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) resolves `caller_principal` via `extract_spiffe_uri_from_grpc_context()`. A missing or malformed SPIFFE URI yields a denied `CheckResponse` with status **401** and `error: authentication_required`. `403` is reserved for governance denials and for unparseable request fields — it is not an authentication outcome.
 
 **Security Boundary:**
 - **Trust Anchor:** Service mesh mTLS termination proxy (Envoy, Istio, Linkerd) validates certificate chains against the SPIFFE trust bundle before forwarding to the gateway.
@@ -388,7 +401,7 @@ deny[msg] if {
 
 ### 3.4 Preventing POLICY_DRIFT_VIOLATION
 
-The [`ControlRegistry`](src/gateway/governance/control_registry.py) computes a deterministic hash of active policies to detect drift. Ephemeral instance IDs must **not** appear in policy bodies to prevent spurious drift alerts:
+[`ControlRegistry`](../../src/gateway/governance/constants.py) exposes `active_hash`, a deterministic hash of the active regional compliance profile. [`scripts/check_policy_drift.py`](../../scripts/check_policy_drift.py) compares the compiled OPA artifact hash against that value and against the committed baseline in `config/opa/.policy_hash`. Ephemeral instance IDs must **not** appear in policy bodies, or every pod restart registers as drift:
 
 ```python
 # ❌ DRIFT-INDUCING: Exact SPIFFE ID in policy
@@ -412,25 +425,24 @@ Examples:
   spiffe://cage.altostrat.com/agents/security/penetration-tester-9e2b5f1a
 ```
 
-### 3.5 Policy Registration with Namespace Wildcards
+### 3.5 Agent Registration with Namespace Prefixes
 
-When registering controls in the [`ControlRegistry`](src/gateway/governance/control_registry.py), use namespace patterns:
+Agents are **not** registered through a Python API. `ControlRegistry` is a read-only singleton that loads `config/compliance/{REGION}_BASELINE.json`; it has no mutating methods. Registration is declarative and lands through PR + CI:
 
-```python
-from src.gateway.governance.control_registry import ControlRegistry
+1. Add the agent to `config/agent_catalog.json`, declaring `authorized_parent_prefixes` as SPIFFE **prefixes**, never exact IDs.
+2. [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) loads that file as an OPA data document (`approved_agents := data.agent_catalog_data.agents`) at startup and on bundle update.
+3. Prefix authorization is evaluated by `_parent_authorized_for_subagent`, which iterates the declared prefixes and applies `startswith(parent_spiffe, prefix)`.
 
-registry = ControlRegistry()
-
-# Register FTRA control for the 'finance' namespace
-registry.register_control(
-    control_id="FTRA-001",
-    policy_path="policies/ftra/market_access.rego",
-    authorized_agent_pattern="spiffe://cage.altostrat.com/agents/finance/*",
-    tier=GovernanceTier.TIER_3,
-)
+```rego
+# config/opa/agent_catalog.rego — shipped rule
+_parent_authorized_for_subagent(parent_spiffe, subagent) {
+    authorized_prefixes := object.get(subagent, "authorized_parent_prefixes", [])
+    some prefix in authorized_prefixes
+    startswith(parent_spiffe, prefix)
+}
 ```
 
-The registry compiles these patterns into OPA policy fragments automatically.
+Because matching is prefix-based, ephemeral instance suffixes never enter the policy body, and the catalog stays stable across pod restarts.
 
 ---
 
@@ -535,31 +547,32 @@ deny[msg] if {
 
 ---
 
-## §5 Implementation Roadmap
+## §5 Implementation Status
 
-### Phase 1: Transport-Layer Identity Extraction (Immediate)
-- [ ] Implement [`mtls_extractor.py`](src/gateway/middleware/mtls_extractor.py) middleware
-- [ ] Remove all `X-Agent-ID` / `X-SPIFFE-ID` header parsing code
-- [ ] Update [`governance_envelope.py`](src/gateway/governance/governance_envelope.py) to consume `request.state.verified_spiffe_id`
-- [ ] Add integration tests verifying rejection of forged headers
+Shipped in `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extraction` (v3.1.0).
 
-### Phase 2: DPoP Double-Binding (2-4 weeks)
-- [ ] Implement DPoP proof generation/validation in [`src/gateway/middleware/dpop_validator.py`](src/gateway/middleware/dpop_validator.py)
-- [ ] Add DPoP examples to agent SDK documentation
-- [ ] Update Kubernetes pod manifests to mount agent signing keys
-- [ ] Add load tests verifying DPoP overhead < 5ms p99
+### Phase 1 — Transport-Layer Identity Extraction ✅ SHIPPED
+- [x] [`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) extracts SVIDs from ASGI scope and gRPC context
+- [x] All `X-Agent-ID` / `X-SPIFFE-ID` header parsing and anonymous fallback removed from [`inference_proxy.py`](../../src/gateway/server/inference_proxy.py) and [`agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py)
+- [x] Fail-closed coverage: `test_missing_spiffe_certificate_fails_closed` and `test_agent_id_from_spiffe_cert_used_for_quota` in [`tests/test_inference_proxy_extended.py`](../../tests/test_inference_proxy_extended.py)
 
-### Phase 3: Namespace Prefix Policies (Concurrent with Phase 2)
-- [ ] Migrate all OPA policies from exact SPIFFE IDs to namespace patterns
-- [ ] Update [`ControlRegistry.register_control()`](src/gateway/governance/control_registry.py) to accept `authorized_agent_pattern`
-- [ ] Add `agent_namespace` to standard OPA input schema
-- [ ] Verify `POLICY_DRIFT_VIOLATION` no longer triggers on pod restarts
+### Phase 2 — DPoP Double-Binding ⚠️ PARTIAL
+- [x] Vendor-neutral `ProofOfPossessionValidator` protocol and `DPoPValidator` in [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) (11 tests in [`tests/test_dpop_validator.py`](../../tests/test_dpop_validator.py))
+- [ ] **Wire the validator into an ingress path.** The module currently has no importers in `src/` — DPoP is implemented and unit-tested, but no request is validated against it yet.
+- [ ] DPoP examples in agent SDK documentation ([`packages/cage-client/`](../../packages/cage-client))
+- [ ] Kubernetes pod manifests mounting agent signing keys
+- [ ] Load tests verifying DPoP overhead < 5ms p99
 
-### Phase 4: A2A Delegation Framework (4-6 weeks)
-- [ ] Implement subagent SPIFFE ID generation in agent runtime
-- [ ] Add delegation metadata to [`GovernanceEnvelopeBuilder`](src/gateway/governance/governance_envelope.py)
-- [ ] Create OPA delegation policy library in `policies/delegation/`
-- [ ] Add E2E tests for parent → subagent → external service call chains
+### Phase 3 — Namespace Prefix Policies ✅ SHIPPED
+- [x] [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) evaluates `authorized_parent_prefixes` via `startswith()`
+- [x] Catalog entries declared declaratively in `config/agent_catalog.json`
+- [ ] Verify `POLICY_DRIFT_VIOLATION` no longer triggers on pod restarts under sustained staging load
+
+### Phase 4 — A2A Delegation Framework 🔲 NOT STARTED
+- [ ] Subagent SPIFFE ID generation in the agent runtime
+- [ ] Delegation metadata in [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py) — the envelope builder does not yet consume the verified SVID
+- [ ] OPA delegation policy library under `config/opa/delegation/`
+- [ ] E2E tests for parent → subagent → external service call chains
 
 ---
 
@@ -613,6 +626,7 @@ deny[msg] if {
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0.0 | 2026-09-22 | Principal Security & Governance Architect | Initial specification: SPIFFE extraction, DPoP binding, namespace prefix matching, A2A delegation |
+| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`governance/spiffe_extractor.py`, `server/dpop_validator.py`, `governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `config/agent_catalog.json` + `agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
 
 ---
 

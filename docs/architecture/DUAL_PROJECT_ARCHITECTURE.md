@@ -4,6 +4,7 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
+| **Last Updated**   | 2026-09-22                |
 | **Version**        | 0.1.0-rc.1                |
 | **Status**         | Implemented & Verified (GKE deployment confirmed 2026-06-03) |
 
@@ -97,10 +98,12 @@ Two distinct Kubernetes secrets are provisioned by Terraform ([`app_secrets/main
 
 | Secret Name                      | Keys                                             | Mounted By              |
 | -------------------------------- | ------------------------------------------------ | ----------------------- |
-| `advisor-secrets`                | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`      | governed-financial-advisor, compliance-bridge |
+| `advisor-secrets`                | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`      | governed-financial-advisor |
 | `langfuse-compliance-secrets`    | `LANGFUSE_COMPLIANCE_PUBLIC_KEY`, `LANGFUSE_COMPLIANCE_SECRET_KEY` | compliance-bridge only  |
 
-Source: [`app_secrets/main.tf` L10-31](../../infra/modules/app_secrets/main.tf) (advisor-secrets) and [`app_secrets/main.tf` L45-58](../../infra/modules/app_secrets/main.tf) (compliance-secrets).
+Source: [`app_secrets/main.tf` L42-68](../../infra/modules/app_secrets/main.tf) (advisor-secrets) and [`app_secrets/main.tf` L80-93](../../infra/modules/app_secrets/main.tf) (compliance-secrets).
+
+> **Note:** the compliance bridge does not read the application-project keys from `advisor-secrets`. Its deployment resolves `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` from a separate `langfuse-secrets` object, which the `app_secrets` Terraform module does not provision — see [`compliance-bridge.yaml` L61-73](../../deployment/k8s/compliance-bridge.yaml).
 
 ### 3.2 Compliance Bridge Pod (Dual Credential Mount)
 
@@ -122,7 +125,7 @@ The compliance bridge K8s deployment ([`compliance-bridge.yaml`](../../deploymen
       key: public-key
 ```
 
-Source: [`compliance-bridge.yaml` L44-68](../../deployment/k8s/compliance-bridge.yaml).
+Source: [`compliance-bridge.yaml` L61-85](../../deployment/k8s/compliance-bridge.yaml).
 
 ### 3.3 Python Client Factories (Explicit Separation)
 
@@ -133,14 +136,16 @@ Two separate Langfuse client factories enforce the isolation in application code
 Used by [`metrics.py`](../../src/compliance_bridge/metrics.py) to **read** traces for compliance metrics aggregation:
 
 ```python
-# src/compliance_bridge/metrics.py L55-61
+# src/compliance_bridge/metrics.py L208-217
 def _make_app_langfuse():
+    import httpx
     from langfuse.api import LangfuseAPI
 
     return LangfuseAPI(
         username=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
         password=os.environ.get("LANGFUSE_SECRET_KEY", ""),
         base_url=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        httpx_client=httpx.Client(timeout=_LANGFUSE_API_TIMEOUT_S),
     )
 ```
 
@@ -149,8 +154,10 @@ def _make_app_langfuse():
 Used by [`audit_workflow.py`](../../src/compliance_bridge/audit_workflow.py) to **write** OSCAL findings and governance scores:
 
 ```python
-# src/compliance_bridge/audit_workflow.py L102-110
+# src/compliance_bridge/audit_workflow.py L171-183
 def _make_compliance_langfuse():
+    import httpx
+
     return _get_langfuse_class()(
         public_key=os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY", ""),
         secret_key=os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY", ""),
@@ -158,6 +165,7 @@ def _make_compliance_langfuse():
             "LANGFUSE_COMPLIANCE_HOST",
             os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
         ),
+        httpx_client=httpx.Client(timeout=_LANGFUSE_SDK_TIMEOUT_S),
     )
 ```
 
@@ -221,9 +229,9 @@ Step 5 is the only cross-project operation: it reads failing traces from the app
 
 ### 5.2 Silent Failure Warning (POAM-018 — Open)
 
-> ⚠️ **POAM-018 (AU-9) — Open:** If `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` are not set, the compliance project client initializes with empty credentials. Langfuse SDK calls will fail silently (no exception raised — the SDK logs a warning and drops the trace). This means **audit evidence collection fails without any visible error** unless Langfuse SDK logs are monitored.
+> ⚠️ **POAM-018 (AU-9) — partially remediated, still tracked Open:** The startup guard now exists. [`_validate_langfuse_credentials()` L117-L161](../../src/compliance_bridge/audit_workflow.py) runs at module import (invoked at L164) and raises `RuntimeError` in non-development environments when `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` — or the application-project keys — are absent; under `dev` / `development` / `test` / `ci` it logs a `[POAM-018]` warning instead. Without that guard the compliance client would initialize with empty credentials and the Langfuse SDK would drop every audit trace silently.
 >
-> **Remediation (scheduled 2026-07-15):** Add startup validation in `audit_workflow.py` that raises `RuntimeError` if compliance credentials are empty in non-dev environments; add `/health` check that reports compliance Langfuse connectivity status. See [`docs/POAM.md` POAM-018](../compliance/cross-region/POAM.md).
+> **Remaining work:** the `/health` check reporting compliance Langfuse connectivity status is not implemented, so POAM-018 remains Open in [`POAM_US_FED.md`](../compliance/us_fed/POAM_US_FED.md) and [`POAM_ISO42001.md`](../compliance/universal/POAM_ISO42001.md).
 
 This is documented as a known gap in [NIST_RMF_CHUNK4](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md):
 
@@ -290,5 +298,5 @@ This would be a Terraform infrastructure change, not a code change. The Python c
 | [infra/ENV_INTEGRATION.md](../../infra/ENV_INTEGRATION.md)                | Credential mapping for both projects                   |
 | [compliance-bridge.yaml](../../deployment/k8s/compliance-bridge.yaml)     | K8s deployment with dual secret mounts                 |
 | [app_secrets/main.tf](../../infra/modules/app_secrets/main.tf)            | Terraform provisioning of separate K8s secrets         |
-| [docs/POAM.md POAM-018](../compliance/cross-region/POAM.md)                                       | Silent credential failure — open remediation item      |
-| [docs/POAM.md POAM-019](../compliance/cross-region/POAM.md)                                       | Terraform fallback defeats isolation — open remediation item |
+| [POAM_US_FED.md](../compliance/us_fed/POAM_US_FED.md)                                       | POAM-018 / POAM-019 — NIST AU-9, SC-7 aspect           |
+| [POAM_ISO42001.md](../compliance/universal/POAM_ISO42001.md)                                | POAM-018 / POAM-019 — ISO 42001 §A.9.4 aspect          |

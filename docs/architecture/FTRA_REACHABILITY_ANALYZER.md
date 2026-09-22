@@ -1,5 +1,7 @@
 # FTRA Reachability Analyzer
 
+**Last Updated:** 2026-09-22
+
 ## 1. Architectural Role & Domain Boundary
 
 The Forward-Looking Trajectory Reachability Analyzer (FTRA) operates as an advanced lookahead safety tier within the `SymbolicGovernor`. Rather than evaluating static rules on single actions, FTRA analyzes the proposed multi-step `ExecutionPlan` as a directed graph to detect if any unsafe or irreversible terminal states are structurally reachable.

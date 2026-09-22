@@ -467,6 +467,52 @@ CAGE_ACTIVE_ACTUATORS=actuator_01
 
 **Fail-closed semantics:** If no actuator claims an action, `ActuatorRegistry.get_actuator()` returns `None`. The consequence gateway ([`consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)) must handle unclaimed actions explicitly (typically by raising `GovernanceError` or logging a warning).
 
+###### Actuator Adapter Contract: Outbound Credential Injection
+
+Actuator adapters accept an optional `CredentialBrokerAdapter` (see *Optional Cross-Cutting: Credential Broker* below) and, when one is supplied, extend the outbound HTTP contract with broker-supplied headers:
+
+| Element | Signature / Location | Notes |
+|---|---|---|
+| Adapter constructor | `Actuator01Adapter(client, signer, signer_resolver=None, policy_signer=None, credential_broker=None)` | `credential_broker` defaults to `None`; also accepted by `Actuator01Adapter.from_env()`. |
+| Transport | [`ActuatorHttpClient.submit_envelope(..., extra_headers: dict[str, str] \| None = None)`](../../src/integrations/actuator_01/client.py) | `extra_headers` is merged over the wire headers (`X-Secure-Tenant-ID`, `X-Operator-URNs`, `X-Archytan-Signatures`, `X-Execution-Assertion`, `X-Timestamp`) immediately before the POST. Header *values* are never logged. |
+| Dispatch call | [`adapter.py`](../../src/integrations/actuator_01/adapter.py) passes `extra_headers=extra_headers if extra_headers else None` | With no broker configured, `extra_headers` is `None` and the wire contract is byte-identical to the pre-broker behaviour. |
+
+Because the canonical envelope is built *after* the credential fetch and the headers are never folded into it, credential injection does not perturb JCS canonicalization, the envelope digest, the 120-byte assertion, or the quorum signatures.
+
+##### Optional Cross-Cutting: Credential Broker
+
+Outbound tool credentials are supplied through the [`CredentialBrokerAdapter`](../../src/gateway/governance/seams/credential_broker.py) protocol. The kernel declares the protocol and its exception hierarchy only; every implementation — vault client, workload-identity exchange, cloud secret manager — is a Layer 3 concern and is injected into the actuator at construction time.
+
+```python
+class CredentialBrokerAdapter(Protocol):
+    async def fetch_credential(
+        self,
+        agent_svid: str,
+        tool_name: str,
+        scope: str | None = None,
+    ) -> dict[str, str]: ...
+```
+
+| Exception | Meaning |
+|---|---|
+| `CredentialBrokerError` | Base class; also covers transient failures (network, vault unavailable). |
+| `CredentialNotFound` | No matching secret exists for the requested tool. |
+| `CredentialAccessDenied` | The SVID is not authorized for the requested credential. |
+
+All three are re-exported from [`src/gateway/governance/seams/__init__.py`](../../src/gateway/governance/seams/__init__.py).
+
+**Implementer obligations** (stated in the protocol docstring, enforced by the implementation, not by the kernel):
+
+- Validate the SVID signature before issuing any credential.
+- Scope credentials to the requested `tool_name` (least privilege).
+- Never log or cache the returned mapping beyond the immediate dispatch.
+- Fail closed: raise on authorization failure rather than returning empty headers.
+- Be safe for concurrent access.
+
+**Fail-closed semantics:** The reference actuator treats *any* broker exception as terminal — it returns `ActuationReceipt(accepted=False, retryable=False)` with a single `CREDENTIAL_BROKER_FAILED` finding and performs no network dispatch. See [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md) for the full ALLOW-path gate sequence and [`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py) for the behavioural contract.
+
+**Hermetic default:** no broker is configured unless one is explicitly constructed and injected, so local development and CI runs dispatch without outbound credentials.
+
 ##### Single-Active Exclusive: Normative Provider
 
 Normative providers implement the [`NormativeProvider`](../../src/gateway/governance/normative_provider.py) protocol and supply legal/regulatory baselines for the deployment region. Exactly one normative provider is active per instance; the provider is selected via `CAGE_NORMATIVE_PROVIDER` environment variable.
@@ -627,14 +673,15 @@ The `nemo_node_factory.py` in the LangGraph harness bridges §4.1 and §4.3: it 
 
 ### 4.4 Seams Contracts Layer — Kernel & Vendor Decoupling (`src/gateway/governance/seams/`)
 
-Added in the post-v3.0.1 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, execution actuation, and graph topologies:
+Added in the post-v3.0.1 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, execution actuation, graph topologies, and outbound credential brokering:
 
 | Seam Module | Protocol / Dataclass | Role |
 |---|---|---|
 | [`normative.py`](../../src/gateway/governance/seams/normative.py) | `NormativeProvider`, `NormativeBaseline`, `ValidationResult` | Defines normative constraint contracts without importing kernel or vendor modules |
 | [`attestation.py`](../../src/gateway/governance/seams/attestation.py) | `AttestationProvider`, `ExternalAttestation`, `AttestationStatus` | Standardizes external evidence attestation with attributable `provider_name` |
 | [`actuation.py`](../../src/gateway/governance/seams/actuation.py) | `ExecutionActuator`, `ExecutionClearance`, `ActuationReceipt` | Decouples execution actuation and signing contracts from specific transport layers |
-| [`graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | `GraphTopologyProtocol`, `GraphNode`, `GraphEdge` | Standardizes structural graph inspection across domain agent workflows |
+| [`graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | `GraphTopology` | Standardizes structural graph inspection across domain agent workflows |
+| [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) | `CredentialBrokerAdapter`, `CredentialBrokerError`, `CredentialNotFound`, `CredentialAccessDenied` | Brokers outbound tool credentials at the dispatch edge so agents never hold raw API secrets; the kernel holds the protocol only |
 
 **Architectural Invariant:** Seam modules maintain **ZERO imports from the kernel** (`src/gateway/governance/*` outside `seams/`). This invariant completely severs circular dependencies between the governance kernel and external vendor integration adapters.
 

@@ -139,6 +139,56 @@ The following `params` keys are automatically replaced with `"***REDACTED***"` b
 
 This prevents PII from appearing in the audit log. The log records the *decision*, not the sensitive input data.
 
+### Outbound Credential Masking
+
+`params_redacted` covers *inbound* action parameters. A second, independent
+mechanism covers *outbound* credentials obtained from the credential broker seam
+([`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py))
+at the actuation edge.
+
+**Masking rule.** Before the actuator logs anything about a fetched credential,
+every header value is reduced to its first 8 characters followed by `****`
+(empty values become `****`). Header *names* are preserved so operators can see
+*which* credential was issued without seeing its value. Implemented in
+[`adapter.py`](../../src/integrations/actuator_01/adapter.py):
+
+```python
+masked_keys = {k: f"{v[:8]}****" if v else "****" for k, v in extra_headers.items()}
+```
+
+The single INFO record emitted on a successful fetch carries only the action,
+the agent SVID (itself truncated to 20 characters plus `...` when longer), and
+the masked header map:
+
+```text
+[actuator_01/adapter] Credentials fetched for action=execute_trade svid=urn:cage:agent:advis... headers={'Authorization': 'Bearer s****'}
+```
+
+> [!IMPORTANT]
+> The mask is prefix-preserving: the first 8 characters of each header value
+> survive into the log. For `Authorization: Bearer <token>` headers this exposes
+> only the scheme prefix. Brokers that return bare-token headers (no scheme
+> prefix) will leak the first 8 characters of the token into logs.
+
+**Credentials never enter audit records.** The broker's return value is held in a
+local variable for the duration of a single dispatch and is passed only to
+[`ActuatorHttpClient.submit_envelope(extra_headers=...)`](../../src/integrations/actuator_01/client.py),
+which merges it into the outbound request headers and logs only operator counts,
+assertion length, body length, and the response status code. Specifically:
+
+| Surface | Contains credential values? | Evidence |
+|---|---|---|
+| Signed canonical envelope / `envelope_digest` | No — the envelope is built after the fetch and never receives `extra_headers` | [`adapter.py`](../../src/integrations/actuator_01/adapter.py) |
+| `ActuationReceipt` fields, including `raw_receipt` | No | `test_credential_headers_not_in_audit_record` |
+| `ActuationReceipt.findings` (including `CREDENTIAL_BROKER_FAILED`) | No | `test_credential_headers_not_in_audit_record` |
+| Adapter / client logs at INFO and above | Masked only | `test_actuator_masks_credentials_in_logs` |
+
+Both assertions are enforced by
+[`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py):
+the masking test fails if the full secret appears anywhere in captured log
+output, and the audit-record test fails if it appears in `str(receipt)`,
+`receipt.raw_receipt`, or any finding.
+
 ### Governance Tier Index
 
 The governance pipeline is an **8-tier symbolic governor** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers: Tiers 0–6). Active backing verifiers are OPA, Control Barrier Functions (CBF), multi-agent consensus, and TLA+ formal models.

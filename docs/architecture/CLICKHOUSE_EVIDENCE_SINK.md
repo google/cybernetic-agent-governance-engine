@@ -3,8 +3,8 @@
 **Status:** Design specification (reference architecture)
 **Schema Version:** `cage-audit/3.0`
 **DDL Artifact:** [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
-**Source of Truth:** [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py:508)
-**Last Updated:** 2026-09-05
+**Source of Truth:** [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py:764)
+**Last Updated:** 2026-09-22
 
 > **Reference Architecture Note.** CAGE is an illustrative reference
 > architecture, not a deployed production service. The ClickHouse topology,
@@ -35,25 +35,31 @@
 
 ## 1. Purpose & Position in the Evidence Pipeline
 
-Redis Streams (`cage:evidence:stream`) is the **source of truth** for the
-hash-chained governance evidence chain. It is a *hot*, bounded store
-(`EVIDENCE_STREAM_MAX_LEN=1000000`, ~7 days at production rates). GCS provides
-*cold*, immutable, CMEK-encrypted object storage with a 60-second flush.
+Redis Streams (`cage:evidence:stream`, overridable via `EVIDENCE_STREAM_KEY`) is
+the **source of truth** for the hash-chained governance evidence chain. It is a
+*hot*, bounded store trimmed to `EVIDENCE_STREAM_MAX_LEN` entries (default
+`100000`). The cold tier is pluggable through `EVIDENCE_COLD_STORE`
+(`gcs` | `s3` | `null`, default `null`; see
+[`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:43)); the
+GCS backend provides immutable, CMEK-encrypted object storage flushed every
+`EVIDENCE_COLD_STORE_FLUSH_SECONDS` (default 60).
 
 Neither tier is queryable. Compliance questions such as *"show every
 `request_denied` for tier `tier1_reversible_trades` correlated to W3C trace
-`00-…-01` in Q3"* currently require rehydrating NDJSON from GCS. ClickHouse
-closes that gap as a **queryable, append-only, tamper-evident analytical
-mirror**.
+`00-…-01` in Q3"* currently require rehydrating NDJSON from cold storage.
+ClickHouse closes that gap as a **queryable, append-only, tamper-evident
+analytical mirror**.
 
 ```mermaid
 flowchart LR
     A[Gateway / Compliance Bridge producers] --> B[Redis Streams cage:evidence:stream]
-    B --> C[GCS cold tier, 60s flush, CMEK]
-    B --> D[ClickHouse sink, 5s batch]
+    B --> C[Cold store, 60s flush, CMEK]
+    B -.not wired at HEAD.-> D[ClickHouse sink, 100 rec or 5s batch]
+    P[POST /v1/infra/events] --> D
     D --> E[MV gap detector]
     D --> F[MV hash verifier]
     D --> G[MV 5m metrics rollup]
+    D --> N[infra_events_mv]
     F --> H[evidence_chain_divergence]
     G --> I[Prometheus scrape]
     H --> I
@@ -63,9 +69,9 @@ flowchart LR
 
 | Tier | Store | Role | Retention | Mutability |
 |---|---|---|---|---|
-| Hot | Redis Streams | Source of truth, chain head, sequence allocation | 7 days (MAXLEN 1M) | Append-only (`XADD` + Lua) |
-| Cold | GCS + CMEK | Immutable archival evidence of record | 7 years | Write-once objects |
-| Query | ClickHouse | Analytical mirror + tamper detection | 7 years | Append-only (WORM-enforced) |
+| Hot | Redis Streams | Source of truth, chain head; sequence allocated in-process under `asyncio.Lock`, not by Redis | Bounded by `EVIDENCE_STREAM_MAX_LEN` (default 100,000 entries) | Append-only (`XADD` with `maxlen` trim) |
+| Cold | Pluggable cold store (`gcs` + CMEK, `s3`, or `null`) | Immutable archival evidence of record | Adopter policy; 7 years assumed throughout this document | Write-once objects |
+| Query | ClickHouse | Analytical mirror + tamper detection | 7 years (TTL in §3.6) | Append-only (WORM-enforced) |
 
 **Authority rule:** ClickHouse is a **derived mirror**, never an authority. If
 ClickHouse and GCS disagree, GCS wins; if GCS and Redis disagree within the
@@ -81,8 +87,24 @@ ClickHouse exists.
 
 ## 2. Source Schema Contract (`cage-audit/3.0`)
 
-Wire record as written by
-[`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py:508):
+> [!WARNING]
+> **`cage-audit/3.0` is the target contract, not the wire format the kernel
+> currently produces.** It is what the DDL artifact and
+> [`ClickHouseSink._evidence_to_row()`](../../src/compliance_bridge/clickhouse_sink.py:438)
+> are written against. At HEAD the Layer 1 producer
+> [`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py:877)
+> emits `_SCHEMA = "cage-evidence-stream/2.0"`
+> ([`stream.py:422`](../../src/gateway/governance/evidence/stream.py:422)) with
+> exactly these entry fields: `schema`, `sequence`, `event_type`, `control_id`,
+> `prev_hash`, `record_hash`, `payload_json`, `timestamp_utc` — plus
+> `kms_signature` and `kms_signature_algorithm` only when
+> `EVIDENCE_STREAM_KMS_SIGN=true`. It emits **no** `trace_id`, `chain_id`,
+> `hash_algorithm`, or `canonicalization`; those identifiers do not appear
+> anywhere under `src/gateway/governance/evidence/`. Consequently the
+> `chk_schema_version` and `chk_trace_id_present` constraints in §4 would reject
+> a record produced by the kernel today. Tracked as §12.2 open question 6.
+
+Target wire record, as the sink and DDL expect it:
 
 ```json
 {
@@ -103,7 +125,7 @@ Wire record as written by
 }
 ```
 
-**Link function** ([`_link_hash()`](../../src/gateway/governance/evidence/stream.py:659)):
+**Target link function:**
 
 ```text
 header = JCS({
@@ -125,6 +147,27 @@ record_hash = SHA256( utf8(prev_hash) || header || utf8(payload_json) )
 RFC 8785 orders object members by the UTF-16 code units of their names, so the
 header member order above is exactly the on-wire order — a property the
 verification view depends on.
+
+**Implemented link function** at HEAD
+([`_link_hash()`](../../src/gateway/governance/evidence/stream.py:597)) builds a
+four-member header, and the genesis hash is `SHA-256("EVIDENCE_STREAM_GENESIS")`:
+
+```text
+header = JCS({
+  "control_id":  <control_id>,
+  "event_type":  <event_type>,
+  "schema":      "cage-evidence-stream/2.0",
+  "sequence":    <int>
+  // sparse, only when non-null:
+  // "classification_reason", "narrowing_applied", "pause_token"
+})
+
+record_hash = SHA256( utf8(prev_hash) || header || utf8(payload_json) )
+```
+
+The composition rule is identical; only the header membership differs. The T2
+canonical rebuild in §5.3 implements the **target** header and therefore cannot
+verify records produced by the implemented one.
 
 **Consequences that drive the ClickHouse schema:**
 
@@ -224,6 +267,7 @@ pruning is unusually effective here.
 | `prev_hash` | `Nullable(FixedString(64))` | `NULL` **only** for the genesis record of a chain; a `CONSTRAINT` enforces that `sequence = 0 ⇔ prev_hash IS NULL`. |
 | `kms_signature` | `Nullable(String)` | Variable-length base64, populated asynchronously by `AsyncBatchSigner`. `NULL` when `EVIDENCE_STREAM_KMS_SIGN=false`. |
 | `hash_algorithm`, `canonicalization` | `LowCardinality(String)` | Inside the hash; required for verification and future algorithm agility. |
+| `evidence_class` | `Enum8('GOVERNANCE' = 1, 'INFRA' = 2)` `DEFAULT 'GOVERNANCE'` | **Not** part of the hash. Separates chained governance evidence from unchained infrastructure telemetry ingested via `POST /v1/infra/events`; drives the `infra_events_mv` projection (§6.4). `Enum8` rather than `LowCardinality(String)` so an unknown class is rejected at `INSERT`. |
 | `classification_reason`, `narrowing_applied`, `pause_token` | `Nullable(String)` | Sparse header members; presence changes the canonical header bytes, so they must round-trip verbatim. |
 | `ingested_at` | `DateTime64(3, 'UTC')` `DEFAULT now64(3)` | Sink-side arrival time. **Not** part of the hash — it is deliberately excluded from every canonical rebuild. Powers ingestion-lag SLOs and late-arrival forensics. |
 | `redis_msg_id` | `String` | Redis Stream `XADD` id (`<ms>-<seq>`). The idempotency/reconciliation handle between Redis and ClickHouse after a sink retry. |
@@ -281,6 +325,7 @@ CREATE TABLE IF NOT EXISTS cage_evidence.evidence_stream
     trace_id              String CODEC(ZSTD(1)),
     hash_algorithm        LowCardinality(String) DEFAULT 'SHA-256',
     canonicalization      LowCardinality(String) DEFAULT 'RFC8785',
+    evidence_class        Enum8('GOVERNANCE' = 1, 'INFRA' = 2) DEFAULT 'GOVERNANCE',
 
     -- ---- Payload (opaque canonical bytes, never re-serialized) -----------
     payload               String CODEC(ZSTD(3)),
@@ -433,7 +478,7 @@ because it is itself a JCS-canonicalized JSON object, not a string scalar;
 wrapping it would double-encode and guarantee a false mismatch.
 
 Recomputation then mirrors
-[`_link_hash()`](../../src/gateway/governance/evidence/stream.py:659) exactly:
+[`_link_hash()`](../../src/gateway/governance/evidence/stream.py:597) exactly:
 
 ```sql
 lower(hex(SHA256(
@@ -470,7 +515,7 @@ hash*, eliminating all reimplementation risk:
 2. Fetch the corresponding canonical records from GCS cold storage (the
    immutable tier), **not** from ClickHouse — comparing ClickHouse against
    itself proves nothing.
-3. Call [`verify_record()`](../../src/gateway/governance/evidence/stream.py:728)
+3. Call [`verify_record()`](../../src/gateway/governance/evidence/stream.py:651)
    for each.
 4. Insert a new row with `verdict = 'CONFIRMED'` or `'CLEARED'`.
 
@@ -501,11 +546,13 @@ ClickHouse's role is to make that comparison cheap, not to replace it.
 
 ## 6. Materialized Views
 
-All three views follow the ClickHouse idiom of an **explicit target table**
+The DDL artifact defines four materialized views. The three chain-related views
+(§6.1–§6.3) follow the ClickHouse idiom of an **explicit target table**
 (`TO <table>`) rather than an implicit `.inner.*` table. Explicit targets are
-non-negotiable here: they can be granted, backed up, and queried under their own
+non-negotiable there: they can be granted, backed up, and queried under their own
 RBAC identity, and the MV can be dropped and recreated during a schema migration
-without destroying accumulated state.
+without destroying accumulated state. The fourth, `infra_events_mv` (§6.4), is a
+pure projection and is the documented exception.
 
 ### 6.1 View 1 — Chain sequence gap detector (`mv_evidence_chain_gaps`)
 
@@ -777,9 +824,8 @@ GROUP BY bucket_5m, chain_id, event_type, control_id, schema_version;
 **Prometheus exposition.** ClickHouse's built-in `/metrics` endpoint exposes
 *server* internals only; it cannot export table-derived series. The correct
 mechanism is a `prometheus` handler bound to parameterised queries in
-`config.xml`, scraped by the existing `ServiceMonitor` pattern used elsewhere in
-CAGE (see
-``deployment/k8s/compliance-bridge-servicemonitor.yaml``):
+`config.xml`. No `ServiceMonitor` manifest exists in `deployment/k8s/` at HEAD,
+so adopters must supply their own scrape configuration:
 
 ```xml
 <clickhouse>
@@ -852,6 +898,40 @@ series.
 | `EvidenceChainDivergenceSuspected` | `clickhouse_chain_divergence_total{verdict="SUSPECTED"} > 0` for 1h | warning — T3 verifier is behind |
 | `EvidenceIngestLagHigh` | `clickhouse_evidence_ingest_lag_ms > 60000` for 10m | warning — sink falling behind Redis |
 | `EvidenceIngestStalled` | `rate(clickhouse_evidence_records_total[15m]) == 0` while gateway traffic > 0 | critical — sink is down |
+
+### 6.4 View 4 — Infrastructure event split (`infra_events_mv`)
+
+Infrastructure telemetry arrives through `POST /v1/infra/events` (§8.1) carrying
+`evidence_class = 'INFRA'`. It shares the `evidence_stream` table but is
+deliberately **outside** the governance hash chain: those rows carry a zero
+`chain_id`, `sequence = 0`, and a `record_hash` that is an event id rather than a
+chain link. `infra_events_mv` separates them so that governance queries and
+chain verification are not polluted by non-chained rows:
+
+```sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS cage_evidence.infra_events_mv
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (event_type, timestamp)
+POPULATE AS
+SELECT *
+FROM cage_evidence.evidence_stream
+WHERE evidence_class = 'INFRA';
+```
+
+This is the one view in this document that uses an **implicit** target table
+rather than `TO <table>`, and the one that uses `POPULATE`. Both are deliberate:
+the view is a pure projection with no aggregate state to preserve, and
+`POPULATE` backfills existing INFRA rows on first creation. Note that `POPULATE`
+drops rows inserted while it runs, which is acceptable only because these rows
+are operational telemetry, not chained evidence.
+
+> [!IMPORTANT]
+> Because INFRA rows do not participate in the hash chain, they will trip the
+> T1/T2 verifiers in §5 if they are not excluded. Chain-verification queries must
+> filter `evidence_class = 'GOVERNANCE'`; the queries in §5.2, §5.3, and the
+> `mv_evidence_hash_verification` definition in §6.2 do **not** currently apply
+> that filter.
 
 ---
 
@@ -1117,43 +1197,64 @@ alert from `system.session_log`.
 
 ### 8.1 Placement and layering
 
-The sink is a new module,
-`src/compliance_bridge/clickhouse_sink.py`, consumed by
-[`evidence_consumer.py`](../../src/compliance_bridge/main.py). This
-respects the CAGE three-layer split:
+The sink is implemented as
+[`ClickHouseSink`](../../src/compliance_bridge/clickhouse_sink.py:125) in
+`src/compliance_bridge/clickhouse_sink.py`, with a process-wide singleton
+accessor
+[`get_clickhouse_sink()`](../../src/compliance_bridge/clickhouse_sink.py:549).
+This respects the CAGE three-layer split:
 
 - **Layer 1 (`src/gateway/`) is untouched.** The kernel publishes to the event
   bus and knows nothing about storage tiers. No import boundary
   (Gate G3) is crossed.
 - **Layer 3 (integration).** ClickHouse is an external vendor system, so the
-  sink is an adapter behind a narrow protocol, following the same shape as other
-  CAGE adapters.
+  sink is an adapter confined to the compliance bridge, following the same shape
+  as other CAGE adapters. `clickhouse_connect` is imported lazily inside
+  [`_init_client()`](../../src/compliance_bridge/clickhouse_sink.py:409) so the
+  dependency is optional at import time.
+
+The public surface is small and concrete — there is no `EvidenceSink` protocol
+and no sink registry at HEAD:
 
 ```python
-class EvidenceSink(Protocol):
-    """Secondary, non-authoritative evidence sink."""
-
-    async def write_batch(self, records: list[dict[str, Any]]) -> None: ...
-    async def flush(self) -> None: ...
+class ClickHouseSink:
+    async def start(self) -> None: ...
+    async def ingest(
+        self, record: dict[str, Any]
+    ) -> None: ...  # never blocks, never raises
+    async def health_check(self) -> bool: ...
     async def close(self) -> None: ...
 ```
 
-`EvidenceStreamConsumer` holds a `list[EvidenceSink]`. Adding ClickHouse is
-registering one more sink — GCS and ClickHouse remain mutually ignorant, and a
-future adopter can add or remove a tier without editing consumer logic.
+> [!WARNING]
+> **The Redis evidence stream is not connected to this sink at HEAD.** The only
+> caller of `get_clickhouse_sink()` is
+> [`ingest_infra_event()`](../../src/compliance_bridge/main.py:732), the
+> `POST /v1/infra/events` endpoint, which synthesizes infrastructure telemetry
+> rows with `evidence_class="INFRA"`, a zero `chain_id`, `sequence = 0`, and
+> `record_hash` set to the event id — records that are deliberately outside the
+> governance hash chain. No component forwards `cage:evidence:stream` entries
+> into `ClickHouseSink.ingest()`. Everything §8.2–§8.6 says about batching,
+> back-pressure, and field mapping is implemented and exercised by unit tests,
+> but the Redis → ClickHouse hop in the §1 diagram does not exist yet.
 
 ### 8.2 Batching
 
 | Parameter | Value | Env var |
 |---|---|---|
+| Sink enabled | `false` | `CLICKHOUSE_ENABLED` |
+| Host / port | `localhost` / `9000` (native protocol) | `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT` |
+| Database | `cage_evidence` | `CLICKHOUSE_DATABASE` |
+| Credentials | `evidence_writer` / — | `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD` |
 | Batch size | 100 records | `CLICKHOUSE_SINK_BATCH_SIZE` |
 | Flush interval | 5 seconds | `CLICKHOUSE_SINK_FLUSH_SECONDS` |
 | Max queue depth | 10,000 records | `CLICKHOUSE_SINK_MAX_QUEUE` |
-| Insert timeout | 30 seconds | `CLICKHOUSE_SINK_TIMEOUT_S` |
+| Connect / send-receive timeout | 30 seconds | `CLICKHOUSE_SINK_TIMEOUT_S` |
 
 Whichever of size-or-time triggers first wins. The 5-second interval is
-deliberately 12× tighter than the 60-second GCS flush: GCS optimises for object
-size and cost, ClickHouse for query freshness during incident response.
+deliberately 12× tighter than the 60-second cold-store flush
+(`EVIDENCE_COLD_STORE_FLUSH_SECONDS`): the cold tier optimises for object size
+and cost, ClickHouse for query freshness during incident response.
 
 Inserts use `clickhouse-connect` with `async_insert=1, wait_for_async_insert=1`.
 This is a genuine trade-off, resolved toward durability: server-side async
@@ -1163,18 +1264,23 @@ disk. Fire-and-forget (`wait_for_async_insert=0`) would be faster and would
 silently lose evidence — unacceptable even for a non-authoritative mirror,
 because a silently-empty mirror produces *false all-clear* verification results.
 
+The client is synchronous, so both `get_client()` and `insert()` are dispatched
+through `run_in_executor()` to keep the event loop free.
+
 ### 8.3 Bounded queue and back-pressure
 
 The queue is `asyncio.Queue(maxsize=10_000)` with an **explicit
-drop-oldest-and-count** policy on overflow:
+drop-oldest-and-count** policy on overflow, in
+[`ClickHouseSink.ingest()`](../../src/compliance_bridge/clickhouse_sink.py:234):
 
 ```python
 try:
     self._queue.put_nowait(record)
+    CLICKHOUSE_SINK_QUEUE_DEPTH.set(self._queue.qsize())
 except asyncio.QueueFull:
     dropped = self._queue.get_nowait()  # shed the oldest
     self._queue.put_nowait(record)
-    CLICKHOUSE_SINK_DROPPED.inc()
+    CLICKHOUSE_SINK_DROPPED_TOTAL.inc()
     logger.error(
         "[ClickHouseSink] Queue full; dropped record seq=%s chain=%s. "
         "Evidence remains durable in Redis and GCS.",
@@ -1187,37 +1293,41 @@ Dropping is loud and counted rather than silent, and the log line states the
 recovery path. An unbounded queue would convert a ClickHouse outage into a
 compliance-bridge OOM kill — trading a degraded *mirror* for a failed
 *source of truth*, which is exactly backwards. Dropped records are recoverable
-by backfill from GCS (§11.4).
+by backfill from the cold tier (§11.4).
 
 ### 8.4 Failure handling — the sink must never block Redis consumption
 
 This is the single hardest requirement in the integration and is enforced
 structurally, not by discipline:
 
-1. `EvidenceStreamConsumer._consume_loop()` only ever calls `put_nowait()`. It
-   never awaits ClickHouse.
-2. Flushing runs in a **separate** `asyncio.Task` owned by the sink.
+1. `ingest()` only ever calls `put_nowait()`. It never awaits ClickHouse, and it
+   swallows even the overflow-handling failure path.
+2. Flushing runs in a **separate** `asyncio.Task` named `clickhouse-flush`,
+   created in [`start()`](../../src/compliance_bridge/clickhouse_sink.py:191) and
+   owned by the sink.
 3. Every ClickHouse call is wrapped in `except Exception` — the sink's failure
    surface is `None`.
-4. A circuit breaker opens after 10 consecutive failures and stays open for 60
-   seconds, so a hard outage costs one probe per minute instead of a retry storm.
+4. A [`CircuitBreaker`](../../src/compliance_bridge/clickhouse_sink.py:75) opens
+   after 10 consecutive failures and stays open for 60 seconds, so a hard outage
+   costs one probe per minute instead of a retry storm.
 
 ```python
-async def _flush_batch(self, batch: list[dict]) -> None:
+async def _flush_buffer(self, batch: list[dict[str, Any]]) -> None:
     for attempt in range(self._max_retries):  # max_retries = 3
         try:
-            await self._client.insert(...)
-            CLICKHOUSE_SINK_RECORDS.inc(len(batch))
+            await asyncio.get_event_loop().run_in_executor(None, _do_insert)
+            CLICKHOUSE_SINK_BATCH_DURATION_SECONDS.observe(duration)
+            CLICKHOUSE_SINK_RECORDS_TOTAL.inc(len(rows))
             self._breaker.record_success()
             return
         except Exception as exc:
-            CLICKHOUSE_SINK_ERRORS.labels(error_type=type(exc).__name__).inc()
+            CLICKHOUSE_SINK_ERRORS_TOTAL.labels(error_type=type(exc).__name__).inc()
             if attempt == self._max_retries - 1:
                 self._breaker.record_failure()
                 logger.error(
                     "[ClickHouseSink] Batch of %d dropped after %d attempts: %s. "
                     "Evidence remains durable in Redis and GCS.",
-                    len(batch),
+                    len(rows),
                     self._max_retries,
                     exc,
                 )
@@ -1250,8 +1360,12 @@ Retries can duplicate a batch that actually succeeded before the client timed
 out. Duplicates are handled — never prevented by mutation:
 
 - The insert sets `insert_deduplication_token` to
-  `f"{chain_id}:{min_seq}-{max_seq}"`. ClickHouse's built-in block deduplication
-  then discards an identical replayed block within its dedup window.
+  `f"{','.join(sorted(chain_ids))}:{min_seq}-{max_seq}"` over the whole batch —
+  a batch may span more than one chain, so every distinct `chain_id` in it is
+  folded into the token
+  ([`_flush_buffer()`](../../src/compliance_bridge/clickhouse_sink.py:345)).
+  ClickHouse's built-in block deduplication then discards an identical replayed
+  block within its dedup window.
 - Any duplicate that escapes that window is caught by the
   `duplicate_count > 0` signal in `v_chain_gap_alerts` (§6.1) and reconciled
   offline. It is **never** repaired with `ALTER … DELETE`; the WORM property
@@ -1260,35 +1374,61 @@ out. Duplicates are handled — never prevented by mutation:
 
 ### 8.6 Field mapping, Redis wire → ClickHouse column
 
+Implemented by
+[`ClickHouseSink._evidence_to_row()`](../../src/compliance_bridge/clickhouse_sink.py:438):
+
 | Redis field | Column | Transformation |
 |---|---|---|
 | `schema` (`cage-audit/3.0`) | `schema_version` | Strip the `cage-audit/` prefix → `'3.0'` |
 | `chain_id` | `chain_id` | `str` → `UUID` |
 | `sequence` (string) | `sequence` | `int()` |
-| `timestamp_utc` | `timestamp` | ISO-8601 → `DateTime64(3,'UTC')` |
+| `timestamp_utc` | `timestamp` | ISO-8601 → `DateTime64(3,'UTC')` (`Z` rewritten to `+00:00`) |
 | `event_type` | `event_type` | verbatim |
 | `control_id` | `control_id` | verbatim |
 | `trace_id` | `trace_id` | verbatim — **never** normalised or truncated (it is hashed) |
+| `hash_algorithm` | `hash_algorithm` | verbatim; defaults to `'SHA-256'` when absent |
+| `canonicalization` | `canonicalization` | verbatim; defaults to `'RFC8785'` when absent |
+| `evidence_class` | `evidence_class` | verbatim; defaults to `'GOVERNANCE'`. Drives the `infra_events_mv` split (§6.4) |
 | `payload_json` | `payload` | **verbatim bytes**, no re-serialization |
+| `payload_json.classification_reason` | `classification_reason` | lifted out of the parsed payload |
+| `payload_json.narrowing_applied` | `narrowing_applied` | lifted out of the parsed payload and re-serialized with `json.dumps()` |
+| `payload_json.pause_token` | `pause_token` | lifted out of the parsed payload |
 | `prev_hash` | `prev_hash` | `""` → `NULL` at genesis, else verbatim |
 | `record_hash` | `record_hash` | verbatim |
 | `kms_signature` | `kms_signature` | `""` → `NULL` |
 | `kms_signature_algorithm` | `kms_signature_algorithm` | `""` → `NULL` |
-| Redis `XADD` id | `redis_msg_id` | verbatim |
+| `redis_msg_id` | `redis_msg_id` | verbatim; `""` when the record did not come from Redis |
 | — | `ingested_at` | server `DEFAULT now64(3)` |
 
 The `payload_json` row is the one that breaks verification if it is ever
 "improved". The mapping must move opaque bytes; any `json.loads()`/`json.dumps()`
-round-trip in this path is a defect.
+round-trip on `payload` itself is a defect.
+
+> [!WARNING]
+> Two mapping defects exist at HEAD. First, the sparse members
+> (`classification_reason`, `narrowing_applied`, `pause_token`) are read from
+> *inside* the parsed payload, whereas §2 and §5.3 treat them as top-level
+> header members that participate in the hash. Second,
+> `narrowing_applied` is written through `json.dumps()`, which is **not** RFC
+> 8785 and therefore will not reproduce the canonical bytes the T2 rebuild in
+> §5.3 expects. Both live in `_evidence_to_row()` and must be resolved together
+> with the schema divergence in §2 before the T2 verifier can be trusted.
 
 ### 8.7 PII and residency
 
-Records are already scrubbed by
-[`PIIScrubber.scrub()`](../../src/gateway/governance/pii_sanitizer.py) *before*
-they enter the evidence stream, so the sink inherits a clean payload and
-performs **no** scrubbing of its own — re-scrubbing would alter the hashed bytes
-and destroy verifiability. ClickHouse is deployed per-jurisdiction in the same
-region as the Redis and GCS tiers (`us-central1`, `europe-west1`,
+The sink performs **no** scrubbing of its own, and must not: re-scrubbing would
+alter the hashed bytes and destroy verifiability
+([`_evidence_to_row()`](../../src/compliance_bridge/clickhouse_sink.py:438)
+copies `payload_json` through verbatim). Sanitization is therefore an upstream
+obligation. At HEAD that obligation is **unmet**:
+[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207) is imported
+only by [`uca_logger.py`](../../src/gateway/governance/uca_logger.py), not by
+[`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py:877)
+or by [`GovernanceEventBus.publish()`](../../src/compliance_bridge/sse_events.py:203).
+See §10.3.
+
+For residency, ClickHouse is intended to be deployed per-jurisdiction in the
+same region as the Redis and cold tiers (`us-central1`, `europe-west1`,
 `asia-southeast1`), mirroring the Langfuse sovereignty model.
 
 ---
@@ -1367,17 +1507,22 @@ additive evolution is compatible with WORM while `MODIFY COLUMN` is not.
 | Article | Requirement | Implementation | Honest limitation |
 |---|---|---|---|
 | **Art. 5(1)(e)** Storage limitation | Keep no longer than necessary | 7-year TTL, automatically enforced | 7 years is justified by overriding financial-services retention law (Art. 17(3)(b)) |
-| **Art. 17** Right to erasure | Erase personal data on request | Payloads are PII-scrubbed *before* ingestion, so the store should contain no erasable personal data. Residual risk is handled by partition `DROP` | **Row-level erasure is impossible by design.** If un-scrubbed PII ever reaches the store, the only remedies are dropping the whole month's partition or crypto-shredding the CMEK key. This is a deliberate trade of granular erasure for immutability |
+| **Art. 17** Right to erasure | Erase personal data on request | *Intended:* payloads are PII-scrubbed before ingestion so the store holds no erasable personal data. Residual risk is handled by partition `DROP`. **Not wired at HEAD** — see the note below this table | **Row-level erasure is impossible by design.** If un-scrubbed PII ever reaches the store, the only remedies are dropping the whole month's partition or crypto-shredding the CMEK key. This is a deliberate trade of granular erasure for immutability |
 | **Art. 30** Records of processing | Maintain processing records | The store *is* the record: what was processed, when, under which control, correlated by trace | — |
 | **Art. 32** Security of processing | Integrity and confidentiality | CMEK at rest, TLS in transit, RBAC, hash-chain integrity | — |
 | **Art. 44** Transfers | Restrict cross-border transfer | Per-jurisdiction instances + row policies (§7.5) | — |
 
 **The erasure trade-off, stated plainly:** immutability and granular erasure are
-fundamentally in tension. This design chooses immutability and discharges the
-erasure obligation *upstream* by never admitting personal data to the store. That
-choice only holds if [`PIIScrubber`](../../src/gateway/governance/pii_sanitizer.py)
-holds; scrubber coverage is therefore a load-bearing GDPR control, not a
-best-effort nicety.
+fundamentally in tension. This design chooses immutability and intends to
+discharge the erasure obligation *upstream* by never admitting personal data to
+the store. **That premise is not met at HEAD.** The repository's sanitizer is
+[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207)
+(`sanitize()` / `sanitize_dict()`), and the only module importing it is
+[`uca_logger.py`](../../src/gateway/governance/uca_logger.py) — the evidence
+ingestion path in
+[`stream.py`](../../src/gateway/governance/evidence/stream.py:877) performs no
+sanitization. Wiring `PIISanitizer` into evidence ingestion is therefore a
+prerequisite for the GDPR position above, not an implemented control.
 
 ### 10.4 Sector-specific
 
@@ -1486,8 +1631,10 @@ GROUP BY chain_id;
 SELECT sequence, linkage_status FROM ( /* neighbor() query from §5.2 */ )
 WHERE linkage_status != 'OK';
 
--- 3. Authoritative T3 re-verification against GCS.
---    uv run python -m src.compliance_bridge.verify_chain --chain-id <uuid>
+-- 3. Authoritative T3 re-verification against the cold tier.
+--    No CLI entry point exists at HEAD. T3 is currently a manual procedure:
+--    rehydrate the records from cold storage and call
+--    src.gateway.governance.evidence.stream.verify_record() per record.
 
 -- 4. Record the verdict (append-only).
 INSERT INTO cage_evidence.evidence_chain_divergence
@@ -1497,18 +1644,30 @@ VALUES (...);
 
 ### 11.7 Testing
 
+All sink tests live in
+[`tests/test_clickhouse_sink.py`](../../tests/test_clickhouse_sink.py) and carry
+`pytestmark = [pytest.mark.local, pytest.mark.unit]`:
+
 | Test | Marker | Asserts |
 |---|---|---|
-| `test_clickhouse_sink_batching` | `unit` | Size and time triggers both flush |
-| `test_clickhouse_sink_never_blocks` | `unit` | Redis consumption continues while the sink raises |
-| `test_clickhouse_sink_retry_backoff` | `unit` | 3 attempts, jittered exponential delay, no re-raise |
-| `test_clickhouse_queue_overflow_drops_oldest` | `unit` | Bounded queue sheds and counts |
-| `test_clickhouse_payload_byte_identity` | `unit` | `payload` round-trips byte-for-byte |
-| `test_clickhouse_schema_ddl_idempotent` | `integration` | DDL applies twice cleanly |
-| `test_clickhouse_hash_recompute_matches_python` | `integration` | MV `computed_hash` == `_link_hash()` on escape-safe fixtures |
-| `test_clickhouse_gap_detection` | `integration` | Removing a sequence raises `missing_count` |
-| `test_clickhouse_worm_denies_delete` | `integration` | `evidence_writer` `DELETE`/`ALTER UPDATE` are refused |
-| `test_clickhouse_reader_cannot_insert` | `integration` | `evidence_reader` `INSERT` is refused |
+| `test_clickhouse_sink_initialization` | `local`, `unit` | Constructor sets host, port, database; connection stays lazy |
+| `test_clickhouse_sink_batch_buffering` | `local`, `unit` | Insert triggers at the configured batch size (100 default) |
+| `test_clickhouse_sink_time_based_flush` | `local`, `unit` | Flush interval triggers even with a partial batch |
+| `test_clickhouse_sink_retry_exponential_backoff` | `local`, `unit` | 3 attempts with exponential backoff on insert failure |
+| `test_clickhouse_sink_circuit_breaker_opens` | `local`, `unit` | Circuit opens after 10 consecutive failures |
+| `test_clickhouse_sink_circuit_breaker_closes` | `local`, `unit` | Circuit closes after the cooldown window |
+| `test_clickhouse_sink_circuit_breaker_resets_on_success` | `local`, `unit` | Consecutive-failure counter resets on success |
+| `test_clickhouse_sink_circuit_breaker_integration` | `local`, `unit` | `_flush_buffer()` skips the batch while the breaker is open |
+| `test_clickhouse_sink_queue_overflow_drops_oldest` | `local`, `unit` | Bounded queue sheds the oldest record and counts it |
+| `test_clickhouse_sink_schema_mapping` | `local`, `unit` | Evidence record → ClickHouse row transformation |
+| `test_clickhouse_sink_nullable_field_handling` | `local`, `unit` | Empty-string wire fields map to `NULL` |
+| `test_clickhouse_sink_non_blocking_failure` | `local`, `unit` | Failures never raise out of the sink |
+| `test_clickhouse_sink_metrics_emitted` | `local`, `unit` | Prometheus counters increment on insert |
+| `test_clickhouse_sink_health_check` | `local`, `unit` | `health_check()` reports connectivity status |
+
+No integration-tier suite exercises the DDL, the materialized views, or the RBAC
+grants against a live ClickHouse instance at HEAD; §5, §6, and §7 are therefore
+unverified by automated tests.
 
 Run per AGENTS.md:
 
@@ -1550,6 +1709,15 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov \
 5. **Redis retention vs. backfill window.** Redis holds ~7 days; a ClickHouse
    outage longer than that forces GCS-based backfill. Automating that backfill
    is unimplemented follow-on work.
+6. **Producer/consumer schema divergence (open, blocking).** The DDL and
+   [`ClickHouseSink`](../../src/compliance_bridge/clickhouse_sink.py:125) target
+   `cage-audit/3.0`, but the Layer 1 producer still emits
+   `cage-evidence-stream/2.0` without `trace_id`, `chain_id`, `hash_algorithm`,
+   or `canonicalization` (§2). Until
+   [`stream.py`](../../src/gateway/governance/evidence/stream.py:422) emits the
+   v3.0 header, the `chk_schema_version` and `chk_trace_id_present` constraints
+   reject live kernel records. Resolving this is a prerequisite for any real
+   deployment of this sink.
 
 ---
 
@@ -1557,7 +1725,8 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov \
 
 ### Code
 - [`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py) — schema, `_link_hash()`, `verify_record()`
-- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py) — consumer to extend with the sink
+- [`src/compliance_bridge/clickhouse_sink.py`](../../src/compliance_bridge/clickhouse_sink.py) — `ClickHouseSink`, `CircuitBreaker`, `get_clickhouse_sink()`
+- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py:732) — `POST /v1/infra/events`, the sole caller of the sink at HEAD
 - [`src/gateway/governance/pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) — upstream PII control
 - [`src/compliance_bridge/metrics.py`](../../src/compliance_bridge/metrics.py) — Prometheus registry
 - [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql) — the DDL artifact
@@ -1578,5 +1747,5 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov \
 ---
 
 **Document Maintainer:** CAGE Architecture Team
-**Last Updated:** 2026-09-05
+**Last Updated:** 2026-09-22
 **Next Review:** Post-v4.0 release

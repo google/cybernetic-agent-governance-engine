@@ -1,5 +1,7 @@
 # Cryptographic Signer Engine
 
+**Last Updated:** 2026-09-22
+
 ## 1. Architectural Role & Domain Boundary
 
 The `KMSGovernanceSigner` is a core Layer 1 Kernel component that acts as the primary asymmetric signing authority for the CAGE architecture. It abstracts cloud-native Hardware Security Module (HSM) interactions across multi-cloud environments (GCP, AWS, Azure Key Vault). 

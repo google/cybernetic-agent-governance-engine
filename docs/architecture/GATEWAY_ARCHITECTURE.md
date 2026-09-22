@@ -10,6 +10,7 @@
 **Version:** v3.0.1  
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*  
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*  
+**Last Updated:** 2026-09-22  
 
 > **Jurisdiction separation principle:** ISO/IEC 42001:2023 is the **sole universal governance baseline** — every control, pipeline step, and audit artifact applies to all deployment regions. All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable. No US_FED, EU_ECB, or APAC_MAS obligation is imposed on deployments in other regions.
 
@@ -26,7 +27,7 @@ Both model pools are deployed on cost-optimized Spot/preemptible GPU nodes (e.g.
 
 ### Trust Boundaries
 
-- **Upstream (Untrusted Ingress)**: The Gateway is the primary ingress point and treats all incoming client and agent traffic as untrusted. Trace context (`traceparent`) is extracted to stitch distributed Langfuse spans, scanner noise is dropped, and payloads must undergo cryptographic and policy verification.
+- **Upstream (Untrusted Ingress)**: The Gateway is the primary ingress point and treats all incoming client and agent traffic as untrusted. Trace context (`traceparent`) is extracted to stitch distributed Langfuse spans, scanner noise is dropped, and payloads must undergo cryptographic and policy verification. **Caller identity is taken from the mTLS transport only** — the SPIFFE URI in the verified peer certificate — never from request headers or the request body (see [§5.4](#54-transport-layer-agent-identity-spiffe-mtls)).
 - **Downstream (Kernel & Actuators)**: Bridges external requests to the Layer 1 Kernel (`SymbolicGovernor`, `ConsequenceGateway`) and execution actuators via `ActuatorRegistry`. No action or side-effect occurs without traversing the complete governance pipeline and receiving a cryptographically signed routing seal or `ConsequenceToken`.
 
 ### Three-Layer Architecture Boundary
@@ -193,7 +194,7 @@ flowchart TD
 
 ### Request Lifecycle Phases
 
-1. **Ingress & Noise Filter**: Incoming HTTP/FastMCP/gRPC request arrives; scanner probes are filtered.
+1. **Ingress, Noise Filter & Identity Extraction**: Incoming HTTP/FastMCP/gRPC request arrives; scanner probes are filtered. The caller's SPIFFE URI is extracted from the verified mTLS peer certificate and requests lacking one are rejected immediately — HTTP 401 on the ASGI path, denied `CheckResponse` on the `ext_authz` gRPC path (see [§5.4](#54-transport-layer-agent-identity-spiffe-mtls)).
 2. **Pre-Execution Validation**: Intent is pre-evaluated against declarative policies before inference tokens are consumed.
 3. **Model Pool Routing**: The request routes to the Reasoning Model Pool or Governance Model Pool.
 4. **Tool Call Interception**: When a model initiates an action via MCP, the execution request is intercepted by the Gateway.
@@ -339,6 +340,37 @@ Every governance clearance is attested by an unforgeable routing seal verified b
   - **Primary Signer**: Google Cloud KMS HSM asymmetric signing (private key never leaves HSM). HMAC-SHA256 is strictly dev/CI fallback.
   - **Fail-Closed Enforcement**: Requests reaching `/tools/execute` without a valid, unexpired seal are rejected by `GovernanceMiddleware` with HTTP 403.
 
+### 5.4 Transport-Layer Agent Identity (SPIFFE mTLS)
+
+Agent identity is a **transport-layer fact**, not an application-layer claim. The canonical specification is [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md); this section records how the kernel implements it.
+
+**Extraction module** — [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py):
+
+| Symbol | Transport | Behaviour |
+|---|---|---|
+| `extract_spiffe_uri_from_asgi_scope(scope)` | HTTP / ASGI (FastAPI, Uvicorn) | Reads the peer certificate from the ASGI scope and returns the first SAN URI matching the SPIFFE pattern. |
+| `extract_spiffe_uri_from_grpc_context(context)` | gRPC (`ext_authz`) | Reads the mesh-supplied peer principal and validates it as a SPIFFE URI. |
+| `validate_spiffe_uri(uri)` | Shared | Raises unless the URI matches `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`. |
+| `SpiffeExtractionError` | Shared | Raised on every failure mode; callers translate it into a fail-closed rejection. |
+
+**Removed in v3.1.0 (breaking change — `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extraction`):**
+
+- The `X-Agent-ID` request header is **no longer read anywhere** in the kernel and confers no identity.
+- No `X-SPIFFE-ID` (or equivalent) header is trusted — headers are attacker-controlled.
+- No `agent_id` is derived from the JSON request body.
+- The anonymous / unauthenticated caller fallback has been deleted from both ingress paths and from [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego).
+
+**Fail-closed ingress behaviour:**
+
+| Ingress | Implementation | Failure response |
+|---|---|---|
+| HTTP chat-completions proxy | [`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) | HTTP **401** with `{"error": "authentication_required", "message": "Client certificate with valid SPIFFE URI required"}`; the SC-8 control is stamped `BLOCK` on the span. Quota accounting downstream keys on the extracted SPIFFE URI. |
+| Envoy `ext_authz` gRPC | [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) | A denied `CheckResponse`: **401** when the SPIFFE URI is missing or malformed, **403** when the `CheckRequest` fields themselves cannot be extracted. `caller_principal` is otherwise the verified SPIFFE URI and is forwarded into `handle_check_request()`. |
+
+**Authorization (distinct from authentication):** the extracted SPIFFE URI becomes the OPA principal. Agent-to-agent delegation is authorized declaratively in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by `startswith()` prefix matching against each subagent's `authorized_parent_prefixes`, so ephemeral pod suffixes never enter policy bodies.
+
+**Proof-of-possession (available, not yet on the hot path):** [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) provides the vendor-neutral `ProofOfPossessionValidator` protocol and an RFC 9449 `DPoPValidator` that binds a DPoP proof to the mTLS client certificate, raising `TokenBindingError` on failure. It is unit-tested in [`tests/test_dpop_validator.py`](../../tests/test_dpop_validator.py) but is not yet invoked by gateway middleware; see §5 of the identity spec for the remaining rollout items.
+
 ---
 
 ## 6. NIST AI 600-1 Governance Modules
@@ -406,6 +438,8 @@ The ingress adapter layer normalizes external governance signals from heterogene
 
 [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) implements the Envoy `ext_authz` gRPC servicer (`envoy.service.auth.v3.Authorization.Check`), enabling the Gateway to serve as an external authorization engine for Istio, Contour, Emissary, or GCP Agent Gateway (AGW) proxies without code modification.
 
+The adapter resolves `caller_principal` with `extract_spiffe_uri_from_grpc_context()` before the JSON-RPC body is dispatched to `validate_action()`. There is no header or body fallback: an absent or malformed SPIFFE URI produces a denied `CheckResponse` (401), and an unparseable `CheckRequest` produces a denied `CheckResponse` (403). See [§5.4](#54-transport-layer-agent-identity-spiffe-mtls).
+
 ### 7.3 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
 The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a **Pre-Pipeline Boundary Gate** that analyzes an entire multi-step `ExecutionPlan` before execution begins.
@@ -460,6 +494,12 @@ src/gateway/
 │   ├── nemo/               # NeMo Guardrails lifecycle manager
 │   ├── reconciliation/     # External ledger reconciliation daemon
 │   ├── safety/             # Control Barrier Function (CBF) engine
+│   ├── seams/              # Vendor-neutral seam contracts (zero kernel imports)
+│   │   ├── actuation.py        # ExecutionActuator protocol & clearance/receipt records
+│   │   ├── attestation.py      # AttestationProvider base class & attestation records
+│   │   ├── credential_broker.py # CredentialBrokerAdapter protocol & error taxonomy
+│   │   ├── graph_topology.py   # Domain-agnostic GraphTopology structure
+│   │   └── normative.py        # NormativeProvider protocol, baselines & evidence seals
 │   ├── consequence_gateway.py # Atomic execution authorization & token consumption
 │   ├── contracts.py        # Protocol interfaces (structural subtyping)
 │   ├── decisions.py        # Canonical six-state decision vocabulary
@@ -468,11 +508,13 @@ src/gateway/
 │   ├── kms_signer.py       # Cloud KMS HSM asymmetric governance signer
 │   ├── routing_seal.py     # Cryptographic routing seal generator & validator
 │   ├── singletons.py       # Module-level singletons & fail-closed assertions
+│   ├── spiffe_extractor.py # SPIFFE SVID extraction from mTLS peer certificates
 │   └── symbolic_governor.py # Neuro-symbolic governance dispatch loop
 ├── infrastructure/         # Telemetry setup & OTel client configuration
 ├── observability/          # Distributed W3C MCP tracing context propagation
 └── server/                 # Composition root & protocol servicers
     ├── agent_gateway_adapter.py # Envoy ext_authz gRPC servicer & AGW bridge
+    ├── dpop_validator.py   # RFC 9449 proof-of-possession validator & protocol
     ├── governance_middleware.py # Core governance endpoints & seal verification
     ├── hybrid_server.py    # FastAPI composition root & lifespan manager
     ├── inference_proxy.py  # vLLM proxy for Reasoning/Governance Model Pools
@@ -497,3 +539,6 @@ src/gateway/
 | `src/gateway/governance/routing_seal.py` | Routing Seal | Constant-time HMAC-SHA256 and KMS routing seal generation and verification. |
 | `src/gateway/governance/contracts.py` | Subsystem Protocols | Structural subtyping contracts (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, etc.). |
 | `src/gateway/observability/mcp_tracing.py` | Distributed Tracing | W3C `traceparent` context extraction and child span creation across SSE transports. |
+| `src/gateway/governance/spiffe_extractor.py` | Agent Identity | SPIFFE SVID extraction and validation from the mTLS peer certificate on both the ASGI and gRPC ingress paths; raises `SpiffeExtractionError` to force fail-closed rejection. |
+| `src/gateway/server/dpop_validator.py` | Token Binding | `ProofOfPossessionValidator` protocol and RFC 9449 `DPoPValidator` binding DPoP proofs to the client certificate (not yet wired into middleware). |
+| `src/gateway/governance/seams/` | Seam Contracts | Vendor-neutral protocol and dataclass contracts (`actuation.py`, `attestation.py`, `credential_broker.py`, `graph_topology.py`, `normative.py`) with zero kernel imports. |

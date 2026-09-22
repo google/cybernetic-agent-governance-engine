@@ -5,8 +5,10 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-09-09                |
 | **Version**        | 3.0.1                     |
-| **Status**         | Current — v3.0.1 stable; test suite verified; **4,148 collected / 3,921 local unit passed, 0 failed** (baseline: 2,553 passing core unit tests); NoDirectBind invariant machine-verified over 21/24 reachable core states (57 sequential / 66 concurrent full reachable states); Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
+| **Status**         | Current — v3.0.1 stable; test suite verified; **4,347 local/unit passed, 122 skipped, 0 failed** (`make test-fast`, 2026-09-22); NoDirectBind invariant machine-verified over 44 reachable states (49 under the CBF ∥ OPA interleaving superset); Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
 | **Canonical Path** | `docs/architecture/FORMAL_VERIFICATION.md` |
+
+**Last Updated:** 2026-09-22
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.1 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
@@ -68,7 +70,7 @@ In the prior architecture, the continuous variable $x_2$ (market price) evolved 
 
 **The Updated Hybrid Automaton:**
 
-1. Upon `/v1/approvals/{thread_id}/resume`, the system transitions from $\text{PENDING\_HITL}$ to $\text{REVALIDATING}$.
+1. $\text{PENDING\_HITL}$ is entered when [`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) calls the LangGraph `interrupt()` primitive (`langgraph.types.interrupt`), suspending the graph. When the reviewer resumes the thread via the LangGraph SDK `Command(resume={...})` pattern, `interrupt()` returns the decision payload and the node issues `Command(goto="post_hitl_rehydrate")`, transitioning the system to $\text{REVALIDATING}$.
 2. The `post_hitl_revalidate_node` samples $P_{\text{fresh}}$ (continuous state $x_2$ at time $t_{\text{resume}}$).
 3. The guard condition $G_{\text{actuate}}$ for the transition to $\text{APPROVED}$ (execution) is strictly defined by the invariant:
 $$G_{\text{actuate}} \iff \left( \frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \le \text{max\_slippage\_pct} \right) \land \left( \text{CBF}(P_{\text{fresh}}, \text{amount}) \ge 0 \right) \land \left( \text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW} \right)$$
@@ -90,7 +92,7 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 
 | AARM Vector | Threat Description | CAGE Control Point | Neutralization Invariant | Verdict |
 | ----------- | ------------------ | ------------------ | ------------------------ | ------- |
-| **AARM-V1** | Memory Poisoning — attacker mutates the agent's context accumulator to inject false beliefs | SHA-256 hash-chained `OscalFinding` log (`context_accumulator.py`) | $\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$ — any mutation at node $k$ produces $\text{record\_hash}_k \ne \text{expected}_k$, detectable at $O(n)$ | **NEUTRALIZED** |
+| **AARM-V1** | Memory Poisoning — attacker mutates the agent's context accumulator to inject false beliefs | SHA-256 hash-chained `OscalFinding` log ([`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py)) | $\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$ — any mutation at node $k$ produces $\text{record\_hash}_k \ne \text{expected}_k$, detectable at $O(n)$ | **NEUTRALIZED** |
 | **AARM-V2** | Goal Hijacking — agent's objective is redirected mid-execution | STPA UCA Validator (Tier 0) + OPA Rego policy (Tier 4) | $\forall \text{action}: \text{UCA}(\text{action}) \notin \{\text{UCA-1}, \dots, \text{UCA-9}\} \land \text{OPA}(\text{action}) = \text{ALLOW}$ | **NEUTRALIZED** |
 | **AARM-V3** | Confused Deputy — agent is manipulated into performing actions on behalf of an unauthorized principal | OPA RBAC (`trade.governance` package) + HMAC routing seal (`X-CAGE-Routing-Seal`) | $\forall \text{tool\_call}: \text{seal\_valid}(\text{request}) \land \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ | **NEUTRALIZED** |
 | **AARM-V4** | Cross-Agent Propagation — malicious payload propagates across agent boundaries | Linkerd mTLS SPIFFE/SVID identity + NeMo input rail on every agent boundary | $\forall \text{agent\_msg}: \text{SPIFFE\_identity\_verified} \land \text{NeMo}(\text{msg}) = \text{SAFE}$ | **NEUTRALIZED** |
@@ -185,18 +187,18 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`](../../proof/model.py). The proof requires no external dependencies beyond the Python standard library.
 
-**Scope of the model.** The tuple covers the **STERA Runtime Pipeline** (`SymbolicGovernor._run_checks()`) — Tiers 0 through 6b (8 tiers: `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria`), with the CBF and OPA tiers evaluated concurrently, giving 8 tuple positions. FTRA (the **Pre-Pipeline Boundary Gate**) is deliberately outside the tuple: it is a gateway precondition that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. FTRA is NOT a peer of Tiers 0–6b — those sequential tiers operate per tool call within `_run_checks()`, whereas FTRA operates on the entire execution graph before per-tool-call checks begin. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
+**Scope of the model.** The tuple covers the **STERA Runtime Pipeline** together with the FTRA boundary gate, giving **9 tuple positions**: `ftra`, `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria` (see `TIERS` in [`proof/model.py`](../../proof/model.py)). FTRA is modelled as **Tier 0.5** — it was folded into the tuple to close the proof/implementation divergence tracked as ARCH-1. Operationally FTRA remains distinct from Tiers 1–7: it is a gateway precondition that runs at the LangGraph graph level, before `SymbolicGovernor._run_checks()` is invoked, and it operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py). `cbf` and `opa` occupy separate positions (Tier 3a / 3b) because the runtime evaluates them concurrently and each can independently block the action.
 
-> **Scope limitation:** The current BFS proof covers the governance state machine (57-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
+> **Scope limitation:** The current BFS proof covers the governance state machine (44-state gated model). It does not model the full implementation including the LangGraph harness or Redis state. A TLA+/Alloy extension to the full implementation is tracked as future work.
 
-> **FTRA exclusion note:** FTRA (the Pre-Pipeline Boundary Gate) is not included in the 57-state BFS state tuple. The automaton provides an under-approximation: HITL-resumption paths are pruned (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope.
+> **Under-approximation note:** The automaton prunes HITL-resumption paths (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope. Actuator-side seal verification (`routing_seal.verify_seal()`) is likewise a distinct trust boundary and is not re-modelled here.
 
 **State machine definition:**
 
 | Component | Definition |
 | --------- | ---------- |
-| **Tiers** | `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (8 tuple positions, in order) |
-| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROWED` \| `PAUSED` |
+| **Tiers** | `ftra` → `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (9 tuple positions, in order) |
+| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROW` \| `PAUSE` |
 | **`resolvedAllow`** | `TRUE` if and only if all tiers have passed **and** a valid routing seal has been issued |
 | **Terminal states** | `EXECUTED` (success) and `DENIED` (fail-closed) |
 
@@ -210,37 +212,43 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 **Proof results (run: `uv run python proof/model.py`):**
 
 ```
-[gated]   Reachable states: 57 (core sequential: 21 reachable, 0 unsafe)
-[gated]   No-Direct-Bind holds over all 57 reachable states: True
+[gated]   Reachable states: 44
+[gated]   No-Direct-Bind holds over all 44 reachable states: True
 [gated]   EXECUTED states: 1
-[gated]     → resolvedAllow=True  seal_present=True  seal_consumed=True
+[gated]     → resolvedAllow=True  seal_present=True
 
+[ungated] Reachable states: 21
+[ungated] No-Direct-Bind holds: False
 [ungated] direct-bind shortcut produces a violation: True
 [ungated] Counterexample state:
 [ungated]   phase         = EXECUTED
 [ungated]   resolvedAllow = False
 [ungated]   seal_present  = False
-[ungated]   tier_results  = {all 8 tiers: PASS}
+[ungated]   tier_results  = {'ftra': 'PASS', 'stpa': 'PASS', 'confidence': 'PASS',
+                             'cbf': 'PASS', 'opa': 'PASS', 'fiscal': 'PASS',
+                             'consensus': 'PASS', 'causal': 'PASS', 'fria': 'PASS'}
 
 Concurrency sub-proof (CBF ∥ OPA interleaving):
-  Reachable states: 66 (core concurrent: 24 reachable, 0 unsafe; superset=True)
+  Reachable states: 49 (gated: 44) — superset=True
   No-Direct-Bind holds under every interleaving: True
   EXECUTED states: 1 (all with resolvedAllow=TRUE: True)
 
-NARROW/PAUSE state-space sub-proofs:
-  NARROW states: 1 → resolvedAllow=True  seal_present=True
-  PAUSE states:  1 → resolvedAllow=False  seal_present=False
+NARROW/PAUSE state-space sub-proofs (C1-sub audit remediation):
+  NARROW states: 1
+    → resolvedAllow=True  seal_present=True  soft_threshold_exceeded=True
+  PAUSE states: 1
+    → resolvedAllow=False  seal_present=False  transient_block=True
 
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE`, `seal_present = True`, and `seal_consumed = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all nine tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
 
 ### Concurrency: Order-Independence of the CBF ∥ OPA Gate
 
 `gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
 
-`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 66 states versus 57 (24 versus 21 core states) — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
+`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 49 states versus 44 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
 
 Proving the invariant over the superset is a strictly stronger result than proving it over the canonical order alone: the seal gate holds under *every* interleaving, not merely under one scheduling.
 
@@ -250,27 +258,28 @@ Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_c
 
 | Path | Seal issued? | Satisfies NoDirectBind? |
 | ---- | ------------ | ----------------------- |
-| `validate_action()` | ✅ Yes — after all 8 tiers pass | ✅ Yes |
+| `validate_action()` | ✅ Yes — after every tier passes | ✅ Yes |
 | `govern()` (pre-fix) | ❌ No — returned `None` | ❌ No — direct-bind shortcut |
 
 A caller that caught `GovernanceError` from the old `govern()` path and proceeded to execution would reach `EXECUTED` without a resolved seal — a direct-bind violation identical to the ungated counterexample above.
 
 **Remediation (v2.0.0-rc.2 / v3.0.0):**
 
-[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 8 tiers (FTRA + 7 in-pipeline tiers). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing, invalid, or already-consumed seal produces an immediate `BLOCKED` response.
+[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed every in-pipeline tier (the FTRA boundary gate having already cleared at the LangGraph level). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing, invalid, or already-consumed seal produces an immediate `BLOCKED` response.
 
 Both `govern()` and `validate_action()` now satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
 ### Gap-Specific Sub-Proofs
 
-The proof file also verifies four additional sub-cases:
+The proof file also verifies five additional sub-cases:
 
 | Sub-proof | Configuration modelled | Invariant holds? | Interpretation |
 | --------- | ---------------------- | ---------------- | -------------- |
-| Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (19 states) | Confirms the seal gate is load-bearing, not decorative |
-| Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** without actuator / transitions to DENIED with actuator | Proves both seal issuance and actuator verification are load-bearing |
-| Gap 3 (`CBF_FAIL_OPEN`) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but CBF tier absent from gate; production startup `RuntimeError` prevents this configuration |
-| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (21 states) | Confirms the seal gate is load-bearing, not decorative |
+| Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** — violation confirmed (21 states) | Proves both seal issuance and actuator verification are load-bearing |
+| Gap 3 (`CBF_FAIL_OPEN`) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally, 43 states) | Seal path preserved, but CBF tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally, 43 states) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| C1-sub (ungated NARROW negative control) | NARROW decision reaches `EXECUTED` without seal verification | ❌ **No** — violation confirmed (33 states) | Proves the seal gate is load-bearing for the NARROW path, not only for plain ALLOW |
 
 For Gaps 3 and 4, the structural invariant is preserved because the seal is still issued after the remaining tiers pass. However, the *completeness* of the gate is degraded — a mandatory tier is absent. The production startup assertions (see Step 7.1 below) prevent these configurations from being reachable in production at all, closing the gap at the deployment boundary rather than the runtime boundary.
 
@@ -538,23 +547,25 @@ where:
 
 The model explores all reachable interleavings under breadth-first search (BFS) across $N \in \{2, 3, 4\}$ agents and mechanically asserts four core safety properties:
 
-1. **SP-1 (Global Non-Negative Reserve Invariant):** At all reachable states $s$:
-   $$B(s) - \sum_{i=1}^N r_i(s) \ge 0$$
-2. **SP-2 (Exact Capital Conservation):** Total capital is strictly conserved across state transitions:
-   $$B(s) + \sum_{i=1}^N c_i(s) + \sum_{i=1}^N r_i(s) = B(s_0)$$
-3. **SP-3 (Epoch Monotonicity):** Fence epoch never decreases on failover or resync:
-   $$F(s') \ge F(s) \quad \forall (s, s') \in \to$$
-4. **SP-4 (Atomic Commit or Rollback Finality):** No agent can transition to `COMMITTED` if replica synchronization fails during the `WAIT` barrier.
+1. **SP-1 (No Double-Spend):** Total balance never exceeds the initial pool:
+   $$\sum_{i=1}^N \left( r_i(s) + c_i(s) \right) + B(s) \le B(s_0)$$
+2. **SP-2 (Non-Negative Agent Reserves):** Individual agent reserves are always non-negative:
+   $$r_i(s) \ge 0 \quad \forall i, \forall s$$
+3. **SP-3 (Available-Balance Invariant):** Concurrent reserves never exceed the available balance:
+   $$B_{\text{available}}(s) = B(s_0) - \sum_{i=1}^N r_i(s) \ge 0$$
+4. **SP-4 (Fence Epoch Guard):** The fence epoch prevents stale-read exploitation — an agent whose observed epoch lags the current epoch $F$ cannot reserve or commit.
 
 ### Verification Results
 
-Exhaustive state space enumeration in `proof/distributed_cbf_model.py` verifies 100% compliance across all properties:
+Exhaustive state space enumeration in `proof/distributed_cbf_model.py` (run: `uv run python proof/distributed_cbf_model.py`) verifies 100% compliance across all properties under the **fenced** transition function:
 
 | Agent Count ($N$) | Reachable States Explored | Property Violations | Result |
 |---|---|---|---|
-| $N = 2$ | 2,401 states | 0 | **PASS** |
-| $N = 3$ | 117,649 states | 0 | **PASS** |
-| $N = 4$ | 5,764,801 states | 0 | **PASS** |
+| $N = 2$ | 357 states | 0 | **PASS** |
+| $N = 3$ | 2,246 states | 0 | **PASS** |
+| $N = 4$ | 12,184 states | 0 | **PASS** |
+
+**Negative control.** The script additionally enumerates the **unfenced** variant ($N = 2$, 431 reachable states), constructs a race state in which two agents each reserve 3 of a 4-unit pool, and confirms the invariant checker flags it (`SP-3: Negative available balance: -2`). Reachability analysis then shows that this race state is **unreachable** under the fenced transition function — establishing that the fence epoch mechanism is load-bearing rather than decorative.
 
 ---
 
@@ -563,8 +574,8 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` verifies 
 **Claim:** Attestation failures from external providers are structurally attributable, preventing misbehaving providers from crashing the attestation loop silently. Furthermore, Causal Evidence Records (CERs) from Provider 02 must carry mathematically verifiable Ed25519 signatures enforcing fail-closed security.
 
 **Proof / Remediation (POAM-2026-072):**
-1. Added `ExternalAttestation.provider_name` and `fetch_error` attribution to explicitly log and isolate failures.
-2. The `verify_cer_signature()` routine strictly parses and verifies Ed25519 signatures on CERs. Malformed or invalid signatures result in a fast, fail-closed rejection.
+1. [`ExternalAttestation`](../../src/gateway/governance/seams/attestation.py) carries a first-class `provider_name` field. When a provider raises, [`attestation_aggregator`](../../src/gateway/governance/attestation_aggregator.py) appends an entry with `attestation_type="ERROR"`, `status=AttestationStatus.ERROR`, the offending `provider_name`, and `metadata={"error": str(exc)}` — failures are attributable without string-prefix matching on `attestation_type`, and one misbehaving provider cannot abort the fetch loop.
+2. [`Provider02AttestationProvider.verify_cer()`](../../src/integrations/provider_02/provider.py) performs two-stage verification: Stage 1 recomputes the SHA-256 certificate-hash binding, Stage 2 verifies the Ed25519 envelope signature against out-of-band cached JWKs. [`CERVerification`](../../src/integrations/provider_02/provider.py) enforces the fail-closed invariant `valid=True ⟹ signature_checked=True` in `__post_init__`, so a resolution success can never be reported as a verification success.
 
 ---
 
@@ -588,7 +599,7 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` verifies 
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 21/24 core reachable states (57 sequential / 66 concurrent) | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 44 gated reachable states (49 under the CBF ∥ OPA interleaving superset) | **PASS** |
 | 8 | CBF discrete-time invariance — $h(S(t+1)) \ge (1-\gamma) \cdot h(S(t))$, Lua atomic check+commit + replica `WAIT` barrier | **PASS** |
 | 9 | Routing seal v3 integrity — asymmetric JWT signed via KMS HSM (dev fallback: 4-tuple HMAC), 30s TTL, constant-time compare | **PASS** |
 | 10 | Provenance hash chain — SHA-256, $O(n)$ tamper detection, deterministic RFC 8785 JCS serialization | **PASS** |

@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 3.0.x   | ✅ Yes    |
+| 3.1.x   | ✅ Yes    |
+| 3.0.x   | ⚠️ Critical fixes only |
 | 2.1.x   | ⚠️ Critical fixes only |
 | < 2.1.0 | ❌ No     |
 
@@ -104,10 +105,12 @@ deployment. Key security controls are documented in:
 | Control Barrier Function | Atomic Redis Lua (`atomic_verify_and_commit()`) with synchronous replica `WAIT` barrier, monotonic `safety:fence_epoch`, and fail-closed state rollback |
 | Evidence chain integrity | SHA-256 hash-chained NDJSON & Redis Streams db=1; enforced blocking durability in production (`validate_evidence_stream_preconditions()`) |
 | mTLS | Linkerd SPIFFE/SVID; gateway↔OPA, gateway↔NeMo; ServiceAccounts annotated with compliance metadata (`POAM-007,POAM-011`) |
+| Agent identity (v3.1.0) | SPIFFE SVID extracted from the verified mTLS client certificate SAN (`spiffe_extractor.py`); **no** header or body identity path, **no** anonymous fallback; fail-closed 401 `authentication_required` on both HTTP and ext_authz/gRPC ingress. An RFC 9449 `DPoPValidator` ships and is unit-tested but is **not yet wired into any ingress path**. See [`docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
+| Egress credentials (v3.1.0) | `CredentialBrokerAdapter` protocol in Layer 1; the Layer 3 reference actuator fetches per dispatch, keyed on agent SVID and tool name, and attaches the result as request headers. Values are masked in logs and absent from the audit record; fails closed on `CredentialNotFound` / `CredentialAccessDenied` |
 | Egress lockdown | Cilium L7 FQDN allowlist |
 | Token quota enforcement | Per-session step-count (≤12) and token (≤100k) via Redis atomic Lua counters; fail-closed |
 
-> **Note:** CAGE v3.0.x is a reference architecture. Regulated-environment deployers
+> **Note:** CAGE v3.x is a reference architecture. Regulated-environment deployers
 > must conduct their own risk assessment before production use. See
 > [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) for the complete
 > posture breakdown and pre-deployment checklist.
@@ -123,6 +126,30 @@ deployment. Key security controls are documented in:
 ### Evidence Stream Precondition Hardening
 
 > **Audit Durability Guarantee:** `validate_evidence_stream_preconditions()` halts startup in production if `EVIDENCE_CHAIN_BLOCKING=false`, ensuring no routing seal is issued without durable evidence commitment to the tamper-evident log.
+
+### Zero-Trust Agent Identity (v3.1.0)
+
+> **Header-spoofing closure:** Agent identity is no longer read from application-layer
+> data. `X-Agent-ID` / `X-SPIFFE-ID` headers and body-supplied `agent_id` fields are
+> ignored; the sole source of truth is the SPIFFE URI SAN of the verified mTLS client
+> certificate. Because every downstream governance tier keys off `agent_id`, a forgeable
+> identity previously undermined tier selection, quota accounting, and A2A authorization
+> simultaneously. Unauthenticated requests now fail closed with 401 on both ingress paths rather
+> than falling back to an anonymous principal.
+
+### Egress Credential Brokerage (v3.1.0)
+
+> **Ambient-credential closure:** Outbound API credentials are no longer held by
+> adapters. They are requested per dispatch from a `CredentialBrokerAdapter`, keyed on
+> the calling agent's SVID and the tool name, injected as request headers at dispatch
+> time, and held only in local scope. Credential values never appear in
+> `ActuationReceipt`, findings, or HTTP response bodies — asserted by
+> `test_credential_headers_not_in_audit_record`.
+>
+> **Masking is prefix-preserving, not total.** Log masking applies `value[:8] + "****"`.
+> For an `Authorization: Bearer <token>` header only the scheme survives, but a broker
+> that returns a bare-token header will leak the first 8 characters of the secret into
+> logs. Brokers should return scheme-prefixed header values.
 
 ## Prohibited Security Anti-Patterns
 

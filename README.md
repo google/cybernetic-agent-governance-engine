@@ -22,6 +22,29 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 ---
 
+## What's New in v3.1.0
+
+> **Release date:** 2026-09-22 — Zero-Trust Identity & Egress: agent identity moves from the application layer to the transport layer, and outbound credentials move from adapter-held secrets to a brokered, SVID-scoped seam.
+> See [CHANGELOG.md](CHANGELOG.md#310---2026-09-22) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for the migration guide.
+
+> [!WARNING]
+> **Breaking change.** `X-Agent-ID` / `X-SPIFFE-ID` header parsing and the anonymous
+> fallback are removed. Callers must present a mesh-issued mTLS client certificate
+> carrying a SPIFFE URI SAN; unauthenticated requests fail closed with **401**
+> `authentication_required` on both the HTTP and ext_authz/gRPC paths. No
+> compatibility shim is provided — the removed path was a
+> spoofing vector.
+
+| Capability | Location | Description |
+|---|---|---|
+| **Native SPIFFE Identity Extraction** | `src/gateway/governance/spiffe_extractor.py` | Agent identity is read exclusively from the verified mTLS client certificate SAN on both ASGI and gRPC ingress. Header- and body-supplied identity is ignored; there is no anonymous principal. |
+| **DPoP Proof-of-Possession (RFC 9449)** | `src/gateway/server/dpop_validator.py` | Vendor-neutral `ProofOfPossessionValidator` protocol and pure-Python `DPoPValidator` binding tokens to the client certificate thumbprint. Unit-tested; **not yet wired into an ingress path**. |
+| **Declarative A2A Authorization** | `config/opa/agent_catalog.rego` | Subagents declare `authorized_parent_prefixes`; OPA authorizes via `startswith()` prefix matching, keeping ephemeral instance IDs out of policy bodies. |
+| **Egress Credential Broker Seam** | `src/gateway/governance/seams/credential_broker.py` | Layer 1 holds the `CredentialBrokerAdapter` protocol; the Layer 3 reference actuator invokes it as a pre-dispatch gate keyed on agent SVID and tool name, masks values in logs, keeps them out of the audit record, and fails closed on denial. |
+| **CAGE Guard for LangGraph** | `packages/cage-client/` | Governance enforcement wrapped around LangGraph nodes via the CAGE Client SDK. |
+
+---
+
 ## What's New in v3.0.1
 
 > **Release date:** 2026-09-07 — Major Version Release: Domain-agnostic kernel extraction, Layer 1/Layer 2 separation, architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
@@ -55,6 +78,7 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 | Suite / Jurisdiction | Posture | Result | Date |
 |---|---|---|---|
+| **Universal / Unit Suite (v3.1.0)** | `test` (offline, `make test-fast`) | ✅ **4,347 passed** / 0 failed / 122 skipped / 6 subtests passed | 2026-09-22 |
 | **Universal / Unit Suite** | `test` (offline) | ✅ **3,921 passed** / 0 failed / 82 skipped (4,148 total collected) | 2026-09-09 |
 | **US_FED** (NIST SP 800-53 / FedRAMP) | `dev` / `test` | ✅ **3,747 passed** / 0 failed / 67 skipped (75.40% cov) | 2026-09-03 |
 | **US_FED** (NIST SP 800-53 / FedRAMP) | `prod` | ✅ **217 passed** / 0 failed / 131 skipped | 2026-09-03 |
@@ -219,6 +243,8 @@ CAGE is composed of the following runtime subsystems:
 | **Consequence Gateway**          | **L1** | `src/gateway/governance/`         | 6-step token evaluation, JWS verification, and authority store — see [`CONSEQUENCE_GATEWAY.md`](docs/architecture/CONSEQUENCE_GATEWAY.md) |
 | **FTRA Reachability Analyzer**   | **L1** | `src/gateway/governance/ftra/`    | Irreversibility classification and graph bounding — see [`FTRA_REACHABILITY_ANALYZER.md`](docs/architecture/FTRA_REACHABILITY_ANALYZER.md) |
 | **Cryptographic Signer Engine**  | **L1** | `src/gateway/governance/`         | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution — see [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) |
+| **Ingress Identity Boundary**    | **L1** | `src/gateway/governance/spiffe_extractor.py`, `src/gateway/server/dpop_validator.py` | SPIFFE SVID extraction from the verified mTLS client certificate SAN (ASGI + gRPC), fail-closed 401 on both paths. An RFC 9449 DPoP validator ships but is not yet wired into ingress — see [`AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
+| **Seam Contracts**               | **L1** | `src/gateway/governance/seams/`   | Zero-kernel-import protocols for external adapters: `normative.py`, `attestation.py`, `actuation.py`, `graph_topology.py`, `credential_broker.py` |
 | **Compliance Bridge**            | **L3** | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API; infrastructure telemetry to ClickHouse |
 | **Vendor Integrations**          | **L3** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `actuator_01/` (execution actuator), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier), `storage_gcs/` (GCS durable sink), `storage_s3/` (S3 durable sink) |
 | **Domain Plugins** *(optional)*  | **L2** | `src/cage_finance/`, `src/cage_healthcare/` | Entry-point (`cage.plugins`) capability packages contributing domain-specific tiers, barriers, rails, tools, and compliance overlays. Finance and healthcare are equal-standing example domains; adopters add `src/cage_<domain>/`. **Zero plugins loaded:** kernel denies all domain actions (fail-closed) |
@@ -877,6 +903,7 @@ cybernetic-agent-governance-engine/
 | [`docs/compliance/eu_ecb/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md)                                           | POA&M — EU_ECB EU AI Act / DORA / GDPR (5 items)                  |
 | [`docs/compliance/apac_mas/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md)                                       | POA&M — APAC_MAS MAS FEAT / Notice 655 / TRM (4 items)            |
 | [`docs/architecture/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md)                         | Gateway subsystem detail                                           |
+| [`docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) | **Canonical agent identity spec** — SPIFFE SVID extraction from mTLS, DPoP double-binding (RFC 9449), namespace prefix policies, A2A delegation |
 | [`docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md`](docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md)        | Dispatch loop, 2-phase commit, and interruption taxonomy |
 | [`docs/architecture/CONSEQUENCE_GATEWAY.md`](docs/architecture/CONSEQUENCE_GATEWAY.md)        | 6-step token evaluation, JWS verification, and authority store |
 | [`docs/architecture/FTRA_REACHABILITY_ANALYZER.md`](docs/architecture/FTRA_REACHABILITY_ANALYZER.md)  | Forward-Looking Trajectory Reachability Analyzer — Irreversibility classification and graph bounding |

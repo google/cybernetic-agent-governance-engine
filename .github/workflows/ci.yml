@@ -268,6 +268,22 @@ jobs:
         # W1.8: Ensure no maintainer-specific cloud project identifiers are leaked in tracked files.
         run: |
           uv run python scripts/check_project_id_hygiene.py --verbose
+      - name: Documentation reference check (G9 - No dangling paths or symbols in core docs)
+        # Docs drift silently: a renamed module leaves the prose pointing at a file that
+        # no longer exists. This gate fails the build on broken links, dangling file
+        # paths, and stale Python symbol references.
+        # Scoped to the reconciled tree; docs/partners/** carries a known backlog and is
+        # excluded until it reaches zero. CHANGELOG.md is excluded by design — a
+        # changelog must be free to name paths that were removed.
+        run: |
+          uv run python scripts/check_doc_references.py \
+            --path README.md \
+            --path AGENTS.md \
+            --path COMPLIANCE.md \
+            --path SECURITY.md \
+            --path CONTRIBUTING.md \
+            --path docs/architecture \
+            --path compliance
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

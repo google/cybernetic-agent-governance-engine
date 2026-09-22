@@ -1,8 +1,10 @@
-# CAGE v3.0.1 Breaking Changes
+# CAGE v3.x Breaking Changes
 
-> **Status:** Released. CAGE v3.0.1 release date: 2026-09-07.
-> See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
-> describes the breaking changes included in this release. Item IDs (`SR-#`,
+> **Status:** Released. Covers the v3 line — v3.0.1 (2026-09-07) and v3.1.0 (2026-09-22).
+> The v3.1.0 clean breaks are collected in
+> [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) at the end of this document.
+> See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. The sections below
+> describe the breaking changes included in v3.0.1. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
 > ``local/plans/remediation/MAJOR_VERSION_CLEANUP_PLAN.md`` 1:1
 > so the two documents can be cross-referenced.
@@ -725,5 +727,25 @@ Following the v3.0.1 major release, 19 feature branches were implemented to comp
 
 ---
 
-**Last updated:** 2026-09-09 (Post-v3.0.1 Seam Contracts SC-1–SC-7 + POAM-2026-072 Remediation)
+## v3.1.0 Clean Breaks — Zero-Trust Identity & Egress (2026-09-22)
+
+Released in `v3.1.0`. See [`CHANGELOG.md`](../CHANGELOG.md) §[3.1.0] and the canonical
+[`AGENT_IDENTITY_BINDING_SPEC.md`](architecture/AGENT_IDENTITY_BINDING_SPEC.md).
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **ZT-1** | Ingress identity | `X-Agent-ID` and `X-SPIFFE-ID` header parsing removed from [`inference_proxy.py`](../src/gateway/server/inference_proxy.py) and [`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py). Identity comes exclusively from the verified mTLS client certificate SAN via [`spiffe_extractor.py`](../src/gateway/governance/spiffe_extractor.py). | An HTTP header is client-controlled. Any caller able to craft a request could forge an agent identity, defeating every downstream tier that keys off `agent_id`. | **401** `authentication_required` with message `Client certificate with valid SPIFFE URI required`, on both the HTTP and ext_authz/gRPC paths. |
+| **ZT-2** | Ingress identity | Body-derived identity (`body.get("agent_id")`) no longer honoured. | Same spoofing surface as ZT-1, one layer deeper. | Request is rejected before governance dispatch; the body field is ignored entirely. |
+| **ZT-3** | Ingress identity | Anonymous fallback removed. There is no unauthenticated path. | Fail-closed boundary: an unidentifiable caller cannot be governed, so it must not be served. | 401 `authentication_required` rather than a degraded anonymous tier. |
+| **ZT-4** | A2A authorization | Agent-to-agent trust is declared as SPIFFE **prefixes** (`authorized_parent_prefixes` in `config/agent_catalog.json`, matched by `startswith()` in [`agent_catalog.rego`](../config/opa/agent_catalog.rego)), not enumerated exact IDs. | Ephemeral pod suffixes in policy bodies caused spurious `POLICY_DRIFT_VIOLATION` on every restart. | Parent SPIFFE IDs outside a declared prefix are denied with `parent agent '%v' is not authorized to invoke subagent '%v'`. |
+| **ZT-5** | Egress credentials | Adapters no longer hold outbound API credentials. The Layer 1 `CredentialBrokerAdapter` protocol ([`seams/credential_broker.py`](../src/gateway/governance/seams/credential_broker.py)) is invoked by the Layer 3 actuator as a pre-dispatch gate and the result is passed to `submit_envelope(extra_headers=...)`, keyed on agent SVID and tool name. | Credentials become a governed consequence rather than ambient adapter state; values are masked in logs and absent from the audit record. | `CredentialNotFound` / `CredentialAccessDenied` fail closed — no envelope is built, no signature produced, and no HTTP request issued. |
+| **ZT-6** | Integrations | `src/integrations/provider_04/` removed. | Orphaned after the transition to `actuator_01`; zero residual references. | `ImportError` on `src.integrations.provider_04`. |
+
+**Migration for ZT-1 – ZT-3:** present a mesh-issued mTLS client certificate with a
+SPIFFE URI SAN. No compatibility shim is provided; the removed path was a spoofing
+vector and a deprecation window would have preserved it.
+
+---
+
+**Last updated:** 2026-09-22 (v3.1.0 Zero-Trust Identity & Egress clean breaks ZT-1–ZT-6)
 

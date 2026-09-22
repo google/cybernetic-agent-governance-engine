@@ -1,5 +1,7 @@
 # Deferral Queue State Machine
 
+**Last Updated:** 2026-09-22
+
 ## 1. Architectural Role & Domain Boundary
 
 The Deferral Queue (`DeferQueue`) implements the "Deferral Service" mandate from the CSA AARM specification. It provides a formal parking state for executions suffering from situational ambiguity or data starvation, preventing the brittle constraint of forcing a binary ALLOW/DENY decision under uncertainty.
@@ -48,7 +50,7 @@ A `DeferToken` represents the parked execution context and progresses through a 
 ## 4. Operational Guarantees & Edge Cases
 
 - **Eviction Immunity**: The tokens are stored in Redis `db=1` configured with a `noeviction` maxmemory policy. This guarantees that a sudden burst of unrelated cache traffic will never prematurely evict a pending deferral context.
-- **Atomicity via Watch/Multi/Exec**: `DeferQueue.resolve()` uses Redis optimistic locking (`WATCH DEFER:{id}`) to ensure that a token cannot be simultaneously resolved by both an automated injection and a human operator.
+- **Atomicity via Watch/Multi/Exec**: `DeferQueue._resolve()` uses Redis optimistic locking (`WATCH DEFER:{id}`) to ensure that a token cannot be simultaneously resolved by both an automated injection and a human operator. Per ADR-008 the resolution path is **strictly private** — there is no public `resolve()`; callers reach it only through the vetted `inject` / `escalate` / TTL-expiry paths, and `atomic_resolve()` provides the idempotency claim used by ticket holders.
 - **WebAuthn Cryptographic Binding**: Phase 5 fixes require operators to bind approvals using WebAuthn. The queue validates the raw `client_data_json` against the signed `challenge_binding` to mathematically prove human intent at resolution time.
 
 ## 5. Configuration Contracts & Runtime Matrix

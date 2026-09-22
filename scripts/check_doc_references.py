@@ -42,7 +42,11 @@ DOC_ROOTS = [
     REPO_ROOT / "compliance",
     REPO_ROOT / "README.md",
     REPO_ROOT / "AGENTS.md",
-    REPO_ROOT / "POAM.md",
+    # CHANGELOG.md is deliberately excluded: a changelog records removals, so it
+    # must be free to name paths that no longer exist on disk.
+    REPO_ROOT / "COMPLIANCE.md",
+    REPO_ROOT / "SECURITY.md",
+    REPO_ROOT / "CONTRIBUTING.md",
 ]
 
 # Markdown link: [text](target)
@@ -513,12 +517,32 @@ def main() -> int:
         "--output", "-o", type=Path, default=None, help="Output file path"
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument(
+        "--path",
+        action="append",
+        default=None,
+        metavar="PREFIX",
+        help=(
+            "Restrict the audit to documents under this repo-relative path prefix. "
+            "Repeatable. Omit to audit every discovered document."
+        ),
+    )
     args = parser.parse_args()
 
     files = find_markdown_files()
+
+    if args.path:
+        prefixes = [(REPO_ROOT / p).resolve() for p in args.path]
+        files = [
+            f
+            for f in files
+            if any(f == prefix or prefix in f.parents for prefix in prefixes)
+        ]
+        print("Scoped to: " + ", ".join(args.path))
+
     all_issues: list[Issue] = []
 
-    print(f"Auditing {len(files)} documentation files across repository...")
+    print(f"Auditing {len(files)} documentation files...")
     for f in files:
         file_issues = audit_markdown_file(f)
         all_issues.extend(file_issues)

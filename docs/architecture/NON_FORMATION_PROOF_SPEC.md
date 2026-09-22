@@ -224,15 +224,15 @@ lookup used elsewhere, so a receipt can be cross-referenced to its OSCAL
 control entry (e.g. `CTRL_CBF_002` → SP 800-53 `SC-4`) without a new mapping
 table.
 
-### 2.12 Third-party schema precedents (`local/integrations/singh/`)
+### 2.12 Third-party schema precedents (`third_party/agent-integrity/schemas/`)
 
 Two externally-authored schemas already sketch adjacent concepts and are
 useful prior art (not dependencies):
-[`integrity-receipt.schema.json`](../../local/integrations/singh/integrity-receipt.schema.json)
+[`integrity-receipt.schema.json`](../../third_party/agent-integrity/schemas/integrity-receipt.schema.json)
 defines a signed receipt with `policyDigest` + `envelopeDigest` +
 `verification.status` (`PASS/REVIEW/BLOCKED`) bound by an Ed25519
 `signature`, and
-[`integrity-envelope.schema.json`](../../local/integrations/singh/integrity-envelope.schema.json)
+[`integrity-envelope.schema.json`](../../third_party/agent-integrity/schemas/integrity-envelope.schema.json)
 defines an immutable `decisionRegistryDigest` separating policy decisions
 from response content. The `GovernanceRefusalReceipt` design (§6) borrows the
 **digest-separation principle** (policy/rule digest kept distinct from the

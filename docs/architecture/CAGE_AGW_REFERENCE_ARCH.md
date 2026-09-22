@@ -2,7 +2,8 @@
 
 > **Status:** Phase B — Work Stream D (D4)
 > **Change category:** Cat-S (Standard) — documentation only
-> **Compliance:** SC-8, SC-12, AC-3, AU-2, SI-10
+> **Compliance:** SC-8, SC-12, AC-3, IA-3, AU-2, SI-10
+> **Last Updated:** 2026-09-22
 
 ---
 
@@ -35,11 +36,28 @@ self-managed Envoy/Istio deployments with zero code difference.
 Every agent tool call passes through the adapter before reaching the
 application container:
 
-1. Parse the JSON-RPC 2.0 body to extract `(tool_name, params)`
-2. Run the full CAGE 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) via `validate_action()`
-3. Return `OkHttpResponse` + `x-cage-routing-seal` header on `APPROVED`
-4. Return `DeniedHttpResponse(403)` + violation JSON on `DENIED`
-5. Return `DeniedHttpResponse(202)` + `{verdict: DEFERRED, thread_id}` on `MANUAL_REVIEW`
+1. Extract the caller's SPIFFE URI from the mTLS peer principal via
+   `extract_spiffe_uri_from_grpc_context()`
+   ([`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py));
+   this value becomes `caller_principal`. Identity is **never** taken from a
+   request header (the former `X-Agent-ID` header was removed in v3.1.0) or
+   from the JSON-RPC body, and there is no anonymous fallback
+2. Parse the JSON-RPC 2.0 body to extract `(tool_name, params)`
+3. Run the full CAGE 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) via `validate_action()`
+4. Return `OkHttpResponse` + `x-cage-routing-seal` header on `APPROVED`
+5. Return `DeniedHttpResponse(403)` + violation JSON on `DENIED`
+6. Return `DeniedHttpResponse(202)` + `{verdict: DEFERRED, thread_id}` on `MANUAL_REVIEW`
+
+**Fail-closed identity behaviour (step 1):**
+
+| Condition | Response |
+|-----------|----------|
+| SPIFFE URI missing or not matching `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$` | `DeniedHttpResponse(401)` — `{"error": "authentication_required", "message": "Client certificate with valid SPIFFE URI required"}` |
+| `CheckRequest` fields cannot be extracted at all | `DeniedHttpResponse(403)` — `{"error": "request_extraction_error"}` |
+
+The equivalent HTTP/ASGI ingress (`inference_proxy.py`) returns plain HTTP 401
+for the same identity failure. The canonical identity contract is
+[`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
 
 ---
 
@@ -180,8 +198,8 @@ the ext_authz timeout is typically 5 seconds.
                                            │
                                     mTLS callout to CAGE :50051
                                            │
-                                    CAGE reads peer.principal
-                                    (SPIFFE ID from SAN)
+                                    CAGE extracts peer principal
+                                    (SPIFFE ID from SAN, regex-validated)
                                            │
                                     OPA agent catalog lookup
                                     (input.caller_identity.sub)
@@ -194,11 +212,18 @@ the ext_authz timeout is typically 5 seconds.
                                                       │
                                              mTLS callout to CAGE :50051
                                                       │
-                                             CAGE reads peer.principal
-                                             (GCP service account email)
+                                             CAGE extracts peer principal
+                                             (must be a SPIFFE URI)
                                                       │
                                              OPA agent catalog lookup
 ```
+
+> **Corrected 2026-09-22:** earlier revisions of this document stated that the
+> GCP path supplies a *GCP service account email* as the peer principal. That is
+> no longer accurate. `extract_spiffe_uri_from_grpc_context()` validates the
+> principal against `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$` and raises
+> `SpiffeExtractionError` otherwise, so the AGW/Workload Identity deployment must
+> present the caller as a SPIFFE URI. A bare service-account email is rejected.
 
 **SC-12 compliance:** mTLS certificate lifecycle is managed by the service
 mesh or GCP Workload Identity — not by CAGE. CAGE only reads the peer
@@ -207,6 +232,12 @@ principal from the already-validated mTLS connection.
 **AC-3 compliance:** The gRPC endpoint must only accept calls from the
 registered proxy service account. This is enforced by the service mesh
 mTLS policy (Istio `PeerAuthentication`) or AGW IAM binding — not by CAGE.
+
+**IA-3 compliance (fail-closed):** CAGE derives `caller_principal` solely from
+the validated peer SPIFFE URI and feeds it to OPA as `input.caller_identity.sub`.
+No header, body field, or anonymous fallback can supply it; an unresolvable
+principal terminates the request with a denied `CheckResponse` before
+`validate_action()` is reached.
 
 ---
 
@@ -217,6 +248,7 @@ mTLS policy (Istio `PeerAuthentication`) or AGW IAM binding — not by CAGE.
 | **SC-8** (Transmission Confidentiality) | mTLS required between calling proxy and CAGE :50051; enforced by service mesh or AGW |
 | **SC-12** (Cryptographic Key Establishment) | mTLS certificate lifecycle managed by Istio CA or GCP Certificate Manager |
 | **AC-3** (Access Enforcement) | gRPC endpoint only accepts calls from registered proxy service account (mTLS CN/SAN validation) |
+| **IA-3** (Device Identification & Authentication) | `extract_spiffe_uri_from_grpc_context()` in [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) derives `caller_principal` from the mTLS peer SPIFFE URI; header/body identity and anonymous fallback removed (v3.1.0); fail-closed denied response on extraction failure |
 | **AU-2** (Audit Events) | Every `CheckRequest`/`CheckResponse` logged via OTel/Langfuse pipeline in `_emit_audit_event()` |
 | **SI-10** (Information Input Validation) | `parse_jsonrpc_body()` validates JSON-RPC 2.0 structure before passing to `validate_action()`; fail-closed on parse error |
 

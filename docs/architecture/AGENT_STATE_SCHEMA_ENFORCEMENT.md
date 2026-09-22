@@ -1,16 +1,32 @@
 # GAP-3: AgentState Schema Enforcement Architecture
 
 > [!NOTE]
-> **Document Status**: Approved Design Specification (GAP-3) — Pending Implementation
-> **Implementation Target**: Layer 4 Reference Application ([`src/governed_financial_advisor/`](../../src/governed_financial_advisor/))
-> **Runtime Status**: Design artifact only. The schemas and route-level validations specified herein are planned and not currently enforced in the v3.0.x gateway runtime. The [`QueryResponse`](#3-queryresponse-pydantic-model-specification) model, route enforcement via `response_model`, and [`compliance/schemas/agent_state_schema.json`](#4-agentstateschema-json-schema-draft-07) are not yet merged in code.
+> **Document Status**: Design Specification (GAP-3) — **partially implemented**.
+> **Implementation Target**: Layer 4 Reference Application ([`src/governed_financial_advisor/`](../../src/governed_financial_advisor/)) and the Layer 1 kernel state contract.
 
-**Status:** Approved for Implementation
+**Status:** Partially Implemented — see the component matrix below
 **Date:** 2026-07-05
+**Last Updated:** 2026-09-22
 **Author:** Architecture Review
 **Implements:** GAP-3 (Schema Enforcement at API and Node Boundaries)
+
+### Implementation Status at HEAD
+
+| Component | Specified in | Status at HEAD | Evidence |
+| --------- | ------------ | -------------- | -------- |
+| `QueryResponse` Pydantic model | §3 | **Implemented** | [`src/governed_financial_advisor/models/query.py`](../../src/governed_financial_advisor/models/query.py) — `response`, `trace_id` (32-hex pattern), `frozen=True` |
+| `response_model` on `/agent/query` | §5.1 | **Implemented** | [`server.py:323`](../../src/governed_financial_advisor/server.py#L323) — `@app.post("/agent/query", response_model=QueryResponse)` |
+| `agent_state_schema.json` artifact | §4 | **Implemented, auto-generated** | [`compliance/schemas/agent_state_schema.json`](../../compliance/schemas/agent_state_schema.json) — 40 properties, Draft 2020-12 |
+| Schema drift detection in CI | §6 | **Implemented** | `make check-agent-state-schema` → `uv run python scripts/generate_agent_state_schema.py --check` |
+| Kernel state-contract validator | §5.2 | **Implemented but not wired** | [`src/gateway/governance/state_contract.py`](../../src/gateway/governance/state_contract.py) — `CompiledStateValidator` / `StateContractViolation`. Unit-tested in [`tests/test_runtime_schema_enforcement.py`](../../tests/test_runtime_schema_enforcement.py); **no importer exists in `src/`** |
+| `validate_state` helper + `CAGE_SCHEMA_STRICT` | §5.2–§5.4 | **Not implemented** | Neither symbol appears anywhere in `src/`. The kernel took the `CompiledStateValidator` route instead |
+
+> [!WARNING]
+> Sections 5.2, 5.3 and 5.4 below describe a `validate_state` helper gated by a `CAGE_SCHEMA_STRICT` environment variable. **That design was not the one adopted.** The kernel instead ships `CompiledStateValidator`, which takes an explicit `enforcing: bool = True` constructor argument rather than reading an env var. Read those sections as historical design intent, not as a description of runtime behaviour.
+
 **Affected files:**
 - `src/governed_financial_advisor/server.py`
+- `src/gateway/governance/state_contract.py`
 - `src/gateway/governance/langgraph_harness/types.py`
 - `src/gateway/governance/langgraph_harness/nemo_node_factory.py`
 - `src/governed_financial_advisor/graph/state.py` (read-only reference)
@@ -137,18 +153,22 @@ All existing callers receive `{"response": str, "trace_id": str | null}`. The `Q
 
 ---
 
-## 4. `AgentStateSchema` JSON Schema (Draft-07)
+## 4. `AgentStateSchema` JSON Schema (Draft 2020-12)
 
 ### 4.1 Rationale for JSON Schema over TypedDict
 
-`AgentState` is a LangGraph `TypedDict`. LangGraph nodes in the harness receive `StateDict = dict[str, Any]` — a plain dict at runtime. `TypedDict` annotations are erased at runtime and cannot be used for runtime validation. JSON Schema draft-07 is used because:
-- `jsonschema` is already a transitive dependency (via `openapi-schema-validator`).
-- Draft-07 is the version supported by `jsonschema.validate` without additional configuration.
+`AgentState` is a LangGraph `TypedDict`. LangGraph nodes in the harness receive `StateDict = dict[str, Any]` — a plain dict at runtime. `TypedDict` annotations are erased at runtime and cannot be used for runtime validation. JSON Schema is used because:
+- `jsonschema` is already available in the resolved environment and is imported directly by [`state_contract.py`](../../src/gateway/governance/state_contract.py).
 - The schema can be stored as a static JSON file and compared in CI.
+
+> [!IMPORTANT]
+> This section originally specified **draft-07**. The artifact that actually shipped declares
+> `"$schema": "https://json-schema.org/draft/2020-12/schema"` and is compiled with
+> `jsonschema.Draft202012Validator`. Draft 2020-12 is the binding version.
 
 ### 4.2 Schema File Location
 
-Store the schema at:
+The schema lives at:
 
 ```
 compliance/schemas/agent_state_schema.json
@@ -156,9 +176,12 @@ compliance/schemas/agent_state_schema.json
 
 This location is under `compliance/` (not `src/`) so it is treated as a compliance artifact alongside OSCAL and Lula files, and is subject to the same change-management controls.
 
-### 4.3 Complete JSON Schema
+> [!IMPORTANT]
+> The file is **machine-generated, not hand-edited**. [`scripts/generate_agent_state_schema.py`](../../scripts/generate_agent_state_schema.py) derives it from the `AgentState` runtime model and writes it to `SCHEMA_OUTPUT_PATH`. Regenerate with `uv run python scripts/generate_agent_state_schema.py`; verify freshness with `make check-agent-state-schema`. The inline copy in §4.3 below is illustrative and may lag the generated artifact — the generated file is authoritative.
 
-**NOTE:** The schema is auto-generated by [`scripts/generate_agent_state_schema.py`](../../scripts/generate_agent_state_schema.py). The canonical source is [`compliance/schemas/agent_state_schema.json`](../../compliance/schemas/agent_state_schema.json). This section provides the current synchronized schema structure (all 32 AgentState properties):
+### 4.3 Illustrative JSON Schema
+
+**NOTE:** The schema is auto-generated by [`scripts/generate_agent_state_schema.py`](../../scripts/generate_agent_state_schema.py). The canonical source is [`compliance/schemas/agent_state_schema.json`](../../compliance/schemas/agent_state_schema.json). The inline structure below is a trimmed illustration; the generated artifact carries all 40 AgentState properties:
 
 ```json
 {
@@ -279,9 +302,9 @@ This location is under `compliance/` (not `src/`) so it is treated as a complian
 - **Partial delta updates (exempt from `additionalProperties` enforcement):**
   - LangGraph nodes return partial update dicts (e.g., `{"guardrail_blocked": True, "guardrail_reason": "..."}`) that merge into the state via reducers.
   - These partial updates are not validated against the full schema — only their merge result is validated at the next node entry boundary.
-  - Example: `nemo_guardrail_node` returns `{"messages": [...], "guardrail_blocked": False, "guardrail_reason": ""}` — this is a 3-key dict, not a 32-key AgentState, and is not validated until the next node receives the merged state.
+  - Example: `nemo_guardrail_node` returns `{"messages": [...], "guardrail_blocked": False, "guardrail_reason": ""}` — this is a 3-key dict, not a 40-key AgentState, and is not validated until the next node receives the merged state.
 
-**Rationale:** `additionalProperties: false` enforces that the full state at boundaries contains only the declared 32 properties, preventing schema drift from undeclared fields leaking into the state contract. Intermediate node return values are partial deltas by design and are merged into state via LangGraph reducers before the next validation checkpoint.
+**Rationale:** `additionalProperties: false` enforces that the full state at boundaries contains only the declared 40 properties, preventing schema drift from undeclared fields leaking into the state contract. Intermediate node return values are partial deltas by design and are merged into state via LangGraph reducers before the next validation checkpoint.
 
 **Implementation detail:** The `LedgerEntry` sub-schema uses `additionalProperties: false` because it is a closed, well-defined record type with no partial-update semantics.
 
@@ -291,9 +314,9 @@ This location is under `compliance/` (not `src/`) so it is treated as a complian
 
 ### 5.1 API Boundary — `response_model` on `/agent/query`
 
-**Location:** `src/governed_financial_advisor/server.py`
+**Location:** [`src/governed_financial_advisor/server.py:323`](../../src/governed_financial_advisor/server.py#L323)
 
-**Change:** Add `response_model=QueryResponse` to the `@app.post("/agent/query")` decorator.
+**Status: Implemented.** The decorator reads `@app.post("/agent/query", response_model=QueryResponse)` at HEAD.
 
 **Effect:** FastAPI validates the handler's return dict against `QueryResponse` before serialising the HTTP response. A non-conforming return raises `ResponseValidationError` → HTTP 500. This is the correct fail-closed behaviour: a malformed response is a server error, not a client error.
 
@@ -439,9 +462,12 @@ async def nemo_guardrail_node(state: StateDict) -> dict[str, Any]:
 
 ### 6.1 Problem
 
-`AgentState` in [`src/governed_financial_advisor/graph/state.py`](../../src/governed_financial_advisor/demo/state.py) and the JSON Schema in `compliance/schemas/agent_state_schema.json` are maintained separately. A developer who adds a field to `AgentState` without updating the schema creates silent drift.
+`AgentState` in [`src/governed_financial_advisor/graph/state.py`](../../src/governed_financial_advisor/graph/state.py) and the JSON Schema in [`compliance/schemas/agent_state_schema.json`](../../compliance/schemas/agent_state_schema.json) could drift if maintained separately: a developer who adds a field to `AgentState` without updating the schema creates a silent gap.
 
-### 6.2 CI Check — pytest Schema Consistency Test
+> [!NOTE]
+> **Resolved at HEAD by generation, not by parallel maintenance.** The schema is derived from the `AgentState` runtime model by [`scripts/generate_agent_state_schema.py`](../../scripts/generate_agent_state_schema.py), and `--check` mode compares the freshly generated schema against the committed artifact. The `make check-agent-state-schema` target runs exactly this and is the enforcing gate. The pytest approach described in §6.2 below was the original proposal; the generator-diff approach is what shipped.
+
+### 6.2 CI Check — pytest Schema Consistency Test (original proposal)
 
 Add the following test to `tests/test_agent_state_schema.py`:
 

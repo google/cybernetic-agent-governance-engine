@@ -12,10 +12,13 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 
 **Status:** **IMPLEMENTED** (Production) / **DIRECT** (Local Dev)
 **Version:** v3.0.1
+**Last Updated:** 2026-09-22
 
 > **Update 2026-03-03:** The GatewayClass has been migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (see `deployment/k8s/inference-gateway/gateway.yaml`). Gateway API CRDs are now installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving all routing, priority, and autoscaling capabilities.
 
 > **Update 2026-05-31:** The OTel Collector sidecar has been **deprecated**. All telemetry now flows via direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`. Remove any `OTEL_EXPORTER_OTLP_ENDPOINT` references pointing to a collector.
+
+> **Update 2026-09-22 (BREAKING):** Caller identity at the inference edge is now derived exclusively from the SPIFFE URI in the verified mTLS client certificate. The `X-Agent-ID` header, any body-supplied `agent_id`, and the anonymous fallback have been removed; unauthenticated requests receive HTTP 401. See [§6](#6-agent-identity-at-the-inference-edge-mtls-spiffe) and the canonical [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
 
 
 ---
@@ -167,3 +170,35 @@ python3 deployment/deploy_sw.py --project-id <YOUR_PROJECT_ID> --skip-build
 > **Note:** The `--project-id` flag is GCP-specific and can be omitted for non-GCP Kubernetes deployments.
 
 Once this variable is set, the `GatewayService` will automatically switch to **Gateway Mode**, routing all LLM requests through this single endpoint.
+
+---
+
+## 6. Agent Identity at the Inference Edge (mTLS SPIFFE)
+
+The Inference Gateway handles **routing, priority, and autoscaling**. It does not establish who the caller is. Caller identity is resolved inside the CAGE gateway process from the mTLS transport, and it is the only accepted source of identity.
+
+### 6.1 Extraction and fail-closed rejection
+
+[`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) resolves the caller immediately after the Tier-1 keyword scan and before any quota or NeMo work:
+
+- It calls `extract_spiffe_uri_from_asgi_scope(request.scope)` from [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py), which returns the first SAN URI matching `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`.
+- On any failure it stamps the SC-8 control as `BLOCK` on the span and returns **HTTP 401** with `{"error": "authentication_required", "message": "Client certificate with valid SPIFFE URI required"}`.
+- There is **no anonymous fallback** — the request never reaches quota enforcement, NeMo rails, or the model pools.
+- The resulting SPIFFE URI is the `agent_id` used for per-session token/step quota accounting (the HTTP 429 quota path reports it verbatim).
+
+### 6.2 Removed identity sources (breaking change, v3.1.0)
+
+| Removed | Replacement |
+|---|---|
+| `X-Agent-ID` request header | SPIFFE URI from the verified mTLS peer certificate |
+| Any `X-SPIFFE-ID`-style header | SPIFFE URI from the verified mTLS peer certificate |
+| `agent_id` field in the JSON request body | SPIFFE URI from the verified mTLS peer certificate |
+| Anonymous / unauthenticated fallback identity | HTTP 401 rejection |
+
+Clients that previously identified themselves with a header or body field now receive HTTP 401 until they present a client certificate.
+
+### 6.3 Deployment implication
+
+Because extraction reads the peer certificate from the ASGI scope, the verified client certificate must actually reach the gateway process: either TLS with client-certificate verification terminates at the gateway's ASGI server, or the fronting mesh/proxy must populate the verified peer certificate in the scope. Terminating client TLS at the Inference Gateway without propagating the verified peer certificate will cause every inference request to fail closed with 401.
+
+The canonical identity specification — including the DPoP double-binding design and the OPA namespace-prefix authorization model — is [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).

@@ -1,6 +1,6 @@
 # Latency as Currency: Funding Governance with Inference Speed
 
-> **Last verified:** 2026-06-02
+**Last Updated:** 2026-09-22
 
 > **Universal Baseline:** Audit logging latency requirements are governed by **ISO 42001 §A.9.2** (evidence integrity) universally across all `CAGE_DEPLOYMENT_REGION` values. Jurisdiction-specific SLA authorities are listed in the table below.
 >
@@ -76,7 +76,7 @@ The following mechanisms are implemented in code and actively reduce governance 
 
 ### 1. OPA Decision Cache (Redis, 10s TTL)
 
-[`src/gateway/core/policy.py`](../src/gateway/core/policy.py) implements a short-TTL Redis cache for OPA decisions. Identical OPA inputs (same action + symbol + amount) within a **10-second window** return the cached decision without an HTTP round-trip.
+[`src/gateway/core/policy.py`](../../src/gateway/core/policy.py) implements a short-TTL Redis cache for OPA decisions. Identical OPA inputs (same action + symbol + amount) within a **10-second window** return the cached decision without an HTTP round-trip.
 
 - **Key prefix:** `cage:opa:decision:` (SHA-256 of canonical JSON input, first 24 hex chars)
 - **TTL:** `_OPA_CACHE_TTL_SECONDS = 10` — intentionally short to avoid stale decisions under fast market moves

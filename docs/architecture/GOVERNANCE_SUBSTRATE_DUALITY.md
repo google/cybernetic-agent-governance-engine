@@ -3,6 +3,7 @@
 **Document type:** Architectural Analysis & Strategic Positioning
 **Status:** INTERNAL — For engineering and executive review
 **Date:** 2026-07-18
+**Last Updated:** 2026-09-22
 **Authority:** Supplements `docs/architecture/SUBSTRATE_MOAT_STRATEGY.md` and
 `docs/project/CAGE_ONE_PAGER.md`
 
@@ -62,7 +63,7 @@ committed code.
 | Cryptographic routing seal | HMAC-SHA256 seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers); downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
 | Fail-closed startup assertion | `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production — the container fails to start rather than degrading to an unguarded state | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | DEFER state machine | 4-state machine (PARK → HYDRATE → REPLAY) prevents binary forced decisions on incomplete context; parked in Redis `db=1` with 4-hour TTL | [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) |
-| Human-gated HITL interrupt | LangGraph `interrupt_before=["governed_trader"]` pauses execution; resumes only on explicit `POST /v1/approvals/{thread_id}/resume` with reviewer identity and rationale | [`src/governed_financial_advisor/graph/graph.py`](../../src/governed_financial_advisor/graph/graph.py) |
+| Human-gated HITL interrupt | `approval_node` calls the LangGraph dynamic `interrupt()` primitive, suspending the graph; it resumes only on an explicit `Command(resume=...)` carrying reviewer identity and rationale | [`src/governed_financial_advisor/graph/nodes/approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) |
 
 ### 2.3 "Policy-as-code feeds into infrastructure-as-code"
 
@@ -227,9 +228,9 @@ compliance at the commit boundary." This is technically precise for CAGE:
 - The routing seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py))
   enforces the governance pipeline approval at the actuator call boundary —
   the seal must be verified before any tool execution.
-- The HITL interrupt enforces the human approval boundary — the LangGraph graph
-  cannot proceed past `interrupt_before=["governed_trader"]` without an
-  explicit human decision.
+- The HITL interrupt enforces the human approval boundary — once routing sends a
+  thread into `approval_node`, the graph cannot proceed past that node's
+  `interrupt()` call without an explicit human decision.
 
 These are three distinct "commit boundaries" at three distinct layers of the
 stack. The Governance Layer (OSCAL/Lula) can specify which boundaries apply to

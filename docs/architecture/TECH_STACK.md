@@ -10,6 +10,8 @@
 | **Canonical Path**   | `docs/architecture/TECH_STACK.md`                                        |
 | **References**       | [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md), [`AGENT_SYSTEM_ARCHITECTURE.md`](AGENT_SYSTEM_ARCHITECTURE.md) |
 
+**Last Updated:** 2026-09-22
+
 ---
 
 ## 1. Programming Languages
@@ -30,7 +32,7 @@
 
 | Framework                   | License    | Role                                   | Governance Justification & Key Details                                                                                       |
 | --------------------------- | ---------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **LangGraph**               | MIT        | Multi-agent `StateGraph` orchestration | Deterministic cyclic state machine; supports `interrupt_before` for HITL and `AsyncRedisSaver` checkpoint persistence         |
+| **LangGraph**               | MIT        | Multi-agent `StateGraph` orchestration | Deterministic cyclic state machine ($\ge 1.1.0$); dynamic `interrupt()` primitive for HITL and `AsyncRedisSaver` checkpoint persistence |
 | **FastAPI**                 | MIT        | HTTP API server                        | High-performance ASGI server with OpenAPI schema generation; agent server `:8081/:80`, compliance bridge `:3001/:3002`       |
 | **FastMCP**                 | MIT        | MCP tool server over SSE               | Model Context Protocol implementation with W3C `traceparent` distributed trace propagation                                    |
 | **NeMo Guardrails**         | Apache-2.0 | AI safety rails                        | Programmable conversational safety rails; 10 Presidio PII entity types; configurable via `GUARDRAILS_MODEL_NAME`             |
@@ -78,8 +80,8 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 
 | Library             | License    | Purpose & Governance Justification                                                                   |
 | ------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
-| `opa-python-client` | Apache-2.0 | Programmatic OPA evaluation from Python agents                                                       |
-| `dowhy`             | MIT        | Causal inference engine for Tier 6 causal gatekeeper (counterfactual refutation & slope invariance) |
+| `httpx` (direct)    | BSD-3-Clause | OPA is evaluated over the REST Data API with a hand-rolled async client in [`src/gateway/core/policy.py`](../../src/gateway/core/policy.py) — no third-party OPA SDK is declared |
+| `dowhy`             | MIT        | Causal inference engine for Tier 6 causal gatekeeper (counterfactual refutation & slope invariance); `compliance` extra |
 
 ### 4.4 Observability
 
@@ -95,13 +97,15 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 | Library       | License    | Purpose & Governance Justification                                                   |
 | ------------- | ---------- | ------------------------------------------------------------------------------------ |
 | `pydantic` v2 | MIT        | Strict runtime type validation and JSON schema export across all domain models       |
-| `canonicaljson` / RFC 8785 | Apache-2.0 | Deterministic JSON Canonicalization Scheme (JCS) for tamper-evident hash calculation |
+| `jsonschema`  | MIT        | Draft 2020-12 validation of LangGraph node output against the AgentState contract ([`state_contract.py`](../../src/gateway/governance/state_contract.py)) |
+| Vendored JCS (RFC 8785) | Apache-2.0 | Deterministic JSON Canonicalization Scheme for tamper-evident hash calculation. Vendored in-tree at [`src/gateway/governance/vendor/jcs`](../../src/gateway/governance/vendor/jcs) and wrapped by [`jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py) — no external `canonicaljson` dependency |
 
 ### 4.6 State, Caching & Concurrency
 
 | Library              | License    | Purpose & Governance Justification                                                |
 | -------------------- | ---------- | --------------------------------------------------------------------------------- |
-| `aioredis` / `redis` | MIT        | Async Redis client; `AsyncRedisSaver`, Lua atomic CBF, and FiscalLimitGuard locks |
+| `redis`              | MIT        | Async Redis client ($\ge 5.0.0$, native `redis.asyncio`); `AsyncRedisSaver`, Lua atomic CBF, and FiscalLimitGuard locks. `aioredis` is **not** a dependency — it was absorbed into `redis-py` 4.2+ |
+| `clickhouse-connect` | Apache-2.0 | ClickHouse driver for the durable evidence sink; `clickhouse` extra                |
 | `cachetools`         | MIT        | `TTLCache(maxsize=32, ttl=300)` — 5-minute compliance metric cache in bridge      |
 
 ### 4.7 HTTP & Networking
@@ -128,9 +132,9 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 
 | Library               | License    | Purpose & Governance Justification                                                   |
 | --------------------- | ---------- | ------------------------------------------------------------------------------------ |
-| `google-cloud-kms`    | Apache-2.0 | **GCP** governance signing — Cloud KMS HSM-backed RSA-4096 (`GCPKMSProvider`)        |
-| `boto3`               | Apache-2.0 | **AWS** governance signing — AWS KMS HSM provider (`AWSKMSProvider`)                  |
-| `azure-keyvault-keys` | MIT        | **Azure** governance signing — Azure Key Vault Managed HSM provider (`AzureKMSProvider`) |
+| `google-cloud-kms`    | Apache-2.0 | **GCP** governance signing — Cloud KMS HSM-backed RSA-4096 (`GCPKMSProvider`); declared in the `gateway` extra |
+| `boto3`               | Apache-2.0 | **AWS** governance signing — AWS KMS HSM provider (`AWSKMSProvider`); declared in the `s3` extra              |
+| `azure-keyvault-keys` | MIT        | **Azure** governance signing — Azure Key Vault Managed HSM provider (`AzureKMSProvider`). **Not declared** in `pyproject.toml`: imported lazily, and `AzureKMSProvider` raises an install hint when absent |
 | `cryptography`        | Apache-2.0 / BSD | Low-level cryptographic primitives (Ed25519 CER verification, RSA verify)       |
 | `hashlib` / `hmac`    | PSF        | Standard library digest implementations for SHA-256 hash chains and dev-mode HMAC    |
 
@@ -148,6 +152,8 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 | ------------------- | -------------- | ----------------------------------------------------------------------------------------- |
 | ~~`outlines`~~      | **REMOVED**    | Critical CVE-2025-69872. Replaced with native vLLM FSM guided decoding.                   |
 | ~~OTel Collector~~  | **DEPRECATED** | Removed in favor of direct OTLP gRPC export from application pods to Langfuse web service.|
+| ~~SLM verifier tier~~ | **REMOVED** (`7ab1acd`) | The Small Language Model semantic-similarity sidecar was deleted along with its `[slm]` extra (`flask`, `sentence-transformers`, `torch` and the transitive `nvidia-*` suite) and its Dockerfile and Terraform module. No SLM package remains in the tree. Active backing verifiers are OPA, CBF, multi-agent consensus, and the TLA+ formal models. |
+| ~~`sentence-transformers`~~ | **REMOVED** (`7ab1acd`) | Backed the former Stage 2.5 embedding-based semantic injection scorer (~2 GB transitive footprint). Stage 2 pure-regex detection is retained. Adopters needing semantic detection implement it as a Layer 3 adapter — see [`ADR-2026-09-19-001`](../adr/ADR-2026-09-19-001-remove-sentence-transformers-from-core.md). |
 
 ---
 
@@ -162,6 +168,7 @@ Third-party compliance, attestation, and actuator provider adapters live in `src
 | **Provider 03** | `src/integrations/provider_03/` | JCS (RFC 8785) evidence normalization and decision governance adapter                                     | Implemented |
 | **Provider 05** | `src/integrations/provider_05/` | Verifiable Execution Evidence Pack; RFC-3161 cryptographic evidence packages with 3 axioms               | Implemented |
 | **Provider 06** | `src/integrations/provider_06/` | Tri-state deterministic verifier adapter (`PASS`/`REVIEW`/`BLOCKED`) with DeferQueue parking integration | Implemented |
+| **Provider 07** | `src/integrations/provider_07/` | Bayesian causal suitability adapter; `Provider07NormativeProvider` + `Provider07JwksClient` with `kid`-resolved signature verification | Implemented |
 | **Actuator 01** | `src/integrations/actuator_01/` | Actuator-side vendor adapter; envelope builder and signature verification for sealed execution            | Implemented |
 | **Storage GCS** | `src/integrations/storage_gcs/` | Google Cloud Storage cold-store backend for evidence archives                                             | Implemented |
 | **Storage S3**  | `src/integrations/storage_s3/`  | AWS S3 / MinIO cold-store backend for evidence archives                                                   | Implemented |
@@ -173,7 +180,25 @@ Third-party compliance, attestation, and actuator provider adapters live in `src
 4. **Tri-State / Review Mapping**: Upstream non-binary verdicts (`REVIEW`, `ESCALATE`) map to `ValidationResult(admitted=False, findings=[{"needs_human_review": True, ...}])` for parking in `DeferQueue`.
 5. **Fail-Closed Semantics**: Network timeouts, parsing failures, and HTTP errors always fail closed.
 6. **Sidecar & UDS Architecture**: Production high-throughput adapters run as sidecar containers over Unix Domain Sockets (UDS) for sub-millisecond latency.
-7. **Hermetic Testing**: All unit tests run against mock clients (`respx`); no live external API calls in PR CI.
+7. **Hermetic Unit Testing**: Adapter *unit* tests run against mocked transports (`respx`). Tests marked `partner_integration` / `live_external` are excluded from hermetic runs and must execute over the wire against live partner sandboxes.
+
+### 5.2 Distributable Client SDK (`packages/cage-client/`)
+
+The policy-enforcement-point client is shipped as a standalone, independently installable package so that adopters can govern their own LangGraph applications without vendoring the CAGE kernel.
+
+| Attribute | Value |
+| --------- | ----- |
+| **Distribution name** | `cage-client` v0.1.0 (Apache-2.0) |
+| **Source root** | [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client) |
+| **Runtime dependencies** | `httpx>=0.27.0`, `pydantic>=2.0.0`, `cryptography>=41.0.0` — three packages only |
+| **Optional extras** | `langgraph` (`langgraph`, `langchain-core`), `http2` (`h2`), `all` |
+| **Python floor** | $\ge 3.10$ |
+| **Build command** | `make build-client-sdk` (`cd packages/cage-client && uv build`) |
+
+Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client): `core.py` exposes `CageClient.validate_action()`; `transport.py` and `envelope.py` carry the wire layer; `crypto.py` performs routing-seal verification; `exceptions.py` defines `PolicyViolationException`, `DeferralPending`, `RoutingSealVerificationError` and the `CageGatewayError` base; and the `adapters` subpackage provides the `@cage_guard` LangGraph decorator.
+
+> [!NOTE]
+> An in-tree mirror of the same client lives at [`src/gateway/client/`](../../src/gateway/client) and is what the reference advisor imports (`from src.gateway.client.adapters.langgraph import cage_guard`). The two trees are near-identical but not byte-identical; `packages/cage-client/` is the published artifact.
 
 ---
 
