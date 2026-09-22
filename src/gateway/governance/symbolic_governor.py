@@ -2427,6 +2427,9 @@ class SymbolicGovernor:
                             defer_token,
                             latency_ms,
                         )
+                        # Extract agent_id from _caller_principal
+                        agent_id = params.get("_caller_principal", "")
+
                         return {
                             "verdict": GovernanceDecision.DEFER,
                             "violations": violations,
@@ -2438,6 +2441,7 @@ class SymbolicGovernor:
                             "defer_token": defer_token,
                             "deferrable": classification_meta.get("deferrable", True),
                             "retry_after_seconds": 300,  # 5 minute default
+                            "agent_id": agent_id,
                         }
 
                     # ── NARROW path (Phase 1.3 — partial-authority/clamped execution) ──
@@ -2492,11 +2496,15 @@ class SymbolicGovernor:
                             constraints_applied,
                             latency_ms,
                         )
+                        # Extract agent_id from _caller_principal
+                        agent_id = params.get("_caller_principal", "")
+
                         return {
                             "verdict": GovernanceDecision.NARROW,
                             "violations": violations,
                             "seal": seal,
                             "latency_ms": latency_ms,
+                            "agent_id": agent_id,
                             "classification_meta": classification_meta,
                             # NARROW-specific fields
                             "original_params": original_params,
@@ -2651,6 +2659,9 @@ class SymbolicGovernor:
                             latency_ms,
                         )
 
+                        # Extract agent_id from _caller_principal
+                        agent_id = params.get("_caller_principal", "")
+
                         return {
                             "verdict": GovernanceDecision.PAUSE,
                             "violations": violations,
@@ -2666,6 +2677,7 @@ class SymbolicGovernor:
                             "retry_after_seconds": estimated_wait,
                             # Audit receipt
                             "pause_receipt": pause_receipt,
+                            "agent_id": agent_id,
                         }
 
                     # ── DENY path (default for hard violations) ────────────────
@@ -2739,11 +2751,15 @@ class SymbolicGovernor:
                     latency_ms,
                 )
 
+                # Extract agent_id from _caller_principal (injected by agent_gateway_adapter)
+                agent_id = params.get("_caller_principal", "")
+
                 return {
                     "verdict": GovernanceDecision.ALLOW,
                     "violations": [],
                     "seal": seal,
                     "latency_ms": latency_ms,
+                    "agent_id": agent_id,
                 }
             except GovernanceError:
                 raise

@@ -1129,7 +1129,27 @@ class CAGEAuthorizationServicer:
             # Extract caller principal from mTLS peer certificate (SC-8 / AC-3)
             # The peer principal is set by the service mesh from the SPIFFE ID
             # in the client certificate's SAN field.
-            caller_principal: str = request.attributes.source.principal or ""
+            # Validate it's a proper SPIFFE URI and fail closed if missing.
+            from src.gateway.governance.spiffe_extractor import (
+                extract_spiffe_uri_from_grpc_context,
+            )
+
+            try:
+                caller_principal = extract_spiffe_uri_from_grpc_context(request.attributes)
+            except Exception as spiffe_exc:
+                logger.error(
+                    "AgentGatewayAdapter: SPIFFE extraction failed: %s — fail-closed",
+                    spiffe_exc,
+                )
+                response_dict = _build_denied_response(
+                    401,
+                    {
+                        "error": "authentication_required",
+                        "message": "Client certificate with valid SPIFFE URI required",
+                        "detail": str(spiffe_exc),
+                    },
+                )
+                return _dict_to_check_response(response_dict)
         except Exception as exc:
             logger.warning(
                 "AgentGatewayAdapter: failed to extract request fields: %s — fail-closed",

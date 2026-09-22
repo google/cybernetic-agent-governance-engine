@@ -284,11 +284,32 @@ async def chat_completions(
             return JSONResponse(content=blocked, status_code=403)
         stamp_iso_control(span, tier=1, control="A.5.2", outcome="PASS")
 
-        # ── Step 2: Token Quota Enforcement (ISO 42001 Annex A.4) ──
+        # ── Step 2: Agent Identity Extraction (SC-8 mTLS Authentication) ──
+        # Extract verified SPIFFE URI from client TLS certificate.
+        # Requests without a verified SPIFFE certificate fail closed (401).
+        try:
+            from src.gateway.governance.spiffe_extractor import (
+                extract_spiffe_uri_from_asgi_scope,
+            )
+
+            agent_id = extract_spiffe_uri_from_asgi_scope(request.scope)
+        except Exception as spiffe_exc:
+            logger.error(
+                "Failed to extract SPIFFE identity from client certificate: %s — failing closed",
+                spiffe_exc,
+            )
+            stamp_iso_control(span, tier=0, control="SC-8", outcome="BLOCK")
+            return JSONResponse(
+                content={
+                    "error": "authentication_required",
+                    "message": "Client certificate with valid SPIFFE URI required",
+                    "detail": str(spiffe_exc),
+                },
+                status_code=401,
+            )
+
+        # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
-        agent_id = (
-            body.get("agent_id") or request.headers.get("X-Agent-ID", "") or "anonymous"
-        )
         token_delta = int(body.get("max_tokens", 0))
         quota_result = await _get_token_quota_proxy().check_and_increment(
             agent_id=agent_id,
@@ -316,11 +337,11 @@ async def chat_completions(
             )
         stamp_iso_control(span, tier=2, control="A.4", outcome="PASS")
 
-        # 3. NeMo input verification — runs for ALL requests.
+        # 4. NeMo input verification — runs for ALL requests.
         # Uses the full message list; falls back to last_user_msg for NeMo
         # rails that expect a single string (NeMo context is the last user msg
         # or a concatenation of all messages when no user message exists).
-        # Steps 3-6 are wrapped in a try/except so that any downstream
+        # Steps 4-7 are wrapped in a try/except so that any downstream
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
         nemo_input_text = last_user_msg if last_user_msg else all_messages_text
         try:
@@ -378,7 +399,7 @@ async def chat_completions(
             )
             raise
 
-        # 4. Forward to vLLM (R-06 fix — pooled client, streaming support)
+        # 5. Forward to vLLM (R-06 fix — pooled client, streaming support)
         api_base = _resolve_backend_url(model_id)
         api_key = config_manager.get("VLLM_API_KEY") or "EMPTY"
         target_url = f"{api_base.rstrip('/')}/chat/completions"
@@ -516,7 +537,7 @@ async def chat_completions(
             safe_err = _safe_error_response(exc)
             raise HTTPException(status_code=500, detail=safe_err)
 
-        # 5. Output filtering / PII masking
+        # 6. Output filtering / PII masking
         if vllm_response.get("choices"):
             choice = vllm_response["choices"][0]
             message = choice.get("message", {})

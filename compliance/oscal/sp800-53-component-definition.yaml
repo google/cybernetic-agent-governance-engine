@@ -104,17 +104,65 @@ component-definition:
                   value: system-specific
                 - name: dual-control-implementation-date
                   value: "2026-09-07"
+                - name: spiffe-enforcement-date
+                  value: "2026-09-22"
+                - name: breaking-change
+                  value: "removed X-Agent-ID and X-SPIFFE-ID header parsing; mTLS client certificate required"
+              description: |
+                AC-3 (Access Enforcement) is implemented through multiple layers:
+
+                1. **Kernel-Level SPIFFE Extraction (2026-09-22 BREAKING CHANGE)**:
+                   All public inference and AGW ingress endpoints enforce strict mTLS/SPIFFE
+                   validation. Agent identity is extracted exclusively from verified mTLS
+                   client certificate Subject Alternative Name (SAN) fields via
+                   src/gateway/governance/spiffe_extractor.py. HTTP header-based identity
+                   (X-Agent-ID, X-SPIFFE-ID) has been deprecated and removed.
+                   Requests without a valid SPIFFE SVID fail closed with 401 Unauthorized.
+
+                   The extract_spiffe_uri_from_asgi_scope() function validates:
+                   - Client certificate presence in ASGI scope["client_cert"]
+                   - SAN URI field extraction from certificate
+                   - SPIFFE URI pattern match (^spiffe://[trust-domain]/path)
+                   - Fails closed on any validation error (SpiffeExtractionError → 401)
+
+                2. **Agent-to-Agent (A2A) Authorization with SPIFFE Prefix Matching**:
+                   Parent agent SPIFFE IDs are evaluated against subagent authorization
+                   policies using declarative OPA Rego rules (config/opa/agent_catalog.rego).
+                   Subagents declare `authorized_parent_prefixes` arrays enabling hierarchical
+                   trust delegation without enumerating every parent SPIFFE ID.
+
+                   Example authorization flow:
+                   - Parent: spiffe://cluster.local/ns/agents/sa/orchestrator
+                   - Subagent authorized_parent_prefixes: ["spiffe://cluster.local/ns/agents/"]
+                   - OPA evaluation: startswith(parent_spiffe, prefix) → allow
+
+                3. **Dual-Control Authentication for DEFER Escalation**:
+                   defer_escalate() and defer_inject() enforce quorum authentication via
+                   DeferQueue.approve() as documented in previous implementation.
+
+                BREAKING CHANGE: Removed anonymous fallback and HTTP header identity parsing.
+                Unauthenticated requests fail closed (401/403). This change enforces cryptographic
+                identity binding at the kernel level, eliminating header spoofing attack surface.
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
                 - href: "#9fbe4cdd-f9b0-4635-bc7d-6a3a3beae05a"
                   rel: lula
+                - href: "../../src/gateway/governance/spiffe_extractor.py"
+                  rel: implementation
+                  text: "Kernel-level SPIFFE URI extraction from mTLS certificates"
+                - href: "../../config/opa/agent_catalog.rego"
+                  rel: implementation
+                  text: "A2A authorization with SPIFFE namespace prefix matching"
                 - href: "../../src/compliance_bridge/main.py"
                   rel: implementation
                   text: "defer_escalate() and defer_inject() authentication enforcement"
                 - href: "../../src/gateway/governance/defer_queue.py"
                   rel: implementation
                   text: "DeferQueue.approve() quorum enforcement"
+                - href: "../../tests/test_inference_proxy_extended.py"
+                  rel: test
+                  text: "SPIFFE enforcement and fail-closed authentication test coverage"
                 - href: "../../tests/test_defer_dual_control_auth.py"
                   rel: test
                   text: "Adversarial dual-control authentication test coverage"
@@ -574,35 +622,52 @@ component-definition:
             - uuid: "5f386745-cdda-431b-adec-850cdd899f3e"
               control-id: ia-3
               description: |
-                Device identification and authentication is implemented via HMAC-SHA256
-                seal verification per request in src/gateway/governance/contracts.py.
-                Each client must compute an HMAC-SHA256 seal over the request payload
-                using the shared CAGE_ROUTING_SEAL_SECRET. OPA validates the seal
-                before evaluating any policy rules; requests with missing or invalid
-                seals are rejected with HTTP 401. This ensures that only authenticated
-                client systems (devices) can submit governance requests, providing
-                cryptographic device identity verification without relying solely on
-                network-layer controls.
+                **IA-3 Device Identification and Authentication** is implemented through
+                cryptographic SPIFFE SVID extraction from mTLS substrate across all
+                ingress and inter-service communication paths:
 
-                SPIFFE workload identity (Work Item 2, 2026-09-07): Extends existing
-                SVID-based workload identity to the operator approval path. Linkerd
-                service mesh (deployment/k8s/linkerd-mtls-policy.yaml) provides mTLS
-                with SPIFFE SVID peer certificates for all pod-to-pod communication.
-                Each workload receives a SPIFFE ID in the format
-                spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
+                1. **Kernel-Level SPIFFE Extraction (2026-09-22 Extension)**:
+                   The linkerd mTLS mesh policy has been extended to all public ingress
+                   agent paths via strict SPIFFE SVID validation. The spiffe_extractor.py
+                   module (src/gateway/governance/spiffe_extractor.py) provides fail-closed
+                   cryptographic identity extraction from mTLS client certificates at the
+                   ASGI/gRPC transport layer, eliminating header-based identity spoofing
+                   attack surface.
 
-                Workload SVID authenticates the channel (pod-to-pod mTLS); OIDC sub
-                identifies the human operator in shared-console scenarios. This dual-layer
-                identity model (device via SVID, operator via OIDC) enables cryptographically
-                verifiable device authentication independent of operator identity, satisfying
-                IA-3 (device authentication) in conjunction with IA-2 (operator authentication).
+                   Extraction functions:
+                   - extract_spiffe_uri_from_asgi_scope(): FastAPI/Uvicorn inference proxy
+                   - extract_spiffe_uri_from_grpc_context(): Envoy ext_authz/AGW adapter
+                   - Both validate SAN URI fields and fail closed on missing/invalid certificates
 
-                The require_operator_identity() function (src/compliance_bridge/auth.py:88)
-                extracts SVID from request.attributes.source.principal (populated by
-                Linkerd) or x-cage-source-principal header (Envoy ext_authz integration).
-                This extends the workload identity assertion already documented in
-                src/gateway/governance/oscal_ssp_exporter.py:319 to cover the defer
-                escalation approval path, not just general governance requests.
+                   Requests without valid SPIFFE SVID fail with 401 Unauthorized.
+
+                2. **Linkerd Service Mesh mTLS Foundation**:
+                   Linkerd enforces pod-to-pod mutual TLS (mTLS) across all in-cluster
+                   communication (deployment/k8s/linkerd-mtls-policy.yaml). Every pod
+                   receives a SPIFFE ID in the format:
+                   spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
+
+                3. **HMAC Routing Seal Verification**:
+                   Device authentication is also enforced via HMAC-SHA256 seal verification
+                   in src/gateway/governance/contracts.py. Clients compute seals over request
+                   payloads using CAGE_ROUTING_SEAL_SECRET. Requests with missing/invalid
+                   seals are rejected with HTTP 401.
+
+                4. **Dual-Layer Identity Model**:
+                   Workload SVID authenticates the device/channel (IA-3); OIDC sub identifies
+                   the human operator in shared-console scenarios (IA-2). This separation
+                   enables cryptographically verifiable device authentication independent of
+                   operator identity.
+
+                5. **Compliance Bridge Operator Path**:
+                   The require_operator_identity() function (src/compliance_bridge/auth.py:88)
+                   extracts SVID from request.attributes.source.principal (Linkerd) or
+                   x-cage-source-principal header (Envoy), extending workload identity to
+                   the defer escalation approval path.
+
+                BREAKING CHANGE (2026-09-22): Removed X-Agent-ID and X-SPIFFE-ID header
+                parsing. All requests must present a valid mTLS client certificate with
+                SPIFFE URI in SAN field. Anonymous/unauthenticated requests fail closed (401).
               props:
                 - name: implementation-status
                   value: implemented
@@ -610,15 +675,25 @@ component-definition:
                   value: system-specific
                 - name: operator-path-extension-date
                   value: "2026-09-07"
+                - name: spiffe-enforcement-date
+                  value: "2026-09-22"
+                - name: breaking-change
+                  value: "removed X-Agent-ID and X-SPIFFE-ID header parsing; mTLS client certificate required"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-3"
                   rel: reference
+                - href: "../../src/gateway/governance/spiffe_extractor.py"
+                  rel: implementation
+                  text: "Kernel-level SPIFFE URI extraction from mTLS certificates"
                 - href: "../../deployment/k8s/linkerd-mtls-policy.yaml"
                   rel: configuration
                   text: "Linkerd SPIFFE trust domain and mTLS policy"
                 - href: "../../src/compliance_bridge/auth.py"
                   rel: implementation
                   text: "require_operator_identity() SVID extraction for approval path"
+                - href: "../../tests/test_inference_proxy_extended.py"
+                  rel: test
+                  text: "SPIFFE enforcement and fail-closed device authentication tests"
 
     # -----------------------------------------------------------------------
     # Component 4: Compliance Bridge (src/compliance_bridge/)
@@ -842,36 +917,55 @@ component-definition:
             - uuid: "ca8f96e2-69a3-4d6b-980c-962e73e075d8"
               control-id: ia-2
               description: |
-                Identification and authentication is inherited from GCP Workload Identity
-                Federation. Each Kubernetes Service Account is bound to a GCP IAM Service
-                Account via Workload Identity, providing cryptographically verifiable
-                identity for all pod-level API calls to GCP services. Cluster authentication
-                is managed via GKE cluster RBAC (deployment/k8s/lula-rbac.yaml,
-                deployment/k8s/service-account.yaml). Human operator access to the GKE
-                cluster requires GCP IAM authentication with MFA enforced at the
-                organizational policy level. GCP Identity-Aware Proxy (IAP) protects
-                any externally accessible management endpoints.
+                **IA-2 Identification and Authentication (Organizational Users)** is
+                implemented through multi-layer cryptographic identity extraction:
 
-                Application-level operator identification (Work Item 2, 2026-09-07): Human
-                operator identity for defer escalation approval path is extracted via
-                require_operator_identity() (src/compliance_bridge/auth.py:88). Identity
-                precedence is fail-closed and evaluated (not negotiated):
+                1. **GCP/GKE Platform Layer (inherited)**:
+                   Identification and authentication is inherited from GCP Workload Identity
+                   Federation. Each Kubernetes Service Account is bound to a GCP IAM Service
+                   Account via Workload Identity, providing cryptographically verifiable
+                   identity for all pod-level API calls to GCP services. Cluster authentication
+                   is managed via GKE cluster RBAC (deployment/k8s/lula-rbac.yaml,
+                   deployment/k8s/service-account.yaml). Human operator access to the GKE
+                   cluster requires GCP IAM authentication with MFA enforced at the
+                   organizational policy level. GCP Identity-Aware Proxy (IAP) protects
+                   any externally accessible management endpoints.
 
-                1. SPIFFE SVID (primary): Extracted from mTLS client certificate SAN via
-                   Linkerd service mesh. SVID format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
-                   The SVID is populated by Linkerd into request.attributes.source.principal
-                   or x-cage-source-principal header. Principal hash derived via SHA-256
-                   of complete SVID URI (line 118).
+                2. **Kernel-Level SPIFFE Extraction (2026-09-22 Extension)**:
+                   All public inference and AGW ingress endpoints enforce cryptographic
+                   SPIFFE SVID extraction from mTLS client certificate SAN fields via
+                   src/gateway/governance/spiffe_extractor.py. This provides fail-closed
+                   cryptographic identity verification at the transport layer, eliminating
+                   header-based identity assertion attack surface.
 
-                2. OIDC JWT (gated fallback): Only accepted when CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true.
-                   Identity extracted from JWT 'sub' claim pre-validated by upstream middleware.
-                   Principal hash derived via SHA-256 of sub claim value (line 140).
+                   Extraction paths:
+                   - extract_spiffe_uri_from_asgi_scope(): FastAPI/Uvicorn inference proxy
+                   - extract_spiffe_uri_from_grpc_context(): Envoy ext_authz/AGW adapter
 
-                3. Dev-mode synthetic: Requires dual-condition opt-in (CAGE_ENV=dev AND
-                   CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true). All synthetic principals
-                   carry auth_method="DEV_SYNTHETIC" and reserved urn:cage:dev: prefix
-                   enforcement (line 157-161). Production (CAGE_ENV=prod) never yields
-                   synthetic principals.
+                   BREAKING CHANGE: Removed X-Agent-ID and X-SPIFFE-ID header parsing.
+                   All requests must present valid mTLS client certificate. Unauthenticated
+                   requests fail closed with 401 Unauthorized.
+
+                3. **Application-Level Operator Identification (2026-09-07)**:
+                   Human operator identity for defer escalation approval path is extracted via
+                   require_operator_identity() (src/compliance_bridge/auth.py:88). Identity
+                   precedence is fail-closed and evaluated (not negotiated):
+
+                   a. SPIFFE SVID (primary): Extracted from mTLS client certificate SAN via
+                      Linkerd service mesh. SVID format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
+                      The SVID is populated by Linkerd into request.attributes.source.principal
+                      or x-cage-source-principal header. Principal hash derived via SHA-256
+                      of complete SVID URI (line 118).
+
+                   b. OIDC JWT (gated fallback): Only accepted when CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true.
+                      Identity extracted from JWT 'sub' claim pre-validated by upstream middleware.
+                      Principal hash derived via SHA-256 of sub claim value (line 140).
+
+                   c. Dev-mode synthetic: Requires dual-condition opt-in (CAGE_ENV=dev AND
+                      CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true). All synthetic principals
+                      carry auth_method="DEV_SYNTHETIC" and reserved urn:cage:dev: prefix
+                      enforcement (line 157-161). Production (CAGE_ENV=prod) never yields
+                      synthetic principals.
 
                 Identity rejection rules: Request-body identity assertion is forbidden
                 (breaking change from prior self-asserted operator_urn/session_id fields
@@ -886,9 +980,12 @@ component-definition:
                 provides tamper-evident binding between the approval record and the
                 transport-layer authentication substrate.
 
-                Alignment with IA-3 workload identity: This extends the existing SVID-based
-                workload identity (IA-3 control, already asserted in src/gateway/governance/oscal_ssp_exporter.py:319)
-                to the operator approval path. Workload SVID authenticates the channel
+                4. **Alignment with IA-3 Device Authentication**:
+                   SPIFFE SVID extraction provides dual-layer identity binding: IA-3 (device/workload
+                   via mTLS certificate) and IA-2 (operator via OIDC sub). The kernel-level
+                   SPIFFE extraction (2026-09-22) extends existing workload identity to all
+                   ingress paths, ensuring cryptographic device authentication independent of
+                   operator identity. Workload SVID authenticates the channel
                 (pod-to-pod mTLS via Linkerd); OIDC sub identifies the human operator in
                 shared-console scenarios where multiple operators use the same service account.
               props:

@@ -137,6 +137,13 @@ def proxy_deps(monkeypatch):
 
     nemo_safe = MagicMock(is_safe=True, reason="")
 
+    # Mock SPIFFE extractor to return a test SPIFFE URI
+    mock_spiffe_uri = "spiffe://cluster.local/ns/default/sa/test-agent"
+    monkeypatch.setattr(
+        "src.gateway.governance.spiffe_extractor.extract_spiffe_uri_from_asgi_scope",
+        lambda scope: mock_spiffe_uri,
+    )
+
     # Patch at the point-of-use (the imported name in the module)
     monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
     monkeypatch.setattr(_mod, "_get_token_quota_proxy", lambda: quota_proxy)
@@ -589,55 +596,46 @@ async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
 
 
 @pytest.mark.asyncio
-async def test_agent_id_from_body_used_for_quota(proxy_deps):
-    """agent_id from the request body is passed to quota check_and_increment."""
+async def test_agent_id_from_spiffe_cert_used_for_quota(proxy_deps):
+    """agent_id extracted from SPIFFE certificate is used for quota enforcement."""
     app = proxy_deps["app"]
     quota_proxy = proxy_deps["quota_proxy"]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
+        # Body agent_id is ignored - SPIFFE cert takes precedence
         await client.post(
             "/v1/chat/completions",
-            json=_chat_body(agent_id="agent-xyz"),
+            json=_chat_body(agent_id="ignored-body-value"),
         )
 
     call_args = quota_proxy.check_and_increment.call_args
-    assert call_args.kwargs.get("agent_id") == "agent-xyz"
+    # Agent ID comes from mocked SPIFFE certificate, not from body
+    assert call_args.kwargs.get("agent_id") == "spiffe://cluster.local/ns/default/sa/test-agent"
 
 
 @pytest.mark.asyncio
-async def test_anonymous_agent_id_when_not_provided(proxy_deps):
-    """When no agent_id is in body or headers, 'anonymous' is used."""
-    app = proxy_deps["app"]
-    quota_proxy = proxy_deps["quota_proxy"]
+async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
+    """Requests without SPIFFE certificate are rejected with 401."""
+    import src.gateway.server.inference_proxy as _mod
+    from src.gateway.server.inference_proxy import inference_app
+
+    # Do NOT mock the SPIFFE extractor - let it fail naturally
+    # Mock other dependencies to isolate the SPIFFE check
+    monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
+    monkeypatch.setattr(_mod, "stamp_iso_control", MagicMock())
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=inference_app), base_url="http://test"
     ) as client:
-        await client.post("/v1/chat/completions", json=_chat_body())
-
-    call_args = quota_proxy.check_and_increment.call_args
-    assert call_args.kwargs.get("agent_id") == "anonymous"
-
-
-@pytest.mark.asyncio
-async def test_agent_id_from_header_used_when_body_omits_it(proxy_deps):
-    """X-Agent-ID header is respected when body lacks agent_id."""
-    app = proxy_deps["app"]
-    quota_proxy = proxy_deps["quota_proxy"]
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        await client.post(
-            "/v1/chat/completions",
-            json=_chat_body(),
-            headers={"X-Agent-ID": "header-agent"},
-        )
-
-    call_args = quota_proxy.check_and_increment.call_args
-    assert call_args.kwargs.get("agent_id") == "header-agent"
+        response = await client.post("/v1/chat/completions", json=_chat_body())
+        
+        # Should fail with 401 Unauthorized due to missing SPIFFE certificate
+        assert response.status_code == 401
+        data = response.json()
+        assert data.get("error") == "authentication_required"
+        assert "SPIFFE" in data.get("message", "")
 
 
 # ---------------------------------------------------------------------------
