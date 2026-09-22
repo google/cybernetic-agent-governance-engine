@@ -35,6 +35,8 @@ jobs:
     name: Hermetic Governance Pipeline Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      CAGE_ENV: test
 
     steps:
       - name: Checkout repository
