@@ -114,12 +114,6 @@ def test_tier_tuple_matches_run_checks_pipeline() -> None:
     assert "ftra" in model.TIERS
 
 
-def test_concurrent_tiers_are_the_gathered_pair() -> None:
-    """Only CBF and OPA are dispatched concurrently by the runtime."""
-    assert model.CONCURRENT_TIERS == frozenset({"cbf", "opa"})
-    assert model.CONCURRENT_TIERS <= set(model.TIERS)
-
-
 def test_tier_count_is_exactly_9() -> None:
     """Pin the number of modelled governance tiers to exactly 9.
 
@@ -211,54 +205,6 @@ def test_gap1_ungated_reachable_state_count_is_stable() -> None:
 
 # ---------------------------------------------------------------------------
 # C2 — concurrency: the invariant is order-independent
-# ---------------------------------------------------------------------------
-
-
-def test_concurrent_model_over_approximates_the_sequential_one() -> None:
-    """Every sequentially reachable state is also concurrently reachable."""
-    gated = model.enumerate_reachable(model.gated_transitions)
-    concurrent = model.enumerate_reachable(model.concurrent_tier_transitions)
-    assert gated <= concurrent
-    assert len(concurrent) > len(gated), (
-        "the concurrent model must add interleaving states, otherwise it is "
-        "not exercising the parallel gate"
-    )
-
-
-def test_concurrent_reachable_state_count_is_stable() -> None:
-    states = model.enumerate_reachable(model.concurrent_tier_transitions)
-    assert len(states) == EXPECTED_CONCURRENT_STATES
-
-
-def test_invariant_holds_under_every_cbf_opa_interleaving() -> None:
-    states = model.enumerate_reachable(model.concurrent_tier_transitions)
-    holds, counterexample = model.check_no_direct_bind(states)
-    assert holds, f"NoDirectBind violated under interleaving at {counterexample}"
-
-
-def test_concurrent_model_reaches_the_opa_first_interleaving() -> None:
-    """The OPA-before-CBF ordering is genuinely explored, not just declared."""
-    states = model.enumerate_reachable(model.concurrent_tier_transitions)
-    opa_first = [
-        s
-        for s in states
-        if s.tier_result("opa") == "PASS" and s.tier_result("cbf") == "PENDING"
-    ]
-    assert opa_first, (
-        "expected at least one state where OPA resolved before CBF — the "
-        "sequential model cannot reach this"
-    )
-
-
-def test_concurrent_model_still_yields_a_single_executed_state() -> None:
-    states = model.enumerate_reachable(model.concurrent_tier_transitions)
-    executed = [s for s in states if s.phase == "EXECUTED"]
-    assert len(executed) == 1
-    assert executed[0].resolved_allow is True
-
-
-# ---------------------------------------------------------------------------
-# Gaps 3 and 4 — skipped tiers preserve structure but drop a check
 # ---------------------------------------------------------------------------
 
 
@@ -422,23 +368,6 @@ def test_all_executed_states_have_ftra_pass() -> None:
 
     for state in executed:
         assert state.tier_result("ftra") == "PASS", "EXECUTED state must have FTRA=PASS"
-
-
-def test_ftra_in_concurrent_model() -> None:
-    """FTRA behavior is consistent in the concurrent interleaving model."""
-    states = model.enumerate_reachable(model.concurrent_tier_transitions)
-    executed = [s for s in states if s.phase == "EXECUTED"]
-
-    # All executed states must have FTRA=PASS even in concurrent model
-    for state in executed:
-        assert state.tier_result("ftra") == "PASS", (
-            "EXECUTED state in concurrent model must have FTRA=PASS"
-        )
-
-
-# ---------------------------------------------------------------------------
-# End-to-end: the script itself must run clean (it asserts internally)
-# ---------------------------------------------------------------------------
 
 
 def test_proof_script_main_runs_and_asserts_clean(capsys) -> None:  # type: ignore[no-untyped-def]

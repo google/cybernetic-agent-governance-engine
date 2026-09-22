@@ -34,10 +34,13 @@ import os
 from .cold_store import EvidenceColdStore
 from .null_cold_store import NullColdStore
 from .residency import resolve_cold_store_bucket
+from .signer import EvidenceSigner
+from .null_signer import NullSigner
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_COLD_STORE: EvidenceColdStore | None = None
+_DEFAULT_SIGNER: EvidenceSigner | None = None
 
 
 def get_cold_store(
@@ -50,40 +53,14 @@ def get_cold_store(
     timeout_seconds: int | None = None,
     use_ssl: bool = True,
 ) -> EvidenceColdStore:
-    """Construct an EvidenceColdStore instance based on environment or parameters.
-
-    Selection Priority:
-        1. Explicit `backend` argument.
-        2. `EVIDENCE_COLD_STORE` environment variable.
-        3. Default to `"null"`.
-
-    Args:
-        backend: Storage backend ("gcs", "s3", "null").
-        bucket: Explicit bucket name. If None, resolved via residency rules.
-        region: CAGE deployment region ("US_FED", "EU_ECB", "APAC_MAS", "LOCAL").
-        location: Cloud location/zone (e.g. "europe-west1", "asia-southeast1").
-        cmek_key: Optional Cloud KMS key resource ID for server-side encryption.
-        endpoint: S3-compatible endpoint URL (for MinIO, AWS, Ceph, etc.).
-        timeout_seconds: Timeout for storage I/O operations.
-        use_ssl: Whether to enforce TLS for S3-compatible endpoints.
-
-    Returns:
-        Instance conforming to EvidenceColdStore protocol.
-
-    Raises:
-        ValueError: If backend is unrecognized.
-        MissingBucketConfigError: If required bucket cannot be resolved.
-        ResidencyViolationError: If resolved bucket violates jurisdictional rules.
-    """
+    """Construct an EvidenceColdStore instance based on environment or parameters."""
     selected_backend = (
         (backend or os.environ.get("EVIDENCE_COLD_STORE") or "null").lower().strip()
     )
 
-    # Null store bypasses cloud bucket resolution
     if selected_backend == "null":
         return NullColdStore()
 
-    # Resolve bucket with residency verification for cloud backends
     resolved_bucket = bucket or resolve_cold_store_bucket(
         region=region,
         location=location,
@@ -153,3 +130,42 @@ def reset_default_cold_store() -> None:
     """Reset the singleton instance (used for test isolation)."""
     global _DEFAULT_COLD_STORE
     _DEFAULT_COLD_STORE = None
+
+
+def get_evidence_signer(backend: str | None = None) -> EvidenceSigner:
+    """Construct an EvidenceSigner instance based on environment or parameters."""
+    # Convert 'true' to 'gcp_kms' for backward compatibility
+    env_signer = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower().strip()
+    if env_signer == "true":
+        env_signer = "gcp_kms"
+    elif env_signer == "false":
+        env_signer = "null"
+        
+    selected_backend = (backend or env_signer).lower().strip()
+
+    if selected_backend == "null":
+        return NullSigner()
+    
+    if selected_backend == "gcp_kms":
+        # Lazy import of compliance bridge signer
+        from src.compliance_bridge.kms_batch_signer import get_batch_signer
+        return get_batch_signer()
+        
+    raise ValueError(
+        f"Unsupported signer backend: '{selected_backend}'. "
+        "Must be one of: 'gcp_kms', 'null'."
+    )
+
+
+def get_default_signer() -> EvidenceSigner:
+    """Return or initialize the singleton default EvidenceSigner instance."""
+    global _DEFAULT_SIGNER
+    if _DEFAULT_SIGNER is None:
+        _DEFAULT_SIGNER = get_evidence_signer()
+    return _DEFAULT_SIGNER
+
+
+def reset_default_signer() -> None:
+    """Reset the singleton instance (used for test isolation)."""
+    global _DEFAULT_SIGNER
+    _DEFAULT_SIGNER = None

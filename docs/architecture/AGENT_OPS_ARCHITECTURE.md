@@ -210,7 +210,7 @@ Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TO
 |------|---------|
 | `approval` ([`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py)) | Suspends the LangGraph StateGraph by calling the dynamic `interrupt()` primitive (`langgraph.types.interrupt`) and surfaces the trade payload to a reviewer |
 | `post_hitl_rehydrate` | Fetches a live market quote at actuation time (yfinance `fast_info["last_price"]`); computes price drift vs. stale approval price |
-| `post_hitl_revalidate` | Re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** with fresh market data and live cash balance; checks drift against reviewer's `max_slippage_pct` |
+| `post_hitl_revalidate` | Re-runs **Tier 3a (CBF)** and **Tier 3b (OPA)** only with fresh market data and live cash balance; checks drift against reviewer's `max_slippage_pct` |
 | `drift_blocked` | Fail-closed terminal node reached when drift or re-validation blocks the trade |
 
 > [!IMPORTANT]
@@ -226,7 +226,7 @@ Reviewer resumes the thread: Command(resume={"approved": true, "max_slippage_pct
         ↓ (if not approved → rejection_node → END)
 post_hitl_rehydrate — fetch live price; compute drift_pct
         ↓ (if drift_pct > max_slippage_pct → drift_blocked)
-post_hitl_revalidate — re-run Tier 2 (CBF) + Tier 4 (OPA) with fresh params
+post_hitl_revalidate — re-run Tier 3a (CBF) + Tier 3b (OPA) with fresh params
         ↓ (if governance violation → drift_blocked)
 executor — execute trade
 ```

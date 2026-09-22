@@ -40,10 +40,23 @@ from pydantic import ValidationError
 
 
 class TestApprovalResumeRequest:
+    def test_approval_node_raises_on_empty_rationale(self):
+        from src.governed_financial_advisor.graph.nodes.approval_node import approval_node
+        from pydantic import ValidationError
+        from unittest.mock import patch
+        
+        # Simulate interrupt() returning a decision with empty rationale
+        with patch("src.governed_financial_advisor.graph.nodes.approval_node.interrupt", return_value={"approved": True, "reviewer": "test", "rationale": ""}):
+            try:
+                approval_node({"execution_plan_output": {}, "evaluation_result": {}})
+                assert False, "Should have raised ValidationError"
+            except ValidationError as e:
+                assert "rationale is required and must be a non-empty string" in str(e)
+
     """Unit tests for the Pydantic model validation."""
 
     def _load(self):
-        from src.governed_financial_advisor.server import ApprovalResumeRequest
+        from src.governed_financial_advisor.graph.nodes.approval_contract import ApprovalDecision as ApprovalResumeRequest
 
         return ApprovalResumeRequest
 
@@ -156,26 +169,6 @@ class TestApprovalNodeRationale:
         assert decision["approved"] is False
         assert cmd.goto == "rejection"
 
-    def test_empty_rationale_stored_but_does_not_crash(self):
-        """Backward compat: node stores empty rationale without crashing.
-        Validation is the API layer's responsibility; the node is not the gate."""
-        cmd = self._call_node_with_decision(
-            {
-                "approved": True,
-                "reviewer": "legacy@example.com",
-                # rationale absent — simulates old client
-            }
-        )
-        decision = cmd.update["approval_decision"]
-        assert decision.get("rationale", "") == ""
-
-
-# ---------------------------------------------------------------------------
-# 3. rejection_node — rationale shown in rejection message
-# ---------------------------------------------------------------------------
-
-
-class TestRejectionNodeRationale:
     def test_rationale_appears_in_rejection_message(self):
         from src.governed_financial_advisor.graph.nodes.approval_node import (
             rejection_node,

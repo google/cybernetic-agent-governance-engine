@@ -98,15 +98,15 @@ class TestTranslateAAIF:
     def test_known_stage_maps_to_correct_tier(self):
         stage_map, _ = translate_aaif(_MINIMAL_AAIF_SPEC)
         assert "input_validation" in stage_map
-        assert stage_map["input_validation"]["tier"] == 0
+        assert stage_map["input_validation"]["tier"] == 0.5
 
-    def test_policy_check_maps_to_tier_2(self):
+    def test_policy_check_maps_to_tier_3_5(self):
         stage_map, _ = translate_aaif(_MULTI_STAGE_AAIF_SPEC)
-        assert stage_map["policy_check"]["tier"] == 2
+        assert stage_map["policy_check"]["tier"] == 3.5
 
-    def test_access_control_maps_to_tier_3(self):
+    def test_access_control_maps_to_tier_3_5(self):
         stage_map, _ = translate_aaif(_MULTI_STAGE_AAIF_SPEC)
-        assert stage_map["access_control"]["tier"] == 3
+        assert stage_map["access_control"]["tier"] == 3.5
 
     def test_governance_hook_produces_uca(self):
         _, ucas = translate_aaif(_MINIMAL_AAIF_SPEC)
@@ -120,7 +120,7 @@ class TestTranslateAAIF:
     def test_uca_has_aaif_stage_metadata(self):
         _, ucas = translate_aaif(_MINIMAL_AAIF_SPEC)
         assert ucas[0]["_aaif_stage"] == "input_validation"
-        assert ucas[0]["_aaif_tier"] == 0
+        assert ucas[0]["_aaif_tier"] == 0.5
 
     def test_unknown_stage_gets_tier_minus_one(self):
         stage_map, _ = translate_aaif(_UNKNOWN_STAGE_AAIF_SPEC)

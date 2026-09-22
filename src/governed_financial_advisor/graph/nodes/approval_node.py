@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from langgraph.types import Command, interrupt
+from src.governed_financial_advisor.graph.nodes.approval_contract import ApprovalDecision
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,15 @@ def approval_node(state: dict[str, Any]) -> Command:
     # On resume it returns the value supplied via Command(resume={...}).
     decision: dict[str, Any] = interrupt(trade_payload)
 
-    approved: bool = bool(decision.get("approved", False))
-    reviewer: str = decision.get("reviewer", "unknown")
-    rationale: str = decision.get("rationale", "")
-    comment: str = decision.get("comment", "")
+    # Enforce mandatory rationale validation via ApprovalDecision contract
+    # A resume payload without a rationale will raise a ValidationError here,
+    # protecting the compliance chain from unexplained approvals.
+    validated_decision = ApprovalDecision(**decision)
+
+    approved: bool = validated_decision.approved
+    reviewer: str = validated_decision.reviewer
+    rationale: str = validated_decision.rationale
+    comment: str = validated_decision.comment
     timestamp: str = decision.get("timestamp", datetime.now(timezone.utc).isoformat())
 
     approval_decision: dict[str, Any] = {
@@ -87,14 +93,14 @@ def approval_node(state: dict[str, Any]) -> Command:
         "rationale": rationale,
         "comment": comment,
         "timestamp": timestamp,
-        "max_slippage_pct": float(decision.get("max_slippage_pct", 2.0)),
+        "max_slippage_pct": validated_decision.max_slippage_pct,
     }
 
     logger.info(
         "[ApprovalNode] Decision received: approved=%s reviewer=%s rationale=%r",
         approved,
         reviewer,
-        rationale[:120] if rationale else "(empty — compliance gap)",
+        rationale[:120],
     )
 
     if approved:

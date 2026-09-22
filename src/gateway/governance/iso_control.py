@@ -158,7 +158,7 @@ def _persist_evaluation(result: dict) -> None:
 
 def stamp_iso_control(
     span: Any,
-    tier: int,
+    ingress_stage: int,
     control: str,
     outcome: str,
 ) -> None:
@@ -182,7 +182,7 @@ def stamp_iso_control(
         span:     An ``opentelemetry.trace.Span`` instance (or any object
                   exposing ``set_attribute``).  If falsy the function returns
                   immediately without raising.
-        tier:     Integer enforcement tier.
+        ingress_stage: Integer enforcement ingress stage.
                   1 = Tier-1 heuristic (Aho-Corasick)
                   2 = Tier-2 agentic confidence / structural corroboration
                   3 = Tier-3 policy (OPA / NeMo)
@@ -195,11 +195,11 @@ def stamp_iso_control(
 
     region = _get_deployment_region()
     timestamp_ms: int = int(time.time() * 1000)
-    evidence_chain: str = f"{control}:{tier}:{outcome}"
+    evidence_chain: str = f"{control}:{ingress_stage}:{outcome}"
 
     # Universal: ISO 42001 evidence always produced (R-1 — no region guard).
     span.set_attribute("iso42001.control", control)
-    span.set_attribute("iso42001.tier", tier)
+    span.set_attribute("iso42001.ingress_stage", ingress_stage)
     span.set_attribute("iso42001.outcome", outcome)
     span.set_attribute("iso42001.timestamp", timestamp_ms)
     span.set_attribute("iso42001.gateway_version", _GATEWAY_VERSION)
@@ -225,9 +225,9 @@ def stamp_iso_control(
             span.set_attribute("cage.mas_feat_control", mas_ref)
 
     logger.debug(
-        "stamp_iso_control: control=%s tier=%d outcome=%s region=%s",
+        "stamp_iso_control: control=%s ingress_stage=%d outcome=%s region=%s",
         control,
-        tier,
+        ingress_stage,
         outcome,
         region,
     )
@@ -235,7 +235,7 @@ def stamp_iso_control(
     # Build evaluation result dict and persist durably
     result = {
         "control": control,
-        "tier": tier,
+        "ingress_stage": ingress_stage,
         "outcome": outcome,
         "timestamp_ms": timestamp_ms,
         "gateway_version": _GATEWAY_VERSION,

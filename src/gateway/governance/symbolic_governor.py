@@ -193,7 +193,7 @@ class GovernanceError(Exception):
 # FRIA Confidence-Starvation Boundary — three-zone enforcement thresholds
 # ---------------------------------------------------------------------------
 # These constants define the three enforcement zones for the adaptive FRIA
-# (Fundamental Rights Impact Assessment) tier (Tier 6b of the governance
+# (Fundamental Rights Impact Assessment) tier (Tier 7 of the governance
 # pipeline).  They are read at module load time and may be overridden via
 # environment variables for staged rollouts or regional tuning.
 #
@@ -2026,7 +2026,7 @@ class SymbolicGovernor:
                         opa_span.record_exception(exc)
                         raise
 
-            # Fire CBF and OPA concurrently — same as Tier 3 in the full pipeline.
+            # Fire CBF and OPA concurrently — same as Tiers 3a and 3b in the full pipeline.
             _t_parallel_start = time.perf_counter()
             _gather_results2 = await asyncio.gather(
                 _cbf_revalidate(),
@@ -2254,7 +2254,7 @@ class SymbolicGovernor:
         Confidence, CBF, OPA, Fiscal Limit Pre-Reservation, Consensus, Causal,
         and FRIA — before issuing the routing seal.
 
-        Previously this method ran only Tier 3 (CBF and OPA), which
+        Previously this method ran only Tiers 3a and 3b (CBF and OPA), which
         meant 5 of 7 substantive tiers were bypassed while the seal implied full
         governance approval.  That gap is now closed: the routing seal is issued
         ONLY after ``_run_checks()`` completes successfully across all tiers.

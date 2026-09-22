@@ -156,7 +156,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                 span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
                 stamp_iso_control(
                     span,
-                    tier=config.iso_tier,
+                    ingress_stage=config.iso_tier,
                     control=config.iso_control,
                     outcome="PASS",
                 )
@@ -188,7 +188,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                     span.set_attribute("governance.blocked", True)
                     stamp_iso_control(
                         span,
-                        tier=config.iso_tier,
+                        ingress_stage=config.iso_tier,
                         control=config.iso_control,
                         outcome="ESCALATE",
                     )
@@ -214,7 +214,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                 span.set_status(trace.Status(trace.StatusCode.ERROR, msg))
                 stamp_iso_control(
                     span,
-                    tier=config.iso_tier,
+                    ingress_stage=config.iso_tier,
                     control=config.iso_control,
                     outcome="BLOCK",
                 )
@@ -238,7 +238,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                 span.set_attribute("governance.blocked", True)
                 stamp_iso_control(
                     span,
-                    tier=config.iso_tier,
+                    ingress_stage=config.iso_tier,
                     control=config.iso_control,
                     outcome="BLOCK",
                 )

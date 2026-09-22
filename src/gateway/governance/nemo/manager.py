@@ -578,7 +578,7 @@ async def validate_with_nemo(
                 OBSERVATION_METADATA_FALLBACK_REASON,
                 "NeMo_config_parse_failed",
             )
-            stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
+            stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="DEGRADED")
 
             if CAGE_SEAL_ENFORCEMENT != "log":
                 # Fail-closed: in enforce mode a circuit-breaker trip must reject
@@ -624,7 +624,7 @@ async def validate_with_nemo(
             span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "BLOCKED")
             span.set_attribute(TRACE_METADATA_RISK_VERDICT, "REJECTED")
             span.set_attribute(TRACE_METADATA_GUARDRAILS_INTERVENED, True)
-            stamp_iso_control(span, tier=1, control="A.5.2", outcome="BLOCK")
+            stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="BLOCK")
             if token is not None:
                 streaming_handler_var.reset(token)
             return (
@@ -691,7 +691,7 @@ async def validate_with_nemo(
             span.set_attribute("guardrails.deterministic_verdict", is_deterministic)
             stamp_iso_control(
                 span,
-                tier=3,
+                ingress_stage=3,
                 control="A.6.1.2",
                 outcome="PASS" if is_safe else "BLOCK",
             )
@@ -835,7 +835,7 @@ async def verify_input(
         if _detect_bypass(text):
             logger.warning("🛑 Blocking systemic bypass attempt: %s...", text[:50])
             span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "BLOCKED")
-            stamp_iso_control(span, tier=1, control="A.5.2", outcome="BLOCK")
+            stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="BLOCK")
             return SafetyResult(
                 is_safe=False,
                 reason="STPA Violation UCA-7: Request contains systemic bypass attempt.",
@@ -851,7 +851,7 @@ async def verify_input(
                 OBSERVATION_METADATA_FALLBACK_REASON,
                 "NeMo_config_parse_failed",
             )
-            stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
+            stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="DEGRADED")
 
             if CAGE_SEAL_ENFORCEMENT != "log":
                 # Fail-closed: in enforce mode a circuit-breaker trip must reject
@@ -907,11 +907,11 @@ async def verify_input(
 
             if bot_response:
                 span.set_attribute("output", bot_response)
-                stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="BLOCK")
+                stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK")
                 return SafetyResult(is_safe=False, reason=bot_response)
 
             span.set_attribute("output", "SAFE")
-            stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="PASS")
+            stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")
             return SafetyResult(is_safe=True)
 
         except Exception as exc:
@@ -962,7 +962,7 @@ async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
                 cage_enforcement,
             )
             span.set_attribute("output", scrubbed_text)
-            stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="REDACT")
+            stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="REDACT")
             return scrubbed_text
 
         try:
@@ -974,7 +974,7 @@ async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
             # Only replace if NeMo returned a non-trivial response different from the input
             final_out = out_content if out_content else scrubbed_text
             span.set_attribute("output", final_out)
-            stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="REDACT")
+            stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="REDACT")
             return final_out
 
         except Exception as exc:
@@ -1047,7 +1047,7 @@ async def validate_output_semantics(
                 OBSERVATION_METADATA_FALLBACK_REASON,
                 "NeMo_config_parse_failed",
             )
-            stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
+            stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="DEGRADED")
 
             if cage_enforcement == "enforce":
                 logger.warning(
@@ -1089,7 +1089,7 @@ async def validate_output_semantics(
                 # Empty response — treat as safe (NeMo passed through without intervention).
                 span.set_attribute("output.semantic_verdict", "SAFE_EMPTY_RESPONSE")
                 span.set_attribute("output.semantic_safe", True)
-                stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="PASS")
+                stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")
                 return True, ""
 
             verdict_upper = verdict_raw.upper()
@@ -1108,13 +1108,13 @@ async def validate_output_semantics(
                 span.set_attribute("output.semantic_verdict", "UNSAFE")
                 span.set_attribute("output.semantic_safe", False)
                 span.set_attribute("output.semantic_reason", reason)
-                stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="BLOCK")
+                stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK")
                 return False, reason
             else:
                 # "SAFE" or any non-UNSAFE response — treat as safe.
                 span.set_attribute("output.semantic_verdict", "SAFE")
                 span.set_attribute("output.semantic_safe", True)
-                stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="PASS")
+                stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")
                 return True, ""
 
         except Exception as exc:

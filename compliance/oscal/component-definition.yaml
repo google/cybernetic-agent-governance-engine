@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-09-14T01:09:18Z'
+    last-modified: '2026-09-22T23:23:29Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -27,10 +27,10 @@ component-definition:
   - uuid: b2c3d4e5-f6a7-8901-bcde-f12345678901
     title: TypeScript Governance Gateway
     type: software
-    description: 'Mastra-based Express gateway enforcing multi-tier shielding:
-      Tier 1 Aho-Corasick heuristic, NeMo Guardrails, and Tier 3 OPA policy
-      enforcement. All enforcement events are tagged with ISO 42001 control IDs and
-      emitted as OTel spans to Langfuse.
+    description: 'Mastra-based Express gateway enforcing multi-tier shielding: Tier
+      1 Aho-Corasick heuristic, NeMo Guardrails, and Tier 3 OPA policy enforcement.
+      All enforcement events are tagged with ISO 42001 control IDs and emitted as
+      OTel spans to Langfuse.
 
       '
     purpose: 'Acts as the primary ingress enforcement layer for all AI requests. Blocks
@@ -47,8 +47,9 @@ component-definition:
       implemented-requirements:
       - uuid: d4e5f6a7-b8c9-0123-defa-234567890123
         control-id: A.5.2
-        description: 'Aho-Corasick Tier-1 and NeMo Guardrails block toxic/injected content
-          at ingress. All blocks are tagged iso42001.control_id=A.5.2 on OTel spans.
+        description: 'Aho-Corasick Tier-1 and NeMo Guardrails block toxic/injected
+          content at ingress. All blocks are tagged iso42001.control_id=A.5.2 on OTel
+          spans.
 
           '
         remarks: 'Implemented in stpaGovernanceMiddleware.ts: stampIsoControl(TIER_1_HEURISTIC).
@@ -449,28 +450,28 @@ component-definition:
       evidence disclosure to external normative providers and auditors. Implements
       a three-posture disclosure model: PUBLIC (unrestricted access, public internet
       distribution), PRIVATE (authenticated access only, no public distribution),
-      and EMBARGO (time-locked disclosure with explicit release date). Evidence
-      records are indexed via SHA-256 and SHA-512 multihash identifiers, stored
-      in write-once evidence repositories (GCS/S3), and disclosed via signed manifest
-      files containing content-addressing metadata. Disclosure posture is determined
-      at evidence capture time and enforced cryptographically through access control
-      and distribution policies.
+      and EMBARGO (time-locked disclosure with explicit release date). Evidence records
+      are indexed via SHA-256 and SHA-512 multihash identifiers, stored in write-once
+      evidence repositories (GCS/S3), and disclosed via signed manifest files containing
+      content-addressing metadata. Disclosure posture is determined at evidence capture
+      time and enforced cryptographically through access control and distribution
+      policies.
 
       '
     purpose: 'Provides verifiable evidence disclosure to normative providers (FlowSignal,
       external auditors) while maintaining confidentiality boundaries appropriate
       to each deployment region''s regulatory posture. Implements ISO 42001 §A.8.4
       operational transparency requirements — specifically the mandate that AI system
-      operation controls are auditable by authorized external parties. Satisfies
-      NIST SP 800-53 AU-16 (Cross-Organizational Audit Information Sharing) for
-      US_FED deployments.
+      operation controls are auditable by authorized external parties. Satisfies NIST
+      SP 800-53 AU-16 (Cross-Organizational Audit Information Sharing) for US_FED
+      deployments.
 
       '
     responsible-roles:
     - role-id: provider
     props:
     - name: software-version
-      value: '0.1.0'
+      value: 0.1.0
     - name: source-file-disclosure
       value: src/gateway/governance/evidence/disclosure.py
     - name: source-file-exporter
@@ -489,37 +490,35 @@ component-definition:
       implemented-requirements:
       - uuid: b6b7-req-a84-cer-00001111
         control-id: A.8.4
-        description: 'CER Disclosure Infrastructure implements ISO 42001 §A.8.4
-          operational transparency by providing tamper-evident evidence disclosure
-          to authorized normative providers and auditors. Three disclosure postures
-          satisfy regional regulatory requirements: PUBLIC posture (unrestricted
-          access, content-addressed manifest files distributed via public URLs) satisfies
-          open-governance mandates in US_FED deployments where OMB A-130 requires
-          transparency-by-default for federal AI systems. PRIVATE posture (authenticated
-          access only, no public distribution) satisfies EU_ECB data minimization
-          requirements under GDPR Article 5(1)(c) where evidence disclosure is limited
-          to authorized supervisory authorities. EMBARGO posture (time-locked disclosure
-          with explicit release date) satisfies APAC_MAS pre-approval requirements
-          where evidence must be retained internally until regulatory clearance is
-          granted. Evidence records are indexed via SHA-256 and SHA-512 multihash
-          identifiers (multihash format: sha256-<hex-digest> / sha512-<hex-digest>),
-          ensuring content-addressable verification across organizational boundaries.
-          Disclosure manifest files are cryptographically signed via KMS to prevent
-          tampering and provide non-repudiation. This implements ISO 42001 §A.8.4
-          AI System Operation Controls — specifically the requirement that operational
-          evidence is available to authorized parties in a verifiable, tamper-evident
-          format.
+        description: 'CER Disclosure Infrastructure implements ISO 42001 §A.8.4 operational
+          transparency by providing tamper-evident evidence disclosure to authorized
+          normative providers and auditors. Three disclosure postures satisfy regional
+          regulatory requirements: PUBLIC posture (unrestricted access, content-addressed
+          manifest files distributed via public URLs) satisfies open-governance mandates
+          in US_FED deployments where OMB A-130 requires transparency-by-default for
+          federal AI systems. PRIVATE posture (authenticated access only, no public
+          distribution) satisfies EU_ECB data minimization requirements under GDPR
+          Article 5(1)(c) where evidence disclosure is limited to authorized supervisory
+          authorities. EMBARGO posture (time-locked disclosure with explicit release
+          date) satisfies APAC_MAS pre-approval requirements where evidence must be
+          retained internally until regulatory clearance is granted. Evidence records
+          are indexed via SHA-256 and SHA-512 multihash identifiers (multihash format:
+          sha256-<hex-digest> / sha512-<hex-digest>), ensuring content-addressable
+          verification across organizational boundaries. Disclosure manifest files
+          are cryptographically signed via KMS to prevent tampering and provide non-repudiation.
+          This implements ISO 42001 §A.8.4 AI System Operation Controls — specifically
+          the requirement that operational evidence is available to authorized parties
+          in a verifiable, tamper-evident format.
 
           '
-        remarks: 'Disclosure posture is determined at evidence capture time via
-          CAGE_CER_DISCLOSURE_POSTURE environment variable (PUBLIC | PRIVATE | EMBARGO).
-          Posture enforcement is cryptographic — PUBLIC evidence is written to publicly-readable
-          GCS/S3 buckets with unrestricted IAM policies, PRIVATE evidence requires
-          authenticated access tokens, EMBARGO evidence carries time-lock metadata
-          enforced at manifest generation. Reference architecture: adopters should
-          adapt disclosure postures, hash algorithms, and content-addressing schemes
-          to their regulatory environments. Default posture is PRIVATE (fail-closed
-          on disclosure).
+        remarks: 'Disclosure posture is determined at evidence capture time via CAGE_CER_DISCLOSURE_POSTURE
+          environment variable (PUBLIC | PRIVATE | EMBARGO). Posture enforcement is
+          cryptographic — PUBLIC evidence is written to publicly-readable GCS/S3 buckets
+          with unrestricted IAM policies, PRIVATE evidence requires authenticated
+          access tokens, EMBARGO evidence carries time-lock metadata enforced at manifest
+          generation. Reference architecture: adopters should adapt disclosure postures,
+          hash algorithms, and content-addressing schemes to their regulatory environments.
+          Default posture is PRIVATE (fail-closed on disclosure).
 
           '
         links:
@@ -606,7 +605,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-09-14T01:09:18Z'
+      value: '2026-09-22T23:23:29Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -664,7 +663,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/ftra/schemas.py
     - name: last-compiled
-      value: '2026-09-14T01:09:18Z'
+      value: '2026-09-22T23:23:29Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-validator01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home

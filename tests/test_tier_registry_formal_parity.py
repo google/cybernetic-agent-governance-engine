@@ -177,3 +177,35 @@ class TestFormalModelParity:
         assert set(formal_model.TIER_LABELS.keys()) == set(formal_model.TIERS), (
             "TIER_LABELS keys must exactly match the TIERS tuple"
         )
+
+    def test_tier_strings_in_code_resolve_to_labels(self):
+        """Verify all 'Tier <n>' strings in src/ resolve to TIER_LABELS."""
+        import proof.model as formal_model
+        import re
+        from pathlib import Path
+        
+        valid_labels = set(formal_model.TIER_LABELS.values())
+        # We explicitly allow 'Tier 1' through 'Tier 7' and 'Tier 0.5', 'Tier 3a', 'Tier 3b'
+        # based on valid_labels.
+        # But this test checks for any 'Tier <number>' pattern in code.
+        
+        # Regex to find 'Tier <number>' or 'Tier <number><letter>'
+        pattern = re.compile(r'Tier\s+([0-9]+(?:\.[0-9]+)?(?:[a-z])?)', re.IGNORECASE)
+        
+        src_dir = Path("src")
+        violations = []
+        for py_file in src_dir.rglob("*.py"):
+            if "integrations" in py_file.parts:
+                continue
+            text = py_file.read_text(encoding="utf-8")
+            for line_no, line in enumerate(text.splitlines(), 1):
+                matches = pattern.findall(line)
+                for match in matches:
+                    tier_str = f"Tier {match}"
+                    # Allow "Tier X" if it exactly matches a valid label
+                    # But case-insensitive check? Let's just normalize to Title Case
+                    tier_str = tier_str.title().replace("3A", "3a").replace("3B", "3b")
+                    if tier_str not in valid_labels:
+                        violations.append(f"{py_file}:{line_no}: Found {tier_str} which is not in TIER_LABELS")
+                        
+        assert not violations, "Found unregistered Tier labels in code:\n" + "\n".join(violations)

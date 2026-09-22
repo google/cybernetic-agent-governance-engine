@@ -69,7 +69,7 @@ async def tool_executor_node(state: DataAnalystState) -> dict[str, Any]:
       - Log all data access for audit trail
 
     The @cage_guard decorator (applied in graph builder below) validates
-    state["proposed_action"] through Tier 0 (STPA), Tier 1 (confidence), and
+    state["proposed_action"] through Tier 1 (STPA), Tier 2 (confidence), and
     Tier 6 (causal) before allowing tool execution.
     """
     from langchain_mcp_adapters.tools import load_mcp_tools

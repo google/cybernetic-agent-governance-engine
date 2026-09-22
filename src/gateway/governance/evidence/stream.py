@@ -1249,9 +1249,18 @@ class EvidenceStreamSink:
         if self._redis is None:
             return None
 
-        # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
+        # Wire PIISanitizer into the evidence path before the hash is computed.
+        # This prevents un-verifiable records if the sink applies masking later.
+        from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+        pii = _get_pii_sanitizer()
+        
+        # PII sanitization mutates the event in place or returns a new dict?
+        # sanitize_dict returns a new dict. We only want to sanitize the 'payload' field 
+        # (and possibly 'tool_input', etc, but sanitize_dict is safe on the whole event)
+        sanitized_event = pii.sanitize_dict(event)
+
         # v2.0: Migrated to RFC 8785 JCS with pre-normalization
-        normalized_event = _normalize_for_jcs(event)
+        normalized_event = _normalize_for_jcs(sanitized_event)
         payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
         event_type = event.get("type", "UNKNOWN")
@@ -1438,8 +1447,15 @@ class EvidenceStreamSink:
         including the hash and sequence number for the commit proof.
         """
         # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
+        # Wire PIISanitizer into the evidence path before the hash is computed.
+        # This prevents un-verifiable records if the sink applies masking later.
+        from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+        pii = _get_pii_sanitizer()
+        
+        sanitized_event = pii.sanitize_dict(event)
+
         # v2.0: Migrated to RFC 8785 JCS with pre-normalization
-        normalized_event = _normalize_for_jcs(event)
+        normalized_event = _normalize_for_jcs(sanitized_event)
         payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
         event_type = event.get("type", "UNKNOWN")
@@ -1524,19 +1540,21 @@ class EvidenceStreamSink:
     def _enqueue_signing(self, entry: dict) -> None:
         """Enqueue an evidence stream entry for async KMS signing."""
         try:
-            from .kms_batch_signer import get_batch_signer
+            from .factory import get_evidence_signer
 
             def _on_signed(record_hash: str, signature: str) -> None:
                 entry["kms_signature"] = signature
 
-            signer = get_batch_signer()
+            signer = get_evidence_signer()
             signer.enqueue(
                 record_hash=entry["record_hash"],
                 payload=json.loads(entry["payload_json"]),
                 callback=_on_signed,
             )
         except Exception as exc:
-            logger.warning("[EvidenceStream] KMS enqueue failed: %s", exc)
+            # If the factory raises ValueError (unsupported backend or missing config),
+            # let it crash rather than silently bypassing non-repudiation.
+            raise RuntimeError(f"KMS evidence signing enqueue failed: {exc}") from exc
 
     async def _cold_flush_loop(self) -> None:
         """Background daemon that flushes Redis Stream entries to cold store.

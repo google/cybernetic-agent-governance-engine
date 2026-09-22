@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: stera-gateway-monitor
+  namespace: governance-stack
+  labels:
+    release: prometheus
+    app: stera-gateway
+spec:
+  selector:
+    matchLabels:
+      app: stera-gateway
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s

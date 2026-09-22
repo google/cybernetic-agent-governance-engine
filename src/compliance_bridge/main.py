@@ -426,7 +426,7 @@ async def health() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# GET /v1/controls  (Capability 1.2)
+# GET /v1/controls  (Service Group 1.2)
 #
 # Discovery endpoint — returns the registry of supported controls filtered by
 # CAGE_DEPLOYMENT_REGION.  Avoids callers (Lula, agentsight-ui) hard-coding
@@ -548,7 +548,7 @@ async def list_controls(
 
 
 # ---------------------------------------------------------------------------
-# GET /v1/metrics/summary  (Capability 2.6)
+# GET /v1/metrics/summary  (Service Group 2.6)
 #
 # Aggregate endpoint — returns compliance posture across ALL supported controls
 # in a single response.  Eliminates the need for N individual /v1/metrics calls
@@ -791,7 +791,7 @@ def _build_cer_index() -> CERIndex | None:
 
 
 # ---------------------------------------------------------------------------
-# GET /v1/oscal/assessment-results  (Capability 2.3)
+# GET /v1/oscal/assessment-results  (Service Group 2.3)
 #
 # Generates a standards-compliant OSCAL 1.1.2 Assessment Results document
 # from the current compliance posture.  Closes the loop with Lula — Lula can
@@ -903,7 +903,7 @@ async def export_oscal_assessment_results(
 
 
 # ---------------------------------------------------------------------------
-# GET /v1/audit/status/{audit_id}  (Capability 1.3)
+# GET /v1/audit/status/{audit_id}  (Service Group 1.3)
 #
 # Poll endpoint for async audit results.  POST /v1/audit/ingest stores results
 # here so callers can retrieve them after an async ingest.
@@ -1105,7 +1105,7 @@ async def audit_ingest(
             "remediation_sent": result["remediation_sent"],
             "remediation_text": result["remediation_text"],
             "advisor_error": result["advisor_error"],
-            # Per-control advisory breakdown (Capability 3.1). Empty list when
+            # Per-control advisory breakdown (Service Group 3.1). Empty list when
             # no LLM advisory was generated (VLLM_BASE_URL unset, etc.).
             "remediation_per_control": result.get("per_control", []),
             # CAGE v0.1.0 AARM fields

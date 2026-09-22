@@ -1,0 +1,45 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+component-definition:
+  uuid: 4f3b1b4c-8d52-5a8b-8e3b-9736eb9fbe23
+  metadata:
+    title: CAGE Validation — Prometheus Metrics Scrape
+    last-modified: '2026-09-22T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nVerifies that the ServiceMonitor for STERA Gateway is deployed."
+  components:
+  - uuid: 5c6ec14f-85af-5735-8a1b-dacc49e1abdc
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 81af40e7-a7a8-570a-a320-3c4154bea03a
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'Control implementation for metrics.'
+      implemented-requirements:
+      - uuid: 67b3f09d-e367-5c5c-9876-82f5d837d78b
+        control-id: metrics
+        description: Automated lula validation for ServiceMonitor.
+        links:
+        - href: '#ab6f9b2e-f19d-54a8-bd5f-47f1fbed0a22'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: ab6f9b2e-f19d-54a8-bd5f-47f1fbed0a22
+      title: Lula Validation — ServiceMonitor
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: stera-gateway-monitor\n      resource: servicemonitors\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\nvalidate if {\\n  input[\\\"stera-gateway-monitor\\\"].metadata.name == \\\"stera-gateway-monitor\\\"\\n}\\n\"\n"

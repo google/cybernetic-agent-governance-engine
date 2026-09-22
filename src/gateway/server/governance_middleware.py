@@ -258,9 +258,9 @@ async def tier1_keyword_check(text: str, span: Any = None) -> str | None:
     Stamps the ISO 42001 evidence attribute on *span* when provided.
     """
     if ac_keyword_scan(text):
-        stamp_iso_control(span, tier=1, control="A.5.2", outcome="BLOCK")
+        stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="BLOCK")
         return "keyword_match"
-    stamp_iso_control(span, tier=1, control="A.5.2", outcome="PASS")
+    stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="PASS")
     return None
 
 
@@ -287,7 +287,7 @@ async def sanitize_mcp_tool_response(
     """
     result = detect_indirect_injection(tool_name, response_text)
     if result.detected:
-        stamp_iso_control(span, tier=2, control="A.9.2", outcome="BLOCK")
+        stamp_iso_control(span, ingress_stage=2, control="A.9.2", outcome="BLOCK")
         logger.warning(
             '🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s "\n'
             "(ISO 42001 A.9.2 — indirect injection blocked)",
@@ -295,7 +295,7 @@ async def sanitize_mcp_tool_response(
             result.pattern_matched,
         )
         return f"indirect_injection:{result.pattern_matched}"
-    stamp_iso_control(span, tier=2, control="A.9.2", outcome="PASS")
+    stamp_iso_control(span, ingress_stage=2, control="A.9.2", outcome="PASS")
     return None
 
 

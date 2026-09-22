@@ -212,55 +212,11 @@ if (
 # Graph is now in app.state.graph
 
 
-class ApprovalResumeRequest(BaseModel):
-    """Payload contract for resuming a HITL approval interrupt.
+from src.governed_financial_advisor.graph.nodes.approval_contract import (
+    ApprovalDecision as ApprovalResumeRequest,
+)
 
-    Route-orphaned by design: POST /v1/approvals/{thread_id}/resume was removed
-    in 7ab1acd when HITL migrated to the LangGraph interrupt() primitive.
-    Reviewers now resume with Command(resume={...}) through the SDK, and this
-    model defines the shape that payload must take.
-
-    .. warning::
-       This model is not yet applied to the live resume path.  ``approval_node``
-       reads the interrupt() return value as a plain dict and defaults
-       ``rationale`` to "", so the mandatory-rationale rule below is currently
-       enforced only where this class is constructed explicitly.  Wiring it into
-       ``approval_node`` is tracked as follow-up work.
-
-    Attributes:
-        ticket_id: Unique defer ticket ID for atomic idempotency enforcement.
-        approved:  Whether the trade is approved or rejected.
-        reviewer:  Identity of the human reviewer (email or employee ID).
-                   Used for ISO 42001 A.7.2 accountability attribution.
-        rationale: Mandatory free-text justification.  The auditor's reason
-                   for this decision is hashed directly into the evidence chain —
-                   an unexplained resume is a compliance gap (ISO 42001 §6.1,
-                   NIST AI RMF GOVERN-5).
-        comment:   Optional supplementary note (legacy field — prefer rationale).
-    """
-
-    ticket_id: str | None = None
-    approved: bool
-    reviewer: str
-    rationale: str  # mandatory — cannot be empty string
-    comment: str = ""  # kept for backwards compatibility
-    max_slippage_pct: float = 2.0  # reviewer's execution price tolerance (%)
-    # Default: 2.0% (institutional large-cap standard).
-
-    @staticmethod
-    def _validate_rationale(value: str) -> str:
-        if not value or not value.strip():
-            raise ValueError(
-                "rationale is required and must be a non-empty string. "
-                "Provide the business justification for this approval decision "
-                "so it can be hashed into the compliance evidence chain."
-            )
-        return value
-
-    @model_validator(mode="after")
-    def _check_rationale_not_empty(self) -> "ApprovalResumeRequest":
-        self._validate_rationale(self.rationale)
-        return self
+# Deprecated class definition removed. Use ApprovalDecision directly.
 
 
 class RefinementTriggerRequest(BaseModel):

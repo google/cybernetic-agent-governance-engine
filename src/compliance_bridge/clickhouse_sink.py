@@ -506,10 +506,18 @@ class ClickHouseSink:
         narrowing_applied = record.get("narrowing_applied")
         if narrowing_applied is None:
             # Legacy leg: the payload holds a decoded object, not canonical text.
+            # Use RFC 8785 JCS to ensure deterministic hashing.
             narrowing_applied_raw = payload_dict.get("narrowing_applied")
-            narrowing_applied = (
-                json.dumps(narrowing_applied_raw) if narrowing_applied_raw else None
-            )
+            if narrowing_applied_raw:
+                from src.gateway.governance.jcs_canonicalizer import (
+                    jcs_canonicalize_plan,
+                )
+
+                narrowing_applied = jcs_canonicalize_plan(
+                    narrowing_applied_raw
+                ).decode("utf-8")
+            else:
+                narrowing_applied = None
         # Otherwise it is already the canonical JSON text that was hashed —
         # re-encoding it here would break mv_evidence_hash_verification.
 

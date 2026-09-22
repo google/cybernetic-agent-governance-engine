@@ -36,7 +36,7 @@ def test_stamp_iso_control_sets_all_required_attributes():
 
     stamp_iso_control(
         span=mock_span,
-        tier=2,
+        ingress_stage=2,
         control="A.9.2",
         outcome="PASSED",
     )
@@ -48,8 +48,8 @@ def test_stamp_iso_control_sets_all_required_attributes():
 
     assert "iso42001.control" in set_attribute_calls
     assert set_attribute_calls["iso42001.control"] == "A.9.2"
-    assert "iso42001.tier" in set_attribute_calls
-    assert set_attribute_calls["iso42001.tier"] == 2
+    assert "iso42001.ingress_stage" in set_attribute_calls
+    assert set_attribute_calls["iso42001.ingress_stage"] == 2
     assert "iso42001.outcome" in set_attribute_calls
     assert set_attribute_calls["iso42001.outcome"] == "PASSED"
     assert "iso42001.timestamp" in set_attribute_calls
@@ -62,7 +62,7 @@ def test_stamp_iso_control_failed_outcome():
     from src.gateway.governance.iso_control import stamp_iso_control
 
     mock_span = MagicMock()
-    stamp_iso_control(span=mock_span, tier=4, control="SC-4", outcome="FAILED")
+    stamp_iso_control(span=mock_span, ingress_stage=4, control="SC-4", outcome="FAILED")
 
     set_attribute_calls = {
         call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list
@@ -76,7 +76,7 @@ def test_stamp_iso_control_evidence_chain_format():
     from src.gateway.governance.iso_control import stamp_iso_control
 
     mock_span = MagicMock()
-    stamp_iso_control(span=mock_span, tier=3, control="A.6.1.2", outcome="BLOCK")
+    stamp_iso_control(span=mock_span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK")
 
     set_attribute_calls = {
         call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list
@@ -89,7 +89,7 @@ def test_stamp_iso_control_noop_when_span_is_none():
     from src.gateway.governance.iso_control import stamp_iso_control
 
     # Should not raise
-    stamp_iso_control(span=None, tier=1, control="A.5.2", outcome="PASS")
+    stamp_iso_control(span=None, ingress_stage=1, control="A.5.2", outcome="PASS")
 
 
 def test_stamp_iso_control_noop_when_span_is_falsy():
@@ -97,7 +97,7 @@ def test_stamp_iso_control_noop_when_span_is_falsy():
     from src.gateway.governance.iso_control import stamp_iso_control
 
     # Should not raise
-    stamp_iso_control(span=False, tier=1, control="A.5.2", outcome="PASS")
+    stamp_iso_control(span=False, ingress_stage=1, control="A.5.2", outcome="PASS")
 
 
 def test_stamp_iso_control_timestamp_is_integer():
@@ -105,7 +105,7 @@ def test_stamp_iso_control_timestamp_is_integer():
     from src.gateway.governance.iso_control import stamp_iso_control
 
     mock_span = MagicMock()
-    stamp_iso_control(span=mock_span, tier=1, control="A.5.3", outcome="PASS")
+    stamp_iso_control(span=mock_span, ingress_stage=1, control="A.5.3", outcome="PASS")
 
     set_attribute_calls = {
         call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list

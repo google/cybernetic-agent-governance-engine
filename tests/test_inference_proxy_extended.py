@@ -266,7 +266,7 @@ async def test_tier1_keyword_match_returns_403(proxy_deps):
     assert resp.status_code == 403
     body = resp.json()
     content = body["choices"][0]["message"]["content"]
-    assert "Tier-1 keyword match" in content
+    assert "Ingress Stage 1 keyword match" in content
 
 
 @pytest.mark.asyncio

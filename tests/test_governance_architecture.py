@@ -53,7 +53,7 @@ _REGION_SPECIFIC_CONTROLS = {
 # ---------------------------------------------------------------------------
 # Prohibited patterns — match regulatory CITATION STRINGS in executable code.
 # Crucially, these must NOT match:
-#   - OTel attribute keys: "iso42001.control", "iso42001.tier", etc.
+#   - OTel attribute keys: "iso42001.control", "iso42001.ingress_stage", etc.
 #     These are fixed wire-format identifiers, not volatile regulatory citations.
 #   - Pydantic field names or OTel span attribute constants.
 # The patterns below match only the human-readable citation form (with space).
