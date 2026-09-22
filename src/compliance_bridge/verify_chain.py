@@ -60,7 +60,7 @@ def verify_evidence_chain(records: list[dict[str, Any]]) -> bool:
         # First record may have None or empty prev_hash
         if prev_hash is None:
             prev_hash = ""
-            
+
         if i > 0 and prev_hash != expected_prev:
             logger.error(
                 "Link broken at sequence %d: prev_hash=%s, expected=%s",
@@ -73,7 +73,7 @@ def verify_evidence_chain(records: list[dict[str, Any]]) -> bool:
         # Recompute the hash
         payload_json = record.get("payload_json", "{}")
         # Ensure we use JCS representation for narrowing_applied if it exists
-        # In a real tool we'd parse and canonicalize, but here we assume the JSON string is exact 
+        # In a real tool we'd parse and canonicalize, but here we assume the JSON string is exact
         # (the kernel normalizes and JCS-canonicalizes it prior to stream insertion).
 
         computed_hash = _link_hash(
@@ -101,13 +101,15 @@ def verify_evidence_chain(records: list[dict[str, Any]]) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Verify CAGE evidence chain integrity.")
+    parser = argparse.ArgumentParser(
+        description="Verify CAGE evidence chain integrity."
+    )
     parser.add_argument("file", help="Path to JSONL evidence file")
     args = parser.parse_args()
 
     records = []
     try:
-        with open(args.file, "r") as f:
+        with open(args.file) as f:
             for line in f:
                 if line.strip():
                     records.append(json.loads(line))

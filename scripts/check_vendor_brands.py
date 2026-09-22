@@ -7,8 +7,8 @@ from pathlib import Path
 # NOTE: This list may start empty if the tree is clean. An empty-but-wired gate
 # that catches the next violation is still worth having.
 FORBIDDEN_VENDOR_BRANDS: set[str] = {"langsmith"}
-# TODO(latent-gate): The kernel still contains 'langfuse' and 'openai' in 
-# telemetry_provider.py and nemo/vllm_client.py. These should be refactored 
+# TODO(latent-gate): The kernel still contains 'langfuse' and 'openai' in
+# telemetry_provider.py and nemo/vllm_client.py. These should be refactored
 # out of Layer 1 (src/gateway/) into Layer 3 (src/integrations/) before they
 # can be added to the forbidden list.
 
@@ -99,7 +99,9 @@ def should_skip(path: Path, base_dir: Path) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check vendor brand literals in kernel")
+    parser = argparse.ArgumentParser(
+        description="Check vendor brand literals in kernel"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
@@ -113,7 +115,9 @@ def main() -> int:
     if not FORBIDDEN_VENDOR_BRANDS:
         if args.verbose:
             print("INFO: Gate G8: No vendor brands configured (empty list).")
-        print("✅ Gate G8 PASSED: Vendor brand list is empty (gate is wired but not restrictive).")
+        print(
+            "✅ Gate G8 PASSED: Vendor brand list is empty (gate is wired but not restrictive)."
+        )
         return 0
 
     violations_found = False
@@ -135,7 +139,9 @@ def main() -> int:
 
     if violations_found:
         print()
-        print("❌ Gate G8 FAILED: Found forbidden vendor brand literals in kernel code.")
+        print(
+            "❌ Gate G8 FAILED: Found forbidden vendor brand literals in kernel code."
+        )
         print(f"   Forbidden brands: {', '.join(sorted(FORBIDDEN_VENDOR_BRANDS))}")
         print()
         print("   The kernel must be vendor-neutral. Vendor names are acceptable in:")
@@ -151,7 +157,9 @@ def main() -> int:
 
     if args.verbose:
         print(f"📊 Scanned {scanned_count} files in {gateway_dir}/")
-    print(f"✅ Gate G8 PASSED: No vendor brand literals found (scanned {scanned_count} files).")
+    print(
+        f"✅ Gate G8 PASSED: No vendor brand literals found (scanned {scanned_count} files)."
+    )
     return 0
 
 

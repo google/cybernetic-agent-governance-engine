@@ -27,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class EvidenceSigner(Protocol):
     """Protocol for asynchronous background evidence signing."""

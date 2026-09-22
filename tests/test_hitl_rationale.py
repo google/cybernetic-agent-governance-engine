@@ -41,22 +41,31 @@ from pydantic import ValidationError
 
 class TestApprovalResumeRequest:
     def test_approval_node_raises_on_empty_rationale(self):
-        from src.governed_financial_advisor.graph.nodes.approval_node import approval_node
-        from pydantic import ValidationError
         from unittest.mock import patch
-        
+
+        from pydantic import ValidationError
+
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            approval_node,
+        )
+
         # Simulate interrupt() returning a decision with empty rationale
-        with patch("src.governed_financial_advisor.graph.nodes.approval_node.interrupt", return_value={"approved": True, "reviewer": "test", "rationale": ""}):
+        with patch(
+            "src.governed_financial_advisor.graph.nodes.approval_node.interrupt",
+            return_value={"approved": True, "reviewer": "test", "rationale": ""},
+        ):
             try:
                 approval_node({"execution_plan_output": {}, "evaluation_result": {}})
-                assert False, "Should have raised ValidationError"
+                raise AssertionError("Should have raised ValidationError")
             except ValidationError as e:
                 assert "rationale is required and must be a non-empty string" in str(e)
 
     """Unit tests for the Pydantic model validation."""
 
     def _load(self):
-        from src.governed_financial_advisor.graph.nodes.approval_contract import ApprovalDecision as ApprovalResumeRequest
+        from src.governed_financial_advisor.graph.nodes.approval_contract import (
+            ApprovalDecision as ApprovalResumeRequest,
+        )
 
         return ApprovalResumeRequest
 

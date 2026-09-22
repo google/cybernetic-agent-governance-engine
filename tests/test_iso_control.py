@@ -76,7 +76,9 @@ def test_stamp_iso_control_evidence_chain_format():
     from src.gateway.governance.iso_control import stamp_iso_control
 
     mock_span = MagicMock()
-    stamp_iso_control(span=mock_span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK")
+    stamp_iso_control(
+        span=mock_span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
+    )
 
     set_attribute_calls = {
         call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list

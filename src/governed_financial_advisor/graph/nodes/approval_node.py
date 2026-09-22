@@ -39,7 +39,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from langgraph.types import Command, interrupt
-from src.governed_financial_advisor.graph.nodes.approval_contract import ApprovalDecision
+
+from src.governed_financial_advisor.graph.nodes.approval_contract import (
+    ApprovalDecision,
+)
 
 logger = logging.getLogger(__name__)
 

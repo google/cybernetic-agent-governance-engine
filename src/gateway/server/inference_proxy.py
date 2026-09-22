@@ -388,7 +388,9 @@ async def chat_completions(
                 rails, nemo_input_text, pre_check_results=pre_check_results
             )
             if not nemo_result.is_safe:
-                stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK")
+                stamp_iso_control(
+                    span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
+                )
                 blocked = _create_blocked_response(nemo_result.reason)
                 return JSONResponse(content=blocked, status_code=403)
             stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")

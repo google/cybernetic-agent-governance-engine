@@ -643,7 +643,9 @@ class TestApprovalNodeSlippageAndTTL:
 
 class TestApprovalResumeRequestSchema:
     def _load(self):
-        from src.governed_financial_advisor.graph.nodes.approval_contract import ApprovalDecision as ApprovalResumeRequest
+        from src.governed_financial_advisor.graph.nodes.approval_contract import (
+            ApprovalDecision as ApprovalResumeRequest,
+        )
 
         return ApprovalResumeRequest
 

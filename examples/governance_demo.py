@@ -300,7 +300,9 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
     # --- Validate mandatory rationale ---
     _step("Testing API validation — submitting empty rationale…")
     try:
-        from src.governed_financial_advisor.graph.nodes.approval_contract import ApprovalDecision as ApprovalResumeRequest
+        from src.governed_financial_advisor.graph.nodes.approval_contract import (
+            ApprovalDecision as ApprovalResumeRequest,
+        )
 
         ApprovalResumeRequest(approved=True, reviewer="lars@example.com", rationale="")
         _fail("Expected ValidationError — empty rationale should have been rejected")

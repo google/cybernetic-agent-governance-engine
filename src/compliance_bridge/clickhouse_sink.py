@@ -513,9 +513,9 @@ class ClickHouseSink:
                     jcs_canonicalize_plan,
                 )
 
-                narrowing_applied = jcs_canonicalize_plan(
-                    narrowing_applied_raw
-                ).decode("utf-8")
+                narrowing_applied = jcs_canonicalize_plan(narrowing_applied_raw).decode(
+                    "utf-8"
+                )
             else:
                 narrowing_applied = None
         # Otherwise it is already the canonical JSON text that was hashed —

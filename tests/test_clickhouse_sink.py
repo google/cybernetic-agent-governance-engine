@@ -582,18 +582,20 @@ async def test_clickhouse_sink_circuit_breaker_integration():
 
         await sink.close()
 
+
 @pytest.mark.asyncio
 async def test_clickhouse_sink_jcs_canonicalization_parity():
     """Verify that narrowing_applied uses RFC 8785 JCS canonicalization."""
     sink = ClickHouseSink()
-    
+
     # Python's dict has order, but standard JSON serialization might sort or not.
     # We want to ensure JCS canonicalization is applied.
     narrowing_raw = {"b": 2, "a": 1, "c": None, "d": "test"}
     payload_dict = {"narrowing_applied": narrowing_raw}
     import json
+
     payload_json = json.dumps(payload_dict)
-    
+
     record = {
         "schema": "cage-audit/3.0",
         "chain_id": "test-chain",
@@ -611,8 +613,8 @@ async def test_clickhouse_sink_jcs_canonicalization_parity():
         "kms_signature_algorithm": "",
         "redis_msg_id": "",
     }
-    
+
     row = sink._evidence_to_row(record)
-    
+
     # Expected RFC 8785 (keys sorted, no spaces)
     assert row["narrowing_applied"] == '{"a":1,"b":2,"c":null,"d":"test"}'

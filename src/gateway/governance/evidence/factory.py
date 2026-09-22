@@ -33,9 +33,9 @@ import os
 
 from .cold_store import EvidenceColdStore
 from .null_cold_store import NullColdStore
+from .null_signer import NullSigner
 from .residency import resolve_cold_store_bucket
 from .signer import EvidenceSigner
-from .null_signer import NullSigner
 
 logger = logging.getLogger(__name__)
 
@@ -140,17 +140,18 @@ def get_evidence_signer(backend: str | None = None) -> EvidenceSigner:
         env_signer = "gcp_kms"
     elif env_signer == "false":
         env_signer = "null"
-        
+
     selected_backend = (backend or env_signer).lower().strip()
 
     if selected_backend == "null":
         return NullSigner()
-    
+
     if selected_backend == "gcp_kms":
         # Lazy import of compliance bridge signer
         from src.compliance_bridge.kms_batch_signer import get_batch_signer
+
         return get_batch_signer()
-        
+
     raise ValueError(
         f"Unsupported signer backend: '{selected_backend}'. "
         "Must be one of: 'gcp_kms', 'null'."

@@ -1252,10 +1252,11 @@ class EvidenceStreamSink:
         # Wire PIISanitizer into the evidence path before the hash is computed.
         # This prevents un-verifiable records if the sink applies masking later.
         from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+
         pii = _get_pii_sanitizer()
-        
+
         # PII sanitization mutates the event in place or returns a new dict?
-        # sanitize_dict returns a new dict. We only want to sanitize the 'payload' field 
+        # sanitize_dict returns a new dict. We only want to sanitize the 'payload' field
         # (and possibly 'tool_input', etc, but sanitize_dict is safe on the whole event)
         sanitized_event = pii.sanitize_dict(event)
 
@@ -1450,8 +1451,9 @@ class EvidenceStreamSink:
         # Wire PIISanitizer into the evidence path before the hash is computed.
         # This prevents un-verifiable records if the sink applies masking later.
         from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+
         pii = _get_pii_sanitizer()
-        
+
         sanitized_event = pii.sanitize_dict(event)
 
         # v2.0: Migrated to RFC 8785 JCS with pre-normalization
