@@ -30,6 +30,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   hermetic-test:
     name: Hermetic Governance Pipeline Tests
