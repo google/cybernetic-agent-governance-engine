@@ -79,9 +79,13 @@ jobs:
         run: |
           # Run core governance tests WITHOUT any ML dependencies
           # This proves Stage 2.5 is truly optional
-          pytest tests/ \
+          pytest \
+            tests/test_cbf_*.py \
+            tests/test_symbolic_governor*.py \
+            tests/test_routing_seal*.py \
+            tests/test_governance_envelope.py \
+            tests/test_consequence_gateway*.py \
             -m "local or unit" \
-            -k "symbolic_governor or cbf or routing_seal or governance_envelope or consequence_gateway" \
             --tb=short \
             -v \
             --no-cov \

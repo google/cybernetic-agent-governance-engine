@@ -73,7 +73,7 @@ try:
     from langgraph.types import interrupt
 except ImportError:
 
-    def interrupt(*args: Any, **kwargs: Any) -> Any:
+    def interrupt(value: Any) -> Any:
         raise RuntimeError("langgraph is required for FTRA HITL interrupt")
 
 
