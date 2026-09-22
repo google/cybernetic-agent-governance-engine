@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger("Gateway.SpiffeExtractor")
@@ -47,7 +48,7 @@ class SpiffeExtractionError(Exception):
     pass
 
 
-def extract_spiffe_uri_from_asgi_scope(scope: dict[str, Any]) -> str:
+def extract_spiffe_uri_from_asgi_scope(scope: Mapping[str, Any]) -> str:
     """Extract SPIFFE URI from ASGI connection scope (FastAPI/Uvicorn).
 
     Args:
@@ -94,13 +95,13 @@ def extract_spiffe_uri_from_asgi_scope(scope: dict[str, Any]) -> str:
     # Handle tuple structure from cryptography.x509: [("URI", "spiffe://...")]
     elif isinstance(san_data, (list, tuple)):
         uri_sans = [
-            value for san_type, value in san_data if san_type.upper() in ("URI", "UNIFORMRESOURCEIDENTIFIER")
+            value
+            for san_type, value in san_data
+            if san_type.upper() in ("URI", "UNIFORMRESOURCEIDENTIFIER")
         ]
 
     if not uri_sans:
-        raise SpiffeExtractionError(
-            "Client certificate SAN contains no URI entries"
-        )
+        raise SpiffeExtractionError("Client certificate SAN contains no URI entries")
 
     # Find the first SPIFFE URI
     for uri in uri_sans:
@@ -145,9 +146,7 @@ def extract_spiffe_uri_from_grpc_context(context: Any) -> str:
         logger.debug("✅ Extracted SPIFFE URI from gRPC context: %s", principal)
         return principal
 
-    raise SpiffeExtractionError(
-        f"Principal '{principal}' is not a valid SPIFFE URI"
-    )
+    raise SpiffeExtractionError(f"Principal '{principal}' is not a valid SPIFFE URI")
 
 
 def validate_spiffe_uri(uri: str) -> None:

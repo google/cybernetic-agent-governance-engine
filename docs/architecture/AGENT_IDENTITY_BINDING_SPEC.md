@@ -34,24 +34,29 @@ agent_id = request.json.get("agent_id")  # Client-controlled
 **Canonical Pattern:**
 ```python
 # ✅ REQUIRED: Extract SVID from verified TLS peer certificate
-from cryptography.x509 import load_der_x509_certificate, SubjectAlternativeName, UniformResourceIdentifier
+from cryptography.x509 import (
+    load_der_x509_certificate,
+    SubjectAlternativeName,
+    UniformResourceIdentifier,
+)
 from cryptography.hazmat.backends import default_backend
+
 
 def extract_spiffe_id_from_mtls(tls_peer_cert_der: bytes) -> str:
     """
     Extract SPIFFE ID from the verified TLS client certificate's Subject Alternative Name.
-    
+
     Args:
         tls_peer_cert_der: DER-encoded X.509 certificate from the TLS handshake peer
-        
+
     Returns:
         SPIFFE ID URI (e.g., 'spiffe://cage.altostrat.com/agents/finance/trading-bot-abc123')
-        
+
     Raises:
         ValueError: If certificate lacks SPIFFE SAN or is malformed
     """
     cert = load_der_x509_certificate(tls_peer_cert_der, default_backend())
-    
+
     try:
         san_ext = cert.extensions.get_extension_for_oid(SubjectAlternativeName.oid)
         for san in san_ext.value:
@@ -61,7 +66,7 @@ def extract_spiffe_id_from_mtls(tls_peer_cert_der: bytes) -> str:
                     return uri
     except Exception as e:
         raise ValueError(f"Certificate lacks valid SPIFFE SAN: {e}")
-    
+
     raise ValueError("No SPIFFE URI found in certificate SANs")
 ```
 
@@ -144,19 +149,20 @@ from cryptography.x509 import load_der_x509_certificate
 from cryptography.hazmat.backends import default_backend
 import jwt  # PyJWT library
 
+
 def compute_certificate_thumbprint(cert_der: bytes) -> str:
     """
     Compute SHA-256 thumbprint (jkt) of the certificate's public key.
-    
+
     Returns:
         Base64url-encoded SHA-256 hash of the DER-encoded public key
     """
     cert = load_der_x509_certificate(cert_der, default_backend())
     public_key_der = cert.public_key().public_bytes(
         encoding=serialization.Encoding.DER,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    
+
     digest = hashlib.sha256(public_key_der).digest()
     # Base64url encoding (RFC 4648 §5)
     return jwt.utils.base64url_encode(digest).decode("utf-8")
@@ -167,108 +173,112 @@ def create_dpop_proof(
     http_method: str,
     http_uri: str,
     tls_cert_der: bytes,
-    nonce: str | None = None
+    nonce: str | None = None,
 ) -> str:
     """
     Generate a DPoP proof JWT bound to the TLS client certificate.
-    
+
     Args:
         signing_key: EC private key corresponding to the TLS certificate
         http_method: HTTP method (e.g., "POST")
         http_uri: Target URI (e.g., "https://gateway.cage.altostrat.com/v1/evaluate")
         tls_cert_der: DER-encoded TLS client certificate
         nonce: Optional server-provided nonce
-        
+
     Returns:
         Signed DPoP JWT string
     """
     jkt = compute_certificate_thumbprint(tls_cert_der)
-    
+
     # Extract public key for JWK representation
     public_key = signing_key.public_key()
     public_numbers = public_key.public_numbers()
-    
+
     # Convert coordinates to base64url
     x_bytes = public_numbers.x.to_bytes(32, byteorder="big")
     y_bytes = public_numbers.y.to_bytes(32, byteorder="big")
-    
+
     jwk = {
         "kty": "EC",
         "crv": "P-256",
         "x": jwt.utils.base64url_encode(x_bytes).decode("utf-8"),
-        "y": jwt.utils.base64url_encode(y_bytes).decode("utf-8")
+        "y": jwt.utils.base64url_encode(y_bytes).decode("utf-8"),
     }
-    
-    headers = {
-        "alg": "ES256",
-        "typ": "dpop+jwt",
-        "jwk": jwk
-    }
-    
+
+    headers = {"alg": "ES256", "typ": "dpop+jwt", "jwk": jwk}
+
     payload = {
         "jti": str(uuid.uuid4()),
         "htm": http_method,
         "htu": http_uri,
         "iat": int(time.time()),
-        "jkt": jkt
+        "jkt": jkt,
     }
-    
+
     if nonce:
         payload["nonce"] = nonce
-    
+
     return jwt.encode(payload, signing_key, algorithm="ES256", headers=headers)
 
 
-def verify_dpop_binding(dpop_jwt: str, tls_cert_der: bytes, http_method: str, http_uri: str) -> bool:
+def verify_dpop_binding(
+    dpop_jwt: str, tls_cert_der: bytes, http_method: str, http_uri: str
+) -> bool:
     """
     Verify that the DPoP proof is bound to the presented TLS certificate.
-    
+
     Args:
         dpop_jwt: DPoP proof JWT from the 'DPoP' HTTP header
         tls_cert_der: DER-encoded TLS peer certificate from the connection
         http_method: Expected HTTP method
         http_uri: Expected HTTP URI
-        
+
     Returns:
         True if binding is valid
-        
+
     Raises:
         ValueError: If binding verification fails
     """
     # Decode without verification to extract JWK
     unverified_header = jwt.get_unverified_header(dpop_jwt)
     jwk = unverified_header.get("jwk")
-    
+
     if not jwk:
         raise ValueError("DPoP JWT missing 'jwk' header")
-    
+
     # Reconstruct public key from JWK
     x = int.from_bytes(jwt.utils.base64url_decode(jwk["x"]), byteorder="big")
     y = int.from_bytes(jwt.utils.base64url_decode(jwk["y"]), byteorder="big")
-    
+
     public_numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1())
     public_key = public_numbers.public_key(default_backend())
-    
+
     # Verify JWT signature
     payload = jwt.decode(dpop_jwt, public_key, algorithms=["ES256"])
-    
+
     # Verify thumbprint binding
     expected_jkt = compute_certificate_thumbprint(tls_cert_der)
     if payload.get("jkt") != expected_jkt:
-        raise ValueError(f"DPoP thumbprint mismatch: expected {expected_jkt}, got {payload.get('jkt')}")
-    
+        raise ValueError(
+            f"DPoP thumbprint mismatch: expected {expected_jkt}, got {payload.get('jkt')}"
+        )
+
     # Verify HTTP method/URI binding
     if payload.get("htm") != http_method:
-        raise ValueError(f"DPoP method mismatch: expected {http_method}, got {payload.get('htm')}")
-    
+        raise ValueError(
+            f"DPoP method mismatch: expected {http_method}, got {payload.get('htm')}"
+        )
+
     if payload.get("htu") != http_uri:
-        raise ValueError(f"DPoP URI mismatch: expected {http_uri}, got {payload.get('htu')}")
-    
+        raise ValueError(
+            f"DPoP URI mismatch: expected {http_uri}, got {payload.get('htu')}"
+        )
+
     # Verify freshness (allow 60 second clock skew)
     iat = payload.get("iat")
     if not iat or abs(time.time() - iat) > 60:
         raise ValueError("DPoP proof expired or clock skew exceeds tolerance")
-    
+
     return True
 ```
 
@@ -288,22 +298,22 @@ Gateway middleware validates the binding before routing to governance logic:
 ```python
 async def dpop_validation_middleware(request: Request, call_next):
     dpop_header = request.headers.get("DPoP")
-    
+
     if not dpop_header:
         raise Unauthorized("DPoP proof required")
-    
+
     tls_cert_der = request.state.tls_peer_cert
-    
+
     try:
         verify_dpop_binding(
             dpop_jwt=dpop_header,
             tls_cert_der=tls_cert_der,
             http_method=request.method,
-            http_uri=str(request.url)
+            http_uri=str(request.url),
         )
     except ValueError as e:
         raise Forbidden(f"DPoP validation failed: {e}")
-    
+
     return await call_next(request)
 ```
 
@@ -416,7 +426,7 @@ registry.register_control(
     control_id="FTRA-001",
     policy_path="policies/ftra/market_access.rego",
     authorized_agent_pattern="spiffe://cage.altostrat.com/agents/finance/*",
-    tier=GovernanceTier.TIER_3
+    tier=GovernanceTier.TIER_3,
 )
 ```
 
@@ -487,15 +497,15 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 envelope = GovernanceEnvelopeBuilder.build(
     agent_id=request.state.verified_spiffe_id,  # Parent's SPIFFE ID
     action="ftra.market.analyze_volatility",
-    consequence={
-        "target_market": "NASDAQ",
-        "timeframe": "30d"
-    },
+    consequence={"target_market": "NASDAQ", "timeframe": "30d"},
     delegation={
         "subagent_spiffe": "spiffe://cage.altostrat.com/agents/finance/advisor-7f3a9b2c/quant-researcher-4d2e1a9b",
-        "delegated_actions": ["ftra.analytics.fetch_timeseries", "ftra.analytics.compute_volatility"],
-        "ttl_seconds": 300
-    }
+        "delegated_actions": [
+            "ftra.analytics.fetch_timeseries",
+            "ftra.analytics.compute_volatility",
+        ],
+        "ttl_seconds": 300,
+    },
 )
 ```
 

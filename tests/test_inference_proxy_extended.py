@@ -612,7 +612,10 @@ async def test_agent_id_from_spiffe_cert_used_for_quota(proxy_deps):
 
     call_args = quota_proxy.check_and_increment.call_args
     # Agent ID comes from mocked SPIFFE certificate, not from body
-    assert call_args.kwargs.get("agent_id") == "spiffe://cluster.local/ns/default/sa/test-agent"
+    assert (
+        call_args.kwargs.get("agent_id")
+        == "spiffe://cluster.local/ns/default/sa/test-agent"
+    )
 
 
 @pytest.mark.asyncio
@@ -625,12 +628,15 @@ async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
     # Mock other dependencies to isolate the SPIFFE check
     monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
     monkeypatch.setattr(_mod, "stamp_iso_control", MagicMock())
+    import src.gateway.governance.nemo.manager as _nemo_mgr
+
+    monkeypatch.setattr(_nemo_mgr, "initialize_rails", lambda: MagicMock())
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=inference_app), base_url="http://test"
     ) as client:
         response = await client.post("/v1/chat/completions", json=_chat_body())
-        
+
         # Should fail with 401 Unauthorized due to missing SPIFFE certificate
         assert response.status_code == 401
         data = response.json()

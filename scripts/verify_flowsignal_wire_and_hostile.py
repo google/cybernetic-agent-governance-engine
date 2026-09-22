@@ -135,13 +135,19 @@ async def main() -> None:
             json=wire_request_body,
             headers=headers,
         )
-        print(f"    Wire HTTP Status: {resp_allow.status_code} {resp_allow.reason_phrase}")
-        print(f"    Wire Trace Context: {resp_allow.headers.get('x-cloud-trace-context')}")
+        print(
+            f"    Wire HTTP Status: {resp_allow.status_code} {resp_allow.reason_phrase}"
+        )
+        print(
+            f"    Wire Trace Context: {resp_allow.headers.get('x-cloud-trace-context')}"
+        )
         print(f"    Wire Response Date: {resp_allow.headers.get('date')}")
         resp_allow_data = resp_allow.json()
         print(f"    FlowSignal Decision: {resp_allow_data.get('decision')}")
         print(f"    Authority Record ID: {resp_allow_data.get('authority_record_id')}")
-        print(f"    Receipt ID: {resp_allow_data.get('authority_receipt', {}).get('id')}")
+        print(
+            f"    Receipt ID: {resp_allow_data.get('authority_receipt', {}).get('id')}"
+        )
 
     # 3. Live Wire Hostile Malformed Request to Cloud Run
     print("\n[3] Live Wire Hostile Request (Malformed Request Ingress to Cloud Run)")
@@ -151,27 +157,42 @@ async def main() -> None:
             json={"malformed_attack_vector": True},
             headers=headers,
         )
-        print(f"    Wire HTTP Status: {resp_malformed.status_code} {resp_malformed.reason_phrase}")
-        print(f"    Wire Trace Context: {resp_malformed.headers.get('x-cloud-trace-context')}")
+        print(
+            f"    Wire HTTP Status: {resp_malformed.status_code} {resp_malformed.reason_phrase}"
+        )
+        print(
+            f"    Wire Trace Context: {resp_malformed.headers.get('x-cloud-trace-context')}"
+        )
         print(f"    Cloud Run Response Preview: {resp_malformed.text[:160]}...")
 
     # 4. LIVE-P3-004: Hostile Malformed FlowSignal Responses vs CAGE Fail-Closed Gate
     print("\n" + "=" * 80)
     print("LIVE-P3-004: MALFORMED FLOWSIGNAL RESPONSE / FAIL-CLOSED ADMISSION SUITE")
-    print("Safe Property: INVALID_FLOWSIGNAL_RESPONSE ⇒ admitted=False ∧ no ConsequenceToken")
+    print(
+        "Safe Property: INVALID_FLOWSIGNAL_RESPONSE ⇒ admitted=False ∧ no ConsequenceToken"
+    )
     print("=" * 80)
 
     # Setup mock signer for hermetic ConsequenceToken verification
-    from src.gateway.governance.consequence_token import ConsequenceToken
-    from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from src.gateway.governance.consequence_token import ConsequenceToken
+
     private_key = ec.generate_private_key(ec.SECP256R1())
 
     mock_signer = MagicMock()
-    mock_signer.key_id = "projects/test/locations/us/keyRings/test/cryptoKeys/test/cryptoKeyVersions/1"
-    mock_signer.sign.side_effect = lambda data: private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+    mock_signer.key_id = (
+        "projects/test/locations/us/keyRings/test/cryptoKeys/test/cryptoKeyVersions/1"
+    )
+    mock_signer.sign.side_effect = lambda data: private_key.sign(
+        data, ec.ECDSA(hashes.SHA256())
+    )
 
-    with patch("src.gateway.governance.consequence_token_service.get_governance_signer", return_value=mock_signer):
+    with patch(
+        "src.gateway.governance.consequence_token_service.get_governance_signer",
+        return_value=mock_signer,
+    ):
         provider = FlowSignalNormativeProvider(
             endpoint=endpoint,
             api_key=bearer,
@@ -182,15 +203,26 @@ async def main() -> None:
         vectors = [
             (
                 "A. Missing decision field",
-                {"authority_record_id": "MANDATE-TREASURY-001", "message": "Authority evaluation complete"},
+                {
+                    "authority_record_id": "MANDATE-TREASURY-001",
+                    "message": "Authority evaluation complete",
+                },
             ),
             (
                 "B. Unknown decision value ('MAYBE')",
-                {"decision": "MAYBE", "authority_record_id": "MANDATE-TREASURY-001", "message": "Undetermined"},
+                {
+                    "decision": "MAYBE",
+                    "authority_record_id": "MANDATE-TREASURY-001",
+                    "message": "Undetermined",
+                },
             ),
             (
                 "C. ALLOW with missing/empty authority_record_id",
-                {"decision": "ALLOW", "authority_record_id": "", "message": "Authorized without record reference"},
+                {
+                    "decision": "ALLOW",
+                    "authority_record_id": "",
+                    "message": "Authorized without record reference",
+                },
             ),
         ]
 
@@ -206,24 +238,40 @@ async def main() -> None:
             )
 
             with patch("httpx.AsyncClient.post", return_value=mock_response):
-                val_result: ValidationResult = await provider.validate_fria(allow_payload)
+                val_result: ValidationResult = await provider.validate_fria(
+                    allow_payload
+                )
 
-            token_minted = any(f.get("code") == "CONSEQUENCE_TOKEN" and "token" in f for f in val_result.findings)
-            token_mint_failed = any(f.get("code") == "CONSEQUENCE_TOKEN_MINT_FAILED" for f in val_result.findings)
+            token_minted = any(
+                f.get("code") == "CONSEQUENCE_TOKEN" and "token" in f
+                for f in val_result.findings
+            )
+            token_mint_failed = any(
+                f.get("code") == "CONSEQUENCE_TOKEN_MINT_FAILED"
+                for f in val_result.findings
+            )
 
             print(f"Provider Result: {val_result}")
             print(f"Admission State: admitted = {val_result.admitted}")
             print(f"Reason / Error Code: {val_result.error}")
             print(f"Findings Count: {len(val_result.findings)}")
             for idx, f in enumerate(val_result.findings):
-                print(f"  [{idx}] code={f.get('code')}, severity={f.get('severity')}, message={f.get('message')}")
+                print(
+                    f"  [{idx}] code={f.get('code')}, severity={f.get('severity')}, message={f.get('message')}"
+                )
             print(f"ConsequenceToken Minted: {token_minted}")
             if token_mint_failed:
-                print("ConsequenceToken Mint Failed finding recorded: True (Fail-Closed)")
+                print(
+                    "ConsequenceToken Mint Failed finding recorded: True (Fail-Closed)"
+                )
 
             # Invariant assertion
-            safe_property_satisfied = (val_result.admitted is False) and (not token_minted)
-            print(f"Safe Invariant Satisfied (admitted=False ∧ no Token): {safe_property_satisfied}")
+            safe_property_satisfied = (val_result.admitted is False) and (
+                not token_minted
+            )
+            print(
+                f"Safe Invariant Satisfied (admitted=False ∧ no Token): {safe_property_satisfied}"
+            )
             assert safe_property_satisfied, f"VIOLATION OF SAFE PROPERTY ON {name}"
 
     print("\n" + "=" * 80)
@@ -233,4 +281,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

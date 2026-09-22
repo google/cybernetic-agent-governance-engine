@@ -1135,7 +1135,9 @@ class CAGEAuthorizationServicer:
             )
 
             try:
-                caller_principal = extract_spiffe_uri_from_grpc_context(request.attributes)
+                caller_principal = extract_spiffe_uri_from_grpc_context(
+                    request.attributes
+                )
             except Exception as spiffe_exc:
                 logger.error(
                     "AgentGatewayAdapter: SPIFFE extraction failed: %s — fail-closed",

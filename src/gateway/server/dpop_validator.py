@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 class TokenBindingError(ValueError):
     """Raised when DPoP token binding validation fails (fail-closed)."""
+
     pass
 
 
@@ -82,7 +83,9 @@ class DPoPValidator(ProofOfPossessionValidator):
             max_age_seconds: Maximum allowed timestamp skew (default: 60s)
         """
         self._max_age_seconds = max_age_seconds
-        self._seen_jti: set[str] = set()  # In-memory JTI tracking (production: use Redis)
+        self._seen_jti: set[str] = (
+            set()
+        )  # In-memory JTI tracking (production: use Redis)
 
     async def validate_token_binding(
         self,
@@ -92,7 +95,7 @@ class DPoPValidator(ProofOfPossessionValidator):
         http_method: str,
     ) -> bool:
         """Validate DPoP proof against mTLS certificate binding."""
-        
+
         # Parse DPoP JWT (header.payload.signature)
         dpop_parts = dpop_proof.split(".")
         if len(dpop_parts) != 3:
@@ -115,7 +118,7 @@ class DPoPValidator(ProofOfPossessionValidator):
             raise TokenBindingError(
                 f"HTTP method mismatch: expected {http_method}, got {dpop_claims['htm']}"
             )
-        
+
         if dpop_claims["htu"] != expected_uri:
             raise TokenBindingError(
                 f"URI mismatch: expected {expected_uri}, got {dpop_claims['htu']}"
@@ -127,8 +130,10 @@ class DPoPValidator(ProofOfPossessionValidator):
         age = current_time - proof_time
 
         if age < 0:
-            raise TokenBindingError(f"DPoP proof timestamp is in the future: iat={proof_time}")
-        
+            raise TokenBindingError(
+                f"DPoP proof timestamp is in the future: iat={proof_time}"
+            )
+
         if age > self._max_age_seconds:
             raise TokenBindingError(
                 f"DPoP proof expired: age={age}s exceeds max_age={self._max_age_seconds}s"
@@ -148,7 +153,7 @@ class DPoPValidator(ProofOfPossessionValidator):
         dpop_jwk = dpop_header.get("jwk")
         if not dpop_jwk:
             raise TokenBindingError("DPoP JWT header missing 'jwk' claim")
-        
+
         dpop_thumbprint = self._compute_jwk_thumbprint_from_dict(dpop_jwk)
 
         # Fail-closed: Thumbprints MUST match
@@ -168,22 +173,30 @@ class DPoPValidator(ProofOfPossessionValidator):
                 raise TokenBindingError(f"Missing required DPoP header field: {field}")
 
         if header["typ"] != "dpop+jwt":
-            raise TokenBindingError(f"Invalid DPoP type: expected 'dpop+jwt', got '{header['typ']}'")
+            raise TokenBindingError(
+                f"Invalid DPoP type: expected 'dpop+jwt', got '{header['typ']}'"
+            )
 
         required_claims = ["htm", "htu", "iat", "jti"]
         for claim in required_claims:
             if claim not in claims:
                 raise TokenBindingError(f"Missing required DPoP claim: {claim}")
 
-    def _extract_cert_public_key(self, cert_pem: str) -> rsa.RSAPublicKey | ec.EllipticCurvePublicKey:
+    def _extract_cert_public_key(
+        self, cert_pem: str
+    ) -> rsa.RSAPublicKey | ec.EllipticCurvePublicKey:
         """Extract public key from PEM-encoded X.509 certificate."""
         try:
             cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
             public_key = cert.public_key()
-            
-            if not isinstance(public_key, (rsa.RSAPublicKey, ec.EllipticCurvePublicKey)):
-                raise TokenBindingError(f"Unsupported certificate public key type: {type(public_key)}")
-            
+
+            if not isinstance(
+                public_key, (rsa.RSAPublicKey, ec.EllipticCurvePublicKey)
+            ):
+                raise TokenBindingError(
+                    f"Unsupported certificate public key type: {type(public_key)}"
+                )
+
             return public_key
         except Exception as e:
             raise TokenBindingError(f"Failed to parse client certificate: {e}")
@@ -195,18 +208,22 @@ class DPoPValidator(ProofOfPossessionValidator):
         if isinstance(public_key, rsa.RSAPublicKey):
             public_numbers = public_key.public_numbers()
             jwk = {
-                "e": self._base64url_encode(public_numbers.e.to_bytes(
-                    (public_numbers.e.bit_length() + 7) // 8, "big"
-                )),
+                "e": self._base64url_encode(
+                    public_numbers.e.to_bytes(
+                        (public_numbers.e.bit_length() + 7) // 8, "big"
+                    )
+                ),
                 "kty": "RSA",
-                "n": self._base64url_encode(public_numbers.n.to_bytes(
-                    (public_numbers.n.bit_length() + 7) // 8, "big"
-                )),
+                "n": self._base64url_encode(
+                    public_numbers.n.to_bytes(
+                        (public_numbers.n.bit_length() + 7) // 8, "big"
+                    )
+                ),
             }
         elif isinstance(public_key, ec.EllipticCurvePublicKey):
-            public_numbers = public_key.public_numbers()
+            ec_numbers = public_key.public_numbers()
             curve_name = public_key.curve.name
-            
+
             # Map cryptography curve names to JWK crv values
             curve_map = {
                 "secp256r1": "P-256",
@@ -216,13 +233,13 @@ class DPoPValidator(ProofOfPossessionValidator):
             crv = curve_map.get(curve_name)
             if not crv:
                 raise TokenBindingError(f"Unsupported EC curve: {curve_name}")
-            
+
             coord_size = (public_key.curve.key_size + 7) // 8
             jwk = {
                 "crv": crv,
                 "kty": "EC",
-                "x": self._base64url_encode(public_numbers.x.to_bytes(coord_size, "big")),
-                "y": self._base64url_encode(public_numbers.y.to_bytes(coord_size, "big")),
+                "x": self._base64url_encode(ec_numbers.x.to_bytes(coord_size, "big")),
+                "y": self._base64url_encode(ec_numbers.y.to_bytes(coord_size, "big")),
             }
         else:
             raise TokenBindingError(f"Unsupported public key type: {type(public_key)}")
