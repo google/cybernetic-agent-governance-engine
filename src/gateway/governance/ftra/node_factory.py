@@ -76,6 +76,7 @@ except ImportError:
     def interrupt(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("langgraph is required for FTRA HITL interrupt")
 
+
 from src.gateway.governance.ftra.models import ParseFailureClass, ParseResult
 
 if TYPE_CHECKING:

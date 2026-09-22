@@ -55,7 +55,7 @@ jobs:
           # Install ONLY [gateway] and [compliance_bridge] extras
           # Explicitly EXCLUDE [advisor] which pulls sentence-transformers
           uv pip install --system -e ".[gateway,compliance_bridge]"
-          uv pip install --system pytest pytest-asyncio fakeredis respx httpx
+          uv pip install --system pytest pytest-asyncio pytest-xdist pytest-timeout fakeredis respx httpx
 
       - name: Verify ML packages are NOT installed
         run: |
