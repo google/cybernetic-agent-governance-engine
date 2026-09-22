@@ -5,4 +5,3 @@ async def self_check_input(
     llm: Any | None = ...,
     **kwargs: Any,
 ) -> bool: ...
-

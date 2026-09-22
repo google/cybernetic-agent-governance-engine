@@ -34,12 +34,12 @@ class TestQueryResponseModel:
     def test_query_response_valid_trace_id(self) -> None:
         """Verify 32-char lowercase hex trace_id validates cleanly."""
         valid_trace_id = "0123456789abcdef0123456789abcdef"
-        
+
         response = QueryResponse(
             response="Your portfolio is well-diversified.",
             trace_id=valid_trace_id,
         )
-        
+
         assert response.response == "Your portfolio is well-diversified."
         assert response.trace_id == valid_trace_id
 
@@ -49,7 +49,7 @@ class TestQueryResponseModel:
             response="I cannot assist with that request.",
             trace_id=None,
         )
-        
+
         assert response.response == "I cannot assist with that request."
         assert response.trace_id is None
 
@@ -60,7 +60,7 @@ class TestQueryResponseModel:
                 response="Response text",
                 trace_id="0123456789ABCDEF0123456789ABCDEF",  # uppercase
             )
-        
+
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("trace_id",)
@@ -73,7 +73,7 @@ class TestQueryResponseModel:
                 response="Response text",
                 trace_id="0123456789abcdef",  # only 16 chars
             )
-        
+
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("trace_id",)
@@ -86,7 +86,7 @@ class TestQueryResponseModel:
                 response="Response text",
                 trace_id="0123456789abcdef0123456789abcdef00",  # 34 chars
             )
-        
+
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("trace_id",)
@@ -99,7 +99,7 @@ class TestQueryResponseModel:
                 response="Response text",
                 trace_id="0123456789abcdefghijklmnopqrstuv",  # contains g-v
             )
-        
+
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("trace_id",)
@@ -111,7 +111,7 @@ class TestQueryResponseModel:
             response="Market analysis complete.",
             trace_id="abcdef0123456789abcdef0123456789",
         )
-        
+
         with pytest.raises(ValidationError):
             response.response = "Modified text"  # type: ignore[misc]
 
@@ -122,7 +122,7 @@ class TestQueryResponseModel:
             user_id="test_user_123",
             thread_id="thread_456",
         )
-        
+
         assert request.prompt == "What stocks should I buy?"
         assert request.user_id == "test_user_123"
         assert request.thread_id == "thread_456"
@@ -130,7 +130,7 @@ class TestQueryResponseModel:
     def test_query_request_defaults(self) -> None:
         """Verify QueryRequest applies default values for user_id and thread_id."""
         request = QueryRequest(prompt="Tell me about ETFs")
-        
+
         assert request.prompt == "Tell me about ETFs"
         assert request.user_id == "default_user"
         assert request.thread_id == "default_thread"
@@ -145,7 +145,7 @@ class TestAgentQueryEndpointSchemaConformance:
             response="Based on your risk profile, I recommend diversified ETFs.",
             trace_id="0123456789abcdef0123456789abcdef",
         )
-        
+
         # Verify serialization matches expected wire format
         json_data = response.model_dump()
         assert json_data == {
@@ -159,7 +159,7 @@ class TestAgentQueryEndpointSchemaConformance:
             response="I'm sorry, I can't assist with that request.",
             trace_id=None,
         )
-        
+
         json_data = response.model_dump()
         assert json_data == {
             "response": "I'm sorry, I can't assist with that request.",
@@ -173,7 +173,7 @@ class TestAgentQueryEndpointSchemaConformance:
             "response": "Market analysis complete.",
             "trace_id": "abcdef0123456789abcdef0123456789",
         }
-        
+
         validated = QueryResponse(**server_response)
         assert validated.response == "Market analysis complete."
         assert validated.trace_id == "abcdef0123456789abcdef0123456789"
@@ -181,13 +181,13 @@ class TestAgentQueryEndpointSchemaConformance:
     def test_query_response_json_schema_generation(self) -> None:
         """Verify QueryResponse generates valid JSON Schema for OpenAPI."""
         schema = QueryResponse.model_json_schema()
-        
+
         # Verify schema structure
         assert schema["type"] == "object"
         assert "properties" in schema
         assert "response" in schema["properties"]
         assert "trace_id" in schema["properties"]
-        
+
         # Verify trace_id has pattern constraint
         trace_id_schema = schema["properties"]["trace_id"]
         assert "pattern" in trace_id_schema or "anyOf" in trace_id_schema
@@ -195,9 +195,9 @@ class TestAgentQueryEndpointSchemaConformance:
     def test_endpoint_decorator_specifies_response_model(self) -> None:
         """Verify POST /agent/query endpoint declares response_model=QueryResponse."""
         import inspect
-        
+
         from src.governed_financial_advisor.server import app
-        
+
         # Find the /agent/query endpoint
         query_route = None
         for route in app.routes:
@@ -205,9 +205,9 @@ class TestAgentQueryEndpointSchemaConformance:
                 if hasattr(route, "methods") and "POST" in route.methods:
                     query_route = route
                     break
-        
+
         assert query_route is not None, "POST /agent/query endpoint not found"
-        
+
         # Verify response_model is set
         assert hasattr(query_route, "response_model")
         assert query_route.response_model == QueryResponse

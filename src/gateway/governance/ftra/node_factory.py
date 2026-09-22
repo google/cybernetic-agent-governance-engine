@@ -69,7 +69,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from langgraph.types import interrupt
+try:
+    from langgraph.types import interrupt
+except ImportError:
+
+    def interrupt(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("langgraph is required for FTRA HITL interrupt")
 
 from src.gateway.governance.ftra.models import ParseFailureClass, ParseResult
 
@@ -886,5 +891,3 @@ def _park_in_defer_queue(
             exc,
         )
         return token.defer_id
-
-

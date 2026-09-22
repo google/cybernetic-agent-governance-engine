@@ -225,7 +225,15 @@ class WebhookRegistry:
         """
         # Bypass geographic checks for non-production environments
         cage_env = os.environ.get("CAGE_ENV", "production").lower()
-        if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
+        if cage_env in (
+            "development",
+            "dev",
+            "test",
+            "ci",
+            "staging",
+            "uat",
+            "preprod",
+        ):
             return  # Geographic enforcement disabled for staging/dev/test
 
         allowed_suffixes = _REGION_ALLOWED_SUFFIXES.get(self._region, [])

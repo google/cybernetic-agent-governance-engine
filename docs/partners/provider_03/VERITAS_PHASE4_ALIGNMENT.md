@@ -85,11 +85,7 @@ This silent overwrite violates three governance invariants:
 # VERITAS / CAGE Phase 4 Invariant I-07: Action Context Collision Guard
 # Fail closed if both legacy and canonical keys are present
 for src_key, dest_key in self._field_map.items():
-    if (
-        src_key != dest_key
-        and src_key in action_context
-        and dest_key in action_context
-    ):
+    if src_key != dest_key and src_key in action_context and dest_key in action_context:
         logger.error(
             "[Provider03] Action context collision detected: "
             "legacy key '%s' and canonical key '%s' both present",

@@ -75,10 +75,10 @@ def test_schema_file_is_valid_json():
 
 def test_all_36_agent_state_fields_present():
     """Assert all 40 AgentState fields are present under properties.
-    
+
     Failure means the expected field count has changed. This is a regression guard
     to detect unintentional field additions or removals.
-    
+
     Updated from 36 to 40 after adding cage-client governance integration fields:
       - agent_id (required): Agent identifier for governance tracking
       - proposed_action (optional): Action payload for @cage_guard decorator
@@ -111,13 +111,13 @@ def test_all_agent_state_fields_in_schema():
 
 def test_no_phantom_fields_in_schema():
     """Assert zero phantom fields exist (schema_props - state_fields == set()).
-    
+
     Failure means the schema declares properties that don't exist in AgentState.
     This can happen when a field is removed from AgentState but not from the schema.
     """
     state_fields = get_agent_state_annotations()
     schema_props = get_schema_properties()
-    
+
     phantom_fields = schema_props - state_fields
     assert phantom_fields == set(), (
         f"Schema contains phantom fields not present in AgentState: {sorted(phantom_fields)}. "
@@ -127,13 +127,13 @@ def test_no_phantom_fields_in_schema():
 
 def test_guardrail_reason_is_non_nullable_string():
     """Assert guardrail_reason is {"type": "string"} (not nullable).
-    
+
     Failure means the guardrail_reason field allows null, which violates the
     contract that it must always be present (empty string when not blocked).
     """
     with SCHEMA_PATH.open() as f:
         schema = json.load(f)
-    
+
     guardrail_reason_schema = schema["properties"]["guardrail_reason"]
     assert guardrail_reason_schema["type"] == "string", (
         f"guardrail_reason must be non-nullable string type, got: {guardrail_reason_schema}"
@@ -146,13 +146,13 @@ def test_guardrail_reason_is_non_nullable_string():
 
 def test_additional_properties_is_false():
     """Assert additionalProperties is False.
-    
+
     Failure means the schema allows arbitrary additional properties, which
     violates the strict schema contract.
     """
     with SCHEMA_PATH.open() as f:
         schema = json.load(f)
-    
+
     assert schema.get("additionalProperties") is False, (
         f"Schema must have additionalProperties set to False, got: {schema.get('additionalProperties')}"
     )
@@ -181,17 +181,17 @@ def test_required_fields_exist_in_agent_state():
 
 def test_hermetic_induced_drift_detection(monkeypatch, tmp_path):
     """Hermetic induced-drift test with monkeypatched output path.
-    
+
     This test verifies that the --check flag correctly detects schema drift
     without modifying the committed schema file. It monkeypatches the output
     path to a temporary location and tests both drift and parity scenarios.
     """
     import scripts.generate_agent_state_schema as gen_module
-    
+
     # Monkeypatch the schema output path to tmp_path
     tmp_schema_path = tmp_path / "schema.json"
     monkeypatch.setattr(gen_module, "SCHEMA_OUTPUT_PATH", tmp_schema_path)
-    
+
     # Test 1: Intentional drift (missing property) should return exit code 1
     drift_schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -202,32 +202,34 @@ def test_hermetic_induced_drift_detection(monkeypatch, tmp_path):
         "properties": {
             "messages": {"type": "array"}  # Only one property instead of 32
         },
-        "$defs": {}
+        "$defs": {},
     }
     tmp_schema_path.write_text(json.dumps(drift_schema, indent=2) + "\n")
-    
+
     exit_code = gen_module.main(["--check"])
     assert exit_code == 1, (
         "Expected exit code 1 when schema has intentional drift (missing properties)"
     )
-    
+
     # Test 2: Exact synchronized JSON should return exit code 0
     # Generate the current schema and write it to the temp path
     current_schema = gen_module.generate_schema()
     gen_module.write_schema(current_schema, tmp_schema_path)
-    
+
     exit_code = gen_module.main(["--check"])
     assert exit_code == 0, (
         "Expected exit code 0 when schema is synchronized with AgentState model"
     )
-    
+
     # Test 3: Verify the committed schema at git root remains untouched
-    committed_schema_path = Path(__file__).parents[1] / "compliance" / "schemas" / "agent_state_schema.json"
+    committed_schema_path = (
+        Path(__file__).parents[1] / "compliance" / "schemas" / "agent_state_schema.json"
+    )
     original_content = committed_schema_path.read_text()
-    
+
     # Run the check again to ensure no side effects
     gen_module.main(["--check"])
-    
+
     assert committed_schema_path.read_text() == original_content, (
         "Committed schema file was modified by --check mode (must remain read-only)"
     )

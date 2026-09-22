@@ -111,27 +111,29 @@ mkdir -p src/integrations/semantic_injection_detector
 # src/integrations/semantic_injection_detector/adapter.py
 from sentence_transformers import SentenceTransformer
 from src.gateway.governance.prompt_injection_detector import (
-    detect_prompt_injection, InjectionResult
+    detect_prompt_injection,
+    InjectionResult,
 )
+
 
 class SemanticInjectionAdapter:
     def __init__(self):
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         self.threshold = 0.82
-    
+
     def detect_with_semantic(self, text: str) -> InjectionResult:
         # Run Stage 2 regex first
         result = detect_prompt_injection(text)
         if result.detected:
             return result
-        
+
         # Add Stage 2.5 semantic check
         score = self._semantic_score(text)
         if score >= self.threshold:
             return InjectionResult(
                 detected=True,
                 pattern_matched="semantic_similarity",
-                confidence=round(score, 4)
+                confidence=round(score, 4),
             )
         return result
 ```

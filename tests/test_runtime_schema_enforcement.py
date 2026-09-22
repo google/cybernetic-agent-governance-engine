@@ -109,9 +109,7 @@ def test_non_enforcing_posture_skips_validation() -> None:
     invalid_state = {"completely": "wrong", "keys": 123}
 
     # Should not raise despite schema violation
-    validator.validate_node_output(
-        node_name="non_enforcing_node", state=invalid_state
-    )
+    validator.validate_node_output(node_name="non_enforcing_node", state=invalid_state)
 
 
 def test_invalid_enum_value_raises_violation() -> None:

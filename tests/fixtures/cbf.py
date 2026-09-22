@@ -28,7 +28,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
@@ -74,6 +73,7 @@ def make_cbf():
                 Redis client. Tests can configure Redis responses via mock_redis.
         """
         from dataclasses import replace
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
         # Default to CashBarrier with optional overrides
         if invariant is None:

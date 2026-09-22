@@ -42,7 +42,7 @@ from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 class DataAnalystState(TypedDict):
     messages: Annotated[list, add_messages]  # Inherited global conversation
     reasoning_output: str | None  # Local Thinker payload
-    
+
     # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
     agent_id: str  # Audit trail identifier
     proposed_action: dict[str, Any] | None  # Parameters for governance validation
@@ -61,13 +61,13 @@ class DataAnalystState(TypedDict):
 # ---------------------------------------------------------------------------
 async def tool_executor_node(state: DataAnalystState) -> dict[str, Any]:
     """Execute market data tools after CAGE governance validation.
-    
+
     This node invokes get_market_data via MCP. While read-only (no financial
     transactions), it still requires governance validation to:
       - Enforce rate limits (prevent API quota exhaustion)
       - Validate ticker symbols (prevent injection attacks)
       - Log all data access for audit trail
-    
+
     The @cage_guard decorator (applied in graph builder below) validates
     state["proposed_action"] through Tier 0 (STPA), Tier 1 (confidence), and
     Tier 6 (causal) before allowing tool execution.
@@ -192,7 +192,7 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
 # ---------------------------------------------------------------------------
 async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
     """Generate tool calls and populate proposed_action for governance.
-    
+
     This node's LLM selects market data tools based on the thinker's reasoning.
     It MUST populate state["proposed_action"] so the downstream tool_executor_node's
     @cage_guard decorator can validate parameters before actual execution.
@@ -307,7 +307,8 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
                 "tool_name": first_call["name"],
                 "arguments": first_call["args"],
                 # Flatten common parameters
-                "ticker": first_call["args"].get("ticker") or first_call["args"].get("symbol", "UNKNOWN"),
+                "ticker": first_call["args"].get("ticker")
+                or first_call["args"].get("symbol", "UNKNOWN"),
             }
 
         return {
@@ -401,7 +402,7 @@ from src.gateway.client.adapters.langgraph import cage_guard
 from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
 
 
-def _create_guarded_tool_executor():
+def _create_guarded_tool_executor() -> Any:
     """Lazy factory for @cage_guard decorator to defer env var validation until runtime."""
     return cage_guard(
         client=get_cage_client(),
@@ -414,7 +415,9 @@ builder = StateGraph(DataAnalystState)
 # Add Nodes
 builder.add_node("thinker", analyst_thinker_node)
 builder.add_node("doer", analyst_doer_node)
-builder.add_node("execute_tool", _create_guarded_tool_executor())  # CAGE governance enforced
+builder.add_node(
+    "execute_tool", _create_guarded_tool_executor()
+)  # CAGE governance enforced
 builder.add_node("reporter", analyst_reporter_node)
 
 # Edges

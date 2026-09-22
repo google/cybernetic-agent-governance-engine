@@ -1076,4 +1076,3 @@ class TestInferThetaPartnerContractVectors:
             "INFERTHETA_UNKNOWN_KEY",
             "INFERTHETA_SIGNATURE_INVALID",
         )
-

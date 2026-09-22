@@ -131,8 +131,7 @@ The graph compiles with `interrupt_before=["governed_trader"]` ([`graph.py:creat
 ```python
 graph = create_graph(redis_url)
 compiled = graph.compile(
-    checkpointer=get_checkpointer(redis_url),
-    interrupt_before=["governed_trader"]
+    checkpointer=get_checkpointer(redis_url), interrupt_before=["governed_trader"]
 )
 ```
 

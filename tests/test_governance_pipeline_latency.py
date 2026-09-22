@@ -257,7 +257,7 @@ def _opa_patches():
     """Return a list of patch context managers for the OPA safety node."""
     mock_gov = AsyncMock()
     mock_gov.govern = AsyncMock(return_value=None)
-    
+
     mock_client = AsyncMock()
     mock_envelope = MagicMock()
     mock_envelope.subject.get.return_value = "mock_hash"

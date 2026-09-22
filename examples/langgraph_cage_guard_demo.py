@@ -53,13 +53,13 @@ import asyncio
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, TypedDict
-from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
 from pathlib import Path
+from typing import Any, TypedDict
+from unittest.mock import AsyncMock, MagicMock
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
@@ -83,14 +83,36 @@ def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _TTY else text
 
 
-def RED(t: str) -> str: return _c("31;1", t)
-def GREEN(t: str) -> str: return _c("32;1", t)
-def YELLOW(t: str) -> str: return _c("33;1", t)
-def CYAN(t: str) -> str: return _c("36;1", t)
-def MAGENTA(t: str) -> str: return _c("35;1", t)
-def BOLD(t: str) -> str: return _c("1", t)
-def DIM(t: str) -> str: return _c("2", t)
-def WHITE(t: str) -> str: return _c("97", t)
+def RED(t: str) -> str:
+    return _c("31;1", t)
+
+
+def GREEN(t: str) -> str:
+    return _c("32;1", t)
+
+
+def YELLOW(t: str) -> str:
+    return _c("33;1", t)
+
+
+def CYAN(t: str) -> str:
+    return _c("36;1", t)
+
+
+def MAGENTA(t: str) -> str:
+    return _c("35;1", t)
+
+
+def BOLD(t: str) -> str:
+    return _c("1", t)
+
+
+def DIM(t: str) -> str:
+    return _c("2", t)
+
+
+def WHITE(t: str) -> str:
+    return _c("97", t)
 
 
 def _hr(char: str = "─", width: int = 76) -> None:
@@ -136,6 +158,7 @@ def _pause(interactive: bool) -> None:
 # LangGraph Definitions
 # ---------------------------------------------------------------------------
 
+
 class AgentState(TypedDict):
     agent_id: str
     proposed_action: dict[str, Any]
@@ -162,17 +185,34 @@ def get_mock_client() -> CageClient:
                 envelope_type="cage_governance_decision",
                 issued_at=datetime.now(timezone.utc),
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
-                issuer={"service": "mock-gateway", "instance_id": "test", "region": "us"},
-                subject={"action": action, "agent_id": agent_id, "action_hash": "mock", "record_hash": "mock"},
-                governance_context={"policy_version": "1.0", "tiers_passed": ["tier_1"]},
-                payload={"decision": "ALLOW", "execution_token": f"token-{uuid.uuid4().hex[:8]}"},
+                issuer={
+                    "service": "mock-gateway",
+                    "instance_id": "test",
+                    "region": "us",
+                },
+                subject={
+                    "action": action,
+                    "agent_id": agent_id,
+                    "action_hash": "mock",
+                    "record_hash": "mock",
+                },
+                governance_context={
+                    "policy_version": "1.0",
+                    "tiers_passed": ["tier_1"],
+                },
+                payload={
+                    "decision": "ALLOW",
+                    "execution_token": f"token-{uuid.uuid4().hex[:8]}",
+                },
                 signature={"algorithm": "none", "value": "none", "kid": "none"},
             )
         elif ticker == "PROHIBITED" or amount > 10000:
             # ACT 2: DENY
             raise PolicyViolationException(
                 reason_code="PROHIBITED_TICKER",
-                violation_details={"message": f"Ticker {ticker} is not allowed or amount exceeds limits."},
+                violation_details={
+                    "message": f"Ticker {ticker} is not allowed or amount exceeds limits."
+                },
                 audit_id=f"audit-{uuid.uuid4().hex[:8]}",
                 recoverable=False,
             )
@@ -191,13 +231,15 @@ def get_mock_client() -> CageClient:
 
 def build_graph(client: CageClient):
     """Builds and compiles the LangGraph workflow with CAGE decorators."""
-    
+
     # 1. The Core Execution Node (Protected by @cage_guard)
     # The decorator acts as a Policy Enforcement Point (PEP)
     @cage_guard(client=client, action="execute_trade")
     async def execute_trade_guarded(state: AgentState) -> dict[str, Any]:
         action = state.get("proposed_action", {})
-        return {"trade_result": f"Trade executed: {action.get('amount')} shares of {action.get('ticker')}"}
+        return {
+            "trade_result": f"Trade executed: {action.get('amount')} shares of {action.get('ticker')}"
+        }
 
     # 2. The Exception Catcher Node
     # LangGraph conditional edges inspect state, not exceptions.
@@ -262,6 +304,7 @@ def build_graph(client: CageClient):
 # ACT 1 — Compliant Trade (ALLOW)
 # ---------------------------------------------------------------------------
 
+
 async def act1_allow(interactive: bool, graph: Any) -> bool:
     _banner("ACT 1 · Compliant Trade (ALLOW)", CYAN)
     _step("Scenario", "Agent proposes compliant $100 AAPL trade")
@@ -277,14 +320,18 @@ async def act1_allow(interactive: bool, graph: Any) -> bool:
     _info("Submitting graph execution...")
     final_state = await graph.ainvoke(state, config)
 
-    if final_state.get("error") is None and "Trade executed" in final_state.get("trade_result", ""):
+    if final_state.get("error") is None and "Trade executed" in final_state.get(
+        "trade_result", ""
+    ):
         _ok("Trade allowed and executed successfully")
         _info(f"Result: {final_state.get('trade_result')}")
-        
+
         env = final_state.get("governance_envelope")
         if env:
-            _info(f"Governance Envelope: {env.payload.get('decision')} (token: {env.payload.get('execution_token')})")
-        
+            _info(
+                f"Governance Envelope: {env.payload.get('decision')} (token: {env.payload.get('execution_token')})"
+            )
+
         _pause(interactive)
         return True
     else:
@@ -296,10 +343,14 @@ async def act1_allow(interactive: bool, graph: Any) -> bool:
 # ACT 2 — Policy Violation (DENY)
 # ---------------------------------------------------------------------------
 
+
 async def act2_deny(interactive: bool, graph: Any) -> bool:
     _banner("ACT 2 · Policy Violation (DENY)", RED)
     _step("Scenario", "Agent proposes prohibited ticker (PROHIBITED) trade")
-    _step("Expected", "Gateway returns DENY → raises PolicyViolationException → conditional edge routes to failure_node")
+    _step(
+        "Expected",
+        "Gateway returns DENY → raises PolicyViolationException → conditional edge routes to failure_node",
+    )
     _hr()
 
     config = {"configurable": {"thread_id": "act2-thread"}}
@@ -325,11 +376,18 @@ async def act2_deny(interactive: bool, graph: Any) -> bool:
 # ACT 3 — High-Risk Trade (DEFER & HITL Interrupt)
 # ---------------------------------------------------------------------------
 
+
 async def act3_defer(interactive: bool, graph: Any) -> bool:
     _banner("ACT 3 · High-Risk Trade (DEFER & HITL Interrupt)", MAGENTA)
     _step("Scenario", "Agent proposes $5,000 TSLA trade (High risk)")
-    _step("Expected", "Gateway returns DEFER → raises DeferralPending → conditional edge routes to approval_node")
-    _step("Expected", "approval_node calls interrupt() → graph suspends → operator resumes execution")
+    _step(
+        "Expected",
+        "Gateway returns DEFER → raises DeferralPending → conditional edge routes to approval_node",
+    )
+    _step(
+        "Expected",
+        "approval_node calls interrupt() → graph suspends → operator resumes execution",
+    )
     _hr()
 
     config = {"configurable": {"thread_id": "act3-thread"}}
@@ -382,7 +440,10 @@ async def act3_defer(interactive: bool, graph: Any) -> bool:
 
     final_state = graph.get_state(config).values
 
-    if "trade_result" in final_state and "approved" in final_state.get("trade_result", "").lower():
+    if (
+        "trade_result" in final_state
+        and "approved" in final_state.get("trade_result", "").lower()
+    ):
         _ok("Trade successfully resumed and executed via HITL approval.")
         _pause(interactive)
         return True
@@ -394,6 +455,7 @@ async def act3_defer(interactive: bool, graph: Any) -> bool:
 # ---------------------------------------------------------------------------
 # Summary table
 # ---------------------------------------------------------------------------
+
 
 def _summary(results: dict[str, bool]) -> None:
     _banner("DEMO COMPLETE · LangGraph Integration Summary", WHITE)
@@ -433,6 +495,7 @@ def _summary(results: dict[str, bool]) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 async def main_async() -> int:
     parser = argparse.ArgumentParser(

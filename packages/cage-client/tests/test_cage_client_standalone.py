@@ -19,6 +19,7 @@ Standalone unit test for cage-client SDK subpackage.
 import hashlib
 import hmac
 import time
+
 import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -87,4 +88,3 @@ def test_routing_seal_verification():
     old_seal = f"{old_ts}.{old_sig}"
     with pytest.raises(RoutingSealVerificationError):
         verify_routing_seal(old_seal, body, secret, ttl_seconds=30)
-

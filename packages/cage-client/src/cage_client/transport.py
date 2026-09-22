@@ -31,7 +31,7 @@ _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
 def create_mtls_transport(
     cert_path: str | None = None,
     key_path: str | None = None,
-    ca_path: str | None = None
+    ca_path: str | None = None,
 ) -> httpx.AsyncHTTPTransport:
     """Create HTTP/2-enabled async transport with optional mTLS.
 
@@ -54,23 +54,17 @@ def create_mtls_transport(
     if cert_path is not None:
         cert_file = Path(cert_path)
         if not cert_file.exists():
-            raise FileNotFoundError(
-                f"Client certificate not found: {cert_path}"
-            )
+            raise FileNotFoundError(f"Client certificate not found: {cert_path}")
 
     if key_path is not None:
         key_file = Path(key_path)
         if not key_file.exists():
-            raise FileNotFoundError(
-                f"Client private key not found: {key_path}"
-            )
+            raise FileNotFoundError(f"Client private key not found: {key_path}")
 
     if ca_path is not None:
         ca_file = Path(ca_path)
         if not ca_file.exists():
-            raise FileNotFoundError(
-                f"CA certificate bundle not found: {ca_path}"
-            )
+            raise FileNotFoundError(f"CA certificate bundle not found: {ca_path}")
 
     # Configure SSL context for mTLS if paths are provided
     verify: bool | ssl.SSLContext | str
@@ -79,15 +73,12 @@ def create_mtls_transport(
         # Build custom SSL context with client certificates
         ssl_context = ssl.create_default_context(
             purpose=ssl.Purpose.SERVER_AUTH,
-            cafile=ca_path  # Use custom CA bundle if provided
+            cafile=ca_path,  # Use custom CA bundle if provided
         )
 
         # Load client certificate and private key for mutual TLS
         if cert_path and key_path:
-            ssl_context.load_cert_chain(
-                certfile=cert_path,
-                keyfile=key_path
-            )
+            ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
         # Enforce strict server certificate verification
         ssl_context.check_hostname = True
@@ -99,7 +90,4 @@ def create_mtls_transport(
         verify = True
 
     # Create HTTP/2-enabled async transport
-    return httpx.AsyncHTTPTransport(
-        http2=_HTTP2_AVAILABLE,
-        verify=verify
-    )
+    return httpx.AsyncHTTPTransport(http2=_HTTP2_AVAILABLE, verify=verify)

@@ -51,8 +51,9 @@ from cage_client.adapters.langgraph import cage_guard
 # Initialize governance client (once at app startup)
 cage = CageClient(
     gateway_url="http://localhost:8080",
-    routing_seal_secret="dev-secret-key"  # From your .env
+    routing_seal_secret="dev-secret-key",  # From your .env
 )
+
 
 # Define your state
 class AgentState(TypedDict):
@@ -60,6 +61,7 @@ class AgentState(TypedDict):
     proposed_action: dict
     agent_id: str
     result: str
+
 
 # Decorate high-stakes nodes with governance
 @cage_guard(client=cage, action="execute_trade")
@@ -69,9 +71,11 @@ async def execute_trade_node(state: AgentState) -> AgentState:
     # Your business logic here
     return {"result": f"Executed: {trade}"}
 
+
 # Build your graph
 def planner(state: AgentState) -> AgentState:
     return {"proposed_action": {"symbol": "AAPL", "amount": 1000}}
+
 
 graph = StateGraph(AgentState)
 graph.add_node("planner", planner)
@@ -83,10 +87,7 @@ graph.add_edge("execute_trade", END)
 app = graph.compile()
 
 # Run it
-result = await app.ainvoke({
-    "query": "Buy AAPL",
-    "agent_id": "advisor-v1"
-})
+result = await app.ainvoke({"query": "Buy AAPL", "agent_id": "advisor-v1"})
 print(result["result"])
 ```
 

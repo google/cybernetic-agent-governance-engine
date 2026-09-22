@@ -68,13 +68,11 @@ def _load_actuator(name: str) -> ExecutionActuator:
     normalized = name.strip().lower()
 
     if normalized in ("actuator_01", "a01", "archytan"):
-        from src.integrations.actuator_01.adapter import Actuator01ExecutionActuator
+        from src.integrations.actuator_01.adapter import Actuator01Adapter
 
-        return Actuator01ExecutionActuator.from_env()
+        return Actuator01Adapter.from_env()
 
-    raise ValueError(
-        f"Unknown execution actuator: '{name}'. Supported: actuator_01"
-    )
+    raise ValueError(f"Unknown execution actuator: '{name}'. Supported: actuator_01")
 
 
 class ActuatorRegistry:
@@ -185,9 +183,7 @@ def load_actuators_from_env(
 
     # Hermetic default: return registry unmodified
     if not actuator_names_raw:
-        logger.info(
-            "CAGE_ACTIVE_ACTUATORS unset or empty; no actuators loaded"
-        )
+        logger.info("CAGE_ACTIVE_ACTUATORS unset or empty; no actuators loaded")
         return registry
 
     # Split on comma, strip whitespace, ignore empty tokens

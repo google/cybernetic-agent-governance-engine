@@ -244,7 +244,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         polling_task = asyncio.create_task(attestation_aggregator.start_poll_loop())
         app.state.attestation_aggregator = attestation_aggregator
         app.state.attestation_polling_task = polling_task
-        logger.info("Attestation aggregator initialized with %d provider(s)", attestation_aggregator.provider_count)
+        logger.info(
+            "Attestation aggregator initialized with %d provider(s)",
+            attestation_aggregator.provider_count,
+        )
     else:
         app.state.attestation_aggregator = attestation_aggregator
         app.state.attestation_polling_task = None

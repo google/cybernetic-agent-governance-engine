@@ -342,8 +342,9 @@ from cage_client.adapters.langgraph import cage_guard
 # Initialize client (once at app startup)
 cage = CageClient(
     gateway_url="http://localhost:8080",
-    routing_seal_secret="dev-secret-key"  # From .env
+    routing_seal_secret="dev-secret-key",  # From .env
 )
+
 
 # Define your LangGraph workflow
 class AgentState(TypedDict):
@@ -352,6 +353,7 @@ class AgentState(TypedDict):
     agent_id: str
     result: str
 
+
 # Decorate high-stakes nodes with governance
 @cage_guard(client=cage, action="execute_trade")
 async def execute_trade_node(state: AgentState) -> AgentState:
@@ -359,6 +361,7 @@ async def execute_trade_node(state: AgentState) -> AgentState:
     trade = state["proposed_action"]
     result = await execute_trade(**trade)
     return {"result": f"Executed {trade}"}
+
 
 # Build graph (governance enforcement is transparent)
 graph = StateGraph(AgentState)
@@ -412,6 +415,7 @@ app = graph.compile()
 ```python
 from cage_client.exceptions import PolicyViolationException, DeferralPending
 
+
 @graph.on_error
 async def handle_governance_error(state, error):
     if isinstance(error, PolicyViolationException):
@@ -419,17 +423,17 @@ async def handle_governance_error(state, error):
         return {
             "next_node": "replan",
             "violation": error.violation_details,
-            "reason": error.reason_code
+            "reason": error.reason_code,
         }
-    
+
     elif isinstance(error, DeferralPending):
         # Action requires HITL → park checkpoint
         return {
             "next_node": "__interrupt__",
             "ticket_id": error.ticket_id,
-            "resume_after": error.expires_at
+            "resume_after": error.expires_at,
         }
-    
+
     raise error  # Re-raise non-governance errors
 ```
 
@@ -438,7 +442,10 @@ async def handle_governance_error(state, error):
 For users building governance **into** the CAGE monorepo itself (not consuming it as a library), node factories are available:
 
 ```python
-from src.gateway.governance.langgraph_harness import create_opa_safety_node, create_nemo_guardrail_node
+from src.gateway.governance.langgraph_harness import (
+    create_opa_safety_node,
+    create_nemo_guardrail_node,
+)
 
 graph.add_node("input_rail", create_nemo_guardrail_node(rail_type="input"))
 graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governance"))

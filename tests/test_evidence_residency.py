@@ -131,7 +131,7 @@ def test_resolve_cold_store_bucket_staging_allows_cross_region(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Assert staging/dev environments decouple jurisdictional posture from physical location.
-    
+
     This enables multi-jurisdiction compliance testing on a single staging cluster
     deployed in us-central1, where EU_ECB and APAC_MAS postures can be tested
     without requiring geographically distributed infrastructure.
@@ -139,7 +139,7 @@ def test_resolve_cold_store_bucket_staging_allows_cross_region(
     monkeypatch.setenv("CAGE_ENV", "staging")  # Non-production posture
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
     monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "us-central-evidence")
-    
+
     # Should NOT raise in staging - jurisdictional posture decoupled from location
     bucket = resolve_cold_store_bucket()
     assert bucket == "us-central-evidence"
@@ -153,7 +153,7 @@ def test_resolve_cold_store_bucket_test_env_allows_location_mismatch(
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
     monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "eu-evidence-bucket")
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")  # Mismatch allowed
-    
+
     # Should NOT raise in test mode
     bucket = resolve_cold_store_bucket()
     assert bucket == "eu-evidence-bucket"
@@ -167,7 +167,7 @@ def test_resolve_cold_store_bucket_staging_apac_from_us_location(
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
     monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_APAC", "us-staging-evidence")
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-    
+
     # APAC_MAS posture decoupled from physical location in staging
     bucket = resolve_cold_store_bucket()
     assert bucket == "us-staging-evidence"
@@ -181,7 +181,7 @@ def test_resolve_cold_store_bucket_dev_us_fed_from_eu_location(
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
     monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_US", "eu-dev-evidence")
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west1")
-    
+
     # US_FED posture decoupled from physical location in dev
     bucket = resolve_cold_store_bucket()
     assert bucket == "eu-dev-evidence"

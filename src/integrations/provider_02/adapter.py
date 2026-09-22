@@ -295,7 +295,7 @@ def _classify_terminal_path(
     """Classify the terminal path from the collected steps.
 
     Uses a strict precedence ladder to determine the terminal path type:
-    
+
     1. Priority 1 (Happy Path): Terminal node reached
     2. Priority 2 (CBF Invariant Block): CBF safety violation detected
     3. Priority 3 (Loop Breaker): Iteration limit or loop detection
@@ -332,7 +332,7 @@ def _classify_terminal_path(
         cbf_verdict = step.signals.get("cbf_verdict")
         if cbf_verdict in ("BLOCK", "BLOCKED"):
             return "cbf_block"
-        
+
         # Fallback: Legacy safetyStatus signal (backward compatibility)
         if step.signals.get("safetyStatus") == "BLOCKED":
             return "cbf_block"
@@ -342,15 +342,15 @@ def _classify_terminal_path(
         # Check explicit iteration_limit_reached signal
         if step.signals.get("iteration_limit_reached") is True:
             return "loop_breaker"
-        
+
         # Check loop_breaker metadata flag
         if step.metadata.get("loop_breaker") is True:
             return "loop_breaker"
-        
+
         # Check loopCount threshold (3+ iterations)
         if step.signals.get("loopCount", 0) >= 3:
             return "loop_breaker"
-    
+
     # Fallback: Legacy topology pattern for loop detection
     # Pattern: evaluator → explainer path without reaching terminal (iteration limit)
     if "evaluator" in topology.nodes and "explainer" in topology.nodes:
@@ -365,7 +365,7 @@ def _classify_terminal_path(
         nemo_verdict = step.signals.get("nemo_verdict")
         if nemo_verdict in ("BLOCK", "BLOCKED"):
             return "nemo_block"
-    
+
     # Fallback: Legacy structural heuristic for early exit (NeMo block pattern)
     # Short traversal (≤2 nodes) indicates guardrail rejection at entry
     first_node = node_names[0] if node_names else None
@@ -381,7 +381,7 @@ def _classify_terminal_path(
             node_names,
             topology.terminal_node,
         )
-    
+
     return "unknown"
 
 
@@ -521,19 +521,17 @@ class Provider02AttestationCallback:
             and "hitl_interrupt" in self._step_id_by_node
         ):
             return [self._step_id_by_node["hitl_interrupt"]]
-        
+
         def _find_recorded_ancestors(
-            current_node: str,
-            visited: set[str],
-            target_node: str
+            current_node: str, visited: set[str], target_node: str
         ) -> list[str]:
             """Recursively find recorded ancestors, with cycle detection.
-            
+
             Cycle detection only triggers if we visit the same unrecorded node twice
             in a single path, indicating infinite traversal. Topological cycles in
             the graph (like execution_analyst -> evaluator -> execution_analyst) are
             allowed if at least one node in the cycle is recorded.
-            
+
             Args:
                 current_node: The node being examined
                 visited: Set of nodes visited in this traversal path
@@ -545,8 +543,10 @@ class Provider02AttestationCallback:
             # We must return the step_id ONLY for attestation nodes.
             # For unrolled loops, if target_node itself was recorded in a prior
             # iteration, that prior iteration is a valid sequential ancestor.
-            if (current_node in self._topology.attestation_nodes and
-                current_node in self._step_id_by_node):
+            if (
+                current_node in self._topology.attestation_nodes
+                and current_node in self._step_id_by_node
+            ):
                 return [self._step_id_by_node[current_node]]
 
             # Boundary condition: if we've reached the target node during traversal
@@ -579,7 +579,9 @@ class Provider02AttestationCallback:
             for parent in possible_parents:
                 # Create a new visited set for each branch to allow DAG convergence
                 branch_visited = visited.copy()
-                ancestor_ids.extend(_find_recorded_ancestors(parent, branch_visited, target_node))
+                ancestor_ids.extend(
+                    _find_recorded_ancestors(parent, branch_visited, target_node)
+                )
 
             return ancestor_ids
 
@@ -589,7 +591,9 @@ class Provider02AttestationCallback:
 
         for parent in possible_parents:
             visited: set[str] = set()
-            all_ancestor_ids.extend(_find_recorded_ancestors(parent, visited, node_name))
+            all_ancestor_ids.extend(
+                _find_recorded_ancestors(parent, visited, node_name)
+            )
 
         # Deduplicate while preserving order
         seen: dict[str, None] = {}
@@ -623,14 +627,14 @@ class Provider02AttestationCallback:
         signals["approvalRequired"] = state.get("approval_required", False)
 
         interrupt_node = self._topology.interrupt_node or self._topology.terminal_node
-        
+
         # Resolve parent step IDs with explicit awareness of "hitl_interrupt" in parent_edges
         parent_step_ids = (
             self._build_parent_step_ids("hitl_interrupt")
             if "hitl_interrupt" in self._topology.parent_edges
             else self._build_parent_step_ids(interrupt_node)
         )
-        
+
         step = ProjectBundleStepEntry(
             node_name="hitl_interrupt",
             parent_step_ids=parent_step_ids,

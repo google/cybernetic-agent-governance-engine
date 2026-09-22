@@ -27,10 +27,7 @@ from src.gateway.client.exceptions import RoutingSealVerificationError
 
 
 def verify_routing_seal(
-    seal_header: str,
-    body_bytes: bytes,
-    secret: str,
-    ttl_seconds: int = 30
+    seal_header: str, body_bytes: bytes, secret: str, ttl_seconds: int = 30
 ) -> bool:
     """Verify HMAC-SHA256 routing seal with micro-TTL enforcement.
 
@@ -84,9 +81,7 @@ def verify_routing_seal(
     # Compute expected HMAC-SHA256 signature
     message = f"{timestamp_str}.{body_bytes.hex()}".encode()
     expected_signature = hmac.new(
-        secret.encode("utf-8"),
-        message,
-        hashlib.sha256
+        secret.encode("utf-8"), message, hashlib.sha256
     ).hexdigest()
 
     # Constant-time comparison to prevent timing attacks
@@ -135,7 +130,7 @@ def generate_w3c_traceparent() -> str:
     if trace_id is None:
         trace_id = secrets.token_hex(16)  # 16 bytes = 32 hex chars
     if span_id is None:
-        span_id = secrets.token_hex(8)   # 8 bytes = 16 hex chars
+        span_id = secrets.token_hex(8)  # 8 bytes = 16 hex chars
 
     # W3C Trace Context format: version-trace_id-parent_id-trace_flags
     # trace_flags=01 means sampled

@@ -60,7 +60,7 @@ def _load_attestation_provider(name: str) -> AttestationProvider:
     normalized = name.strip().lower()
 
     if normalized in ("provider_02", "p02"):
-        from src.integrations.provider_02.attestation_provider import (
+        from src.integrations.provider_02.provider import (
             Provider02AttestationProvider,
         )
 
@@ -114,9 +114,7 @@ class AttestationAggregator:
         self._poll_task: asyncio.Task[None] | None = None
 
     @classmethod
-    def from_env(
-        cls, poll_interval_s: float | None = None
-    ) -> AttestationAggregator:
+    def from_env(cls, poll_interval_s: float | None = None) -> AttestationAggregator:
         """Construct AttestationAggregator from environment variables.
 
         Reads:

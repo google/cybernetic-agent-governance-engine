@@ -45,4 +45,3 @@ __all__ = [
     "generate_w3c_traceparent",
     "verify_routing_seal",
 ]
-

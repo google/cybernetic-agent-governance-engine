@@ -156,9 +156,7 @@ class ExecutionGrant(BaseModel):
     record_hash: str = Field(
         ..., description="SHA256 hash of audit record (governance trail link)"
     )
-    signature: str = Field(
-        ..., description="Base64-encoded cryptographic signature"
-    )
+    signature: str = Field(..., description="Base64-encoded cryptographic signature")
 
     model_config = ConfigDict(
         frozen=True,

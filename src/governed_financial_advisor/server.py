@@ -151,7 +151,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             # Only AsyncRedisSaver has setup(); MemorySaver does not
             try:
                 from langgraph.checkpoint.redis import AsyncRedisSaver
-                
+
                 if isinstance(cp, AsyncRedisSaver):
                     logger.info("Running Redis Checkpointer setup()...")
                     await cp.setup()
@@ -210,8 +210,6 @@ if (
     app.include_router(demo_router)
     logger.warning("Demo endpoints enabled — do not use in production")
 # Graph is now in app.state.graph
-
-
 
 
 class ApprovalResumeRequest(BaseModel):
@@ -504,7 +502,6 @@ async def query_agent(  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 # Approval endpoints (Phase 1b — LangGraph interrupt / Command)
 # ---------------------------------------------------------------------------
-
 
 
 @app.get("/v1/approvals/pending")

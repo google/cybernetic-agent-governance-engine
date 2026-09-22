@@ -75,7 +75,12 @@ class AgentState(TypedDict):
 
     # Safety & Optimization Control
     safety_status: Literal[
-        "APPROVED", "BLOCKED", "ESCALATED", "SKIPPED", "DEFERRED", "HARD_PAUSE_BUDGET_EXCEEDED"
+        "APPROVED",
+        "BLOCKED",
+        "ESCALATED",
+        "SKIPPED",
+        "DEFERRED",
+        "HARD_PAUSE_BUDGET_EXCEEDED",
     ]
     governance_signature: str | None  # Cryptographic-style approval from Evaluator
 

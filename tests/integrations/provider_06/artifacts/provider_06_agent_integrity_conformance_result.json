@@ -15,7 +15,7 @@
   "provenance": {
     "agentIntegrityCliBuildSha256": "186c5619a156946d466cb5bc0a7486a7df9163f7ae6e4e46b68c56a1870d4e3b",
     "agentIntegrityPackageLockSha256": "2d0f7cc5056eee9f6a742a2ffc7b1cfbafdd6f836ff854ade92aa4c4dda1b73b",
-    "agentIntegrityTree": "0dbcb3ed294a1100cf4576a6f25c47b429ad59c5",
+    "agentIntegrityTree": "0f82b9a3e64d9ce7350a97b766878585ea0f2b06",
     "cageBase": "94e9d717be22bafcf6307efd9434fdb04754ac6a",
     "cageEvidenceBinding": "fixed-base-plus-protected-file-sha256",
     "generatorVersion": 1

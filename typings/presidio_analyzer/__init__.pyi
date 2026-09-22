@@ -18,4 +18,3 @@ class AnalyzerEngine:
         return_decision_process: bool = ...,
         **kwargs: Any,
     ) -> list[RecognizerResult]: ...
-

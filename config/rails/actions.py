@@ -32,8 +32,8 @@ See: docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md
 
 import logging
 import os
-from collections.abc import Sequence
-from typing import Any, Callable, TypeVar, cast
+from collections.abc import Callable, Sequence
+from typing import Any, TypeVar, cast
 
 import httpx
 from opentelemetry import trace as _otel_trace
@@ -67,7 +67,9 @@ except ImportError:
 
 
 try:
-    from nemoguardrails.actions import action as _nemo_action  # pyright: ignore[reportMissingTypeStubs]
+    from nemoguardrails.actions import (
+        action as _nemo_action,  # pyright: ignore[reportMissingTypeStubs]
+    )
 
     def action(name: str) -> Callable[[_F], _F]:  # pyright: ignore[reportRedeclaration]
         """Thin wrapper that delegates to nemoguardrails.actions.action."""
@@ -938,9 +940,7 @@ async def log_safety_audit_action(
         span.set_attribute("iso42001.control_id", "A.6.2.8")
         span.set_attribute("nemo.action.outcome", "LOGGED")
         event_type = (
-            str((context or {}).get("event_type", "unknown"))
-            if context
-            else "unknown"
+            str((context or {}).get("event_type", "unknown")) if context else "unknown"
         )
         logger.info(
             "LogSafetyAuditAction: safety event logged (event_type=%s)", event_type

@@ -198,7 +198,9 @@ def resolve_cold_store_bucket(
     if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
         logger.info(
             "Geographic residency checks DISABLED for CAGE_ENV=%s. Region: %s, Bucket: %s",
-            cage_env, active_region, candidate
+            cage_env,
+            active_region,
+            candidate,
         )
         return candidate
 

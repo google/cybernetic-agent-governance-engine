@@ -217,10 +217,12 @@ The graph compiles with `interrupt_before=["governed_trader"]`, implementing the
 
 ```python
 # In approval_node.py
-def approval_node(state: AgentState) -> Command[Literal["post_hitl_rehydrate", "rejection"]]:
+def approval_node(
+    state: AgentState,
+) -> Command[Literal["post_hitl_rehydrate", "rejection"]]:
     """
     Mandatory HITL gate using interrupt() pattern.
-    
+
     Execution flow:
     1. Graph reaches this node after safety_check passes
     2. interrupt() suspends execution and returns interrupt payload
@@ -231,7 +233,7 @@ def approval_node(state: AgentState) -> Command[Literal["post_hitl_rehydrate", "
     if not state.get("approval_required"):
         # No HITL needed - proceed directly
         return Command(goto="post_hitl_rehydrate")
-    
+
     # Build interrupt payload with metadata
     interrupt_value = {
         "thread_id": state.get("thread_id"),
@@ -239,17 +241,17 @@ def approval_node(state: AgentState) -> Command[Literal["post_hitl_rehydrate", "
         "amount": state.get("execution_plan_output", {}).get("amount"),
         "ticker": state.get("data_analyst_ticker"),
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat(),
-        "max_slippage_pct": 2.0  # Default reviewer-facing slippage tolerance
+        "max_slippage_pct": 2.0,  # Default reviewer-facing slippage tolerance
     }
-    
+
     # interrupt() suspends here - returns interrupt_value to caller
     # State is checkpointed; execution pauses until resume Command received
     return Command(
         update={
             "hitl_expires_at": interrupt_value["expires_at"],
-            "approval_required": True
+            "approval_required": True,
         },
-        graph=interrupt(value=interrupt_value)
+        graph=interrupt(value=interrupt_value),
     )
 ```
 
@@ -258,13 +260,10 @@ def approval_node(state: AgentState) -> Command[Literal["post_hitl_rehydrate", "
 ```python
 # In server.py FastAPI endpoint
 @app.post("/v1/approvals/{thread_id}/resume")
-async def resume_approval(
-    thread_id: str,
-    request: ApprovalResumeRequest
-) -> dict:
+async def resume_approval(thread_id: str, request: ApprovalResumeRequest) -> dict:
     """
     Resume suspended graph with human approval decision.
-    
+
     The resume Command is passed to the graph's .stream() method,
     triggering continuation from the interrupt point.
     """
@@ -273,18 +272,18 @@ async def resume_approval(
         "approved": request.approved,
         "reviewer": request.reviewer,
         "rationale": request.rationale,
-        "max_slippage_pct": request.max_slippage_pct or 2.0
+        "max_slippage_pct": request.max_slippage_pct or 2.0,
     }
-    
+
     # Resume graph execution via Command(resume=...)
     config = {"configurable": {"thread_id": thread_id}}
     async for chunk in graph.astream(
         Command(resume=approval_decision),  # Resumes from interrupt point
-        config=config
+        config=config,
     ):
         # Process resumed execution chunks
         pass
-    
+
     return {"status": "resumed", "thread_id": thread_id}
 ```
 

@@ -623,7 +623,9 @@ class TestCreateFtraNode:
                 "src.gateway.governance.defer_queue.DeferQueue",
                 return_value=mock_queue_instance,
             ) as mock_defer_queue_cls:
-                with patch("src.gateway.governance.ftra.node_factory.interrupt") as mock_interrupt:
+                with patch(
+                    "src.gateway.governance.ftra.node_factory.interrupt"
+                ) as mock_interrupt:
                     node(state)
 
         # The critical regression assertion: DeferQueue must be constructed
@@ -631,7 +633,7 @@ class TestCreateFtraNode:
         mock_defer_queue_cls.assert_called_once_with(mock_client)
         mock_queue_instance.park.assert_awaited_once()
         mock_from_url.assert_called_once()
-        
+
         # Verify interrupt() was called with the correct payload
         mock_interrupt.assert_called_once()
         interrupt_payload = mock_interrupt.call_args[0][0]
@@ -661,7 +663,9 @@ class TestCreateFtraNode:
         }
 
         with patch("redis.asyncio.from_url", side_effect=ConnectionError("redis down")):
-            with patch("src.gateway.governance.ftra.node_factory.interrupt") as mock_interrupt:
+            with patch(
+                "src.gateway.governance.ftra.node_factory.interrupt"
+            ) as mock_interrupt:
                 node(state)
 
         # Verify interrupt() was called and defer_id is a valid UUID
@@ -1498,9 +1502,11 @@ class TestFtraIntegration:
         with patch(
             "redis.asyncio.from_url", side_effect=ConnectionError("redis unavailable")
         ):
-            with patch("src.gateway.governance.ftra.node_factory.interrupt") as mock_interrupt:
+            with patch(
+                "src.gateway.governance.ftra.node_factory.interrupt"
+            ) as mock_interrupt:
                 node(state)
-        
+
         # Verify interrupt() was called (HITL_REQUIRED verdict)
         mock_interrupt.assert_called_once()
         payload = mock_interrupt.call_args[0][0]

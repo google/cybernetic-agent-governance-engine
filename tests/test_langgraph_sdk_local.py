@@ -66,7 +66,9 @@ def test_langgraph_server_connectivity() -> None:
     # Try /ok endpoint first (common health check pattern)
     try:
         resp = httpx.get(f"{sdk_base_url}/ok", timeout=5.0)
-        assert resp.status_code == 200, f"Unexpected status from /ok: {resp.status_code}"
+        assert resp.status_code == 200, (
+            f"Unexpected status from /ok: {resp.status_code}"
+        )
         return
     except httpx.HTTPStatusError:
         pass  # Fall through to /docs
@@ -80,7 +82,9 @@ def test_langgraph_server_connectivity() -> None:
     # Fall back to /docs (OpenAPI documentation endpoint)
     try:
         resp = httpx.get(f"{sdk_base_url}/docs", timeout=5.0, follow_redirects=True)
-        assert resp.status_code == 200, f"Unexpected status from /docs: {resp.status_code}"
+        assert resp.status_code == 200, (
+            f"Unexpected status from /docs: {resp.status_code}"
+        )
     except httpx.RequestError as exc:
         pytest.fail(
             f"LangGraph SDK server not reachable at {sdk_base_url}. "
@@ -128,7 +132,9 @@ async def test_anti_mock_model_guard() -> None:
 
     # List available assistants
     assistants = await client.assistants.search()
-    assert len(assistants) > 0, "No assistants found. Check langgraph.json configuration."
+    assert len(assistants) > 0, (
+        "No assistants found. Check langgraph.json configuration."
+    )
 
     # Create a thread and run a minimal query
     thread = await client.threads.create()
@@ -147,7 +153,9 @@ async def test_anti_mock_model_guard() -> None:
     state = await client.threads.get_state(thread["thread_id"])
 
     # Verify run completed without errors
-    assert run["status"] in ["success", "error"], f"Unexpected run status: {run['status']}"
+    assert run["status"] in ["success", "error"], (
+        f"Unexpected run status: {run['status']}"
+    )
 
     # Anti-mock assertion: If the run succeeded, verify output exists and is non-trivial
     # MockChatModel returns predictable stub outputs; real models produce variable text.
@@ -195,7 +203,9 @@ async def test_in_process_and_gateway_gates() -> None:
     try:
         resp = httpx.get(f"{gateway_url}/health", timeout=5.0)
         if resp.status_code != 200:
-            pytest.skip(f"Gateway not healthy at {gateway_url}. Status: {resp.status_code}")
+            pytest.skip(
+                f"Gateway not healthy at {gateway_url}. Status: {resp.status_code}"
+            )
     except httpx.RequestError as exc:
         pytest.skip(f"Gateway not reachable at {gateway_url}: {exc}")
 
@@ -259,8 +269,14 @@ async def test_in_process_and_gateway_gates() -> None:
     if run["status"] == "interrupted":
         # LangGraph SDK returns interrupted runs with metadata about where they stopped
         # Verify the interruption is at a governance checkpoint node
-        assert state.get("next") is not None, "Interrupted run missing 'next' node metadata"
-        next_nodes = state["next"] if isinstance(state["next"], (list, tuple)) else [state["next"]]
+        assert state.get("next") is not None, (
+            "Interrupted run missing 'next' node metadata"
+        )
+        next_nodes = (
+            state["next"]
+            if isinstance(state["next"], (list, tuple))
+            else [state["next"]]
+        )
         assert any(n in ["governed_trader", "defer_node"] for n in next_nodes), (
             f"Run interrupted at unexpected node: {state['next']}"
         )
@@ -365,4 +381,3 @@ def test_ollama_deployed_outside_container() -> None:
 
     assert "OLLAMA_BASE_URL=http://host.docker.internal:11434" in env_content
     assert "VLLM_FAST_API_BASE=http://host.docker.internal:11434/v1" in env_content
-

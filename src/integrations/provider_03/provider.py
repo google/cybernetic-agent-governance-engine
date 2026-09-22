@@ -232,7 +232,7 @@ class Provider03NormativeProvider:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
-                
+
                 # Fail-closed JSON parsing
                 try:
                     data = resp.json()
@@ -253,7 +253,7 @@ class Provider03NormativeProvider:
                             }
                         ],
                     )
-                
+
                 # Enforce response schema structure
                 if not isinstance(data, dict):
                     logger.error(
@@ -376,7 +376,7 @@ class Provider03NormativeProvider:
                     headers=self._headers(),
                 )
                 resp.raise_for_status()
-                
+
                 # Fail-closed JSON parsing
                 try:
                     data = resp.json()
@@ -390,7 +390,7 @@ class Provider03NormativeProvider:
                         thread_id=thread_id,
                         error=f"Invalid JSON response: {exc}",
                     )
-                
+
                 # Verify response is a dict
                 if not isinstance(data, dict):
                     logger.error(
@@ -401,10 +401,12 @@ class Provider03NormativeProvider:
                         thread_id=thread_id,
                         error=f"Invalid response format: expected JSON object, got {type(data).__name__}",
                     )
-                
+
                 return EvidenceSeal(
                     thread_id=thread_id,
-                    seal_hash=data.get("seal_hash", data.get("receipt_hash", "")),
+                    seal_hash=str(
+                        data.get("seal_hash") or data.get("receipt_hash") or ""
+                    ),
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
@@ -420,7 +422,9 @@ class Provider03NormativeProvider:
             logger.error("[Provider03] submit_evidence request error: %s %s", url, exc)
             return EvidenceSeal(thread_id=thread_id, error=str(exc))
         except Exception as exc:
-            logger.error("[Provider03] submit_evidence unexpected error: %s %s", url, exc)
+            logger.error(
+                "[Provider03] submit_evidence unexpected error: %s %s", url, exc
+            )
             return EvidenceSeal(thread_id=thread_id, error=str(exc))
 
     def ingest_bind_receipt(self, receipt: dict[str, Any]) -> str:

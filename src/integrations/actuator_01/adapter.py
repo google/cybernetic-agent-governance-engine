@@ -134,7 +134,7 @@ class Actuator01Adapter:
     @classmethod
     def from_env(
         cls,
-        signer: RawMessageSigner,
+        signer: RawMessageSigner | None = None,
         signer_resolver: SignerResolver | None = None,
         policy_signer: RawMessageSigner | None = None,
     ) -> Actuator01Adapter:
@@ -142,6 +142,7 @@ class Actuator01Adapter:
 
         Args:
             signer: Base signer (RawMessageSigner) for assertions and default quorum signing.
+                Defaults to get_governance_signer() if omitted.
             signer_resolver: Optional callable ``(operator_urn: str) -> RawMessageSigner``
                 for per-operator signing keys. If ``None``, defaults to ``signer`` for all.
             policy_signer: Optional policy authority signer for dual-authority decision signatures.
@@ -149,6 +150,10 @@ class Actuator01Adapter:
         Raises:
             RuntimeError: If any required environment variable is missing.
         """
+        if signer is None:
+            from src.gateway.governance.kms_signer import get_governance_signer
+
+            signer = get_governance_signer()
         endpoint = os.environ.get(_ENV_ENDPOINT, "")
         cert_path = os.environ.get(_ENV_CERT_PATH, "")
         key_path = os.environ.get(_ENV_KEY_PATH, "")

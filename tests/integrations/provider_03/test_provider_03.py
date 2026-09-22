@@ -432,7 +432,9 @@ class TestErrorHandling:
         """Unexpected exception on validate_fria returns ENDPOINT_ERROR."""
         with patch("httpx.AsyncClient") as MockClient:
             client_instance = AsyncMock()
-            client_instance.post.side_effect = RuntimeError("Unexpected connection drop")
+            client_instance.post.side_effect = RuntimeError(
+                "Unexpected connection drop"
+            )
             MockClient.return_value.__aenter__.return_value = client_instance
 
             result = await adapter.validate_fria({"action": "test"})
@@ -579,7 +581,7 @@ class TestBindReceipt:
 
 class TestActionContextCollision:
     """Tests for Invariant I-07 action context collision handling.
-    
+
     Invariant I-07 requires that any collision between configured `src_key` and
     `dest_key` inside `action_context` immediately short-circuits with
     `admitted=False`, produces a `MAPPING_COLLISION` finding, and completely
@@ -627,7 +629,7 @@ class TestActionContextCollision:
     @pytest.mark.local
     async def test_collision_rejects_even_if_values_match(self) -> None:
         """Collision fails closed even when src and dest values are identical.
-        
+
         Value equality must not bypass schema determinism — the presence of both
         keys itself violates the invariant.
         """

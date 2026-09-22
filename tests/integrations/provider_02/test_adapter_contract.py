@@ -316,7 +316,7 @@ class TestHelperFunctions:
         self, fixture_name: str, expected_terminal_path: str
     ) -> None:
         """Verify _classify_terminal_path correctly classifies all native Provider 02 fixtures.
-        
+
         This test validates the refactored precedence ladder against real fixture data
         to ensure heuristic-free classification aligned with fixture conventions.
         """
@@ -348,7 +348,7 @@ class TestHelperFunctions:
 
         # Collect all unique node names from the fixture
         node_names = {s.node_name for s in steps}
-        
+
         # Build a minimal synthetic topology that includes all fixture nodes
         # Use the last step's node as terminal for happy_path fixtures
         terminal_node = (
@@ -356,7 +356,7 @@ class TestHelperFunctions:
             if expected_terminal_path == "happy_path"
             else "__synthetic_terminal__"
         )
-        
+
         topology = GraphTopology(
             nodes=node_names | {terminal_node},
             attestation_nodes=node_names,
@@ -481,10 +481,10 @@ class TestProvider02AttestationCallback:
         for node in ["nemo_guardrail", "evaluator", "safety_check"]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {"risk_status": "APPROVED"})
-        
+
         # Capture safety_check step_id for DAG provenance validation
         safety_check_step_id = cb._step_id_by_node["safety_check"]
-        
+
         state = {
             "approval_required": True,
             "approval_decision": {
@@ -502,19 +502,19 @@ class TestProvider02AttestationCallback:
         interrupt_step = cb._steps[-1]  # Last step should be the interrupt
         assert interrupt_step.node_name == "hitl_interrupt"
         assert interrupt_step.signals.get("interruptType") == "HITL_MANUAL_REVIEW"
-        
+
         # RFC 8785 64-char hex stateHash validation
         assert interrupt_step.state_hash, "state_hash must be non-empty"
         assert re.match(r"^[a-f0-9]{64}$", interrupt_step.state_hash), (
             f"state_hash must be 64 lowercase hex chars (RFC 8785), got {interrupt_step.state_hash!r}"
         )
-        
+
         # Linear causal DAG provenance: interrupt_step.parent_step_ids == [safety_check_step_id]
         assert interrupt_step.parent_step_ids == [safety_check_step_id], (
             f"HITL interrupt must link to safety_check parent, "
             f"expected [{safety_check_step_id}], got {interrupt_step.parent_step_ids}"
         )
-        
+
         # Simulate graph resumption through governed_trader
         resumed_state = {
             "approval_required": False,
@@ -528,18 +528,20 @@ class TestProvider02AttestationCallback:
         }
         cb.on_chain_start("governed_trader", resumed_state)
         cb.on_chain_end("governed_trader", resumed_state)
-        
+
         # Terminal happy-path node
         cb.on_chain_start("explainer", resumed_state)
         cb.on_chain_end("explainer", resumed_state)
-        
+
         # Validate governed_trader links to interrupt step
-        governed_trader_step = next(s for s in cb._steps if s.node_name == "governed_trader")
+        governed_trader_step = next(
+            s for s in cb._steps if s.node_name == "governed_trader"
+        )
         assert governed_trader_step.parent_step_ids == [interrupt_step.step_id], (
             f"governed_trader must link to hitl_interrupt parent, "
             f"expected [{interrupt_step.step_id}], got {governed_trader_step.parent_step_ids}"
         )
-        
+
         # Validate all generated step entries against PROJECT_STEP_VALIDATOR
         for step in cb._steps:
             try:
@@ -549,7 +551,7 @@ class TestProvider02AttestationCallback:
                     f"Step {step.node_name} failed schema validation: {e}\n"
                     f"Step data: {step.to_dict()}"
                 )
-        
+
         # Terminal path classification
         bundle = cb.get_bundle()
         assert bundle.terminal_path == "happy_path", (
@@ -597,7 +599,7 @@ class TestProvider02AttestationCallback:
 
     def test_ancestor_contraction_skipped_intermediate_nodes(self) -> None:
         """Ancestor contraction: A (attested) -> B (skipped) -> C (skipped) -> D (attested).
-        
+
         D.parent_step_ids must contract to [A.step_id], skipping B and C.
         """
         from src.gateway.governance.seams.graph_topology import GraphTopology
@@ -616,7 +618,9 @@ class TestProvider02AttestationCallback:
             terminal_node="D",
         )
 
-        cb = Provider02AttestationCallback(topology=topology, thread_id="contraction-test")
+        cb = Provider02AttestationCallback(
+            topology=topology, thread_id="contraction-test"
+        )
 
         # Execute all nodes (on_chain_end will skip B and C as non-attestation nodes)
         for node in ["A", "B", "C", "D"]:
@@ -626,8 +630,10 @@ class TestProvider02AttestationCallback:
         bundle = cb.get_bundle()
 
         # Bundle should contain only A and D
-        assert len(bundle.steps) == 2, f"Expected 2 steps (A, D), got {len(bundle.steps)}"
-        
+        assert len(bundle.steps) == 2, (
+            f"Expected 2 steps (A, D), got {len(bundle.steps)}"
+        )
+
         step_a = next(s for s in bundle.steps if s.node_name == "A")
         step_d = next(s for s in bundle.steps if s.node_name == "D")
 
@@ -644,7 +650,7 @@ class TestProvider02AttestationCallback:
 
     def test_ancestor_contraction_branched_dag(self) -> None:
         """Branched DAG: A -> B -> D and A -> C -> D, where B and C are skipped.
-        
+
         D.parent_step_ids must contract to [A.step_id] without duplicates.
         """
         from src.gateway.governance.seams.graph_topology import GraphTopology
@@ -673,8 +679,10 @@ class TestProvider02AttestationCallback:
         bundle = cb.get_bundle()
 
         # Bundle should contain only A and D
-        assert len(bundle.steps) == 2, f"Expected 2 steps (A, D), got {len(bundle.steps)}"
-        
+        assert len(bundle.steps) == 2, (
+            f"Expected 2 steps (A, D), got {len(bundle.steps)}"
+        )
+
         step_a = next(s for s in bundle.steps if s.node_name == "A")
         step_d = next(s for s in bundle.steps if s.node_name == "D")
 
@@ -686,7 +694,7 @@ class TestProvider02AttestationCallback:
 
     def test_ancestor_contraction_partial_skipped_path(self) -> None:
         """Mixed attestation: A (attested) -> B (skipped) -> C (attested) -> D (attested).
-        
+
         C.parent_step_ids should contract to [A.step_id], and D.parent_step_ids should be [C.step_id].
         """
         from src.gateway.governance.seams.graph_topology import GraphTopology
@@ -713,8 +721,10 @@ class TestProvider02AttestationCallback:
         bundle = cb.get_bundle()
 
         # Bundle should contain A, C, D (B is skipped)
-        assert len(bundle.steps) == 3, f"Expected 3 steps (A, C, D), got {len(bundle.steps)}"
-        
+        assert len(bundle.steps) == 3, (
+            f"Expected 3 steps (A, C, D), got {len(bundle.steps)}"
+        )
+
         step_a = next(s for s in bundle.steps if s.node_name == "A")
         step_c = next(s for s in bundle.steps if s.node_name == "C")
         step_d = next(s for s in bundle.steps if s.node_name == "D")
@@ -743,8 +753,8 @@ class TestProvider02AttestationCallback:
             parent_edges={
                 "A": [],
                 "B": ["A", "D"],  # B depends on A and D, creating cycle with D
-                "D": ["B"],       # D depends on B, completing the cycle B <-> D
-                "C": ["B"],       # C depends on B, which is part of the cycle
+                "D": ["B"],  # D depends on B, completing the cycle B <-> D
+                "C": ["B"],  # C depends on B, which is part of the cycle
             },
             terminal_node="C",
         )
@@ -762,7 +772,7 @@ class TestProvider02AttestationCallback:
 
         # Execute C - this should trigger cycle detection when resolving parents through B <-> D
         cb.on_chain_start("C", {})
-        
+
         with pytest.raises(ValueError, match=r"Cycle detected in graph topology"):
             cb.on_chain_end("C", {})
 

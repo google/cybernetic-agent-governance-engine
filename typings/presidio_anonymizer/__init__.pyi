@@ -12,4 +12,3 @@ class AnonymizerEngine:
         analyzer_results: Sequence[Any],
         **kwargs: Any,
     ) -> EngineResult: ...
-

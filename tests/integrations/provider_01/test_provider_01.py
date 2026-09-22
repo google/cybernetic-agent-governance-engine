@@ -783,7 +783,9 @@ class TestDualHeaderAuthentication:
             "X-Serverless-Authorization": "Bearer google-oidc-identity-token-xyz",
         }
 
-    def test_headers_gcp_id_token_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_headers_gcp_id_token_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Adapter reads CAGE_NORMATIVE_GCP_ID_TOKEN from environment when not passed explicitly."""
         import src.integrations.provider_01.provider as prov_mod
 
@@ -811,5 +813,3 @@ class TestDualHeaderAuthentication:
         )
         headers = provider._headers()
         assert headers == {"Content-Type": "application/json"}
-
-

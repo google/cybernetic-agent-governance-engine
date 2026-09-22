@@ -135,7 +135,9 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
                 "safety_status": "APPROVED",
                 "consecutive_denials": 0,  # Reset on ALLOW
                 "last_violation": None,  # Clear previous violations
-                "governance_signature": str(envelope.signature),  # Store envelope signature
+                "governance_signature": str(
+                    envelope.signature
+                ),  # Store envelope signature
             }
 
         except PolicyViolationException as exc:

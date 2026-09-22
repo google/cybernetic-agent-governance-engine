@@ -311,7 +311,8 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
         REPO_ROOT / "src" / "gateway" / "governance" / "nemo" / norm,
         REPO_ROOT / "src" / "governed_financial_advisor" / norm,
         REPO_ROOT / "src" / "governed_financial_advisor" / norm.replace("src/", ""),
-        REPO_ROOT / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
+        REPO_ROOT
+        / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
         REPO_ROOT / "src" / "governed_financial_advisor" / "tools" / norm,
         REPO_ROOT / "src" / "governed_financial_advisor" / "agents" / norm,
         REPO_ROOT / "src" / "integrations" / norm,
@@ -331,9 +332,16 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
         REPO_ROOT / "src" / "cage_finance" / "opa" / norm.replace("opa/", ""),
         REPO_ROOT / "src" / "cage_healthcare" / "opa" / norm.replace("opa/", ""),
         REPO_ROOT / "src" / norm,
-        REPO_ROOT / "src" / "compliance_bridge" / norm.replace("compliance_bridge/", ""),
+        REPO_ROOT
+        / "src"
+        / "compliance_bridge"
+        / norm.replace("compliance_bridge/", ""),
         REPO_ROOT / "src" / "compliance_bridge" / norm,
-        REPO_ROOT / "src" / "gateway" / "compliance_bridge" / norm.replace("compliance_bridge/", ""),
+        REPO_ROOT
+        / "src"
+        / "gateway"
+        / "compliance_bridge"
+        / norm.replace("compliance_bridge/", ""),
         REPO_ROOT / "docs" / "compliance" / norm,
         REPO_ROOT / "src" / "cage_healthcare" / "policy" / norm.replace("opa/", ""),
         REPO_ROOT / "config" / norm,
@@ -341,7 +349,8 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
         REPO_ROOT / "local" / norm,
         REPO_ROOT / "src" / "governed_financial_advisor" / norm,
         REPO_ROOT / "src" / "governed_financial_advisor" / norm.replace("src/", ""),
-        REPO_ROOT / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
+        REPO_ROOT
+        / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
         REPO_ROOT / "compliance" / "continuous-monitoring" / norm,
         REPO_ROOT / "local" / "plans" / "remediation" / norm,
         REPO_ROOT / "docs" / "compliance" / "us_fed" / norm,
@@ -365,7 +374,9 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
 def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
     """Verify qualified module.Symbol references (e.g. src.gateway.symbolic_governor.SymbolicGovernor)."""
     clean_sym = symbol_str.strip()
-    if clean_sym in KNOWN_DOCUMENTED_GAPS or any(clean_sym == g or clean_sym.startswith(g) for g in KNOWN_DOCUMENTED_GAPS):
+    if clean_sym in KNOWN_DOCUMENTED_GAPS or any(
+        clean_sym == g or clean_sym.startswith(g) for g in KNOWN_DOCUMENTED_GAPS
+    ):
         return True, ""
 
     if is_template_or_pattern(symbol_str):
@@ -379,7 +390,11 @@ def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
         candidate_path = REPO_ROOT.joinpath(*parts[:i])
         candidate_file = candidate_path.with_suffix(".py")
         candidate_init = candidate_path / "__init__.py"
-        if candidate_file.is_file() or candidate_init.is_file() or candidate_path.is_dir():
+        if (
+            candidate_file.is_file()
+            or candidate_init.is_file()
+            or candidate_path.is_dir()
+        ):
             if candidate_init.is_file():
                 candidate_file = candidate_init
             elif candidate_path.is_dir() and not candidate_file.is_file():
@@ -412,7 +427,10 @@ def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
                     )
                 return True, ""
             except Exception as err:
-                return False, f"Failed to parse {candidate_file.relative_to(REPO_ROOT)}: {err}"
+                return (
+                    False,
+                    f"Failed to parse {candidate_file.relative_to(REPO_ROOT)}: {err}",
+                )
 
     return False, f"Could not resolve module path for symbol '{symbol_str}'"
 
@@ -458,13 +476,17 @@ def audit_markdown_file(path: Path) -> list[Issue]:
 
             has_ext = any(code_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS)
             is_explicit_path = "/" in code_snippet and (
-                code_snippet.startswith(("src/", "tests/", "docs/", "compliance/", "scripts/"))
+                code_snippet.startswith(
+                    ("src/", "tests/", "docs/", "compliance/", "scripts/")
+                )
                 or has_ext
             )
 
             if is_explicit_path:
                 valid, reason = verify_file_path(path.parent, code_snippet)
-                if not valid and not any(code_snippet.startswith(p) for p in ("../..", "...")):
+                if not valid and not any(
+                    code_snippet.startswith(p) for p in ("../..", "...")
+                ):
                     issues.append(
                         Issue(path, line_idx, "File Path", code_snippet, reason)
                     )
@@ -484,8 +506,12 @@ def audit_markdown_file(path: Path) -> list[Issue]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify doc references against repo code.")
-    parser.add_argument("--output", "-o", type=Path, default=None, help="Output file path")
+    parser = argparse.ArgumentParser(
+        description="Verify doc references against repo code."
+    )
+    parser.add_argument(
+        "--output", "-o", type=Path, default=None, help="Output file path"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
@@ -499,7 +525,9 @@ def main() -> int:
 
     out_lines: list[str] = []
     if not all_issues:
-        out_lines.append("All documentation references, file paths, and symbols are valid.")
+        out_lines.append(
+            "All documentation references, file paths, and symbols are valid."
+        )
         exit_code = 0
     else:
         out_lines.append(f"Found {len(all_issues)} broken documentation references:\n")

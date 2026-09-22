@@ -80,7 +80,7 @@ class GovernedTraderState(TypedDict):
     data_analyst_ticker: str | None  # passed from parent graph for re-hydration
     rehydration_result: dict | None  # fresh market snapshot + drift metrics
     post_hitl_safety_status: str | None  # "APPROVED" | "BLOCKED" after re-validation
-    
+
     # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
     agent_id: str  # Audit trail identifier
     proposed_action: dict[str, Any] | None  # Parameters for governance validation
@@ -204,20 +204,20 @@ def route_approval(state: GovernedTraderState) -> str:
 @side_effect_node(kind="api_call", external_system="gateway_mcp")
 async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     """Execute trade tools after CAGE governance validation.
-    
+
     CRITICAL SECURITY GATE: This node invokes execute_trade_action via MCP, which
     triggers real financial transactions. The @cage_guard decorator (applied in
     graph builder below) enforces pre-execution validation through the full 7-tier
     governance pipeline (STPA, CBF, OPA, FTRA, consensus, causal) before ANY tool
     executes.
-    
+
     Governance Contract:
         - Decorator extracts state["proposed_action"] (populated by executor_node)
         - Submits to Gateway PDP: POST /v1/validate with action="execute_trade"
         - On ALLOW: Injects state["governance_envelope"] and proceeds
         - On DENY: Raises PolicyViolationException → routes to explainer
         - On DEFER: Raises DeferralPending → routes to defer_node
-    
+
     TOCTOU Closure: This node executes AFTER post_hitl_revalidate_node when
     approval was required, ensuring fresh market data and slippage bounds are
     validated at actuation time, not check time.
@@ -272,7 +272,7 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
 
 async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
     """Generate tool calls and populate proposed_action for governance.
-    
+
     This node's LLM generates tool_calls based on the approved execution plan.
     It MUST populate state["proposed_action"] with the extracted trade parameters
     so the downstream tool_executor_node's @cage_guard decorator can validate
@@ -754,7 +754,7 @@ from src.gateway.client.adapters.langgraph import cage_guard
 from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
 
 
-def _create_guarded_tool_executor():
+def _create_guarded_tool_executor() -> Any:
     """Lazy factory for @cage_guard decorator to defer env var validation until runtime."""
     return cage_guard(
         client=get_cage_client(),

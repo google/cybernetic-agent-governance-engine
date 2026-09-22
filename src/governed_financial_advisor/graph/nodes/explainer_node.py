@@ -123,7 +123,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
             consecutive_denials,
             MAX_CONSECUTIVE_DENIALS,
         )
-        last_violation = state.get("last_violation", {})
+        last_violation = state.get("last_violation") or {}
         budget_exceeded_msg = (
             f"🛑 **Replanning Budget Exhausted**\n\n"
             f"This request has been denied {consecutive_denials} consecutive times "
@@ -159,7 +159,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
         )
 
         # Build self-correction prompt using last_violation if present
-        last_violation = state.get("last_violation")
+        last_violation = state.get("last_violation") or {}
         if last_violation:
             # DENY path with violation details — construct self-correction prompt
             violation_guidance = (

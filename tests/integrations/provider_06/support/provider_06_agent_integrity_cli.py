@@ -32,7 +32,10 @@ from pathlib import Path
 BASE_COMMIT = "94e9d717be22bafcf6307efd9434fdb04754ac6a"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/project"
-ARTIFACT_PATH = Path(__file__).resolve().parents[1] / "artifacts/provider_06_agent_integrity_conformance_result.json"
+ARTIFACT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "artifacts/provider_06_agent_integrity_conformance_result.json"
+)
 PROSE_PATH = REPO_ROOT / "docs/partners/provider_06/CONFORMANCE_RESULT.md"
 AGENT_INTEGRITY_ROOT = REPO_ROOT / "third_party/agent-integrity"
 CLI_PATH = AGENT_INTEGRITY_ROOT / "packages/cli/dist/cli.js"
@@ -47,7 +50,9 @@ _MAX_OUTPUT_BYTES = 128 * 1024
 _BUILD_TIMEOUT_SECONDS = 180
 _VERIFY_TIMEOUT_SECONDS = 30
 _GENERATOR_VERSION = 1
-_BUILD_LOCK_PATH = Path(tempfile.gettempdir()) / "cage-provider-06-agent-integrity-build.lock"
+_BUILD_LOCK_PATH = (
+    Path(tempfile.gettempdir()) / "cage-provider-06-agent-integrity-build.lock"
+)
 
 
 @dataclass(frozen=True)
@@ -145,7 +150,9 @@ def run_bounded_process(
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                failure = RuntimeError(f"process timed out after {timeout_seconds} seconds")
+                failure = RuntimeError(
+                    f"process timed out after {timeout_seconds} seconds"
+                )
                 break
             events = selector.select(min(remaining, 0.1))
             if not events and process.poll() is not None:
@@ -169,12 +176,14 @@ def run_bounded_process(
     finally:
         selector.close()
         if failure is not None or process.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=5)
     if failure is not None:
         raise failure
-    return ProcessResult(process.returncode, bytes(captured["stdout"]), bytes(captured["stderr"]))
+    return ProcessResult(
+        process.returncode, bytes(captured["stdout"]), bytes(captured["stderr"])
+    )
 
 
 def _bounded_text(value: bytes, label: str) -> str:
@@ -197,9 +206,13 @@ def ensure_agent_integrity_cli() -> None:
     with cross_process_lock(_BUILD_LOCK_PATH, timeout_seconds=_BUILD_TIMEOUT_SECONDS):
         node = _executable("node")
         npm = _executable("npm")
-        version = run_bounded_process(
-            [node, "--version"], cwd=AGENT_INTEGRITY_ROOT, timeout_seconds=10
-        ).stdout.decode("ascii").strip()
+        version = (
+            run_bounded_process(
+                [node, "--version"], cwd=AGENT_INTEGRITY_ROOT, timeout_seconds=10
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
         try:
             major = int(version.removeprefix("v").split(".", maxsplit=1)[0])
         except (ValueError, IndexError) as error:
@@ -216,7 +229,9 @@ def ensure_agent_integrity_cli() -> None:
                 stderr = _bounded_text(completed.stderr, "build stderr")[-4000:]
                 raise RuntimeError(f"Agent Integrity locked build failed: {stderr}")
         if not CLI_PATH.is_file():
-            raise RuntimeError("Agent Integrity CLI build did not produce packages/cli/dist/cli.js")
+            raise RuntimeError(
+                "Agent Integrity CLI build did not produce packages/cli/dist/cli.js"
+            )
 
 
 def copy_fixture_project(tmp_path: Path) -> FixtureProject:
@@ -225,7 +240,9 @@ def copy_fixture_project(tmp_path: Path) -> FixtureProject:
     trusted_config_path = project_root / "integrity/trusted-config.json"
     config = json.loads(trusted_config_path.read_text(encoding="utf-8"))
     if config.get("projectRoot") != "__PROJECT_ROOT__":
-        raise RuntimeError("committed trusted config must contain the project-root placeholder")
+        raise RuntimeError(
+            "committed trusted config must contain the project-root placeholder"
+        )
     config["projectRoot"] = str(project_root.resolve())
     trusted_config_path.write_text(
         json.dumps(config, sort_keys=True, separators=(",", ":")) + "\n",
@@ -245,11 +262,17 @@ def run_agent_integrity_verify(
     ensure_agent_integrity_cli()
     completed = run_bounded_process(
         [
-            _executable("node"), str(CLI_PATH), "verify",
-            "--trusted-policy", str(fixture.policy_path),
-            "--trusted-config", str(fixture.trusted_config_path),
+            _executable("node"),
+            str(CLI_PATH),
+            "verify",
+            "--trusted-policy",
+            str(fixture.policy_path),
+            "--trusted-config",
+            str(fixture.trusted_config_path),
         ],
-        input_bytes=json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode(),
+        input_bytes=json.dumps(
+            request, separators=(",", ":"), ensure_ascii=False
+        ).encode(),
         cwd=AGENT_INTEGRITY_ROOT,
         timeout_seconds=_VERIFY_TIMEOUT_SECONDS,
     )
@@ -258,7 +281,9 @@ def run_agent_integrity_verify(
     try:
         parsed = _parse_one_object(stdout)
     except (json.JSONDecodeError, RuntimeError) as error:
-        raise RuntimeError(f"Agent Integrity returned invalid JSON: {error}; stderr={stderr[-2000:]}") from error
+        raise RuntimeError(
+            f"Agent Integrity returned invalid JSON: {error}; stderr={stderr[-2000:]}"
+        ) from error
     return VerificationResult(completed.returncode, parsed, stderr[-4000:])
 
 
@@ -268,17 +293,25 @@ def _request(project: Path, name: str) -> dict[str, object]:
 
 def _finding_codes(result: VerificationResult) -> list[str]:
     findings = result.stdout.get("findings", [])
-    return [item["code"] for item in findings if isinstance(item, dict) and isinstance(item.get("code"), str)]
+    return [
+        item["code"]
+        for item in findings
+        if isinstance(item, dict) and isinstance(item.get("code"), str)
+    ]
 
 
-def _observe(name: str, request_name: str, root: Path, mutation: str | None = None) -> dict[str, object]:
+def _observe(
+    name: str, request_name: str, root: Path, mutation: str | None = None
+) -> dict[str, object]:
     fixture = copy_fixture_project(root / name)
     request = _request(fixture.project_root, request_name)
     if mutation == "response":
         response = request["envelope"]["response"]  # type: ignore[index]
         response["content"] = f"{response['content']} Mutated."  # type: ignore[index]
     elif mutation == "source":
-        (fixture.project_root / "docs/source.md").write_text("mutated source bytes\n", encoding="utf-8")
+        (fixture.project_root / "docs/source.md").write_text(
+            "mutated source bytes\n", encoding="utf-8"
+        )
     elif mutation == "missing":
         (fixture.project_root / "docs/source.md").unlink()
     elif mutation == "config":
@@ -286,7 +319,11 @@ def _observe(name: str, request_name: str, root: Path, mutation: str | None = No
         config["allowedRoots"] = ["not-docs"]
         fixture.trusted_config_path.write_text(json.dumps(config), encoding="utf-8")
     result = run_agent_integrity_verify(fixture, request)
-    return {"exitCode": result.returncode, "status": result.stdout.get("status"), "findingCodes": _finding_codes(result)}
+    return {
+        "exitCode": result.returncode,
+        "status": result.stdout.get("status"),
+        "findingCodes": _finding_codes(result),
+    }
 
 
 def generate_conformance_artifact(output_path: Path | None = None) -> dict[str, object]:
@@ -306,13 +343,18 @@ def generate_conformance_artifact(output_path: Path | None = None) -> dict[str, 
         for name, fixture_name, mutation, exit_code, status in expectations:
             actual = _observe(name, fixture_name, root, mutation)
             expected = {"exitCode": exit_code, "status": status}
-            scenarios.append({
-                "name": name,
-                "fixture": fixture_name if mutation is None else f"{fixture_name} with copied {mutation} mutation",
-                "expected": expected,
-                "actual": actual,
-                "passed": actual["exitCode"] == exit_code and actual["status"] == status,
-            })
+            scenarios.append(
+                {
+                    "name": name,
+                    "fixture": fixture_name
+                    if mutation is None
+                    else f"{fixture_name} with copied {mutation} mutation",
+                    "expected": expected,
+                    "actual": actual,
+                    "passed": actual["exitCode"] == exit_code
+                    and actual["status"] == status,
+                }
+            )
     agent_tree = _git("rev-parse", "HEAD:third_party/agent-integrity")
     protected = {path: _sha256(REPO_ROOT / path) for path in PROTECTED_PATHS}
     artifact: dict[str, object] = {
@@ -328,7 +370,9 @@ def generate_conformance_artifact(output_path: Path | None = None) -> dict[str, 
             "cageBase": BASE_COMMIT,
             "cageEvidenceBinding": "fixed-base-plus-protected-file-sha256",
             "agentIntegrityTree": agent_tree,
-            "agentIntegrityPackageLockSha256": _sha256(AGENT_INTEGRITY_ROOT / "package-lock.json"),
+            "agentIntegrityPackageLockSha256": _sha256(
+                AGENT_INTEGRITY_ROOT / "package-lock.json"
+            ),
             "agentIntegrityCliBuildSha256": _sha256(CLI_PATH),
         },
         "buildPolicy": {
@@ -339,5 +383,7 @@ def generate_conformance_artifact(output_path: Path | None = None) -> dict[str, 
         },
     }
     if output_path is not None:
-        output_path.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     return artifact

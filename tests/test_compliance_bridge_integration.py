@@ -301,7 +301,7 @@ class TestHealthAndDiscovery:
         assert "controls" in data
         assert data["total"] >= 8
         ids = {c["control_id"] for c in data["controls"]}
-        
+
         # Expected controls based on active jurisdictional posture (CAGE_DEPLOYMENT_REGION),
         # NOT physical cluster location. Staging clusters can test any regional framework.
         universal_expected = [
@@ -313,11 +313,11 @@ class TestHealthAndDiscovery:
             "SC-4",
         ]
         if _REGION == "EU_ECB":
-            expected_controls = universal_expected + ["Article 12", "Article 13"]
+            expected_controls = [*universal_expected, "Article 12", "Article 13"]
         elif _REGION == "APAC_MAS":
-            expected_controls = universal_expected + ["MAS-FEAT-1"]
+            expected_controls = [*universal_expected, "MAS-FEAT-1"]
         else:  # US_FED or unset
-            expected_controls = universal_expected + ["SC-7", "SC-8"]
+            expected_controls = [*universal_expected, "SC-7", "SC-8"]
         for expected in expected_controls:
             assert expected in ids, (
                 f"{expected} missing from /v1/controls for CAGE_DEPLOYMENT_REGION={_REGION}"

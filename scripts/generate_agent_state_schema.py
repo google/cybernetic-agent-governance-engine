@@ -90,53 +90,52 @@ def strip_optional(type_hint: Any) -> Any:
     return type_hint
 
 
-def map_type_to_schema(field_name: str, type_hint: Any, field_is_optional: bool) -> dict[str, Any]:
+def map_type_to_schema(
+    field_name: str, type_hint: Any, field_is_optional: bool
+) -> dict[str, Any]:
     """Map a Python type hint to a JSON Schema property definition."""
-    
+
     # Handle Annotated types (e.g., Annotated[list[BaseMessage], add_messages])
     origin = get_origin(type_hint)
     if origin is typing.Annotated:
         args = get_args(type_hint)
         inner_type = args[0]
-        
+
         # Special handling for messages field
         if field_name == "messages":
             return {
                 "type": "array",
                 "description": "Shared conversation history (LangChain BaseMessage serialized at boundary)",
-                "items": {"$ref": "#/$defs/OpaqueMessage"}
+                "items": {"$ref": "#/$defs/OpaqueMessage"},
             }
-        
+
         # For completed_transactions with LedgerEntry
         if field_name == "completed_transactions":
             return {
                 "type": "array",
                 "description": "Saga transaction ledger (Write-Ahead Log) — append-only via operator.add reducer",
-                "items": {"$ref": "#/$defs/LedgerEntry"}
+                "items": {"$ref": "#/$defs/LedgerEntry"},
             }
-        
+
         # Recurse on the inner type for other Annotated cases
         type_hint = inner_type
         origin = get_origin(type_hint)
-    
+
     # Strip Optional wrapper
     base_type = strip_optional(type_hint) if field_is_optional else type_hint
-    
+
     # Handle Literal types
     literal_values = extract_literal_values(base_type)
     if literal_values:
-        schema = {
-            "type": "string",
-            "enum": literal_values
-        }
+        schema = {"type": "string", "enum": literal_values}
         return {"type": ["string", "null"]} if field_is_optional else schema
-    
+
     # Handle Union types (e.g., str | dict | None for execution_plan_output)
     union_origin = get_origin(base_type)
     if union_origin is typing.Union or isinstance(base_type, types.UnionType):
         args = get_args(base_type)
         non_none_args = [arg for arg in args if arg is not type(None)]
-        
+
         if len(non_none_args) > 1:
             # Multiple non-None types: use oneOf
             schemas = []
@@ -150,51 +149,48 @@ def map_type_to_schema(field_name: str, type_hint: Any, field_is_optional: bool)
             if field_is_optional:
                 schemas.append({"type": "null"})
             return {"oneOf": schemas}
-    
+
     # Get the origin for generic types
     origin = get_origin(base_type)
-    
+
     # Handle basic types
     if base_type is str:
         if field_name == "guardrail_reason":
             schema = {
                 "type": "string",
-                "description": "NeMo guardrail block reason — empty string when not blocked"
+                "description": "NeMo guardrail block reason — empty string when not blocked",
             }
         elif field_name == "user_id":
             schema = {
                 "type": "string",
                 "description": "User identity — ISO 42001 A.7.2 accountability attribution",
-                "minLength": 1
+                "minLength": 1,
             }
         else:
             schema = {"type": "string"}
         return {"type": ["string", "null"]} if field_is_optional else schema
-    
+
     if base_type is int:
         schema = {"type": "integer"}
         if field_name == "loop_count":
             schema["minimum"] = 0
         return {"type": ["integer", "null"]} if field_is_optional else schema
-    
+
     if base_type is bool:
         return {"type": "boolean"}
-    
+
     # Handle dict types
     if origin is dict or base_type is dict:
         schema = {"type": "object"}
         if field_name == "latency_stats":
             schema["additionalProperties"] = {"type": "number"}
         return {"type": ["object", "null"]} if field_is_optional else schema
-    
+
     # Handle list types
     if origin is list:
-        schema = {
-            "type": "array",
-            "items": {"type": "object"}
-        }
+        schema = {"type": "array", "items": {"type": "object"}}
         return {"type": ["array", "null"]} if field_is_optional else schema
-    
+
     # Fallback for Any or unknown types
     return {"type": ["object", "null"]} if field_is_optional else {"type": "object"}
 
@@ -204,54 +200,64 @@ def generate_ledger_entry_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "description": "A single record in the Saga transaction ledger",
-        "required": ["sequence_id", "timestamp", "uca_ref", "action", "idempotency_key", "status", "context_data"],
+        "required": [
+            "sequence_id",
+            "timestamp",
+            "uca_ref",
+            "action",
+            "idempotency_key",
+            "status",
+            "context_data",
+        ],
         "properties": {
             "sequence_id": {
                 "type": "integer",
                 "description": "Monotonically increasing int — used for LIFO rollback ordering",
-                "minimum": 0
+                "minimum": 0,
             },
             "timestamp": {
                 "type": "string",
-                "description": "ISO-8601 UTC string — written at PENDING time"
+                "description": "ISO-8601 UTC string — written at PENDING time",
             },
             "uca_ref": {
                 "type": "string",
-                "description": "The STPA UCA ID that governs this action (e.g. 'UCA-4')"
+                "description": "The STPA UCA ID that governs this action (e.g. 'UCA-4')",
             },
             "action": {
                 "type": "string",
-                "description": "The forward action name (e.g. 'execute_trade')"
+                "description": "The forward action name (e.g. 'execute_trade')",
             },
             "idempotency_key": {
                 "type": "string",
-                "description": "Derived key (hash of tx_id + action) to prevent double-refunds"
+                "description": "Derived key (hash of tx_id + action) to prevent double-refunds",
             },
             "status": {
                 "type": "string",
                 "description": "WAL transition state",
-                "enum": ["PENDING", "COMPLETED", "ROLLED_BACK", "PARTIAL_FAILURE"]
+                "enum": ["PENDING", "COMPLETED", "ROLLED_BACK", "PARTIAL_FAILURE"],
             },
             "context_data": {
                 "type": "object",
-                "description": "Payload the compensating node needs to issue the reversal"
-            }
+                "description": "Payload the compensating node needs to issue the reversal",
+            },
         },
-        "additionalProperties": False
+        "additionalProperties": False,
     }
 
 
 def generate_schema() -> dict:
     """Generate JSON Schema from AgentState TypedDict via runtime introspection."""
-    
+
     # Get type hints with full resolution
     hints = typing.get_type_hints(AgentState, include_extras=True)
-    
+
     properties = {}
     for field_name, type_hint in hints.items():
         field_is_optional = is_optional(type_hint)
-        properties[field_name] = map_type_to_schema(field_name, type_hint, field_is_optional)
-    
+        properties[field_name] = map_type_to_schema(
+            field_name, type_hint, field_is_optional
+        )
+
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://cage.internal/schemas/agent_state_schema.json",
@@ -265,12 +271,12 @@ def generate_schema() -> dict:
         "$defs": {
             "OpaqueMessage": {
                 "type": "object",
-                "description": "LangChain BaseMessage serialised at boundary"
+                "description": "LangChain BaseMessage serialised at boundary",
             },
-            "LedgerEntry": generate_ledger_entry_schema()
-        }
+            "LedgerEntry": generate_ledger_entry_schema(),
+        },
     }
-    
+
     return schema
 
 
@@ -289,26 +295,33 @@ def write_schema(schema: dict, output_path: Path) -> None:
 
 def check_schema(current_schema: dict, output_path: Path) -> bool:
     """Check if committed schema matches current model.
-    
+
     Returns:
         True if schemas match, False otherwise.
     """
     if not output_path.exists():
         print(f"✗ Schema file does not exist: {output_path}", file=sys.stderr)
-        print("  Run 'uv run python scripts/generate_agent_state_schema.py' to generate it.", file=sys.stderr)
+        print(
+            "  Run 'uv run python scripts/generate_agent_state_schema.py' to generate it.",
+            file=sys.stderr,
+        )
         return False
-    
+
     with output_path.open("r") as f:
         committed_content = f.read()
-    
+
     current_content = format_schema_json(current_schema)
-    
+
     if current_content != committed_content:
         print("✗ Schema drift detected!", file=sys.stderr)
-        print(f"  Committed schema in {output_path} does not match current AgentState model.", file=sys.stderr)
-        
+        print(
+            f"  Committed schema in {output_path} does not match current AgentState model.",
+            file=sys.stderr,
+        )
+
         # Show diff
         import difflib
+
         committed_lines = committed_content.splitlines(keepends=True)
         current_lines = current_content.splitlines(keepends=True)
         diff = difflib.unified_diff(
@@ -316,25 +329,28 @@ def check_schema(current_schema: dict, output_path: Path) -> bool:
             current_lines,
             fromfile=f"{output_path} (committed)",
             tofile=f"{output_path} (generated)",
-            lineterm=""
+            lineterm="",
         )
         print("\nDiff:", file=sys.stderr)
         for line in diff:
             print(line, file=sys.stderr)
-        
-        print("\n  Run 'uv run python scripts/generate_agent_state_schema.py' to update the schema.", file=sys.stderr)
+
+        print(
+            "\n  Run 'uv run python scripts/generate_agent_state_schema.py' to update the schema.",
+            file=sys.stderr,
+        )
         return False
-    
+
     print(f"✓ Schema is up-to-date: {output_path}")
     return True
 
 
 def main(args: list[str] | None = None) -> int:
     """Main entry point.
-    
+
     Args:
         args: Command-line arguments (for testing). If None, uses sys.argv.
-    
+
     Returns:
         Exit code: 0 on success, 1 on failure.
     """
@@ -347,10 +363,10 @@ def main(args: list[str] | None = None) -> int:
         help="Check mode: fail with exit code 1 if schema is out of sync (for CI)",
     )
     parsed_args = parser.parse_args(args)
-    
+
     # Generate current schema from runtime model
     current_schema = generate_schema()
-    
+
     if parsed_args.check:
         # CI check mode: verify committed schema matches current model
         if check_schema(current_schema, SCHEMA_OUTPUT_PATH):

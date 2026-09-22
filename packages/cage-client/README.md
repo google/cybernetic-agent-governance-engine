@@ -34,6 +34,7 @@ uv add "git+https://github.com/google/cybernetic-agent-governance-engine.git#sub
 import asyncio
 from cage_client import CageClient, PolicyViolationException, DeferralPending
 
+
 async def main():
     async with CageClient(
         gateway_url="http://localhost:8080",
@@ -51,6 +52,7 @@ async def main():
         except DeferralPending as exc:
             print("Action deferred for HITL review, ticket:", exc.ticket_id)
 
+
 asyncio.run(main())
 ```
 
@@ -58,6 +60,7 @@ asyncio.run(main())
 
 ```python
 from cage_client.adapters.langgraph import cage_guard
+
 
 @cage_guard(
     action="execute_trade",
@@ -104,6 +107,7 @@ from cage_client.adapters.langgraph import cage_guard
 
 cage = CageClient(gateway_url="http://localhost:8080", routing_seal_secret="...")
 
+
 @cage_guard(client=cage, action="execute_trade")
 async def trade_node(state: dict) -> dict:
     return {"result": "executed"}
@@ -142,8 +146,10 @@ If you start with the client SDK and later need direct kernel access, the migrat
 @cage_guard(client=cage, action="execute_trade")
 async def trade_node(state): ...
 
+
 # After (node factory)
 from src.gateway.governance.langgraph_harness import create_opa_safety_node
+
 graph.add_node("opa_check", create_opa_safety_node(policy_path="trade_governance"))
 ```
 

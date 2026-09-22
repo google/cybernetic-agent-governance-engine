@@ -246,6 +246,11 @@ class Provider02AttestationProvider(AttestationProvider):
             self._timeout,
         )
 
+    @classmethod
+    def from_env(cls) -> Provider02AttestationProvider:
+        """Instantiate provider from environment variables."""
+        return cls()
+
     def _build_httpx_kwargs(self) -> dict[str, Any]:
         """Build httpx.AsyncClient configuration with optional mTLS."""
         kwargs: dict[str, Any] = {"timeout": self._timeout}

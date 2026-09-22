@@ -233,9 +233,7 @@ class CageClient:
         )
 
         try:
-            response = await self._client.post(
-                endpoint, json=payload, headers=headers
-            )
+            response = await self._client.post(endpoint, json=payload, headers=headers)
         except httpx.RequestError as e:
             # Network failure, timeout, connection refused (fail-closed)
             logger.error(
@@ -300,16 +298,12 @@ class CageClient:
         try:
             response_data = response.json()
         except json.JSONDecodeError as e:
-            raise CageGatewayError(
-                f"Invalid JSON in ALLOW response: {e}"
-            ) from e
+            raise CageGatewayError(f"Invalid JSON in ALLOW response: {e}") from e
 
         # Extract governance envelope from response
         envelope_data = response_data.get("envelope")
         if not envelope_data:
-            raise CageGatewayError(
-                "ALLOW response missing required 'envelope' field"
-            )
+            raise CageGatewayError("ALLOW response missing required 'envelope' field")
 
         # Verify routing seal if secret is configured
         if self.routing_seal_secret:
@@ -337,9 +331,7 @@ class CageClient:
         try:
             envelope = GovernanceEnvelope(**envelope_data)
         except Exception as e:
-            raise CageGatewayError(
-                f"Failed to parse governance envelope: {e}"
-            ) from e
+            raise CageGatewayError(f"Failed to parse governance envelope: {e}") from e
 
         logger.info(
             f"Action ALLOWED: action={envelope.subject.get('action')}, "
@@ -362,9 +354,7 @@ class CageClient:
         try:
             response_data = response.json()
         except json.JSONDecodeError as e:
-            raise CageGatewayError(
-                f"Invalid JSON in DENY response: {e}"
-            ) from e
+            raise CageGatewayError(f"Invalid JSON in DENY response: {e}") from e
 
         # Extract structured violation details
         reason_code = response_data.get("reason_code", "UNKNOWN_VIOLATION")
@@ -373,9 +363,7 @@ class CageClient:
         recoverable = response_data.get("recoverable", True)
 
         if not audit_id:
-            raise CageGatewayError(
-                "DENY response missing required 'audit_id' field"
-            )
+            raise CageGatewayError("DENY response missing required 'audit_id' field")
 
         logger.warning(
             f"Action DENIED: reason_code={reason_code}, audit_id={audit_id}, "
@@ -403,9 +391,7 @@ class CageClient:
         try:
             response_data = response.json()
         except json.JSONDecodeError as e:
-            raise CageGatewayError(
-                f"Invalid JSON in DEFER response: {e}"
-            ) from e
+            raise CageGatewayError(f"Invalid JSON in DEFER response: {e}") from e
 
         # Extract deferral ticket details
         ticket_id = response_data.get("ticket_id")
@@ -414,9 +400,7 @@ class CageClient:
         ttl_seconds = response_data.get("ttl_seconds", 14400)
 
         if not ticket_id:
-            raise CageGatewayError(
-                "DEFER response missing required 'ticket_id' field"
-            )
+            raise CageGatewayError("DEFER response missing required 'ticket_id' field")
 
         # Parse expiration timestamp
         if expires_at_str:
@@ -430,9 +414,9 @@ class CageClient:
                 ) from e
         else:
             # Fallback: calculate expiration from TTL
-            expires_at = datetime.now(timezone.utc).replace(
-                microsecond=0
-            ) + timedelta(seconds=ttl_seconds)
+            expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+                seconds=ttl_seconds
+            )
 
         logger.info(
             f"Action DEFERRED: ticket_id={ticket_id}, "

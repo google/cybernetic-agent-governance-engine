@@ -55,6 +55,11 @@ class Provider05BlueprintProvider(AttestationProvider):
             active_thresholds or {"THR-FIN-006": _DEFAULT_THR_FIN_006_VALUE}
         )
 
+    @classmethod
+    def from_env(cls) -> Provider05BlueprintProvider:
+        """Instantiate provider from environment variables."""
+        return cls()
+
     @property
     def provider_name(self) -> str:
         return "provider_05-blueprint"

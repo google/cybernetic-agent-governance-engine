@@ -60,14 +60,22 @@ def _finding_codes(result: object) -> list[str]:
 @requires_node
 def test_valid_fixture_returns_pass(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
-    result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-pass.json"))
-    assert (result.returncode, result.stdout["status"], _finding_codes(result)) == (0, "PASS", [])
+    result = run_agent_integrity_verify(
+        fixture, _request(fixture.project_root, "request-pass.json")
+    )
+    assert (result.returncode, result.stdout["status"], _finding_codes(result)) == (
+        0,
+        "PASS",
+        [],
+    )
 
 
 @requires_node
 def test_ambiguous_support_returns_review(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
-    result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-review.json"))
+    result = run_agent_integrity_verify(
+        fixture, _request(fixture.project_root, "request-review.json")
+    )
     assert (result.returncode, result.stdout["status"]) == (2, "REVIEW")
     assert _finding_codes(result) == ["claim.support_ambiguous"]
 
@@ -75,7 +83,9 @@ def test_ambiguous_support_returns_review(tmp_path: Path) -> None:
 @requires_node
 def test_blocked_fixture_returns_blocked(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
-    result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-blocked.json"))
+    result = run_agent_integrity_verify(
+        fixture, _request(fixture.project_root, "request-blocked.json")
+    )
     assert (result.returncode, result.stdout["status"]) == (3, "BLOCKED")
     assert _finding_codes(result) == ["decision.rejected"]
 
@@ -97,8 +107,12 @@ def test_response_mutation_never_passes(tmp_path: Path) -> None:
 @requires_node
 def test_source_mutation_never_passes(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
-    (fixture.project_root / "docs/source.md").write_text("mutated source bytes\n", encoding="utf-8")
-    result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-pass.json"))
+    (fixture.project_root / "docs/source.md").write_text(
+        "mutated source bytes\n", encoding="utf-8"
+    )
+    result = run_agent_integrity_verify(
+        fixture, _request(fixture.project_root, "request-pass.json")
+    )
     assert result.returncode != 0
     assert result.stdout.get("status") != "PASS"
     assert "source.digest_mismatch" in _finding_codes(result)
@@ -108,7 +122,9 @@ def test_source_mutation_never_passes(tmp_path: Path) -> None:
 def test_missing_source_never_passes(tmp_path: Path) -> None:
     fixture = copy_fixture_project(tmp_path)
     (fixture.project_root / "docs/source.md").unlink()
-    result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-pass.json"))
+    result = run_agent_integrity_verify(
+        fixture, _request(fixture.project_root, "request-pass.json")
+    )
     assert result.returncode != 0
     assert result.stdout.get("status") != "PASS"
     assert "source.collection_failed" in _finding_codes(result)
@@ -120,7 +136,9 @@ def test_invalid_trusted_config_never_passes(tmp_path: Path) -> None:
     config = json.loads(fixture.trusted_config_path.read_text(encoding="utf-8"))
     config["allowedRoots"] = ["not-docs"]
     fixture.trusted_config_path.write_text(json.dumps(config), encoding="utf-8")
-    result = run_agent_integrity_verify(fixture, _request(fixture.project_root, "request-pass.json"))
+    result = run_agent_integrity_verify(
+        fixture, _request(fixture.project_root, "request-pass.json")
+    )
     assert result.returncode != 0
     assert result.stdout.get("status") != "PASS"
 
@@ -197,7 +215,11 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
     assert "provider_06" not in executable_added
     assert "agent_integrity" not in executable_added
 
-    for config_path in (repo_root / "pyproject.toml", repo_root / "setup.cfg", repo_root / "setup.py"):
+    for config_path in (
+        repo_root / "pyproject.toml",
+        repo_root / "setup.cfg",
+        repo_root / "setup.py",
+    ):
         if config_path.exists():
             text = config_path.read_text(encoding="utf-8")
             assert "provider_06" not in text
@@ -234,7 +256,9 @@ def test_result_artifact_matches_live_required_scenarios(tmp_path: Path) -> None
 
     def source_mutation(fixture: object, _request_value: object) -> None:
         project_root = fixture.project_root  # type: ignore[attr-defined]
-        (project_root / "docs/source.md").write_text("mutated source bytes\n", encoding="utf-8")
+        (project_root / "docs/source.md").write_text(
+            "mutated source bytes\n", encoding="utf-8"
+        )
 
     def missing_source(fixture: object, _request_value: object) -> None:
         project_root = fixture.project_root  # type: ignore[attr-defined]
@@ -268,8 +292,14 @@ def test_prose_result_matches_machine_readable_artifact() -> None:
     assert len(rows) == artifact["requiredScenariosTotal"]
     for scenario in artifact["scenarios"]:
         row = rows[scenario["name"]]
-        assert row["expected"] == f"{scenario['expected']['exitCode']}/{scenario['expected']['status']}"
-        assert row["actual"] == f"{scenario['actual']['exitCode']}/{scenario['actual']['status']}"
+        assert (
+            row["expected"]
+            == f"{scenario['expected']['exitCode']}/{scenario['expected']['status']}"
+        )
+        assert (
+            row["actual"]
+            == f"{scenario['actual']['exitCode']}/{scenario['actual']['status']}"
+        )
         assert row["findings"] == (",".join(scenario["actual"]["findingCodes"]) or "-")
         assert row["passed"] == str(scenario["passed"]).lower()
 
@@ -323,7 +353,9 @@ def test_build_lock_serializes_processes(tmp_path: Path) -> None:
     counter_path = tmp_path / "counter"
     counter_path.write_text("0")
     processes = [
-        multiprocessing.Process(target=_lock_contender, args=(str(lock_path), str(counter_path)))
+        multiprocessing.Process(
+            target=_lock_contender, args=(str(lock_path), str(counter_path))
+        )
         for _ in range(4)
     ]
     for process in processes:

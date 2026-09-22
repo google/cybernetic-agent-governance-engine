@@ -233,7 +233,7 @@ def _build_workflow() -> StateGraph:
         BLOCKED → route to explainer (trade denied, explain to user)
         """
         import json
-        
+
         status = state.get("safety_status")
         if status in ("APPROVED", "SKIPPED"):
             # Phase 2.1: Runtime approval condition check
@@ -250,12 +250,14 @@ def _build_workflow() -> StateGraph:
                     return "approval_node"
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
-            
+
             # Check trade amount from execution_plan_output
             plan_raw = state.get("execution_plan_output")
             try:
                 plan = (
-                    json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw or {}
+                    json.loads(plan_raw)
+                    if isinstance(plan_raw, str)
+                    else plan_raw or {}
                 )
                 for step in plan.get("steps", []):
                     amount = float(step.get("amount", 0))
@@ -263,7 +265,7 @@ def _build_workflow() -> StateGraph:
                         return "approval_node"
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
-            
+
             # No approval needed - skip directly to governed_trader
             return "governed_trader"
         elif status in ("DEFERRED", "ESCALATED", "MANUAL_REVIEW"):
