@@ -57,6 +57,7 @@ from src.gateway.governance.execution_actuator import (
     ExecutionActuator as ExecutionActuator,
 )
 from src.gateway.governance.raw_signer_protocol import RawMessageSigner
+from src.gateway.governance.seams.credential_broker import CredentialBrokerAdapter
 from src.integrations.actuator_01.assertion import (
     AssertionBuildError,
     build_assertion,
@@ -104,6 +105,7 @@ class Actuator01Adapter:
     - Per-operator quorum signing
     - mTLS HTTP submission
     - Response classification with fail-closed semantics
+    - Optional credential broker integration for outbound authentication
 
     Configuration is sourced from environment variables:
     - ``ACTUATOR_01_ENDPOINT``: Base URL (required)
@@ -117,6 +119,8 @@ class Actuator01Adapter:
         signer: ``RawMessageSigner`` protocol instance for quorum and assertion signing.
         signer_resolver: Optional callable ``(operator_urn: str) -> RawMessageSigner``
             for per-operator signing keys. If ``None``, defaults to ``signer`` for all operators.
+        policy_signer: Optional policy authority signer for dual-authority decision signatures.
+        credential_broker: Optional ``CredentialBrokerAdapter`` for fetching outbound API credentials.
     """
 
     def __init__(
@@ -125,11 +129,13 @@ class Actuator01Adapter:
         signer: RawMessageSigner,
         signer_resolver: SignerResolver | None = None,
         policy_signer: RawMessageSigner | None = None,
+        credential_broker: CredentialBrokerAdapter | None = None,
     ) -> None:
         self._client = client
         self._signer = signer
         self._resolve_signer = signer_resolver or (lambda _urn: signer)
         self._policy_signer = policy_signer  # Optional dual-authority policy signer
+        self._credential_broker = credential_broker  # Optional credential broker
 
     @classmethod
     def from_env(
@@ -137,6 +143,7 @@ class Actuator01Adapter:
         signer: RawMessageSigner | None = None,
         signer_resolver: SignerResolver | None = None,
         policy_signer: RawMessageSigner | None = None,
+        credential_broker: CredentialBrokerAdapter | None = None,
     ) -> Actuator01Adapter:
         """Construct adapter from environment variables.
 
@@ -146,6 +153,7 @@ class Actuator01Adapter:
             signer_resolver: Optional callable ``(operator_urn: str) -> RawMessageSigner``
                 for per-operator signing keys. If ``None``, defaults to ``signer`` for all.
             policy_signer: Optional policy authority signer for dual-authority decision signatures.
+            credential_broker: Optional ``CredentialBrokerAdapter`` for fetching outbound API credentials.
 
         Raises:
             RuntimeError: If any required environment variable is missing.
@@ -191,6 +199,7 @@ class Actuator01Adapter:
             signer=signer,
             signer_resolver=signer_resolver,
             policy_signer=policy_signer,
+            credential_broker=credential_broker,
         )
 
     # ── ExecutionActuator Protocol Implementation ─────────────────────────
@@ -297,6 +306,47 @@ class Actuator01Adapter:
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
             )
+
+        # ── Gate 3: Fetch outbound credentials (optional) ────────────────
+        extra_headers: dict[str, str] = {}
+        if self._credential_broker:
+            try:
+                # Use operator_urn as agent SVID for credential authorization
+                agent_svid = clearance.operator_urn
+                extra_headers = await self._credential_broker.fetch_credential(
+                    agent_svid=agent_svid,
+                    tool_name=clearance.action,
+                    scope=None,
+                )
+                # Security: Mask credentials in logs
+                masked_keys = {k: f"{v[:8]}****" if v else "****" for k, v in extra_headers.items()}
+                logger.info(
+                    "[actuator_01/adapter] Credentials fetched for action=%s svid=%s headers=%s",
+                    clearance.action,
+                    agent_svid[:20] + "..." if len(agent_svid) > 20 else agent_svid,
+                    masked_keys,
+                )
+            except Exception as exc:
+                # Fail-closed: Credential broker failures block execution
+                logger.error(
+                    "[actuator_01/adapter] Credential broker failed: %s", exc
+                )
+                return ActuationReceipt(
+                    accepted=False,
+                    receipt_id=None,
+                    session_uuid=None,
+                    raw_receipt=None,
+                    findings=[
+                        {
+                            "code": "CREDENTIAL_BROKER_FAILED",
+                            "severity": "TERMINAL",
+                            "detail": str(exc),
+                        }
+                    ],
+                    retryable=False,
+                    envelope_digest=None,
+                    timestamp_utc=timestamp_utc,
+                )
 
         # ── Step 1-2: Build, canonicalize, digest ─────────────────────────
         try:
@@ -439,6 +489,7 @@ class Actuator01Adapter:
                 signatures=quorum_signatures,
                 assertion=assertion_b64,
                 issued_at=clearance.issued_at,
+                extra_headers=extra_headers if extra_headers else None,
             )
         except httpx.HTTPError as exc:
             classified = classify_network_error(exc)

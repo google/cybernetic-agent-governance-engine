@@ -123,7 +123,7 @@ class TestPerOperatorSigning:
         captured_signatures = []
 
         async def mock_submit(
-            canonical_bytes, operator_urns, signatures, assertion, issued_at
+            canonical_bytes, operator_urns, signatures, assertion, issued_at, extra_headers=None
         ):
             nonlocal captured_signatures
             captured_signatures = signatures
@@ -168,7 +168,7 @@ class TestPerOperatorSigning:
         captured_signatures = []
 
         async def mock_submit(
-            canonical_bytes, operator_urns, signatures, assertion, issued_at
+            canonical_bytes, operator_urns, signatures, assertion, issued_at, extra_headers=None
         ):
             nonlocal captured_signatures
             captured_signatures = signatures
@@ -215,7 +215,7 @@ class TestPerOperatorSigning:
         captured_reversed = {}
 
         async def mock_submit_forward(
-            canonical_bytes, operator_urns, signatures, assertion, issued_at
+            canonical_bytes, operator_urns, signatures, assertion, issued_at, extra_headers=None
         ):
             nonlocal captured_forward
             captured_forward = {"urns": operator_urns, "sigs": signatures}
@@ -229,7 +229,7 @@ class TestPerOperatorSigning:
             )
 
         async def mock_submit_reversed(
-            canonical_bytes, operator_urns, signatures, assertion, issued_at
+            canonical_bytes, operator_urns, signatures, assertion, issued_at, extra_headers=None
         ):
             nonlocal captured_reversed
             captured_reversed = {"urns": operator_urns, "sigs": signatures}

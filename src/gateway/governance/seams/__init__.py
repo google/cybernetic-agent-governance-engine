@@ -35,9 +35,21 @@ Architecture Principle:
 
 from __future__ import annotations
 
+from .credential_broker import (
+    CredentialAccessDenied,
+    CredentialBrokerAdapter,
+    CredentialBrokerError,
+    CredentialNotFound,
+)
+
 __all__ = [
+    "CredentialAccessDenied",
+    "CredentialBrokerAdapter",
+    "CredentialBrokerError",
+    "CredentialNotFound",
     "actuation",
     "attestation",
+    "credential_broker",
     "graph_topology",
     "normative",
 ]

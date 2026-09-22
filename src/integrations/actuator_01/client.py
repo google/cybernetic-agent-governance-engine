@@ -93,6 +93,7 @@ class ActuatorHttpClient:
         signatures: list[str],
         assertion: str,
         issued_at: int,
+        extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         """Submit a canonical execution envelope with quorum signatures.
 
@@ -106,6 +107,7 @@ class ActuatorHttpClient:
         - X-Execution-Assertion: base64-encoded 120-byte assertion
         - X-Timestamp: unix seconds (equals issued_at)
         - Content-Type: application/json
+        - Additional headers from extra_headers (e.g., Authorization)
 
         Args:
             canonical_bytes: The exact canonical envelope bytes from JCS.
@@ -113,6 +115,9 @@ class ActuatorHttpClient:
             signatures: List of hex signatures (positionally aligned with URNs).
             assertion: Base64-encoded 120-byte execution assertion.
             issued_at: Unix timestamp in seconds.
+            extra_headers: Optional dictionary of additional HTTP headers to inject
+                (e.g., Authorization tokens from credential broker). Values are
+                NEVER logged to prevent credential leakage.
 
         Returns:
             httpx.Response object (caller classifies status code).
@@ -149,6 +154,10 @@ class ActuatorHttpClient:
             "X-Execution-Assertion": assertion,
             "X-Timestamp": str(issued_at),
         }
+
+        # Merge extra headers (e.g., Authorization from credential broker)
+        if extra_headers:
+            headers.update(extra_headers)
 
         logger.info(
             "[actuator_01/client] Submitting envelope: operators=%d assertion_len=%d body_len=%d",
