@@ -51,7 +51,10 @@ LangGraph 1.1 Notes:
   - StateGraph / TypedDict / add_messages API is fully backward-compatible.
   - Consumers may opt in to typed streaming via ``version="v2"`` on
     ``invoke()`` / ``stream()`` calls (see LangGraph 1.1 migration guide).
-  - Typed interrupts are supported for the interrupt_before pattern.
+  - HITL suspension uses the dynamic ``interrupt()`` primitive inside
+    ``approval_node``; the static ``interrupt_before`` parameter was removed in
+    Phase 2.1 (see ``_build_workflow`` and the compile sites below).  Callers
+    resume with ``Command(resume={...})`` via the LangGraph SDK.
 """
 
 import os
@@ -301,7 +304,9 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
         redis_url: Optional Redis connection URL. Falls back to MemorySaver if None.
 
     Returns:
-        Compiled graph with checkpointer and interrupt_before configuration.
+        Compiled graph with a checkpointer.  HITL suspension is dynamic —
+        ``approval_node`` calls ``interrupt()`` at runtime rather than the
+        graph declaring ``interrupt_before`` at compile time.
     """
     workflow = _build_workflow()
 
@@ -340,11 +345,13 @@ def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
     This entry point is used by the LangGraph SDK local development server
     (langgraph.json). It delegates all state persistence to the LangGraph
     Server's own in-memory or Redis-backed checkpointer, avoiding double
-    checkpointing. The compiled graph retains interrupt_before semantics
-    for the manual handshake gate at governed_trader.
+    checkpointing. The HITL gate at ``approval_node`` still suspends the graph,
+    because it uses the dynamic ``interrupt()`` primitive rather than a
+    compile-time ``interrupt_before`` declaration.
 
     Returns:
-        Compiled graph with interrupt_before but no checkpointer.
+        Compiled graph with no checkpointer.  Dynamic ``interrupt()``
+        suspension remains active; resume with ``Command(resume={...})``.
     """
     workflow = _build_workflow()
 

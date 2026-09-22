@@ -1322,10 +1322,16 @@ class SymbolicGovernor:
         data race under concurrent async requests — two simultaneous calls could
         overwrite each other's payload before it was read in ``govern()``.
 
-        Latency optimizations (v2.0.x baseline):
-        - CBF (Redis read) and OPA (HTTP) checks are fully independent and now
-          run concurrently via asyncio.gather, bounding their combined cost to
-          max(CBF_ms, OPA_ms) instead of CBF_ms + OPA_ms.
+        Execution shape (current):
+        - Checks run in two phases.  Phase 1 is read-only (OPA, Tier-2
+          corroboration, consensus, causal, FRIA); Phase 2 performs mutations
+          (CBF commit, fiscal reservation) only when Phase 1 yields zero
+          violations.
+        - CBF and OPA are NOT run concurrently.  An earlier revision gathered
+          them with ``asyncio.gather`` to bound cost at max(CBF_ms, OPA_ms);
+          that was removed so a CBF commit can never be issued against a plan
+          OPA later rejects.  Combined cost is therefore CBF_ms + OPA_ms.
+          See the phase-ordering note further down this method.
         - Each stage is wrapped in a discrete OTel span so Langfuse shows the
           full 10-layer pipeline breakdown.
         """

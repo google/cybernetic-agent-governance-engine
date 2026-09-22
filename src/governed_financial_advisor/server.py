@@ -213,7 +213,19 @@ if (
 
 
 class ApprovalResumeRequest(BaseModel):
-    """Request body for POST /v1/approvals/{thread_id}/resume.
+    """Payload contract for resuming a HITL approval interrupt.
+
+    Route-orphaned by design: POST /v1/approvals/{thread_id}/resume was removed
+    in 7ab1acd when HITL migrated to the LangGraph interrupt() primitive.
+    Reviewers now resume with Command(resume={...}) through the SDK, and this
+    model defines the shape that payload must take.
+
+    .. warning::
+       This model is not yet applied to the live resume path.  ``approval_node``
+       reads the interrupt() return value as a plain dict and defaults
+       ``rationale`` to "", so the mandatory-rationale rule below is currently
+       enforced only where this class is constructed explicitly.  Wiring it into
+       ``approval_node`` is tracked as follow-up work.
 
     Attributes:
         ticket_id: Unique defer ticket ID for atomic idempotency enforcement.

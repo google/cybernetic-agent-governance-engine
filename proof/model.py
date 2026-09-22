@@ -1,6 +1,6 @@
 # Adapted from the open-source implementation by LalaSkye (Apache 2.0)
 # Original repository: https://github.com/LalaSkye/no-direct-bind
-# Modifications: Adapted for the CAGE 8-tier governance architecture,
+# Modifications: Adapted for the CAGE 9-tier governance architecture,
 # extended with Gap 1/2/3/4 sub-proofs and a concurrency-interleaving
 # sub-proof, and integrated with CAGE state machine phases
 # (PENDING → CHECKING → SEAL_ISSUED → EXECUTED/DENIED).
@@ -16,11 +16,14 @@
 # It proves the No-Direct-Bind invariant holds for all interleavings of the
 # concurrent CBF/OPA tier evaluations within one request.
 #
-# State counts (C1-sub audit remediation — added NARROW/PAUSE states):
-#   - Gated sequential model: ~57 reachable states (was 21 before NARROW/PAUSE)
-#   - Concurrent CBF/OPA model: ~66 reachable states (was 24 before NARROW/PAUSE)
-#   - Ungated (direct-bind) model: 19 reachable states (unchanged)
-# The increase is due to:
+# State counts — these are PINNED by tests/test_no_direct_bind_proof.py
+# (EXPECTED_GATED_STATES / EXPECTED_UNGATED_STATES / EXPECTED_CONCURRENT_STATES)
+# and must be regenerated (``uv run python proof/model.py``) whenever the
+# transition relation changes:
+#   - Gated sequential model:     44 reachable states
+#   - Concurrent CBF/OPA model:   49 reachable states (strict superset of gated)
+#   - Ungated (direct-bind) model: 21 reachable states
+# NARROW/PAUSE terminal states are included in the counts above, enabled by:
 #   - soft_threshold_exceeded flag (enables NARROW terminal state)
 #   - transient_block flag (enables PAUSE terminal state)
 #   - Non-deterministic branching in tier PASS transitions
@@ -49,7 +52,7 @@ Theorem (No-Direct-Bind):
         NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
 This file:
-  1. Defines the CAGE 8-tier governance state machine.
+  1. Defines the CAGE 9-tier governance state machine (FTRA + 8 in-pipeline tiers).
   2. Enumerates every reachable state via BFS.
   3. Asserts the invariant holds in ALL reachable states.
   4. Defines an ungated (direct-bind) variant and proves it VIOLATES the

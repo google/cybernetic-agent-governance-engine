@@ -24,7 +24,10 @@ not in the node itself.
 Flow:
   1. Graph routes to approval_node based on runtime conditions
   2. approval_node calls interrupt(payload) → GraphInterrupt suspends execution
-  3. Human reviewer calls POST /v1/approvals/{thread_id}/resume
+  3. Human reviewer discovers the pending interrupt via GET /v1/approvals/pending
+     and resumes through the LangGraph SDK with Command(resume={...}).
+     (The POST /v1/approvals/{thread_id}/resume route was removed in 7ab1acd;
+     external clients use the SDK.)
   4. interrupt() returns resume payload, node updates state and returns Command
 
 Pure LangGraph — no static compile-time interrupts, no BullMQ.

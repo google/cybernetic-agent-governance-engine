@@ -22,8 +22,12 @@ Phase 1b: Approval gate added before executor using LangGraph-native
 interrupt / Command mechanism.  When approval_required=True, the graph
 pauses at approval_node and waits for a human to resume via:
 
-    POST /v1/approvals/{thread_id}/resume
-    {"approved": bool, "reviewer": str, "comment": str}
+    Command(resume={"approved": bool, "reviewer": str,
+                    "rationale": str, "max_slippage_pct": float})
+
+via the LangGraph SDK.  Pending interrupts are discoverable through
+GET /v1/approvals/pending.  The POST /v1/approvals/{thread_id}/resume route
+was removed in 7ab1acd when HITL migrated to the interrupt() primitive.
 
 Approval threshold: trade value > $10,000 OR risk_score > 0.7
 (derived from the evaluation_result parsed in should_require_approval).
