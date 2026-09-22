@@ -319,7 +319,9 @@ class Actuator01Adapter:
                     scope=None,
                 )
                 # Security: Mask credentials in logs
-                masked_keys = {k: f"{v[:8]}****" if v else "****" for k, v in extra_headers.items()}
+                masked_keys = {
+                    k: f"{v[:8]}****" if v else "****" for k, v in extra_headers.items()
+                }
                 logger.info(
                     "[actuator_01/adapter] Credentials fetched for action=%s svid=%s headers=%s",
                     clearance.action,
@@ -328,9 +330,7 @@ class Actuator01Adapter:
                 )
             except Exception as exc:
                 # Fail-closed: Credential broker failures block execution
-                logger.error(
-                    "[actuator_01/adapter] Credential broker failed: %s", exc
-                )
+                logger.error("[actuator_01/adapter] Credential broker failed: %s", exc)
                 return ActuationReceipt(
                     accepted=False,
                     receipt_id=None,

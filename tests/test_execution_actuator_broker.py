@@ -48,7 +48,11 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 class MockCredentialBroker:
     """Mock credential broker that returns test credentials."""
 
-    def __init__(self, headers: dict[str, str] | None = None, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        headers: dict[str, str] | None = None,
+        raise_error: Exception | None = None,
+    ):
         self.headers = headers or {"Authorization": "Bearer test-token-12345678"}
         self.raise_error = raise_error
         self.fetch_calls: list[tuple[str, str, str | None]] = []
@@ -123,7 +127,7 @@ async def test_actuator_fetches_and_attaches_credentials():
     )
     mock_client = MagicMock(spec=ActuatorHttpClient)
     mock_client.base_url = "https://test.actuator.example.com"
-    
+
     # Mock successful response
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
@@ -148,7 +152,7 @@ async def test_actuator_fetches_and_attaches_credentials():
     # Assert
     assert receipt.accepted is True
     assert receipt.receipt_id == "receipt-001"
-    
+
     # Verify broker was called with correct parameters
     assert len(mock_broker.fetch_calls) == 1
     agent_svid, tool_name, scope = mock_broker.fetch_calls[0]
@@ -160,7 +164,9 @@ async def test_actuator_fetches_and_attaches_credentials():
     assert mock_client.submit_envelope.called
     call_kwargs = mock_client.submit_envelope.call_args.kwargs
     assert "extra_headers" in call_kwargs
-    assert call_kwargs["extra_headers"] == {"Authorization": "Bearer secret-api-key-abcd1234"}
+    assert call_kwargs["extra_headers"] == {
+        "Authorization": "Bearer secret-api-key-abcd1234"
+    }
 
 
 @pytest.mark.asyncio
@@ -172,7 +178,7 @@ async def test_actuator_masks_credentials_in_logs(caplog):
     )
     mock_client = MagicMock(spec=ActuatorHttpClient)
     mock_client.base_url = "https://test.actuator.example.com"
-    
+
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -197,7 +203,7 @@ async def test_actuator_masks_credentials_in_logs(caplog):
     # Assert: Full credential value must NOT appear in logs
     log_text = caplog.text
     assert "sensitive-secret-token-xyz" not in log_text
-    
+
     # Masked prefix should appear
     assert "Bearer s****" in log_text or "Credentials fetched" in log_text
 
@@ -268,7 +274,7 @@ async def test_actuator_without_broker_proceeds_normally():
     # Arrange
     mock_client = MagicMock(spec=ActuatorHttpClient)
     mock_client.base_url = "https://test.actuator.example.com"
-    
+
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -291,7 +297,7 @@ async def test_actuator_without_broker_proceeds_normally():
 
     # Assert
     assert receipt.accepted is True
-    
+
     # Verify no extra_headers were passed
     call_kwargs = mock_client.submit_envelope.call_args.kwargs
     assert call_kwargs.get("extra_headers") is None
@@ -306,7 +312,7 @@ async def test_credential_headers_not_in_audit_record():
     )
     mock_client = MagicMock(spec=ActuatorHttpClient)
     mock_client.base_url = "https://test.actuator.example.com"
-    
+
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = {
