@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-sla_monitor.py — Evidence Age SLA Background Monitor  (Tier 2.5)
+sla_monitor.py — Evidence Age SLA Background Monitor  (Capability 2.5)
 
 Implements NIST SP 800-53 CA-7 (Continuous Monitoring) by periodically
 polling per-control compliance metrics and firing notifier alerts when

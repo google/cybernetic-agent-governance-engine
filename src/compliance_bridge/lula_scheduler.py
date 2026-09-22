@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-lula_scheduler.py — Active Lula validation scheduler  (Tier 3.4)
+lula_scheduler.py — Active Lula validation scheduler  (Capability 3.4)
 
 Implements continuous control validation by periodically running
 ``lula validate`` against the OSCAL component definition and feeding

@@ -204,7 +204,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "src/gateway/governance/nemo/manager.py",
         ],
         notes=(
-            "Multi-tier shielding: Tier 1 Aho-Corasick heuristic, "
+            "Multi-tier shielding: Pre-gate Aho-Corasick heuristic, "
             "NeMo Guardrails Colang rails, and OPA policy enforcement. "
             "Presidio strips PII from all injection payloads before they reach inference."
         ),

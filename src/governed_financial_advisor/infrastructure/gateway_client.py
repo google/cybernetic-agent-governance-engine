@@ -113,7 +113,7 @@ class GatewayClient:
 
         This is the **Option 2: Unified Gateway Governance Routing** client
         method.  Calls ``POST /governance/validate-action`` on the Hybrid
-        Gateway, which runs Tier 2 (CBF) + Tier 4 (OPA) and returns a verdict
+        Gateway, which runs Tier 3a (CBF) + Tier 3b (OPA) and returns a verdict
         with an HMAC-SHA256 routing seal on approval.
 
         W3C Trace Context Propagation

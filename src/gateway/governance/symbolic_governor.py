@@ -1927,13 +1927,13 @@ class SymbolicGovernor:
         with respect to the static plan and do not need re-evaluation.
 
         Tiers intentionally skipped vs. the full ``govern()`` pipeline:
-          Tier 0: STPA/STAMP UCA validation — deterministic w.r.t. plan structure
-          Tier 1: Agent confidence pre-check — plan was approved at check-time
-          Tier 2 structural corroboration: dependent on STPA/OPA margin, skipped
-          Tier 3: Fiscal Limit Pre-Reservation — already reserved at check-time
+          Tier 0.5: FTRA action classification & reachability
+          Tier 1: STPA/STAMP UCA validation — deterministic w.r.t. plan structure
+          Tier 2: Agent confidence pre-check — plan was approved at check-time
+          Tier 4: Fiscal Limit Pre-Reservation — already reserved at check-time
           Tier 5: Multi-agent consensus — consensus is over the static plan
           Tier 6: DoWhy causal gatekeeper — causal structure is plan-static
-          Tier 6b: FRIA — pre-market document obligation, not per-resume check
+          Tier 7: FRIA — pre-market document obligation, not per-resume check
 
         This avoids paying the full 8-tier cost (including FTRA pre-pipeline gate, multi-model consensus
         and DoWhy causal computation) for a targeted post-approval recheck.
@@ -2254,7 +2254,7 @@ class SymbolicGovernor:
         Confidence, CBF, OPA, Fiscal Limit Pre-Reservation, Consensus, Causal,
         and FRIA — before issuing the routing seal.
 
-        Previously this method ran only Tier 2 (CBF) and Tier 4 (OPA), which
+        Previously this method ran only Tier 3 (CBF and OPA), which
         meant 5 of 7 substantive tiers were bypassed while the seal implied full
         governance approval.  That gap is now closed: the routing seal is issued
         ONLY after ``_run_checks()`` completes successfully across all tiers.

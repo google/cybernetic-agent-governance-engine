@@ -211,8 +211,8 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
 
     CRITICAL SECURITY GATE: This node invokes execute_trade_action via MCP, which
     triggers real financial transactions. The @cage_guard decorator (applied in
-    graph builder below) enforces pre-execution validation through the full 7-tier
-    governance pipeline (STPA, CBF, OPA, FTRA, consensus, causal) before ANY tool
+    graph builder below) enforces pre-execution validation through the full 8-tier
+    governance pipeline (FTRA, STPA, Confidence, CBF, OPA, Fiscal, Consensus, Causal, FRIA) before ANY tool
     executes.
 
     Governance Contract:
@@ -397,7 +397,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
         toctou.rehydration.drift_pct    — abs percentage change
 
     Fail-open on missing ticker or yfinance errors: sets status=SKIPPED and
-    continues so the re-validation step can still run Tier 2/4 on plan params.
+    continues so the re-validation step can still run Tier 3a/3b on plan params.
     """
     tracer = get_tracer()
 
@@ -537,18 +537,20 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
     reviewer's slippage tolerance as the bounded acceptance envelope.
 
     Enforcement tiers re-run at this node:
-        Tier 2: Control Barrier Function (CBF) — cash balance against fresh state
-        Tier 4: OPA Rego policy — drawdown, position limits, fiscal cap
+        Tier 3a: Control Barrier Function (CBF) — cash balance against fresh state
+        Tier 3b: OPA Rego policy — drawdown, position limits, fiscal cap
 
     Tiers NOT re-run (input-time checks, independent of market state):
-        Tier 0: STPA/STAMP UCA validation
-        Tier 1: Agent confidence pre-check
-        Tier 3: Fiscal Limit Pre-Reservation
+        Tier 0.5: FTRA action classification & reachability
+        Tier 1: STPA/STAMP UCA validation
+        Tier 2: Agent confidence pre-check
+        Tier 4: Fiscal Limit Pre-Reservation
         Tier 5: Multi-agent consensus
         Tier 6: DoWhy causal gatekeeper
+        Tier 7: FRIA normative boundary enforcement
 
     Note: SymbolicGovernor.govern() runs the full pipeline. All tiers are
-    therefore re-evaluated — this is intentionally conservative. Tiers 1/3/5/6
+    therefore re-evaluated — this is intentionally conservative. Tiers 1/2/4/5/6/7
     will pass trivially since the plan was already approved at check-time.
 
     Emits OTel span attributes:

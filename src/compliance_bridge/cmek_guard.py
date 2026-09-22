@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-cmek_guard.py — CMEK startup validation  (Tier 3.3)
+cmek_guard.py — CMEK startup validation  (Capability 3.3)
 
 Implements encryption-at-rest validation for OSCAL evidence artifacts stored
 in GCS.  The underlying CMEK validation logic is universal (ISO 42001 A.8.4);

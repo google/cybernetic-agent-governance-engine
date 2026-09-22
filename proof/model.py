@@ -140,6 +140,18 @@ TIERS = (
     "fria",  # Tier 7:  FRIA normative boundary enforcement
 )
 
+TIER_LABELS: dict[str, str] = {
+    "ftra": "Tier 0.5",
+    "stpa": "Tier 1",
+    "confidence": "Tier 2",
+    "cbf": "Tier 3",
+    "opa": "Tier 3",
+    "fiscal": "Tier 4",
+    "consensus": "Tier 5",
+    "causal": "Tier 6",
+    "fria": "Tier 7",
+}
+
 # The subset of tiers that the runtime evaluates concurrently
 # (``asyncio.gather()`` in symbolic_governor.py).  Used by
 # ``concurrent_tier_transitions()`` to explore both interleavings.

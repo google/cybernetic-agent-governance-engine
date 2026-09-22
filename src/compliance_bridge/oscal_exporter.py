@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-oscal_exporter.py — OSCAL Assessment Results exporter  (Tier 2.3)
+oscal_exporter.py — OSCAL Assessment Results exporter  (Capability 2.3)
 
 Generates a standards-compliant OSCAL Assessment Results document from the
 current compliance posture returned by get_compliance_metrics().

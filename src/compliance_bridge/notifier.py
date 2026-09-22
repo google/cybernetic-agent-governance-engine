@@ -25,7 +25,7 @@ Channel selection is driven by the ALERT_CHANNEL environment variable:
   ALERT_CHANNEL=slack                — Posts Slack Block Kit payloads to
                                         COMPLIANCE_ALERT_WEBHOOK_URL using httpx.
 
-  ALERT_CHANNEL=pagerduty  (Tier 2.4) — Posts PagerDuty Events API v2 incidents.
+  ALERT_CHANNEL=pagerduty  (Capability 2.4) — Posts PagerDuty Events API v2 incidents.
                                         Requires PAGERDUTY_ROUTING_KEY.
                                         Closes POAM-008 / NIST IR-1 incident response.
                                         Severity mapping:
@@ -33,7 +33,7 @@ Channel selection is driven by the ALERT_CHANNEL environment variable:
                                           SLA breach             → 'error'
                                           Remediation advisory   → 'info'
 
-  ALERT_CHANNEL=webhook    (Tier 2.4) — Posts a generic JSON payload to any HTTP
+  ALERT_CHANNEL=webhook    (Capability 2.4) — Posts a generic JSON payload to any HTTP
                                         endpoint (OpsGenie, Jira Service Mgmt,
                                         ServiceNow). Requires COMPLIANCE_ALERT_WEBHOOK_URL.
 
@@ -345,7 +345,7 @@ class SlackNotifier:
 
 
 # ---------------------------------------------------------------------------
-# PagerDutyNotifier — incident management channel  (Tier 2.4 / POAM-008)
+# PagerDutyNotifier — incident management channel  (Capability 2.4 / POAM-008)
 #
 # Uses PagerDuty Events API v2 (https://developer.pagerduty.com/docs/events-api-v2).
 # Requires PAGERDUTY_ROUTING_KEY (integration key from a PD service).
@@ -473,7 +473,7 @@ class PagerDutyNotifier:
 
 
 # ---------------------------------------------------------------------------
-# WebhookNotifier — generic JSON POST channel  (Tier 2.4)
+# WebhookNotifier — generic JSON POST channel  (Capability 2.4)
 #
 # Sends a structured JSON payload to any HTTP endpoint that accepts POST.
 # Compatible with OpsGenie, Jira Service Management, ServiceNow, and any

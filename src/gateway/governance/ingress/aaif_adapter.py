@@ -31,14 +31,14 @@ AAIF stage → CAGE pipeline tier mapping
 -----------------------------------------
 | AAIF stage              | CAGE tier                              |
 |-------------------------|----------------------------------------|
-| ``input_validation``    | Tier 0 — Aho-Corasick / prompt inject  |
-| ``content_filtering``   | Tier 1 — NeMo Guardrails               |
-| ``policy_check``        | Tier 2 — STPA validator                |
-| ``access_control``      | Tier 3 — OPA RBAC                      |
-| ``rate_limiting``       | Tier 4 — CBF / token quota             |
+| ``input_validation``    | Tier 0.5 — FTRA classification         |
+| ``content_filtering``   | Tier 1 — STPA/STAMP                    |
+| ``policy_check``        | Tier 3b — OPA Rego policy              |
+| ``access_control``      | Tier 3b — OPA RBAC                     |
+| ``rate_limiting``       | Tier 3a — CBF / token quota            |
 | ``consensus``           | Tier 5 — Consensus / multi-agent       |
 | ``causal_validation``   | Tier 6 — DoWhy causal gatekeeper       |
-| ``output_validation``   | Tier 1 — NeMo output guardrail         |
+| ``output_validation``   | Tier 7 — FRIA normative boundary       |
 
 Usage::
 
@@ -60,31 +60,31 @@ logger = logging.getLogger("Gateway.Governance.Ingress.AAIFAdapter")
 
 _AAIF_STAGE_TO_CAGE_TIER: dict[str, dict[str, Any]] = {
     "input_validation": {
-        "tier": 0,
-        "name": "Aho-Corasick / Prompt Injection Detection",
+        "tier": 0.5,
+        "name": "FTRA classification",
         "enforcement": ["python"],
-        "module": "src.gateway.governance.prompt_injection_detector",
+        "module": "src.gateway.governance.ftra.node_factory",
     },
     "content_filtering": {
         "tier": 1,
-        "name": "NeMo Guardrails",
-        "enforcement": ["nemo"],
-        "module": "src.gateway.governance.nemo.manager",
-    },
-    "policy_check": {
-        "tier": 2,
-        "name": "STPA Validator",
-        "enforcement": ["python", "opa"],
+        "name": "STPA/STAMP",
+        "enforcement": ["python"],
         "module": "src.gateway.governance.stpa_validator",
     },
+    "policy_check": {
+        "tier": 3.5,  # 3b
+        "name": "OPA Rego policy",
+        "enforcement": ["opa"],
+        "module": "src.gateway.governance.symbolic_governor",
+    },
     "access_control": {
-        "tier": 3,
+        "tier": 3.5,  # 3b
         "name": "OPA RBAC",
         "enforcement": ["opa"],
         "module": "src.gateway.governance.symbolic_governor",
     },
     "rate_limiting": {
-        "tier": 4,
+        "tier": 3.0,  # 3a
         "name": "CBF / Token Quota",
         "enforcement": ["python"],
         "module": "src.gateway.governance.cbf",
@@ -102,10 +102,10 @@ _AAIF_STAGE_TO_CAGE_TIER: dict[str, dict[str, Any]] = {
         "module": "src.gateway.governance.causal_gatekeeper",
     },
     "output_validation": {
-        "tier": 1,
-        "name": "NeMo Output Guardrail",
-        "enforcement": ["nemo"],
-        "module": "src.gateway.governance.nemo.manager",
+        "tier": 7,
+        "name": "FRIA Normative Boundary",
+        "enforcement": ["python"],
+        "module": "src.gateway.governance.symbolic_governor",
     },
 }
 

@@ -26,7 +26,7 @@ This module is the single authoritative source of truth for:
   - get_iso_control_map(region) — accessor returning universal + jurisdictional map
   - SUPPORTED_CONTROLS        — ordered list of universal control IDs
   - CRITICAL_CONTROLS         — controls requiring immediate alerting on FAIL
-  - FRAMEWORK_CONTROLS        — framework name → list of control IDs  (Tier 2.1)
+  - FRAMEWORK_CONTROLS        — framework name → list of control IDs  (Capability 2.1)
   - SUPPORTED_FRAMEWORKS      — sorted list of supported framework short-names
   - _UNIVERSAL_SLA            — per-control max-stale evidence window (ISO 42001 only)
   - _JURISDICTIONAL_SLA       — region-keyed SLA overrides for jurisdictional controls
@@ -472,7 +472,7 @@ SUPPORTED_CONTROLS: list[str] = list(_ALL_CONTROLS.keys())
 CRITICAL_CONTROLS: set[str] = {"A.9.2", "SC-4", "A.8.4"}
 
 # ---------------------------------------------------------------------------
-# FRAMEWORK_CONTROLS — framework short-name → list[control_id]  (Tier 2.1)
+# FRAMEWORK_CONTROLS — framework short-name → list[control_id]  (Capability 2.1)
 #
 # Derived automatically from ALL controls (universal + jurisdictional) so it
 # never drifts out of sync.  All control IDs in FRAMEWORK_CONTROLS are

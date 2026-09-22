@@ -168,3 +168,12 @@ class TestFormalModelParity:
         assert formal_model.TIERS == expected, (
             f"proof/model.py TIERS changed! Expected {expected}, got {formal_model.TIERS}"
         )
+
+    def test_formal_tier_labels_exist(self):
+        """Verify TIER_LABELS contains all items in TIERS."""
+        import proof.model as formal_model
+
+        assert hasattr(formal_model, "TIER_LABELS"), "TIER_LABELS is missing from proof/model.py"
+        assert set(formal_model.TIER_LABELS.keys()) == set(formal_model.TIERS), (
+            "TIER_LABELS keys must exactly match the TIERS tuple"
+        )

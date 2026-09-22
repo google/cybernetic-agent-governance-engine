@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-eval_dataset.py — Langfuse evaluation dataset auto-population  (Tier 3.2)
+eval_dataset.py — Langfuse evaluation dataset auto-population  (Capability 3.2)
 
 Implements the ISO 42001 A.7.5 (Documented Information) requirement to retain
 evidence of control failures in a structured, queryable form.

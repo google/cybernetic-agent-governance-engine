@@ -666,7 +666,7 @@ async def _step5_remediation_advisor(
     audit_id: str,
 ) -> dict:
     """
-    Tier 3.1: Fan out remediation advisories to ALL alert_targets in parallel.
+    Capability 3.1: Fan out remediation advisories to ALL alert_targets in parallel.
 
     Returns dict with aggregate keys:
       remediation_sent (bool)       — True if ≥1 advisory succeeded
@@ -886,7 +886,7 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
             exc,
         )
 
-    # Step 3c — auto-populate Langfuse eval dataset for FAIL findings (Tier 3.2 / ISO 42001 A.7.5).
+    # Step 3c — auto-populate Langfuse eval dataset for FAIL findings (Capability 3.2 / ISO 42001 A.7.5).
     # Fire-and-forget: must not block the HTTP response — runs in background after Step 4.
     async def _step3c_eval_dataset_bg() -> None:
         try:

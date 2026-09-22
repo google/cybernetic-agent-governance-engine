@@ -836,16 +836,16 @@ async def validate_action_endpoint(
         tree across the service boundary.
 
     Governance tiers executed (full 8-tier pipeline — FTRA pre-gate + 7 in-pipeline tiers via _run_checks()):
-        - Tier 0: STPA/STAMP Unsafe Control Action validation
-        - Tier 1: Agent confidence threshold pre-check (fast-fail)
-        - Tier 2: Control Barrier Function (CBF) — mathematical safety bounds
-          (runs concurrently with Tier 4 OPA check via asyncio.gather)
-        - Tier 3: Fiscal Limit Pre-Reservation — atomic Redis WATCH/MULTI/EXEC
-        - Tier 4: OPA Rego policy evaluation — declarative rule enforcement
-          (CBF and OPA run concurrently via asyncio.gather for execute_trade)
+        - Tier 0.5: FTRA action classification & reachability analysis
+        - Tier 1: STPA/STAMP Unsafe Control Action validation
+        - Tier 2: Agent confidence threshold pre-check (fast-fail)
+        - Tier 3a: Control Barrier Function (CBF) — mathematical safety bounds
+          (runs concurrently with Tier 3b OPA check via asyncio.gather)
+        - Tier 3b: OPA Rego policy evaluation — declarative rule enforcement
+        - Tier 4: Fiscal Limit Pre-Reservation — atomic Redis WATCH/MULTI/EXEC
         - Tier 5: Multi-agent Consensus gate (ISO 42001)
         - Tier 6: DoWhy Causal Gatekeeper — refutation-based safety lock
-        - Tier 6b: Adaptive FRIA Enforcement (EU AI Act Art. 29a)
+        - Tier 7: Adaptive FRIA Enforcement (EU AI Act Art. 29a)
 
     The routing seal is issued ONLY after all tiers pass — a seal issued
     before full pipeline completion would imply governance approval that
