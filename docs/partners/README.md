@@ -18,7 +18,7 @@ specifications, and technical exchange artifacts.
 | `provider_01` | **FlowSignal** | Synchronous Normative Provider (`NormativeProvider`) | [`provider_01/`](provider_01/) | [`src/integrations/provider_01/`](../../src/integrations/provider_01/) |
 | `provider_02` | **InferTheta / NexArt / Vector3** | Attestation Provider & Cryptographic Evidence Resolver (CER) | [`provider_02/`](provider_02/) | [`src/integrations/provider_02/`](../../src/integrations/provider_02/) |
 | `provider_03` | **Veritas** | Synchronous Normative Provider (`NormativeProvider`) | [`provider_03/`](provider_03/) | [`src/integrations/provider_03/`](../../src/integrations/provider_03/) |
-| `provider_04` | *(Partner 04)* | Telemetry & Observability Integration | *(Spike)* | [`src/integrations/provider_04/`](../../src/integrations/provider_04/) |
+| `actuator_01` | **Archytan** | Downstream Execution Actuator (`ExecutionActuator`) | *(Reference)* | [`src/integrations/actuator_01/`](../../src/integrations/actuator_01/) |
 | `provider_05` | **Veraxis Execution Integrity Protocol (VEIP)** | Attestation Provider & Execution Warrant Verification | [`provider_05/`](provider_05/) | [`src/integrations/provider_05/`](../../src/integrations/provider_05/) |
 | `provider_06` | **Guardian Cyber Agent Integrity** | Synchronous Verifier & Conformance Harness (`1-alpha`) | [`provider_06/`](provider_06/) | [`src/integrations/provider_06/`](../../src/integrations/provider_06/) |
 | `provider_07` | **InferTheta** | Graph Topology & Governance Schema Provider | [`provider_07/`](provider_07/) | [`src/integrations/provider_07/`](../../src/integrations/provider_07/) |

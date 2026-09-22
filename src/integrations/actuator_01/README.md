@@ -9,10 +9,7 @@
 > execution actuator integration partner for CAGE. The package path
 > `actuator_01` is retained for import stability across branches and test
 > fixtures.
->
-> **Formerly `provider_04`:** This integration was renamed from `provider_04`
-> to `actuator_01` to reflect its role as an execution actuator rather than a
-> normative provider or attestation provider.
+
 
 | Property | Value |
 |---|---|
