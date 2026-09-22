@@ -254,13 +254,13 @@ kubectl exec -n governance-stack deploy/governed-financial-advisor -- env | grep
 
 ---
 
-## 5.4 Terraform Fallback Warning (POAM-019 — Open)
+## 5.4 Terraform Fallback (POAM-019 — Closed)
 
-> ⚠️ **POAM-019 (AU-9, SC-7) — Open:** `infra/targets/gcp-gke/main.tf` contains a fallback that silently collapses dual-project telemetry isolation when `langfuse_compliance_public_key` / `langfuse_compliance_secret_key` Terraform variables are empty — it falls back to application project credentials. This silently defeats the evidentiary independence design.
+> ✅ **POAM-019 (AU-9, SC-7) — Closed, verified 2026-09-22.** `infra/targets/gcp-gke/main.tf` previously contained a fallback that silently collapsed dual-project telemetry isolation when the `langfuse_compliance_public_key` / `langfuse_compliance_secret_key` Terraform variables were empty — it fell back to application project credentials, defeating the evidentiary independence design.
 >
-> **Impact:** If `prod.tfvars` does not define compliance credentials (which it currently does not by default), production deployment has no telemetry isolation — all audit evidence flows to the same Langfuse project as application metrics.
+> **Historical impact:** while the fallback existed, a `prod.tfvars` without compliance credentials would deploy with no telemetry isolation — all audit evidence flowing to the same Langfuse project as application metrics. This is no longer reachable: the apply now fails closed.
 >
-> **Remediation (scheduled 2026-07-15):** Remove the Terraform fallback; make compliance credentials a required variable with no default; add compliance credentials to `prod.tfvars` template; add a Terraform `validation` block requiring non-empty compliance keys when `enable_compliance_bridge = true`. See [`docs/POAM.md` POAM-019](../compliance/cross-region/POAM.md).
+> **Remediation — ✅ delivered in `fd5e28b` (verified 2026-09-22):** The fallback was removed. A `lifecycle.precondition` on the `app_secrets` module call (`infra/targets/gcp-gke/main.tf:730`) now rejects an apply when either compliance key is empty **or** equal to its application-project counterpart, and `infra/targets/gcp-gke/variables.tf:495-519` declares both variables `nullable = false` with validation blocks. See [`POAM_ISO42001.md` POAM-019](../compliance/universal/POAM_ISO42001.md).
 
 ---
 
