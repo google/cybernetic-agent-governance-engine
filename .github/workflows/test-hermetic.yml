@@ -55,7 +55,7 @@ jobs:
           # Install ONLY [gateway] and [compliance_bridge] extras
           # Explicitly EXCLUDE [advisor] which pulls sentence-transformers
           uv pip install --system -e ".[gateway,compliance_bridge]"
-          uv pip install --system pytest pytest-asyncio pytest-xdist pytest-timeout fakeredis respx httpx pandas
+          uv pip install --system pytest pytest-asyncio pytest-xdist pytest-timeout "fakeredis[lua]" respx httpx pandas freezegun
 
       - name: Verify ML packages are NOT installed
         run: |
@@ -77,7 +77,7 @@ jobs:
 
       - name: Run hermetic governance pipeline tests
         env:
-          CAGE_ACTIVE_PLUGINS: ""
+          CAGE_ACTIVE_PLUGINS: "finance"
         run: |
           # Run core governance tests WITHOUT any ML dependencies
           # This proves Stage 2.5 is truly optional
