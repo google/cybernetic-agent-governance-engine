@@ -257,6 +257,14 @@ def _opa_patches():
     """Return a list of patch context managers for the OPA safety node."""
     mock_gov = AsyncMock()
     mock_gov.govern = AsyncMock(return_value=None)
+    
+    mock_client = AsyncMock()
+    mock_envelope = MagicMock()
+    mock_envelope.subject.get.return_value = "mock_hash"
+    mock_envelope.signature = "mock_sig"
+    mock_client.validate_action = AsyncMock(return_value=mock_envelope)
+    mock_get_client = MagicMock(return_value=mock_client)
+
     return [
         patch(
             "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
@@ -267,12 +275,12 @@ def _opa_patches():
             new_callable=MagicMock,
         ),
         patch(
-            "src.governed_financial_advisor.graph.nodes.safety_node.stamp_iso_control",
+            "src.gateway.governance.iso_control.stamp_iso_control",
             new_callable=MagicMock,
         ),
         patch(
-            "src.gateway.governance.iso_control.stamp_iso_control",
-            new_callable=MagicMock,
+            "src.governed_financial_advisor.graph.nodes.safety_node.get_cage_client",
+            mock_get_client,
         ),
     ]
 
@@ -384,7 +392,7 @@ class TestTier3SafetyNodeLatency:
         state = _opa_state()
 
         patches = _opa_patches()
-        with patches[0], patches[1]:
+        with patches[0], patches[1], patches[2], patches[3]:
             t_start = time.perf_counter()
             result = await safety_check_node(state)
             t_end = time.perf_counter()

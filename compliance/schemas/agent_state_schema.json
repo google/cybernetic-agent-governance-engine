@@ -15,8 +15,7 @@
     "guardrail_blocked",
     "guardrail_reason",
     "output_rail_applied",
-    "completed_transactions",
-    "agent_id"
+    "completed_transactions"
   ],
   "additionalProperties": false,
   "properties": {
@@ -244,29 +243,25 @@
       ]
     },
     "agent_id": {
-      "type": "string",
-      "description": "Agent identifier for cage-client governance integration"
+      "type": "string"
     },
     "proposed_action": {
       "type": [
         "object",
         "null"
-      ],
-      "description": "Proposed action payload for @cage_guard decorator"
+      ]
     },
     "governance_envelope": {
       "type": [
         "object",
         "null"
-      ],
-      "description": "Governance validation envelope from CageClient"
+      ]
     },
     "governance_status": {
       "type": [
         "string",
         "null"
-      ],
-      "description": "Governance decision status (ALLOWED/DENIED/DEFERRED)"
+      ]
     }
   },
   "$defs": {

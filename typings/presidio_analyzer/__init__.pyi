@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any
 
 class RecognizerResult:
     entity_type: str
@@ -12,10 +12,10 @@ class AnalyzerEngine:
         self,
         text: str,
         language: str,
-        entities: List[str] | None = ...,
+        entities: list[str] | None = ...,
         correlation_id: str | None = ...,
         score_threshold: float | None = ...,
         return_decision_process: bool = ...,
         **kwargs: Any,
-    ) -> List[RecognizerResult]: ...
+    ) -> list[RecognizerResult]: ...
 

@@ -141,7 +141,20 @@ def test_fixture_envelopes_exclude_cage_action_keys() -> None:
         visit(json.loads(path.read_text(encoding="utf-8"))["envelope"])
 
 
+def _ensure_base_commit() -> None:
+    try:
+        subprocess.run(
+            ["git", "cat-file", "-e", BASE_COMMIT],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        pytest.skip(f"Base commit {BASE_COMMIT} not available (shallow clone)")
+
+
 def test_protected_runtime_and_schema_files_match_base() -> None:
+    _ensure_base_commit()
     repo_root = REPO_ROOT
     for relative in PROTECTED_PATHS:
         expected = subprocess.run(
@@ -154,6 +167,7 @@ def test_protected_runtime_and_schema_files_match_base() -> None:
 
 
 def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
+    _ensure_base_commit()
     repo_root = REPO_ROOT
     diff = subprocess.run(
         ["git", "diff", "--no-ext-diff", "--unified=0", f"{BASE_COMMIT}...HEAD"],
