@@ -20,12 +20,36 @@ Executes:
 2. Live wire hostile malformed-body attack against Cloud Run DRS ingress.
 3. LIVE-P3-004 hostile response interception suite (Vectors A, B, C)
    evaluating CAGE fail-closed admission and ConsequenceToken gating.
+
+Configuration
+-------------
+This script talks to a live partner staging environment, so all
+deployment-specific identifiers are supplied by the operator. There are
+deliberately no hardcoded fallbacks (AGENTS.md secret hygiene); a missing
+value exits with actionable guidance rather than silently targeting someone
+else's project.
+
+Required:
+    FLOWSIGNAL_STAGING_ENDPOINT — Cloud Run base URL of the staging service.
+    CAGE_GCP_PROJECT            — GCP project ID or number holding the secret.
+    CAGE_GCP_IMPERSONATE_SA     — service account to impersonate.
+
+Optional:
+    FLOWSIGNAL_BEARER_SECRET    — Secret Manager secret name
+                                  (default: "flowsignal-cage-phase3-bearer").
+
+Example:
+    export FLOWSIGNAL_STAGING_ENDPOINT="https://<service>.a.run.app"
+    export CAGE_GCP_PROJECT="my-project"
+    export CAGE_GCP_IMPERSONATE_SA="cage-gateway@my-project.iam.gserviceaccount.com"
+    uv run python scripts/verify_flowsignal_wire_and_hostile.py
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -42,8 +66,50 @@ from src.integrations.provider_01.provider import (
 )
 
 
+def _require_env(name: str, description: str) -> str:
+    """Return a required environment variable, or exit with actionable guidance.
+
+    Fail-closed by design: this script authenticates against a live partner
+    staging endpoint, so deployment-specific identifiers must be supplied by
+    the operator. Per AGENTS.md secret hygiene, there are deliberately no
+    hardcoded fallbacks — a missing value is an error, not a default.
+    """
+    value = os.environ.get(name, "").strip()
+    if not value:
+        sys.exit(
+            f"ERROR: {name} is not set.\n"
+            f"  {name} must contain {description}.\n"
+            f"  This script targets a live partner staging environment and has\n"
+            f"  no default — export the variable for your own GCP project:\n"
+            f"    export {name}=...\n"
+        )
+    return value
+
+
 def get_gcp_credentials() -> tuple[str, str, str]:
-    endpoint = "https://flowsignal-cage-phase3-staging-jtw7fsky5a-nw.a.run.app"
+    """Resolve the staging endpoint and credentials from the environment.
+
+    Required environment variables:
+        FLOWSIGNAL_STAGING_ENDPOINT — Cloud Run base URL of the staging service.
+        CAGE_GCP_PROJECT            — GCP project ID or number holding the secret.
+        CAGE_GCP_IMPERSONATE_SA     — service account to impersonate.
+    """
+    endpoint = _require_env(
+        "FLOWSIGNAL_STAGING_ENDPOINT",
+        "the Cloud Run base URL of the FlowSignal staging service",
+    )
+    project = _require_env(
+        "CAGE_GCP_PROJECT",
+        "the GCP project ID or number holding the FlowSignal bearer secret",
+    )
+    impersonate_sa = _require_env(
+        "CAGE_GCP_IMPERSONATE_SA",
+        "the service account to impersonate (e.g. cage-gateway@<project>.iam.gserviceaccount.com)",
+    )
+    secret_name = os.environ.get(
+        "FLOWSIGNAL_BEARER_SECRET", "flowsignal-cage-phase3-bearer"
+    )
+
     bearer = subprocess.check_output(
         [
             "gcloud",
@@ -51,9 +117,9 @@ def get_gcp_credentials() -> tuple[str, str, str]:
             "versions",
             "access",
             "latest",
-            "--secret=flowsignal-cage-phase3-bearer",
-            "--project=176425346853",
-            "--impersonate-service-account=cage-gateway@laah-cybernetics.iam.gserviceaccount.com",
+            f"--secret={secret_name}",
+            f"--project={project}",
+            f"--impersonate-service-account={impersonate_sa}",
         ],
         text=True,
         stderr=subprocess.DEVNULL,
@@ -65,7 +131,7 @@ def get_gcp_credentials() -> tuple[str, str, str]:
             "auth",
             "print-identity-token",
             f"--audiences={endpoint}",
-            "--impersonate-service-account=cage-gateway@laah-cybernetics.iam.gserviceaccount.com",
+            f"--impersonate-service-account={impersonate_sa}",
         ],
         text=True,
         stderr=subprocess.DEVNULL,
