@@ -134,3 +134,20 @@ output "langfuse_service_account_email" {
   description = "Langfuse service account email"
   value       = google_service_account.langfuse.email
 }
+
+# ─── Load Balancer & Cloud Armor ──────────────────────────────────────────────
+
+output "load_balancer_ip" {
+  description = "External load balancer static IP address (only when enable_load_balancer=true)"
+  value       = var.enable_load_balancer ? google_compute_global_address.gateway[0].address : null
+}
+
+output "gateway_domain" {
+  description = "Custom domain for gateway (from var.gateway_domain)"
+  value       = var.gateway_domain
+}
+
+output "cloud_armor_policy_id" {
+  description = "Cloud Armor security policy ID (only when enable_load_balancer=true)"
+  value       = var.enable_load_balancer ? google_compute_security_policy.gateway_armor[0].id : null
+}

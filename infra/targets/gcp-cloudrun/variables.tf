@@ -117,6 +117,38 @@ variable "enable_nist_compliance" {
   default     = false
 }
 
+variable "enable_load_balancer" {
+  description = "Enable external HTTPS load balancer + Cloud Armor WAF. When enabled, gateway ingress is restricted to INTERNAL_AND_CLOUD_LOAD_BALANCING. When disabled (default), gateway accepts all traffic."
+  type        = bool
+  default     = false
+}
+
+variable "gateway_domain" {
+  description = "Custom domain for gateway managed SSL certificate (e.g., gateway.example.com). Leave empty to skip SSL certificate provisioning."
+  type        = string
+  default     = ""
+}
+
+variable "enable_iap" {
+  description = "Enable Identity-Aware Proxy for additional authentication layer. Requires OAuth2 client configuration."
+  type        = bool
+  default     = false
+}
+
+variable "iap_client_id" {
+  description = "IAP OAuth2 client ID. Required when enable_iap=true."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "iap_client_secret" {
+  description = "IAP OAuth2 client secret. Required when enable_iap=true."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "enable_vllm_gpu" {
   description = "Enable vLLM GPU inference deployment (future phase — reserved for sidecar vLLM integration)"
   type        = bool

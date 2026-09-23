@@ -455,6 +455,9 @@ resource "google_cloud_run_v2_service" "gateway" {
   location = var.region
   project  = var.project_id
 
+  # B2: Conditional ingress tightening — only restrict to LB traffic when LB exists
+  ingress = var.enable_load_balancer ? "INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING" : "INGRESS_TRAFFIC_ALL"
+
   template {
     service_account = google_service_account.gateway.email
 
@@ -577,6 +580,11 @@ resource "google_cloud_run_v2_service" "gateway" {
     }
   }
 
+  # B2: Critical ordering — gateway service creation is naturally ordered:
+  # When enable_load_balancer=false: no LB resources exist, ingress=ALL
+  # When enable_load_balancer=true: Terraform creates LB first (via count-based
+  # conditional resources), then applies INTERNAL_AND_CLOUD_LOAD_BALANCING ingress.
+  # The conditional `count` in load balancer resources prevents circular dependency.
   depends_on = [google_redis_instance.redis]
 }
 
@@ -585,6 +593,9 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
   name     = "cage-governed-advisor-${var.environment}"
   location = var.region
   project  = var.project_id
+
+  # Internal service: only accessible from within VPC
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     service_account = google_service_account.governed_advisor.email
@@ -647,6 +658,9 @@ resource "google_cloud_run_v2_service" "agentsight_ui" {
   location = var.region
   project  = var.project_id
 
+  # Internal service: only accessible from within VPC
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
   template {
     service_account = google_service_account.agentsight_ui.email
 
@@ -697,6 +711,9 @@ resource "google_cloud_run_v2_service" "compliance_bridge" {
   name     = "cage-compliance-bridge-${var.environment}"
   location = var.region
   project  = var.project_id
+
+  # Internal service: only accessible from within VPC
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     service_account = google_service_account.compliance_bridge.email
@@ -753,6 +770,9 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
   name     = "cage-langfuse-web-${var.environment}"
   location = var.region
   project  = var.project_id
+
+  # Internal service: only accessible from within VPC
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     service_account = google_service_account.langfuse.email
@@ -862,6 +882,9 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
   name     = "cage-langfuse-worker-${var.environment}"
   location = var.region
   project  = var.project_id
+
+  # Internal service: only accessible from within VPC
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     service_account = google_service_account.langfuse.email
