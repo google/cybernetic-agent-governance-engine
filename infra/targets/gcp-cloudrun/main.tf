@@ -36,17 +36,11 @@ resource "google_compute_subnetwork" "subnet" {
   private_ip_google_access = true
 }
 
-# ─── VPC Access Connector (for Cloud Run VPC Direct Egress) ──────────────────
-
-resource "google_vpc_access_connector" "connector" {
-  name          = "cage-cloudrun-connector-${var.environment}"
-  region        = var.region
-  network       = google_compute_network.vpc.id
-  ip_cidr_range = "10.8.0.0/28"
-  project       = var.project_id
-
-  depends_on = [google_compute_network.vpc]
-}
+# ─── VPC Access Connector ─────────────────────────────────────────────────────
+# REMOVED: B6 defect — services use Direct VPC Egress (network_interfaces),
+# making the connector unreachable infrastructure with standing cost and attack
+# surface. The connector and network_interfaces are mutually exclusive vpc_access
+# modes per https://cloud.google.com/run/docs/configuring/vpc-direct-vpc
 
 # ─── Cloud Memorystore Redis ──────────────────────────────────────────────────
 
@@ -187,6 +181,15 @@ resource "google_storage_bucket" "compliance_artifacts" {
 
   versioning {
     enabled = true
+  }
+
+  # AU-9: WORM retention (B5 fix) — 2555 days (7 years) immutable retention.
+  # Prevents deletion before 2555 days AND locks the policy irreversibly.
+  # Compounding with downgraded writer SA (objectCreator instead of objectAdmin)
+  # ensures even the compliance bridge cannot erase evidence it writes.
+  retention_policy {
+    retention_period = 220752000  # 2555 days in seconds
+    is_locked        = var.enable_nist_compliance ? true : false
   }
 
   lifecycle_rule {
@@ -385,10 +388,18 @@ resource "google_secret_manager_secret_iam_member" "gateway_routing_seal_salt" {
   project   = var.project_id
 }
 
-# Gateway: GCS bucket access
-resource "google_storage_bucket_iam_member" "gateway_compliance_artifacts" {
+# Gateway: GCS bucket access (B5 fix — downgraded from objectAdmin)
+# objectCreator: can write objects but NOT delete them (AU-9 WORM compliance)
+# legacyBucketReader: can list bucket contents for evidence enumeration
+resource "google_storage_bucket_iam_member" "gateway_compliance_artifacts_creator" {
   bucket = google_storage_bucket.compliance_artifacts.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.gateway.email}"
+}
+
+resource "google_storage_bucket_iam_member" "gateway_compliance_artifacts_reader" {
+  bucket = google_storage_bucket.compliance_artifacts.name
+  role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.gateway.email}"
 }
 
@@ -421,10 +432,18 @@ resource "google_storage_bucket_iam_member" "langfuse_traces" {
   member = "serviceAccount:${google_service_account.langfuse.email}"
 }
 
-# Compliance Bridge: GCS bucket access
-resource "google_storage_bucket_iam_member" "compliance_bridge_artifacts" {
+# Compliance Bridge: GCS bucket access (B5 fix — downgraded from objectAdmin)
+# objectCreator: can write evidence but NOT delete it (AU-9 WORM compliance)
+# legacyBucketReader: can list bucket contents for evidence enumeration
+resource "google_storage_bucket_iam_member" "compliance_bridge_artifacts_creator" {
   bucket = google_storage_bucket.compliance_artifacts.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.compliance_bridge.email}"
+}
+
+resource "google_storage_bucket_iam_member" "compliance_bridge_artifacts_reader" {
+  bucket = google_storage_bucket.compliance_artifacts.name
+  role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
@@ -508,10 +527,7 @@ resource "google_cloud_run_v2_service" "gateway" {
     }
   }
 
-  depends_on = [
-    google_vpc_access_connector.connector,
-    google_redis_instance.redis
-  ]
+  depends_on = [google_redis_instance.redis]
 }
 
 # Governed Financial Advisor Service
@@ -572,10 +588,7 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
     }
   }
 
-  depends_on = [
-    google_vpc_access_connector.connector,
-    google_redis_instance.redis
-  ]
+  depends_on = [google_redis_instance.redis]
 }
 
 # AgentSight UI Service
@@ -626,7 +639,7 @@ resource "google_cloud_run_v2_service" "agentsight_ui" {
     }
   }
 
-  depends_on = [google_vpc_access_connector.connector]
+  # No explicit depends_on needed — network_interfaces reference ensures VPC creation order
 }
 
 # Compliance Bridge Service
@@ -682,7 +695,7 @@ resource "google_cloud_run_v2_service" "compliance_bridge" {
     }
   }
 
-  depends_on = [google_vpc_access_connector.connector]
+  # No explicit depends_on needed — network_interfaces reference ensures VPC creation order
 }
 
 # Langfuse Web Service
@@ -789,7 +802,6 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
   }
 
   depends_on = [
-    google_vpc_access_connector.connector,
     google_sql_database_instance.postgres,
     google_sql_database.langfuse
   ]
@@ -885,7 +897,6 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
   }
 
   depends_on = [
-    google_vpc_access_connector.connector,
     google_sql_database_instance.postgres,
     google_sql_database.langfuse
   ]

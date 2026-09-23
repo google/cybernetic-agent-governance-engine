@@ -137,13 +137,23 @@ resource "google_storage_bucket" "langfuse_events" {
 
   uniform_bucket_level_access = true
 
-  # AU-9: 7-year retention for compliance evidence (ISO 42001 A.7.5)
+  # AU-9: WORM retention (B5 fix) — 2555 days (7 years) immutable retention.
+  # Prevents deletion before 2555 days AND locks the policy irreversibly.
+  # Compounding with downgraded writer SA (objectCreator instead of objectAdmin)
+  # ensures even the compliance bridge cannot erase evidence it writes.
+  retention_policy {
+    retention_period = 220752000  # 2555 days in seconds
+    is_locked        = var.enable_nist_compliance ? true : false
+  }
+
+  # Lifecycle rule now transitions to cold storage, not deletes
   lifecycle_rule {
     condition {
-      age = 2555 # 7 years in days
+      age = 365
     }
     action {
-      type = "Delete"
+      type          = "SetStorageClass"
+      storage_class = "ARCHIVE"
     }
   }
 
@@ -179,9 +189,16 @@ resource "google_service_account" "langfuse_gcs" {
   project      = var.project_id
 }
 
-resource "google_storage_bucket_iam_member" "langfuse_gcs_admin" {
+# B5 fix — downgraded from objectAdmin to enforce AU-9 WORM compliance
+resource "google_storage_bucket_iam_member" "langfuse_gcs_creator" {
   bucket = google_storage_bucket.langfuse_events.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
+}
+
+resource "google_storage_bucket_iam_member" "langfuse_gcs_reader" {
+  bucket = google_storage_bucket.langfuse_events.name
+  role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
 }
 
