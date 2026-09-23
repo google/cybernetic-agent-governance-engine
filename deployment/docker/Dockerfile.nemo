@@ -49,6 +49,7 @@ RUN uv pip install --quiet grpcio-tools
 COPY src/cybernetic_governance_engine /app/src/cybernetic_governance_engine
 COPY src/gateway /app/src/gateway
 COPY src/cage_finance /app/src/cage_finance
+COPY src/integrations /app/src/integrations
 COPY config /app/config
 COPY README.md /app/README.md
 
@@ -75,4 +76,4 @@ ENV PORT=$PORT
 EXPOSE $PORT
 
 # Start the NeMo Guardrails server (FastAPI via uvicorn)
-CMD ["python", "src/gateway/governance/nemo/server.py"]
+CMD ["python", "src/integrations/nemo/server.py"]

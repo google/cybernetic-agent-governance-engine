@@ -251,11 +251,10 @@ def get_telemetry_provider(
 
 
 __all__ = [
-    "BaseTelemetryProvider",
-    "NullTelemetryProvider",
-    "MockTelemetryProvider",
-    "ConfigurationError",
     "MIN_SAMPLES",
+    "BaseTelemetryProvider",
+    "ConfigurationError",
+    "MockTelemetryProvider",
+    "NullTelemetryProvider",
     "get_telemetry_provider",
-    "RemoteTelemetryProvider",
 ]

@@ -27,9 +27,9 @@ from typing import Any
 import pandas as pd
 
 from src.gateway.governance.telemetry_provider import (
+    MIN_SAMPLES,
     BaseTelemetryProvider,
     ConfigurationError,
-    MIN_SAMPLES,
     NullTelemetryProvider,
 )
 

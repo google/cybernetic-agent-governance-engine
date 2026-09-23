@@ -157,6 +157,13 @@ _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_
 # ---------------------------------------------------------------------------
 # Prometheus telemetry for replay defense (§2.10) and WAIT replication (§4.3)
 # ---------------------------------------------------------------------------
+_REPLAY_REJECTED_COUNTER: Any = None
+_EPOCH_REGRESSION_COUNTER: Any = None
+_CURRENT_FENCE_EPOCH_GAUGE: Any = None
+_WAIT_LATENCY_HISTOGRAM: Any = None
+_WAIT_TIMEOUT_COUNTER: Any = None
+_STRICT_REPLICATION_ROLLBACK_COUNTER: Any = None
+
 try:
     from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 

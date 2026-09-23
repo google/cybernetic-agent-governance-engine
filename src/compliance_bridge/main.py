@@ -769,8 +769,8 @@ def _build_cer_index() -> CERIndex | None:
 
     try:
         # Function-scope lazy import (Gate G3 allowlisted pattern)
-        from src.integrations.provider_02.cer_index import Provider02CERIndex
         from src.compliance_bridge.disclosure import Disclosure
+        from src.integrations.provider_02.cer_index import Provider02CERIndex
 
         cer_uris: dict[str, str] = {}
         raw_uris = os.environ.get("PROVIDER_02_CER_URIS_JSON", "").strip()

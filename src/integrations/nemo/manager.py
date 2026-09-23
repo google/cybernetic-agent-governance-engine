@@ -45,7 +45,6 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.governance.iso_control import stamp_iso_control
-from src.integrations.nemo.vllm_client import VLLMLLM
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.observability.attributes import (
     OBSERVATION_METADATA_FALLBACK_REASON,
@@ -60,6 +59,7 @@ from src.gateway.observability.attributes import (
     TRACE_METADATA_GUARDRAILS_OUTCOME,
     TRACE_METADATA_RISK_VERDICT,
 )
+from src.integrations.nemo.vllm_client import VLLMLLM
 
 logger = logging.getLogger("NeMoManager")
 handler = logging.StreamHandler()

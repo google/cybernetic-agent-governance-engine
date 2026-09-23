@@ -125,8 +125,10 @@ wait_for_pids+=("$!")
 trap 'rm -f "$cb_backend"' EXIT
 
 # 2. vLLM Streamer
-echo "🏗️  Starting build for vllm-streamer..."
-if [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
+if [[ "${SKIP_VLLM:-false}" == "true" ]]; then
+  echo "⏩ Skipping vLLM Streamer build (SKIP_VLLM=true)."
+elif [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
+  echo "🏗️  Starting build for vllm-streamer..."
   # vLLM has its own cloudbuild yaml file
   hf_token=${HUGGING_FACE_HUB_TOKEN:-$HF_TOKEN}
   if [[ -n "$hf_token" ]]; then

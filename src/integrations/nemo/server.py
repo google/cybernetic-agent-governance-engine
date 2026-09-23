@@ -114,8 +114,8 @@ import grpc
 
 sys.path.append(".")
 
-from src.integrations.nemo.manager import create_nemo_manager
 from src.gateway.protos import nemo_pb2, nemo_pb2_grpc
+from src.integrations.nemo.manager import create_nemo_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
