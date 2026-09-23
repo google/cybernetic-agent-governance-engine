@@ -65,11 +65,25 @@ backend "gcs" {
 
 ### Step 2: Create Secrets Configuration
 
+#### Method A: Local Execution (terraform.auto.tfvars)
+
 Copy the example configuration and populate secrets:
 
 ```bash
 cp terraform.auto.tfvars.example terraform.auto.tfvars
 # Edit terraform.auto.tfvars with your secrets (gitignored)
+```
+
+#### Method B: CI/CD Pipeline Execution (Environment Variables)
+
+If deploying via GitHub Actions, Cloud Build, or GitLab CI, pass the variables using Terraform's `TF_VAR_` environment variable convention.
+
+```yaml
+# Example CI/CD step
+env:
+  TF_VAR_routing_seal_secret: ${{ secrets.ROUTING_SEAL_SECRET }}
+  TF_VAR_langfuse_nextauth_secret: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
+run: terraform apply -auto-approve
 ```
 
 **Required secrets** (never commit these):
