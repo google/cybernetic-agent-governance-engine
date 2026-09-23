@@ -100,6 +100,7 @@ class Provider07NormativeProvider:
         jwks_url: str = "",
         timeout_seconds: float = 5.0,
         jwks_client: Provider07JwksClient | None = None,
+        allow_step1_unsigned: bool = False,
     ) -> None:
         """
         Initialize Provider 07 adapter.
@@ -110,10 +111,25 @@ class Provider07NormativeProvider:
             jwks_url: JWKS manifest endpoint (default: {endpoint}/.well-known/jwks.json)
             timeout_seconds: HTTP request timeout in seconds
             jwks_client: Optional pre-configured JWKS client (for testing)
+            allow_step1_unsigned: Dev/testing only. Allows Step 1 unsigned responses.
         """
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
+        self._allow_step1_unsigned = allow_step1_unsigned
+
+        if self._allow_step1_unsigned:
+            cage_env = os.environ.get("CAGE_ENV", "development").lower()
+            if cage_env in ("production", "prod"):
+                raise RuntimeError(
+                    f"allow_step1_unsigned cannot be enabled in production environments (CAGE_ENV={cage_env!r}). "
+                    "Cryptographic signatures and JWKS resolution are strictly required."
+                )
+            logger.warning(
+                "⚠️  Provider 07 allow_step1_unsigned active (CAGE_ENV=%s) — "
+                "Step 1 unsigned responses will be accepted for dev/testing only.",
+                cage_env,
+            )
 
         # JWKS client for out-of-band key resolution
         if jwks_client is not None:
@@ -137,6 +153,7 @@ class Provider07NormativeProvider:
             PROVIDER_07_API_KEY: API key (optional)
             PROVIDER_07_JWKS_URL: JWKS URL (optional)
             PROVIDER_07_TIMEOUT_SECONDS: HTTP timeout (optional, default: 5.0)
+            PROVIDER_07_ALLOW_STEP1_UNSIGNED: Allow Step 1 unsigned responses (default: false)
 
         Returns:
             Configured Provider07NormativeProvider instance
@@ -148,12 +165,17 @@ class Provider07NormativeProvider:
         api_key = os.environ.get("PROVIDER_07_API_KEY", "").strip()
         jwks_url = os.environ.get("PROVIDER_07_JWKS_URL", "").strip()
         timeout_seconds = float(os.environ.get("PROVIDER_07_TIMEOUT_SECONDS", "5.0"))
+        allow_step1_unsigned = (
+            os.environ.get("PROVIDER_07_ALLOW_STEP1_UNSIGNED", "false").strip().lower()
+            in ("true", "1", "yes")
+        )
 
         return cls(
             endpoint=endpoint,
             api_key=api_key,
             jwks_url=jwks_url,
             timeout_seconds=timeout_seconds,
+            allow_step1_unsigned=allow_step1_unsigned,
         )
 
     async def fetch_baseline(self, region: str) -> NormativeBaseline:
@@ -311,66 +333,80 @@ class Provider07NormativeProvider:
                 ],
             )
 
-        # Resolve public key via out-of-band JWKS
-        # Trust Anchor Invariant: Never parse keys from the response itself
-        try:
-            public_key = await self._jwks_client.get_key(inference_response.kid)
-        except Exception as exc:
-            logger.error(
-                "provider_07: JWKS fetch failed for kid=%s: %s",
-                inference_response.kid,
-                exc,
-            )
-            return ValidationResult(
-                admitted=False,
-                findings=[
-                    {
-                        "code": "INFERTHETA_JWKS_ERROR",
-                        "message": f"Failed to resolve kid={inference_response.kid}: {exc}",
-                        "status": "error",
-                    }
-                ],
-            )
-
-        if public_key is None:
-            # Unknown kid — fail closed
-            logger.warning(
-                "provider_07: Unknown kid=%s in JWKS manifest — failing closed",
-                inference_response.kid,
-            )
-            return ValidationResult(
-                admitted=False,
-                findings=[
-                    {
-                        "code": "INFERTHETA_UNKNOWN_KEY",
-                        "message": f"Unknown Key Identifier: {inference_response.kid}",
-                        "status": "fail",
-                    }
-                ],
-            )
-
-        # Verify Ed25519 JCS signature
-        signature_valid = verify_inference_signature(
-            payload=data,
-            public_key=public_key,
-            signature_b64=inference_response.signature,
+        # Step 1 unsigned mode check (dev/testing only)
+        is_step1_unsigned = (
+            self._allow_step1_unsigned
+            and inference_response.signature == "unsigned-placeholder"
         )
 
-        if not signature_valid:
-            logger.warning(
-                "provider_07: Signature verification FAILED for kid=%s decision=%s",
-                inference_response.kid,
-                inference_response.decision,
+        if not is_step1_unsigned:
+            # Resolve public key via out-of-band JWKS
+            # Trust Anchor Invariant: Never parse keys from the response itself
+            try:
+                public_key = await self._jwks_client.get_key(inference_response.kid)
+            except Exception as exc:
+                logger.error(
+                    "provider_07: JWKS fetch failed for kid=%s: %s",
+                    inference_response.kid,
+                    exc,
+                )
+                return ValidationResult(
+                    admitted=False,
+                    findings=[
+                        {
+                            "code": "INFERTHETA_JWKS_ERROR",
+                            "message": f"Failed to resolve kid={inference_response.kid}: {exc}",
+                            "status": "error",
+                        }
+                    ],
+                )
+
+            if public_key is None:
+                # Unknown kid — fail closed
+                logger.warning(
+                    "provider_07: Unknown kid=%s in JWKS manifest — failing closed",
+                    inference_response.kid,
+                )
+                return ValidationResult(
+                    admitted=False,
+                    findings=[
+                        {
+                            "code": "INFERTHETA_UNKNOWN_KEY",
+                            "message": f"Unknown Key Identifier: {inference_response.kid}",
+                            "status": "fail",
+                        }
+                    ],
+                )
+
+            # Verify Ed25519 JCS signature
+            signature_valid = verify_inference_signature(
+                payload=data,
+                public_key=public_key,
+                signature_b64=inference_response.signature,
             )
-            return ValidationResult(
-                admitted=False,
-                findings=[
-                    {
-                        "code": "INFERTHETA_SIGNATURE_INVALID",
-                        "message": "Ed25519 signature verification failed",
-                        "status": "fail",
-                    }
-                ],
+
+            if not signature_valid:
+                logger.warning(
+                    "provider_07: Signature verification FAILED for kid=%s decision=%s",
+                    inference_response.kid,
+                    inference_response.decision,
+                )
+                return ValidationResult(
+                    admitted=False,
+                    findings=[
+                        {
+                            "code": "INFERTHETA_SIGNATURE_INVALID",
+                            "message": "Ed25519 signature verification failed",
+                            "status": "fail",
+                        }
+                    ],
+                )
+        else:
+            logger.warning(
+                "provider_07: STEP 1 DEMO MODE ACTIVE — skipping Ed25519 signature verification "
+                "for kid=%s signature=%s",
+                inference_response.kid,
+                inference_response.signature,
             )
 
         # Tri-state decision handling with token mint verification
@@ -393,24 +429,26 @@ class Provider07NormativeProvider:
                     ],
                 )
 
-            # Valid ALLOW: signature OK, authority token present
+            # Valid ALLOW: signature OK (or Step 1 placeholder), authority token present
             logger.info(
                 "provider_07: ALLOW decision with authority_record_id=%s posterior_risk=%.3f",
                 inference_response.authority_record_id,
                 inference_response.posterior_risk_score,
             )
+            finding: dict[str, Any] = {
+                "code": "INFERTHETA_ALLOW",
+                "message": "Bayesian inference admits action",
+                "status": "pass",
+                "authority_record_id": inference_response.authority_record_id,
+                "posterior_risk_score": inference_response.posterior_risk_score,
+                "marginal_probabilities": inference_response.marginal_probabilities,
+            }
+            if is_step1_unsigned:
+                finding["step1_demo_mode"] = True
+
             return ValidationResult(
                 admitted=True,
-                findings=[
-                    {
-                        "code": "INFERTHETA_ALLOW",
-                        "message": "Bayesian inference admits action",
-                        "status": "pass",
-                        "authority_record_id": inference_response.authority_record_id,
-                        "posterior_risk_score": inference_response.posterior_risk_score,
-                        "marginal_probabilities": inference_response.marginal_probabilities,
-                    }
-                ],
+                findings=[finding],
             )
 
         elif decision == "REFUSE":

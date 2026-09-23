@@ -59,10 +59,11 @@ Configure the adapter via environment variables (injected via Kubernetes ConfigM
 
 | Variable | Default | Description | Sensitivity |
 |---|---|---|---|
-| `PROVIDER_07_ENDPOINT` | `http://localhost:8087` | Base URL for InferTheta API | Public |
+| `PROVIDER_07_ENDPOINT` | `http://localhost:8087` | Base URL for InferTheta API (Staging: `https://infertheta-cage-staging.onrender.com`) | Public |
 | `PROVIDER_07_API_KEY` | *(required)* | Bearer token for authentication | **Secret** |
 | `PROVIDER_07_JWKS_URL` | *(required)* | Out-of-band JWKS manifest URL | Public |
 | `PROVIDER_07_TIMEOUT_SECONDS` | `5.0` | Request timeout (seconds) | Public |
+| `PROVIDER_07_ALLOW_STEP1_UNSIGNED` | `false` | Dev/testing only. Allows Step 1 unsigned responses (blocked in production) | Internal |
 
 **Secret Management**:
 - `PROVIDER_07_API_KEY` must be stored in a Kubernetes Secret and mounted via `secretKeyRef`
@@ -257,9 +258,12 @@ Expected utility scores guide **counterfactual recommendations**:
 - JWKS resolution and Ed25519 signature verification
 - Timeout and retry behavior
 
-### Live External Tests (`pytest.mark.live_external`, CI-gated)
-- Real InferTheta staging environment (requires `PROVIDER_07_API_KEY`)
-- End-to-end baseline fetch, inference request, signature verification
+### Live External Tests (`pytest.mark.live_external + pytest.mark.partner_integration`)
+- Real InferTheta staging environment (`https://infertheta-cage-staging.onrender.com`)
+- Live baseline fetch (`GET /baseline/{region}`)
+- Canonical test vector validation (`POST /infer`)
+- Dev/testing Step 1 unsigned mode validation (`PROVIDER_07_ALLOW_STEP1_UNSIGNED=true`)
+- Live suite located in [`tests/integrations/provider_07/test_provider_07_live.py`](../../../tests/integrations/provider_07/test_provider_07_live.py)
 
 ---
 
@@ -270,16 +274,16 @@ src/integrations/provider_07/
 ├── README.md                   ← This file
 ├── __init__.py                 ← Package exports
 ├── schema.py                   ← Pydantic v2 wire protocol models
-├── adapter.py                  ← NormativeProvider implementation (Phase 2)
-├── jwks_client.py              ← Out-of-band JWKS fetcher (Phase 2)
-└── signature.py                ← Ed25519 verification (Phase 2)
+├── adapter.py                  ← NormativeProvider implementation
+├── jwks_client.py              ← Out-of-band JWKS fetcher
+└── signature.py                ← Ed25519 verification
 ```
 
 ---
 
 ## References
 
-- **Canonical Schema**: [`docs/partners/INFERTHETA_CANONICAL_SCHEMA.md`](../../../docs/partners/INFERTHETA_CANONICAL_SCHEMA.md)
+- **Canonical Schema**: [`docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md`](../../../docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md)
 - **NormativeProvider Seam**: [`src/gateway/governance/normative_provider.py`](../../gateway/governance/normative_provider.py)
 - **Adapter Architecture**: [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](../../../docs/architecture/EXTENSIBILITY_ARCHITECTURE.md)
 - **Import Boundary Enforcement**: [`scripts/check_import_boundaries.py`](../../../scripts/check_import_boundaries.py)
@@ -290,5 +294,8 @@ src/integrations/provider_07/
 
 ---
 
-**Phase 1 Status**: ✅ Complete — Schema Definition & Documentation  
-**Next Phase**: Phase 2 — Adapter Implementation ([`adapter.py`](adapter.py), [`jwks_client.py`](jwks_client.py), [`signature.py`](signature.py))
+**Integration Status**:
+- ✅ Step 1 Wire Contract: Confirmed & validated against live staging
+- ✅ Step 1 Dedicated Suitability Graph: Calibrated & deployed on Render
+- ⏳ Step 2 Cryptographic Hardening: Ed25519 signatures, out-of-band JWKS, and real minted `authority_record_id` (deferred)
+
