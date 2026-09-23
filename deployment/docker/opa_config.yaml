@@ -1,0 +1,13 @@
+# OPA Runtime Configuration Template
+# Environment variables resolved at container startup via opa-entrypoint.sh
+
+services:
+  compliance_bridge:
+    url: ${CAGE_COMPLIANCE_BRIDGE_URL}
+
+labels:
+  region: ${CAGE_DEPLOYMENT_REGION}
+  environment: ${ENVIRONMENT}
+
+decision_logs:
+  console: true

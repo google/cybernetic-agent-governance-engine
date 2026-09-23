@@ -67,6 +67,12 @@ variable "gateway_image" {
   default     = ""
 }
 
+variable "opa_sidecar_image" {
+  description = "OPA sidecar container image"
+  type        = string
+  default     = ""
+}
+
 variable "governed_advisor_image" {
   description = "Governed Financial Advisor container image URL"
   type        = string

@@ -471,8 +471,53 @@ resource "google_cloud_run_v2_service" "gateway" {
       egress = "ALL_TRAFFIC"
     }
 
+    # OPA Sidecar Container (must start before gateway)
     containers {
-      image = var.gateway_image != "" ? var.gateway_image : "gcr.io/${var.project_id}/cage-gateway:latest"
+      name  = "opa"
+      image = var.opa_sidecar_image != "" ? var.opa_sidecar_image : "gcr.io/${var.project_id}/cage-opa:latest"
+
+      # NO ports block - OPA sidecar does not expose external ports
+      # Only localhost communication with gateway container
+
+      resources {
+        limits = {
+          cpu    = "0.5"
+          memory = "256Mi"
+        }
+      }
+
+      startup_probe {
+        http_get {
+          path = "/health"
+          port = 8181
+        }
+        initial_delay_seconds = 5
+        period_seconds        = 3
+        timeout_seconds       = 2
+        failure_threshold     = 10
+      }
+
+      env {
+        name  = "ENVIRONMENT"
+        value = var.environment
+      }
+
+      env {
+        name  = "CAGE_DEPLOYMENT_REGION"
+        value = var.cage_deployment_region
+      }
+
+      env {
+        name  = "CAGE_COMPLIANCE_BRIDGE_URL"
+        value = google_cloud_run_v2_service.compliance_bridge.uri
+      }
+    }
+
+    # Gateway Container (depends on OPA sidecar)
+    containers {
+      name       = "gateway"
+      image      = var.gateway_image != "" ? var.gateway_image : "gcr.io/${var.project_id}/cage-gateway:latest"
+      depends_on = ["opa"]
 
       ports {
         container_port = 8080
@@ -493,6 +538,11 @@ resource "google_cloud_run_v2_service" "gateway" {
       env {
         name  = "CAGE_DEPLOYMENT_REGION"
         value = var.cage_deployment_region
+      }
+
+      env {
+        name  = "OPA_URL"
+        value = "http://localhost:8181"
       }
 
       env {
