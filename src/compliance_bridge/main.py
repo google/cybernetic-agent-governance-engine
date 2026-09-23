@@ -770,15 +770,54 @@ def _build_cer_index() -> CERIndex | None:
     try:
         # Function-scope lazy import (Gate G3 allowlisted pattern)
         from src.integrations.provider_02.cer_index import Provider02CERIndex
+        from src.compliance_bridge.disclosure import Disclosure
 
-        # For now, construct with empty mappings — B2 resolver integration
-        # will populate these dynamically. This wiring proves the plumbing works.
+        cer_uris: dict[str, str] = {}
+        raw_uris = os.environ.get("PROVIDER_02_CER_URIS_JSON", "").strip()
+        if raw_uris:
+            try:
+                parsed_uris = json.loads(raw_uris)
+                if isinstance(parsed_uris, dict):
+                    cer_uris = {str(k): str(v) for k, v in parsed_uris.items()}
+            except Exception as parse_err:
+                logger.warning(
+                    "[cer-index] Failed to parse PROVIDER_02_CER_URIS_JSON: %s",
+                    parse_err,
+                )
+
+        disclosure_policies: dict[str, Disclosure] = {}
+        raw_policies = os.environ.get("PROVIDER_02_DISCLOSURE_POLICIES_JSON", "").strip()
+        if raw_policies:
+            try:
+                parsed_policies = json.loads(raw_policies)
+                if isinstance(parsed_policies, dict):
+                    for k, v in parsed_policies.items():
+                        try:
+                            disclosure_policies[str(k)] = Disclosure(str(v).lower())
+                        except (ValueError, KeyError):
+                            try:
+                                disclosure_policies[str(k)] = Disclosure[str(v).upper()]
+                            except Exception:
+                                logger.warning(
+                                    "[cer-index] Unknown disclosure policy '%s' for control '%s'",
+                                    v,
+                                    k,
+                                )
+            except Exception as parse_err:
+                logger.warning(
+                    "[cer-index] Failed to parse PROVIDER_02_DISCLOSURE_POLICIES_JSON: %s",
+                    parse_err,
+                )
+
         index = Provider02CERIndex(
-            cer_uris={},
-            disclosure_policies={},
+            cer_uris=cer_uris,
+            disclosure_policies=disclosure_policies,
         )
         logger.info(
-            "[cer-index] Provider02CERIndex constructed (resolver: %s)", resolver_url
+            "[cer-index] Provider02CERIndex constructed (resolver: %s, uris: %d, policies: %d)",
+            resolver_url,
+            len(cer_uris),
+            len(disclosure_policies),
         )
         return index
     except Exception as exc:

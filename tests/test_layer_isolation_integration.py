@@ -91,12 +91,10 @@ def test_gateway_files_have_no_cage_imports():
 
 @pytest.mark.local
 @pytest.mark.layer_isolation
-@pytest.mark.skip(reason="Layer 1 → Layer 4 remediation deferred to future work stream")
 def test_gateway_files_have_no_gfa_imports():
     """Directly verify that no src/gateway/ files import from src/governed_financial_advisor/.
 
-    NOTE: Layer 1 → Layer 4 violations are tracked separately and will be remediated
-    as part of the Rails Seam refactoring. Currently focuses on Layer 1 → Layer 2/3 enforcement.
+    Enforces that Layer 1 (kernel) never imports from Layer 4 (application).
     """
     gateway_root = Path(__file__).parent.parent / "src" / "gateway"
     assert gateway_root.exists(), f"Gateway directory not found: {gateway_root}"

@@ -178,46 +178,6 @@ class TestTimeoutEnforcement:
 class TestFactoryIntegration:
     """Integration tests for HTTP client factory usage."""
 
-    @pytest.mark.skip(
-        reason="JWKS verifier module removed in Phase 1 domain extraction - test preserved for historical reference"
-    )
-    @pytest.mark.asyncio
-    async def test_jwks_verifier_uses_factory(self):
-        """JWKS verifier should use factory-created client with timeout."""
-        with respx.mock:
-            # This is a regression test to ensure jwks_verifier.py uses the factory
-            jwks_route = respx.get(
-                "https://issuer.example.com/.well-known/jwks.json"
-            ).mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "keys": [
-                            {
-                                "kid": "test-key-1",
-                                "kty": "RSA",
-                                "alg": "RS256",
-                                "n": "test-n",
-                                "e": "AQAB",
-                            }
-                        ]
-                    },
-                )
-            )
-
-            from src.gateway.governance.jwks_verifier import JwksVerifier
-
-            verifier = JwksVerifier(
-                jwks_url="https://issuer.example.com/.well-known/jwks.json",
-                issuer="https://issuer.example.com",
-                posture=DeploymentPosture.TEST,
-            )
-
-            # Should succeed with factory-created client
-            jwks = await verifier.fetch_jwks()
-            assert "test-key-1" in jwks
-            assert jwks_route.called
-
     @pytest.mark.asyncio
     async def test_timeout_prevents_resource_exhaustion(self):
         """Multiple concurrent timeout failures should not exhaust resources."""

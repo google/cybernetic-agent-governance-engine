@@ -286,4 +286,36 @@ def test_no_cer_index_preserves_legacy_behavior():
     assert len(cer_hash_props) == 0
 
 
+# ---------------------------------------------------------------------------
+# Test 7: _build_cer_index parses environment variables correctly
+# ---------------------------------------------------------------------------
+
+
+def test_build_cer_index_from_env_vars(monkeypatch):
+    """_build_cer_index parses PROVIDER_02_CER_URIS_JSON and disclosure policies."""
+    import json
+    from src.compliance_bridge.main import _build_cer_index
+
+    # Case 1: Not configured
+    monkeypatch.delenv("PROVIDER_02_RESOLVER_URL", raising=False)
+    assert _build_cer_index() is None
+
+    # Case 2: Configured with JSON mappings
+    monkeypatch.setenv("PROVIDER_02_RESOLVER_URL", "https://resolver.example.com")
+    monkeypatch.setenv(
+        "PROVIDER_02_CER_URIS_JSON",
+        json.dumps({"AC-1": "https://verify.example.com/cer/sha256:111"}),
+    )
+    monkeypatch.setenv(
+        "PROVIDER_02_DISCLOSURE_POLICIES_JSON",
+        json.dumps({"AC-1": "public"}),
+    )
+
+    index = _build_cer_index()
+    assert index is not None
+    assert index.uri_for_control("AC-1") == "https://verify.example.com/cer/sha256:111"
+    assert index.disclosure_for_control("AC-1") == Disclosure.PUBLIC
+    assert index.uri_for_control("UNKNOWN-CTRL") is None
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
-
 import pytest
 
-from src.gateway.governance.symbolic_governor import SymbolicGovernor, _env_flag
+from src.gateway.governance.symbolic_governor import _env_flag
 
 
 @pytest.mark.local
@@ -48,50 +46,3 @@ def test_env_flag(monkeypatch, env_val, default, expected):
 
     assert _env_flag("TEST_FLAG", default) is expected
 
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_env_false(monkeypatch):
-    """Test removed: enable_legacy_trade_dispatch parameter deprecated in v3.0.0.
-
-    The legacy trade dispatch mechanism was replaced by the pluggable domain tier
-    architecture. This test verified environment variable parsing for a deprecated
-    parameter that no longer exists in SymbolicGovernor.__init__.
-    """
-    pytest.skip("enable_legacy_trade_dispatch parameter deprecated in v3.0.0")
-
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_env_true(monkeypatch):
-    """Test removed: enable_legacy_trade_dispatch parameter deprecated in v3.0.0.
-
-    The legacy trade dispatch mechanism was replaced by the pluggable domain tier
-    architecture. This test verified environment variable parsing for a deprecated
-    parameter that no longer exists in SymbolicGovernor.__init__.
-    """
-    pytest.skip("enable_legacy_trade_dispatch parameter deprecated in v3.0.0")
-
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_override_true(monkeypatch):
-    """Test removed: enable_legacy_trade_dispatch parameter deprecated in v3.0.0.
-
-    The legacy trade dispatch mechanism was replaced by the pluggable domain tier
-    architecture. This test verified parameter override behavior for a deprecated
-    parameter that no longer exists in SymbolicGovernor.__init__.
-    """
-    pytest.skip("enable_legacy_trade_dispatch parameter deprecated in v3.0.0")
-
-
-@pytest.mark.local
-@pytest.mark.unit
-def test_symbolic_governor_legacy_override_false(monkeypatch):
-    """Test removed: enable_legacy_trade_dispatch parameter deprecated in v3.0.0.
-
-    The legacy trade dispatch mechanism was replaced by the pluggable domain tier
-    architecture. This test verified parameter override behavior for a deprecated
-    parameter that no longer exists in SymbolicGovernor.__init__.
-    """
-    pytest.skip("enable_legacy_trade_dispatch parameter deprecated in v3.0.0")

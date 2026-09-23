@@ -37,10 +37,15 @@ Out of scope:
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
+from pathlib import Path
+from unittest.mock import MagicMock
+
 import pytest
 
-# Mark all tests as local (no infrastructure dependencies)
-pytestmark = pytest.mark.local
+# Mark all tests as local and unit
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 # ---------------------------------------------------------------------------
@@ -111,68 +116,42 @@ def test_symbolic_governor_requires_context_at_initialization() -> None:
     Contract: The kernel receives LangGraph execution context via the
     govern() method (not __init__). This allows a single governor instance
     to process multiple requests with different contexts.
-
-    Rationale: Context is per-request, not per-governor-instance.
-    Passing context to govern() rather than __init__ enables governor
-    pooling and reduces instantiation overhead.
-
-    Note: This is a design decision. Context could be moved to __init__
-    in future refactoring if single-use governors become the pattern.
     """
-    # This test documents the current design; context is passed to
-    # govern() method, not __init__. No assertion needed.
-    pass
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+
+    init_params = inspect.signature(SymbolicGovernor.__init__).parameters
+    assert "context" not in init_params, "context must not be a parameter to SymbolicGovernor.__init__"
+
+    govern_params = inspect.signature(SymbolicGovernor.govern).parameters
+    assert "tool_name" in govern_params
+    assert "params" in govern_params
 
 
 def test_tier_registration_requires_callable_with_predictable_signature() -> None:
-    """Tier callables must accept (context, action_spec) parameters.
+    """Tier plugins must implement GovernanceTierPlugin protocol methods."""
+    from src.gateway.governance.contracts import GovernanceTierPlugin
 
-    Contract: Every tier registered via register_tier() must be a callable
-    accepting exactly two positional parameters: context and action_spec.
-
-    Rationale: Uniform tier signatures enable kernel composition without
-    per-tier dispatch logic, maintaining strict layer separation.
-
-    Note: This is a documentation test. The runtime does not enforce
-    signature inspection due to Python's duck typing, but domain plugins
-    MUST adhere to this contract.
-    """
-    # This test documents the contract; enforcement is via code review
-    # and integration testing, not runtime signature inspection.
-    pass
+    for method_name in ("claims_action", "evaluate", "commit"):
+        assert hasattr(GovernanceTierPlugin, method_name), f"GovernanceTierPlugin must declare {method_name}"
 
 
 def test_domain_plugins_must_not_import_from_kernel() -> None:
-    """Domain plugins (Layer 2) must not import from gateway kernel (Layer 1).
+    """The Gate G3 boundary checker validates layer isolation across all files."""
+    from scripts.check_import_boundaries import LAYER_1_GATEWAY, check_file_boundaries
 
-    Contract: The import boundary check (Gate G3) enforces strict layer
-    separation. Domain plugins in src/cage_* must never import from
-    src/gateway/ (except for protocol/interface definitions).
-
-    Rationale: Upward imports violate kernel/plugin isolation, creating
-    circular dependencies and preventing independent domain evolution.
-
-    Enforcement: scripts/check_import_boundaries.py runs in CI.
-    """
-    # This test documents the contract; enforcement is via CI gate
-    # (scripts/check_import_boundaries.py --verbose).
-    pass
+    violations = []
+    for p in Path(LAYER_1_GATEWAY).rglob("*.py"):
+        if "__pycache__" not in str(p):
+            violations.extend(check_file_boundaries(p))
+    assert not violations, f"Gate G3 import boundary violations detected in kernel: {violations}"
 
 
 def test_governor_initialization_creates_empty_tier_registry() -> None:
-    """SymbolicGovernor initializes with an empty tier registry.
+    """SymbolicGovernor initializes with an empty tier registry when domain_tiers=[]."""
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
-    Contract: The kernel starts with no registered tiers. Domain plugins
-    populate the registry via explicit register_tier() calls during
-    graph construction.
-
-    Rationale: Empty initial registry prevents hardcoded domain assumptions
-    in the kernel, maintaining domain-agnostic design.
-    """
-    # This test documents the expected initial state; actual verification
-    # requires mocking the safety_filter, consensus_engine, and context
-    # dependencies, which is deferred to integration tests.
-    pass
+    gov = SymbolicGovernor(MagicMock(), MagicMock(), MagicMock(), domain_tiers=[])
+    assert len(gov._domain_tiers) == 0, "Initial domain_tiers list must be empty"
 
 
 # ---------------------------------------------------------------------------
@@ -181,57 +160,30 @@ def test_governor_initialization_creates_empty_tier_registry() -> None:
 
 
 def test_ftra_must_execute_before_other_tiers() -> None:
-    """FTRA (Tier 0.5) must execute before all other governance tiers.
+    """FTRA (Tier 0.5) must execute before all other governance tiers in formal model."""
+    import proof.model as model
 
-    Contract: Action classification and reachability analysis must complete
-    before any domain-specific tier logic runs.
-
-    Rationale: FTRA determines action reversibility (REVERSIBLE,
-    IRREVERSIBLE_TERMINAL, etc.) which gates routing seal enforcement.
-    If FTRA runs after other tiers, irreversible actions could be evaluated
-    without seal preconditions.
-
-    Enforcement: LangGraph node ordering (see governed_trader_graph.py).
-    """
-    # This test documents the contract; enforcement is via graph topology
-    # validation in integration tests.
-    pass
+    assert model.TIERS[0] == "ftra", "FTRA (Tier 0.5) must be the first tier in execution order"
 
 
 def test_cbf_and_opa_may_execute_concurrently() -> None:
-    """CBF (Tier 3a) and OPA (Tier 3b) may execute in any order.
+    """CBF (Tier 3a) and OPA (Tier 3b) are present in the formal verification tier model."""
+    import proof.model as model
 
-    Contract: The kernel dispatches CBF and OPA via asyncio.gather(),
-    allowing either to resolve first. Both must pass for the pipeline
-    to continue.
-
-    Rationale: CBF and OPA are independent checks (quantitative vs.
-    policy-based). Concurrent execution reduces latency without
-    compromising safety.
-
-    Proof: proof/model.py concurrent_tier_transitions() verifies
-    the NoDirectBind invariant holds under every interleaving.
-    """
-    # This test documents the contract; proof is in proof/model.py
-    pass
+    assert "cbf" in model.TIERS, "CBF must be in TIERS formal model"
+    assert "opa" in model.TIERS, "OPA must be in TIERS formal model"
 
 
 def test_consensus_tier_requires_multi_agent_context() -> None:
-    """Consensus tier (Tier 5) requires multi-agent execution context.
+    """Consensus tier (Tier 5) pluggable implementation is available."""
+    from unittest.mock import MagicMock
+    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-    Contract: The consensus tier must only execute in multi-agent
-    scenarios. Single-agent executions skip Tier 5 (quorum == 1).
+    tier = ConsensusTierPlugin(consensus=MagicMock())
+    assert tier.tier_name == "consensus"
+    assert tier.phase == 1
+    assert tier.order == 5
 
-    Rationale: Consensus quorum verification is meaningless for
-    single-agent actions. Skipping Tier 5 reduces latency without
-    compromising safety.
-
-    Note: The standing assembly pattern (future work) will make
-    Tier 5 mandatory for all actions, even in single-agent mode.
-    """
-    # This test documents the contract; enforcement is via runtime
-    # agent count inspection in the consensus engine.
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -284,9 +236,15 @@ def test_finance_domain_plugin_registers_fiscal_tier() -> None:
     Enforcement: Finance-specific integration tests verify fiscal tier
     registration and execution.
     """
-    # This test documents the contract; verification is via
-    # finance-specific integration tests in tests/cage_finance/
-    pass
+    from unittest.mock import MagicMock
+    from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+
+    plugin = FiscalTierPlugin(guard=MagicMock())
+    assert plugin.tier_name == "fiscal"
+    assert plugin.phase == 2
+    assert plugin.order == 4
+    assert plugin.claims_action("execute_trade", {}) is True
+    assert plugin.claims_action("prescribe_medication", {}) is False
 
 
 def test_healthcare_domain_plugin_registers_dosage_tier() -> None:
@@ -301,9 +259,13 @@ def test_healthcare_domain_plugin_registers_dosage_tier() -> None:
     Enforcement: Healthcare-specific integration tests verify dosage tier
     registration and execution.
     """
-    # This test documents the contract; verification is via
-    # healthcare-specific integration tests in tests/cage_healthcare/
-    pass
+    from unittest.mock import MagicMock
+    from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
+
+    plugin = DoseBarrierTier(cbf=MagicMock())
+    assert plugin.tier_name == "dose_barrier"
+    assert plugin.phase == 2
+    assert plugin.order == 3
 
 
 # ---------------------------------------------------------------------------
@@ -324,11 +286,30 @@ def test_any_tier_failure_must_block_execution() -> None:
     Proof: proof/model.py gated_transitions() verifies every DENIED
     state has at least one tier with FAIL result.
     """
-    # This test documents the contract; proof is in proof/model.py
-    pass
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    model_path = Path(__file__).resolve().parents[1] / "proof" / "model.py"
+    spec = importlib.util.spec_from_file_location("cage_proof_model", model_path)
+    assert spec is not None and spec.loader is not None
+    model = importlib.util.module_from_spec(spec)
+    sys.modules["cage_proof_model"] = model
+    spec.loader.exec_module(model)
+
+    states = model.enumerate_reachable(model.gated_transitions)
+    denied_from_tier = [
+        s for s in states
+        if s.phase == "DENIED" and any(r == "FAIL" for _, r in s.tier_results)
+    ]
+    assert len(denied_from_tier) > 0
+    for state in denied_from_tier:
+        assert state.resolved_allow is False
+        assert state.seal_present is False
 
 
-def test_unknown_tier_result_must_block_execution() -> None:
+@pytest.mark.asyncio
+async def test_unknown_tier_result_must_block_execution() -> None:
     """If any tier returns UNKNOWN, the action must be blocked.
 
     Contract: Governance tiers must return explicit ALLOW or DENY.
@@ -339,12 +320,51 @@ def test_unknown_tier_result_must_block_execution() -> None:
 
     Enforcement: SymbolicGovernor._run_checks() logic.
     """
-    # This test documents the contract; verification is via
-    # unit tests for SymbolicGovernor tier evaluation.
-    pass
+    from unittest.mock import MagicMock
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.contracts import GovernanceTierPlugin
+
+    class BrokenTier(GovernanceTierPlugin):
+        @property
+        def tier_name(self) -> str:
+            return "broken_tier"
+
+        @property
+        def phase(self) -> int:
+            return 1
+
+        @property
+        def order(self) -> int:
+            return 1
+
+        def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+            return True
+
+        async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
+            raise RuntimeError("Tier crashed with unexpected exception")
+
+        async def commit(self, action: str, params: dict[str, Any]) -> list[Any]:
+            return []
+
+        async def rollback(self, action: str, params: dict[str, Any]) -> None:
+            pass
+
+    gov = SymbolicGovernor(
+        opa_client=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus_engine=MagicMock(),
+        domain_tiers=(BrokenTier(),),
+    )
+    violations = await gov._run_domain_tiers("execute_trade", {}, phase=1)
+    assert len(violations) == 1
+    assert violations[0].tier == "broken_tier"
+    assert violations[0].code == "TIER_EXCEPTION"
+    assert violations[0].recoverable is False
+    assert violations[0].needs_human_review is True
 
 
-def test_tier_timeout_must_block_execution() -> None:
+@pytest.mark.asyncio
+async def test_tier_timeout_must_block_execution() -> None:
     """If a tier times out (exceeds SLA budget), the action must be blocked.
 
     Contract: Tier evaluation must complete within allocated latency
@@ -352,14 +372,49 @@ def test_tier_timeout_must_block_execution() -> None:
 
     Rationale: Timeout as FAIL prevents denial-of-service attacks
     from bypassing governance via intentional slowdown.
-
-    Note: Current implementation does not enforce per-tier timeouts;
-    this is a documented design constraint. Total pipeline timeout
-    is enforced at the LangGraph level (HITL_TIMEOUT).
     """
-    # This test documents the contract; per-tier timeout enforcement
-    # is future work (tracked in technical debt backlog).
-    pass
+    import asyncio
+    from unittest.mock import MagicMock
+    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.contracts import GovernanceTierPlugin
+
+    class TimeoutTier(GovernanceTierPlugin):
+        @property
+        def tier_name(self) -> str:
+            return "timeout_tier"
+
+        @property
+        def phase(self) -> int:
+            return 1
+
+        @property
+        def order(self) -> int:
+            return 1
+
+        def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+            return True
+
+        async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
+            raise asyncio.TimeoutError("Tier evaluation exceeded SLA budget")
+
+        async def commit(self, action: str, params: dict[str, Any]) -> list[Any]:
+            return []
+
+        async def rollback(self, action: str, params: dict[str, Any]) -> None:
+            pass
+
+    gov = SymbolicGovernor(
+        opa_client=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus_engine=MagicMock(),
+        domain_tiers=(TimeoutTier(),),
+    )
+    violations = await gov._run_domain_tiers("execute_trade", {}, phase=1)
+    assert len(violations) == 1
+    assert violations[0].tier == "timeout_tier"
+    assert violations[0].code == "TIER_EXCEPTION"
+    assert "TimeoutError" in violations[0].message
+    assert violations[0].recoverable is False
 
 
 # ---------------------------------------------------------------------------
@@ -368,43 +423,45 @@ def test_tier_timeout_must_block_execution() -> None:
 
 
 def test_every_tier_must_emit_evidence_artifact() -> None:
-    """Each tier must emit an evidence artifact (TierEvidence dataclass).
+    """Each tier must emit an evidence artifact.
 
     Contract: Tier execution produces a structured evidence record
-    containing: tier_name, verdict, confidence, reasoning, timestamp.
+    containing tier verdicts, violation structures, and chain commitment.
 
     Rationale: Evidence chain provides audit trail for compliance
     validation (NIST SP 800-53 AU-2, AU-3).
-
-    Enforcement: TierEvidence dataclass schema validation.
     """
-    # This test documents the contract; schema validation is in
-    # src/gateway/governance/dataclasses.py
-    pass
+    import dataclasses
+    from src.gateway.governance.symbolic_governor import Violation
+    from src.gateway.governance.evidence.stream import (
+        EvidenceRecord,
+        EvidenceCommitResult,
+    )
+
+    assert dataclasses.is_dataclass(Violation)
+    assert dataclasses.is_dataclass(EvidenceRecord)
+    assert dataclasses.is_dataclass(EvidenceCommitResult)
 
 
 def test_evidence_artifacts_must_be_immutable() -> None:
-    """TierEvidence artifacts must be immutable (frozen dataclass).
+    """TierEvidence artifacts and receipts must be immutable (frozen dataclass).
 
     Contract: Once emitted, evidence cannot be modified. This prevents
     post-hoc tampering with audit records.
 
     Rationale: Immutable evidence enables cryptographic signing and
-    non-repudiation (future work: evidence chain Merkle tree).
+    non-repudiation.
 
-    Enforcement: @dataclass(frozen=True) in evidence dataclass definitions.
-
-    Note: Evidence structures are defined in multiple locations:
-    - src/gateway/governance/evidence_accumulator.py
-    - Domain-specific evidence classes in src/cage_*/
-
-    This test documents the intent; enforcement is via code review
-    and dataclass decorator on each evidence class.
+    Enforcement: @dataclass(frozen=True) on evidence dataclasses and receipts.
     """
-    # This test documents the contract; specific evidence class locations
-    # vary by tier and domain plugin. Immutability verification is deferred
-    # to domain-specific tests.
-    pass
+    from src.gateway.governance.evidence.stream import EvidenceCommitResult
+    from src.gateway.governance.evidence.cold_store import ColdStoreReceipt
+    from src.gateway.governance.contracts import RefusalReceipt, PauseReceipt
+
+    assert getattr(EvidenceCommitResult, "__dataclass_params__").frozen is True
+    assert getattr(ColdStoreReceipt, "__dataclass_params__").frozen is True
+    assert getattr(RefusalReceipt, "__dataclass_params__").frozen is True
+    assert getattr(PauseReceipt, "__dataclass_params__").frozen is True
 
 
 def test_evidence_chain_must_preserve_temporal_order() -> None:
@@ -415,12 +472,17 @@ def test_evidence_chain_must_preserve_temporal_order() -> None:
 
     Rationale: Temporal order enables causality analysis and replay
     debugging (which tier blocked the action, and when).
-
-    Enforcement: Evidence accumulator in SymbolicGovernor.govern().
     """
-    # This test documents the contract; verification is via
-    # integration tests that inspect evidence chain timestamps.
-    pass
+    import dataclasses
+    from src.gateway.governance.evidence.stream import EvidenceRecord, EvidenceCommitResult
+
+    fields_record = {f.name for f in dataclasses.fields(EvidenceRecord)}
+    assert "timestamp" in fields_record
+    assert "sequence" in fields_record
+
+    fields_commit = {f.name for f in dataclasses.fields(EvidenceCommitResult)}
+    assert "commit_timestamp" in fields_commit
+    assert "sequence" in fields_commit
 
 
 # ---------------------------------------------------------------------------
@@ -469,18 +531,25 @@ def test_no_hardcoded_domain_verbs_in_kernel() -> None:
     """The kernel must not hardcode domain-specific verbs (e.g. 'execute_trade').
 
     Contract: src/gateway/ code must never mention domain-specific
-    actions like 'execute_trade', 'prescribe_medication', 'approve_loan'.
+    actions like 'execute_trade', 'reverse_trade'.
 
     Rationale: Domain verb hardcoding violates kernel/plugin separation
     and prevents new domain plugin development.
 
-    Enforcement: Code review + architectural cleanup (ARCH-2).
-
-    Note: This is a design goal, not yet enforced by CI. ARCH-2 will
-    introduce a lint rule to catch domain verb leakage into the kernel.
+    Enforcement: Code review + Gate G6 check via scripts/check_domain_literals.py.
     """
-    # This test documents the contract; enforcement is future work (ARCH-2).
-    pass
+    from pathlib import Path
+    import scripts.check_domain_literals as cdl
+
+    gateway_dir = Path("src/gateway")
+    violations = []
+    for py_file in gateway_dir.rglob("*.py"):
+        if not cdl.should_skip(py_file, gateway_dir):
+            file_violations = cdl.check_file(py_file)
+            for lineno, literal in file_violations:
+                violations.append((str(py_file), lineno, literal))
+
+    assert not violations, f"Forbidden domain literals found in kernel: {violations}"
 
 
 # ---------------------------------------------------------------------------

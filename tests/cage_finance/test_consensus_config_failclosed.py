@@ -114,4 +114,19 @@ class TestLegacyConsensusAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_preserves_return_value(self):
-        pass
+        """Verify that _LegacyConsensusAdapter returns the exact dict from inner."""
+        from src.gateway.governance.contracts import _LegacyConsensusAdapter
+
+        expected = {
+            "status": "REJECT",
+            "reason": "quorum_not_reached",
+            "votes": [{"agent": "agent1", "vote": "REJECT"}],
+            "extra_metadata": 12345,
+        }
+        inner = AsyncMock()
+        inner.check_consensus.return_value = expected
+
+        adapter = _LegacyConsensusAdapter(inner)
+        result = await adapter.check_consensus("sell", 15000.0, "GOOG")
+        assert result == expected
+
