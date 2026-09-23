@@ -199,9 +199,16 @@ class TestEd25519SignatureVerification:
         public_key_bytes = base64.urlsafe_b64decode(public_key_jwk["x"] + "==")
         public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
 
-        # Corrupt the signature value (flip first byte)
+        # Corrupt the signature bytes deterministically: decode the raw 64-byte
+        # Ed25519 signature, XOR the first byte by 0xFF (always changes it), then
+        # re-encode. Simply replacing "X" in the base64 string is non-deterministic
+        # — when the original signature happens to start with "X", the tamper is a
+        # no-op and verify() returns True.
         original_sig = receipt["signature"]["value"]
-        tampered_sig = "X" + original_sig[1:]
+        sig_bytes = bytearray(base64.urlsafe_b64decode(original_sig + "=="))
+        sig_bytes[0] ^= 0xFF  # guaranteed to differ from the original
+        tampered_sig = base64.urlsafe_b64encode(bytes(sig_bytes)).decode("ascii").rstrip("=")
+        assert tampered_sig != original_sig, "XOR tamper must produce a different signature"
         receipt["signature"]["value"] = tampered_sig
 
         # Signature verification should fail

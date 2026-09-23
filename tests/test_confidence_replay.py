@@ -182,9 +182,30 @@ def _make_fake_redis() -> MagicMock:
     redis.zrem = _zrem
     redis.pipeline = lambda transaction=True: FakePipeline()
 
-    # Lua script support for CAS operations
+    # Lua script support for CAS operations — simulate the CAS Lua script
+    # in-process so that _resolve() actually writes token/status/rev to store.
     redis.script_load = AsyncMock(return_value="mock-sha")
-    redis.evalsha = AsyncMock(return_value=[1, "1"])  # success, new_rev
+
+    async def _evalsha(
+        sha: str,
+        num_keys: int,
+        key: str,
+        expected_rev: str,
+        token_json: str,
+        new_status: str,
+    ) -> list:
+        """Simulate the CAS Lua script: compare rev, then write token+status+rev."""
+        current_rev_raw = store.get(key, {}).get("rev")
+        current_rev = current_rev_raw if current_rev_raw is not None else "0"
+        if str(current_rev) != str(expected_rev):
+            return [0, int(current_rev)]
+        new_rev = int(current_rev) + 1
+        store.setdefault(key, {}).update(
+            {"token": token_json, "status": new_status, "rev": str(new_rev)}
+        )
+        return [1, new_rev]
+
+    redis.evalsha = _evalsha
 
     # Expose the raw store dict so tests can inspect Redis state directly.
     redis._store = store
