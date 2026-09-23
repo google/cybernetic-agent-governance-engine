@@ -129,6 +129,18 @@ variable "gateway_domain" {
   default     = ""
 }
 
+variable "enable_cloud_dns" {
+  description = "Enable DNS record creation in an existing Cloud DNS managed zone"
+  type        = bool
+  default     = false
+}
+
+variable "dns_zone_name" {
+  description = "The name of your existing Cloud DNS managed zone (e.g., my-company-zone). Zone must exist prior to apply."
+  type        = string
+  default     = ""
+}
+
 variable "enable_iap" {
   description = "Enable Identity-Aware Proxy for additional authentication layer. Requires OAuth2 client configuration."
   type        = bool

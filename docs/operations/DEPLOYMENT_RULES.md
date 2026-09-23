@@ -27,6 +27,16 @@ Local `docker build` is prohibited for GKE-targeted images.**
 
 ---
 
+## 🌐 DNS & Custom Domain Lifecycle Separation (Architecture Invariant)
+
+When provisioning custom domains and external load balancers across any deployment target:
+
+- **Decoupled Zone Lifecycle**: DNS managed zones must be treated as foundational, persistent infrastructure managed independently from ephemeral application stacks. Never provision or destroy the parent managed zone within ephemeral application lifecycles.
+- **Subdomain Takeover Prevention**: Deleting a managed zone while upstream parent delegations exist creates an orphaned zone vulnerability. Workload Terraform modules must only manage record sets (`A` / `AAAA` records), leaving the parent zone intact during teardown.
+- **Internal Maintainer Environments**: Open-source maintainers developing and testing within Google's internal sandbox environments (Argolis / Altostrat dev and staging postures) must follow maintainer-specific DNS delegation procedures documented in `.maintainer/ARGOLIS_ALTOSTRAT_DNS.md` (gitignored).
+
+---
+
 ## Deployment Entry Point
 
 All deployments are driven by [`deploy_all.sh`](../../deploy_all.sh) at the
