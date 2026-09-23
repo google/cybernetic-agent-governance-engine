@@ -50,7 +50,23 @@ except ImportError:
 
 pytestmark = [pytest.mark.local]
 
+_LANGGRAPH_DEV_ENABLED = os.environ.get("LANGGRAPH_DEV_ENABLED", "").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
+_skip_unless_langgraph_dev = pytest.mark.skipif(
+    not _LANGGRAPH_DEV_ENABLED,
+    reason=(
+        "LangGraph SDK local tests require LANGGRAPH_DEV_ENABLED=1 and a running "
+        "dev server at localhost:2024 (bash scripts/dev_local.sh). "
+        "Omit when testing live GKE cluster."
+    ),
+)
+
+
+@_skip_unless_langgraph_dev
 def test_langgraph_server_connectivity() -> None:
     """Validate LangGraph SDK server is listening at localhost:2024.
 
@@ -73,7 +89,7 @@ def test_langgraph_server_connectivity() -> None:
     except httpx.HTTPStatusError:
         pass  # Fall through to /docs
     except httpx.RequestError as exc:
-        pytest.skip(
+        pytest.fail(
             f"LangGraph SDK server not reachable at {sdk_base_url}. "
             f"Start the stack with: bash scripts/dev_local.sh\n"
             f"Error: {exc}"
@@ -93,6 +109,7 @@ def test_langgraph_server_connectivity() -> None:
         )
 
 
+@_skip_unless_langgraph_dev
 @pytest.mark.integration
 async def test_anti_mock_model_guard() -> None:
     """Execute a run and verify active model is NOT MockChatModel.
@@ -178,6 +195,7 @@ async def test_anti_mock_model_guard() -> None:
         )
 
 
+@_skip_unless_langgraph_dev
 @pytest.mark.integration
 async def test_in_process_and_gateway_gates() -> None:
     """Send payload and verify traversal through NeMo, FTRA, safety_check, and interruption.

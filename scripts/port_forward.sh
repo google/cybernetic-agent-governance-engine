@@ -187,11 +187,14 @@ start_pf() {
 # ── Endpoint Check Helper ──────────────────────────────────────────────────
 has_endpoints() {
   local svc="$1"
-  kubectl get endpointslice -n "$NS" -l kubernetes.io/service-name="$svc" --request-timeout=5s -o json 2>/dev/null | jq -e '.items[].endpoints | select(. != null) | length > 0' &>/dev/null
+  kubectl get endpointslice -n "$NS" -l kubernetes.io/service-name="$svc" --request-timeout=15s -o json 2>/dev/null | jq -e '.items[].endpoints | select(. != null) | length > 0' &>/dev/null
 }
 
 # ── Core Services Required by Tests ──────────────────────────────────────────
 : > "${PF_PIDS_FILE}"
+
+# Query existing services once with 15s timeout
+EXISTING_SVCS=$(kubectl get svc -n "$NS" --request-timeout=15s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
 
 start_pf opa          opa                       8181  8181  # OPA policy engine
 start_pf langfuse     langfuse-web              3001  3000  # Langfuse API (LLM judge evaluation)
@@ -217,17 +220,17 @@ fi
 
 start_pf gateway      gateway                   8080  8080  # Gateway gRPC/HTTP
 
-if kubectl get svc -n "$NS" redis-master --request-timeout=5s &>/dev/null; then
+if [[ " $EXISTING_SVCS " =~ [[:space:]]redis-master[[:space:]] ]]; then
   start_pf redis        redis-master              6379  6379  # Redis (redis-master svc)
-else
+elif [[ " $EXISTING_SVCS " =~ [[:space:]]redis[[:space:]] ]]; then
   start_pf redis        redis                     6379  6379  # Redis (redis svc)
 fi
 
-if kubectl get svc -n "$NS" compliance-bridge --request-timeout=5s &>/dev/null; then
+if [[ " $EXISTING_SVCS " =~ [[:space:]]compliance-bridge[[:space:]] ]]; then
   start_pf compliance   compliance-bridge          3002    80  # Compliance bridge — BASE_URL (:3002)
 fi
 
-if kubectl get svc -n "$NS" governed-financial-advisor --request-timeout=5s &>/dev/null; then
+if [[ " $EXISTING_SVCS " =~ [[:space:]]governed-financial-advisor[[:space:]] ]]; then
   start_pf backend      governed-financial-advisor 8081    80  # Governed Financial Advisor backend (:8081)
 fi
 
