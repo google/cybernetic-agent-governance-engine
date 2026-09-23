@@ -1743,14 +1743,44 @@ async def defer_escalate(
                     "defer_id": defer_id,
                 },
             )
+        elif status == ApprovalStatus.CONTENTION_ABORTED:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "CONTENTION_ABORTED",
+                    "message": "Concurrent approval contention detected. Retry this request.",
+                    "defer_id": defer_id,
+                },
+            )
+
+        # Safety guard: ensure token is not None for successful approvals
+        if token is None:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "INTERNAL_ERROR",
+                    "message": f"Unexpected approval state: {status.name} with no token",
+                    "defer_id": defer_id,
+                },
+            )
 
         # Determine response based on approval status
         if status == ApprovalStatus.QUORUM_REACHED:
             response_status = "escalated"
             event_type = "DEFER_RESOLVED"
-        else:  # PARTIAL_QUORUM
+        elif status == ApprovalStatus.PARTIAL_QUORUM:
             response_status = "partially_approved"
             event_type = "DEFER_PARTIALLY_APPROVED"
+        else:
+            # Unreachable: all known statuses handled above
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "INTERNAL_ERROR",
+                    "message": f"Unexpected approval status: {status.name}",
+                    "defer_id": defer_id,
+                },
+            )
 
     except HTTPException:
         raise

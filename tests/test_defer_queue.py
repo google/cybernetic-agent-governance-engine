@@ -21,9 +21,11 @@ Tests verify Redis isolation semantics (db=1 namespace) and all DeferQueue opera
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import fakeredis.aioredis
 import pytest
 
 from src.gateway.governance.defer_queue import (
@@ -37,101 +39,19 @@ from src.gateway.governance.defer_queue import (
 )
 
 # ---------------------------------------------------------------------------
-# fakeredis fixture — async pipeline simulation
+# fakeredis fixture — Real Redis simulation with Lua support
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def fake_redis():
-    """Minimal async Redis mock using an in-memory dict store."""
-    store: dict[str, dict] = {}
-    zsets: dict[str, dict] = {}
-
-    redis = MagicMock()
-
-    # hset
-    async def _hset(key: str, mapping: dict):
-        store.setdefault(key, {}).update(mapping)
-
-    # hget
-    async def _hget(key: str, field: str):
-        return store.get(key, {}).get(field)
-
-    # expire (no-op in mock — TTL not enforced in unit tests)
-    async def _expire(key: str, ttl: int):
-        pass
-
-    # zadd
-    async def _zadd(zset_key: str, mapping: dict):
-        zsets.setdefault(zset_key, {}).update(mapping)
-
-    # zrangebyscore
-    async def _zrangebyscore(zset_key: str, min_score, max_score, start=0, num=100):
-        members = zsets.get(zset_key, {})
-        result = []
-        max_f = float("inf") if max_score == "+inf" else float(max_score)
-        for member, score in sorted(members.items(), key=lambda x: x[1]):
-            if score <= max_f:
-                result.append(member)
-        return result[start : start + num]
-
-    # zrem
-    async def _zrem(zset_key: str, member: str):
-        zsets.get(zset_key, {}).pop(member, None)
-
-    # watch (no-op in mock — concurrency not enforced in unit tests)
-    async def _watch(key: str):
-        pass
-
-    # unwatch (no-op in mock — concurrency not enforced in unit tests)
-    async def _unwatch():
-        pass
-
-    # Pipeline context manager
-    class FakePipeline:
-        def __init__(self):
-            self._ops = []
-
-        def hset(self, key, mapping):
-            self._ops.append(("hset", key, mapping))
-            return self
-
-        def expire(self, key, ttl):
-            self._ops.append(("expire", key, ttl))
-            return self
-
-        def zadd(self, zset_key, mapping):
-            self._ops.append(("zadd", zset_key, mapping))
-            return self
-
-        def zrem(self, zset_key, member):
-            self._ops.append(("zrem", zset_key, member))
-            return self
-
-        async def execute(self):
-            for op in self._ops:
-                if op[0] == "hset":
-                    store.setdefault(op[1], {}).update(op[2])
-                elif op[0] == "zadd":
-                    zsets.setdefault(op[1], {}).update(op[2])
-                elif op[0] == "zrem":
-                    zsets.get(op[1], {}).pop(op[2], None)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-    redis.hget = _hget
-    redis.zadd = _zadd
-    redis.zrangebyscore = _zrangebyscore
-    redis.zrem = _zrem
-    redis.watch = _watch
-    redis.unwatch = _unwatch
-    redis.pipeline = lambda transaction=True: FakePipeline()
-
-    return redis
+    """Real fakeredis[lua] instance with full WATCH/MULTI/EXEC/Lua support.
+    
+    Replaces the no-op stub that masked the WATCH-on-pool defect.
+    Uses fakeredis.aioredis.FakeRedis with decode_responses=True for hermetic
+    testing with real Lua script execution and CAS semantics.
+    """
+    return fakeredis.aioredis.FakeRedis(decode_responses=True)
 
 
 # ---------------------------------------------------------------------------
@@ -413,80 +333,33 @@ def test_is_external_hold_finding_needs_human_review_false():
 
 @pytest.fixture
 def fake_redis_with_past_expiry():
-    """Redis mock that places tokens in the past for expire_stale() testing."""
+    """Real fakeredis instance with helper to park tokens in the past for expire_stale() testing."""
     import time
-
-    store: dict[str, dict] = {}
-    zsets: dict[str, dict] = {}
-
-    redis = MagicMock()
-
-    async def _hget(key: str, field: str):
-        return store.get(key, {}).get(field)
-
-    async def _zrangebyscore(zset_key: str, min_score, max_score, start=0, num=100):
-        members = zsets.get(zset_key, {})
-        result = []
-        now = time.time()
-        for member, score in sorted(members.items(), key=lambda x: x[1]):
-            if score <= now:  # Only return expired tokens
-                result.append(member)
-        return result[start : start + num]
-
-    class FakePipeline:
-        def __init__(self):
-            self._ops = []
-
-        def hset(self, key, mapping):
-            self._ops.append(("hset", key, mapping))
-            return self
-
-        def expire(self, key, ttl):
-            self._ops.append(("expire", key, ttl))
-            return self
-
-        def zadd(self, zset_key, mapping):
-            self._ops.append(("zadd", zset_key, mapping))
-            return self
-
-        def zrem(self, zset_key, member):
-            self._ops.append(("zrem", zset_key, member))
-            return self
-
-        async def execute(self):
-            for op in self._ops:
-                if op[0] == "hset":
-                    store.setdefault(op[1], {}).update(op[2])
-                elif op[0] == "zadd":
-                    zsets.setdefault(op[1], {}).update(op[2])
-                elif op[0] == "zrem":
-                    zsets.get(op[1], {}).pop(op[2], None)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-    redis.hget = _hget
-    redis.zadd = lambda zset_key, mapping: zsets.setdefault(zset_key, {}).update(
-        mapping
-    )
-    redis.zrangebyscore = _zrangebyscore
-    redis.zrem = lambda zset_key, member: zsets.get(zset_key, {}).pop(member, None)
-
-    # Park helper that places token in the past (already expired)
-    def park_expired(token: DeferToken):
-        import time
-
+    
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    
+    # Helper function that parks a token with expiry time in the past
+    async def park_expired(token: DeferToken):
+        """Park a token with expiry time 1 second in the past."""
         key = f"DEFER:{token.defer_id}"
-        store[key] = {"token": token.model_dump_json(), "status": "PARKED"}
-        # Set expiry time to 1 second in the past
-        zsets.setdefault("DEFER:expiry_index", {})[token.defer_id] = time.time() - 1
-
-    redis.pipeline = lambda transaction=True: FakePipeline()
-    redis._park_expired = park_expired
-
+        
+        # Store token data (mimicking DeferQueue.park() logic)
+        await redis.hset(
+            key,
+            mapping={
+                "token": token.model_dump_json(),
+                "status": "PARKED",
+                "revision": "1",
+            },
+        )
+        
+        # Add to expiry index with a past timestamp
+        expiry_ts = time.time() - 1  # 1 second in the past
+        await redis.zadd("DEFER:expiry_index", {token.defer_id: expiry_ts})
+    
+    # Attach helper as an attribute for test access
+    redis._park_expired = park_expired  # type: ignore
+    
     return redis
 
 
@@ -505,7 +378,7 @@ async def test_expire_stale_calls_dlq_publisher_for_flowsignal_escalation(
         confidence_score=0.82,
         opa_input_snapshot={"action": "execute_trade"},
     )
-    fake_redis_with_past_expiry._park_expired(token)
+    await fake_redis_with_past_expiry._park_expired(token)
 
     count = await queue.expire_stale()
 
@@ -533,7 +406,7 @@ async def test_expire_stale_does_not_call_dlq_for_non_flowsignal_reasons(
         confidence_score=0.85,
         ttl_seconds=300,
     )
-    fake_redis_with_past_expiry._park_expired(token)
+    await fake_redis_with_past_expiry._park_expired(token)
 
     count = await queue.expire_stale()
 
@@ -556,7 +429,7 @@ async def test_expire_stale_without_dlq_publisher_logs_warning_only(
         confidence_score=0.80,
         opa_input_snapshot={},
     )
-    fake_redis_with_past_expiry._park_expired(token)
+    await fake_redis_with_past_expiry._park_expired(token)
 
     count = await queue.expire_stale()
 
@@ -585,8 +458,8 @@ async def test_expire_stale_dlq_publisher_error_does_not_crash_sweep(
         confidence_score=0.80,
         opa_input_snapshot={},
     )
-    fake_redis_with_past_expiry._park_expired(token1)
-    fake_redis_with_past_expiry._park_expired(token2)
+    await fake_redis_with_past_expiry._park_expired(token1)
+    await fake_redis_with_past_expiry._park_expired(token2)
 
     # Should not raise — errors are caught and logged
     count = await queue.expire_stale()
@@ -993,6 +866,224 @@ def test_defer_token_serialization_preserves_upstream_permit_id():
     restored = DeferToken.model_validate_json(json_str)
     assert restored.upstream_permit_id == "upstream-permit-789"
     assert restored.is_authority_bound() is True
+
+
+# ---------------------------------------------------------------------------
+# Test: Regression — PR #225 Concurrent Dual Control Approval Safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dual_control_approval_quorum_safety(fake_redis):
+    """Regression test for the lost-update defect (PR #225 scenario).
+    
+    Park a token with required_quorum=2. Issue concurrent approvals from two
+    distinct operators using asyncio.gather(). Assert:
+    - Exactly one QUORUM_REACHED, one PARTIAL_QUORUM
+    - Zero CONTENTION_ABORTED (both should succeed via CAS retry)
+    - Final token has len(approvals) == 2 with both distinct URNs
+    - Final token has resolution == "ESCALATED"
+    
+    This test would have FAILED before the WATCH-on-pool fix, producing either:
+    1. Two QUORUM_REACHED (both approvals saw the same initial state)
+    2. Lost approvals (second approval overwrote first)
+    """
+    from src.gateway.governance.defer_queue import ApprovalRecord, ApprovalStatus
+
+    queue = DeferQueue(fake_redis)
+    
+    # Park a token with required_quorum=2 (default for CONFIDENCE_BELOW_THRESHOLD)
+    token = DeferToken(
+        thread_id="thread-concurrent-001",
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        confidence_score=0.65,
+        ttl_seconds=600,
+        opa_input_snapshot={"action": "execute_trade", "amount_usd": 12000},
+    )
+    await queue.park(token)
+    
+    # Create two distinct approval records
+    approval_alice = ApprovalRecord(
+        approver_urn="urn:operator:alice",
+        approved_at_utc="2026-09-23T16:00:00Z",
+        auth_method="OIDC",
+        auth_principal_hash="alice-hash-123",
+    )
+    
+    approval_bob = ApprovalRecord(
+        approver_urn="urn:operator:bob",
+        approved_at_utc="2026-09-23T16:00:01Z",
+        auth_method="OIDC",
+        auth_principal_hash="bob-hash-456",
+    )
+    
+    # Issue concurrent approvals
+    results = await asyncio.gather(
+        queue.approve(token.defer_id, approval_alice),
+        queue.approve(token.defer_id, approval_bob),
+    )
+    
+    statuses = [r[0] for r in results]
+    
+    # Assert: exactly one QUORUM_REACHED, one PARTIAL_QUORUM
+    assert statuses.count(ApprovalStatus.QUORUM_REACHED) == 1, (
+        f"Expected exactly 1 QUORUM_REACHED, got {statuses}"
+    )
+    assert statuses.count(ApprovalStatus.PARTIAL_QUORUM) == 1, (
+        f"Expected exactly 1 PARTIAL_QUORUM, got {statuses}"
+    )
+    
+    # Assert: zero CONTENTION_ABORTED (both should succeed via CAS retry)
+    assert statuses.count(ApprovalStatus.CONTENTION_ABORTED) == 0, (
+        f"Unexpected CONTENTION_ABORTED in concurrent approvals: {statuses}"
+    )
+    
+    # Retrieve final token state
+    final_token = await queue.get(token.defer_id)
+    assert final_token is not None
+    
+    # Assert: final token has exactly 2 approvals with both distinct URNs
+    assert len(final_token.approvals) == 2, (
+        f"Expected 2 approvals, got {len(final_token.approvals)}"
+    )
+    
+    approver_urns = {a.approver_urn for a in final_token.approvals}
+    assert approver_urns == {"urn:operator:alice", "urn:operator:bob"}, (
+        f"Expected both alice and bob in approvals, got {approver_urns}"
+    )
+    
+    # Assert: final token has resolution == "ESCALATED"
+    assert final_token.resolution == "ESCALATED", (
+        f"Expected resolution='ESCALATED', got {final_token.resolution}"
+    )
+    assert final_token.resolved_at_utc is not None
+
+
+# ---------------------------------------------------------------------------
+# Test: Regression — Defect A (cjson empty-list corruption)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_list_round_trip_preservation(fake_redis):
+    """Guards against cjson empty-list corruption (Defect A from the analysis).
+    
+    Create token with opa_input_snapshot containing empty lists ([] and nested).
+    Create token with approvals=[] (empty initially).
+    Park token, read back, verify empty lists intact.
+    Approve once, verify empty lists still intact after CAS round-trip.
+    
+    This test guards against cjson.encode([]) → Lua cjson.null → Python None
+    deserialization corruption that could occur if the Lua script doesn't
+    properly handle empty arrays.
+    """
+    from src.gateway.governance.defer_queue import ApprovalRecord
+
+    queue = DeferQueue(fake_redis)
+    
+    # Create token with explicit empty lists in opa_input_snapshot
+    token = DeferToken(
+        thread_id="thread-empty-lists-001",
+        defer_reason=DeferReason.DATA_STARVATION,
+        confidence_score=0.68,
+        ttl_seconds=600,
+        opa_input_snapshot={
+            "action": "query_data",
+            "empty_list": [],
+            "nested": {
+                "also_empty": [],
+                "non_empty": [1, 2, 3],
+            },
+        },
+        approvals=[],  # Explicitly empty initially
+    )
+    
+    # Park token
+    await queue.park(token)
+    
+    # Read back and verify empty lists are intact
+    retrieved = await queue.get(token.defer_id)
+    assert retrieved is not None
+    assert retrieved.opa_input_snapshot["empty_list"] == [], (
+        f"Expected empty_list=[], got {retrieved.opa_input_snapshot['empty_list']}"
+    )
+    assert retrieved.opa_input_snapshot["nested"]["also_empty"] == [], (
+        f"Expected nested.also_empty=[], got {retrieved.opa_input_snapshot['nested']['also_empty']}"
+    )
+    assert retrieved.approvals == [], f"Expected approvals=[], got {retrieved.approvals}"
+    
+    # Approve once (triggers CAS round-trip)
+    approval = ApprovalRecord(
+        approver_urn="urn:operator:charlie",
+        approved_at_utc="2026-09-23T16:05:00Z",
+        auth_method="OIDC",
+        auth_principal_hash="charlie-hash-789",
+    )
+    status, updated = await queue.approve(token.defer_id, approval)
+    
+    # Verify approval succeeded
+    assert updated is not None
+    assert len(updated.approvals) == 1
+    
+    # Verify empty lists survived the CAS round-trip
+    assert updated.opa_input_snapshot["empty_list"] == [], (
+        f"Empty list corrupted after CAS: {updated.opa_input_snapshot['empty_list']}"
+    )
+    assert updated.opa_input_snapshot["nested"]["also_empty"] == [], (
+        f"Nested empty list corrupted after CAS: {updated.opa_input_snapshot['nested']['also_empty']}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: Regression — CAS retry exhaustion path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cas_retry_exhaustion_returns_contention_aborted(fake_redis, monkeypatch):
+    """Tests the 409 Conflict path when CAS retry is exhausted.
+    
+    Use monkeypatch to force _cas_update() to always return (False, 999).
+    Call approve() and assert it returns CONTENTION_ABORTED.
+    
+    This test ensures the CAS retry exhaustion path is properly wired
+    and returns the correct status code for handling by callers.
+    """
+    from src.gateway.governance.defer_queue import ApprovalRecord, ApprovalStatus
+
+    queue = DeferQueue(fake_redis)
+    
+    # Park a normal token
+    token = DeferToken(
+        thread_id="thread-contention-001",
+        defer_reason=DeferReason.INSUFFICIENT_CONTEXT,
+        confidence_score=0.62,
+        ttl_seconds=600,
+        opa_input_snapshot={"action": "test"},
+    )
+    await queue.park(token)
+    
+    # Monkeypatch _cas_update to always fail (simulates persistent contention)
+    async def _always_fail_cas(defer_id, revision, token, status):
+        return (False, 999)  # Always return failure
+    
+    monkeypatch.setattr(queue, "_cas_update", _always_fail_cas)
+    
+    # Attempt approval
+    approval = ApprovalRecord(
+        approver_urn="urn:operator:dave",
+        approved_at_utc="2026-09-23T16:10:00Z",
+        auth_method="OIDC",
+        auth_principal_hash="dave-hash-abc",
+    )
+    
+    status, updated_token = await queue.approve(token.defer_id, approval)
+    
+    # Assert: approval returns CONTENTION_ABORTED after retry exhaustion
+    assert status == ApprovalStatus.CONTENTION_ABORTED, (
+        f"Expected CONTENTION_ABORTED, got {status}"
+    )
+    assert updated_token is None, "Expected None token on contention abort"
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

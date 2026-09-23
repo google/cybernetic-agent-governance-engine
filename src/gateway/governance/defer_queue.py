@@ -50,6 +50,7 @@ operation control that prevents unsafe execution under ambiguous context.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -61,8 +62,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from src.gateway.infrastructure.redis_client import TransactionAbortedError
-
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -73,6 +72,44 @@ _KEY_PREFIX = "DEFER:"
 _EXPIRY_ZSET = "DEFER:expiry_index"
 _DEFAULT_TTL = 3600 * 4  # 4-hour park window before stale escalation
 _DEFAULT_HOLD_TTL = 300  # 5-minute default TTL for external hold escalations
+
+# ---------------------------------------------------------------------------
+# Lua CAS Script for Revision-Based Compare-and-Swap
+# ---------------------------------------------------------------------------
+
+#: Lua script for atomic compare-and-swap on revision-controlled token updates.
+#: This script compares the current revision against the expected revision,
+#: and only updates the token blob + status if they match, then increments
+#: the revision counter. This prevents lost updates during concurrent dual-
+#: control approvals.
+#:
+#: Arguments:
+#:   KEYS[1] — Redis hash key (e.g., "DEFER:{defer_id}")
+#:   ARGV[1] — Expected revision (integer as string)
+#:   ARGV[2] — New token JSON blob (opaque string, no parsing in Lua)
+#:   ARGV[3] — New status string
+#:
+#: Returns:
+#:   {1, new_rev}      — Success: updated token, status, and revision
+#:   {0, actual_rev}   — Conflict: current revision != expected revision
+#:
+#: Slot-safety: Touches exactly one key (KEYS[1]) — safe for Redis Cluster.
+_CAS_UPDATE_LUA = """
+local current_rev = redis.call('HGET', KEYS[1], 'rev')
+if current_rev == false then
+    current_rev = '0'
+end
+
+local expected_rev = ARGV[1]
+if current_rev ~= expected_rev then
+    return {0, tonumber(current_rev)}
+end
+
+local new_rev = tonumber(current_rev) + 1
+redis.call('HSET', KEYS[1], 'token', ARGV[2], 'status', ARGV[3], 'rev', new_rev)
+return {1, new_rev}
+"""
+
 
 # ---------------------------------------------------------------------------
 # DeferReason — why the execution graph was halted
@@ -315,16 +352,18 @@ class DeferToken(BaseModel):
 class ApprovalStatus(str, Enum):
     """Outcome of a DeferQueue.approve() call.
 
-    PARTIAL_QUORUM:    Approval recorded; token remains PARTIALLY_APPROVED.
-    QUORUM_REACHED:    Quorum threshold met; token transitions to RESOLVED.
-    ALREADY_APPROVED:  This operator has already approved this token.
-    NOT_FOUND:         Token does not exist or has already been resolved.
+    PARTIAL_QUORUM:      Approval recorded; token remains PARTIALLY_APPROVED.
+    QUORUM_REACHED:      Quorum threshold met; token transitions to RESOLVED.
+    ALREADY_APPROVED:    This operator has already approved this token.
+    NOT_FOUND:           Token does not exist or has already been resolved.
+    CONTENTION_ABORTED:  CAS retry exhausted due to excessive concurrent modifications.
     """
 
     PARTIAL_QUORUM = "PARTIAL_QUORUM"
     QUORUM_REACHED = "QUORUM_REACHED"
     ALREADY_APPROVED = "ALREADY_APPROVED"
     NOT_FOUND = "NOT_FOUND"
+    CONTENTION_ABORTED = "CONTENTION_ABORTED"
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +440,178 @@ class DeferQueue:
     ) -> None:
         self._redis = redis_client
         self._dlq_publisher = dlq_publisher
+        self._cas_update_sha: str | None = None
+
+    # ------------------------------------------------------------------
+    # CAS Helper Methods — Revision-Based Atomicity Primitives
+    # ------------------------------------------------------------------
+
+    async def _read_token_with_rev(
+        self, defer_id: str
+    ) -> tuple[DeferToken | None, str | None, int]:
+        """Atomically read token, status, and revision fields.
+
+        This helper uses HMGET to atomically read all three fields in a
+        single round-trip, ensuring snapshot consistency for CAS operations.
+
+        Migration path: If the 'rev' field is absent (legacy tokens parked
+        before revision tracking was added), it defaults to 0. This enables
+        zero-downtime rollout of the CAS primitive.
+
+        Args:
+            defer_id: The token's defer_id.
+
+        Returns:
+            A tuple of (DeferToken | None, status | None, revision).
+            - token: The parsed DeferToken, or None if not found.
+            - status: The current status string ("PARKED", "PARTIALLY_APPROVED",
+                      "RESOLVED"), or None if the key does not exist.
+            - revision: The current revision number (integer), or 0 if absent.
+
+        Example::
+
+            token, status, rev = await queue._read_token_with_rev(defer_id)
+            if token is None:
+                return ApprovalStatus.NOT_FOUND
+
+            # ... validate invariants ...
+
+            # Atomically update via CAS
+            success, new_rev = await queue._cas_update(
+                defer_id, rev, updated_token, "RESOLVED"
+            )
+        """
+        key = f"{_KEY_PREFIX}{defer_id}"
+        raw_token, raw_status, raw_rev = await self._redis.hmget(
+            key, "token", "status", "rev"
+        )
+
+        if raw_token is None:
+            return (None, None, 0)
+
+        token = DeferToken.model_validate_json(raw_token)
+        status = raw_status
+
+        # Migration path: absent rev field defaults to 0
+        revision = int(raw_rev) if raw_rev is not None else 0
+
+        return (token, status, revision)
+
+    async def _cas_update(
+        self,
+        defer_id: str,
+        expected_rev: int,
+        updated_token: DeferToken,
+        new_status: str,
+    ) -> tuple[bool, int]:
+        """Atomically update token + status via revision-based compare-and-swap.
+
+        This method implements the core CAS primitive for concurrent-safe token
+        mutations. It ensures that only one of multiple concurrent approve()
+        calls can succeed, preventing the lost-update race condition that occurs
+        when WATCH/MULTI/EXEC is executed on separate connections.
+
+        CAS Semantics:
+            - Compares the current revision in Redis against expected_rev.
+            - If they match: updates token blob + status + increments revision.
+            - If they conflict: returns failure + the actual current revision.
+
+        The Lua script (_CAS_UPDATE_LUA) is executed via EVALSHA for efficiency,
+        with a fallback to EVAL + SCRIPT LOAD if the script is not yet cached.
+
+        Args:
+            defer_id:       The token's defer_id.
+            expected_rev:   The revision number read by _read_token_with_rev().
+            updated_token:  The new DeferToken to write (already mutated by caller).
+            new_status:     The new status string ("PARTIALLY_APPROVED", "RESOLVED").
+
+        Returns:
+            A tuple of (success: bool, actual_or_new_rev: int).
+            - If success is True: actual_or_new_rev is the incremented revision.
+            - If success is False: actual_or_new_rev is the conflicting revision
+              observed in Redis (caller should retry with fresh read).
+
+        Raises:
+            Exception: Redis connection errors are propagated to the caller.
+
+        Example::
+
+            # Read current state
+            token, status, rev = await queue._read_token_with_rev(defer_id)
+
+            # Mutate token in-memory
+            token.approvals.append(new_approval)
+
+            # Attempt CAS update
+            success, new_rev = await queue._cas_update(
+                defer_id, rev, token, "PARTIALLY_APPROVED"
+            )
+            if not success:
+                # Conflict: another approval raced us. Retry from the top.
+                raise TransactionAbortedError()
+        """
+        key = f"{_KEY_PREFIX}{defer_id}"
+        token_json = updated_token.model_dump_json()
+
+        # Lazily load the script and cache its SHA on first call
+        if self._cas_update_sha is None:
+            self._cas_update_sha = await self._redis.script_load(_CAS_UPDATE_LUA)
+            logger.debug(
+                "[defer_queue] Loaded CAS Lua script, SHA=%s", self._cas_update_sha
+            )
+
+        try:
+            # Attempt EVALSHA (fast path: script already loaded)
+            result = await self._redis.evalsha(
+                self._cas_update_sha,
+                1,  # number of keys
+                key,
+                str(expected_rev),
+                token_json,
+                new_status,
+            )
+        except Exception as exc:
+            # NOSCRIPT error: script was evicted, reload and retry with EVAL
+            if "NOSCRIPT" in str(exc):
+                logger.debug(
+                    "[defer_queue] NOSCRIPT error, falling back to EVAL for defer_id=%s",
+                    defer_id,
+                )
+                result = await self._redis.eval(
+                    _CAS_UPDATE_LUA,
+                    1,
+                    key,
+                    str(expected_rev),
+                    token_json,
+                    new_status,
+                )
+                # Re-cache the SHA for future calls
+                self._cas_update_sha = await self._redis.script_load(_CAS_UPDATE_LUA)
+            else:
+                # Other errors: propagate
+                raise
+
+        # Parse result: [success_flag, revision]
+        success_flag = int(result[0])
+        actual_or_new_rev = int(result[1])
+
+        if success_flag == 1:
+            logger.debug(
+                "[defer_queue] CAS SUCCESS: defer_id=%s rev %d → %d status=%s",
+                defer_id,
+                expected_rev,
+                actual_or_new_rev,
+                new_status,
+            )
+            return (True, actual_or_new_rev)
+        else:
+            logger.debug(
+                "[defer_queue] CAS CONFLICT: defer_id=%s expected_rev=%d actual_rev=%d",
+                defer_id,
+                expected_rev,
+                actual_or_new_rev,
+            )
+            return (False, actual_or_new_rev)
 
     # ------------------------------------------------------------------
     # park — add a deferred token to the queue
@@ -409,17 +620,16 @@ class DeferQueue:
     async def park(self, token: DeferToken, correlation_id: str | None = None) -> str:
         """Park a DeferToken in Redis.
 
+        Uses atomic HSETNX for initial key creation. If the key already exists
+        (idempotent re-park), uses CAS retry loop to update only if current
+        status is PARKED (does not overwrite RESOLVED tokens).
+
         Args:
             token: The fully constructed DeferToken.
             correlation_id: Optional correlation ID to associate with the token.
 
         Returns:
             The ``defer_id`` of the parked token.
-
-        Raises:
-            TransactionAbortedError: The Redis WATCH/MULTI/EXEC transaction was
-                aborted because a concurrent writer modified a watched key.  The
-                caller should treat this as a retriable condition.
         """
         if correlation_id is not None:
             token.correlation_id = correlation_id
@@ -428,31 +638,81 @@ class DeferQueue:
         expiry_ts = time.time() + token.ttl_seconds
         token_json = token.model_dump_json()
 
-        try:
-            async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hset(key, mapping={"token": token_json, "status": "PARKED"})
+        # Attempt atomic key creation with HSETNX
+        created = await self._redis.hsetnx(key, "token", token_json)
+
+        if created:
+            # New key — complete initialization with pipeline
+            async with self._redis.pipeline(transaction=False) as pipe:
+                pipe.hset(key, "status", "PARKED")
+                pipe.hset(key, "rev", 0)
                 pipe.expire(key, token.ttl_seconds)
                 pipe.zadd(_EXPIRY_ZSET, {token.defer_id: expiry_ts})
                 await pipe.execute()
-        except TransactionAbortedError:
-            logger.warning(
-                "[defer_queue] park() transaction aborted for defer_id=%s thread_id=%s — "
-                "returning DeferResult.ABORTED",
+
+            logger.info(
+                "[defer_queue] Parked token defer_id=%s thread_id=%s correlation_id=%s reason=%s "
+                "confidence=%.3f ttl=%ds",
                 token.defer_id,
                 token.thread_id,
+                token.correlation_id,
+                token.defer_reason.value,
+                token.confidence_score or -1.0,
+                token.ttl_seconds,
             )
-            raise
+        else:
+            # Key exists — idempotent re-park via CAS (only update if status=PARKED)
+            max_retries = 3
+            base_jitter_ms = 5
 
-        logger.info(
-            "[defer_queue] Parked token defer_id=%s thread_id=%s correlation_id=%s reason=%s "
-            "confidence=%.3f ttl=%ds",
-            token.defer_id,
-            token.thread_id,
-            token.correlation_id,
-            token.defer_reason.value,
-            token.confidence_score or -1.0,
-            token.ttl_seconds,
-        )
+            for attempt in range(max_retries):
+                existing_token, current_status, revision = await self._read_token_with_rev(
+                    token.defer_id
+                )
+
+                if existing_token is None:
+                    # Race: key was deleted between HSETNX and now
+                    logger.warning(
+                        "[defer_queue] park() re-park race: key disappeared for defer_id=%s",
+                        token.defer_id,
+                    )
+                    break
+
+                # Only update if current status is PARKED
+                if current_status != "PARKED":
+                    logger.info(
+                        "[defer_queue] park() idempotent: defer_id=%s already in status=%s, skipping",
+                        token.defer_id,
+                        current_status,
+                    )
+                    break
+
+                # Attempt CAS update
+                success, new_rev = await self._cas_update(
+                    token.defer_id, revision, token, "PARKED"
+                )
+
+                if success:
+                    # Update expiry index (idempotent)
+                    await self._redis.zadd(_EXPIRY_ZSET, {token.defer_id: expiry_ts})
+                    logger.info(
+                        "[defer_queue] park() idempotent re-park: defer_id=%s updated",
+                        token.defer_id,
+                    )
+                    break
+
+                # CAS conflict — retry with jitter
+                jitter_ms = base_jitter_ms * (2**attempt)
+                logger.debug(
+                    "[defer_queue] park() CAS conflict on attempt %d/%d for defer_id=%s, "
+                    "retrying after %dms",
+                    attempt + 1,
+                    max_retries,
+                    token.defer_id,
+                    jitter_ms,
+                )
+                await asyncio.sleep(jitter_ms / 1000.0)
+
         return token.defer_id
 
     # ------------------------------------------------------------------
@@ -471,59 +731,81 @@ class DeferQueue:
         resolution. Direct resolution bypasses confidence threshold checks and
         violates ADR-008 Phase 5.
 
+        Uses revision-based CAS with bounded retry (3 attempts) to prevent lost
+        updates during concurrent resolution attempts.
+
         Args:
             defer_id:       The token's defer_id.
             resolution:     Resolution type string.
             injection_data: Optional data payload for INJECTED resolutions.
 
         Returns:
-            The updated DeferToken, or None if the token was not found.
+            The updated DeferToken, or None if the token was not found or CAS
+            retry was exhausted.
         """
-        key = f"{_KEY_PREFIX}{defer_id}"
-        raw = await self._redis.hget(key, "token")
-        if raw is None:
-            logger.warning(
-                "[defer_queue] _resolve() called for unknown defer_id=%s", defer_id
-            )
-            return None
+        max_retries = 3
+        base_jitter_ms = 5
 
-        token = DeferToken.model_validate_json(raw)
-        token.resolved_at_utc = datetime.now(tz=timezone.utc).isoformat()
-        token.resolution = resolution
+        for attempt in range(max_retries):
+            # Read current token state with revision
+            token, current_status, revision = await self._read_token_with_rev(defer_id)
 
-        try:
-            async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hset(
-                    key,
-                    mapping={
-                        "token": token.model_dump_json(),
-                        "status": "RESOLVED",
-                        **(
-                            {"injection_data": json.dumps(injection_data)}
-                            if injection_data
-                            else {}
-                        ),
-                    },
+            if token is None:
+                logger.warning(
+                    "[defer_queue] _resolve() called for unknown defer_id=%s", defer_id
                 )
-                pipe.zrem(_EXPIRY_ZSET, defer_id)
-                await pipe.execute()
-        except TransactionAbortedError:
-            logger.warning(
-                "[defer_queue] _resolve() transaction aborted for defer_id=%s resolution=%s — "
-                "returning DeferResult.ABORTED",
-                defer_id,
-                resolution,
-            )
-            raise
+                return None
 
-        logger.info(
-            "[defer_queue] Resolved defer_id=%s resolution=%s thread_id=%s correlation_id=%s",
+            # Mutate token in-memory
+            token.resolved_at_utc = datetime.now(tz=timezone.utc).isoformat()
+            token.resolution = resolution
+
+            # Attempt CAS update
+            success, new_rev = await self._cas_update(
+                defer_id, revision, token, "RESOLVED"
+            )
+
+            if success:
+                # CAS succeeded — post-update cleanup
+                await self._redis.zrem(_EXPIRY_ZSET, defer_id)
+
+                # Store injection_data if provided (separate operation, idempotent)
+                if injection_data:
+                    key = f"{_KEY_PREFIX}{defer_id}"
+                    await self._redis.hset(
+                        key, "injection_data", json.dumps(injection_data)
+                    )
+
+                logger.info(
+                    "[defer_queue] Resolved defer_id=%s resolution=%s thread_id=%s correlation_id=%s",
+                    defer_id,
+                    resolution,
+                    token.thread_id,
+                    token.correlation_id,
+                )
+                return token
+
+            # CAS conflict — retry with exponential jitter
+            jitter_ms = base_jitter_ms * (2**attempt)
+            logger.debug(
+                "[defer_queue] _resolve() CAS conflict on attempt %d/%d for defer_id=%s, "
+                "retrying after %dms",
+                attempt + 1,
+                max_retries,
+                defer_id,
+                jitter_ms,
+            )
+            await asyncio.sleep(jitter_ms / 1000.0)
+
+        # Retry exhaustion
+        logger.warning(
+            "[defer_queue] _resolve() CAS retry exhausted for defer_id=%s resolution=%s "
+            "after %d attempts — returning None",
             defer_id,
             resolution,
-            token.thread_id,
-            token.correlation_id,
+            max_retries,
         )
-        return token
+        return None
 
     # ------------------------------------------------------------------
     # atomic_resolve — atomic CAS ticket invalidation for idempotency
@@ -635,7 +917,7 @@ class DeferQueue:
     ) -> tuple[ApprovalStatus, DeferToken | None]:
         """Append an approval; resolve only when the quorum threshold is met.
 
-        Enforces invariants under WATCH/MULTI/EXEC:
+        Enforces invariants via revision-based CAS:
           - Token is in PARKED or PARTIALLY_APPROVED state
           - record.approver_urn is not already present in token.approvals
           - Status becomes PARTIALLY_APPROVED while len(approvals) < required_quorum
@@ -645,8 +927,9 @@ class DeferQueue:
           - Authority-bound tokens (upstream_permit_id is set) REFUSE all approvals
           - Returns ApprovalStatus.NOT_FOUND to fail-closed for authority-bound tokens
 
-        Concurrent approval safety (R-13): Uses Redis WATCH/MULTI/EXEC to prevent
-        lost updates when two operators approve simultaneously.
+        Concurrent approval safety: Uses revision-based CAS with bounded retry (3 attempts).
+        On CAS conflict, retries with 5ms exponential jitter. On retry exhaustion, returns
+        CONTENTION_ABORTED.
 
         Args:
             defer_id: The token's defer_id.
@@ -654,38 +937,24 @@ class DeferQueue:
 
         Returns:
             Tuple of (ApprovalStatus, updated_token_or_None).
-            Status indicates: PARTIAL_QUORUM, QUORUM_REACHED, ALREADY_APPROVED, NOT_FOUND.
-
-        Raises:
-            TransactionAbortedError: Concurrent modification detected; caller should retry.
+            Status indicates: PARTIAL_QUORUM, QUORUM_REACHED, ALREADY_APPROVED,
+            NOT_FOUND, or CONTENTION_ABORTED (on CAS retry exhaustion).
         """
-        key = f"{_KEY_PREFIX}{defer_id}"
+        max_retries = 3
+        base_jitter_ms = 5
 
-        # WATCH the key to detect concurrent modifications
-        try:
-            await self._redis.watch(key)
-        except Exception:
-            # If WATCH fails, unwatch and raise
-            await self._redis.unwatch()
-            raise
+        for attempt in range(max_retries):
+            # Read current token state with revision
+            token, current_status, revision = await self._read_token_with_rev(defer_id)
 
-        try:
-            # Read current token state
-            raw = await self._redis.hget(key, "token")
-            status_raw = await self._redis.hget(key, "status")
-
-            if raw is None:
-                await self._redis.unwatch()
+            if token is None:
                 logger.warning(
                     "[defer_queue] approve() called for unknown defer_id=%s", defer_id
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
 
-            token = DeferToken.model_validate_json(raw)
-
             # PRAXIS Phase 2: Refuse approval for authority-bound tokens
             if token.is_authority_bound():
-                await self._redis.unwatch()
                 logger.warning(
                     "[defer_queue] Approval REFUSED for authority-bound token: "
                     "defer_id=%s upstream_permit_id=%s. Token must expire; "
@@ -695,11 +964,8 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
 
-            current_status = status_raw or "PARKED"
-
             # Only approve tokens in PARKED or PARTIALLY_APPROVED state
             if current_status not in ("PARKED", "PARTIALLY_APPROVED"):
-                await self._redis.unwatch()
                 logger.warning(
                     "[defer_queue] approve() called for already-resolved defer_id=%s status=%s",
                     defer_id,
@@ -710,7 +976,6 @@ class DeferQueue:
             # Check for duplicate approver
             existing_urns = {a.approver_urn for a in token.approvals}
             if record.approver_urn in existing_urns:
-                await self._redis.unwatch()
                 logger.warning(
                     "[defer_queue] Duplicate approval rejected: defer_id=%s approver=%s",
                     defer_id,
@@ -718,7 +983,7 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.ALREADY_APPROVED, token)
 
-            # Append approval
+            # Append approval (in-memory mutation)
             token.approvals.append(record)
             distinct_approvers = len({a.approver_urn for a in token.approvals})
 
@@ -732,40 +997,50 @@ class DeferQueue:
                 new_status = "PARTIALLY_APPROVED"
                 approval_status = ApprovalStatus.PARTIAL_QUORUM
 
-            # Atomic write with MULTI/EXEC
-            async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hset(
-                    key,
-                    mapping={
-                        "token": token.model_dump_json(),
-                        "status": new_status,
-                    },
-                )
+            # Attempt CAS update
+            success, new_rev = await self._cas_update(
+                defer_id, revision, token, new_status
+            )
+
+            if success:
+                # CAS succeeded — post-update cleanup
                 if new_status == "RESOLVED":
-                    # Remove from expiry index when resolved
-                    pipe.zrem(_EXPIRY_ZSET, defer_id)
-                await pipe.execute()
+                    # Remove from expiry index (idempotent, separate operation)
+                    await self._redis.zrem(_EXPIRY_ZSET, defer_id)
 
-            logger.info(
-                "[defer_queue] Approval recorded: defer_id=%s approver=%s "
-                "distinct_approvers=%d/%d status=%s correlation_id=%s",
-                defer_id,
-                record.approver_urn,
-                distinct_approvers,
-                token.required_quorum,
-                new_status,
-                token.correlation_id,
-            )
-            return (approval_status, token)
+                logger.info(
+                    "[defer_queue] Approval recorded: defer_id=%s approver=%s "
+                    "distinct_approvers=%d/%d status=%s correlation_id=%s",
+                    defer_id,
+                    record.approver_urn,
+                    distinct_approvers,
+                    token.required_quorum,
+                    new_status,
+                    token.correlation_id,
+                )
+                return (approval_status, token)
 
-        except TransactionAbortedError:
-            logger.warning(
-                "[defer_queue] approve() transaction aborted for defer_id=%s approver=%s — "
-                "concurrent modification detected",
+            # CAS conflict — retry with exponential jitter
+            jitter_ms = base_jitter_ms * (2**attempt)
+            logger.debug(
+                "[defer_queue] approve() CAS conflict on attempt %d/%d for defer_id=%s, "
+                "retrying after %dms",
+                attempt + 1,
+                max_retries,
                 defer_id,
-                record.approver_urn,
+                jitter_ms,
             )
-            raise
+            await asyncio.sleep(jitter_ms / 1000.0)
+
+        # Retry exhaustion
+        logger.warning(
+            "[defer_queue] approve() CAS retry exhausted for defer_id=%s approver=%s "
+            "after %d attempts — returning CONTENTION_ABORTED",
+            defer_id,
+            record.approver_urn,
+            max_retries,
+        )
+        return (ApprovalStatus.CONTENTION_ABORTED, None)
 
     # ------------------------------------------------------------------
     # get — fetch a single token by ID

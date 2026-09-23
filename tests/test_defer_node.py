@@ -44,6 +44,19 @@ def fake_redis():
     async def _hget(key: str, field: str):
         return store.get(key, {}).get(field)
 
+    async def _hmget(key: str, *fields: str):
+        hash_data = store.get(key, {})
+        return [hash_data.get(field) for field in fields]
+
+    async def _hsetnx(key: str, field: str, value: str):
+        """Set field in hash only if it doesn't exist."""
+        if key not in store:
+            store[key] = {}
+        if field not in store[key]:
+            store[key][field] = value
+            return 1
+        return 0
+
     async def _zadd(zset_key: str, mapping: dict):
         zsets.setdefault(zset_key, {}).update(mapping)
 
@@ -63,8 +76,17 @@ def fake_redis():
         def __init__(self):
             self._ops = []
 
-        def hset(self, key, mapping):
-            self._ops.append(("hset", key, mapping))
+        def hset(self, key, field_or_mapping=None, value=None):
+            """Support both hset(key, mapping) and hset(key, field, value)."""
+            if value is not None:
+                # Individual field/value pair: hset(key, field, value)
+                self._ops.append(("hset", key, {field_or_mapping: value}))
+            elif isinstance(field_or_mapping, dict):
+                # Mapping form: hset(key, {field1: val1, ...})
+                self._ops.append(("hset", key, field_or_mapping))
+            else:
+                # Legacy positional form
+                self._ops.append(("hset", key, field_or_mapping))
             return self
 
         def expire(self, key, ttl):
@@ -95,6 +117,8 @@ def fake_redis():
             pass
 
     redis.hget = _hget
+    redis.hmget = _hmget
+    redis.hsetnx = _hsetnx
     redis.zadd = _zadd
     redis.zrangebyscore = _zrangebyscore
     redis.zrem = _zrem

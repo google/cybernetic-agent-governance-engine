@@ -195,6 +195,19 @@ def fake_redis_defer():
     async def _hget(key: str, field: str):
         return store.get(key, {}).get(field)
 
+    async def _hmget(key: str, *fields: str):
+        hash_data = store.get(key, {})
+        return [hash_data.get(field) for field in fields]
+
+    async def _hsetnx(key: str, field: str, value: str):
+        """Set field in hash only if it doesn't exist."""
+        if key not in store:
+            store[key] = {}
+        if field not in store[key]:
+            store[key][field] = value
+            return 1
+        return 0
+
     async def _watch(key: str):
         pass
 
@@ -205,8 +218,17 @@ def fake_redis_defer():
         def __init__(self):
             self._ops = []
 
-        def hset(self, key, mapping):
-            self._ops.append(("hset", key, mapping))
+        def hset(self, key, field_or_mapping=None, value=None):
+            """Support both hset(key, mapping) and hset(key, field, value)."""
+            if value is not None:
+                # Individual field/value pair: hset(key, field, value)
+                self._ops.append(("hset", key, {field_or_mapping: value}))
+            elif isinstance(field_or_mapping, dict):
+                # Mapping form: hset(key, {field1: val1, ...})
+                self._ops.append(("hset", key, field_or_mapping))
+            else:
+                # Legacy positional form
+                self._ops.append(("hset", key, field_or_mapping))
             return self
 
         def expire(self, key, ttl):
@@ -237,6 +259,8 @@ def fake_redis_defer():
             pass
 
     redis.hget = _hget
+    redis.hmget = _hmget
+    redis.hsetnx = _hsetnx
     redis.watch = _watch
     redis.unwatch = _unwatch
     redis.pipeline = lambda transaction=True: FakePipeline()

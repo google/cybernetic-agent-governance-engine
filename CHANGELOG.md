@@ -9,6 +9,14 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **[CRITICAL]** Eliminated lost-update concurrency defect in DEFER dual-control approval flows. Concurrent approvals on `required_quorum >= 2` tokens no longer silently overwrite each other. Replaced broken WATCH-on-pool pattern with monotonic revision CAS primitive. Retries are bounded to 3 attempts with 5ms exponential jitter; exhaustion returns HTTP 409 Conflict.
+- Removed unreachable `TransactionAbortedError` exception handlers in `defer_queue.py` (dead code since v2.0).
+
+### Changed
+- **[BREAKING]** `DeferQueue.approve()` now returns `ApprovalStatus.CONTENTION_ABORTED` on CAS retry exhaustion (previously would raise unhandled exception). Callers must map this to HTTP 409.
+- Redis schema for defer tokens now includes a `rev` (revision) field. Existing tokens are migrated transparently (absent `rev` treated as `0`).
+
 ### Breaking Changes
 
 #### refactor(deps)! — LangGraph & Dependency Decoupling (v4.0.0 track)
