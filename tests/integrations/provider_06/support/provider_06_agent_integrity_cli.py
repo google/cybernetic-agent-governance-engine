@@ -29,7 +29,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-BASE_COMMIT = "94e9d717be22bafcf6307efd9434fdb04754ac6a"
+BASE_COMMIT = "d069d9be85acede00d04dd887f61e5c9e2dbe1b3"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/project"
 ARTIFACT_PATH = (
