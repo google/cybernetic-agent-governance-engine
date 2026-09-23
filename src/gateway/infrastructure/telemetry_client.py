@@ -128,7 +128,7 @@ _telemetry_configured = False
 
 
 # ---------------------------------------------------------------------------
-# Langfuse OTLP endpoint resolution
+# RemoteTelemetry OTLP endpoint resolution
 # ---------------------------------------------------------------------------
 
 
@@ -138,9 +138,9 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
     Priority:
     1. ``OTEL_EXPORTER_OTLP_ENDPOINT`` set explicitly → use it with
        ``OTEL_EXPORTER_OTLP_HEADERS`` (parsed as ``key=value,key2=value2``).
-    2. ``LANGFUSE_HOST`` + ``LANGFUSE_PUBLIC_KEY`` + ``LANGFUSE_SECRET_KEY`` →
-       derive ``{LANGFUSE_HOST}/api/public/otel`` with HTTP Basic Auth.
-       Langfuse's integrated OTel collector archives all received spans automatically.
+    2. ``TELEMETRY_HOST`` + ``TELEMETRY_PUBLIC_KEY`` + ``TELEMETRY_SECRET_KEY`` →
+       derive ``{TELEMETRY_HOST}/api/public/otel`` with HTTP Basic Auth.
+       RemoteTelemetry's integrated OTel collector archives all received spans automatically.
     3. No endpoint configured → return ``("", {})`` so the caller skips OTLP export.
        The standalone otel-collector sidecar (port 4318) is deprecated; falling back
        to localhost:4318 would cause retry-loop timeouts in test workers.
@@ -160,14 +160,14 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
                     headers[k.strip()] = v.strip()
         return explicit, headers
 
-    host = os.getenv("LANGFUSE_HOST", "").strip().rstrip("/")
-    pk = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
-    sk = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
+    host = os.getenv("TELEMETRY_HOST", "").strip().rstrip("/")
+    pk = os.getenv("TELEMETRY_PUBLIC_KEY", "").strip()
+    sk = os.getenv("TELEMETRY_SECRET_KEY", "").strip()
     if host and pk and sk:
         endpoint = f"{host}/api/public/otel"
         token = base64.b64encode(f"{pk}:{sk}".encode()).decode()
         logger.info(
-            "✅ Telemetry: derived Langfuse OTLP endpoint from LANGFUSE_HOST → %s",
+            "✅ Telemetry: derived RemoteTelemetry OTLP endpoint from TELEMETRY_HOST → %s",
             endpoint,
         )
         return endpoint, {"Authorization": f"Basic {token}"}
@@ -175,9 +175,9 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
     # No endpoint configured — otel-collector (port 4318) is deprecated and removed.
     # Return empty string so configure_telemetry() skips OTLP exporter initialisation.
     logger.debug(
-        "Telemetry: no OTEL_EXPORTER_OTLP_ENDPOINT or LANGFUSE_HOST set — "
+        "Telemetry: no OTEL_EXPORTER_OTLP_ENDPOINT or TELEMETRY_HOST set — "
         "OTLP export disabled (standalone otel-collector is deprecated; "
-        "telemetry is collected natively by Langfuse when LANGFUSE_HOST is set)"
+        "telemetry is collected natively by RemoteTelemetry when TELEMETRY_HOST is set)"
     )
     return "", {}
 
@@ -186,7 +186,7 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
 # Resilience: downgrade noisy OTLP/S3 backend errors to WARNING level
 # ---------------------------------------------------------------------------
 
-# Phrases emitted by the Langfuse S3 worker and by the OTel OTLP HTTP exporter
+# Phrases emitted by the RemoteTelemetry S3 worker and by the OTel OTLP HTTP exporter
 # when the collector's S3 backend or OTLP endpoint is unavailable.  These are
 # background-thread errors that should never surface as ERROR in application
 # logs.  The list also covers urllib3 connection-pool retry messages that the
@@ -397,11 +397,11 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
         except Exception:
             pass
 
-        # 2. Centralized Tier / Langfuse native OTLP ingestion
+        # 2. Centralized Tier / RemoteTelemetry native OTLP ingestion
         # Endpoint resolution priority (see _resolve_otlp_endpoint_and_headers):
         #   1. OTEL_EXPORTER_OTLP_ENDPOINT (explicit)
-        #   2. LANGFUSE_HOST + LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY
-        #      → auto-derives {LANGFUSE_HOST}/api/public/otel with HTTP Basic Auth
+        #   2. TELEMETRY_HOST + TELEMETRY_PUBLIC_KEY + TELEMETRY_SECRET_KEY
+        #      → auto-derives {TELEMETRY_HOST}/api/public/otel with HTTP Basic Auth
         #   3. No fallback — OTLP export is disabled if neither is set.
         #      The standalone OTel Collector (port 4318) is deprecated and removed.
         otel_endpoint, otlp_headers = _resolve_otlp_endpoint_and_headers()
@@ -412,8 +412,8 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
             # Skip OTLP exporter entirely to avoid retry-loop timeouts in tests.
             logger.info(
                 "[INFO] OpenTelemetry: OTLP export skipped - no OTEL_EXPORTER_OTLP_ENDPOINT or "
-                "LANGFUSE_HOST configured. Set LANGFUSE_HOST + keys to enable telemetry "
-                "via Langfuse's integrated OTel collector."
+                "TELEMETRY_HOST configured. Set TELEMETRY_HOST + keys to enable telemetry "
+                "via RemoteTelemetry's integrated OTel collector."
             )
         else:
             try:
@@ -530,18 +530,18 @@ def clean_model_name(model_name: str) -> str:
 
     # Strip common prefixes
     cleaned = model_name
-    if cleaned.startswith("openai/"):
-        cleaned = cleaned[7:]
+    if cleaned.startswith("provider/"):
+        cleaned = cleaned[9:]
 
-    if "/" in cleaned and not cleaned.startswith("openai/"):
+    if "/" in cleaned and not cleaned.startswith("provider/"):
         # Extract the final basename from the POSIX path
         cleaned = cleaned.split("/")[-1]
 
     return cleaned
 
 
-# Maximum byte length for span string attributes that are exported to Langfuse via
-# OTLP. Langfuse's S3 worker fails with HTTP 500 ("Failed to upload JSON to S3")
+# Maximum byte length for span string attributes that are exported to RemoteTelemetry via
+# OTLP. RemoteTelemetry's S3 worker fails with HTTP 500 ("Failed to upload JSON to S3")
 # when a single span JSON payload exceeds ~1 MB. Full LLM prompts and completions
 # are the primary culprit; we truncate them here, before the BatchSpanProcessor
 # queues them, so the Protobuf batch stays well under the limit.
@@ -566,7 +566,7 @@ def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignor
 
     Span attributes that carry LLM prompt/completion text are truncated to
     ``_SPAN_ATTR_MAX_CHARS`` characters before being attached to the span.
-    This prevents the self-hosted Langfuse S3 worker from returning HTTP 500
+    This prevents the self-hosted RemoteTelemetry S3 worker from returning HTTP 500
     ("Failed to upload JSON to S3") on oversized span payloads.
     """
     tracer = get_tracer()
@@ -605,7 +605,7 @@ def record_completion(span, completion: str):  # type: ignore[no-untyped-def]
     """Helper to record completion metadata.
 
     The completion string is truncated to ``_SPAN_ATTR_MAX_CHARS`` characters
-    before being attached to the span to avoid Langfuse S3 upload failures on
+    before being attached to the span to avoid RemoteTelemetry S3 upload failures on
     large model outputs.
     """
     if span and completion:

@@ -13,13 +13,13 @@
 # limitations under the License.
 
 """
-OTel-compliant replacements for the former Langfuse SDK helpers.
+OTel-compliant replacements for the former Telemetry SDK helpers.
 
-All Langfuse interactions are now routed exclusively via:
+All Telemetry interactions are now routed exclusively via:
   - Prompt fetch  → compliance-bridge HTTP proxy  (GET /v1/prompts/:name)
   - Compliance scoring → OTel span events         (picked up by compliance-bridge)
 
-The compliance-bridge is the SOLE authorised Langfuse SDK consumer.
+The compliance-bridge is the SOLE authorised Telemetry SDK consumer.
 """
 
 import json
@@ -65,9 +65,9 @@ def get_managed_prompt(
     On 404 or any network/timeout error, logs a warning and returns ``fallback``.
 
     Args:
-        name:     Prompt name registered in Langfuse (e.g. 'agent/explainer')
+        name:     Prompt name registered in Telemetry (e.g. 'agent/explainer')
         fallback: Static text to return when the bridge is unreachable
-        label:    Langfuse prompt label (default: 'production')
+        label:    Telemetry prompt label (default: 'production')
     """
     bridge_url = os.environ.get(
         "COMPLIANCE_BRIDGE_URL", "http://compliance-bridge:3001"
@@ -137,7 +137,7 @@ def score_compliance_event(
     Emits a compliance score as an OTel span event on the current span.
 
     The compliance-bridge reads these events from the OTLP stream and converts
-    them into Langfuse scores so that the time-windowed safety_rate per
+    them into Telemetry scores so that the time-windowed safety_rate per
     control ID remains accurate.
 
     Args:

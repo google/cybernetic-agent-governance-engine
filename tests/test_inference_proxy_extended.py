@@ -148,10 +148,9 @@ def proxy_deps(monkeypatch):
     monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
     monkeypatch.setattr(_mod, "_get_token_quota_proxy", lambda: quota_proxy)
     monkeypatch.setattr(_mod, "_get_uca_logger", lambda: uca_logger)
-    monkeypatch.setattr(_mod, "verify_input", AsyncMock(return_value=nemo_safe))
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_input", AsyncMock(return_value=nemo_safe))
     monkeypatch.setattr(
-        _mod,
-        "verify_and_mask_output",
+        "src.integrations.nemo.manager.verify_and_mask_output",
         AsyncMock(side_effect=lambda _rails, text: text),
     )
     monkeypatch.setattr(_mod, "stamp_iso_control", MagicMock())
@@ -175,7 +174,7 @@ def proxy_deps(monkeypatch):
         return MagicMock()
 
     # chat_completions imports initialize_rails locally; patch via sys.modules
-    import src.gateway.governance.nemo.manager as _nemo_mgr
+    import src.integrations.nemo.manager as _nemo_mgr
 
     monkeypatch.setattr(_nemo_mgr, "initialize_rails", _mock_init_rails)
 
@@ -336,13 +335,13 @@ async def test_quota_exceeded_calls_uca_logger(proxy_deps):
 
 
 @pytest.mark.asyncio
-async def test_nemo_block_returns_403(proxy_deps):
+async def test_nemo_block_returns_403(proxy_deps, monkeypatch):
     """When NeMo verify_input blocks, the endpoint returns 403."""
     app = proxy_deps["app"]
     mod = proxy_deps["module"]
     blocked_result = MagicMock(is_safe=False, reason="test-block-reason")
-    mod.verify_input = AsyncMock(return_value=blocked_result)
-
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_input", AsyncMock(return_value=blocked_result)
+)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -355,7 +354,7 @@ async def test_nemo_block_returns_403(proxy_deps):
 
 
 @pytest.mark.asyncio
-async def test_nemo_exception_triggers_quota_rollback(proxy_deps):
+async def test_nemo_exception_triggers_quota_rollback(proxy_deps, monkeypatch):
     """When verify_input raises, quota is rolled back before re-raising.
 
     The endpoint wraps the NeMo call in try/except so that any downstream
@@ -369,7 +368,7 @@ async def test_nemo_exception_triggers_quota_rollback(proxy_deps):
     async def _bad_verify(rails, text, **kw):
         raise RuntimeError("nemo exploded")
 
-    mod.verify_input = _bad_verify
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_input", _bad_verify)
 
     # Build a minimal fake Request so we can call chat_completions directly.
     # The scope must include "app" so request.app.state is accessible.
@@ -459,7 +458,7 @@ async def test_upstream_connection_error_returns_500(proxy_deps):
 
 
 @pytest.mark.asyncio
-async def test_output_content_passed_through_nemo_filter(proxy_deps):
+async def test_output_content_passed_through_nemo_filter(proxy_deps, monkeypatch):
     """The assistant content from vLLM is passed through verify_and_mask_output."""
     app = proxy_deps["app"]
     mod = proxy_deps["module"]
@@ -474,7 +473,7 @@ async def test_output_content_passed_through_nemo_filter(proxy_deps):
         masked_calls.append(text)
         return text
 
-    mod.verify_and_mask_output = _capture_mask
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _capture_mask)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -486,7 +485,7 @@ async def test_output_content_passed_through_nemo_filter(proxy_deps):
 
 
 @pytest.mark.asyncio
-async def test_masked_content_replaces_original(proxy_deps):
+async def test_masked_content_replaces_original(proxy_deps, monkeypatch):
     """If verify_and_mask_output changes content, the masked version is returned."""
     app = proxy_deps["app"]
     mod = proxy_deps["module"]
@@ -498,7 +497,7 @@ async def test_masked_content_replaces_original(proxy_deps):
     async def _mask(_rails, text):
         return text.replace("raw PII data", "[REDACTED]")
 
-    mod.verify_and_mask_output = _mask
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _mask)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -628,7 +627,7 @@ async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
     # Mock other dependencies to isolate the SPIFFE check
     monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
     monkeypatch.setattr(_mod, "stamp_iso_control", MagicMock())
-    import src.gateway.governance.nemo.manager as _nemo_mgr
+    import src.integrations.nemo.manager as _nemo_mgr
 
     monkeypatch.setattr(_nemo_mgr, "initialize_rails", lambda: MagicMock())
 
@@ -650,7 +649,7 @@ async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_call_arguments_filtered_by_nemo(proxy_deps):
+async def test_tool_call_arguments_filtered_by_nemo(proxy_deps, monkeypatch):
     """Tool call function arguments are passed through verify_and_mask_output."""
     app = proxy_deps["app"]
     mod = proxy_deps["module"]
@@ -690,7 +689,7 @@ async def test_tool_call_arguments_filtered_by_nemo(proxy_deps):
         filtered_args.append(text)
         return text.replace("PII-123", "REDACTED")
 
-    mod.verify_and_mask_output = _capture_tool_mask
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _capture_tool_mask)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

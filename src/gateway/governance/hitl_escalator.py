@@ -148,7 +148,7 @@ class EscalationRequest:
     """Structured request for HITL escalation.
 
     Attributes:
-        trace_id:       Langfuse trace ID for the governed request.
+        trace_id:       Telemetry trace ID for the governed request.
         reason:         Why the request is being escalated (EscalationReason).
         amount_usd:     Trade amount in USD, if applicable.
         confidence:     Model confidence score, if applicable.
@@ -174,7 +174,7 @@ class EscalationRecord:
 
     Attributes:
         event:          Always "hitl_escalation".
-        trace_id:       Langfuse trace ID.
+        trace_id:       Telemetry trace ID.
         reason:         Escalation reason string (from EscalationReason.value).
         amount_usd:     Trade amount in USD, or None.
         confidence:     Model confidence score, or None.
@@ -301,7 +301,7 @@ def hitl_override_audit_span(
     ``get_hitl_regulatory_citation()``.
 
     Args:
-        trace_id:                   Langfuse trace ID of the governed request.
+        trace_id:                   Telemetry trace ID of the governed request.
         reviewer_id:                Pseudonymised reviewer identifier.
         decision:                   One of "OVERRIDE", "UPHOLD", "DEFER".
         original_escalation_reason: The ``EscalationReason.value`` that

@@ -31,7 +31,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from nemoguardrails.llm.providers import register_llm_provider
 
-from src.gateway.governance.nemo.manager import create_nemo_manager
+from src.integrations.nemo.manager import create_nemo_manager
 
 
 class MockLLM(BaseChatModel):
@@ -81,7 +81,7 @@ def rails():
     register_llm_provider("vllm_llama", MockLLM)
 
     # Patch register_llm_provider to prevent re-registration or errors
-    with patch("src.gateway.governance.nemo.manager.register_llm_provider"):
+    with patch("src.integrations.nemo.manager.register_llm_provider"):
         app = create_nemo_manager()
         return app
 

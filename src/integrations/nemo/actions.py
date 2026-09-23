@@ -21,7 +21,7 @@ Hybrid Gateway process. They are for GATEWAY-INTERNAL use only.
 PRODUCTION registration: config.rails.actions (HTTP-delegating, canonical)
 These gateway-internal actions are NOT registered with the top-level NeMo Guardrails instance.
 
-See: src.gateway.governance.nemo.action_registry for registration logic.
+See: src.integrations.nemo.action_registry for registration logic.
 
 Architecture note (re-entrant loop fix):
     These actions NO LONGER import ``symbolic_governor`` from ``singletons`` or call
@@ -319,7 +319,7 @@ async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
             # Restore actual VLLM call for fallback
             from langchain_core.messages import HumanMessage
 
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+            from src.integrations.nemo.vllm_client import VLLMLLM
 
             llm = VLLMLLM()
             # Create a simple message list

@@ -38,7 +38,7 @@ except ImportError:
 
 # Configure Logging
 logger = logging.getLogger("NeMo.LLM")
-tracer = trace.get_tracer("src.gateway.governance.nemo.vllm_client")
+tracer = trace.get_tracer("src.integrations.nemo.vllm_client")
 
 from src.gateway.observability.attributes import OBSERVATION_TYPE
 

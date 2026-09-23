@@ -20,7 +20,7 @@ Call ``setup_tracing()`` once at process startup — before binding to any port
 automatically wraps all vLLM / OpenAI SDK calls.
 
 Environment variables:
-    OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint; if unset and LANGFUSE_HOST is
+    OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint; if unset and TELEMETRY_HOST is
                                    also unset, OTLP export is disabled (no localhost fallback)
     OTEL_SERVICE_NAME            — OTel service name (default "cage-gateway")
     OTEL_TRACES_EXPORTER         — set to "none" to disable in tests
@@ -46,7 +46,7 @@ _OTLP_EXPORT_TIMEOUT_MS = _OTLP_EXPORT_TIMEOUT_S * 1_000
 
 
 # ---------------------------------------------------------------------------
-# Langfuse OTLP endpoint resolution (duplicated from
+# RemoteTelemetry OTLP endpoint resolution (duplicated from
 # governed_financial_advisor.utils.telemetry to keep the gateway package
 # dependency-free).
 # ---------------------------------------------------------------------------
@@ -57,9 +57,9 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
 
     Priority:
     1. ``OTEL_EXPORTER_OTLP_ENDPOINT`` set explicitly → use as-is, no extra headers.
-    2. ``LANGFUSE_HOST`` + ``LANGFUSE_PUBLIC_KEY`` + ``LANGFUSE_SECRET_KEY`` →
-       derive ``{LANGFUSE_HOST}/api/public/otel`` with HTTP Basic Auth.
-       Langfuse's integrated OTel collector archives all received spans automatically.
+    2. ``TELEMETRY_HOST`` + ``TELEMETRY_PUBLIC_KEY`` + ``TELEMETRY_SECRET_KEY`` →
+       derive ``{TELEMETRY_HOST}/api/public/otel`` with HTTP Basic Auth.
+       RemoteTelemetry's integrated OTel collector archives all received spans automatically.
     3. No endpoint configured → return ``("", {})`` so the caller skips OTLP export.
        The standalone otel-collector sidecar (port 4318) is deprecated; falling back
        to localhost:4318 would cause retry-loop timeouts in test workers.
@@ -77,14 +77,14 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
                     headers[k.strip()] = v.strip()
         return explicit, headers
 
-    host = os.environ.get("LANGFUSE_HOST", "").strip().rstrip("/")
-    pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
-    sk = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
+    host = os.environ.get("TELEMETRY_HOST", "").strip().rstrip("/")
+    pk = os.environ.get("TELEMETRY_PUBLIC_KEY", "").strip()
+    sk = os.environ.get("TELEMETRY_SECRET_KEY", "").strip()
     if host and pk and sk:
         endpoint = f"{host}/api/public/otel"
         token = base64.b64encode(f"{pk}:{sk}".encode()).decode()
         logger.info(
-            "✅ Gateway tracing: derived Langfuse OTLP endpoint from LANGFUSE_HOST → %s",
+            "✅ Gateway tracing: derived RemoteTelemetry OTLP endpoint from TELEMETRY_HOST → %s",
             endpoint,
         )
         return endpoint, {"Authorization": f"Basic {token}"}
@@ -92,14 +92,14 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
     # No endpoint configured — otel-collector (port 4318) is deprecated and removed.
     # Return empty string so setup_tracing() skips OTLP exporter initialisation entirely.
     logger.debug(
-        "Gateway tracing: no OTEL_EXPORTER_OTLP_ENDPOINT or LANGFUSE_HOST set — "
+        "Gateway tracing: no OTEL_EXPORTER_OTLP_ENDPOINT or TELEMETRY_HOST set — "
         "OTLP export disabled (standalone otel-collector is deprecated; "
-        "telemetry is collected natively by Langfuse when LANGFUSE_HOST is set)"
+        "telemetry is collected natively by RemoteTelemetry when TELEMETRY_HOST is set)"
     )
     return "", {}
 
 
-# Phrases emitted by the Langfuse S3 worker / OTel OTLP exporter when the
+# Phrases emitted by the RemoteTelemetry S3 worker / OTel OTLP exporter when the
 # collector's S3 backend is unavailable.
 _S3_ERROR_PHRASES = (
     "Failed to upload JSON to S3",
@@ -124,7 +124,7 @@ class _OTLPErrorFilter(logging.Filter):
 
     The OTel SDK ``BatchSpanProcessor`` background thread logs a record at
     ``logging.ERROR`` every time the OTLP endpoint returns a non-2xx status
-    (e.g. HTTP 500 "Failed to upload JSON to S3" from the Langfuse collector).
+    (e.g. HTTP 500 "Failed to upload JSON to S3" from the RemoteTelemetry collector).
     This filter intercepts those records and reduces their severity to WARNING
     so they do not surface as uncaught exceptions or trigger alerting rules.
     """
@@ -193,8 +193,8 @@ def setup_tracing() -> None:
             if not _otlp_endpoint:
                 logger.info(
                     "[INFO] OTel OTLP export skipped - no OTEL_EXPORTER_OTLP_ENDPOINT or "
-                    "LANGFUSE_HOST configured. Set LANGFUSE_HOST + keys to enable "
-                    "telemetry via Langfuse's integrated OTel collector."
+                    "TELEMETRY_HOST configured. Set TELEMETRY_HOST + keys to enable "
+                    "telemetry via RemoteTelemetry's integrated OTel collector."
                 )
             else:
                 try:
@@ -203,7 +203,7 @@ def setup_tracing() -> None:
                     )
 
                     # Append /v1/traces only when using a generic collector endpoint
-                    # (Langfuse's endpoint already includes the full path).
+                    # (RemoteTelemetry's endpoint already includes the full path).
                     otlp_url = (
                         _otlp_endpoint
                         if _otlp_endpoint.endswith("/otel")

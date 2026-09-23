@@ -567,7 +567,7 @@ def causal_safety_check(
         if _cage_env not in ("development", "test", "dev", "ci"):
             logger.error(
                 "causal_safety_check: no live telemetry provided in production "
-                "(CAGE_ENV=%s) — failing closed. Ensure LangfuseTelemetryProvider "
+                "(CAGE_ENV=%s) — failing closed. Ensure RemoteTelemetryProvider "
                 "is configured and returning data before calling this function.",
                 _cage_env,
             )

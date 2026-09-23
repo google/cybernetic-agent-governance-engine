@@ -50,7 +50,7 @@ def _get_server_app():
     """Import the FastAPI app with NeMo / Redis mocked out."""
     with (
         patch(
-            "src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()
+            "src.integrations.nemo.manager.load_rails", return_value=MagicMock()
         ),
         patch(
             "src.governed_financial_advisor.graph.graph.create_graph",
@@ -156,7 +156,7 @@ class TestLangfuseWebhook:
     def client(self):
         with (
             patch(
-                "src.gateway.governance.nemo.manager.load_rails",
+                "src.integrations.nemo.manager.load_rails",
                 return_value=MagicMock(),
             ),
             patch(
@@ -282,7 +282,7 @@ class TestApplyRefinementProposalFlow:
     def client(self):
         with (
             patch(
-                "src.gateway.governance.nemo.manager.load_rails",
+                "src.integrations.nemo.manager.load_rails",
                 return_value=MagicMock(),
             ),
             patch(
@@ -387,7 +387,7 @@ class TestWebhookCooldown:
     def client(self):
         with (
             patch(
-                "src.gateway.governance.nemo.manager.load_rails",
+                "src.integrations.nemo.manager.load_rails",
                 return_value=MagicMock(),
             ),
             patch(
@@ -518,7 +518,7 @@ class TestWebhookMinSamples:
     def client(self):
         with (
             patch(
-                "src.gateway.governance.nemo.manager.load_rails",
+                "src.integrations.nemo.manager.load_rails",
                 return_value=MagicMock(),
             ),
             patch(

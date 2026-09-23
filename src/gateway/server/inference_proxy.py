@@ -47,7 +47,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
 
 from src.gateway.governance.iso_control import stamp_iso_control
-from src.gateway.governance.nemo.manager import verify_and_mask_output, verify_input
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
 from src.gateway.governance.uca_logger import _get_uca_logger
@@ -218,7 +217,8 @@ async def chat_completions(
     background_tasks: BackgroundTasks,
 ) -> JSONResponse:
     """OpenAI-compatible governed inference endpoint."""
-    from src.gateway.governance.nemo.manager import initialize_rails as _init_rails
+    from src.integrations.nemo.manager import initialize_rails as _init_rails
+    from src.integrations.nemo.manager import verify_and_mask_output, verify_input
 
     # Rails are initialised externally at startup and stored on app.state.
     # Fall back to on-demand init if not set (e.g. during testing).

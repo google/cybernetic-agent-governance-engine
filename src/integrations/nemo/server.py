@@ -24,7 +24,7 @@ RPC: ``Verify(VerifyRequest) -> VerifyResponse``.
 
 It is run as an independent OS process — either in its own container or as a
 sidecar pod — and must be started explicitly (e.g. ``python -m
-src.gateway.governance.nemo.server``).
+src.integrations.nemo.server``).
 
 RELATIONSHIP TO THE IN-PROCESS SINGLETON (manager.py)
 -------------------------------------------------------
@@ -35,7 +35,7 @@ inference pipeline are:
   - ``nemo_output_rail_node`` (exit rail  — validates / masks LLM output)
 
 **Both nodes call NeMo Guardrails in-process** via functions exported from
-``src/gateway/governance/nemo/manager.py``:
+``src.integrations.nemo/manager.py``:
 
   - ``validate_with_nemo(user_input, rails)``
   - ``verify_input(rails, text)``
@@ -99,7 +99,7 @@ would:
 
 See ``plans/nemo_guardrails_architectural_analysis.md`` for the full
 architectural rationale and decision record.
-See ``src/gateway/governance/nemo/README.md`` for an architecture diagram.
+See ``src.integrations.nemo/README.md`` for an architecture diagram.
 """
 
 import asyncio
@@ -114,7 +114,7 @@ import grpc
 
 sys.path.append(".")
 
-from src.gateway.governance.nemo.manager import create_nemo_manager
+from src.integrations.nemo.manager import create_nemo_manager
 from src.gateway.protos import nemo_pb2, nemo_pb2_grpc
 
 # Configure logging
@@ -122,7 +122,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NeMoSidecar")
 
 # Load Rails Config
-# Config is located in config/rails relative to project root (from src/gateway/governance/nemo)
+# Config is located in config/rails relative to project root (from src.integrations.nemo)
 RAILS_CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../../../config/rails")
 )

@@ -92,7 +92,7 @@ class DeferReason(str, Enum):
     """vLLM sidecar semantic similarity score is within the ambiguity band (0.40-0.60)."""
 
     DATA_STARVATION = "DATA_STARVATION"
-    """Langfuse telemetry evidence window is empty or below minimum sample threshold."""
+    """Remote telemetry evidence window is empty or below minimum sample threshold."""
 
     CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"
     """model confidence_score < DEFER_CONFIDENCE_THRESHOLD (default 0.70)."""

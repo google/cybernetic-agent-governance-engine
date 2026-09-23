@@ -98,7 +98,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         raise
 
     # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
-    from src.gateway.governance.nemo.manager import initialize_rails
+    from src.integrations.nemo.manager import initialize_rails
 
     logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
     nemo_rails = initialize_rails()

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Extended unit tests for src/gateway/governance/nemo/server.py.
+Extended unit tests for src/integrations/nemo/server.py.
 
 Covers branches not exercised by test_nemo_server.py:
   - Verify() with an empty response list (content fallback to "")
@@ -60,7 +60,7 @@ def _stubs(rails_obj: object = None) -> dict:
         "src.gateway.protos.nemo_pb2": mock_pb2,
         "src.gateway.protos.nemo_pb2_grpc": mock_pb2_grpc,
         "src.gateway.protos": MagicMock(nemo_pb2=mock_pb2, nemo_pb2_grpc=mock_pb2_grpc),
-        "src.gateway.governance.nemo.manager": MagicMock(
+        "src.integrations.nemo.manager": MagicMock(
             create_nemo_manager=MagicMock(return_value=rails_obj or MagicMock()),
         ),
     }
@@ -71,9 +71,9 @@ def _fresh_service(stubs: dict, exists: bool = True) -> object:
     import sys
 
     with patch.dict("sys.modules", stubs):
-        sys.modules.pop("src.gateway.governance.nemo.server", None)
+        sys.modules.pop("src.integrations.nemo.server", None)
         with patch("os.path.exists", return_value=exists):
-            from src.gateway.governance.nemo.server import NeMoService
+            from src.integrations.nemo.server import NeMoService
 
             return NeMoService()
 
@@ -165,9 +165,9 @@ async def test_serve_reads_port_env_variable() -> None:
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
-        sys.modules.pop("src.gateway.governance.nemo.server", None)
+        sys.modules.pop("src.integrations.nemo.server", None)
         with patch("os.path.exists", return_value=False):
-            from src.gateway.governance.nemo.server import serve
+            from src.integrations.nemo.server import serve
 
     mock_grpc = stubs["grpc"]
     mock_aio_server = mock_grpc.aio.server.return_value
@@ -195,9 +195,9 @@ async def test_serve_registers_nemo_service() -> None:
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
-        sys.modules.pop("src.gateway.governance.nemo.server", None)
+        sys.modules.pop("src.integrations.nemo.server", None)
         with patch("os.path.exists", return_value=False):
-            from src.gateway.governance.nemo.server import serve
+            from src.integrations.nemo.server import serve
 
     mock_pb2_grpc = stubs["src.gateway.protos.nemo_pb2_grpc"]
     mock_aio_server = stubs["grpc"].aio.server.return_value
@@ -222,9 +222,9 @@ async def test_serve_calls_start_and_wait_for_termination() -> None:
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
-        sys.modules.pop("src.gateway.governance.nemo.server", None)
+        sys.modules.pop("src.integrations.nemo.server", None)
         with patch("os.path.exists", return_value=False):
-            from src.gateway.governance.nemo.server import serve
+            from src.integrations.nemo.server import serve
 
     mock_aio_server = stubs["grpc"].aio.server.return_value
     mock_aio_server.start = AsyncMock()
@@ -249,9 +249,9 @@ def test_rails_config_path_is_absolute() -> None:
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
-        sys.modules.pop("src.gateway.governance.nemo.server", None)
+        sys.modules.pop("src.integrations.nemo.server", None)
         with patch("os.path.exists", return_value=False):
-            from src.gateway.governance.nemo import server as nemo_server_mod
+            from src.integrations.nemo import server as nemo_server_mod
 
     assert os.path.isabs(nemo_server_mod.RAILS_CONFIG_PATH), (
         f"RAILS_CONFIG_PATH should be absolute, got: {nemo_server_mod.RAILS_CONFIG_PATH}"

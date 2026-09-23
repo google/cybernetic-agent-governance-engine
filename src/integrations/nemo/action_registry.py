@@ -44,7 +44,7 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
     actions = list(_actions)
 
     try:
-        from src.gateway.governance.nemo.actions import InvokeVllmFallbackAction
+        from src.integrations.nemo.actions import InvokeVllmFallbackAction
 
         actions.append(("InvokeVllmFallbackAction", InvokeVllmFallbackAction))
     except ImportError:

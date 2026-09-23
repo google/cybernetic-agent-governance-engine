@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src/gateway/governance/nemo/server.py — NeMoService and serve().
+Unit tests for src/integrations/nemo/server.py — NeMoService and serve().
 
 All tests are hermetic:
 - grpc is mocked so no network server is started.
@@ -50,7 +50,7 @@ def _nemo_server_stubs():
         "src.gateway.protos.nemo_pb2": mock_pb2,
         "src.gateway.protos.nemo_pb2_grpc": mock_pb2_grpc,
         "src.gateway.protos": MagicMock(nemo_pb2=mock_pb2, nemo_pb2_grpc=mock_pb2_grpc),
-        "src.gateway.governance.nemo.manager": MagicMock(
+        "src.integrations.nemo.manager": MagicMock(
             create_nemo_manager=MagicMock(return_value=MagicMock()),
         ),
     }
@@ -73,14 +73,14 @@ class TestNeMoServiceLoadRails:
 
         mock_rails = MagicMock(name="MockRails")
         stubs[
-            "src.gateway.governance.nemo.manager"
+            "src.integrations.nemo.manager"
         ].create_nemo_manager.return_value = mock_rails
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
 
             with patch("os.path.exists", return_value=True):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -93,10 +93,10 @@ class TestNeMoServiceLoadRails:
         stubs = _nemo_server_stubs()
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
 
             with patch("os.path.exists", return_value=False):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -108,14 +108,14 @@ class TestNeMoServiceLoadRails:
 
         stubs = _nemo_server_stubs()
         stubs[
-            "src.gateway.governance.nemo.manager"
+            "src.integrations.nemo.manager"
         ].create_nemo_manager.side_effect = RuntimeError("NeMo init failed")
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
 
             with patch("os.path.exists", return_value=True):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -139,9 +139,9 @@ class TestNeMoServiceVerify:
         stubs = _nemo_server_stubs()
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
             with patch("os.path.exists", return_value=False):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -169,13 +169,13 @@ class TestNeMoServiceVerify:
             return_value=MagicMock(response=[{"content": "SAFE"}])
         )
         stubs[
-            "src.gateway.governance.nemo.manager"
+            "src.integrations.nemo.manager"
         ].create_nemo_manager.return_value = mock_rails
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
             with patch("os.path.exists", return_value=True):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -201,13 +201,13 @@ class TestNeMoServiceVerify:
             return_value=MagicMock(response=[{"content": "I cannot help with that."}])
         )
         stubs[
-            "src.gateway.governance.nemo.manager"
+            "src.integrations.nemo.manager"
         ].create_nemo_manager.return_value = mock_rails
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
             with patch("os.path.exists", return_value=True):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -231,13 +231,13 @@ class TestNeMoServiceVerify:
             side_effect=RuntimeError("guardrail crash")
         )
         stubs[
-            "src.gateway.governance.nemo.manager"
+            "src.integrations.nemo.manager"
         ].create_nemo_manager.return_value = mock_rails
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
             with patch("os.path.exists", return_value=True):
-                from src.gateway.governance.nemo.server import NeMoService
+                from src.integrations.nemo.server import NeMoService
 
                 svc = NeMoService()
 
@@ -267,9 +267,9 @@ class TestServeFunction:
         stubs = _nemo_server_stubs()
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
             with patch("os.path.exists", return_value=False):
-                from src.gateway.governance.nemo.server import serve
+                from src.integrations.nemo.server import serve
 
         assert asyncio.iscoroutinefunction(serve)
 
@@ -280,9 +280,9 @@ class TestServeFunction:
         stubs = _nemo_server_stubs()
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.server", None)
+            sys.modules.pop("src.integrations.nemo.server", None)
             with patch("os.path.exists", return_value=False):
-                from src.gateway.governance.nemo import server as nemo_server_mod
+                from src.integrations.nemo import server as nemo_server_mod
 
         assert (
             nemo_server_mod.RAILS_CONFIG_PATH.endswith("config/rails")

@@ -20,12 +20,12 @@ metadata used across CAGE.
 Architecture & Design Rationale (Wave 1, Task W1.6 / AW-6):
   - Vendor namespace decoupling: Declares the telemetry vendor prefix in exactly
     one place, driven by the ``CAGE_TELEMETRY_ATTR_NAMESPACE`` environment variable
-    (default: "langfuse").
+    (default: "telemetry").
   - Zero hot-path overhead: Uses module-level ``Final[str]`` constants rather than
     dataclasses or function calls on static lookup paths.
   - Dynamic key helpers: Provides ``metadata(key)`` and ``observation_metadata(key)``
     for runtime-parameterized attribute naming.
-  - Wire-format stability: When using default namespace ("langfuse"), all emitted
+  - Wire-format stability: When using default namespace ("telemetry"), all emitted
     attribute keys remain 100% byte-identical to historical string literals to
     preserve hash-chain and evidence audit trail verifiability (§0 invariant).
 """
@@ -40,7 +40,7 @@ from typing import Final
 # ---------------------------------------------------------------------------
 
 NAMESPACE: Final[str] = (
-    os.environ.get("CAGE_TELEMETRY_ATTR_NAMESPACE", "langfuse").strip() or "langfuse"
+    os.environ.get("CAGE_TELEMETRY_ATTR_NAMESPACE", "telemetry").strip() or "telemetry"
 )
 
 
@@ -48,7 +48,7 @@ def metadata(key: str) -> str:
     """Format a trace metadata key within the active telemetry namespace.
 
     Example:
-        metadata("governance.action") -> "langfuse.trace.metadata.governance.action"
+        metadata("governance.action") -> "telemetry.trace.metadata.governance.action"
     """
     return f"{NAMESPACE}.trace.metadata.{key}"
 
@@ -57,7 +57,7 @@ def observation_metadata(key: str) -> str:
     """Format an observation metadata key within the active telemetry namespace.
 
     Example:
-        observation_metadata("iso_control") -> "langfuse.observation.metadata.iso_control"
+        observation_metadata("iso_control") -> "telemetry.observation.metadata.iso_control"
     """
     return f"{NAMESPACE}.observation.metadata.{key}"
 

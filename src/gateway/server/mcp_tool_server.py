@@ -55,10 +55,6 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
-from src.gateway.governance.nemo.manager import (
-    initialize_rails,
-    validate_with_nemo,
-)
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.gateway.infrastructure.config_manager import config_manager
@@ -155,6 +151,7 @@ def _assert_required_plugins(loaded: list[Any]) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    from src.integrations.nemo.manager import initialize_rails
     # 1. Tracing bootstrap (Phase 5.1)
     setup_tracing()
 
@@ -339,7 +336,7 @@ async def _evaluate_policy_internal(
     MCP tool so agents cannot invoke OPA evaluation via the tool surface.
     """
     # GAP-3 fix: wrap the OPA client call in a parent span so the parameter
-    # marshalling step and OPA decision are visible as siblings in Langfuse,
+    # marshalling step and OPA decision are visible as siblings in Telemetry,
     # bridging the gap between the FastAPI HTTP span and the governance.opa_check
     # child span already emitted by OPAClient.evaluate_policy().
     with tracer.start_as_current_span("governance.opa_policy_evaluation") as span:
@@ -403,6 +400,7 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
 @mcp.tool()
 async def verify_content_safety(text: str) -> str:
     """Verify safety of a given text using NeMo Guardrails."""
+    from src.integrations.nemo.manager import validate_with_nemo
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
         return "ERROR: NeMo rails not initialised."

@@ -26,13 +26,13 @@ Architecture (Wave 1, Task W1.6):
   - BaseTelemetryProvider:       Abstract interface consumed by SymbolicGovernor.
   - NullTelemetryProvider:       Clean fail-closed null provider returning an empty,
                                  correctly-typed DataFrame without fabricating data.
-  - LangfuseTelemetryProvider:   Fetches live triples from Langfuse governance spans.
+  - RemoteTelemetryProvider:   Fetches live triples from Langfuse governance spans.
   - MockTelemetryProvider:       Retained for test environments; forbidden in production.
   - get_telemetry_provider:      Factory resolving CAGE_TELEMETRY_PROVIDER env var.
 
 Explicit Provider Selection (AW-8):
   Provider selection is controlled via ``CAGE_TELEMETRY_PROVIDER``:
-    - 'langfuse': Pulls live telemetry. Hard failure (ConfigurationError) if credentials missing.
+    - 'remote': Pulls live telemetry. Hard failure (ConfigurationError) if credentials missing.
     - 'null': Returns NullTelemetryProvider. Safe for offline / bare-kernel mode.
     - 'mock': Explicitly runs MockTelemetryProvider. Forbidden if CAGE_ENV=prod.
 """
@@ -176,12 +176,12 @@ def __getattr__(name: str) -> Any:
     This preserves backward-compatible imports while maintaining strict
     layer boundary separation (Gate G3).
     """
-    if name == "LangfuseTelemetryProvider":
+    if name == "RemoteTelemetryProvider":
         from src.integrations.telemetry_langfuse.provider import (
-            LangfuseTelemetryProvider,
+            LangfuseTelemetryProvider as RemoteTelemetryProvider,
         )
 
-        return LangfuseTelemetryProvider
+        return RemoteTelemetryProvider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -197,13 +197,13 @@ def get_telemetry_provider(
 
     Resolution order:
       1. Explicit ``provider_type`` argument if provided.
-      2. ``CAGE_TELEMETRY_PROVIDER`` environment variable ('langfuse', 'null', 'mock').
-      3. If unset: defaults to 'langfuse' if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY
+      2. ``CAGE_TELEMETRY_PROVIDER`` environment variable ('remote', 'null', 'mock').
+      3. If unset: defaults to 'remote' if TELEMETRY_PUBLIC_KEY and TELEMETRY_SECRET_KEY
          are configured, otherwise defaults to 'null'.
 
     Rules:
       - 'mock': forbidden when CAGE_ENV=prod (raises ConfigurationError).
-      - 'langfuse': raises ConfigurationError if credentials or SDK are missing.
+      - 'remote': raises ConfigurationError if credentials or SDK are missing.
       - 'null': returns NullTelemetryProvider().
     """
     if provider_type is None:
@@ -211,11 +211,11 @@ def get_telemetry_provider(
 
     if not provider_type:
         has_keys = bool(
-            os.environ.get("LANGFUSE_PUBLIC_KEY")
-            and os.environ.get("LANGFUSE_SECRET_KEY")
+            os.environ.get("TELEMETRY_PUBLIC_KEY")
+            and os.environ.get("TELEMETRY_SECRET_KEY")
         )
         if has_keys:
-            provider_type = "langfuse"
+            provider_type = "remote"
         else:
             provider_type = "null"
 
@@ -237,16 +237,16 @@ def get_telemetry_provider(
             )
         return MockTelemetryProvider()
 
-    if provider_type == "langfuse":
+    if provider_type == "remote":
         from src.integrations.telemetry_langfuse.provider import (
-            LangfuseTelemetryProvider,
+            LangfuseTelemetryProvider as RemoteTelemetryProvider,
         )
 
-        return LangfuseTelemetryProvider.from_env()
+        return RemoteTelemetryProvider.from_env()
 
     raise ConfigurationError(
         f"Unknown telemetry provider '{provider_type}'. "
-        "Valid choices are: 'langfuse', 'null', 'mock'."
+        "Valid choices are: 'remote', 'null', 'mock'."
     )
 
 
@@ -257,5 +257,5 @@ __all__ = [
     "ConfigurationError",
     "MIN_SAMPLES",
     "get_telemetry_provider",
-    "LangfuseTelemetryProvider",
+    "RemoteTelemetryProvider",
 ]

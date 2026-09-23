@@ -23,7 +23,7 @@
 # The gateway serves HTTP/FastAPI exclusively (src/gateway/server/hybrid_server.py).
 # These stubs are retained as generated artifacts alongside gateway.proto but are
 # NOT imported by any application code. Do not add new imports of this module
-# outside of src/gateway/governance/nemo/server.py (which uses nemo_pb2, not this).
+# outside of src/integrations/nemo/server.py (which uses nemo_pb2, not this).
 # See analysis in docs/SECRET_MANAGEMENT_OPTIONS.md and ARCHITECTURE.md.
 """Generated protocol buffer code (Gateway service — currently unimplemented/unused)."""
 from google.protobuf import descriptor as _descriptor

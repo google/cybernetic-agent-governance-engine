@@ -90,7 +90,7 @@ def _make_hybrid_stubs() -> dict:
         # Tracing
         "src.gateway.tracing_setup": MagicMock(setup_tracing=MagicMock()),
         # NeMo
-        "src.gateway.governance.nemo.manager": MagicMock(
+        "src.integrations.nemo.manager": MagicMock(
             initialize_rails=MagicMock(return_value=MagicMock()),
             validate_with_nemo=AsyncMock(return_value=(True, "SAFE", True)),
         ),

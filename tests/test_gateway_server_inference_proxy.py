@@ -35,7 +35,7 @@ def _make_import_patches():
     """Return a dict of module-path → stub suitable for patch.dict(sys.modules)."""
     return {
         "src.gateway.governance.iso_control": MagicMock(),
-        "src.gateway.governance.nemo.manager": MagicMock(
+        "src.integrations.nemo.manager": MagicMock(
             verify_and_mask_output=AsyncMock(side_effect=lambda _r, t: t),
             verify_input=AsyncMock(),
         ),

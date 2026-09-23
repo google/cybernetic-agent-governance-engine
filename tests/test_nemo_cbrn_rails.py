@@ -16,7 +16,7 @@
 Tests for NeMo Guardrails CBRN Colang rail — AI 600-1 §2.6 (POAM AI600-007).
 
 These tests validate the *static content* of the Colang rail file
-(src/gateway/governance/nemo/colang/cbrn_rails.co) without requiring a live
+(src/integrations/nemo/colang/cbrn_rails.co) without requiring a live
 NeMo Guardrails runtime.  The rail file is parsed as plain text and its
 structural elements are verified.
 
@@ -41,7 +41,7 @@ import pytest
 # Rail file path
 # ---------------------------------------------------------------------------
 
-RAIL_FILE = pathlib.Path("src/gateway/governance/nemo/colang/cbrn_rails.co")
+RAIL_FILE = pathlib.Path("src/integrations/nemo/colang/cbrn_rails.co")
 
 # ---------------------------------------------------------------------------
 # Expected content constants
@@ -98,7 +98,7 @@ class TestCBRNRailFileExists:
     """Verify the CBRN rail file exists at the expected path."""
 
     def test_rail_file_exists(self):
-        """cbrn_rails.co must exist at src/gateway/governance/nemo/colang/."""
+        """cbrn_rails.co must exist at src/integrations/nemo/colang/."""
         assert RAIL_FILE.exists(), f"CBRN rail file missing: {RAIL_FILE}"
 
     def test_rail_file_is_not_empty(self, rail_content: str):

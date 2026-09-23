@@ -45,7 +45,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.governance.iso_control import stamp_iso_control
-from src.gateway.governance.nemo.vllm_client import VLLMLLM
+from src.integrations.nemo.vllm_client import VLLMLLM
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.observability.attributes import (
     OBSERVATION_METADATA_FALLBACK_REASON,
@@ -258,7 +258,7 @@ tracer = trace.get_tracer(__name__)
 # process and is entirely separate from the graph runner's singleton.
 #
 # For the full architectural rationale, see:
-#   - src/gateway/governance/nemo/README.md
+#   - src.integrations.nemo/README.md
 #   - plans/nemo_guardrails_architectural_analysis.md
 # ---------------------------------------------------------------------------
 def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
@@ -393,7 +393,7 @@ def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
 
     # --- Langfuse Prompt Injection ---
     try:
-        from src.gateway.governance.nemo.prompt_fetcher import fetch_managed_prompts
+        from src.integrations.nemo.prompt_fetcher import fetch_managed_prompts
 
         dynamic_prompts_yaml = fetch_managed_prompts()
         if dynamic_prompts_yaml:
@@ -452,7 +452,7 @@ def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
         )
 
     try:
-        from src.gateway.governance.nemo.action_registry import (
+        from src.integrations.nemo.action_registry import (
             get_all_actions,
         )
 

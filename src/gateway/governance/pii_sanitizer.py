@@ -88,13 +88,13 @@ PRESIDIO_SCORE_THRESHOLD: float = float(
     os.environ.get("PRESIDIO_SCORE_THRESHOLD", "0.5")
 )
 
-# LANGFUSE_PII_SCRUBBING_ENABLED: When set to "true", the pii_audit_log()
+# TELEMETRY_PII_SCRUBBING_ENABLED: When set to "true", the pii_audit_log()
 # function applies the PIISanitizer to Langfuse span input/output fields
 # before emitting them.  This prevents PII from appearing in compliance
 # audit traces, satisfying AI 600-1 §2.2 and GDPR Art. 25 data minimisation.
 # See docs/PII_SCRUBBING_POLICY.md for the full scrubbing field policy.
-_LANGFUSE_PII_SCRUBBING_ENABLED: bool = (
-    os.environ.get("LANGFUSE_PII_SCRUBBING_ENABLED", "true").lower() == "true"
+_TELEMETRY_PII_SCRUBBING_ENABLED: bool = (
+    os.environ.get("TELEMETRY_PII_SCRUBBING_ENABLED", "true").lower() == "true"
 )
 
 

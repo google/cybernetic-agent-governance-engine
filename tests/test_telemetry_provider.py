@@ -18,12 +18,12 @@ Unit tests for src.gateway.governance.telemetry_provider.
 Covers:
   - BaseTelemetryProvider abstract interface
   - MockTelemetryProvider deterministic data generation
-  - LangfuseTelemetryProvider with None client (fallback path)
-  - LangfuseTelemetryProvider.from_env() credential-missing path
-  - LangfuseTelemetryProvider.from_env() ImportError path
-  - LangfuseTelemetryProvider.get_latest_data() with live data (sufficient samples)
-  - LangfuseTelemetryProvider.get_latest_data() with too few samples (fallback)
-  - LangfuseTelemetryProvider.get_latest_data() exception fallback
+  - RemoteTelemetryProvider with None client (fallback path)
+  - RemoteTelemetryProvider.from_env() credential-missing path
+  - RemoteTelemetryProvider.from_env() ImportError path
+  - RemoteTelemetryProvider.get_latest_data() with live data (sufficient samples)
+  - RemoteTelemetryProvider.get_latest_data() with too few samples (fallback)
+  - RemoteTelemetryProvider.get_latest_data() exception fallback
   - MIN_SAMPLES default value
 """
 
@@ -39,7 +39,7 @@ from src.gateway.governance.telemetry_provider import (
     MIN_SAMPLES,
     BaseTelemetryProvider,
     ConfigurationError,
-    LangfuseTelemetryProvider,
+    RemoteTelemetryProvider,
     MockTelemetryProvider,
     NullTelemetryProvider,
     get_telemetry_provider,
@@ -172,26 +172,26 @@ class TestMockTelemetryProvider:
 
 
 # ---------------------------------------------------------------------------
-# LangfuseTelemetryProvider — None-client path (default fallback is NullTelemetryProvider)
+# RemoteTelemetryProvider — None-client path (default fallback is NullTelemetryProvider)
 # ---------------------------------------------------------------------------
 
 
-class TestLangfuseTelemetryProviderNoneClient:
+class TestRemoteTelemetryProviderNoneClient:
     """When client=None, all calls fall back to the configured fallback provider."""
 
     def test_none_client_fallback_returns_dataframe(self):
-        provider = LangfuseTelemetryProvider(langfuse_client=None)
+        provider = RemoteTelemetryProvider(langfuse_client=None)
         df = provider.get_latest_data()
         assert isinstance(df, pd.DataFrame)
         assert _REQUIRED_COLUMNS.issubset(set(df.columns))
 
     def test_none_client_uses_default_null_fallback(self):
-        provider = LangfuseTelemetryProvider(langfuse_client=None)
+        provider = RemoteTelemetryProvider(langfuse_client=None)
         assert isinstance(provider._fallback, NullTelemetryProvider)
 
     def test_none_client_custom_fallback_is_used(self):
         custom_fallback = MockTelemetryProvider(seed=123)
-        provider = LangfuseTelemetryProvider(
+        provider = RemoteTelemetryProvider(
             langfuse_client=None, fallback=custom_fallback
         )
         assert provider._fallback is custom_fallback
@@ -200,21 +200,21 @@ class TestLangfuseTelemetryProviderNoneClient:
 
     def test_none_client_default_fallback_data_is_empty(self):
         """Default fallback is NullTelemetryProvider which returns 0 rows (fail-closed)."""
-        provider = LangfuseTelemetryProvider(langfuse_client=None)
+        provider = RemoteTelemetryProvider(langfuse_client=None)
         df = provider.get_latest_data(n_samples=100)
         assert len(df) == 0
 
     def test_none_client_stores_client_as_none(self):
-        provider = LangfuseTelemetryProvider(langfuse_client=None)
+        provider = RemoteTelemetryProvider(langfuse_client=None)
         assert provider._client is None
 
 
 # ---------------------------------------------------------------------------
-# LangfuseTelemetryProvider.from_env() — credential / import-error paths (AW-8)
+# RemoteTelemetryProvider.from_env() — credential / import-error paths (AW-8)
 # ---------------------------------------------------------------------------
 
 
-class TestLangfuseTelemetryProviderFromEnv:
+class TestRemoteTelemetryProviderFromEnv:
     """from_env() constructor enforces explicit configuration (no silent fallback)."""
 
     def test_from_env_without_credentials_raises_configuration_error(self):
@@ -228,7 +228,7 @@ class TestLangfuseTelemetryProviderFromEnv:
             with pytest.raises(
                 ConfigurationError, match="LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"
             ):
-                LangfuseTelemetryProvider.from_env()
+                RemoteTelemetryProvider.from_env()
 
     def test_from_env_import_error_raises_configuration_error(self):
         """If langfuse SDK is not installed, from_env() must raise ConfigurationError (AW-8)."""
@@ -240,7 +240,7 @@ class TestLangfuseTelemetryProviderFromEnv:
                 "builtins.__import__", side_effect=_selective_import_error("langfuse")
             ):
                 with pytest.raises(ConfigurationError, match="package is required"):
-                    LangfuseTelemetryProvider.from_env()
+                    RemoteTelemetryProvider.from_env()
 
     def test_from_env_with_credentials_creates_langfuse_client(self):
         """When credentials are set and langfuse is importable, client should be non-None."""
@@ -257,9 +257,9 @@ class TestLangfuseTelemetryProviderFromEnv:
             },
         ):
             with patch.dict(
-                "sys.modules", {"langfuse": MagicMock(Langfuse=mock_langfuse_cls)}
+                "sys.modules", {"remote": MagicMock(Langfuse=mock_langfuse_cls)}
             ):
-                provider = LangfuseTelemetryProvider.from_env()
+                provider = RemoteTelemetryProvider.from_env()
 
         assert provider._client is not None
 
@@ -300,7 +300,7 @@ class TestGetTelemetryProviderFactory:
             with pytest.raises(ConfigurationError, match="Unknown telemetry provider"):
                 get_telemetry_provider()
 
-    def test_factory_langfuse_delegates_to_from_env(self):
+    def test_factory_remote_delegates_to_from_env(self):
         mock_langfuse_cls = MagicMock()
         mock_client = MagicMock()
         mock_langfuse_cls.return_value = mock_client
@@ -308,27 +308,27 @@ class TestGetTelemetryProviderFactory:
         with patch.dict(
             os.environ,
             {
-                "CAGE_TELEMETRY_PROVIDER": "langfuse",
+                "CAGE_TELEMETRY_PROVIDER": "remote",
                 "LANGFUSE_PUBLIC_KEY": "pk-test-1234",
                 "LANGFUSE_SECRET_KEY": "sk-test-5678",
                 "LANGFUSE_HOST": "https://test.langfuse.example",
             },
         ):
             with patch.dict(
-                "sys.modules", {"langfuse": MagicMock(Langfuse=mock_langfuse_cls)}
+                "sys.modules", {"remote": MagicMock(Langfuse=mock_langfuse_cls)}
             ):
                 provider = get_telemetry_provider()
 
-        assert isinstance(provider, LangfuseTelemetryProvider)
+        assert isinstance(provider, RemoteTelemetryProvider)
         assert provider._client is not None
 
 
 # ---------------------------------------------------------------------------
-# LangfuseTelemetryProvider.get_latest_data() — live data paths
+# RemoteTelemetryProvider.get_latest_data() — live data paths
 # ---------------------------------------------------------------------------
 
 
-class TestLangfuseTelemetryProviderGetLatestData:
+class TestRemoteTelemetryProviderGetLatestData:
     """get_latest_data() with mocked Langfuse client."""
 
     def _make_provider_with_traces(self, traces, n_samples=500):
@@ -338,7 +338,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         mock_response.data = traces
         mock_client.fetch_traces.return_value = mock_response
         fallback = MockTelemetryProvider(seed=42)
-        return LangfuseTelemetryProvider(langfuse_client=mock_client, fallback=fallback)
+        return RemoteTelemetryProvider(langfuse_client=mock_client, fallback=fallback)
 
     def test_sufficient_live_samples_returns_live_dataframe(self):
         n = MIN_SAMPLES + 10
@@ -391,7 +391,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         mock_client = MagicMock()
         mock_client.fetch_traces.side_effect = RuntimeError("network error")
         fallback = MockTelemetryProvider(seed=42)
-        provider = LangfuseTelemetryProvider(
+        provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=fallback
         )
         df = provider.get_latest_data(n_samples=100)
@@ -405,7 +405,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         mock_response = MagicMock(spec=[])  # spec=[] means no attributes
         mock_client.fetch_traces.return_value = mock_response
         fallback = MockTelemetryProvider(seed=42)
-        provider = LangfuseTelemetryProvider(
+        provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=fallback
         )
         df = provider.get_latest_data(n_samples=100)
@@ -426,7 +426,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         mock_response = MagicMock()
         mock_response.data = traces
         mock_client.fetch_traces.return_value = mock_response
-        provider = LangfuseTelemetryProvider(
+        provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=MockTelemetryProvider()
         )
         df = provider.get_latest_data(n_samples=n)
@@ -439,7 +439,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         mock_response = MagicMock()
         mock_response.data = traces
         mock_client.fetch_traces.return_value = mock_response
-        provider = LangfuseTelemetryProvider(
+        provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=MockTelemetryProvider()
         )
         provider.get_latest_data(n_samples=200)

@@ -132,7 +132,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src/gateway/governance/nemo/manager.py",
+            "src.integrations.nemo/manager.py",
             "src/governed_financial_advisor/governance/policy/trade_governance.rego",
             "config/rails/",
         ],
@@ -201,7 +201,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-a92.yaml",
         ],
         implementation_files=[
-            "src/gateway/governance/nemo/manager.py",
+            "src.integrations.nemo/manager.py",
         ],
         notes=(
             "Multi-tier shielding: Pre-gate Aho-Corasick heuristic, "
@@ -314,7 +314,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src/gateway/governance/nemo/manager.py",
+            "src.integrations.nemo/manager.py",
             "deployment/k8s/cilium-network-policy.yaml",
         ],
         notes=(

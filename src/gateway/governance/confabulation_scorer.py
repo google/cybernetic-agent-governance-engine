@@ -14,7 +14,7 @@
 
 """Confabulation scorer — AI 600-1 §2.1 control.
 
-Records low-confidence events to Langfuse for audit purposes.
+Records low-confidence events to Telemetry for audit purposes.
 Implements CTRL_AGT_001: confidence ≥ CONFIDENCE_MIN_SCORE threshold.
 
 POAM: AI600-001
@@ -58,16 +58,16 @@ CONFIDENCE_THRESHOLD: float = get_confidence_min_score()
 
 
 # ---------------------------------------------------------------------------
-# ConfabulationEvent — structured event for Langfuse scoring
+# ConfabulationEvent — structured event for Telemetry scoring
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class ConfabulationEvent:
-    """Structured confabulation event for Langfuse audit scoring.
+    """Structured confabulation event for Telemetry audit scoring.
 
     Attributes:
-        trace_id:         Langfuse trace ID for the governed request.
+        trace_id:         Telemetry trace ID for the governed request.
         confidence:       Model self-reported confidence score [0.0, 1.0].
         model_id:         Model identifier (e.g. "deepseek-r1-distill-qwen-14b").
         grounding_source: Optional grounding API used (e.g. "market_data_api").
@@ -82,12 +82,12 @@ class ConfabulationEvent:
 
 
 # ---------------------------------------------------------------------------
-# score_confabulation — Langfuse score payload builder
+# score_confabulation — Telemetry score payload builder
 # ---------------------------------------------------------------------------
 
 
 def score_confabulation(event: ConfabulationEvent) -> dict:
-    """Return a Langfuse score payload for confabulation risk.
+    """Return a Telemetry score payload for confabulation risk.
 
     The score value is ``1.0 - confidence``, so a confidence of 0.95 yields
     a confabulation risk score of 0.05 (low risk), and a confidence of 0.50
@@ -97,13 +97,13 @@ def score_confabulation(event: ConfabulationEvent) -> dict:
         event: A ``ConfabulationEvent`` describing the low-confidence response.
 
     Returns:
-        A dict suitable for submission to the Langfuse ``/api/public/scores``
+        A dict suitable for submission to the Telemetry ``/api/public/scores``
         endpoint.  Schema:
         {
             "name": "confabulation_risk",
             "value": float,          # 1.0 - confidence
             "comment": str,          # human-readable summary
-            "trace_id": str,         # Langfuse trace ID
+            "trace_id": str,         # Telemetry trace ID
             "data_type": "NUMERIC",
         }
     """

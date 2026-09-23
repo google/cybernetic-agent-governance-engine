@@ -1332,7 +1332,7 @@ class SymbolicGovernor:
           that was removed so a CBF commit can never be issued against a plan
           OPA later rejects.  Combined cost is therefore CBF_ms + OPA_ms.
           See the phase-ordering note further down this method.
-        - Each stage is wrapped in a discrete OTel span so Langfuse shows the
+        - Each stage is wrapped in a discrete OTel span so Telemetry shows the
           full 10-layer pipeline breakdown.
         """
         violations: list[str] = []
@@ -2191,7 +2191,7 @@ class SymbolicGovernor:
         cbf_allowed = True
         cbf_reason = "SAFE"
         try:
-            cbf_raw = await self.safety_filter.verify_action(tool_name, params)  # type: ignore[misc]  # Protocol declares sync str; impl is async
+            cbf_raw = await self.safety_filter.verify_action(tool_name, params)
             cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith(
                 "["
             )

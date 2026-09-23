@@ -18,7 +18,7 @@
 # ⚠️  DEAD CODE — GatewayStub and GatewayServicer are UNIMPLEMENTED and unused.
 # The gateway serves HTTP/FastAPI via hybrid_server.py, not gRPC.
 # These stubs exist as generated artefacts only. Do not wire them into any server.
-# The only active gRPC server in this codebase is src/gateway/governance/nemo/server.py
+# The only active gRPC server in this codebase is src/integrations/nemo/server.py
 # which uses nemo_pb2_grpc, not this module.
 """Client and server classes for the Gateway gRPC service (unimplemented — HTTP/MCP only)."""
 import grpc

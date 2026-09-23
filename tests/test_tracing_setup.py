@@ -54,9 +54,9 @@ def test_resolve_otlp_endpoint_langfuse():
     with patch.dict(
         os.environ,
         {
-            "LANGFUSE_HOST": "https://langfuse.example.com",
-            "LANGFUSE_PUBLIC_KEY": "pk-lf-12345",
-            "LANGFUSE_SECRET_KEY": "sk-lf-67890",
+            "TELEMETRY_HOST": "https://langfuse.example.com",
+            "TELEMETRY_PUBLIC_KEY": "pk-lf-12345",
+            "TELEMETRY_SECRET_KEY": "sk-lf-67890",
         },
         clear=True,
     ):

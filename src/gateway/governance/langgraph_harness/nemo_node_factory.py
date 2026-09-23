@@ -19,7 +19,7 @@ The factories encapsulate:
   - NeMo LLMRails singleton management (``get_nemo_rails``)
   - ``validate_with_nemo()`` for input rails
   - ``verify_and_mask_output()`` for output rails
-  - OTel span instrumentation with Langfuse attributes
+  - OTel span instrumentation with Telemetry attributes
   - Fail-closed exception handling (any error → blocked / sentinel)
   - CAGE_SEAL_ENFORCEMENT mode awareness
 
@@ -51,37 +51,23 @@ tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.nemo_node_fa
 _nemo_rails = None
 _NEMO_AVAILABLE = False
 
-# Stubs — overwritten below if NeMo is installed.  These must always exist as
-# module-level attributes so that unittest.mock.patch() can target them.
-create_nemo_manager = None  # type: ignore[assignment]
+def create_nemo_manager(*args, **kwargs):
+    from src.integrations.nemo.manager import create_nemo_manager as _create
+    return _create(*args, **kwargs)
 
+async def validate_with_nemo(*args, **kwargs):
+    from src.integrations.nemo.manager import validate_with_nemo as _validate
+    return await _validate(*args, **kwargs)
 
-async def validate_with_nemo(user_input, rails, pre_check_results=None) -> tuple:  # type: ignore[misc, no-untyped-def]
-    """Fail-closed stub — NeMo not available."""
-    raise RuntimeError("NeMo manager not available (validate_with_nemo stub)")
+async def verify_and_mask_output(*args, **kwargs):
+    from src.integrations.nemo.manager import verify_and_mask_output as _verify
+    return await _verify(*args, **kwargs)
 
+async def validate_output_semantics(*args, **kwargs):
+    from src.integrations.nemo.manager import validate_output_semantics as _validate_sem
+    return await _validate_sem(*args, **kwargs)
 
-async def verify_and_mask_output(rails, text):  # type: ignore[misc, no-untyped-def]
-    """Fail-closed stub — NeMo not available."""
-    raise RuntimeError("NeMo manager not available (verify_and_mask_output stub)")
-
-
-async def validate_output_semantics(rails, text):  # type: ignore[misc, no-untyped-def]
-    """Fail-closed stub — NeMo not available."""
-    raise RuntimeError("NeMo manager not available (validate_output_semantics stub)")
-
-
-try:
-    from src.gateway.governance.nemo.manager import (  # type: ignore[assignment]
-        create_nemo_manager,
-        validate_output_semantics,
-        validate_with_nemo,
-        verify_and_mask_output,
-    )
-
-    _NEMO_AVAILABLE = True
-except ImportError:
-    logger.warning("NeMo manager not importable — guardrail nodes will fail-closed")
+_NEMO_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
 # Presidio input-side PII scan — module-level singletons (Fix 3 / P1)

@@ -17,7 +17,7 @@ OPA safety-node factory — produces async LangGraph nodes with OPA governance.
 
 The factory encapsulates:
   - OPA invocation via ``symbolic_governor.govern()``
-  - OTel span instrumentation with Langfuse attributes
+  - OTel span instrumentation with Telemetry attributes
   - ISO 42001 evidence stamping (``stamp_iso_control``)
   - Compliance scoring via OTel span events
   - Fail-closed exception handling (any error → BLOCKED)
@@ -62,13 +62,13 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
     (e.g. the harness is used outside the financial-advisor codebase).
     """
     try:
-        from src.gateway.observability.langfuse_utils import (
+        from src.gateway.observability.telemetry_utils import (
             score_compliance_event,
         )
 
         score_compliance_event(thread_id, control, passed=passed, comment=comment)
     except ImportError:
-        # Harness is used in a project that doesn't have langfuse_utils —
+        # Harness is used in a project that doesn't have telemetry_utils —
         # compliance scoring degrades gracefully to a no-op.
         logger.debug(
             "score_compliance_event not available — skipping compliance score "

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src.gateway.governance.nemo.actions — gateway-internal NeMo actions.
+Unit tests for src.integrations.nemo.actions — gateway-internal NeMo actions.
 
 These actions delegate to pre-computed governance results injected into the NeMo
 context by NeMoManager.  Tests cover:
@@ -36,7 +36,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.gateway.governance.nemo.actions import (
+from src.integrations.nemo.actions import (
     CheckApprovalTokenAction,
     CheckAtomicExecutionAction,
     CheckDataLatencyAction,
@@ -445,7 +445,7 @@ class TestInvokeVllmFallbackAction:
 
         with (
             patch(
-                "src.gateway.governance.nemo.actions.genai_span",
+                "src.integrations.nemo.actions.genai_span",
                 return_value=mock_span_ctx,
             )
             if False
@@ -465,7 +465,7 @@ class TestInvokeVllmFallbackAction:
         # Direct invocation — empty content path
         with (
             patch(
-                "src.gateway.governance.nemo.actions.InvokeVllmFallbackAction.__module__",
+                "src.integrations.nemo.actions.InvokeVllmFallbackAction.__module__",
             )
             if False
             else _null_patch()
@@ -502,7 +502,7 @@ class TestInvokeVllmFallbackAction:
                 "src.gateway.infrastructure.telemetry_client": MagicMock(
                     genai_span=_mock_genai_span_ctx()
                 ),
-                "src.gateway.governance.nemo.vllm_client": MagicMock(
+                "src.integrations.nemo.vllm_client": MagicMock(
                     VLLMLLM=mock_vllm_llm
                 ),
                 "langchain_core.messages": MagicMock(HumanMessage=MagicMock()),

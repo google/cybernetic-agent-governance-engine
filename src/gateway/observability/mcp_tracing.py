@@ -17,7 +17,7 @@ MCP Distributed Tracing: W3C Trace Context Propagation
 
 Extracts W3C traceparent from incoming MCP tool call arguments
 and creates child spans linked to the caller's trace. This bridges
-the SSE transport gap and produces a seamless Langfuse waterfall.
+the SSE transport gap and produces a seamless Telemetry waterfall.
 
 Client Side: GatewayMCPClient injects {'_otel_carrier': {traceparent: ...}}
 Server Side: This module extracts it at the ToolManager level (before

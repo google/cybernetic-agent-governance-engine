@@ -23,7 +23,7 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.gateway.governance.langgraph_harness.nemo_node_factory import get_nemo_rails
-from src.gateway.governance.nemo.manager import validate_with_nemo
+from src.integrations.nemo.manager import validate_with_nemo
 from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,

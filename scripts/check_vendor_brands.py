@@ -6,11 +6,8 @@ from pathlib import Path
 # Vendor brand names that must not appear in kernel executable code
 # NOTE: This list may start empty if the tree is clean. An empty-but-wired gate
 # that catches the next violation is still worth having.
-FORBIDDEN_VENDOR_BRANDS: set[str] = {"langsmith"}
-# TODO(latent-gate): The kernel still contains 'langfuse' and 'openai' in
-# telemetry_provider.py and nemo/vllm_client.py. These should be refactored
-# out of Layer 1 (src/gateway/) into Layer 3 (src/integrations/) before they
-# can be added to the forbidden list.
+FORBIDDEN_VENDOR_BRANDS: set[str] = {"langsmith", "langfuse", "openai"}
+
 
 # Files that are allowed to contain vendor brand names
 EXCLUDED_FILES = {

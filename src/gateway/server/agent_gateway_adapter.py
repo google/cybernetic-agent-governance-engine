@@ -72,7 +72,7 @@ Compliance obligations (Cat-M change — AO pre-approval required)
 - AC-3  (Access Enforcement): gRPC endpoint must only accept calls from the
   registered proxy service account (enforced by mTLS CN/SAN validation).
 - AU-2  (Audit Events): every CheckRequest/CheckResponse is logged via the
-  existing OTel/Langfuse pipeline.
+  existing OTel/Telemetry pipeline.
 - SI-10 (Information Input Validation): JSON-RPC body parser validates
   structure before passing to validate_action().
 - OSCAL component update in compliance/oscal/ required within 2 business days

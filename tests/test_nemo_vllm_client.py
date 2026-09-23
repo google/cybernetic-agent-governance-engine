@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src/gateway/governance/nemo/vllm_client.py — VLLMLLM and helpers.
+Unit tests for src/integrations/nemo/vllm_client.py — VLLMLLM and helpers.
 
 All tests are hermetic:
 - litellm is mocked so no real vLLM inference is triggered.
@@ -41,7 +41,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 # ensures the parent packages are already cached in sys.modules by the time
 # any per-test stubbing pops only the leaf "vllm_client" module.
 try:
-    import src.gateway.governance.nemo.vllm_client  # noqa: F401
+    import src.integrations.nemo.vllm_client  # noqa: F401
 except ImportError:
     pass
 
@@ -115,8 +115,8 @@ class TestTruncateHelper:
         import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import _truncate
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import _truncate
 
         result = _truncate("hello world", max_chars=100)
         assert result == "hello world"
@@ -126,8 +126,8 @@ class TestTruncateHelper:
         import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import _truncate
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import _truncate
 
         long_str = "A" * 200
         result = _truncate(long_str, max_chars=50)
@@ -141,8 +141,8 @@ class TestTruncateHelper:
         import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import _truncate
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import _truncate
 
         s = "X" * 100
         result = _truncate(s, max_chars=100)
@@ -186,8 +186,8 @@ class TestVLLMLLMInit:
         )
 
         with patch.dict("sys.modules", stubs):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import VLLMLLM
 
             with pytest.raises(RuntimeError, match="VLLM_BASE_URL"):
                 VLLMLLM(model_name="model", api_key="key")
@@ -197,8 +197,8 @@ class TestVLLMLLMInit:
         import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import VLLMLLM
 
             llm = VLLMLLM(
                 model_name="test-model",
@@ -213,8 +213,8 @@ class TestVLLMLLMInit:
         import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import VLLMLLM
 
             llm = VLLMLLM(
                 model_name="llama-3",
@@ -243,8 +243,8 @@ class TestVLLMLLMAcall:
         import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import VLLMLLM
 
             llm = VLLMLLM(
                 model_name="m",
@@ -264,8 +264,8 @@ class TestVLLMLLMAcall:
         from langchain_core.outputs import ChatGeneration, ChatResult
 
         with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+            sys.modules.pop("src.integrations.nemo.vllm_client", None)
+            from src.integrations.nemo.vllm_client import VLLMLLM
 
             llm = VLLMLLM(
                 model_name="m",
@@ -302,8 +302,8 @@ class TestTimeoutConstants:
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, env, clear=True):
-                sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-                from src.gateway.governance.nemo.vllm_client import (
+                sys.modules.pop("src.integrations.nemo.vllm_client", None)
+                from src.integrations.nemo.vllm_client import (
                     NEMO_VLLM_TIMEOUT_SECONDS,
                 )
 
@@ -320,8 +320,8 @@ class TestTimeoutConstants:
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, env, clear=True):
-                sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-                from src.gateway.governance.nemo.vllm_client import (
+                sys.modules.pop("src.integrations.nemo.vllm_client", None)
+                from src.integrations.nemo.vllm_client import (
                     ADVISOR_VLLM_TIMEOUT_SECONDS,
                 )
 
@@ -334,8 +334,8 @@ class TestTimeoutConstants:
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, {"NEMO_VLLM_TIMEOUT_SECONDS": "30"}):
-                sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-                from src.gateway.governance.nemo.vllm_client import (
+                sys.modules.pop("src.integrations.nemo.vllm_client", None)
+                from src.integrations.nemo.vllm_client import (
                     NEMO_VLLM_TIMEOUT_SECONDS,
                 )
 

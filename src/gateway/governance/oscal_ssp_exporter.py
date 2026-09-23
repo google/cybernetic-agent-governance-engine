@@ -345,7 +345,7 @@ NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
             "(network-policy.yaml) provide L3/L4 default-deny; Cilium extends this to the "
             "application layer by intercepting DNS responses and binding resolved IP addresses "
             "to the FQDN allow-list in real time. Gateway pods may reach only approved external "
-            "LLM provider endpoints (api.openai.com, api.anthropic.com, "
+            "LLM provider endpoints (api.vendor-a.com, api.vendor-b.com, "
             "generativelanguage.googleapis.com) and required GCP service APIs. Sovereign "
             "agent pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080, "
             "OTel:4317/4318) and cannot contact any external endpoint directly, preventing "

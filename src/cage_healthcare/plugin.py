@@ -60,7 +60,7 @@ class HealthcareCagePlugin(CagePlugin):
             governor._domain_tiers = tiers
 
         # Register rail provider (contributes CheckContraindicationAction)
-        from src.gateway.governance.nemo.action_registry import register_rail_provider
+        from src.integrations.nemo.action_registry import register_rail_provider
 
         register_rail_provider(HealthcareRailProvider())
 

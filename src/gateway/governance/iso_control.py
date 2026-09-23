@@ -19,7 +19,7 @@ Mirrors ``stampIsoControl()`` from the TypeScript governance layer:
   src/gateway/src/governance/middleware/stpaGovernanceMiddleware.ts
 
 Every governance decision (PASS / BLOCK / REDACT) must call
-:func:`stamp_iso_control` so that OTel spans flowing to the Langfuse OTLP
+:func:`stamp_iso_control` so that OTel spans flowing to the Telemetry OTLP
 collector carry a consistent ISO 42001 audit trail that the compliance-bridge
 can aggregate.
 

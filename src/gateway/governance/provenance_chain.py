@@ -95,7 +95,7 @@ class ProvenanceRecord:
     """A single cryptographic provenance record for a LangGraph governance node.
 
     Attributes:
-        trace_id:     Langfuse trace ID for the governed request.
+        trace_id:     Telemetry trace ID for the governed request.
         node_id:      LangGraph node name (e.g. "opa_node", "causal_gatekeeper").
         input_hash:   SHA-256 hex digest of the node's input data.
         output_hash:  SHA-256 hex digest of the node's output data.
@@ -174,7 +174,7 @@ def build_provenance_record(
     """Build a ProvenanceRecord for a LangGraph governance node execution.
 
     Args:
-        trace_id:    Langfuse trace ID for the governed request.
+        trace_id:    Telemetry trace ID for the governed request.
         node_id:     LangGraph node name (e.g. "opa_node").
         input_data:  The node's input dict (will be hashed, not stored).
         output_data: The node's output dict (will be hashed, not stored).

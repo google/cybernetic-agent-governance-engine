@@ -229,12 +229,7 @@ try:
         "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
     )
 except ImportError:
-    _REPLAY_REJECTED_COUNTER = None  # type: ignore[assignment]
-    _EPOCH_REGRESSION_COUNTER = None  # type: ignore[assignment]
-    _CURRENT_FENCE_EPOCH_GAUGE = None  # type: ignore[assignment]
-    _WAIT_LATENCY_HISTOGRAM = None  # type: ignore[assignment]
-    _WAIT_TIMEOUT_COUNTER = None  # type: ignore[assignment]
-    _STRICT_REPLICATION_ROLLBACK_COUNTER = None  # type: ignore[assignment]
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +368,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         invariant: "InvariantModel | None" = None,
         cost_resolver: Any = None,
         skip_epoch_seed: bool = False,
-    ):  # type: ignore[no-untyped-def]
+    ) -> None:
         """Initialize the ControlBarrierFunction.
 
         PR C (Stage 2): One engine instance enforces exactly one affine barrier.
@@ -411,7 +406,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         # Backward-compatibility attributes (deprecated; use _invariant)
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
-        self.tracer = get_tracer("src.gateway.governance.safety")
+        self.tracer: Any = get_tracer("src.gateway.governance.safety")
         self._lua_sha: str | None = None
         # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
         self._local_debits: float = 0.0
@@ -784,7 +779,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             # Read last accepted sequence
             last_accepted_raw = await asyncio.to_thread(
                 sync_redis.get,
-                _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,  # type: ignore[attr-defined]
+                _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
             )
             last_accepted = int(last_accepted_raw) if last_accepted_raw else 0
 
@@ -798,7 +793,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             await asyncio.to_thread(
                 sync_redis.set,
                 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
-                str(incoming_sequence),  # type: ignore[attr-defined]
+                str(incoming_sequence),
             )
             logger.debug(
                 "[R-04] Sequence validated: incoming=%d > last_accepted=%d, updated",
@@ -826,7 +821,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
           2. ``safety:current_cash`` — self-reported by the execution system.
              Used only when the reconciled balance is absent or invalid.
              A CRITICAL audit log is emitted so the fallback is always visible
-             in Langfuse and SIEM.
+             in Telemetry and SIEM.
 
         Returns:
             dict with keys:
@@ -1106,7 +1101,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 # Epoch regression detected — fail-closed, return None balance
                 # to force caller to reject the action.
                 return {
-                    "current_cash": None,  # type: ignore[dict-item]
+                    "current_cash": None,
                     "source": "epoch_regression",
                     "fence_epoch": current_epoch,
                     "epoch_reason": epoch_reason,
@@ -1318,7 +1313,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         fence_epoch = int(state.get("fence_epoch", 0))
 
         if self.tracer:
-            with self.tracer.start_as_current_span("safety.cbf_check") as span:  # type: ignore[attr-defined]
+            with self.tracer.start_as_current_span("safety.cbf_check") as span:
                 # R-05: Add fence epoch to span attributes
                 span.set_attribute("cage.cbf.fence_epoch", fence_epoch)
                 return await self._do_verify_action(
@@ -1766,7 +1761,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         client = await _get_raw_redis(redis_client)
 
         async def _run_evalsha() -> list:
-            res = client.evalsha(self._lua_sha, len(keys), *keys, *argv)  # type: ignore[arg-type, misc]  # evalsha return type varies by redis-py version
+            res = client.evalsha(self._lua_sha, len(keys), *keys, *argv)
             return await res if inspect.isawaitable(res) else res
 
         async def _load_and_run() -> list:
@@ -1775,7 +1770,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             return await _run_evalsha()
 
         if self.tracer:
-            with self.tracer.start_as_current_span(  # type: ignore[attr-defined]
+            with self.tracer.start_as_current_span(
                 "safety.cbf_atomic_check_commit"
             ) as span:
                 span.set_attribute("safety.cash.cost", cost)

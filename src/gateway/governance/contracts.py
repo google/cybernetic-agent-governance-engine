@@ -423,7 +423,7 @@ class SafetyFilter(Protocol):
     Enforces hard constraints on actions (e.g. bankruptcy prevention).
     """
 
-    def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
+    async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
         """
         Verifies if the action is safe.
         Returns "SAFE" or an error message starting with "UNSAFE".

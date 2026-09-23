@@ -832,7 +832,7 @@ async def validate_action_endpoint(
         ``opentelemetry.propagate.inject(headers)``.  This endpoint extracts
         it and attaches the incoming span context so that all
         ``cage.validate_action`` child spans are connected to the GFA's
-        ``cage.tool_execute`` root span, producing a unified Langfuse trace
+        ``cage.tool_execute`` root span, producing a unified Telemetry trace
         tree across the service boundary.
 
     Governance tiers executed (full 8-tier pipeline — FTRA pre-gate + 7 in-pipeline tiers via _run_checks()):
@@ -889,7 +889,7 @@ async def validate_action_endpoint(
     # here and attaching it as the current context means all spans opened by
     # symbolic_governor.validate_action() (cage.cbf_action_check,
     # cage.opa_action_check, cage.routing_seal) are children of the GFA's
-    # cage.tool_execute span in Langfuse — not orphaned fragments.
+    # cage.tool_execute span in Telemetry — not orphaned fragments.
     carrier = dict(request.headers)
     remote_ctx = otel_extract(carrier)
     token = otel_context.attach(remote_ctx)

@@ -54,7 +54,7 @@ def _mcp_import_stubs():
         "mcp.server.fastmcp": mock_fastmcp,
         "mcp.server.transport_security": MagicMock(),
         "src.gateway.core.tools": MagicMock(),
-        "src.gateway.governance.nemo.manager": MagicMock(
+        "src.integrations.nemo.manager": MagicMock(
             initialize_rails=MagicMock(return_value=MagicMock()),
             validate_with_nemo=AsyncMock(return_value=(True, "SAFE", True)),
         ),

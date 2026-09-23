@@ -281,15 +281,15 @@ class TestHitlOverrideAuditSpan:
             "hitl.override_ts",
             "hitl.trace_id",
             "hitl.regulatory_citation",
-            "langfuse.trace.metadata.iso.control_id",
-            "langfuse.trace.metadata.iso.requirement",
-            "langfuse.trace.metadata.poam_ref",
+            "telemetry.trace.metadata.iso.control_id",
+            "telemetry.trace.metadata.iso.requirement",
+            "telemetry.trace.metadata.poam_ref",
         }
         assert required.issubset(attrs.keys())
         assert attrs["hitl.decision"] == "OVERRIDE"
         assert attrs["hitl.trace_id"] == "trace-100"
-        assert attrs["langfuse.trace.metadata.poam_ref"] == "AI600-005"
-        assert attrs["langfuse.trace.metadata.iso.control_id"] == "A.8.4"
+        assert attrs["telemetry.trace.metadata.poam_ref"] == "AI600-005"
+        assert attrs["telemetry.trace.metadata.iso.control_id"] == "A.8.4"
 
     def test_reason_truncated_to_500_chars(self):
         long_reason = "x" * 1000
