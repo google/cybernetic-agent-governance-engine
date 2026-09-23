@@ -488,7 +488,7 @@ class TestSubmitEvidence:
         self,
         adapter: Provider06AgentIntegrityAdapter,
     ) -> None:
-        """submit_evidence returns seal hash on success."""
+        """submit_evidence returns seal hash on success (no JWKS configured)."""
         mock_response = _mock_response({"receiptDigest": "sha256-abc123def456"})
 
         with patch("httpx.AsyncClient") as MockClient:
@@ -504,6 +504,283 @@ class TestSubmitEvidence:
         assert result.thread_id == "test-123"
         assert result.seal_hash == "sha256-abc123def456"
         assert result.error is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_submit_evidence_with_valid_signature_verification(
+        self,
+    ) -> None:
+        """submit_evidence with JWKS client executes cryptographic verification."""
+        import base64
+        import hashlib
+        from datetime import datetime, timedelta, timezone
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+        from tests.integrations.provider_06.fixtures.test_key_pair import (
+            TEST_KEY_ID,
+            get_test_private_key,
+            get_test_public_key_jwk,
+        )
+
+        # Create a cryptographically valid receipt signed with test-key-1
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(days=365)
+        envelope_digest = "test-evidence-hash-abc123"
+
+        payload = {
+            "protocolVersion": "1-alpha",
+            "receiptVersion": "2-alpha",
+            "engineVersion": "0.2.0-test",
+            "issuer": "test-issuer",
+            "audience": "cage-test",
+            "purpose": "verification",
+            "nonce": "test-nonce",
+            "runId": "test-run",
+            "createdAt": now.isoformat(),
+            "expiresAt": expires_at.isoformat(),
+            "policyDigest": hashlib.sha256(b"test-policy").hexdigest(),
+            "envelopeDigest": envelope_digest,
+            "verification": {
+                "protocolVersion": "1-alpha",
+                "status": "PASS",
+                "findings": [],
+            },
+        }
+
+        # Sign with test private key
+        payload_bytes = jcs_canonicalize_plan(payload)
+        private_key = get_test_private_key()
+        signature_bytes = private_key.sign(payload_bytes)
+        signature_value = (
+            base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+        )
+        receipt_digest = hashlib.sha256(payload_bytes).hexdigest()
+
+        receipt = {
+            **payload,
+            "signature": {
+                "algorithm": "Ed25519",
+                "keyId": TEST_KEY_ID,
+                "value": signature_value,
+            },
+            "receiptDigest": receipt_digest,
+        }
+
+        # Mock JWKS client
+        with patch(
+            "src.integrations.provider_06.adapter.Provider06KeyManifestClient"
+        ) as MockJWKSClient:
+            mock_client = AsyncMock()
+
+            # Resolve public key
+            public_key_jwk = get_test_public_key_jwk()
+            public_key_bytes = base64.urlsafe_b64decode(public_key_jwk["x"] + "==")
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+
+            mock_client.get_key.return_value = public_key
+            MockJWKSClient.return_value = mock_client
+
+            adapter = Provider06AgentIntegrityAdapter(
+                endpoint="http://localhost:8090",
+                key_manifest_url="file:///test/manifest.json",
+            )
+
+            # Mock HTTP response
+            with patch("httpx.AsyncClient") as MockHTTPClient:
+                client_instance = AsyncMock()
+                from unittest.mock import MagicMock
+                mock_response = MagicMock()
+                mock_response.json.return_value = receipt
+                client_instance.post.return_value = mock_response
+                MockHTTPClient.return_value.__aenter__.return_value = client_instance
+
+                result = await adapter.submit_evidence(
+                    thread_id="test-thread",
+                    evidence_hash=envelope_digest,
+                )
+
+            # Should succeed (cryptographic checks passed)
+            assert result.error is None
+            assert result.seal_hash == receipt_digest
+
+            # Verify get_key was called with test-key-1 (key resolution happened)
+            mock_client.get_key.assert_called_once_with(TEST_KEY_ID)
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_submit_evidence_fails_on_unknown_key(
+        self,
+    ) -> None:
+        """submit_evidence with unknown kid fails closed with cage.unknown_key error."""
+        import base64
+        import hashlib
+        from datetime import datetime, timedelta, timezone
+
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+        from tests.integrations.provider_06.fixtures.test_key_pair import (
+            get_test_private_key,
+        )
+
+        # Create receipt with unknown keyId
+        now = datetime.now(timezone.utc)
+        payload = {
+            "protocolVersion": "1-alpha",
+            "receiptVersion": "2-alpha",
+            "engineVersion": "0.2.0-test",
+            "issuer": "test-issuer",
+            "audience": "cage-test",
+            "purpose": "verification",
+            "nonce": "test-nonce",
+            "runId": "test-run",
+            "createdAt": now.isoformat(),
+            "expiresAt": (now + timedelta(days=365)).isoformat(),
+            "policyDigest": hashlib.sha256(b"test-policy").hexdigest(),
+            "envelopeDigest": "test-evidence-hash",
+            "verification": {"protocolVersion": "1-alpha", "status": "PASS", "findings": []},
+        }
+
+        payload_bytes = jcs_canonicalize_plan(payload)
+        private_key = get_test_private_key()
+        signature_bytes = private_key.sign(payload_bytes)
+        signature_value = (
+            base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+        )
+
+        receipt = {
+            **payload,
+            "signature": {
+                "algorithm": "Ed25519",
+                "keyId": "unknown-key-999",  # Unknown kid
+                "value": signature_value,
+            },
+            "receiptDigest": hashlib.sha256(payload_bytes).hexdigest(),
+        }
+
+        # Mock JWKS client to return None for unknown kid
+        with patch(
+            "src.integrations.provider_06.adapter.Provider06KeyManifestClient"
+        ) as MockJWKSClient:
+            mock_client = AsyncMock()
+            mock_client.get_key.return_value = None  # Unknown kid
+            MockJWKSClient.return_value = mock_client
+
+            adapter = Provider06AgentIntegrityAdapter(
+                endpoint="http://localhost:8090",
+                key_manifest_url="file:///test/manifest.json",
+            )
+
+            # Mock HTTP response
+            with patch("httpx.AsyncClient") as MockHTTPClient:
+                client_instance = AsyncMock()
+                from unittest.mock import MagicMock
+                mock_response = MagicMock()
+                mock_response.json.return_value = receipt
+                client_instance.post.return_value = mock_response
+                MockHTTPClient.return_value.__aenter__.return_value = client_instance
+
+                result = await adapter.submit_evidence(
+                    thread_id="test-thread",
+                    evidence_hash="test-evidence-hash",
+                )
+
+            # Should fail with unknown key error
+            assert result.error is not None
+            assert "unknown key" in result.error.lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_submit_evidence_fails_on_tampered_receipt(
+        self,
+    ) -> None:
+        """submit_evidence with tampered receipt fails digest verification."""
+        import base64
+        import hashlib
+        from datetime import datetime, timedelta, timezone
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+        from tests.integrations.provider_06.fixtures.test_key_pair import (
+            TEST_KEY_ID,
+            get_test_private_key,
+            get_test_public_key_jwk,
+        )
+
+        # Create valid receipt, then tamper with it
+        now = datetime.now(timezone.utc)
+        payload = {
+            "protocolVersion": "1-alpha",
+            "receiptVersion": "2-alpha",
+            "engineVersion": "0.2.0-test",
+            "issuer": "test-issuer",
+            "audience": "cage-test",
+            "purpose": "verification",
+            "nonce": "test-nonce",
+            "runId": "test-run",
+            "createdAt": now.isoformat(),
+            "expiresAt": (now + timedelta(days=365)).isoformat(),
+            "policyDigest": hashlib.sha256(b"test-policy").hexdigest(),
+            "envelopeDigest": "original-digest",
+            "verification": {"protocolVersion": "1-alpha", "status": "PASS", "findings": []},
+        }
+
+        payload_bytes = jcs_canonicalize_plan(payload)
+        private_key = get_test_private_key()
+        signature_bytes = private_key.sign(payload_bytes)
+        signature_value = (
+            base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+        )
+
+        receipt = {
+            **payload,
+            "signature": {
+                "algorithm": "Ed25519",
+                "keyId": TEST_KEY_ID,
+                "value": signature_value,
+            },
+            "receiptDigest": hashlib.sha256(payload_bytes).hexdigest(),
+        }
+
+        # Tamper with receipt after signing
+        receipt["nonce"] = "TAMPERED-NONCE"
+
+        # Mock JWKS client
+        with patch(
+            "src.integrations.provider_06.adapter.Provider06KeyManifestClient"
+        ) as MockJWKSClient:
+            mock_client = AsyncMock()
+
+            public_key_jwk = get_test_public_key_jwk()
+            public_key_bytes = base64.urlsafe_b64decode(public_key_jwk["x"] + "==")
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+
+            mock_client.get_key.return_value = public_key
+            MockJWKSClient.return_value = mock_client
+
+            adapter = Provider06AgentIntegrityAdapter(
+                endpoint="http://localhost:8090",
+                key_manifest_url="file:///test/manifest.json",
+            )
+
+            # Mock HTTP response
+            with patch("httpx.AsyncClient") as MockHTTPClient:
+                client_instance = AsyncMock()
+                from unittest.mock import MagicMock
+                mock_response = MagicMock()
+                mock_response.json.return_value = receipt
+                client_instance.post.return_value = mock_response
+                MockHTTPClient.return_value.__aenter__.return_value = client_instance
+
+                result = await adapter.submit_evidence(
+                    thread_id="test-thread",
+                    evidence_hash="original-digest",
+                )
+
+            # Should fail (receipt digest mismatch)
+            assert result.error is not None
+            assert "digest" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------

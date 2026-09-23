@@ -46,6 +46,7 @@ Status
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -58,6 +59,27 @@ from uuid import uuid4
 import jsonschema
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+# Import test key pair for cryptographic signing
+try:
+    import sys
+
+    # Add tests directory to path for fixture imports
+    test_fixtures_path = (
+        Path(__file__).resolve().parents[3] / "tests" / "integrations" / "provider_06" / "fixtures"
+    )
+    if str(test_fixtures_path) not in sys.path:
+        sys.path.insert(0, str(test_fixtures_path))
+
+    from test_key_pair import TEST_KEY_ID, get_test_private_key
+except ImportError as exc:
+    logger.warning(
+        "[MockEndpoint] Cannot import test key pair: %s. "
+        "Receipts will use legacy mock signatures.",
+        exc,
+    )
+    TEST_KEY_ID = "mock-key-001"
+    get_test_private_key = None  # type: ignore[assignment]
 
 logger = logging.getLogger("cage.integrations.provider_06.mock")
 
@@ -86,7 +108,7 @@ except Exception as _e:
 # Protocol version from Agent Integrity (packages/protocol/src/types.ts)
 PROTOCOL_VERSION = "1-alpha"
 RECEIPT_VERSION = "2-alpha"
-ENGINE_VERSION = "0.1.0-mock"
+ENGINE_VERSION = "0.2.0-mock"  # v0.2: Real Ed25519 signatures
 
 
 # ---------------------------------------------------------------------------
@@ -195,19 +217,36 @@ def _create_mock_receipt(
         "verification": verification_result,
     }
 
-    # Mock signature (not cryptographically valid)
-    # v3.1.0: Migrated to JCS for consistency
+    # Canonicalize payload for signing (excludes signature and receiptDigest)
     payload_bytes = jcs_canonicalize_plan(payload)
-    mock_signature = _sha256(f"mock-sign:{payload_bytes.decode('utf-8')}")
+
+    # Generate real Ed25519 signature if test key is available
+    if get_test_private_key is not None:
+        try:
+            private_key = get_test_private_key()
+            signature_bytes = private_key.sign(payload_bytes)
+            signature_value = base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+            key_id = TEST_KEY_ID
+        except Exception as exc:
+            logger.warning("[MockEndpoint] Ed25519 signing failed: %s. Using mock signature.", exc)
+            signature_value = _sha256(f"mock-sign:{payload_bytes.decode('utf-8')}")
+            key_id = "mock-key-001"
+    else:
+        # Fallback to legacy mock signature
+        signature_value = _sha256(f"mock-sign:{payload_bytes.decode('utf-8')}")
+        key_id = "mock-key-001"
+
+    # Compute receiptDigest over canonical payload (SHA-256 hex)
+    receipt_digest = hashlib.sha256(payload_bytes).hexdigest()
 
     return {
         **payload,
         "signature": {
             "algorithm": "Ed25519",
-            "keyId": "mock-key-001",
-            "value": mock_signature,
+            "keyId": key_id,
+            "value": signature_value,
         },
-        "receiptDigest": _sha256(payload_bytes.decode("utf-8") + mock_signature),
+        "receiptDigest": receipt_digest,
     }
 
 

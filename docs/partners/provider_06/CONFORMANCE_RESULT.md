@@ -14,7 +14,7 @@ readiness or approve a runtime Provider 06 integration.
 
 ## Versions and commands
 
-- CAGE base: `94e9d717be22bafcf6307efd9434fdb04754ac6a`
+- CAGE base: `d069d9be85acede00d04dd887f61e5c9e2dbe1b3`
 - Agent Integrity package: `0.1.0-alpha.0`
 - Agent Integrity protocol: `1-alpha`
 - Node.js: `v24.21.0`
