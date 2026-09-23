@@ -99,6 +99,7 @@ CAGE is a **Kubernetes-native, cloud-agnostic** AI governance engine. The core g
 | Deployment Target | Kubernetes | Cloud Provider | Status |
 |---|---|---|---|
 | GKE (Google Kubernetes Engine) | ✅ Any GKE channel | GCP (optional integrations) | Production-ready |
+| Cloud Run (Serverless) | N/A (Serverless Containers) | GCP | Phase A+B Hardened |
 | EKS (Amazon Elastic Kubernetes Service) | ✅ Any EKS version | AWS (optional integrations) | Supported |
 | AKS (Azure Kubernetes Service) | ✅ Any AKS version | Azure (optional integrations) | Supported |
 | OpenShift | ✅ 4.12+ | On-prem / any cloud | Supported |
@@ -662,6 +663,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 |--------|--------------|---------|
 | GKE Production | ☁️ Cloud Build | `./deploy_all.sh --target gcp-gke --env prod` |
 | GKE Development | ☁️ Cloud Build | `./deploy_all.sh --target gcp-gke --env dev --auto-approve` |
+| Cloud Run Dev/Prod | ☁️ Cloud Build + Terraform | See [Cloud Run Deployment](#cloud-run-deployment) |
 | Local k3d/kind | 🐳 Local Docker | `./deploy_all.sh --target agnostic --env dev` |
 | Docker Compose | 🐳 Local Docker | `docker compose up` |
 
@@ -669,6 +671,95 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 - [Deployment Rules](docs/operations/DEPLOYMENT_RULES.md) — Complete deployment policy
 - [Agent Ops Architecture](docs/architecture/AGENT_OPS_ARCHITECTURE.md) — Defense-in-depth governance pattern
 - [Deployment Guide](infra/DEPLOYMENT_GUIDE.md) — Step-by-step procedures
+
+---
+
+## Cloud Run Deployment
+
+CAGE supports first-class deployment to **Google Cloud Run** with serverless infrastructure, Cloud Armor WAF, and platform-native authentication.
+
+### Prerequisites
+
+- GCP project with Cloud Run API enabled
+- `gcloud` CLI authenticated (`gcloud auth application-default login`)
+- Terraform >= 1.9
+- Custom domain (optional, for production SSL certificates)
+
+### Quick Start (Dev Environment)
+
+```bash
+# 1. Build OPA sidecar image
+gcloud builds submit --config deployment/docker/cloudbuild.opa.yaml
+
+# 2. Generate dev tfvars
+cd infra/targets/gcp-cloudrun
+cat > dev.tfvars <<EOF
+project_id                = "your-dev-project"
+region                    = "us-central1"
+environment               = "dev"
+cage_deployment_region    = "US_FED"
+enable_load_balancer      = false  # Public *.run.app URL
+gateway_domain            = ""
+EOF
+
+# 3. Deploy
+terraform init
+terraform apply -var-file=dev.tfvars
+
+# 4. Verify
+GATEWAY_URL=$(terraform output -raw gateway_url)
+curl $GATEWAY_URL/health
+```
+
+### Production Deployment (with Load Balancer + Cloud Armor)
+
+```bash
+# 1. Update tfvars for production
+cat > prod.tfvars <<EOF
+project_id                = "your-prod-project"
+region                    = "us-central1"
+environment               = "prod"
+cage_deployment_region    = "US_FED"
+enable_nist_compliance    = true
+enable_high_availability  = true
+enable_load_balancer      = true
+gateway_domain            = "gateway.your-domain.com"
+gateway_min_instances     = 2
+EOF
+
+# 2. Deploy (creates LB + Cloud Armor first, then tightens ingress)
+terraform apply -var-file=prod.tfvars
+
+# 3. Get load balancer IP and update DNS
+LB_IP=$(terraform output -raw load_balancer_ip)
+# Create DNS A record: gateway.your-domain.com  A  <LB_IP>
+
+# 4. Wait for SSL certificate provisioning (15-60 minutes)
+gcloud compute ssl-certificates list --project=your-prod-project
+
+# 5. Verify HTTPS works
+curl https://gateway.your-domain.com/health
+```
+
+### Security Features
+
+- **OPA Policy Sidecar**: Baked policy bundle with fail-closed startup ordering
+- **Cloud Armor WAF**: 10 OWASP CRS rules (XSS, SQLi, LFI, RCE, scanner detection)
+- **Rate Limiting**: 100 requests/min per IP (prod only, 10-min ban on exceed)
+- **OIDC Authentication**: Inter-service calls use audience-scoped metadata server tokens
+- **WORM Evidence Retention**: 7-year locked retention policy on compliance artifacts
+- **Ingress Controls**:
+  - Gateway: `INTERNAL_AND_CLOUD_LOAD_BALANCING` (LB-only access when enabled)
+  - Internal services: `INGRESS_TRAFFIC_INTERNAL_ONLY` (VPC-only access)
+
+### Architecture
+
+- **Serverless NEG**: Backend service targets Cloud Run via Network Endpoint Group
+- **Multi-container services**: Gateway runs OPA sidecar on `localhost:8181`
+- **Managed SSL**: Google-managed certificates with TLS 1.2 minimum
+- **Platform Identity**: Service accounts mint OIDC ID tokens from metadata server
+
+See [`docs/architecture/CLOUD_RUN_IMPLEMENTATION_PLAN.md`](docs/architecture/CLOUD_RUN_IMPLEMENTATION_PLAN.md) for full specification.
 
 ---
 
