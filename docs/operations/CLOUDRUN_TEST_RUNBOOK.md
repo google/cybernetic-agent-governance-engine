@@ -176,16 +176,17 @@ CAGE enforces a strict, fail-closed **Selection Marker Contract** (see [`AGENTS.
 
 ### Reusable Tests (Target-Agnostic HTTP / MCP / LLM Workflows):
 - [`tests/test_gateway_connectivity_live.py`](../../tests/test_gateway_connectivity_live.py) — Gateway MCP SSE, Chat Proxy, TLS version checks.
-- [`tests/test_compliance_bridge_smoke.py`](../../tests/test_compliance_bridge_smoke.py) — Health checks and control catalog.
-- [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) (Groups 1–11, 13, 14) — OSCAL exports, SSE streams, audit ingest.
+- [`tests/test_compliance_bridge_smoke.py`](../../tests/test_compliance_bridge_smoke.py) — Health checks and control catalog. Cloud Run IAM auth injected automatically.
+- [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) (Groups 1–11, 13, 14) — OSCAL exports, SSE streams, audit ingest. `require_live_bridge` and `session` fixtures inject IAM identity token on Cloud Run.
+- [`tests/test_redis_eviction_envelope.py`](../../tests/test_redis_eviction_envelope.py) — Redis state store invariants. Runs on both GKE and Cloud Run (Cloud Memorystore). CONFIG GET-based assertions (`noeviction`, `maxmemory`, AOF) skip gracefully on Cloud Memorystore; connection and namespace-isolation tests run on both platforms.
 - [`tests/test_trades_mcp.py`](../../tests/test_trades_mcp.py) & [`tests/test_evaluator_mcp.py`](../../tests/test_evaluator_mcp.py) — MCP tool execution.
 - [`tests/test_agent_accuracy.py`](../../tests/test_agent_accuracy.py) & [`tests/test_agent_performance.py`](../../tests/test_agent_performance.py) — End-to-end multi-agent advisor loops.
 - [`tests/red_team/run_red_team.py`](../../tests/red_team/run_red_team.py) — Adversarial prompt evaluation.
 - [`tests/test_langfuse_smoke.py`](../../tests/test_langfuse_smoke.py) & [`tests/test_langfuse_evaluation.py`](../../tests/test_langfuse_evaluation.py) — Telemetry and LLM-as-a-judge scoring.
 
-### GKE-Exclusive Tests (Marked with `@pytest.mark.gke`):
-- `test_pod_restarts_are_zero` in [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) — Runs `kubectl get pod` to check pod restart count.
-- [`tests/test_redis_eviction_envelope.py`](../../tests/test_redis_eviction_envelope.py) — Asserts GKE StatefulSet `appendonly yes` (AOF) and 256MB/1GB exact container memory ceilings. Cloud Memorystore Redis uses RDB snapshots and RFC1918 VPC peering.
+### GKE-Exclusive Tests (Marked with `@pytest.mark.gke` and **not** refactored for Cloud Run):
+- `test_pod_restarts_are_zero` in [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) — On **GKE**: runs `kubectl get pod` to check restart count. On **Cloud Run**: executes the Cloud Run equivalent (revision health via `/health`) instead.
+- `test_redis_dangerous_commands_disabled` in [`tests/test_redis_eviction_envelope.py`](../../tests/test_redis_eviction_envelope.py) — GKE StatefulSet disables `FLUSHDB` via redis.conf command rename; Cloud Memorystore enforces isolation via IAM roles (test skips on Cloud Run).
 - `compliance/lula/*` — Validates Kubernetes CRDs and PodSecurity policies.
 
 ---
