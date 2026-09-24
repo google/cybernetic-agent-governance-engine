@@ -90,12 +90,15 @@ from urllib3.util.retry import Retry
 # Import Cloud Run auth helper from conftest (available at collection time via
 # conftest module injection; imported defensively to allow offline unit runs).
 try:
-    from conftest import get_cloudrun_auth_headers, get_cloudrun_identity_token
+    from tests.conftest import get_cloudrun_auth_headers, get_cloudrun_identity_token
 except ImportError:
-    def get_cloudrun_auth_headers(*_a, **_kw) -> dict:  # type: ignore[misc]
-        return {}
-    def get_cloudrun_identity_token(*_a, **_kw):  # type: ignore[misc]
-        return None
+    try:
+        from conftest import get_cloudrun_auth_headers, get_cloudrun_identity_token
+    except ImportError:
+        def get_cloudrun_auth_headers(*_a, **_kw) -> dict:  # type: ignore[misc]
+            return {}
+        def get_cloudrun_identity_token(*_a, **_kw):  # type: ignore[misc]
+            return None
 
 pytestmark = pytest.mark.integration
 
@@ -123,7 +126,11 @@ _SKIP_US_FED = pytest.mark.skipif(
 BASE_URL = os.environ.get("COMPLIANCE_BRIDGE_URL", "http://localhost:3001").rstrip("/")
 NAMESPACE = os.environ.get("NAMESPACE", "governance-stack")
 AUDIT_TIMEOUT = int(os.environ.get("INTEGRATION_AUDIT_TIMEOUT_SEC", "30"))
-SSE_TIMEOUT = int(os.environ.get("INTEGRATION_SSE_TIMEOUT_SEC", "10"))
+_is_cloudrun_cfg = (
+    os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+    or BASE_URL.startswith("https://")
+)
+SSE_TIMEOUT = int(os.environ.get("INTEGRATION_SSE_TIMEOUT_SEC", "35" if _is_cloudrun_cfg else "10"))
 SKIP_LANGFUSE = os.environ.get("SKIP_LANGFUSE_CHECKS", "").strip() == "1"
 
 # ---------------------------------------------------------------------------
@@ -706,7 +713,7 @@ class TestOscalExport:
 class TestSSEStream:
     def test_sse_connection_establishes(self, session):
         """The SSE endpoint must respond with text/event-stream Content-Type."""
-        with requests.get(
+        with session.get(
             f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT
         ) as r:
             assert r.status_code == 200
@@ -724,13 +731,25 @@ class TestSSEStream:
         audit_id = f"inttest-sse-{uid}"
         oscal = _OSCAL_PASS_ONLY.format(uid=uid)
 
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+        _auth_headers = get_cloudrun_auth_headers() if _is_cloudrun else {}
+        if not _auth_headers:
+            _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            _auth_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+
         # Open the SSE stream before the ingest
         import threading
 
         def _collect_sse():
             try:
                 with requests.get(
-                    f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT + 5
+                    f"{BASE_URL}/v1/events/stream",
+                    headers=_auth_headers,
+                    stream=True,
+                    timeout=SSE_TIMEOUT + 5,
                 ) as r:
                     for chunk in r.iter_content(chunk_size=None):
                         text = chunk.decode(errors="replace")
@@ -745,12 +764,10 @@ class TestSSEStream:
         time.sleep(0.5)  # give the stream connection time to open
 
         # Now trigger the ingest — include Bearer token so the request is not rejected with 401
-        _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         requests.post(
             f"{BASE_URL}/v1/audit/ingest",
             json={"oscal_yaml": oscal, "audit_id": audit_id},
-            headers=_headers,
+            headers=_auth_headers,
             timeout=AUDIT_TIMEOUT,
         )
 
@@ -1206,12 +1223,24 @@ class TestAlertChannelWiring:
         audit_id = f"inttest-govviol-{uid}"
         oscal = _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid)
 
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+        _auth_headers = get_cloudrun_auth_headers() if _is_cloudrun else {}
+        if not _auth_headers:
+            _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            _auth_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+
         import threading
 
         def _collect():
             try:
                 with requests.get(
-                    f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT + 5
+                    f"{BASE_URL}/v1/events/stream",
+                    headers=_auth_headers,
+                    stream=True,
+                    timeout=SSE_TIMEOUT + 5,
                 ) as r:
                     for chunk in r.iter_content(chunk_size=None):
                         text = chunk.decode(errors="replace")
@@ -1225,12 +1254,10 @@ class TestAlertChannelWiring:
         t.start()
         time.sleep(0.5)
         # Include Bearer token so the ingest request is not rejected with 401
-        _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         requests.post(
             f"{BASE_URL}/v1/audit/ingest",
             json={"oscal_yaml": oscal, "audit_id": audit_id},
-            headers=_headers,
+            headers=_auth_headers,
             timeout=AUDIT_TIMEOUT,
         )
         t.join(timeout=SSE_TIMEOUT)
@@ -1342,15 +1369,21 @@ class TestSlaAndEvalDataset:
         # 1. Trigger a FAIL ingest for A.9.2 to ensure a dataset item exists
         uid = _uid()
         audit_id = f"inttest-eval-{uid}"
-        _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+        _auth_headers = get_cloudrun_auth_headers() if _is_cloudrun else {}
+        if not _auth_headers:
+            _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            _auth_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         r = requests.post(
             f"{BASE_URL}/v1/audit/ingest",
             json={
                 "oscal_yaml": _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid),
                 "audit_id": audit_id,
             },
-            headers=_headers,
+            headers=_auth_headers,
             timeout=AUDIT_TIMEOUT,
         )
         assert r.status_code == 200
@@ -1362,12 +1395,19 @@ class TestSlaAndEvalDataset:
         api_url = (
             f"{lf_host.rstrip('/')}/api/public/dataset-items?datasetName={dataset_name}"
         )
+        lf_headers = (
+            get_cloudrun_auth_headers(lf_host, app_auth=(lf_pk, lf_sk))
+            if _is_cloudrun
+            else {}
+        )
         import time as _time
 
         lf_resp = None
         for _attempt in range(10):
             try:
-                lf_resp = requests.get(api_url, auth=(lf_pk, lf_sk), timeout=15)
+                lf_resp = requests.get(
+                    api_url, auth=(lf_pk, lf_sk), headers=lf_headers, timeout=15
+                )
                 if (
                     lf_resp.status_code == 200
                     and len(lf_resp.json().get("data", [])) >= 1

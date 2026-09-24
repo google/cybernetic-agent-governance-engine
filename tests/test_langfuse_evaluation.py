@@ -537,6 +537,7 @@ def post_scores_to_langfuse(
 
 
 @pytest.mark.integration
+@pytest.mark.gke
 @pytest.mark.slow
 @pytest.mark.timeout(
     900

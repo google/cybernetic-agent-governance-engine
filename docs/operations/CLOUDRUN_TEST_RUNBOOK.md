@@ -136,23 +136,37 @@ export CAGE_TEST_TARGET=cloudrun \
        BACKEND_URL=$(terraform -chdir=infra/targets/gcp-cloudrun output -raw governed_advisor_url) \
        COMPLIANCE_BRIDGE_URL=$(terraform -chdir=infra/targets/gcp-cloudrun output -raw compliance_bridge_url) \
        LANGFUSE_HOST=$(terraform -chdir=infra/targets/gcp-cloudrun output -raw langfuse_web_url) && \
-uv run pytest tests/ -m "integration and not gke" --run-integration -v --tb=short
+uv run pytest tests/ \
+  -m "integration and not gke" \
+  --run-integration \
+  -n 2 --dist loadscope \
+  --no-cov \
+  -p no:langsmith -p no:langsmith_plugin \
+  --tb=short
 ```
+
+#### Execution Parameters Rationale & Parity Invariants:
+- **`-m "integration and not gke"`**: Runs all universal Layer 7 integration tests while excluding tests that require raw Kubernetes node primitives or self-managed container configs (e.g., `test_pod_restarts_are_zero` GKE path, `test_redis_dangerous_commands_disabled`).
+- **`--run-integration`**: Satisfies the fail-closed selection gate in [`tests/conftest.py`](../../tests/conftest.py), preventing accidental execution of live cloud suites during local development.
+- **`-n 2 --dist loadscope`**: Constrains worker concurrency to prevent a thundering herd of container cold starts on serverless Cloud Run revisions (`minScale=0`) while grouping tests by module (`loadscope`) to maintain fixture isolation.
+- **`--no-cov`**: Disables local coverage instrumentation overhead, avoiding skewed coverage metrics from remote network assertions.
+- **`-p no:langsmith -p no:langsmith_plugin`**: Enforces the AGENTS.md § Observability invariant by disabling third-party LangSmith telemetry plugins in favor of sovereign self-hosted Langfuse.
+- **`--tb=short`**: Produces concise error tracebacks.
 
 ### Dedicated Multi-Agent & Langfuse Test Suites against Cloud Run:
 
 ```bash
 # 1. Financial Advisor agent accuracy over live inference
-uv run pytest tests/test_agent_accuracy.py --run-integration -v
+uv run pytest tests/test_agent_accuracy.py --run-integration -n 2 --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin -v
 
 # 2. Langfuse LLM-as-a-judge evaluation & quality scoring
-uv run pytest tests/test_langfuse_evaluation.py --run-integration -v
+uv run pytest tests/test_langfuse_evaluation.py --run-integration -n 2 --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin -v
 
-# 3. Langfuse v3 trace ingestion smoke tests
-uv run pytest tests/test_langfuse_smoke.py --run-integration -v
+# 3. Langfuse v3/v4 trace ingestion smoke tests
+uv run pytest tests/test_langfuse_smoke.py --run-integration --no-cov -p no:langsmith -p no:langsmith_plugin -v
 
 # 4. Gateway connectivity and TLS 1.2+ validation
-uv run pytest tests/test_gateway_connectivity_live.py --run-integration -v
+uv run pytest tests/test_gateway_connectivity_live.py --run-integration --no-cov -p no:langsmith -p no:langsmith_plugin -v
 ```
 
 ---
@@ -172,17 +186,17 @@ CAGE enforces a strict, fail-closed **Selection Marker Contract** (see [`AGENTS.
 
 ---
 
-## 6. GKE-Specific vs. Reusable Test Inventory
+## 7. GKE-Specific vs. Reusable Test Inventory
 
 ### Reusable Tests (Target-Agnostic HTTP / MCP / LLM Workflows):
 - [`tests/test_gateway_connectivity_live.py`](../../tests/test_gateway_connectivity_live.py) — Gateway MCP SSE, Chat Proxy, TLS version checks.
-- [`tests/test_compliance_bridge_smoke.py`](../../tests/test_compliance_bridge_smoke.py) — Health checks and control catalog. Cloud Run IAM auth injected automatically.
-- [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) (Groups 1–11, 13, 14) — OSCAL exports, SSE streams, audit ingest. `require_live_bridge` and `session` fixtures inject IAM identity token on Cloud Run.
+- [`tests/test_compliance_bridge_smoke.py`](../../tests/test_compliance_bridge_smoke.py) — Health checks and control catalog. Cloud Run IAM auth injected automatically via `_bridge_auth_headers()`, with adaptive SSE timeout for Cloud Run cold starts.
+- [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) (Groups 1–11, 13, 14) — OSCAL exports, SSE streams, audit ingest. `require_live_bridge` and `session` fixtures inject IAM identity tokens on Cloud Run.
 - [`tests/test_redis_eviction_envelope.py`](../../tests/test_redis_eviction_envelope.py) — Redis state store invariants. Runs on both GKE and Cloud Run (Cloud Memorystore). CONFIG GET-based assertions (`noeviction`, `maxmemory`, AOF) skip gracefully on Cloud Memorystore; connection and namespace-isolation tests run on both platforms.
 - [`tests/test_trades_mcp.py`](../../tests/test_trades_mcp.py) & [`tests/test_evaluator_mcp.py`](../../tests/test_evaluator_mcp.py) — MCP tool execution.
 - [`tests/test_agent_accuracy.py`](../../tests/test_agent_accuracy.py) & [`tests/test_agent_performance.py`](../../tests/test_agent_performance.py) — End-to-end multi-agent advisor loops.
 - [`tests/red_team/run_red_team.py`](../../tests/red_team/run_red_team.py) — Adversarial prompt evaluation.
-- [`tests/test_langfuse_smoke.py`](../../tests/test_langfuse_smoke.py) & [`tests/test_langfuse_evaluation.py`](../../tests/test_langfuse_evaluation.py) — Telemetry and LLM-as-a-judge scoring.
+- [`tests/test_langfuse_smoke.py`](../../tests/test_langfuse_smoke.py) & [`tests/test_langfuse_evaluation.py`](../../tests/test_langfuse_evaluation.py) — Telemetry, v4 events_only ingestion, and LLM-as-a-judge scoring.
 
 ### GKE-Exclusive Tests (Marked with `@pytest.mark.gke` and **not** refactored for Cloud Run):
 - `test_pod_restarts_are_zero` in [`tests/test_compliance_bridge_integration.py`](../../tests/test_compliance_bridge_integration.py) — On **GKE**: runs `kubectl get pod` to check restart count. On **Cloud Run**: executes the Cloud Run equivalent (revision health via `/health`) instead.
@@ -191,7 +205,7 @@ CAGE enforces a strict, fail-closed **Selection Marker Contract** (see [`AGENTS.
 
 ---
 
-## 7. IAM Authentication & Service-to-Service Invocation
+## 8. IAM Authentication & Service-to-Service Invocation
 
 When services in Cloud Run are deployed with `INGRESS_TRAFFIC_INTERNAL_ONLY` or without public unauthenticated access:
 

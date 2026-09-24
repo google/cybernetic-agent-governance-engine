@@ -47,8 +47,11 @@ import pytest
 
 from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-# Test markers
-pytestmark = [pytest.mark.integration, pytest.mark.live_external]
+pytestmark = [
+    pytest.mark.partner_integration,
+    pytest.mark.live_external,
+    pytest.mark.partner,
+]
 
 # Skip condition
 SKIP_REASON = "PROVIDER_02_API_ENDPOINT not configured"

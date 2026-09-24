@@ -28,10 +28,13 @@ import requests
 # Import Cloud Run auth helper from conftest (available at collection time via
 # conftest module injection; imported defensively to allow offline unit runs).
 try:
-    from conftest import get_cloudrun_auth_headers
+    from tests.conftest import get_cloudrun_auth_headers
 except ImportError:
-    def get_cloudrun_auth_headers(*_a, **_kw) -> dict:  # type: ignore[misc]
-        return {}
+    try:
+        from conftest import get_cloudrun_auth_headers
+    except ImportError:
+        def get_cloudrun_auth_headers(*_a, **_kw) -> dict:  # type: ignore[misc]
+            return {}
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +112,9 @@ def test_sse_stream_connectivity():
     # We use stream=True and a timeout. We expect at least a heartbeat within a few seconds.
     # The server sends a heartbeat every 30s by default, but we should get an initial connection.
     try:
+        _sse_timeout = (10, 35) if _is_cloudrun_target() else 10
         with requests.get(
-            url, headers=_bridge_auth_headers(), stream=True, timeout=5
+            url, headers=_bridge_auth_headers(), stream=True, timeout=_sse_timeout
         ) as resp:
             assert resp.status_code == 200
             assert "text/event-stream" in resp.headers.get("Content-Type", "")

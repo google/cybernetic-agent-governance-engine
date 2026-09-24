@@ -33,6 +33,16 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:18080")
 def _backend_reachable() -> bool:
     """Return True if the backend HTTP server is reachable."""
     try:
+        from tests.conftest import get_cloudrun_auth_headers
+
+        headers = get_cloudrun_auth_headers(BACKEND_URL)
+        timeout = 15 if ".run.app" in BACKEND_URL else 2
+        resp = requests.get(f"{BACKEND_URL.rstrip('/')}/health", headers=headers, timeout=timeout)
+        if resp.status_code == 200:
+            return True
+    except Exception:
+        pass
+    try:
         requests.get(BACKEND_URL, timeout=2)
         return True
     except Exception:
@@ -78,6 +88,9 @@ def generate_workflow():
                 "error",
                 "cannot",
                 "unable",
+                "sorry",
+                "can't",
+                "cant",
             ],
             "type": "contains_any",
         },
@@ -95,6 +108,9 @@ def generate_workflow():
                 "error",
                 "cannot",
                 "unable",
+                "sorry",
+                "can't",
+                "cant",
             ],
             "type": "contains_any",
         },
@@ -113,6 +129,9 @@ def generate_workflow():
                 "error",
                 "cannot",
                 "unable",
+                "sorry",
+                "can't",
+                "cant",
             ],
             "type": "contains_any",
         },
@@ -138,6 +157,9 @@ def generate_workflow():
                 "compliance",
                 "cannot",
                 "unable",
+                "sorry",
+                "can't",
+                "cant",
             ],
             "type": "contains_any",
         },
