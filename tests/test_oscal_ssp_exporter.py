@@ -312,7 +312,7 @@ class TestApplySspPatch:
         ssp_file = tmp_path / "ssp.yaml"
         ssp_file.write_text(_MINIMAL_SSP)
         block = generate_ssp_patch(minimal_cs)
-        result = _apply_ssp_patch(ssp_file, block, dry_run=False)
+        result = _apply_ssp_patch(ssp_file, [block], dry_run=False)
         assert result is True
         with open(ssp_file) as fh:
             patched = yaml.safe_load(fh)
@@ -329,8 +329,8 @@ class TestApplySspPatch:
         ssp_file = tmp_path / "ssp.yaml"
         ssp_file.write_text(_MINIMAL_SSP)
         block = generate_ssp_patch(minimal_cs)
-        _apply_ssp_patch(ssp_file, block, dry_run=False)
-        _apply_ssp_patch(ssp_file, block, dry_run=False)  # second run
+        _apply_ssp_patch(ssp_file, [block], dry_run=False)
+        _apply_ssp_patch(ssp_file, [block], dry_run=False)  # second run
         with open(ssp_file) as fh:
             patched = yaml.safe_load(fh)
         reqs = patched["system-security-plan"]["control-implementation"][
@@ -345,7 +345,7 @@ class TestApplySspPatch:
         ssp_file = tmp_path / "ssp.yaml"
         ssp_file.write_text(_MINIMAL_SSP)
         block = generate_ssp_patch(minimal_cs)
-        _apply_ssp_patch(ssp_file, block, dry_run=False)
+        _apply_ssp_patch(ssp_file, [block], dry_run=False)
         with open(ssp_file) as fh:
             patched = yaml.safe_load(fh)
         lm = patched["system-security-plan"]["metadata"]["last-modified"]
@@ -357,7 +357,7 @@ class TestApplySspPatch:
         ssp_file = tmp_path / "ssp.yaml"
         ssp_file.write_text(_MINIMAL_SSP)
         block = generate_ssp_patch(minimal_cs)
-        _apply_ssp_patch(ssp_file, block, dry_run=False)
+        _apply_ssp_patch(ssp_file, [block], dry_run=False)
         with open(ssp_file) as fh:
             patched = yaml.safe_load(fh)
         version = patched["system-security-plan"]["metadata"]["version"]
@@ -370,14 +370,14 @@ class TestApplySspPatch:
         ssp_file.write_text(_MINIMAL_SSP)
         original_content = ssp_file.read_text()
         block = generate_ssp_patch(minimal_cs)
-        _apply_ssp_patch(ssp_file, block, dry_run=True)
+        _apply_ssp_patch(ssp_file, [block], dry_run=True)
         assert ssp_file.read_text() == original_content
 
     def test_missing_ssp_returns_false(
         self, tmp_path: Path, minimal_cs: ControlStructureModel
     ) -> None:
         block = generate_ssp_patch(minimal_cs)
-        result = _apply_ssp_patch(tmp_path / "nonexistent.yaml", block)
+        result = _apply_ssp_patch(tmp_path / "nonexistent.yaml", [block])
         assert result is False
 
 
@@ -1004,6 +1004,108 @@ class TestFtraTelemetryToOscalTraceability:
         us_fed_map = get_iso_control_map("US_FED")
         assert "ftra_flow_enforcement" in us_fed_map
         assert us_fed_map["ftra_flow_enforcement"] == "AC-4"
+
+
+# ---------------------------------------------------------------------------
+# Phase E: Platform-Aware Narratives Integration Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseEPlatformNarratives:
+    """Integration tests for Phase E platform-aware OSCAL SSP narratives."""
+
+    def test_export_with_explicit_cloudrun_platform(
+        self, tmp_path: Path, minimal_cs: ControlStructureModel
+    ) -> None:
+        """Verify --platform gcp-cloudrun generates compensating control narratives."""
+        cs_file = tmp_path / "cs.yaml"
+        cs_file.write_text(_MINIMAL_YAML)
+        ssp_file = tmp_path / "ssp.yaml"
+        ssp_file.write_text(_MINIMAL_SSP)
+        comp_file = tmp_path / "comp.yaml"
+        comp_file.write_text(_MINIMAL_COMP_DEF)
+        patch_out = tmp_path / "patch.yaml"
+
+        ret = main(
+            [
+                "export",
+                "--input",
+                str(cs_file),
+                "--ssp",
+                str(ssp_file),
+                "--component-def",
+                str(comp_file),
+                "--patch-out",
+                str(patch_out),
+                "--platform",
+                "gcp-cloudrun",
+            ]
+        )
+        assert ret == 0
+
+        # Load SSP and verify platform control narratives are present
+        with open(ssp_file) as fh:
+            ssp = yaml.safe_load(fh)
+
+        impl_reqs = ssp["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
+        control_ids = {r["control-id"] for r in impl_reqs}
+
+        # Verify SC-7, SC-8, SC-39, SI-3 are present
+        assert "sc-7" in control_ids
+        assert "sc-8" in control_ids
+        assert "sc-39" in control_ids
+        assert "si-3" in control_ids
+
+        # Verify SC-7 narrative contains compensating control label
+        sc7_req = next(r for r in impl_reqs if r["control-id"] == "sc-7")
+        assert "**Compensating Control Disclosure:**" in sc7_req["description"]
+
+    def test_export_with_gke_platform_has_different_narratives(
+        self, tmp_path: Path, minimal_cs: ControlStructureModel
+    ) -> None:
+        """Verify --platform gcp-gke generates GKE-specific narratives (Cilium, Linkerd)."""
+        cs_file = tmp_path / "cs.yaml"
+        cs_file.write_text(_MINIMAL_YAML)
+        ssp_file = tmp_path / "ssp.yaml"
+        ssp_file.write_text(_MINIMAL_SSP)
+        comp_file = tmp_path / "comp.yaml"
+        comp_file.write_text(_MINIMAL_COMP_DEF)
+        patch_out = tmp_path / "patch.yaml"
+
+        ret = main(
+            [
+                "export",
+                "--input",
+                str(cs_file),
+                "--ssp",
+                str(ssp_file),
+                "--component-def",
+                str(comp_file),
+                "--patch-out",
+                str(patch_out),
+                "--platform",
+                "gcp-gke",
+            ]
+        )
+        assert ret == 0
+
+        # Load SSP and verify GKE-specific content
+        with open(ssp_file) as fh:
+            ssp = yaml.safe_load(fh)
+
+        impl_reqs = ssp["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
+
+        # Verify SC-7 mentions Cilium
+        sc7_req = next(r for r in impl_reqs if r["control-id"] == "sc-7")
+        assert "Cilium" in sc7_req["description"]
+
+        # Verify SC-8 mentions Linkerd
+        sc8_req = next(r for r in impl_reqs if r["control-id"] == "sc-8")
+        assert "Linkerd" in sc8_req["description"]
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

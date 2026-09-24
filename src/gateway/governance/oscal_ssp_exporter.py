@@ -151,6 +151,256 @@ _REGION_TO_FRAMEWORK_KEY: dict[str, str] = {
 }
 
 
+def _detect_deployment_platform() -> str:
+    """Detect the current deployment platform via environment variables.
+
+    Returns:
+        Platform identifier: one of ``gcp-cloudrun``, ``gcp-gke``, ``aws-ecs``,
+        ``azure-containerapp``, or ``agnostic`` (local/unknown).
+    """
+    if os.getenv("K_SERVICE"):
+        return "gcp-cloudrun"
+    if os.getenv("KUBERNETES_SERVICE_HOST"):
+        return "gcp-gke"
+    if os.getenv("ECS_CONTAINER_METADATA_URI_V4"):
+        return "aws-ecs"
+    if os.getenv("IDENTITY_ENDPOINT") and os.getenv("IDENTITY_HEADER"):
+        return "azure-containerapp"
+    return "agnostic"
+
+
+# ---------------------------------------------------------------------------
+# Platform-aware OSCAL SSP Control Narratives (Phase E)
+# ---------------------------------------------------------------------------
+
+# Stable UUIDs for platform control narratives
+_PLATFORM_SC7_IMPL_UUID = "p7000001-plat-sc7-8000-platform0001"
+_PLATFORM_SC8_IMPL_UUID = "p8000001-plat-sc8-8000-platform0001"
+_PLATFORM_SC39_IMPL_UUID = "p9000001-plat-sc39-8000-platform001"
+_PLATFORM_SI3_IMPL_UUID = "s3000001-plat-si3-8000-platform0001"
+
+PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
+    "gcp-cloudrun": {
+        "sc-7": {
+            "uuid": _PLATFORM_SC7_IMPL_UUID,
+            "control-id": "sc-7",
+            "title": "Boundary Protection — Cloud Run IAM Identity Perimeter",
+            "status": "implemented",
+            "narrative": (
+                "**Compensating Control Disclosure:** Cloud Run execution environments eliminate "
+                "Kubernetes network-layer microsegmentation (Cilium L7 FQDN egress filtering, "
+                "NetworkPolicy default-deny, service mesh mTLS) in favor of a coarser-grained "
+                "IAM-based invoker identity boundary. Individual service instances cannot apply "
+                "pod-level network ACLs; instead, ingress authorization is enforced at the Google "
+                "Front End (GFE) via Cloud Run IAM bindings (roles/run.invoker). Egress control "
+                "is limited to VPC Connector subnet routing and Cloud NAT static IP allow-listing, "
+                "which operates at the IP layer without application-layer FQDN awareness. "
+                "**This compensating control is not equivalent to GKE's defense-in-depth "
+                "microsegmentation posture** and carries elevated lateral movement risk if a "
+                "service instance is compromised. Suitable for moderate-sensitivity workloads "
+                "where simplicity and reduced operational overhead outweigh granular network isolation."
+            ),
+            "evidence": "Cloud Run IAM policy (roles/run.invoker), VPC Connector subnet routes",
+            "poam_refs": "POAM-CR-001 (SC-7 Compensating Control)",
+        },
+        "sc-8": {
+            "uuid": _PLATFORM_SC8_IMPL_UUID,
+            "control-id": "sc-8",
+            "title": "Transmission Confidentiality and Integrity — GFE TLS 1.3 + OIDC Tokens",
+            "status": "implemented",
+            "narrative": (
+                "**Superior Control Implementation:** Cloud Run enforces TLS 1.3 termination at "
+                "the Google Front End (GFE) for all ingress traffic, with automatic certificate "
+                "provisioning and rotation managed by Google's Certificate Authority. Service-to-service "
+                "authentication uses IAM-issued OIDC bearer tokens in the `Authorization: Bearer` header, "
+                "cryptographically binding caller identity to the GCP service account without requiring "
+                "explicit mTLS certificate management. This eliminates the attack surface of in-cluster "
+                "service mesh control planes (Linkerd identity issuer, SPIFFE trust domain, certificate "
+                "rotation daemons) and private key material stored in pod tmpfs. **This control is "
+                "superior to GKE service mesh mTLS** for scenarios prioritizing simplicity and Google-native "
+                "identity federation, at the cost of reduced defense-in-depth against compromised GCP "
+                "control plane components."
+            ),
+            "evidence": "GFE TLS 1.3 termination, Cloud Run IAM OIDC token exchange",
+            "poam_refs": "N/A — superior to baseline",
+        },
+        "sc-39": {
+            "uuid": _PLATFORM_SC39_IMPL_UUID,
+            "control-id": "sc-39",
+            "title": "Process Isolation — Execution-Environment Dependent (gVisor vs. microVM)",
+            "status": "implemented",
+            "narrative": (
+                "Cloud Run process isolation posture is **execution-environment dependent**: "
+                "Gen1 instances use gVisor (application kernel sandbox) with reduced syscall attack "
+                "surface but shared host kernel; Gen2 instances use microVM isolation (Firecracker-style "
+                "hardware virtualization boundary) with stronger guarantees against kernel exploits. "
+                "CAGE governance workloads default to **Gen2 microVM** for high-assurance isolation. "
+                "Unlike GKE RuntimeClass=gvisor or Confidential GKE (AMD SEV), Cloud Run does not "
+                "expose fine-grained RuntimeClass selection or attestation APIs; isolation model is "
+                "determined by instance generation choice at service creation time. **This control "
+                "satisfies SC-39 requirements** for Gen2 deployments but requires architectural review "
+                "for safety-critical workloads requiring hardware root-of-trust attestation."
+            ),
+            "evidence": "Cloud Run Gen2 execution environment (microVM isolation)",
+            "poam_refs": "POAM-CR-002 (SC-39 Gen2 Verification)",
+        },
+        "si-3": {
+            "uuid": _PLATFORM_SI3_IMPL_UUID,
+            "control-id": "si-3",
+            "title": "Malicious Code Protection — Writable Root Filesystem (Compensating)",
+            "status": "implemented",
+            "narrative": (
+                "**Compensating Control Disclosure:** Cloud Run containers execute with a **writable "
+                "root filesystem** by default, eliminating GKE's `readOnlyRootFilesystem: true` "
+                "security context constraint that prevents runtime modification of container image layers. "
+                "This expanded write surface increases risk of malware persistence and fileless attack "
+                "staging areas surviving across requests (if using minimum instances > 0). **This "
+                "compensating control is not equivalent** to GKE's immutable root filesystem posture. "
+                "Mitigation: (a) Binary Authorization admission policy preventing unsigned images, "
+                "(b) VPC Service Controls perimeter blocking exfiltration paths, (c) Cloud Logging "
+                "file access audit trail for forensic detection. Deployments requiring strict immutability "
+                "guarantees (PCI-DSS, FedRAMP High) should use GKE with readOnlyRootFilesystem enforcement."
+            ),
+            "evidence": "Binary Authorization policy, VPC Service Controls perimeter, Cloud Logging",
+            "poam_refs": "POAM-CR-003 (SI-3 Compensating Control)",
+        },
+    },
+    "gcp-gke": {
+        "sc-7": {
+            "uuid": _PLATFORM_SC7_IMPL_UUID,
+            "control-id": "sc-7",
+            "title": "Boundary Protection — Cilium L7 FQDN Egress Lockdown",
+            "status": "implemented",
+            "narrative": (
+                "Layer-7 FQDN-aware egress boundaries are enforced on all governance-stack pods "
+                "by Cilium CiliumNetworkPolicy resources. Standard Kubernetes NetworkPolicies "
+                "(network-policy.yaml) provide L3/L4 default-deny; Cilium extends this to the "
+                "application layer by intercepting DNS responses and binding resolved IP addresses "
+                "to the FQDN allow-list in real time. Gateway pods may reach only approved external "
+                "LLM provider endpoints (api.vendor-a.com, api.vendor-b.com, "
+                "generativelanguage.googleapis.com) and required GCP service APIs. Sovereign "
+                "agent pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080, "
+                "OTel:4317/4318) and cannot contact any external endpoint directly, preventing "
+                "lateral movement and data exfiltration even if a pod is compromised. "
+                "Evidence: cilium monitor --type l7."
+            ),
+            "evidence": "deployment/k8s/cilium-egress-lockdown.yaml",
+            "poam_refs": "POAM-007 (IA-3)",
+        },
+        "sc-8": {
+            "uuid": _PLATFORM_SC8_IMPL_UUID,
+            "control-id": "sc-8",
+            "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
+            "status": "implemented",
+            "narrative": (
+                "Intra-cluster communications between CAGE core components (Gateway → OPA, "
+                "Gateway → NeMo Guardrails) are encrypted using mutual TLS via Linkerd data-plane "
+                "proxies. Each workload's identity is derived deterministically from its "
+                "Kubernetes ServiceAccount as a SPIFFE Verifiable Identity Document (SVID). "
+                "Private keys are stored exclusively in-memory (tmpfs) and TLS certificates are "
+                "rotated automatically every 24 hours by the Linkerd control plane. "
+                "AuthorizationPolicy resources enforce that only explicitly authorized service "
+                "accounts (cage-gateway-sa, cage-compliance-bridge-sa) may reach the OPA Server "
+                "on port 8181; any other caller is rejected at the proxy sidecar before reaching "
+                "the application layer. Evidence: linkerd viz authz deployment/opa-service -n governance-stack."
+            ),
+            "evidence": "deployment/k8s/linkerd-mtls-policy.yaml",
+            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8)",
+        },
+        "sc-39": {
+            "uuid": _PLATFORM_SC39_IMPL_UUID,
+            "control-id": "sc-39",
+            "title": "Process Isolation — gVisor RuntimeClass",
+            "status": "implemented",
+            "narrative": (
+                "All governance-stack pods execute with `runtimeClassName: gvisor`, enforcing "
+                "application kernel sandboxing via gVisor's reduced syscall attack surface. "
+                "gVisor intercepts syscalls in userspace and emulates a Linux kernel interface, "
+                "preventing direct host kernel access from containerized workloads. This isolation "
+                "boundary mitigates container escape vulnerabilities (e.g., runc CVE-2019-5736) "
+                "and kernel privilege escalation exploits. Pod Security Standard enforcement "
+                "(restricted profile) prevents RuntimeClass override. Evidence: kubectl get pod "
+                "-n governance-stack -o jsonpath='{.items[*].spec.runtimeClassName}'."
+            ),
+            "evidence": "deployment/k8s/*-deployment.yaml (runtimeClassName: gvisor)",
+            "poam_refs": "POAM-009 (SC-39)",
+        },
+        "si-3": {
+            "uuid": _PLATFORM_SI3_IMPL_UUID,
+            "control-id": "si-3",
+            "title": "Malicious Code Protection — Immutable Root Filesystem",
+            "status": "implemented",
+            "narrative": (
+                "All governance-stack containers enforce `readOnlyRootFilesystem: true` in their "
+                "securityContext, preventing runtime modification of container image layers. Writable "
+                "data is isolated to explicitly-mounted emptyDir volumes (tmpfs-backed, ephemeral). "
+                "This immutability boundary prevents malware persistence, fileless attack staging, "
+                "and post-compromise binary implantation. Combined with Binary Authorization admission "
+                "policy (only signed images may execute) and Artifact Registry vulnerability scanning "
+                "(block on CRITICAL/HIGH CVEs), this defense-in-depth posture satisfies SI-3 requirements "
+                "for high-assurance AI governance workloads."
+            ),
+            "evidence": "deployment/k8s/*-deployment.yaml (readOnlyRootFilesystem: true)",
+            "poam_refs": "POAM-010 (SI-3)",
+        },
+    },
+}
+
+
+def generate_platform_control_narratives(platform: str | None = None) -> list[dict[str, Any]]:
+    """Generate OSCAL implemented-requirement blocks for platform-aware controls.
+
+    Args:
+        platform: Explicit platform identifier (``gcp-cloudrun``, ``gcp-gke``, etc.).
+            If ``None``, auto-detect via :func:`_detect_deployment_platform`.
+
+    Returns:
+        List of OSCAL implemented-requirement dicts for SC-7, SC-8, SC-39, SI-3.
+        Returns empty list for ``agnostic`` or unknown platforms.
+    """
+    if platform is None:
+        platform = _detect_deployment_platform()
+
+    logger.info("generate_platform_control_narratives: platform=%s", platform)
+
+    if platform not in PLATFORM_CONTROL_NARRATIVES:
+        logger.warning(
+            "generate_platform_control_narratives: no narratives defined for platform '%s' — "
+            "skipping platform-aware controls",
+            platform,
+        )
+        return []
+
+    narratives = PLATFORM_CONTROL_NARRATIVES[platform]
+    blocks = []
+
+    for control_id in ["sc-7", "sc-8", "sc-39", "si-3"]:
+        if control_id not in narratives:
+            continue
+        meta = narratives[control_id]
+        blocks.append(
+            {
+                "uuid": meta["uuid"],
+                "control-id": control_id,
+                "description": meta["narrative"],
+                "props": [
+                    {"name": "implementation-status", "value": meta["status"]},
+                    {"name": "deployment-platform", "value": platform},
+                    {"name": "evidence-file", "value": meta["evidence"]},
+                    {"name": "poam-refs", "value": meta["poam_refs"]},
+                ],
+                "responsible-roles": [{"role-id": "system-administrator"}],
+            }
+        )
+
+    logger.info(
+        "generate_platform_control_narratives: generated %d control blocks for platform=%s",
+        len(blocks),
+        platform,
+    )
+    return blocks
+
+
 def get_regional_profile(region: str | None = None) -> dict:
     """Return the OSCAL profile metadata dict for the given deployment region.
 
@@ -699,11 +949,16 @@ _STPA_IMPL_MARKER = _STPA_IMPL_UUID
 
 def _apply_ssp_patch(
     ssp_path: Path,
-    patch_block: dict[str, Any],
+    patch_blocks: list[dict[str, Any]],
     dry_run: bool = False,
 ) -> bool:
     """
-    Load the existing SSP YAML, inject/replace the STPA patch block, write back.
+    Load the existing SSP YAML, inject/replace patch blocks, write back.
+
+    Args:
+        ssp_path: Path to the SSP YAML file.
+        patch_blocks: List of OSCAL implemented-requirement dicts to inject.
+        dry_run: If True, do not write files.
 
     Returns True if the SSP was modified (or would have been in dry-run).
     """
@@ -725,8 +980,17 @@ def _apply_ssp_patch(
     # Remove any pre-existing exporter block (idempotent)
     impl_reqs = [r for r in impl_reqs if r.get("uuid") != _STPA_IMPL_MARKER]
 
-    # Append new block
-    impl_reqs.append(patch_block)
+    # Remove any pre-existing platform control blocks (idempotent, by UUID)
+    platform_uuids = {
+        _PLATFORM_SC7_IMPL_UUID,
+        _PLATFORM_SC8_IMPL_UUID,
+        _PLATFORM_SC39_IMPL_UUID,
+        _PLATFORM_SI3_IMPL_UUID,
+    }
+    impl_reqs = [r for r in impl_reqs if r.get("uuid") not in platform_uuids]
+
+    # Append new blocks
+    impl_reqs.extend(patch_blocks)
     ssp["system-security-plan"]["control-implementation"][
         "implemented-requirements"
     ] = impl_reqs
@@ -958,6 +1222,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "MAS_FEAT = MAS FEAT Principles + TRM Guidelines."
         ),
     )
+    exp.add_argument(
+        "--platform",
+        default=None,
+        choices=["gcp-cloudrun", "gcp-gke", "aws-ecs", "azure-containerapp", "agnostic"],
+        metavar="PLATFORM",
+        help=(
+            "Deployment platform for platform-aware control narratives (SC-7, SC-8, SC-39, SI-3). "
+            "Auto-detected if not specified. gcp-cloudrun = Cloud Run, gcp-gke = GKE (default for K8s), "
+            "aws-ecs = ECS, azure-containerapp = Azure Container Apps, agnostic = local/unknown."
+        ),
+    )
     return parser
 
 
@@ -1007,17 +1282,26 @@ def cmd_export(args: argparse.Namespace) -> int:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
 
-    patch_block = generate_ssp_patch(cs, target_framework=framework_key)
+    # Generate STPA compiler patch block
+    stpa_patch_block = generate_ssp_patch(cs, target_framework=framework_key)
     component_entry = generate_component_entry(cs)
     ftra_component_entry = generate_ftra_component_entry()
 
-    ok_ssp = _apply_ssp_patch(args.ssp, patch_block, dry_run=args.dry_run)
+    # Generate platform-aware control narratives (Phase E)
+    platform = getattr(args, "platform", None)
+    platform_narratives = generate_platform_control_narratives(platform)
+    
+    # Combine STPA patch with platform narratives
+    all_patch_blocks = [stpa_patch_block] + platform_narratives
+    
+    # Apply all patches to SSP
+    ok_ssp = _apply_ssp_patch(args.ssp, all_patch_blocks, dry_run=args.dry_run)
     _apply_component_patch(args.component_def, component_entry, dry_run=args.dry_run)
     _apply_ftra_component_patch(
         args.component_def, ftra_component_entry, dry_run=args.dry_run
     )
     _write_standalone_patch(
-        args.patch_out, patch_block, component_entry, cs, dry_run=args.dry_run
+        args.patch_out, stpa_patch_block, component_entry, cs, dry_run=args.dry_run
     )
 
     if not ok_ssp:
