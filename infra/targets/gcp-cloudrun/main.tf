@@ -55,6 +55,9 @@ resource "google_redis_instance" "redis" {
 
   redis_version = "REDIS_7_0"
 
+  # CMEK encryption (Phase C)
+  customer_managed_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
+
   # High Availability configuration
   replica_count        = var.enable_high_availability ? 1 : 0
   read_replicas_mode   = var.enable_high_availability ? "READ_REPLICAS_ENABLED" : "READ_REPLICAS_DISABLED"
@@ -92,6 +95,9 @@ resource "google_sql_database_instance" "postgres" {
   database_version = "POSTGRES_15"
   region           = var.region
   project          = var.project_id
+
+  # CMEK encryption (Phase C)
+  encryption_key_name = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
 
   settings {
     tier              = var.postgres_tier
@@ -156,6 +162,14 @@ resource "google_storage_bucket" "langfuse_traces" {
 
   uniform_bucket_level_access = true
 
+  # CMEK encryption (Phase C)
+  dynamic "encryption" {
+    for_each = var.enable_cmek ? [1] : []
+    content {
+      default_kms_key_name = google_kms_crypto_key.cloudrun_cmek[0].id
+    }
+  }
+
   versioning {
     enabled = var.enable_nist_compliance
   }
@@ -178,6 +192,14 @@ resource "google_storage_bucket" "compliance_artifacts" {
   force_destroy = var.environment != "prod"
 
   uniform_bucket_level_access = true
+
+  # CMEK encryption (Phase C)
+  dynamic "encryption" {
+    for_each = var.enable_cmek ? [1] : []
+    content {
+      default_kms_key_name = google_kms_crypto_key.cloudrun_cmek[0].id
+    }
+  }
 
   versioning {
     enabled = true
@@ -461,6 +483,9 @@ resource "google_cloud_run_v2_service" "gateway" {
   template {
     service_account = google_service_account.gateway.email
 
+    # CMEK encryption (Phase C)
+    encryption_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
+
     scaling {
       min_instance_count = var.enable_high_availability ? 2 : var.gateway_min_instances
       max_instance_count = var.gateway_max_instances
@@ -600,6 +625,9 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
   template {
     service_account = google_service_account.governed_advisor.email
 
+    # CMEK encryption (Phase C)
+    encryption_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
+
     scaling {
       min_instance_count = var.enable_high_availability ? 2 : var.advisor_min_instances
       max_instance_count = var.advisor_max_instances
@@ -664,6 +692,9 @@ resource "google_cloud_run_v2_service" "agentsight_ui" {
   template {
     service_account = google_service_account.agentsight_ui.email
 
+    # CMEK encryption (Phase C)
+    encryption_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
+
     scaling {
       min_instance_count = var.enable_high_availability ? 2 : 0
       max_instance_count = 5
@@ -717,6 +748,9 @@ resource "google_cloud_run_v2_service" "compliance_bridge" {
 
   template {
     service_account = google_service_account.compliance_bridge.email
+
+    # CMEK encryption (Phase C)
+    encryption_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
 
     scaling {
       min_instance_count = var.enable_high_availability ? 2 : 0
@@ -776,6 +810,9 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
 
   template {
     service_account = google_service_account.langfuse.email
+
+    # CMEK encryption (Phase C)
+    encryption_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
 
     scaling {
       min_instance_count = var.enable_high_availability ? 2 : 0
@@ -888,6 +925,9 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
 
   template {
     service_account = google_service_account.langfuse.email
+
+    # CMEK encryption (Phase C)
+    encryption_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
 
     scaling {
       min_instance_count = var.enable_high_availability ? 2 : 0
