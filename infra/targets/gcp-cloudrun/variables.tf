@@ -103,6 +103,20 @@ variable "langfuse_worker_image" {
   default     = "langfuse/langfuse-worker:latest"
 }
 
+variable "nemo_image" {
+  description = "NeMo Guardrails container image URL"
+  type        = string
+  default     = ""
+}
+
+# ─── KMS Configuration ────────────────────────────────────────────────────────
+
+variable "kms_governance_key" {
+  description = "Cloud KMS key for governance signature verification (full resource name: projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey})"
+  type        = string
+  default     = ""
+}
+
 # ─── Feature Toggles ──────────────────────────────────────────────────────────
 
 variable "enable_high_availability" {

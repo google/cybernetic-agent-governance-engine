@@ -371,6 +371,18 @@ resource "google_service_account" "langfuse" {
   project      = var.project_id
 }
 
+resource "google_service_account" "nemo_guardrails" {
+  account_id   = "cage-nemo-${var.environment}"
+  display_name = "CAGE NeMo Guardrails Service Account"
+  project      = var.project_id
+}
+
+resource "google_service_account" "reconciliation_daemon" {
+  account_id   = "cage-reconciliation-${var.environment}"
+  display_name = "CAGE Reconciliation Daemon Service Account"
+  project      = var.project_id
+}
+
 # ─── IAM Bindings ─────────────────────────────────────────────────────────────
 
 # Gateway: Secret Manager access
@@ -445,6 +457,21 @@ resource "google_storage_bucket_iam_member" "compliance_bridge_artifacts_reader"
   bucket = google_storage_bucket.compliance_artifacts.name
   role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.compliance_bridge.email}"
+}
+
+# Reconciliation Daemon: GCS access for evidence enumeration
+resource "google_storage_bucket_iam_member" "reconciliation_compliance_artifacts_viewer" {
+  bucket = google_storage_bucket.compliance_artifacts.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.reconciliation_daemon.email}"
+}
+
+# Reconciliation Daemon: KMS access for signature verification
+resource "google_kms_crypto_key_iam_member" "reconciliation_kms_verifier" {
+  count         = var.kms_governance_key != "" ? 1 : 0
+  crypto_key_id = var.kms_governance_key
+  role          = "roles/cloudkms.signerVerifier"
+  member        = "serviceAccount:${google_service_account.reconciliation_daemon.email}"
 }
 
 # ─── Cloud Run Services ───────────────────────────────────────────────────────
@@ -973,6 +1000,565 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
     google_sql_database_instance.postgres,
     google_sql_database.langfuse
   ]
+}
+
+# NeMo Guardrails Service (Phase D - Requirement 9)
+resource "google_cloud_run_v2_service" "nemo_guardrails" {
+  count    = var.enable_nemo_guardrails ? 1 : 0
+  name     = "cage-nemo-guardrails-${var.environment}"
+  location = var.region
+  project  = var.project_id
+
+  # Internal service: only accessible from within VPC (AC-3)
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  template {
+    service_account = google_service_account.nemo_guardrails.email
+
+    scaling {
+      min_instance_count = var.enable_high_availability ? 2 : 0
+      max_instance_count = 5
+    }
+
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.vpc.id
+        subnetwork = google_compute_subnetwork.subnet.id
+      }
+      egress = "ALL_TRAFFIC"
+    }
+
+    containers {
+      name  = "nemo"
+      image = var.nemo_image != "" ? var.nemo_image : "gcr.io/${var.project_id}/cage-nemo-guardrails:latest"
+
+      ports {
+        container_port = 8000
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "2Gi"
+        }
+      }
+
+      # Health checks on port 8000
+      startup_probe {
+        http_get {
+          path = "/health"
+          port = 8000
+        }
+        initial_delay_seconds = 10
+        period_seconds        = 3
+        timeout_seconds       = 2
+        failure_threshold     = 10
+      }
+
+      liveness_probe {
+        http_get {
+          path = "/health"
+          port = 8000
+        }
+        period_seconds    = 20
+        timeout_seconds   = 5
+        failure_threshold = 3
+      }
+
+      env {
+        name  = "ENVIRONMENT"
+        value = var.environment
+      }
+
+      env {
+        name  = "CAGE_DEPLOYMENT_REGION"
+        value = var.cage_deployment_region
+      }
+
+      env {
+        name  = "VLLM_BASE_URL"
+        value = "http://vllm-service:8000"
+      }
+
+      env {
+        name  = "LANGFUSE_HOST"
+        value = google_cloud_run_v2_service.langfuse_web.uri
+      }
+
+      # Langfuse compliance credentials for input validation telemetry (AU-9)
+      dynamic "env" {
+        for_each = var.langfuse_compliance_public_key != "" ? [1] : []
+        content {
+          name = "LANGFUSE_PUBLIC_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.langfuse_compliance_public_key[0].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.langfuse_compliance_secret_key != "" ? [1] : []
+        content {
+          name = "LANGFUSE_SECRET_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.langfuse_compliance_secret_key[0].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service.langfuse_web]
+}
+
+# Reconciliation Daemon Service (Phase D - Requirement 11)
+resource "google_cloud_run_v2_service" "reconciliation_daemon" {
+  name     = "cage-reconciliation-daemon-${var.environment}"
+  location = var.region
+  project  = var.project_id
+
+  # Internal service: only accessible from within VPC
+  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  template {
+    service_account = google_service_account.reconciliation_daemon.email
+
+    scaling {
+      min_instance_count = 1
+      max_instance_count = 1
+    }
+
+    # Critical: CPU always allocated for continuous reconciliation loop
+    containers {
+      image = var.compliance_bridge_image != "" ? var.compliance_bridge_image : "gcr.io/${var.project_id}/cage-compliance-bridge:latest"
+
+      ports {
+        container_port = 8080
+      }
+
+      resources {
+        cpu_idle = false  # CPU always allocated — prevents daemon freeze between requests
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
+      }
+
+      env {
+        name  = "ENVIRONMENT"
+        value = var.environment
+      }
+
+      env {
+        name  = "CAGE_DEPLOYMENT_REGION"
+        value = var.cage_deployment_region
+      }
+
+      env {
+        name  = "GCS_BUCKET"
+        value = google_storage_bucket.compliance_artifacts.name
+      }
+
+      # Continuous mode: daemon runs reconciliation loop indefinitely
+      env {
+        name  = "RECONCILIATION_SINGLE_SHOT"
+        value = "false"
+      }
+
+      # KMS key for signature verification
+      dynamic "env" {
+        for_each = var.kms_governance_key != "" ? [1] : []
+        content {
+          name  = "KMS_GOVERNANCE_KEY"
+          value = var.kms_governance_key
+        }
+      }
+    }
+  }
+
+  depends_on = [google_storage_bucket.compliance_artifacts]
+}
+
+# ─── Cloud Run Jobs (Phase D - Requirement 10) ────────────────────────────────
+
+# Lula Compliance Audit Job (CA-7)
+resource "google_cloud_run_v2_job" "lula_audit" {
+  name     = "cage-lula-audit-${var.environment}"
+  location = var.region
+  project  = var.project_id
+
+  template {
+    template {
+      service_account = google_service_account.compliance_bridge.email
+
+      timeout = "600s"  # 10 minutes
+
+      vpc_access {
+        network_interfaces {
+          network    = google_compute_network.vpc.id
+          subnetwork = google_compute_subnetwork.subnet.id
+        }
+        egress = "ALL_TRAFFIC"
+      }
+
+      containers {
+        image = var.compliance_bridge_image != "" ? var.compliance_bridge_image : "gcr.io/${var.project_id}/cage-compliance-bridge:latest"
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "1Gi"
+          }
+        }
+
+        env {
+          name  = "ENVIRONMENT"
+          value = var.environment
+        }
+
+        env {
+          name  = "CAGE_DEPLOYMENT_REGION"
+          value = var.cage_deployment_region
+        }
+
+        env {
+          name  = "GCS_BUCKET"
+          value = google_storage_bucket.compliance_artifacts.name
+        }
+
+        # Langfuse compliance credentials
+        dynamic "env" {
+          for_each = var.langfuse_compliance_public_key != "" ? [1] : []
+          content {
+            name = "LANGFUSE_COMPLIANCE_PUBLIC_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.langfuse_compliance_public_key[0].secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+
+        dynamic "env" {
+          for_each = var.langfuse_compliance_secret_key != "" ? [1] : []
+          content {
+            name = "LANGFUSE_COMPLIANCE_SECRET_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.langfuse_compliance_secret_key[0].secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+
+        # Inline Python script executing compliance audit workflow
+        command = ["python3", "-c"]
+        args = [<<-PYTHON
+          import asyncio, json, sys, time, yaml as _yaml
+          sys.path.insert(0, "/app")
+
+          from compliance_bridge.metrics import get_compliance_metrics
+          from compliance_bridge.oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
+          from compliance_bridge.audit_workflow import run_audit_workflow
+
+          SUPPORTED_CONTROLS = ["A.5.2", "A.5.3", "A.9.2", "SC-4"]
+          AUDIT_ID = f"cloudrun-{int(time.time())}"
+
+          print("🔍 Starting Lula ISO 42001 audit...")
+
+          async def _main():
+              controls_data = {}
+              async def _fetch(cid):
+                  try:
+                      m = await asyncio.wait_for(get_compliance_metrics(cid, 24), timeout=8.0)
+                      controls_data[cid] = m.model_dump()
+                  except Exception as exc:
+                      controls_data[cid] = {"error": str(exc)}
+
+              await asyncio.wait_for(
+                  asyncio.gather(*[_fetch(cid) for cid in SUPPORTED_CONTROLS]),
+                  timeout=25.0,
+              )
+              return controls_data
+
+          controls_data = asyncio.run(_main())
+          findings = findings_from_metrics_dict(controls_data, AUDIT_ID)
+          doc = build_oscal_assessment_results(findings=findings, audit_id=AUDIT_ID, window_hours=24)
+          oscal_yaml = _yaml.dump(doc, default_flow_style=False, allow_unicode=True)
+          result_lines = oscal_yaml.count("\n")
+          print(f"✅ Lula audit complete. Result: oscal-assessment-{AUDIT_ID}.yaml ({result_lines} lines)")
+
+          result = asyncio.run(run_audit_workflow(oscal_yaml=oscal_yaml, audit_id=AUDIT_ID))
+          print(f"📊 Ingest result:")
+          print(json.dumps(result, indent=2))
+
+          if result.get("status") != "ok":
+              print(f"❌ Ingest failed: {result}", file=sys.stderr)
+              sys.exit(1)
+
+          print("✅ OSCAL results ingested into Langfuse compliance project.")
+        PYTHON
+        ]
+      }
+    }
+  }
+}
+
+# SBOM Generator Job (CM-8)
+resource "google_cloud_run_v2_job" "sbom_generator" {
+  name     = "cage-sbom-generator-${var.environment}"
+  location = var.region
+  project  = var.project_id
+
+  template {
+    template {
+      service_account = google_service_account.compliance_bridge.email
+
+      timeout = "3600s"  # 1 hour
+
+      containers {
+        image = "anchore/syft:v1.10.0"
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "2Gi"
+          }
+        }
+
+        env {
+          name  = "GCP_PROJECT_ID"
+          value = var.project_id
+        }
+
+        env {
+          name  = "SBOM_GCS_BUCKET"
+          value = google_storage_bucket.compliance_artifacts.name
+        }
+
+        # Syft SBOM generation script
+        command = ["/bin/sh", "-c"]
+        args = [<<-SCRIPT
+          set -euo pipefail
+          echo "🔍 CAGE SBOM Generator starting — CM-8"
+          DATE=$(date +%Y-%m-%d)
+          RESULTS_DIR="/tmp/sbom-$${DATE}"
+          mkdir -p "$${RESULTS_DIR}"
+
+          # Image list to scan
+          IMAGES="
+            gcr.io/$${GCP_PROJECT_ID}/cage-gateway:latest
+            gcr.io/$${GCP_PROJECT_ID}/cage-compliance-bridge:latest
+            gcr.io/$${GCP_PROJECT_ID}/cage-governed-advisor:latest
+            gcr.io/$${GCP_PROJECT_ID}/cage-agentsight-ui:latest
+          "
+
+          for IMAGE in $${IMAGES}; do
+            echo "🔬 Scanning image: $${IMAGE}"
+            SAFE_NAME=$(echo "$${IMAGE}" | tr '/:@' '---')
+            SBOM_FILE="$${RESULTS_DIR}/$${SAFE_NAME}-$${DATE}.cdx.json"
+            
+            if syft "$${IMAGE}" -o cyclonedx-json --file "$${SBOM_FILE}" --quiet; then
+              echo "  ✅ SBOM generated: $${SBOM_FILE}"
+            else
+              echo "  ⚠️  Syft scan failed for $${IMAGE}"
+            fi
+          done
+
+          echo "📤 Uploading SBOMs to GCS: gs://$${SBOM_GCS_BUCKET}/sbom/$${DATE}/"
+          if command -v gsutil > /dev/null 2>&1; then
+            gsutil -m cp "$${RESULTS_DIR}/"*.json "gs://$${SBOM_GCS_BUCKET}/sbom/$${DATE}/" || echo "⚠️  GCS upload failed"
+          else
+            echo "⚠️  gsutil not found"
+          fi
+          echo "✅ SBOM generation complete"
+        SCRIPT
+        ]
+      }
+    }
+  }
+}
+
+# Security Scan Job (RA-5)
+resource "google_cloud_run_v2_job" "security_scan" {
+  name     = "cage-security-scan-${var.environment}"
+  location = var.region
+  project  = var.project_id
+
+  template {
+    template {
+      service_account = google_service_account.compliance_bridge.email
+
+      timeout = "1800s"  # 30 minutes
+
+      containers {
+        image = "aquasec/trivy:0.51.4"
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "2Gi"
+          }
+        }
+
+        env {
+          name  = "GCP_PROJECT_ID"
+          value = var.project_id
+        }
+
+        env {
+          name  = "SCAN_GCS_BUCKET"
+          value = google_storage_bucket.compliance_artifacts.name
+        }
+
+        # Trivy security scan script
+        command = ["/bin/sh", "-c"]
+        args = [<<-SCRIPT
+          set -euo pipefail
+          echo "🔍 CAGE Security Scanner starting — RA-5"
+          DATE=$(date +%Y-%m-%d)
+          RESULTS_DIR="/tmp/scan-$${DATE}"
+          mkdir -p "$${RESULTS_DIR}"
+
+          # Image list to scan
+          IMAGES="
+            gcr.io/$${GCP_PROJECT_ID}/cage-gateway:latest
+            gcr.io/$${GCP_PROJECT_ID}/cage-compliance-bridge:latest
+          "
+
+          for IMAGE in $${IMAGES}; do
+            echo "🔬 Scanning image: $${IMAGE}"
+            SAFE_NAME=$(echo "$${IMAGE}" | tr '/:@' '---')
+            SCAN_FILE="$${RESULTS_DIR}/$${SAFE_NAME}-$${DATE}.json"
+            
+            if trivy image --format json --output "$${SCAN_FILE}" "$${IMAGE}"; then
+              echo "  ✅ Scan complete: $${SCAN_FILE}"
+            else
+              echo "  ⚠️  Trivy scan failed for $${IMAGE}"
+            fi
+          done
+
+          echo "📤 Uploading scan results to GCS: gs://$${SCAN_GCS_BUCKET}/security-scans/$${DATE}/"
+          if command -v gsutil > /dev/null 2>&1; then
+            gsutil -m cp "$${RESULTS_DIR}/"*.json "gs://$${SCAN_GCS_BUCKET}/security-scans/$${DATE}/" || echo "⚠️  GCS upload failed"
+          else
+            echo "⚠️  gsutil not found"
+          fi
+          echo "✅ Security scan complete"
+        SCRIPT
+        ]
+      }
+    }
+  }
+}
+
+# ─── Cloud Scheduler Jobs (Phase D - Requirement 10) ──────────────────────────
+
+# Lula Audit Trigger (every 6 hours)
+resource "google_cloud_scheduler_job" "lula_audit_trigger" {
+  name             = "cage-lula-audit-trigger-${var.environment}"
+  region           = var.region
+  project          = var.project_id
+  schedule         = "0 */6 * * *"
+  time_zone        = "UTC"
+  attempt_deadline = "600s"
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.lula_audit.name}:run"
+
+    oauth_token {
+      service_account_email = google_service_account.compliance_bridge.email
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_job.lula_audit]
+}
+
+# SBOM Generator Trigger (daily at 02:00 UTC)
+resource "google_cloud_scheduler_job" "sbom_trigger" {
+  name             = "cage-sbom-trigger-${var.environment}"
+  region           = var.region
+  project          = var.project_id
+  schedule         = "0 2 * * *"
+  time_zone        = "UTC"
+  attempt_deadline = "3600s"
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.sbom_generator.name}:run"
+
+    oauth_token {
+      service_account_email = google_service_account.compliance_bridge.email
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_job.sbom_generator]
+}
+
+# Security Scan Trigger (weekly Sunday at 03:00 UTC)
+resource "google_cloud_scheduler_job" "security_scan_trigger" {
+  name             = "cage-security-scan-trigger-${var.environment}"
+  region           = var.region
+  project          = var.project_id
+  schedule         = "0 3 * * 0"
+  time_zone        = "UTC"
+  attempt_deadline = "1800s"
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.security_scan.name}:run"
+
+    oauth_token {
+      service_account_email = google_service_account.compliance_bridge.email
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_job.security_scan]
+}
+
+# ─── POAM-019 Telemetry Isolation (Phase D - Requirement 12) ──────────────────
+
+resource "terraform_data" "poam_019_langfuse_isolation" {
+  count = var.enable_nist_compliance ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition = (
+        var.langfuse_compliance_public_key != "" &&
+        var.langfuse_compliance_secret_key != "" &&
+        var.langfuse_compliance_public_key != var.langfuse_public_key &&
+        var.langfuse_compliance_secret_key != var.langfuse_secret_key
+      )
+      error_message = <<-EOM
+        POAM-019 telemetry isolation failure (AU-9):
+        
+        When enable_nist_compliance=true, compliance and application Langfuse
+        credentials must be non-empty AND distinct.
+        
+        Current state:
+          - langfuse_compliance_public_key: ${length(var.langfuse_compliance_public_key) > 0 ? "set" : "EMPTY"}
+          - langfuse_compliance_secret_key: ${length(var.langfuse_compliance_secret_key) > 0 ? "set" : "EMPTY"}
+          - Keys match application keys: ${var.langfuse_compliance_public_key == var.langfuse_public_key ? "YES (INVALID)" : "no"}
+        
+        Remediation:
+          1. Provision a separate Langfuse project for compliance telemetry
+          2. Set langfuse_compliance_public_key and langfuse_compliance_secret_key
+             in terraform.auto.tfvars (gitignored)
+          3. Ensure compliance keys differ from application keys
+        
+        Reference: docs/POAM.md POAM-019, NIST SP 800-53 AU-9
+      EOM
+    }
+  }
 }
 
 # ─── IAM Policy for Public Access (Optional) ──────────────────────────────────
