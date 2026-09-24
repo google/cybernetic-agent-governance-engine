@@ -65,11 +65,25 @@ backend "gcs" {
 
 ### Step 2: Create Secrets Configuration
 
+#### Method A: Local Execution (terraform.auto.tfvars)
+
 Copy the example configuration and populate secrets:
 
 ```bash
 cp terraform.auto.tfvars.example terraform.auto.tfvars
 # Edit terraform.auto.tfvars with your secrets (gitignored)
+```
+
+#### Method B: CI/CD Pipeline Execution (Environment Variables)
+
+If deploying via GitHub Actions, Cloud Build, or GitLab CI, pass the variables using Terraform's `TF_VAR_` environment variable convention.
+
+```yaml
+# Example CI/CD step
+env:
+  TF_VAR_routing_seal_secret: ${{ secrets.ROUTING_SEAL_SECRET }}
+  TF_VAR_langfuse_nextauth_secret: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
+run: terraform apply -auto-approve
 ```
 
 **Required secrets** (never commit these):
@@ -122,6 +136,41 @@ terraform output gateway_url
 terraform output langfuse_web_url
 terraform output agentsight_ui_url
 ```
+
+### Step 6: Configure Custom Domain & Cloud DNS (Optional)
+
+If exposing the Gateway via a custom domain and external HTTPS load balancer (`enable_load_balancer = true`):
+
+#### 1. Architecture Invariant: Decoupled DNS Zone Lifecycle
+Treat DNS managed zones as persistent foundational infrastructure. Never create or destroy the parent DNS zone inside ephemeral application deployment stacks. Deleting a managed zone while external parent delegations exist can leave an **orphaned zone**, creating a critical **subdomain takeover** vulnerability. Workload Terraform stacks should only manage the ephemeral `A` / `AAAA` record sets.
+
+#### 2. Automated Record Management via Cloud DNS
+If your domain is managed in Google Cloud DNS within your project:
+
+In your `terraform.auto.tfvars`:
+```hcl
+enable_load_balancer = true
+gateway_domain       = "gateway.example.com"
+enable_cloud_dns     = true
+dns_zone_name        = "my-dns-zone"
+```
+
+Apply the configuration:
+```bash
+terraform apply -var-file=dev.tfvars
+```
+
+Terraform automatically provisions the Google-managed SSL certificate (`google_compute_managed_ssl_certificate.gateway`) and creates an ephemeral `A` record (`gateway.example.com`) pointing to the external load balancer IP (`load_balancer_ip`).
+
+#### 3. Manual / Third-Party DNS Configuration
+If managing DNS outside of Cloud DNS (e.g. an external corporate DNS server or registrar), create an `A` record pointing your domain (e.g., `gateway.example.com`) to the load balancer IP:
+
+```bash
+terraform output load_balancer_ip
+```
+
+> [!NOTE]
+> **Maintainer Internal Postures (Argolis / Altostrat):** Maintainers running internal `dev` or `staging` postures within Google Argolis must follow internal DNS delegation policies (mandatory Cloud DNS, `DNSSEC=Off`, 24-hour Cloud Asset Inventory wait period, and `go/argolis` portal delegation). See the maintainer runbook in `.maintainer/ARGOLIS_ALTOSTRAT_DNS.md` (gitignored).
 
 ## High Availability Configuration
 
@@ -238,6 +287,9 @@ terraform destroy -var-file=dev.tfvars
 ```
 
 **Note**: Production environments (`prod.tfvars`) have deletion protection enabled on databases.
+
+> [!WARNING]
+> **Preserve Persistent DNS Managed Zones:** Running `terraform destroy` safely removes the ephemeral application stack and `A` record (`google_dns_record_set.gateway`). **Never delete the foundational DNS managed zone itself** during routine application teardowns, as orphaned delegations create severe subdomain takeover risks.
 
 ## References
 

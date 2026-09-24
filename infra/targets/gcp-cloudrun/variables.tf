@@ -131,6 +131,18 @@ variable "enable_nist_compliance" {
   default     = false
 }
 
+variable "enable_cmek" {
+  description = "Enable Customer-Managed Encryption Keys (CMEK) for data-at-rest encryption across Cloud SQL, Redis, GCS, and Cloud Run services. Enforces 90-day automatic key rotation and regional data residency lifecycle preconditions."
+  type        = bool
+  default     = false
+}
+
+variable "enable_binary_authorization" {
+  description = "Enable Binary Authorization policy for container admission control. Production environments enforce REQUIRE_ATTESTATION with zero breakglass escape hatches. Dev/staging environments allow ALWAYS_ALLOW for rapid iteration."
+  type        = bool
+  default     = false
+}
+
 variable "enable_load_balancer" {
   description = "Enable external HTTPS load balancer + Cloud Armor WAF. When enabled, gateway ingress is restricted to INTERNAL_AND_CLOUD_LOAD_BALANCING. When disabled (default), gateway accepts all traffic."
   type        = bool
@@ -139,6 +151,18 @@ variable "enable_load_balancer" {
 
 variable "gateway_domain" {
   description = "Custom domain for gateway managed SSL certificate (e.g., gateway.example.com). Leave empty to skip SSL certificate provisioning."
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloud_dns" {
+  description = "Enable DNS record creation in an existing Cloud DNS managed zone"
+  type        = bool
+  default     = false
+}
+
+variable "dns_zone_name" {
+  description = "The name of your existing Cloud DNS managed zone (e.g., my-company-zone). Zone must exist prior to apply."
   type        = string
   default     = ""
 }
