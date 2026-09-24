@@ -4,24 +4,32 @@ This directory contains Terraform configurations for deploying the CAGE (Cyberne
 
 ## Architecture Overview
 
-### Phase 1a: Infrastructure Skeleton — Stateless Services
+### Sovereign 100% In-Project Cloud Run Deployment
 
 This implementation deploys:
 
-- **VPC Network**: Private VPC with subnet for secure communication
-- **Cloud Memorystore Redis**: Managed Redis instance (BASIC or STANDARD_HA)
-- **Cloud SQL PostgreSQL**: Managed PostgreSQL database with automatic backups
-- **GCS Buckets**: Object storage for Langfuse traces and compliance artifacts
-- **Secret Manager**: Secure credential storage (no inline secrets)
-- **Cloud Run Services** (stateless containers):
-  - `gateway` — CAGE governance gateway (port 8080)
-  - `governed_advisor` — Financial advisor with governance controls
-  - `agentsight_ui` — Observability dashboard (port 3000)
+- **VPC Network**: Private VPC with Direct VPC Egress subnet for private zero-trust communication.
+- **Cloud Memorystore Redis**: Managed Redis instance (BASIC or STANDARD_HA) for hot evidence streaming and rate limiting.
+- **Cloud SQL PostgreSQL**: Managed PostgreSQL database with automatic backups and regional HA failover.
+- **GCS Buckets**: Object storage for Langfuse traces and compliance artifacts with AU-9 WORM 7-year locked retention.
+- **Secret Manager**: Secure credential storage (no inline secrets).
+- **In-VPC ClickHouse VM**: Private Compute Engine VM (`cos-stable`, attached `pd-ssd`) inside the VPC without a public IP, providing dedicated high-IOPS OLAP storage for Langfuse v3 trace visualization and analytics, backed by automated daily snapshots.
+- **Serverless NVIDIA L4 GPU Inference**: Cloud Run Gen2 services running vLLM (`vllm-fast` with Qwen2.5-7B, `vllm-reasoning` with DeepSeek-R1-14B) with 24GB VRAM and scale-to-zero capabilities in dev (persistent instances in prod).
+- **Cloud Run Application Services**:
+  - `gateway` — CAGE governance gateway (port 8080) with co-located OPA sidecar (`localhost:8181`)
+  - `governed_advisor` — Financial advisor with consequence gateway controls
+  - `nemo_guardrails` — NeMo Guardrails + Presidio input rails (port 8000)
+  - `reconciliation_daemon` — Private deferred queue reconciliation loop (`cpu_idle = false`)
+  - `agentsight_ui` — Observability dashboard (port 3000/8080)
   - `compliance_bridge` — OSCAL/Lula compliance artifact exporter
-  - `langfuse_web` — Langfuse observability web UI (port 3000)
+  - `langfuse_web` — Langfuse observability web UI (port 3000) backed by Cloud SQL and ClickHouse
   - `langfuse_worker` — Langfuse async trace processing worker
+- **Cloud Run Jobs & Schedulers**:
+  - `lula_audit` (CA-7 continuous control monitoring every 6h)
+  - `sbom_generator` (CM-8 Syft container inventory daily)
+  - `security_scan` (RA-5 Trivy vulnerability scanning weekly)
 
-All services use **VPC Direct Egress** via network interfaces (no VPC Connector) for private communication with Redis and PostgreSQL.
+All services use **VPC Direct Egress** via network interfaces (no VPC Connector) for private communication with Redis, PostgreSQL, and ClickHouse.
 
 ## Prerequisites
 

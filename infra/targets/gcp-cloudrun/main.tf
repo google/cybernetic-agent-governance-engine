@@ -119,7 +119,7 @@ resource "google_sql_database_instance" "postgres" {
     ip_configuration {
       ipv4_enabled    = false
       private_network = google_compute_network.vpc.id
-      require_ssl     = true
+      ssl_mode        = "ENCRYPTED_ONLY"
     }
 
     maintenance_window {

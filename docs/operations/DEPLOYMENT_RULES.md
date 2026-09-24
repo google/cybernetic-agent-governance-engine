@@ -59,6 +59,16 @@ gcloud builds submit \
   --substitutions=_GCP_PROJECT_ID=<PROJECT_ID>
 ```
 
+### ✅ Approved Methods for Cloud Run (Serverless L4 GPU + In-VPC ClickHouse)
+
+```bash
+# Full deployment to Cloud Run dev (scale-to-zero vLLM, private ClickHouse VM)
+./deploy_all.sh --target gcp-cloudrun --env dev --auto-approve
+
+# Full deployment to Cloud Run prod (persistent L4 GPU instances, HA Postgres/Redis)
+./deploy_all.sh --target gcp-cloudrun --env prod --auto-approve
+```
+
 ### ✅ Approved Methods for Local / Agnostic
 
 ```bash
@@ -89,6 +99,7 @@ Usage: ./deploy_all.sh --target TARGET --env ENV [OPTIONS]
 Targets:
   agnostic     Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
   gcp-gke      Provision and deploy to Google Cloud GKE cluster
+  gcp-cloudrun Deploy to Google Cloud Run (serverless L4 GPU, managed SQL/Redis, in-VPC ClickHouse)
 
 Environments:
   dev          Development (fast iteration, reduced security posture)

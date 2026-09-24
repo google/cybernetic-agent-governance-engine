@@ -44,6 +44,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Cloud Run L4 GPU Inference & In-VPC ClickHouse VM** — 100% in-project serverless deployment target for Google Cloud Run featuring serverless accelerated NVIDIA L4 GPU inference for vLLM (Qwen2.5-7B, DeepSeek-R1-14B) with scale-to-zero economics, alongside a private in-VPC Compute Engine ClickHouse VM with daily automated snapshots for Langfuse v3 OLAP trace analytics (`feat(infra)`).
 - **Hermetic Test CI Gate** — New `.github/workflows/test-hermetic.yml` workflow installing ONLY core governance dependencies (excludes `sentence-transformers`, `torch`, all ML packages) and running governance pipeline tests to prove Stage 2.5 is truly optional (`ci(governance)`).
 
 ### Changed
