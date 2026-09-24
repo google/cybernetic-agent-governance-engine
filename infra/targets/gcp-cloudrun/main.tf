@@ -681,7 +681,7 @@ resource "google_cloud_run_v2_service" "agentsight_ui" {
       image = var.agentsight_ui_image != "" ? var.agentsight_ui_image : "gcr.io/${var.project_id}/cage-agentsight-ui:latest"
 
       ports {
-        container_port = 3000
+        container_port = 8080
       }
 
       resources {
@@ -758,6 +758,11 @@ resource "google_cloud_run_v2_service" "compliance_bridge" {
       env {
         name  = "GCS_BUCKET"
         value = google_storage_bucket.compliance_artifacts.name
+      }
+
+      env {
+        name  = "EVIDENCE_STREAM_ENABLED"
+        value = "true"
       }
     }
   }
