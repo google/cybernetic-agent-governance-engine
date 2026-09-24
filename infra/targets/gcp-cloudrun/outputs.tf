@@ -152,6 +152,11 @@ output "cloud_armor_policy_id" {
   value       = var.enable_load_balancer ? google_compute_security_policy.gateway_armor[0].id : null
 }
 
+output "gateway_dns_record" {
+  description = "DNS record name configured in Cloud DNS (only when enable_cloud_dns=true)"
+  value       = var.enable_cloud_dns && var.dns_zone_name != "" && var.enable_load_balancer ? google_dns_record_set.gateway[0].name : null
+}
+
 # ─── CMEK & Binary Authorization ──────────────────────────────────────────────
 
 output "kms_key_ring_id" {

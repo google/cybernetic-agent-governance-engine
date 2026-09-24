@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Template: deployment/k8s/gcp/ingress-gke.yaml.tpl
+# Render via envsubst:
+#   GATEWAY_DOMAIN="gateway.example.com" envsubst < deployment/k8s/gcp/ingress-gke.yaml.tpl > deployment/k8s/gcp/ingress-gke.yaml
+
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
@@ -19,7 +23,7 @@ metadata:
   namespace: governance-stack
 spec:
   domains:
-    - gateway.example.com
+    - ${GATEWAY_DOMAIN}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -36,7 +40,7 @@ metadata:
 spec:
   # TLS is handled by the GCP ManagedCertificate annotation above.
   rules:
-    - host: gateway.example.com
+    - host: ${GATEWAY_DOMAIN}
       http:
         paths:
           - path: /
@@ -46,3 +50,4 @@ spec:
                 name: gateway
                 port:
                   number: 8080
+

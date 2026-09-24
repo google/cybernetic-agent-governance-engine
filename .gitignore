@@ -194,6 +194,8 @@ dist/
 tmp/
 local/
 .local/
+.maintainer/
+docs/internal/
 
 # Governance transpiler output — regenerate via PolicyTranspiler
 **/generated_actions.py
