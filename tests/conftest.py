@@ -791,6 +791,107 @@ def langfuse_client():
     return Langfuse(public_key=public_key, secret_key=secret_key, host=host)
 
 
+def get_cloudrun_identity_token(audience: str | None = None) -> str | None:
+    """
+    Retrieve Google Cloud Run identity token for IAM-authenticated requests.
+    
+    Prefers service account impersonation when CLOUDRUN_TEST_SERVICE_ACCOUNT is set,
+    falling back to personal user credentials for local development.
+    
+    Returns:
+        Identity token string, or None if unavailable.
+    """
+    # Check for pre-cached token in environment
+    token = os.environ.get("CLOUDRUN_IDENTITY_TOKEN") or os.environ.get("GCP_IDENTITY_TOKEN")
+    if token:
+        return token.strip()
+    
+    test_sa = os.environ.get("CLOUDRUN_TEST_SERVICE_ACCOUNT", "").strip()
+    
+    try:
+        import subprocess
+
+        if test_sa:
+            # Service account impersonation mode (CI/CD and staging)
+            cmd = [
+                "gcloud",
+                "auth",
+                "print-identity-token",
+                f"--impersonate-service-account={test_sa}",
+            ]
+            if audience:
+                cmd.append(f"--audiences={audience}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            print(
+                f"\n🔐 [pytest bootstrap] Using service account impersonation: {test_sa}"
+            )
+            return result.stdout.strip()
+        else:
+            # Personal user credential mode (local development)
+            cmd = ["gcloud", "auth", "print-identity-token"]
+            if audience:
+                cmd.append(f"--audiences={audience}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            print(
+                "\n⚠️  [pytest bootstrap] Using personal gcloud credentials (set CLOUDRUN_TEST_SERVICE_ACCOUNT for SA impersonation)"
+            )
+            return result.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def get_cloudrun_auth_headers(url: str | None = None, app_auth: tuple[str, str] | None = None) -> dict[str, str]:
+    """
+    Build Cloud Run auth headers with optional dual-layer authentication.
+
+    When app_auth is None (single-layer mode):
+        Returns {"Authorization": "Bearer <id_token>"} for backward compatibility.
+
+    When app_auth is provided (dual-layer mode):
+        Returns {"X-Serverless-Authorization": "Bearer <id_token>"}
+        Leaves the Authorization header for the caller to populate with application credentials.
+
+    Args:
+        url: Optional audience URL for token scope (unused for now, reserved for future audience targeting).
+        app_auth: Optional (username, password) tuple for application-layer auth.
+                  When provided, ID token moves to X-Serverless-Authorization.
+
+    Returns:
+        Dictionary of HTTP headers for Cloud Run requests.
+    """
+    token = get_cloudrun_identity_token()
+    if not token:
+        return {}
+    
+    if app_auth is None:
+        # Single-layer mode: ID token in Authorization (legacy behavior)
+        return {"Authorization": f"Bearer {token}"}
+    else:
+        # Dual-layer mode: ID token in X-Serverless-Authorization
+        # Caller will add Authorization: Basic <b64(username:password)>
+        return {"X-Serverless-Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="session")
+def cloudrun_auth_headers() -> dict[str, str]:
+    """Provide Authorization header with Google IAM ID token for Cloud Run if available."""
+    return get_cloudrun_auth_headers()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def requires_port_forward(pytestconfig, backend_url: str) -> None:
     """
@@ -832,7 +933,18 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
         "true",
         "yes",
     )
-    timeout = 3
+    # Cloud Run services with minScale=0 require longer timeout for cold starts
+    timeout = 30 if (
+        os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+        or ".run.app" in current_backend
+    ) else 3
+
+    is_cloudrun = (
+        os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+        or os.environ.get("TARGET_PLATFORM", "").lower() == "cloudrun"
+        or ".run.app" in current_backend
+        or (current_backend.startswith("https://") and "localhost" not in current_backend)
+    )
 
     unreachable: list[str] = []
 
@@ -841,16 +953,35 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
     if not skip_langfuse:
         services_to_check.append(("Langfuse", langfuse_host))
 
+    auth_headers = {}
+    if is_cloudrun:
+        id_token = get_cloudrun_identity_token()
+        if id_token:
+            auth_headers = {"Authorization": f"Bearer {id_token}"}
+
     for label, url in services_to_check:
         try:
-            requests.get(url, timeout=timeout)
+            resp = requests.get(url, headers=auth_headers, timeout=timeout)
+            # Classify three states:
+            # 1. Success (2xx/3xx) — reachable and authorized
+            # 2. 401/403 — Cloud Run IAM denied (misconfigured roles/run.invoker)
+            # 3. Other failures — network/timeout/unreachable
+            if resp.status_code in (401, 403):
+                pytest.skip(
+                    f"Cloud Run IAM denied — principal lacks roles/run.invoker on {url}\n"
+                    f"Status: {resp.status_code}, Response: {resp.text[:200]}"
+                )
         except requests.exceptions.RequestException:
             unreachable.append(f"{label} ({url})")
 
     if unreachable:
+        hint = (
+            "Ensure Cloud Run services are deployed and reachable (check ingress/IAM)."
+            if is_cloudrun
+            else "run ./setup_test_env.sh to start port-forwards."
+        )
         pytest.skip(
-            "Required services are not reachable — run ./setup_test_env.sh to "
-            "start port-forwards.\n"
+            f"Required services are not reachable — {hint}\n"
             "Unreachable: " + ", ".join(unreachable)
         )
 
@@ -860,6 +991,12 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
         )
         # Ensure SKIP_LANGFUSE_CHECKS is propagated so tests can skip Langfuse-dependent assertions
         os.environ["SKIP_LANGFUSE_CHECKS"] = "1"
+
+    if is_cloudrun:
+        print(
+            "\n☁️  [pytest bootstrap] Target is Cloud Run — skipping GKE kubectl/Redis secret bootstrap."
+        )
+        return
 
     # ─── Issue 3: Pure Python Redis Seeding ───
     try:

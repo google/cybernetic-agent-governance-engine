@@ -214,7 +214,7 @@ output "attestor_name" {
 
 output "deployment_summary" {
   description = "Cloud Run deployment summary with complete stateful stack"
-  value = <<-EOT
+  value       = <<-EOT
 
   ╔═══════════════════════════════════════════════════════════════════════════╗
   ║  CAGE Cloud Run Deployment Summary (${var.environment})

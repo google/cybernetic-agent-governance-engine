@@ -16,7 +16,7 @@
 
 resource "random_password" "clickhouse_password" {
   length  = 32
-  special = true
+  special = false
 }
 
 resource "google_secret_manager_secret" "clickhouse_password" {
@@ -115,6 +115,13 @@ resource "google_secret_manager_secret_iam_member" "clickhouse_password_access" 
   member    = "serviceAccount:${google_service_account.clickhouse.email}"
 }
 
+# Grant Secret Manager access to Langfuse services (Web and Worker) for ClickHouse OLAP access
+resource "google_secret_manager_secret_iam_member" "langfuse_clickhouse_password" {
+  secret_id = google_secret_manager_secret.clickhouse_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.langfuse.email}"
+}
+
 # Grant logging permissions (AU-2)
 resource "google_project_iam_member" "clickhouse_logging" {
   project = var.project_id
@@ -183,11 +190,59 @@ resource "google_compute_instance" "clickhouse" {
 
   depends_on = [
     google_compute_subnetwork.subnet,
-    google_compute_disk.clickhouse_data
+    google_compute_disk.clickhouse_data,
+    google_compute_router_nat.nat
   ]
 }
 
 # ─── VPC Firewall Rule (SC-7: Internal-Only Access) ───────────────────────────
+#
+# Network Isolation Architecture (Cloud Run Security Parity with GKE NetworkPolicy)
+# ==================================================================================
+#
+# This firewall rule achieves network segmentation equivalent to GKE NetworkPolicy
+# by restricting ClickHouse VM ingress to the Cloud Run VPC subnet only.
+#
+# Security Boundary Enforcement:
+# ─────────────────────────────────────────────────────────────────────────────────
+# 1. SOURCE RESTRICTION (SC-7(3) - Access Points):
+#    - source_ranges = [var.subnet_cidr] limits ingress to Cloud Run services
+#      deployed in the VPC-connected subnet (e.g., 10.8.0.0/28)
+#    - Equivalent to GKE NetworkPolicy podSelector + namespaceSelector
+#
+# 2. NO EXTERNAL IP (SC-7(4)(b) - Prevent Public Access):
+#    - The ClickHouse VM network interface (lines 159-162) has NO access_config
+#      block, ensuring no ephemeral or static public IP is assigned
+#    - Outbound internet access via Cloud NAT only (google_compute_router_nat.nat)
+#    - Prevents direct internet exposure of the OLAP datastore
+#
+# 3. TARGET ISOLATION:
+#    - target_tags = ["cage-clickhouse-internal"] applies this rule only to the
+#      ClickHouse VM, not other compute resources
+#    - Tag-based targeting mirrors GKE NetworkPolicy label selectors
+#
+# 4. PORT MINIMIZATION (CM-7(1) - Least Functionality):
+#    - Ports 8123 (HTTP API) and 9000 (native TCP protocol) only
+#    - No SSH (22), no management ports, no database admin ports
+#
+# Defense-in-Depth Layers:
+# ─────────────────────────────────────────────────────────────────────────────────
+# Layer 1: VPC Firewall (this rule) - Network-level ingress control
+# Layer 2: IAM & Service Accounts - Identity-based access (lines 105-130)
+# Layer 3: Secret Manager - Credential isolation via secretKeyRef (lines 22-39)
+# Layer 4: VPC Service Controls - Data exfiltration prevention (vpc_service_controls.tf)
+# Layer 5: Audit Logging - Full packet metadata capture for AU-2 compliance
+#
+# Relationship to VPC Service Controls:
+# ─────────────────────────────────────────────────────────────────────────────────
+# This firewall rule provides network-level ingress filtering. VPC-SC (when enabled
+# via var.enable_nist_compliance=true) adds an additional perimeter boundary to
+# prevent data exfiltration via Cloud Storage, BigQuery, or other GCP APIs.
+#
+# Together, these controls satisfy SC-7 "Boundary Protection" requirements for
+# federal and financial sector deployments (NIST SP 800-53, FedRAMP, MAS TRM).
+#
+# ─────────────────────────────────────────────────────────────────────────────────
 
 resource "google_compute_firewall" "allow_clickhouse_internal" {
   name    = "cage-allow-clickhouse-internal-${var.environment}"

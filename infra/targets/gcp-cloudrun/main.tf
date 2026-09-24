@@ -36,6 +36,171 @@ resource "google_compute_subnetwork" "subnet" {
   private_ip_google_access = true
 }
 
+# ─── Cloud NAT (Outbound egress for private VMs without public IPs) ───────────
+
+resource "google_compute_router" "router" {
+  name    = "cage-cloudrun-router-${var.environment}"
+  region  = var.region
+  network = google_compute_network.vpc.id
+  project = var.project_id
+}
+
+resource "google_compute_router_nat" "nat" {
+  name                               = "cage-cloudrun-nat-${var.environment}"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  project                            = var.project_id
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# ─── VPC Firewall Rules (SC-7: Boundary Protection) ───────────────────────────
+# Translates GKE NetworkPolicy L3/L4 boundaries to Cloud Run VPC firewall rules.
+# Reference: Cloud Run Security Parity Plan, Phase 2, Task 2.1, Appendix B
+
+# Redis Access (port 6379)
+# NOTE: Redis Memorystore uses Private Service Access (VPC peering), so this
+# rule is documentative. The actual access control is enforced by PSA peering.
+# However, this explicitly documents the allowed boundary for defense-in-depth.
+resource "google_compute_firewall" "allow_redis_from_cloudrun" {
+  name    = "cage-allow-redis-${var.environment}"
+  network = google_compute_network.vpc.id
+  project = var.project_id
+
+  allow {
+    protocol = "tcp"
+    ports    = ["6379"]
+  }
+
+  source_ranges = [var.subnet_cidr]
+  target_tags   = ["cage-redis-internal"]
+  priority      = 1000
+
+  description = "SC-7: Allow Cloud Run services to access Redis Memorystore on port 6379"
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+# ClickHouse Access (ports 8123, 9000)
+# NOTE: ClickHouse firewall rule is defined in clickhouse_vm.tf as
+# google_compute_firewall.allow_clickhouse_internal to keep all ClickHouse
+# resources colocated. This covers HTTP API (8123) and native protocol (9000).
+
+# PostgreSQL Access (port 5432)
+# NOTE: Cloud SQL uses Private Service Connect (PSC) for private IP access.
+# No explicit firewall rules are required - PSC handles network isolation.
+
+# HTTPS Egress (port 443)
+# Allows Cloud Run services to reach external APIs, partner integrations,
+# HuggingFace model downloads, and upstream compliance endpoints.
+resource "google_compute_firewall" "allow_https_egress_from_cloudrun" {
+  name      = "cage-allow-https-egress-${var.environment}"
+  network   = google_compute_network.vpc.id
+  project   = var.project_id
+  direction = "EGRESS"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
+
+  destination_ranges = ["0.0.0.0/0"]
+  priority           = 1000
+
+  description = "SC-7: Allow HTTPS egress from Cloud Run services for external API calls and partner integrations"
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+# Default Deny Ingress
+# Denies all ingress traffic not explicitly allowed by higher-priority rules.
+# This implements a fail-closed boundary protection posture (SC-7).
+resource "google_compute_firewall" "default_deny_ingress" {
+  name    = "cage-default-deny-ingress-${var.environment}"
+  network = google_compute_network.vpc.id
+  project = var.project_id
+
+  deny {
+    protocol = "all"
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  priority      = 65534
+
+  description = "SC-7: Default deny all ingress traffic not explicitly allowed (fail-closed boundary protection)"
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+# ─── vLLM Regional Subnetwork & NAT (when vllm_region != region) ──────────────
+
+locals {
+  vllm_effective_region = var.vllm_region != "" ? var.vllm_region : var.region
+}
+
+resource "google_compute_subnetwork" "vllm_subnet" {
+  count         = var.enable_vllm_gpu && local.vllm_effective_region != var.region ? 1 : 0
+  name          = "cage-cloudrun-vllm-subnet-${var.environment}"
+  ip_cidr_range = "10.0.2.0/24"
+  region        = local.vllm_effective_region
+  network       = google_compute_network.vpc.id
+  project       = var.project_id
+
+  private_ip_google_access = true
+}
+
+resource "google_compute_router" "vllm_router" {
+  count   = var.enable_vllm_gpu && local.vllm_effective_region != var.region ? 1 : 0
+  name    = "cage-cloudrun-vllm-router-${var.environment}"
+  region  = local.vllm_effective_region
+  network = google_compute_network.vpc.id
+  project = var.project_id
+}
+
+resource "google_compute_router_nat" "vllm_nat" {
+  count                              = var.enable_vllm_gpu && local.vllm_effective_region != var.region ? 1 : 0
+  name                               = "cage-cloudrun-vllm-nat-${var.environment}"
+  router                             = google_compute_router.vllm_router[0].name
+  region                             = local.vllm_effective_region
+  project                            = var.project_id
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# ─── Private Services Access (PSA) Peering ───────────────────────────────────
+# Required for Cloud SQL and Cloud Memorystore Redis private IP peering
+
+resource "google_compute_global_address" "private_ip_alloc" {
+  name          = "cage-cloudrun-psa-${var.environment}"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.vpc.id
+  project       = var.project_id
+}
+
+resource "google_service_networking_connection" "private_service_access" {
+  network                 = google_compute_network.vpc.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_ip_alloc.name]
+}
+
 # ─── VPC Access Connector ─────────────────────────────────────────────────────
 # REMOVED: B6 defect — services use Direct VPC Egress (network_interfaces),
 # making the connector unreachable infrastructure with standing cost and attack
@@ -59,9 +224,9 @@ resource "google_redis_instance" "redis" {
   customer_managed_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
 
   # High Availability configuration
-  replica_count        = var.enable_high_availability ? 1 : 0
-  read_replicas_mode   = var.enable_high_availability ? "READ_REPLICAS_ENABLED" : "READ_REPLICAS_DISABLED"
-  
+  replica_count      = var.enable_high_availability ? 1 : 0
+  read_replicas_mode = var.enable_high_availability ? "READ_REPLICAS_ENABLED" : "READ_REPLICAS_DISABLED"
+
   # Persistence configuration
   persistence_config {
     persistence_mode    = "RDB"
@@ -80,14 +245,17 @@ resource "google_redis_instance" "redis" {
     }
   }
 
-  depends_on = [google_compute_network.vpc]
+  depends_on = [
+    google_compute_network.vpc,
+    google_service_networking_connection.private_service_access
+  ]
 }
 
 # ─── Cloud SQL PostgreSQL ─────────────────────────────────────────────────────
 
 resource "random_password" "postgres_password" {
   length  = 32
-  special = true
+  special = false
 }
 
 resource "google_sql_database_instance" "postgres" {
@@ -136,7 +304,10 @@ resource "google_sql_database_instance" "postgres" {
 
   deletion_protection = var.enable_nist_compliance
 
-  depends_on = [google_compute_network.vpc]
+  depends_on = [
+    google_compute_network.vpc,
+    google_service_networking_connection.private_service_access
+  ]
 }
 
 resource "google_sql_database" "langfuse" {
@@ -210,7 +381,7 @@ resource "google_storage_bucket" "compliance_artifacts" {
   # Compounding with downgraded writer SA (objectCreator instead of objectAdmin)
   # ensures even the compliance bridge cannot erase evidence it writes.
   retention_policy {
-    retention_period = 220752000  # 2555 days in seconds
+    retention_period = 220752000 # 2555 days in seconds
     is_locked        = var.enable_nist_compliance ? true : false
   }
 
@@ -405,6 +576,13 @@ resource "google_service_account" "reconciliation_daemon" {
   project      = var.project_id
 }
 
+resource "google_service_account" "test_automation" {
+  account_id   = "cage-test-automation-${var.environment}"
+  display_name = "CAGE Integration Test Automation"
+  description  = "Dedicated service account for integration tests against Cloud Run services. Replaces personal gcloud auth tokens to eliminate PII in Cloud Audit Logs and enable automated CI/CD workflows."
+  project      = var.project_id
+}
+
 # ─── IAM Bindings ─────────────────────────────────────────────────────────────
 
 # Gateway: Secret Manager access
@@ -459,6 +637,22 @@ resource "google_secret_manager_secret_iam_member" "langfuse_postgres_password" 
   project   = var.project_id
 }
 
+resource "google_secret_manager_secret_iam_member" "langfuse_public_key" {
+  count     = var.langfuse_public_key != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.langfuse_public_key[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.langfuse.email}"
+  project   = var.project_id
+}
+
+resource "google_secret_manager_secret_iam_member" "langfuse_secret_key" {
+  count     = var.langfuse_secret_key != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.langfuse_secret_key[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.langfuse.email}"
+  project   = var.project_id
+}
+
 # Langfuse: GCS bucket access
 resource "google_storage_bucket_iam_member" "langfuse_traces" {
   bucket = google_storage_bucket.langfuse_traces.name
@@ -491,18 +685,53 @@ resource "google_storage_bucket_iam_member" "reconciliation_compliance_artifacts
 # Reconciliation Daemon: KMS access for signature verification
 resource "google_kms_crypto_key_iam_member" "reconciliation_kms_verifier" {
   count         = var.kms_governance_key != "" ? 1 : 0
-  crypto_key_id = var.kms_governance_key
+  crypto_key_id = replace(var.kms_governance_key, "/\\/cryptoKeyVersions\\/.*/", "")
   role          = "roles/cloudkms.signerVerifier"
   member        = "serviceAccount:${google_service_account.reconciliation_daemon.email}"
+}
+
+# Compliance Bridge: Secret Manager access for Lula audit credentials
+resource "google_secret_manager_secret_iam_member" "compliance_bridge_langfuse_compliance_pub" {
+  count     = var.langfuse_compliance_public_key != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.langfuse_compliance_public_key[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.compliance_bridge.email}"
+  project   = var.project_id
+}
+
+resource "google_secret_manager_secret_iam_member" "compliance_bridge_langfuse_compliance_sec" {
+  count     = var.langfuse_compliance_secret_key != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.langfuse_compliance_secret_key[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.compliance_bridge.email}"
+  project   = var.project_id
+}
+
+# NeMo Guardrails: Secret Manager access for input validation telemetry
+resource "google_secret_manager_secret_iam_member" "nemo_langfuse_compliance_pub" {
+  count     = var.langfuse_compliance_public_key != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.langfuse_compliance_public_key[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.nemo_guardrails.email}"
+  project   = var.project_id
+}
+
+resource "google_secret_manager_secret_iam_member" "nemo_langfuse_compliance_sec" {
+  count     = var.langfuse_compliance_secret_key != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.langfuse_compliance_secret_key[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.nemo_guardrails.email}"
+  project   = var.project_id
 }
 
 # ─── Cloud Run Services ───────────────────────────────────────────────────────
 
 # Gateway Service
 resource "google_cloud_run_v2_service" "gateway" {
-  name     = "cage-gateway-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-gateway-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # B2: Conditional ingress tightening — only restrict to LB traffic when LB exists
   ingress = var.enable_load_balancer ? "INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING" : "INGRESS_TRAFFIC_ALL"
@@ -591,6 +820,16 @@ resource "google_cloud_run_v2_service" "gateway" {
       }
 
       env {
+        name  = "CAGE_ENV"
+        value = var.environment
+      }
+
+      env {
+        name  = "RECONCILIATION_PROVIDER"
+        value = "stub"
+      }
+
+      env {
         name  = "CAGE_DEPLOYMENT_REGION"
         value = var.cage_deployment_region
       }
@@ -601,6 +840,21 @@ resource "google_cloud_run_v2_service" "gateway" {
       }
 
       env {
+        name  = "CAGE_OPA_DEFAULT_PATH"
+        value = "/v1/data/trade/governance"
+      }
+
+      env {
+        name  = "EVIDENCE_STREAM_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EVIDENCE_CHAIN_BLOCKING"
+        value = var.environment == "prod" ? "true" : "false"
+      }
+
+      env {
         name  = "REDIS_HOST"
         value = google_redis_instance.redis.host
       }
@@ -608,6 +862,11 @@ resource "google_cloud_run_v2_service" "gateway" {
       env {
         name  = "REDIS_PORT"
         value = tostring(google_redis_instance.redis.port)
+      }
+
+      env {
+        name  = "REDIS_URL"
+        value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
       }
 
       env {
@@ -629,6 +888,16 @@ resource "google_cloud_run_v2_service" "gateway" {
           }
         }
       }
+
+      env {
+        name  = "VLLM_BASE_URL"
+        value = var.enable_vllm_gpu ? "${google_cloud_run_v2_service.vllm_fast[0].uri}/v1" : "http://localhost:8000/v1"
+      }
+
+      env {
+        name  = "VLLM_API_KEY"
+        value = "cage-cloudrun-dev-key"
+      }
     }
   }
 
@@ -642,9 +911,10 @@ resource "google_cloud_run_v2_service" "gateway" {
 
 # Governed Financial Advisor Service
 resource "google_cloud_run_v2_service" "governed_advisor" {
-  name     = "cage-governed-advisor-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-governed-advisor-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -688,6 +958,11 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
       }
 
       env {
+        name  = "CAGE_ENV"
+        value = var.environment
+      }
+
+      env {
         name  = "CAGE_DEPLOYMENT_REGION"
         value = var.cage_deployment_region
       }
@@ -701,6 +976,36 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
         name  = "REDIS_PORT"
         value = tostring(google_redis_instance.redis.port)
       }
+
+      env {
+        name  = "REDIS_URL"
+        value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
+      }
+
+      env {
+        name  = "CAGE_OPA_DEFAULT_PATH"
+        value = "/v1/data/trade/governance"
+      }
+
+      env {
+        name  = "EVIDENCE_STREAM_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EVIDENCE_CHAIN_BLOCKING"
+        value = var.environment == "prod" ? "true" : "false"
+      }
+
+      env {
+        name  = "VLLM_BASE_URL"
+        value = var.enable_vllm_gpu ? "${google_cloud_run_v2_service.vllm_fast[0].uri}/v1" : "http://localhost:8000/v1"
+      }
+
+      env {
+        name  = "VLLM_API_KEY"
+        value = "cage-cloudrun-dev-key"
+      }
     }
   }
 
@@ -709,9 +1014,10 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
 
 # AgentSight UI Service
 resource "google_cloud_run_v2_service" "agentsight_ui" {
-  name     = "cage-agentsight-ui-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-agentsight-ui-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -755,6 +1061,11 @@ resource "google_cloud_run_v2_service" "agentsight_ui" {
       }
 
       env {
+        name  = "CAGE_ENV"
+        value = var.environment
+      }
+
+      env {
         name  = "CAGE_DEPLOYMENT_REGION"
         value = var.cage_deployment_region
       }
@@ -766,9 +1077,10 @@ resource "google_cloud_run_v2_service" "agentsight_ui" {
 
 # Compliance Bridge Service
 resource "google_cloud_run_v2_service" "compliance_bridge" {
-  name     = "cage-compliance-bridge-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-compliance-bridge-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -812,6 +1124,11 @@ resource "google_cloud_run_v2_service" "compliance_bridge" {
       }
 
       env {
+        name  = "CAGE_ENV"
+        value = var.environment
+      }
+
+      env {
         name  = "CAGE_DEPLOYMENT_REGION"
         value = var.cage_deployment_region
       }
@@ -833,9 +1150,10 @@ resource "google_cloud_run_v2_service" "compliance_bridge" {
 
 # Langfuse Web Service
 resource "google_cloud_run_v2_service" "langfuse_web" {
-  name     = "cage-langfuse-web-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-langfuse-web-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -914,6 +1232,77 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
       }
 
       env {
+        name  = "NEXTAUTH_URL"
+        value = "http://localhost:3000"
+      }
+
+      env {
+        name  = "AUTH_TRUST_HOST"
+        value = "true"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_ORG_ID"
+        value = "CAGE"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_ORG_NAME"
+        value = "CAGE"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_PROJECT_ID"
+        value = "cybernetic-governance"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_PROJECT_NAME"
+        value = "cybernetic-governance"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_USER_EMAIL"
+        value = "dev-admin@local.com"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_USER_NAME"
+        value = "Admin"
+      }
+
+      env {
+        name  = "LANGFUSE_INIT_USER_PASSWORD"
+        value = "DevPassword123!"
+      }
+
+      dynamic "env" {
+        for_each = var.langfuse_public_key != "" ? [1] : []
+        content {
+          name = "LANGFUSE_INIT_PROJECT_PUBLIC_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.langfuse_public_key[0].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.langfuse_secret_key != "" ? [1] : []
+        content {
+          name = "LANGFUSE_INIT_PROJECT_SECRET_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.langfuse_secret_key[0].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      env {
         name = "SALT"
         value_source {
           secret_key_ref {
@@ -924,7 +1313,8 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
       }
 
       env {
-        name  = "LANGFUSE_S3_EVENT_UPLOAD_BUCKET"
+        name = "LANGFUSE_S3_EVENT_UPLOAD_BUCKET"
+
         value = google_storage_bucket.langfuse_traces.name
       }
 
@@ -946,7 +1336,7 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
 
       env {
         name  = "CLICKHOUSE_MIGRATION_URL"
-        value = "clickhouse://default@${google_compute_instance.clickhouse.network_interface[0].network_ip}:9000/langfuse"
+        value = "clickhouse://default:${random_password.clickhouse_password.result}@${google_compute_instance.clickhouse.network_interface[0].network_ip}:9000/langfuse"
       }
 
       env {
@@ -968,21 +1358,49 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
         name  = "CLICKHOUSE_DB"
         value = "langfuse"
       }
+
+      env {
+        name  = "CLICKHOUSE_CLUSTER_ENABLED"
+        value = "false"
+      }
+
+      env {
+        name  = "REDIS_HOST"
+        value = google_redis_instance.redis.host
+      }
+
+      env {
+        name  = "REDIS_PORT"
+        value = tostring(google_redis_instance.redis.port)
+      }
+
+      env {
+        name  = "REDIS_URL"
+        value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
+      }
+
+      env {
+        name  = "REDIS_CONNECTION_STRING"
+        value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
+      }
     }
   }
 
   depends_on = [
     google_sql_database_instance.postgres,
     google_sql_database.langfuse,
-    google_compute_instance.clickhouse
+    google_compute_instance.clickhouse,
+    google_redis_instance.redis,
+    google_secret_manager_secret_iam_member.langfuse_clickhouse_password
   ]
 }
 
 # Langfuse Worker Service
 resource "google_cloud_run_v2_service" "langfuse_worker" {
-  name     = "cage-langfuse-worker-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-langfuse-worker-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -1079,7 +1497,7 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
 
       env {
         name  = "CLICKHOUSE_MIGRATION_URL"
-        value = "clickhouse://default@${google_compute_instance.clickhouse.network_interface[0].network_ip}:9000/langfuse"
+        value = "clickhouse://default:${random_password.clickhouse_password.result}@${google_compute_instance.clickhouse.network_interface[0].network_ip}:9000/langfuse"
       }
 
       env {
@@ -1101,22 +1519,50 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
         name  = "CLICKHOUSE_DB"
         value = "langfuse"
       }
+
+      env {
+        name  = "CLICKHOUSE_CLUSTER_ENABLED"
+        value = "false"
+      }
+
+      env {
+        name  = "REDIS_HOST"
+        value = google_redis_instance.redis.host
+      }
+
+      env {
+        name  = "REDIS_PORT"
+        value = tostring(google_redis_instance.redis.port)
+      }
+
+      env {
+        name  = "REDIS_URL"
+        value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
+      }
+
+      env {
+        name  = "REDIS_CONNECTION_STRING"
+        value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
+      }
     }
   }
 
   depends_on = [
     google_sql_database_instance.postgres,
     google_sql_database.langfuse,
-    google_compute_instance.clickhouse
+    google_compute_instance.clickhouse,
+    google_redis_instance.redis,
+    google_secret_manager_secret_iam_member.langfuse_clickhouse_password
   ]
 }
 
 # NeMo Guardrails Service (Phase D - Requirement 9)
 resource "google_cloud_run_v2_service" "nemo_guardrails" {
-  count    = var.enable_nemo_guardrails ? 1 : 0
-  name     = "cage-nemo-guardrails-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  count               = var.enable_nemo_guardrails ? 1 : 0
+  name                = "cage-nemo-guardrails-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC (AC-3)
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -1180,6 +1626,11 @@ resource "google_cloud_run_v2_service" "nemo_guardrails" {
       }
 
       env {
+        name  = "CAGE_ENV"
+        value = var.environment
+      }
+
+      env {
         name  = "CAGE_DEPLOYMENT_REGION"
         value = var.cage_deployment_region
       }
@@ -1223,14 +1674,19 @@ resource "google_cloud_run_v2_service" "nemo_guardrails" {
     }
   }
 
-  depends_on = [google_cloud_run_v2_service.langfuse_web]
+  depends_on = [
+    google_cloud_run_v2_service.langfuse_web,
+    google_secret_manager_secret_iam_member.nemo_langfuse_compliance_pub,
+    google_secret_manager_secret_iam_member.nemo_langfuse_compliance_sec
+  ]
 }
 
 # Reconciliation Daemon Service (Phase D - Requirement 11)
 resource "google_cloud_run_v2_service" "reconciliation_daemon" {
-  name     = "cage-reconciliation-daemon-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-reconciliation-daemon-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   # Internal service: only accessible from within VPC
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -1252,7 +1708,7 @@ resource "google_cloud_run_v2_service" "reconciliation_daemon" {
       }
 
       resources {
-        cpu_idle = false  # CPU always allocated — prevents daemon freeze between requests
+        cpu_idle = false # CPU always allocated — prevents daemon freeze between requests
         limits = {
           cpu    = "1"
           memory = "1Gi"
@@ -1261,6 +1717,11 @@ resource "google_cloud_run_v2_service" "reconciliation_daemon" {
 
       env {
         name  = "ENVIRONMENT"
+        value = var.environment
+      }
+
+      env {
+        name  = "CAGE_ENV"
         value = var.environment
       }
 
@@ -1278,6 +1739,16 @@ resource "google_cloud_run_v2_service" "reconciliation_daemon" {
       env {
         name  = "RECONCILIATION_SINGLE_SHOT"
         value = "false"
+      }
+
+      env {
+        name  = "EVIDENCE_STREAM_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "EVIDENCE_CHAIN_BLOCKING"
+        value = var.environment == "prod" ? "true" : "false"
       }
 
       # KMS key for signature verification
@@ -1298,15 +1769,16 @@ resource "google_cloud_run_v2_service" "reconciliation_daemon" {
 
 # Lula Compliance Audit Job (CA-7)
 resource "google_cloud_run_v2_job" "lula_audit" {
-  name     = "cage-lula-audit-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-lula-audit-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   template {
     template {
       service_account = google_service_account.compliance_bridge.email
 
-      timeout = "600s"  # 10 minutes
+      timeout = "600s" # 10 minutes
 
       vpc_access {
         network_interfaces {
@@ -1419,19 +1891,26 @@ resource "google_cloud_run_v2_job" "lula_audit" {
       }
     }
   }
+
+  depends_on = [
+    google_storage_bucket.compliance_artifacts,
+    google_secret_manager_secret_iam_member.compliance_bridge_langfuse_compliance_pub,
+    google_secret_manager_secret_iam_member.compliance_bridge_langfuse_compliance_sec
+  ]
 }
 
 # SBOM Generator Job (CM-8)
 resource "google_cloud_run_v2_job" "sbom_generator" {
-  name     = "cage-sbom-generator-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-sbom-generator-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   template {
     template {
       service_account = google_service_account.compliance_bridge.email
 
-      timeout = "3600s"  # 1 hour
+      timeout = "3600s" # 1 hour
 
       containers {
         image = "anchore/syft:v1.10.0"
@@ -1498,15 +1977,16 @@ resource "google_cloud_run_v2_job" "sbom_generator" {
 
 # Security Scan Job (RA-5)
 resource "google_cloud_run_v2_job" "security_scan" {
-  name     = "cage-security-scan-${var.environment}"
-  location = var.region
-  project  = var.project_id
+  name                = "cage-security-scan-${var.environment}"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   template {
     template {
       service_account = google_service_account.compliance_bridge.email
 
-      timeout = "1800s"  # 30 minutes
+      timeout = "1800s" # 30 minutes
 
       containers {
         image = "aquasec/trivy:0.51.4"
@@ -1599,7 +2079,7 @@ resource "google_cloud_scheduler_job" "sbom_trigger" {
   project          = var.project_id
   schedule         = "0 2 * * *"
   time_zone        = "UTC"
-  attempt_deadline = "3600s"
+  attempt_deadline = "1800s"
 
   http_target {
     http_method = "POST"
@@ -1681,3 +2161,69 @@ resource "terraform_data" "poam_019_langfuse_isolation" {
 #   member   = "allUsers"
 #   project  = var.project_id
 # }
+
+# ─── Test Automation IAM Bindings ─────────────────────────────────────────────
+
+# Grant test automation service account invoker permissions on Gateway
+resource "google_cloud_run_v2_service_iam_member" "gateway_test_invoker" {
+  name     = google_cloud_run_v2_service.gateway.name
+  location = google_cloud_run_v2_service.gateway.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}
+
+# Grant test automation service account invoker permissions on Governed Advisor
+resource "google_cloud_run_v2_service_iam_member" "governed_advisor_test_invoker" {
+  name     = google_cloud_run_v2_service.governed_advisor.name
+  location = google_cloud_run_v2_service.governed_advisor.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}
+
+# Grant test automation service account invoker permissions on Compliance Bridge
+resource "google_cloud_run_v2_service_iam_member" "compliance_bridge_test_invoker" {
+  name     = google_cloud_run_v2_service.compliance_bridge.name
+  location = google_cloud_run_v2_service.compliance_bridge.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}
+
+# Grant test automation service account invoker permissions on Langfuse Web
+resource "google_cloud_run_v2_service_iam_member" "langfuse_web_test_invoker" {
+  name     = google_cloud_run_v2_service.langfuse_web.name
+  location = google_cloud_run_v2_service.langfuse_web.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}
+
+# Grant test automation service account invoker permissions on Langfuse Worker
+resource "google_cloud_run_v2_service_iam_member" "langfuse_worker_test_invoker" {
+  name     = google_cloud_run_v2_service.langfuse_worker.name
+  location = google_cloud_run_v2_service.langfuse_worker.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}
+
+# Grant test automation service account invoker permissions on AgentSight UI
+resource "google_cloud_run_v2_service_iam_member" "agentsight_ui_test_invoker" {
+  name     = google_cloud_run_v2_service.agentsight_ui.name
+  location = google_cloud_run_v2_service.agentsight_ui.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}
+
+# Grant test automation service account invoker permissions on NeMo Guardrails
+resource "google_cloud_run_v2_service_iam_member" "nemo_guardrails_test_invoker" {
+  count    = var.enable_nemo_guardrails ? 1 : 0
+  name     = google_cloud_run_v2_service.nemo_guardrails[0].name
+  location = google_cloud_run_v2_service.nemo_guardrails[0].location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+  project  = var.project_id
+}

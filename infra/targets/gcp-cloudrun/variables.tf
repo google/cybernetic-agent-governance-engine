@@ -19,6 +19,12 @@ variable "project_id" {
   type        = string
 }
 
+variable "organization_id" {
+  description = "GCP organization ID (required for VPC Service Controls in production). Only needed when enable_nist_compliance=true and environment=prod."
+  type        = string
+  default     = ""
+}
+
 # DEP-08: Remove default values for region and zone.
 # Defaulting to us-central1 silently violates GDPR Art. 44 (EU_ECB) and
 # MAS TRM §4.2 (APAC_MAS) when no var-file is supplied. Operators must
@@ -191,6 +197,12 @@ variable "enable_vllm_gpu" {
   description = "Enable vLLM GPU inference deployment (future phase — reserved for sidecar vLLM integration)"
   type        = bool
   default     = false
+}
+
+variable "vllm_region" {
+  description = "Region for vLLM GPU inference services (defaults to us-east4 for capacity availability in Argolis, or var.region)"
+  type        = string
+  default     = "us-east4"
 }
 
 variable "enable_nemo_guardrails" {
@@ -393,7 +405,7 @@ variable "clickhouse_disk_size_gb" {
 variable "vllm_fast_image" {
   description = "vLLM fast inference container image"
   type        = string
-  default     = "vllm/vllm-openai:v0.5.4"
+  default     = "vllm/vllm-openai:latest"
 }
 
 variable "vllm_fast_model" {
@@ -405,7 +417,7 @@ variable "vllm_fast_model" {
 variable "vllm_reasoning_image" {
   description = "vLLM reasoning inference container image"
   type        = string
-  default     = "vllm/vllm-openai:v0.5.4"
+  default     = "vllm/vllm-openai:latest"
 }
 
 variable "vllm_reasoning_model" {

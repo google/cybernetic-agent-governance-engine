@@ -69,13 +69,18 @@ resource "google_secret_manager_secret_iam_member" "vllm_hf_token_access" {
 
 # ─── vLLM Fast Inference Service (L4 GPU) ─────────────────────────────────────
 
+locals {
+  vllm_target_subnetwork = local.vllm_effective_region != var.region ? google_compute_subnetwork.vllm_subnet[0].id : google_compute_subnetwork.subnet.id
+}
+
 resource "google_cloud_run_v2_service" "vllm_fast" {
   count    = var.enable_vllm_gpu ? 1 : 0
   name     = "cage-vllm-fast-${var.environment}"
-  location = var.region
+  location = local.vllm_effective_region
   project  = var.project_id
 
-  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  deletion_protection = false
 
   labels = {
     environment = var.environment
@@ -85,8 +90,9 @@ resource "google_cloud_run_v2_service" "vllm_fast" {
   }
 
   template {
-    service_account       = google_service_account.vllm[0].email
-    execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
+    gpu_zonal_redundancy_disabled = true
+    service_account               = google_service_account.vllm[0].email
+    execution_environment         = "EXECUTION_ENVIRONMENT_GEN2"
 
     timeout = "3600s" # 1 hour timeout for long inference sessions
 
@@ -95,13 +101,13 @@ resource "google_cloud_run_v2_service" "vllm_fast" {
       # Cold start = 3-5 minutes (model download + VRAM load)
       # Trade-off: Standing cost ~$200-300/month vs. user-facing latency
       min_instance_count = var.environment == "prod" ? 1 : 0
-      max_instance_count = 3
+      max_instance_count = var.environment == "prod" ? 3 : 1
     }
 
     vpc_access {
       network_interfaces {
         network    = google_compute_network.vpc.id
-        subnetwork = google_compute_subnetwork.subnet.id
+        subnetwork = local.vllm_target_subnetwork
       }
       egress = "ALL_TRAFFIC"
     }
@@ -113,7 +119,7 @@ resource "google_cloud_run_v2_service" "vllm_fast" {
 
     containers {
       name  = "vllm-inference"
-      image = var.vllm_fast_image != "" ? var.vllm_fast_image : "vllm/vllm-openai:v0.5.4"
+      image = var.vllm_fast_image != "" ? var.vllm_fast_image : "vllm/vllm-openai:latest"
 
       ports {
         name           = "http1"
@@ -187,7 +193,11 @@ resource "google_cloud_run_v2_service" "vllm_fast" {
     }
   }
 
-  depends_on = [google_compute_subnetwork.subnet]
+  depends_on = [
+    google_compute_subnetwork.subnet,
+    google_compute_subnetwork.vllm_subnet,
+    google_compute_router_nat.vllm_nat
+  ]
 }
 
 # ─── vLLM Reasoning Service (DeepSeek-R1) ─────────────────────────────────────
@@ -195,10 +205,11 @@ resource "google_cloud_run_v2_service" "vllm_fast" {
 resource "google_cloud_run_v2_service" "vllm_reasoning" {
   count    = var.enable_vllm_gpu ? 1 : 0
   name     = "cage-vllm-reasoning-${var.environment}"
-  location = var.region
+  location = local.vllm_effective_region
   project  = var.project_id
 
-  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  deletion_protection = false
 
   labels = {
     environment = var.environment
@@ -208,20 +219,21 @@ resource "google_cloud_run_v2_service" "vllm_reasoning" {
   }
 
   template {
-    service_account       = google_service_account.vllm[0].email
-    execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
+    gpu_zonal_redundancy_disabled = true
+    service_account               = google_service_account.vllm[0].email
+    execution_environment         = "EXECUTION_ENVIRONMENT_GEN2"
 
     timeout = "3600s"
 
     scaling {
       min_instance_count = var.environment == "prod" ? 1 : 0
-      max_instance_count = 2 # Lower max for reasoning (longer sessions)
+      max_instance_count = var.environment == "prod" ? 2 : 1
     }
 
     vpc_access {
       network_interfaces {
         network    = google_compute_network.vpc.id
-        subnetwork = google_compute_subnetwork.subnet.id
+        subnetwork = local.vllm_target_subnetwork
       }
       egress = "ALL_TRAFFIC"
     }
@@ -232,7 +244,7 @@ resource "google_cloud_run_v2_service" "vllm_reasoning" {
 
     containers {
       name  = "vllm-reasoning"
-      image = var.vllm_reasoning_image != "" ? var.vllm_reasoning_image : "vllm/vllm-openai:v0.5.4"
+      image = var.vllm_reasoning_image != "" ? var.vllm_reasoning_image : "vllm/vllm-openai:latest"
 
       ports {
         name           = "http1"
@@ -276,9 +288,12 @@ resource "google_cloud_run_v2_service" "vllm_reasoning" {
         "--host", "0.0.0.0",
         "--port", "8000",
         "--gpu-memory-utilization", "0.90",
-        "--max-model-len", "32768", # Longer context for reasoning
+        "--quantization", "awq",
+        "--dtype", "float16",
+        "--max-model-len", "16384",
+        "--enable-prefix-caching",
         "--enable-auto-tool-choice",
-        "--tool-call-parser", "hermes",
+        "--tool-call-parser", "llama3_json",
         "--trust-remote-code"
       ]
 
@@ -305,5 +320,73 @@ resource "google_cloud_run_v2_service" "vllm_reasoning" {
     }
   }
 
-  depends_on = [google_compute_subnetwork.subnet]
+  depends_on = [
+    google_compute_subnetwork.subnet,
+    google_compute_subnetwork.vllm_subnet,
+    google_compute_router_nat.vllm_nat
+  ]
 }
+
+# ─── Service-to-Service Invocation IAM (AC-3) ─────────────────────────────────
+
+# Allow Gateway to invoke vLLM Fast
+resource "google_cloud_run_v2_service_iam_member" "vllm_fast_gateway_invoker" {
+  count    = var.enable_vllm_gpu ? 1 : 0
+  project  = var.project_id
+  location = local.vllm_effective_region
+  name     = google_cloud_run_v2_service.vllm_fast[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.gateway.email}"
+}
+
+# Allow Governed Advisor to invoke vLLM Fast
+resource "google_cloud_run_v2_service_iam_member" "vllm_fast_advisor_invoker" {
+  count    = var.enable_vllm_gpu ? 1 : 0
+  project  = var.project_id
+  location = local.vllm_effective_region
+  name     = google_cloud_run_v2_service.vllm_fast[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.governed_advisor.email}"
+}
+
+# Allow Governed Advisor to invoke vLLM Reasoning
+resource "google_cloud_run_v2_service_iam_member" "vllm_reasoning_advisor_invoker" {
+  count    = var.enable_vllm_gpu ? 1 : 0
+  project  = var.project_id
+  location = local.vllm_effective_region
+  name     = google_cloud_run_v2_service.vllm_reasoning[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.governed_advisor.email}"
+}
+
+# Allow NeMo Guardrails to invoke vLLM Fast
+resource "google_cloud_run_v2_service_iam_member" "vllm_fast_nemo_invoker" {
+  count    = var.enable_vllm_gpu && var.enable_nemo_guardrails ? 1 : 0
+  project  = var.project_id
+  location = local.vllm_effective_region
+  name     = google_cloud_run_v2_service.vllm_fast[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.nemo_guardrails.email}"
+}
+
+# Allow Test Automation SA to invoke vLLM Fast
+resource "google_cloud_run_v2_service_iam_member" "vllm_fast_test_invoker" {
+  count    = var.enable_vllm_gpu ? 1 : 0
+  project  = var.project_id
+  location = local.vllm_effective_region
+  name     = google_cloud_run_v2_service.vllm_fast[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+}
+
+# Allow Test Automation SA to invoke vLLM Reasoning
+resource "google_cloud_run_v2_service_iam_member" "vllm_reasoning_test_invoker" {
+  count    = var.enable_vllm_gpu ? 1 : 0
+  project  = var.project_id
+  location = local.vllm_effective_region
+  name     = google_cloud_run_v2_service.vllm_reasoning[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.test_automation.email}"
+}
+
+

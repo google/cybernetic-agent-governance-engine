@@ -60,7 +60,29 @@ def skip_if_credentials_missing():
         )
     # Also skip if the host is not reachable or times out (e.g. port-forward not running)
     try:
-        requests.get(_host, timeout=3)
+        from tests.conftest import get_cloudrun_auth_headers
+        import base64
+        
+        # Build dual-layer headers for Cloud Run: ID token in X-Serverless-Authorization,
+        # Basic auth in Authorization
+        headers = get_cloudrun_auth_headers(_host, app_auth=(_pk, _sk))
+        if headers:
+            # Dual-layer mode: add Basic auth to Authorization
+            basic_auth = base64.b64encode(f"{_pk}:{_sk}".encode()).decode()
+            headers["Authorization"] = f"Basic {basic_auth}"
+        else:
+            # Local mode: no Cloud Run headers needed
+            headers = {}
+        
+        # Use 30s timeout for Cloud Run cold starts (minScale=0 requires ~11s)
+        timeout = 30 if ".run.app" in _host else 3
+        resp = requests.get(_host, headers=headers, timeout=timeout)
+        # Treat 401/403 with text/html as Cloud Run IAM denial (not app-layer auth failure)
+        if resp.status_code in (401, 403) and "text/html" in resp.headers.get("content-type", ""):
+            pytest.skip(
+                f"Cloud Run IAM denied — principal lacks roles/run.invoker on {_host}\n"
+                f"Status: {resp.status_code}"
+            )
     except (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
@@ -76,6 +98,9 @@ def skip_if_credentials_missing():
 
 def test_langfuse_basic_auth():
     """Verifies that the langfuse-web service is reachable and keys are functional."""
+    import base64
+    from tests.conftest import get_cloudrun_auth_headers
+    
     _host = os.environ.get("LANGFUSE_HOST", LANGFUSE_HOST)
     _pk = os.environ.get(
         "LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY)
@@ -86,8 +111,14 @@ def test_langfuse_basic_auth():
     url = f"{_host.rstrip('/')}/api/public/projects"
 
     logger.info(f"Checking auth at {url}")
+    
+    # Build dual-layer headers for Cloud Run
+    headers = get_cloudrun_auth_headers(_host, app_auth=(_pk, _sk))
+    basic_auth = base64.b64encode(f"{_pk}:{_sk}".encode()).decode()
+    headers["Authorization"] = f"Basic {basic_auth}"
+    
     try:
-        resp = requests.get(url, auth=(_pk, _sk), timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10)
     except (
         requests.exceptions.Timeout,
         requests.exceptions.ReadTimeout,
@@ -149,6 +180,15 @@ def test_langfuse_trace_ingestion():
     }
 
     logger.info(f"Ingesting trace {unique_trace_id} to {ingestion_url}")
+    
+    # Build dual-layer headers for Cloud Run
+    import base64
+    from tests.conftest import get_cloudrun_auth_headers
+    
+    headers = get_cloudrun_auth_headers(_host, app_auth=(_pk, _sk))
+    basic_auth = base64.b64encode(f"{_pk}:{_sk}".encode()).decode()
+    headers["Authorization"] = f"Basic {basic_auth}"
+    
     # Send multiple events in a row to force ClickHouse to flush the buffer.
     # A 0.5s inter-request delay prevents Langfuse worker queue saturation
     # (which causes HTTP 500 on back-to-back test runs).
@@ -156,7 +196,7 @@ def test_langfuse_trace_ingestion():
         logger.info(f"Ingesting trace {i}/10: {unique_trace_id}")
         try:
             resp = requests.post(
-                ingestion_url, auth=(_pk, _sk), json=payload, timeout=10
+                ingestion_url, headers=headers, json=payload, timeout=10
             )
         except (
             requests.exceptions.Timeout,
@@ -187,13 +227,21 @@ def test_langfuse_trace_ingestion():
     verify_url = f"{_host.rstrip('/')}/api/public/traces"
     params = {"name": trace_name, "limit": 10, "projectId": "cybernetic-governance"}
 
+    # Build dual-layer headers for Cloud Run
+    import base64
+    from tests.conftest import get_cloudrun_auth_headers
+    
+    headers = get_cloudrun_auth_headers(_host, app_auth=(_pk, _sk))
+    basic_auth = base64.b64encode(f"{_pk}:{_sk}".encode()).decode()
+    headers["Authorization"] = f"Basic {basic_auth}"
+    
     # Try looking for the trace for up to 180 seconds (18 attempts x 10s).
     # Single-node ClickHouse with Redis queue delays can take >90s to flush.
     found = False
     for attempt in range(1, 19):
         logger.info(f"Verifying trace persistence attempt {attempt}/9...")
         verify_resp = requests.get(
-            verify_url, auth=(_pk, _sk), params=params, timeout=30
+            verify_url, headers=headers, params=params, timeout=30
         )
 
         if verify_resp.status_code == 200:
