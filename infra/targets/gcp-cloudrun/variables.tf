@@ -373,3 +373,50 @@ variable "advisor_max_instances" {
   type        = number
   default     = 5
 }
+
+# ─── ClickHouse Configuration ─────────────────────────────────────────────────
+
+variable "clickhouse_machine_type" {
+  description = "ClickHouse GCE instance machine type"
+  type        = string
+  default     = "e2-standard-4"
+}
+
+variable "clickhouse_disk_size_gb" {
+  description = "ClickHouse persistent disk size in GB"
+  type        = number
+  default     = 100
+}
+
+# ─── vLLM GPU Configuration ───────────────────────────────────────────────────
+
+variable "vllm_fast_image" {
+  description = "vLLM fast inference container image"
+  type        = string
+  default     = "vllm/vllm-openai:v0.5.4"
+}
+
+variable "vllm_fast_model" {
+  description = "Fast inference model (HuggingFace model ID)"
+  type        = string
+  default     = "Qwen/Qwen2.5-7B-Instruct"
+}
+
+variable "vllm_reasoning_image" {
+  description = "vLLM reasoning inference container image"
+  type        = string
+  default     = "vllm/vllm-openai:v0.5.4"
+}
+
+variable "vllm_reasoning_model" {
+  description = "Reasoning model (HuggingFace model ID)"
+  type        = string
+  default     = "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+}
+
+variable "huggingface_token" {
+  description = "HuggingFace API token for gated models"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

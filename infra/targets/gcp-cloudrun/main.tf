@@ -937,12 +937,44 @@ resource "google_cloud_run_v2_service" "langfuse_web" {
         name  = "LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"
         value = "https://storage.googleapis.com"
       }
+
+      # ClickHouse OLAP configuration (Langfuse v3 dual-database architecture)
+      env {
+        name  = "CLICKHOUSE_URL"
+        value = "http://${google_compute_instance.clickhouse.network_interface[0].network_ip}:8123"
+      }
+
+      env {
+        name  = "CLICKHOUSE_MIGRATION_URL"
+        value = "clickhouse://default@${google_compute_instance.clickhouse.network_interface[0].network_ip}:9000/langfuse"
+      }
+
+      env {
+        name  = "CLICKHOUSE_USER"
+        value = "default"
+      }
+
+      env {
+        name = "CLICKHOUSE_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.clickhouse_password.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name  = "CLICKHOUSE_DB"
+        value = "langfuse"
+      }
     }
   }
 
   depends_on = [
     google_sql_database_instance.postgres,
-    google_sql_database.langfuse
+    google_sql_database.langfuse,
+    google_compute_instance.clickhouse
   ]
 }
 
@@ -1038,12 +1070,44 @@ resource "google_cloud_run_v2_service" "langfuse_worker" {
         name  = "LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"
         value = "https://storage.googleapis.com"
       }
+
+      # ClickHouse OLAP configuration (Langfuse v3 dual-database architecture)
+      env {
+        name  = "CLICKHOUSE_URL"
+        value = "http://${google_compute_instance.clickhouse.network_interface[0].network_ip}:8123"
+      }
+
+      env {
+        name  = "CLICKHOUSE_MIGRATION_URL"
+        value = "clickhouse://default@${google_compute_instance.clickhouse.network_interface[0].network_ip}:9000/langfuse"
+      }
+
+      env {
+        name  = "CLICKHOUSE_USER"
+        value = "default"
+      }
+
+      env {
+        name = "CLICKHOUSE_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.clickhouse_password.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name  = "CLICKHOUSE_DB"
+        value = "langfuse"
+      }
     }
   }
 
   depends_on = [
     google_sql_database_instance.postgres,
-    google_sql_database.langfuse
+    google_sql_database.langfuse,
+    google_compute_instance.clickhouse
   ]
 }
 
@@ -1122,7 +1186,7 @@ resource "google_cloud_run_v2_service" "nemo_guardrails" {
 
       env {
         name  = "VLLM_BASE_URL"
-        value = "http://vllm-service:8000"
+        value = var.enable_vllm_gpu ? google_cloud_run_v2_service.vllm_fast[0].uri : "http://vllm-service:8000"
       }
 
       env {

@@ -84,6 +84,37 @@ output "postgres_user" {
   value       = google_sql_user.langfuse.name
 }
 
+# ─── ClickHouse OLAP Database ─────────────────────────────────────────────────
+
+output "clickhouse_private_ip" {
+  description = "ClickHouse private IP address"
+  value       = google_compute_instance.clickhouse.network_interface[0].network_ip
+  sensitive   = true
+}
+
+output "clickhouse_http_url" {
+  description = "ClickHouse HTTP API URL (internal only)"
+  value       = "http://${google_compute_instance.clickhouse.network_interface[0].network_ip}:8123"
+  sensitive   = true
+}
+
+output "clickhouse_instance_name" {
+  description = "ClickHouse GCE instance name"
+  value       = google_compute_instance.clickhouse.name
+}
+
+# ─── vLLM GPU Inference Services ──────────────────────────────────────────────
+
+output "vllm_fast_url" {
+  description = "vLLM fast inference service URL (only when enable_vllm_gpu=true)"
+  value       = var.enable_vllm_gpu ? google_cloud_run_v2_service.vllm_fast[0].uri : null
+}
+
+output "vllm_reasoning_url" {
+  description = "vLLM reasoning service URL (only when enable_vllm_gpu=true)"
+  value       = var.enable_vllm_gpu ? google_cloud_run_v2_service.vllm_reasoning[0].uri : null
+}
+
 # ─── Storage Resources ────────────────────────────────────────────────────────
 
 output "langfuse_traces_bucket" {
@@ -177,4 +208,57 @@ output "binary_authorization_policy_id" {
 output "attestor_name" {
   description = "Binary Authorization attestor name (only when enable_binary_authorization=true)"
   value       = var.enable_binary_authorization ? google_binary_authorization_attestor.cloudrun_attestor[0].name : null
+}
+
+# ─── Deployment Summary ───────────────────────────────────────────────────────
+
+output "deployment_summary" {
+  description = "Cloud Run deployment summary with complete stateful stack"
+  value = <<-EOT
+
+  ╔═══════════════════════════════════════════════════════════════════════════╗
+  ║  CAGE Cloud Run Deployment Summary (${var.environment})
+  ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  ┌─ Core Services ────────────────────────────────────────────────────────────┐
+  │ Gateway:             ${google_cloud_run_v2_service.gateway.uri}
+  │ Governed Advisor:    ${google_cloud_run_v2_service.governed_advisor.uri}
+  │ AgentSight UI:       ${google_cloud_run_v2_service.agentsight_ui.uri}
+  │ Compliance Bridge:   ${google_cloud_run_v2_service.compliance_bridge.uri}
+  └────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ Observability Stack ──────────────────────────────────────────────────────┐
+  │ Langfuse Web:        ${google_cloud_run_v2_service.langfuse_web.uri}
+  │ Langfuse Worker:     ${google_cloud_run_v2_service.langfuse_worker.uri}
+  └────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ Stateful Backend (Private VPC) ───────────────────────────────────────────┐
+  │ PostgreSQL (OLTP):   ${google_sql_database_instance.postgres.private_ip_address}:5432
+  │ Redis (Cache):       ${google_redis_instance.redis.host}:${google_redis_instance.redis.port}
+  │ ClickHouse (OLAP):   ${google_compute_instance.clickhouse.network_interface[0].network_ip}:8123
+  │                      ↳ Disk: ${google_compute_disk.clickhouse_data.name} (${var.clickhouse_disk_size_gb}GB pd-ssd)
+  │                      ↳ Snapshots: Daily @ 04:00 UTC (${var.environment == "prod" ? "30-day" : "7-day"} retention)
+  └────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ GPU Inference (Serverless L4) ────────────────────────────────────────────┐
+  ${var.enable_vllm_gpu ? "│ vLLM Fast (7B):      ${google_cloud_run_v2_service.vllm_fast[0].uri}" : "│ vLLM Fast:           DISABLED (set enable_vllm_gpu=true)"}
+  ${var.enable_vllm_gpu ? "│ vLLM Reasoning (14B):${google_cloud_run_v2_service.vllm_reasoning[0].uri}" : "│ vLLM Reasoning:      DISABLED"}
+  ${var.enable_vllm_gpu ? "│ Scaling: min=${var.environment == "prod" ? "1" : "0"}, max=3 (fast) / 2 (reasoning)" : ""}
+  └────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ Storage (GCS) ────────────────────────────────────────────────────────────┐
+  │ Traces Bucket:       gs://${google_storage_bucket.langfuse_traces.name}
+  │ Artifacts Bucket:    gs://${google_storage_bucket.compliance_artifacts.name}
+  └────────────────────────────────────────────────────────────────────────────┘
+
+  ${var.enable_load_balancer ? "┌─ External Access ─────────────────────────────────────────────────────────┐\n│ Load Balancer IP:    ${google_compute_global_address.gateway[0].address}\n${var.gateway_domain != "" ? "│ Custom Domain:       https://${var.gateway_domain}\n" : ""}└────────────────────────────────────────────────────────────────────────────┘\n" : ""}
+  Next Steps:
+    1. Verify PostgreSQL: gcloud sql connect ${google_sql_database_instance.postgres.name}
+    2. Verify Redis: redis-cli -h ${google_redis_instance.redis.host} PING
+    3. Verify ClickHouse: curl http://${google_compute_instance.clickhouse.network_interface[0].network_ip}:8123/ping
+    4. Access Langfuse UI: ${google_cloud_run_v2_service.langfuse_web.uri}
+    5. Submit test governance request to gateway
+  ${var.enable_vllm_gpu ? "\n  GPU Services:\n    • Cold start latency: 3-5 min (7B), 5-8 min (14B)\n    • Scale-to-zero: ${var.environment == "prod" ? "DISABLED (min=1)" : "ENABLED (min=0)"}" : ""}
+
+  EOT
 }
