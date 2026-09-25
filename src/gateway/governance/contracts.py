@@ -21,6 +21,7 @@ decoupling the Gateway from the specific application implementations.
 import hashlib
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -186,27 +187,38 @@ class PauseReceipt:
 # ---------------------------------------------------------------------------
 
 
+class ViolationKind(StrEnum):
+    """Classification of violation severity and disposition.
+    
+    Precedence: HARD > HITL > NARROWABLE > TRANSIENT > DEFERRABLE
+    """
+    HARD = "hard"
+    HITL = "hitl"
+    DEFERRABLE = "deferrable"
+    TRANSIENT = "transient"
+    NARROWABLE = "narrowable"
+
+
 @dataclass(frozen=True)
 class Violation:
     """Structured violation emitted by a GovernanceTierPlugin.
 
     Every ``evaluate()`` or ``commit()`` call on a domain tier returns a
     (possibly empty) list of ``Violation`` objects.  A non-empty list causes
-    the action to be denied; ``needs_human_review`` routes the denial to the
-    DEFER/human-review queue rather than an immediate DENY.
+    the action to be denied; classification by ``kind`` determines the verdict
+    (DENY, REQUIRE_APPROVAL, DEFER, PAUSE, or NARROW).
 
     This replaces ad-hoc violation strings with a structured record that
     preserves the tier name, machine-readable code, human-readable message,
-    and recoverability context — enabling the ``_rollback_committed()`` method
-    to distinguish transient failures from non-recoverable resource
-    inconsistencies.
+    and kind-based classification — removing dual sources of truth
+    (recoverable + needs_human_review) and enabling fail-closed classification
+    by construction.
     """
 
     tier: str  # e.g. "cbf", "fiscal", "consensus", "causal"
     code: str  # machine-readable, e.g. "CBF_BARRIER_VIOLATED", "ROLLBACK_FAILED"
-    message: str  # human-readable description
-    recoverable: bool = True
-    needs_human_review: bool = False
+    message: str  # human-readable description (never parsed)
+    kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
 
 
 # ---------------------------------------------------------------------------
