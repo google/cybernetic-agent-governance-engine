@@ -1,0 +1,40 @@
+{
+  "CTRL_PHYS_001": {
+    "internal_id": "THR-PHYS-001",
+    "primary_framework": "OSHA 1910.212 — General Requirements for Machines and Guarding",
+    "co_frameworks": [
+      "ISO 10218-1/2 — Industrial Robots Safety",
+      "ISO/TS 15066 — Collaborative Robots",
+      "ANSI/RIA R15.06"
+    ],
+    "scope": "physical_ai",
+    "description": "Spatial separation and kinematic barrier enforcement in collaborative human-robot workspaces."
+  },
+  "CTRL_PHYS_002": {
+    "internal_id": "THR-PHYS-002",
+    "primary_framework": "ISO 3691-4 — Industrial Trucks Safety (Driverless Trucks)",
+    "co_frameworks": [
+      "ISO 21448 — Safety of the Intended Functionality (SOTIF)"
+    ],
+    "scope": "physical_ai",
+    "description": "Maximum kinematic velocity and trajectory clamping for mobile robotics platforms."
+  },
+  "CTRL_PHYS_003": {
+    "internal_id": "THR-PHYS-003",
+    "primary_framework": "ISO 13849-1 — Safety-Related Parts of Control Systems",
+    "co_frameworks": [
+      "IEC 62061 — Functional Safety of Machinery"
+    ],
+    "scope": "physical_ai",
+    "description": "Joint torque saturation limits and motor over-current protection barrier functions."
+  },
+  "CTRL_PHYS_004": {
+    "internal_id": "THR-PHYS-004",
+    "primary_framework": "NIST AI RMF MANAGE-2.4 — Human-AI Teaming Risk Controls",
+    "co_frameworks": [
+      "ISO 42001 §6.1 — AI Risk Management"
+    ],
+    "scope": "physical_ai",
+    "description": "Multi-critic consensus gate for high-consequence physical actuation and curtain override actions."
+  }
+}
