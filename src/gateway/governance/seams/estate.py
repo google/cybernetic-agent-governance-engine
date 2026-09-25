@@ -25,18 +25,31 @@ analysis and deferral queue hydration without polluting Layer 1 with vendor logi
 Architectural Invariant:
     This module must NEVER import from src.gateway.governance or any kernel module
     except other seam dataclasses. It defines pure data contracts and protocols only.
+    Provider resolution (``get_estate_provider``) lives in
+    ``src/gateway/governance/estate_provider.py``, which is the Gate G3
+    allowlisted factory module.
+
+Fail-Closed Contract:
+    Every result carries an explicit ``status``. Consumers MUST treat any result
+    whose ``is_trustworthy`` property is False as inadmissible grounding and
+    fail closed. Conservative field values on error results are defence in
+    depth only — they are never the primary fail-closed signal.
 """
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
 
 class CloudOpsReversibility(str, Enum):
-    """Infrastructure mutation reversibility tiers (maps to FTRA TerminalClassification)."""
+    """Infrastructure mutation reversibility tiers.
+
+    Values mirror ``src.gateway.governance.ftra.models.TerminalClassification``
+    (duplicated because seams may not import kernel modules; keep the two
+    enums in sync).
+    """
 
     READ_ONLY = "READ_ONLY"
     REVERSIBLE = "REVERSIBLE"
@@ -70,7 +83,20 @@ class IaCDriftStatus(str, Enum):
     UNMANAGED = "UNMANAGED"
 
 
-@dataclass
+class EstateQueryStatus(str, Enum):
+    """Outcome of an estate query — the primary fail-closed signal.
+
+    Only ``OK`` results may ground an admissibility decision. Every other
+    status MUST cause the consumer to fail closed.
+    """
+
+    OK = "OK"
+    UNAVAILABLE = "UNAVAILABLE"  # No provider configured, or provider unreachable
+    STALE = "STALE"  # Provider answered, but snapshot is past its validity window
+    INVALID = "INVALID"  # Provider answered with a malformed / unparseable payload
+
+
+@dataclass(frozen=True, kw_only=True)
 class CloudOpsResourcePredicate:
     """Deterministic CloudOps predicate for FTRA grounding and deferral hydration.
 
@@ -79,6 +105,7 @@ class CloudOpsResourcePredicate:
     Returned by EstateProvider.get_resource_predicate().
 
     Attributes:
+        status: Query outcome; only ``EstateQueryStatus.OK`` is trustworthy
         resource_urn: Canonical resource URN (e.g. "gcp:cloudrun:us-central1:gateway")
         resource_type: Resource type classifier (e.g. "compute.instance", "run.service")
         is_load_bearing: True if actively serving live production ingress/traffic
@@ -98,9 +125,11 @@ class CloudOpsResourcePredicate:
         snapshot_id: Estate snapshot identifier
         snapshot_hash: Content-addressed root hash (sha256:...)
         evaluated_at_utc: ISO 8601 evaluation timestamp
-        query_latency_ms: MCP query latency in milliseconds
+        query_latency_ms: Provider query latency in milliseconds
         error: Error message if query failed; None on success
     """
+
+    status: EstateQueryStatus
 
     resource_urn: str
     resource_type: str
@@ -136,12 +165,18 @@ class CloudOpsResourcePredicate:
     query_latency_ms: float = 0.0
     error: str | None = None
 
+    @property
+    def is_trustworthy(self) -> bool:
+        """True only for an OK result with no error — the sole admissible state."""
+        return self.status is EstateQueryStatus.OK and self.error is None
 
-@dataclass
+
+@dataclass(frozen=True, kw_only=True)
 class BlastRadiusEstimate:
     """Cascading impact estimate for proposed infrastructure mutation.
 
     Attributes:
+        status: Query outcome; only ``EstateQueryStatus.OK`` is trustworthy
         resource_urn: Target resource URN
         action: Proposed action verb (e.g. "restart", "delete", "scale_down")
         estimated_affected_services: Number of downstream services impacted
@@ -151,6 +186,8 @@ class BlastRadiusEstimate:
         approval_tier: Required approval level (e.g. "TEAM_LEAD", "SRE_ONCALL", "VP_ENG")
         error: Error message if estimation failed; None on success
     """
+
+    status: EstateQueryStatus
 
     resource_urn: str
     action: str
@@ -164,32 +201,45 @@ class BlastRadiusEstimate:
 
     error: str | None = None
 
+    @property
+    def is_trustworthy(self) -> bool:
+        """True only for an OK result with no error — the sole admissible state."""
+        return self.status is EstateQueryStatus.OK and self.error is None
 
-@dataclass
+
+@dataclass(frozen=True, kw_only=True)
 class TopologySnapshot:
     """Content-addressed infrastructure graph snapshot.
 
     Attributes:
+        status: Query outcome; only ``EstateQueryStatus.OK`` is trustworthy
         scope: Scope filter (e.g. "project:my-gcp-project", "region:us-central1")
         snapshot_id: Immutable snapshot identifier
         snapshot_hash: Content-addressed root hash (sha256:...)
-        nodes: Serialized resource nodes (list of dicts)
-        edges: Dependency edges (list of dicts)
+        nodes: Serialized resource nodes (immutable tuple of dicts)
+        edges: Dependency edges (immutable tuple of dicts)
         captured_at_utc: ISO 8601 capture timestamp
         ttl_seconds: Snapshot validity TTL (default: 300)
         error: Error message if snapshot failed; None on success
     """
 
+    status: EstateQueryStatus
+
     scope: str
     snapshot_id: str
     snapshot_hash: str  # sha256:...
 
-    nodes: list[dict[str, Any]]
-    edges: list[dict[str, Any]]
+    nodes: tuple[dict[str, Any], ...]
+    edges: tuple[dict[str, Any], ...]
 
     captured_at_utc: str
     ttl_seconds: int = 300
     error: str | None = None
+
+    @property
+    def is_trustworthy(self) -> bool:
+        """True only for an OK result with no error — the sole admissible state."""
+        return self.status is EstateQueryStatus.OK and self.error is None
 
 
 class EstateProvider(Protocol):
@@ -201,6 +251,10 @@ class EstateProvider(Protocol):
 
     This protocol follows the same architectural pattern as NormativeProvider
     (src/gateway/governance/seams/normative.py) for vendor-neutral extensibility.
+
+    Implementations MUST NOT raise on upstream failure; they return a result
+    whose ``status`` is not ``EstateQueryStatus.OK`` so that the refusal is
+    observable and can enter the evidence chain.
     """
 
     async def get_resource_predicate(
@@ -240,55 +294,3 @@ class EstateProvider(Protocol):
             TopologySnapshot with nodes, edges, and cryptographic hash anchor
         """
         ...  # pragma: no cover
-
-
-def get_estate_provider(name: str | None = None) -> EstateProvider:
-    """Resolve and instantiate an EstateProvider by name.
-
-    This factory function follows the same pattern as get_normative_provider()
-    in src/gateway/governance/normative_provider.py, providing dynamic vendor
-    adapter loading while preserving Gate G3 import boundary invariants.
-
-    Args:
-        name: Provider name ("provider_09", "opscanvas", "stub"). If None, resolves from
-              CAGE_ESTATE_PROVIDER environment variable (default: "stub").
-
-    Supported providers:
-        - "stub"         — Hermetic test fixture for local/CI (kernel-resident)
-        - "provider_09"  — OpsCanvas MCP estate provider (alias: "opscanvas")
-
-    Returns:
-        An instantiated EstateProvider.
-
-    Raises:
-        ValueError: If the provider name is not registered.
-    """
-    import os
-
-    provider_name = (name or os.environ.get("CAGE_ESTATE_PROVIDER", "stub")).lower()
-
-    # Provider alias normalization
-    alias_map = {
-        "p09": "provider_09",
-        "opscanvas": "provider_09",
-        "ops-canvas": "provider_09",
-        "ops_canvas": "provider_09",
-    }
-    provider_name = alias_map.get(provider_name, provider_name)
-
-    # Kernel-resident stub provider for local/hermetic tests
-    if provider_name == "stub":
-        from src.gateway.governance.estate_provider import StubEstateProvider
-
-        return StubEstateProvider()
-
-    # Vendor providers — lazy-loaded from src/integrations/{provider}/
-    if provider_name == "provider_09":
-        from src.integrations.provider_09 import Provider09EstateProvider
-
-        return Provider09EstateProvider.from_env()
-
-    valid = ["stub", "provider_09"]
-    raise ValueError(
-        f"Unknown estate provider: {provider_name!r}. Available providers: {valid}."
-    )
