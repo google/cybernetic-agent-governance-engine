@@ -295,6 +295,26 @@ Every collected test must carry at least one selection marker (`local`, `unit`, 
 - **LLM / Agent Feedback Loop Latency**: End-to-end multi-agent governance benchmarks (`tests/test_agent_accuracy.py`) execute real GPU inference (vLLM DeepSeek-R1 / Qwen2.5) across multi-step cybernetic loops and require 6–8 minutes (`@pytest.mark.timeout(600)`). Monitor asynchronously; avoid aggressive polling loops.
 - **Partner Integration Isolation & Over-the-Wire Invariant**: Third-party partner tests (`tests/integrations/provider_01/`, `tests/integrations/provider_02/`, etc.) are tagged with `partner_integration` and/or `live_external`. They require live external partner sandboxes/staging endpoints and are excluded from standard internal GKE runs and local hermetic runs (`make test-fast`). **Strict over-the-wire execution is mandatory: all partner integration tests must execute authentic network traffic over the wire (HTTPS/mTLS) against the live partner service. In-process mocks, ASGI test transports (`httpx.ASGITransport(app=...)`), Starlette/FastAPI `TestClient` harnesses, or synthetic stubs are strictly forbidden.** Every partner test run must produce and verify authentic external egress/ingress telemetry, including remote server headers and upstream trace identifiers (e.g., `x-cloud-trace-context`), to guarantee an unbroken mutual audit trail.
 
+### Live Cloud Run Testing & Test Automation Service Account
+> **Live Cloud Run Testing:** For Cloud Run endpoint verification, service smoke tests, and security parity validation, refer to [`docs/operations/CLOUDRUN_TEST_RUNBOOK.md`](docs/operations/CLOUDRUN_TEST_RUNBOOK.md).
+
+#### Cloud Run Authentication Invariant: Dedicated Test Service Account
+- **Never rely on personal credentials for test automation**: Live integration tests against Cloud Run staging and production must authenticate via the dedicated least-privilege test automation service account:
+  ```text
+  cage-test-automation-{env}@{PROJECT_ID}.iam.gserviceaccount.com
+  (e.g., cage-test-automation-dev@laah-cybernetics.iam.gserviceaccount.com)
+  ```
+- **Service Account Role Bindings**: `cage-test-automation-{env}` is provisioned in [`infra/targets/gcp-cloudrun/main.tf`](infra/targets/gcp-cloudrun/main.tf) and granted:
+  - `roles/run.invoker` across all managed Cloud Run services (`cage-gateway-{env}`, `cage-governed-advisor-{env}`, `cage-compliance-bridge-{env}`, `cage-agentsight-ui-{env}`, `cage-langfuse-web-{env}`, `cage-langfuse-worker-{env}`, `cage-vllm-fast-{env}`, `cage-vllm-reasoning-{env}`).
+  - Read-only secret accessor permissions (`roles/secretmanager.secretAccessor`) for test-scoped verification.
+- **Environment Configuration**:
+  ```bash
+  export CLOUDRUN_TEST_SERVICE_ACCOUNT="cage-test-automation-dev@laah-cybernetics.iam.gserviceaccount.com"
+  export CAGE_TEST_TARGET=cloudrun
+  ```
+- **Audit Log Hygiene (PII Prevention)**: Authenticating via `cage-test-automation-{env}` impersonation prevents personal Google identities (`user:*@google.com`) from leaking into Cloud Audit Logs and ensures automated CI/CD and local integration test parity.
+- **Test Harness Integration**: [`tests/conftest.py`](tests/conftest.py), [`scripts/test_live_cloudrun_services.py`](scripts/test_live_cloudrun_services.py), and [`scripts/test_cloudrun_e2e_flow.py`](scripts/test_cloudrun_e2e_flow.py) automatically detect `CLOUDRUN_TEST_SERVICE_ACCOUNT` (or `--impersonate-service-account`) to acquire identity tokens for authenticated invocation.
+
 ---
 
 ## Agent Governance & Cost Guardrails

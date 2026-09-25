@@ -87,6 +87,19 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# Import Cloud Run auth helper from conftest (available at collection time via
+# conftest module injection; imported defensively to allow offline unit runs).
+try:
+    from tests.conftest import get_cloudrun_auth_headers, get_cloudrun_identity_token
+except ImportError:
+    try:
+        from conftest import get_cloudrun_auth_headers, get_cloudrun_identity_token
+    except ImportError:
+        def get_cloudrun_auth_headers(*_a, **_kw) -> dict:  # type: ignore[misc]
+            return {}
+        def get_cloudrun_identity_token(*_a, **_kw):  # type: ignore[misc]
+            return None
+
 pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
@@ -113,7 +126,11 @@ _SKIP_US_FED = pytest.mark.skipif(
 BASE_URL = os.environ.get("COMPLIANCE_BRIDGE_URL", "http://localhost:3001").rstrip("/")
 NAMESPACE = os.environ.get("NAMESPACE", "governance-stack")
 AUDIT_TIMEOUT = int(os.environ.get("INTEGRATION_AUDIT_TIMEOUT_SEC", "30"))
-SSE_TIMEOUT = int(os.environ.get("INTEGRATION_SSE_TIMEOUT_SEC", "10"))
+_is_cloudrun_cfg = (
+    os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+    or BASE_URL.startswith("https://")
+)
+SSE_TIMEOUT = int(os.environ.get("INTEGRATION_SSE_TIMEOUT_SEC", "35" if _is_cloudrun_cfg else "10"))
 SKIP_LANGFUSE = os.environ.get("SKIP_LANGFUSE_CHECKS", "").strip() == "1"
 
 # ---------------------------------------------------------------------------
@@ -184,9 +201,22 @@ def _uid() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def require_live_bridge():
-    """Skip the entire module if the bridge is not reachable."""
+    """Skip the entire module if the bridge is not reachable.
+
+    On Cloud Run deployments (CAGE_TEST_TARGET=cloudrun or BASE_URL is https://),
+    an IAM identity token is injected so the health check passes through Cloud Run
+    IAM authentication.
+    """
+    # Resolve auth headers for the health probe — empty dict for GKE/local.
+    _is_cloudrun = (
+        os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+        or BASE_URL.startswith("https://")
+    )
+    auth_headers: dict[str, str] = get_cloudrun_auth_headers() if _is_cloudrun else {}
+    # Cloud Run cold starts may take ~10s; GKE port-forward is faster.
+    _timeout = 30 if _is_cloudrun else 5
     try:
-        r = requests.get(f"{BASE_URL}/health", timeout=5)
+        r = requests.get(f"{BASE_URL}/health", headers=auth_headers, timeout=_timeout)
         data = r.json()
         if r.status_code != 200 or data.get("service") != "compliance-bridge":
             pytest.skip(
@@ -196,7 +226,8 @@ def require_live_bridge():
     except requests.exceptions.RequestException as exc:
         pytest.skip(
             f"compliance-bridge not reachable at {BASE_URL}: {exc}\n"
-            f"Run: kubectl port-forward svc/compliance-bridge 3001:80 -n {NAMESPACE}"
+            f"GKE: kubectl port-forward svc/compliance-bridge 3001:80 -n {NAMESPACE}\n"
+            f"Cloud Run: ensure COMPLIANCE_BRIDGE_URL, CAGE_TEST_TARGET=cloudrun, and gcloud auth are set."
         )
 
 
@@ -204,19 +235,38 @@ def require_live_bridge():
 def session() -> requests.Session:
     """HTTP session with automatic retry on transient connection errors.
 
-    Port-forwards to GKE can drop briefly (ConnectionReset, ConnectionRefused).
+    On GKE, port-forwards can drop briefly (ConnectionReset, ConnectionRefused).
     The Retry adapter re-attempts up to 3 times with exponential back-off so
     individual tests are not flaky due to port-forward instability.
 
-    When COMPLIANCE_BRIDGE_INTERNAL_TOKEN is set (required when CAGE_ENV is not
-    'dev'), the Bearer token is injected into every request so that the auth
-    middleware does not reject integration-test traffic with 401.
+    On Cloud Run, the session uses the Google IAM identity token for
+    authentication (``Authorization: Bearer <id_token>``), falling back to the
+    ``COMPLIANCE_BRIDGE_INTERNAL_TOKEN`` for internal-service auth if set.
+    Cloud Run IAM auth takes precedence over the internal token.
     """
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
-    token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-    if token:
-        s.headers["Authorization"] = f"Bearer {token}"
+
+    _is_cloudrun = (
+        os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+        or BASE_URL.startswith("https://")
+    )
+    if _is_cloudrun:
+        # Cloud Run: use IAM identity token (preferred) or fall back to internal token.
+        cloudrun_headers = get_cloudrun_auth_headers()
+        if cloudrun_headers:
+            s.headers.update(cloudrun_headers)
+        else:
+            # Fallback: internal app-layer token (set when CAGE_ENV != 'dev')
+            token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            if token:
+                s.headers["Authorization"] = f"Bearer {token}"
+    else:
+        # GKE / local: use internal app-layer token if set.
+        token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+        if token:
+            s.headers["Authorization"] = f"Bearer {token}"
+
     retry = Retry(
         total=3,
         backoff_factor=1.0,  # 1s, 2s, 4s between retries
@@ -228,6 +278,7 @@ def session() -> requests.Session:
     s.mount("http://", adapter)
     s.mount("https://", adapter)
     return s
+
 
 
 # ---------------------------------------------------------------------------
@@ -662,7 +713,7 @@ class TestOscalExport:
 class TestSSEStream:
     def test_sse_connection_establishes(self, session):
         """The SSE endpoint must respond with text/event-stream Content-Type."""
-        with requests.get(
+        with session.get(
             f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT
         ) as r:
             assert r.status_code == 200
@@ -680,13 +731,25 @@ class TestSSEStream:
         audit_id = f"inttest-sse-{uid}"
         oscal = _OSCAL_PASS_ONLY.format(uid=uid)
 
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+        _auth_headers = get_cloudrun_auth_headers() if _is_cloudrun else {}
+        if not _auth_headers:
+            _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            _auth_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+
         # Open the SSE stream before the ingest
         import threading
 
         def _collect_sse():
             try:
                 with requests.get(
-                    f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT + 5
+                    f"{BASE_URL}/v1/events/stream",
+                    headers=_auth_headers,
+                    stream=True,
+                    timeout=SSE_TIMEOUT + 5,
                 ) as r:
                     for chunk in r.iter_content(chunk_size=None):
                         text = chunk.decode(errors="replace")
@@ -701,12 +764,10 @@ class TestSSEStream:
         time.sleep(0.5)  # give the stream connection time to open
 
         # Now trigger the ingest — include Bearer token so the request is not rejected with 401
-        _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         requests.post(
             f"{BASE_URL}/v1/audit/ingest",
             json={"oscal_yaml": oscal, "audit_id": audit_id},
-            headers=_headers,
+            headers=_auth_headers,
             timeout=AUDIT_TIMEOUT,
         )
 
@@ -1043,11 +1104,35 @@ class TestCmekStartupGuard:
         After deploy_all.sh, the compliance-bridge pod must have 0 restarts.
         CrashLoopBackOff is the most common symptom of a CMEK guard failure.
 
-        Requires: kubectl accessible + KUBECONFIG set.
-        Skip if kubectl is not available in the test environment.
+        GKE: Requires kubectl accessible + KUBECONFIG set.
+        Cloud Run: Cloud Run replaces pod restart counts with revision health.
+                   A revision that fails startup cannot serve traffic and the
+                   require_live_bridge fixture would have already skipped the
+                   suite. This branch verifies the service is healthy via /health.
         """
         import subprocess
 
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+
+        if _is_cloudrun:
+            # Cloud Run equivalent: a healthy /health response proves the revision
+            # started successfully (no CMEK crash during lifespan startup).
+            auth_headers: dict[str, str] = get_cloudrun_auth_headers()
+            r = requests.get(
+                f"{BASE_URL}/health", headers=auth_headers, timeout=30
+            )
+            assert r.status_code == 200, (
+                "Cloud Run compliance-bridge revision is unhealthy. "
+                "A startup failure (e.g. CMEK guard RuntimeError) would prevent "
+                "the revision from serving traffic. "
+                f"Check Cloud Run logs: gcloud run services logs read compliance-bridge"
+            )
+            return
+
+        # GKE path: query pod restart count via kubectl
         try:
             result = subprocess.run(
                 [
@@ -1138,12 +1223,24 @@ class TestAlertChannelWiring:
         audit_id = f"inttest-govviol-{uid}"
         oscal = _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid)
 
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+        _auth_headers = get_cloudrun_auth_headers() if _is_cloudrun else {}
+        if not _auth_headers:
+            _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            _auth_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+
         import threading
 
         def _collect():
             try:
                 with requests.get(
-                    f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT + 5
+                    f"{BASE_URL}/v1/events/stream",
+                    headers=_auth_headers,
+                    stream=True,
+                    timeout=SSE_TIMEOUT + 5,
                 ) as r:
                     for chunk in r.iter_content(chunk_size=None):
                         text = chunk.decode(errors="replace")
@@ -1157,12 +1254,10 @@ class TestAlertChannelWiring:
         t.start()
         time.sleep(0.5)
         # Include Bearer token so the ingest request is not rejected with 401
-        _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         requests.post(
             f"{BASE_URL}/v1/audit/ingest",
             json={"oscal_yaml": oscal, "audit_id": audit_id},
-            headers=_headers,
+            headers=_auth_headers,
             timeout=AUDIT_TIMEOUT,
         )
         t.join(timeout=SSE_TIMEOUT)
@@ -1274,15 +1369,21 @@ class TestSlaAndEvalDataset:
         # 1. Trigger a FAIL ingest for A.9.2 to ensure a dataset item exists
         uid = _uid()
         audit_id = f"inttest-eval-{uid}"
-        _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+        _is_cloudrun = (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or BASE_URL.startswith("https://")
+        )
+        _auth_headers = get_cloudrun_auth_headers() if _is_cloudrun else {}
+        if not _auth_headers:
+            _token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
+            _auth_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         r = requests.post(
             f"{BASE_URL}/v1/audit/ingest",
             json={
                 "oscal_yaml": _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid),
                 "audit_id": audit_id,
             },
-            headers=_headers,
+            headers=_auth_headers,
             timeout=AUDIT_TIMEOUT,
         )
         assert r.status_code == 200
@@ -1294,12 +1395,19 @@ class TestSlaAndEvalDataset:
         api_url = (
             f"{lf_host.rstrip('/')}/api/public/dataset-items?datasetName={dataset_name}"
         )
+        lf_headers = (
+            get_cloudrun_auth_headers(lf_host, app_auth=(lf_pk, lf_sk))
+            if _is_cloudrun
+            else {}
+        )
         import time as _time
 
         lf_resp = None
         for _attempt in range(10):
             try:
-                lf_resp = requests.get(api_url, auth=(lf_pk, lf_sk), timeout=15)
+                lf_resp = requests.get(
+                    api_url, auth=(lf_pk, lf_sk), headers=lf_headers, timeout=15
+                )
                 if (
                     lf_resp.status_code == 200
                     and len(lf_resp.json().get("data", [])) >= 1
