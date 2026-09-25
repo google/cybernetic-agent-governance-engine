@@ -188,15 +188,7 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
     _ensure_base_commit()
     repo_root = REPO_ROOT
     diff = subprocess.run(
-        [
-            "git",
-            "diff",
-            "--no-ext-diff",
-            "--unified=0",
-            f"{BASE_COMMIT}...HEAD",
-            "--",
-            "src/integrations/provider_06/",
-        ],
+        ["git", "diff", "--no-ext-diff", "--unified=0", f"{BASE_COMMIT}...HEAD"],
         cwd=repo_root,
         check=True,
         capture_output=True,
@@ -213,13 +205,15 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
     executable_added = "\n".join(
         line
         for path, lines in added_by_path.items()
-        if path.startswith("src/integrations/provider_06/")
+        if not path.startswith("tests/")
         and Path(path).suffix in {".py", ".toml", ".cfg", ".ini"}
         for line in lines
     )
     assert "GovernanceTierPlugin" not in executable_added
     assert "InvariantModel" not in executable_added
     assert "DomainToolProvider" not in executable_added
+    assert "provider_06" not in executable_added
+    assert "agent_integrity" not in executable_added
 
     for config_path in (
         repo_root / "pyproject.toml",

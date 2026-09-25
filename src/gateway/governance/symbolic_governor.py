@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from typing import Any
@@ -43,7 +44,12 @@ from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
-from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
+from src.gateway.governance.contracts import (
+    ConsensusProvider,
+    SafetyFilter,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.ftra.models import FtraBoundaryResult
 
@@ -979,8 +985,7 @@ class SymbolicGovernor:
                             f"{type(exc).__name__} — resource state may be "
                             f"inconsistent; manual reconciliation required"
                         ),
-                        recoverable=False,
-                        needs_human_review=True,
+                        kind=ViolationKind.HARD,
                     )
                 )
         return failures
@@ -1033,8 +1038,7 @@ class SymbolicGovernor:
                                 f"{tier.tier_name} raised {type(exc).__name__} — "
                                 f"failing closed"
                             ),
-                            recoverable=False,
-                            needs_human_review=True,
+                            kind=ViolationKind.HARD,
                         )
                     ]
                 span.set_attribute(
@@ -1457,35 +1461,222 @@ class SymbolicGovernor:
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
             if self._is_governed_action(tool_name, params):
-                _confidence = float(params.get("confidence", 0.0))
+                # H3 Security Fix: Fail-closed confidence validation
+                # Prevents NaN/undefined/invalid values from bypassing tier validation
+                confidence_score = params.get("confidence")
+                
                 # POAM-TIER2-001: stamp the confidence provenance so every Tier 2 decision
                 # is auditable. The structural heuristic below provides independent
                 # corroboration after Tier-1 STPA and Tier-3 OPA results are available.
                 conf_span.set_attribute("tier2.confidence.source", "agent_self_report")
                 conf_span.set_attribute("tier2.confidence.independently_verified", True)
+                
                 # EV-2 Migration: Use config-based threshold with env var override support
                 _confidence_threshold = get_agent_confidence_threshold()
-                if _confidence < _confidence_threshold:
-                    _conf_meta = ControlRegistry().get_mapping(
-                        GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
+                _conf_meta = ControlRegistry().get_mapping(
+                    GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
+                )
+                
+                # Fail closed: validate confidence before threshold check
+                _confidence_valid = True
+                _confidence = 0.0  # Default for telemetry
+                
+                if confidence_score is None:
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score missing (required for all actions)"
                     )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description="confidence score missing",
+                            governing_state={
+                                "confidence": None,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence="Action execution with missing confidence score",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": None,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif not isinstance(confidence_score, (int, float)):
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score invalid type: {type(confidence_score).__name__}"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence score invalid type: {type(confidence_score).__name__}",
+                            governing_state={
+                                "confidence": str(confidence_score),
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Action execution with invalid confidence type: {type(confidence_score).__name__}",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": str(confidence_score),
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif math.isnan(confidence_score):
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score is NaN (invalid)"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description="confidence score is NaN",
+                            governing_state={
+                                "confidence": "NaN",
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence="Action execution with NaN confidence score",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": "NaN",
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif math.isinf(confidence_score):
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score is infinite (invalid)"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description="confidence score is infinite",
+                            governing_state={
+                                "confidence": "inf" if confidence_score > 0 else "-inf",
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence="Action execution with infinite confidence score",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": "inf" if confidence_score > 0 else "-inf",
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif confidence_score < 0:
+                    _confidence = float(confidence_score)
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score {_confidence} is negative (invalid)"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence score {_confidence} is negative",
+                            governing_state={
+                                "confidence": _confidence,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Action execution with negative confidence: {_confidence}",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": _confidence,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif confidence_score > 1.0:
+                    _confidence = float(confidence_score)
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score {_confidence} exceeds maximum 1.0"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence score {_confidence} exceeds maximum 1.0",
+                            governing_state={
+                                "confidence": _confidence,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Action execution with excessive confidence: {_confidence}",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": _confidence,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif confidence_score < _confidence_threshold:
+                    _confidence = float(confidence_score)
                     _conf_msg = (
                         f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
                         f"{_conf_meta['primary_framework']} Confidence Violation: "
                         f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
                         f"Violation: agent confidence below required minimum."
                     )
-                    # CRIT-5 fix: store in a local variable, not on self.
-                    # self._pending_payload was a data race — concurrent requests on
-                    # the singleton could overwrite each other's payload.
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "scope": _conf_meta.get("scope", ""),
-                        "confidence": _confidence,
-                        "threshold": _confidence_threshold,
-                    }
                     violations.append(_conf_msg)
                     tier_failures.append(
                         GovernanceTierFailure(
@@ -1501,12 +1692,28 @@ class SymbolicGovernor:
                             f"(below {_confidence_threshold:.2f} minimum)",
                         )
                     )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": _confidence,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                else:
+                    # Valid confidence score that passes threshold
+                    _confidence = float(confidence_score)
+                
+                # Set telemetry attributes
                 conf_span.set_attribute("governance.confidence.score", _confidence)
                 conf_span.set_attribute(
                     "governance.confidence.threshold", _confidence_threshold
                 )
                 conf_span.set_attribute(
-                    "governance.confidence.passed", _confidence >= _confidence_threshold
+                    "governance.confidence.passed", _confidence_valid
                 )
             conf_span.set_attribute(
                 "governance.stage.latency_ms",
@@ -1572,7 +1779,13 @@ class SymbolicGovernor:
                     policy_decision = policy_resp
                 else:
                     policy_decision = "DENY"
-                if policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                
+                # Fail-closed allowlist pattern (H2 security fix)
+                if policy_decision == "ALLOW":
+                    # Only explicit ALLOW proceeds - no violations added
+                    pass
+                elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                    # Explicit denials with specific violation message
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1593,12 +1806,47 @@ class SymbolicGovernor:
                         )
                     )
                 elif policy_decision == "MANUAL_REVIEW":
+                    # Manual review required
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
                     violations.append(
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Check: Manual Review Required."
+                    )
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="OPA",
+                            control_id=GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+                            rule_description="OPA manual review required",
+                            governing_state={
+                                "policy_decision": policy_decision,
+                                "framework": _opa_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Execution of {tool_name} requires manual review",
+                        )
+                    )
+                else:
+                    # Everything else (typos, unknown verdicts, unexpected values) triggers violation
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
+                    violations.append(
+                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
+                        f"OPA Policy Violation: Unexpected verdict '{policy_decision}' "
+                        f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)"
+                    )
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="OPA",
+                            control_id=GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+                            rule_description="OPA unexpected verdict",
+                            governing_state={
+                                "policy_decision": policy_decision,
+                                "framework": _opa_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Execution of {tool_name} blocked due to unexpected OPA verdict",
+                        )
                     )
 
         else:
@@ -1674,7 +1922,12 @@ class SymbolicGovernor:
 
                 # Retrieve the self-reported confidence value (set in the confidence check
                 # block above; default 0.0 if tool_name branch was skipped somehow).
-                _self_reported_confidence: float = float(params.get("confidence", 0.0))
+                # H3 Security Fix: Safe conversion to handle invalid types already caught above
+                try:
+                    _self_reported_confidence: float = float(params.get("confidence", 0.0))
+                except (TypeError, ValueError):
+                    # Invalid type/value already caught by validation above; use safe default
+                    _self_reported_confidence = 0.0
                 # EV-2 Migration: Use config-based threshold with env var override support
                 _confidence_threshold_t2: float = get_agent_confidence_threshold()
 
@@ -1975,8 +2228,14 @@ class SymbolicGovernor:
             _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
 
             # --- CBF coroutine ---
-            async def _cbf_revalidate() -> str | None:
-                """Atomic CBF verify-and-commit inside a dedicated span."""
+            async def _cbf_revalidate() -> tuple[bool, str]:
+                """Atomic CBF verify-and-commit inside a dedicated span.
+                
+                Returns:
+                    tuple[bool, str]: (committed, reason) where committed=True means
+                                      the CBF balance was successfully debited, and
+                                      reason describes the outcome or refusal reason.
+                """
                 with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
                     cbf_span.set_attribute(OBSERVATION_NAME, "cbf_barrier_check")
                     cbf_span.set_attribute("governance.stage", "cbf")
@@ -1991,14 +2250,14 @@ class SymbolicGovernor:
                             action_name=tool_name,
                             payload=params,
                         )
-                        result = "SAFE" if committed else reason
-                        cbf_span.set_attribute("governance.cbf.result", result[:80])
+                        result_str = "SAFE" if committed else reason
+                        cbf_span.set_attribute("governance.cbf.result", result_str[:80])
                         cbf_span.set_attribute("governance.cbf.committed", committed)
                         cbf_span.set_attribute(
                             "governance.stage.latency_ms",
                             round((time.perf_counter() - _t) * 1000, 2),
                         )
-                        return result
+                        return (committed, reason)
                     except Exception as exc:
                         cbf_span.record_exception(exc)
                         cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
@@ -2026,48 +2285,27 @@ class SymbolicGovernor:
                         opa_span.record_exception(exc)
                         raise
 
-            # Fire CBF and OPA concurrently — same as Tiers 3a and 3b in the full pipeline.
-            _t_parallel_start = time.perf_counter()
-            _gather_results2 = await asyncio.gather(
-                _cbf_revalidate(),
-                _opa_revalidate(),
-                return_exceptions=True,
-            )
-            cbf_result: str | BaseException | None = _gather_results2[0]
-            policy_resp: Any = _gather_results2[1]
-            _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
-            logger.debug(
-                "⚡ [revalidate_post_hitl] CBF+OPA parallel re-check completed "
-                "in %.1fms (tool=%s)",
-                _parallel_ms,
-                tool_name,
-            )
-
-            # --- Evaluate CBF result ---
-            if isinstance(cbf_result, BaseException):
-                if _cbf_fail_open:
-                    logger.warning(
-                        "⚠️ [revalidate_post_hitl] CBF check unavailable (%s) — "
-                        "CBF_FAIL_OPEN=true, skipping CBF gate (audit gap).",
-                        cbf_result,
-                    )
-                else:
-                    logger.error(
-                        "⛔ [revalidate_post_hitl] CBF check unavailable (%s) — "
-                        "fail-closed: blocking revalidation.",
-                        cbf_result,
-                    )
-                    violations.append(
-                        "CBF Fail-Closed (post-HITL revalidation): Redis unavailable "
-                        "— cannot verify cash barrier. Set CBF_FAIL_OPEN=true to "
-                        "override (audit gap)."
-                    )
-            elif isinstance(cbf_result, str) and cbf_result.startswith("UNSAFE"):
-                violations.append(
-                    f"Safety Violation (RBC/CBF) [post-HITL revalidation]: {cbf_result}"
-                )
-
-            # --- Evaluate OPA result ---
+            # C2 Fix: Run OPA first (read-only), then CBF commit only if OPA passes.
+            # This prevents budget leakage where CBF debits balance but OPA subsequently denies.
+            #
+            # Phase ordering (sequential):
+            #   1. OPA policy evaluation (read-only, no side effects)
+            #   2. CBF atomic commit (mutating, debits balance) — only if OPA passed
+            #   3. Seal generation with rollback on failure
+            #
+            # Latency trade-off: Sequential execution adds OPA_ms + CBF_ms instead of max(OPA_ms, CBF_ms).
+            # This is acceptable because correctness (no budget leakage) takes precedence over latency.
+            
+            _t_sequential_start = time.perf_counter()
+            cbf_committed = False  # Track whether CBF actually committed (for rollback)
+            
+            # --- Step 1: OPA revalidation (read-only) ---
+            try:
+                policy_resp = await _opa_revalidate()
+            except BaseException as opa_exc:
+                policy_resp = opa_exc
+            
+            # Evaluate OPA result before proceeding to CBF
             if isinstance(policy_resp, BaseException):
                 violations.append(
                     f"OPA Check Failed [post-HITL revalidation]: {policy_resp}"
@@ -2082,7 +2320,13 @@ class SymbolicGovernor:
                     policy_decision = policy_resp
                 else:
                     policy_decision = "DENY"
-                if policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                
+                # Fail-closed allowlist pattern (H2 security fix)
+                if policy_decision == "ALLOW":
+                    # Only explicit ALLOW proceeds - no violations added
+                    pass
+                elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                    # Explicit denials with specific violation message
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -2092,6 +2336,7 @@ class SymbolicGovernor:
                         f"Action [post-HITL revalidation]."
                     )
                 elif policy_decision == "MANUAL_REVIEW":
+                    # Manual review required
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -2100,8 +2345,71 @@ class SymbolicGovernor:
                         f"{_opa_meta['primary_framework']} Check: Manual Review "
                         f"Required [post-HITL revalidation]."
                     )
-
-            span.set_attribute("toctou.revalidation.cbf_opa_parallel_ms", _parallel_ms)
+                else:
+                    # Everything else (typos, unknown verdicts, unexpected values) triggers violation
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
+                    violations.append(
+                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
+                        f"OPA Policy Violation: Unexpected verdict '{policy_decision}' "
+                        f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]"
+                    )
+            
+            # --- Step 2: CBF commit (only if OPA passed) ---
+            if not violations:
+                try:
+                    cbf_result = await _cbf_revalidate()
+                except BaseException as cbf_exc:
+                    cbf_result = cbf_exc
+                
+                # Evaluate CBF result
+                # C1 Fix: Check the committed boolean directly instead of relying on
+                # reason string prefix matching. This catches all CBF refusals:
+                #   - "UNSAFE: ..." (barrier violation)
+                #   - "RECONCILIATION_UNAVAILABLE: ..." (ground truth unavailable)
+                #   - "Fence epoch regression: ..." (concurrent modification)
+                #   - "Ground truth balance unavailable" (data fetch failure)
+                if isinstance(cbf_result, BaseException):
+                    if _cbf_fail_open:
+                        logger.warning(
+                            "⚠️ [revalidate_post_hitl] CBF check unavailable (%s) — "
+                            "CBF_FAIL_OPEN=true, skipping CBF gate (audit gap).",
+                            cbf_result,
+                        )
+                    else:
+                        logger.error(
+                            "⛔ [revalidate_post_hitl] CBF check unavailable (%s) — "
+                            "fail-closed: blocking revalidation.",
+                            cbf_result,
+                        )
+                        violations.append(
+                            "CBF Fail-Closed (post-HITL revalidation): Redis unavailable "
+                            "— cannot verify cash barrier. Set CBF_FAIL_OPEN=true to "
+                            "override (audit gap)."
+                        )
+                elif isinstance(cbf_result, tuple):
+                    committed, reason = cbf_result
+                    cbf_committed = committed  # Track for potential rollback
+                    if not committed:
+                        # C1 Fix: Any CBF refusal (committed=False) is a hard violation,
+                        # regardless of the reason string content.
+                        violations.append(
+                            f"CBF Commit Refused [post-HITL revalidation]: {reason}"
+                        )
+                        logger.warning(
+                            "⛔ [revalidate_post_hitl] CBF refused to commit: %s",
+                            reason,
+                        )
+            else:
+                logger.info(
+                    "⏭️ [revalidate_post_hitl] OPA denied — skipping CBF commit "
+                    "(budget leakage prevented)"
+                )
+            
+            _sequential_ms = round((time.perf_counter() - _t_sequential_start) * 1000, 2)
+            span.set_attribute("toctou.revalidation.sequential_ms", _sequential_ms)
+            span.set_attribute("toctou.revalidation.cbf_committed", cbf_committed)
 
             try:
                 if violations:

@@ -27,7 +27,11 @@ from src.cage_finance.safety.bounding.models import (
     ContractSeverity,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +47,8 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
     - Position: Phase 1, order 2 (after FTRA boundary, before CBF)
     - Claims: execute_trade_bounded action only
     - Converts ContractResult → Violation
-    - HARD_BLOCK severity → recoverable=False
-    - HITL_ESCALATE severity → recoverable=True (parks in DeferQueue)
+    - HARD_BLOCK severity → ViolationKind.HARD
+    - HITL_ESCALATE severity → ViolationKind.HITL (parks in DeferQueue)
     """
 
     def __init__(self, registry: BoundingContractRegistry):
@@ -106,7 +110,7 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="INVALID_REQUEST_PARAMS",
                     message=f"Invalid parameters for execute_trade_bounded: {e}",
-                    recoverable=False,
+                    kind=ViolationKind.HARD,
                 )
             ]
 
@@ -144,12 +148,15 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
             result: ContractResult from bounding contract evaluation
 
         Returns:
-            Violation with appropriate code and recoverability
+            Violation with appropriate code and kind
         """
-        # Determine recoverability based on severity
-        # HARD_BLOCK → recoverable=False (fail-closed, must abort)
-        # HITL_ESCALATE → recoverable=True (parks in DeferQueue for human review)
-        recoverable = result.severity == ContractSeverity.HITL_ESCALATE
+        # Determine kind based on severity
+        # HARD_BLOCK → ViolationKind.HARD (fail-closed, must abort)
+        # HITL_ESCALATE → ViolationKind.HITL (parks in DeferQueue for human review)
+        if result.severity == ContractSeverity.HITL_ESCALATE:
+            kind = ViolationKind.HITL
+        else:  # HARD_BLOCK
+            kind = ViolationKind.HARD
 
         # Build violation message from findings
         if result.findings:
@@ -175,7 +182,7 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
             tier=self.tier_name,
             code=f"BOUNDING_{result.contract_id}_{result.severity.value}",
             message=message,
-            recoverable=recoverable,
+            kind=kind,
         )
 
     def get_classification_override(self) -> str | None:

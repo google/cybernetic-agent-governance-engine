@@ -17,7 +17,11 @@
 from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 class ClinicalConsensusTier(GovernanceTierPlugin):
@@ -61,7 +65,7 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="CLINICAL_CONSENSUS_REJECTED",
                     message=result.get("reason", "Multi-critic consensus not achieved"),
-                    recoverable=True,
+                    kind=ViolationKind.HITL,
                 )
             ]
         return []

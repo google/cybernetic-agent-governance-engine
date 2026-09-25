@@ -15,7 +15,11 @@
 import uuid
 from typing import Any
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 
 
@@ -57,7 +61,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="FISCAL_LIMIT_EXCEEDED",
                     message=f"Daily fiscal limit exceeded for {agent_id}. Fiscal Limit Pre-Reservation REJECTED",
-                    recoverable=True,
+                    kind=ViolationKind.NARROWABLE,
                 )
             ]
 

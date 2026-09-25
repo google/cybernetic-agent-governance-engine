@@ -336,12 +336,22 @@ class ControlBarrierFunction:
 -- ARGV[3]: gamma (float string) — <InvariantModel.gamma>
 -- ARGV[4]: governance_signature (string, may be empty)
 -- ARGV[5]: ground_truth_balance (float string) -- POAM-023: KMS-verified balance from Python
+-- ARGV[6]: expected_fence (int string) -- C4: Expected fence epoch for CAS validation
 -- Returns: array {status_code, message, new_balance_str, new_epoch}
 --   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation)
+--
+-- C4 Security Fix: Atomic CAS validation at the START to eliminate TOCTOU race
+local expected_fence = tonumber(ARGV[6])
+local current_fence_raw = redis.call('GET', KEYS[3])
+local current_fence = current_fence_raw and tonumber(current_fence_raw) or 0
+if current_fence ~= expected_fence then
+    return {0, "Fence epoch regression: expected " .. tostring(expected_fence) .. ", got " .. tostring(current_fence), "0", current_fence}
+end
+
 -- POAM-023: Ground truth balance passed from Python after KMS verification
 local current = tonumber(ARGV[5])
 if not current then
-    return {0, "Ground truth balance unavailable", "0", 0}
+    return {0, "Ground truth balance unavailable", "0", current_fence}
 end
 local cost = tonumber(ARGV[1]) or 0.0
 local min_cash = tonumber(ARGV[2])
@@ -353,12 +363,8 @@ local h_t = current - min_cash
 local h_next = next_cash - min_cash
 local required_h_next = (1.0 - gamma) * h_t
 
--- Read current epoch for return (even on UNSAFE)
-local current_epoch_raw = redis.call('GET', KEYS[3])
-local current_epoch = current_epoch_raw and tonumber(current_epoch_raw) or 0
-
 if h_next < required_h_next or h_next < 0 then
-    return {0, "UNSAFE: h_next=" .. tostring(h_next) .. " < required=" .. tostring(required_h_next), tostring(current), current_epoch}
+    return {0, "UNSAFE: h_next=" .. tostring(h_next) .. " < required=" .. tostring(required_h_next), tostring(current), current_fence}
 end
 
 redis.call('SET', KEYS[1], tostring(next_cash))
@@ -912,6 +918,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     # Fall through to self-reported balance below
                                 else:
                                     # Sequence valid — update last_accepted and proceed
+                                    # C4 fix: Always read fence epoch from Redis for CAS validation
+                                    fence_epoch = await self._get_fence_epoch()
                                     logger.info(
                                         "CBF: using externally reconciled balance=%.2f "
                                         "source=%s verified_at=%.0f sequence=%d (KMS signature valid, sequence advancing)",
@@ -924,9 +932,12 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                         "current_cash": verified.balance_usd,
                                         "source": "reconciled",
                                         "sequence": verified.sequence,
+                                        "fence_epoch": fence_epoch,
                                     }
                             else:
                                 # Replay defense disabled or sequence=0 (backward compat)
+                                # C4 fix: Always read fence epoch from Redis for CAS validation
+                                fence_epoch = await self._get_fence_epoch()
                                 logger.info(
                                     "CBF: using externally reconciled balance=%.2f "
                                     "source=%s verified_at=%.0f sequence=%d (KMS signature valid)",
@@ -939,6 +950,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     "current_cash": verified.balance_usd,
                                     "source": "reconciled",
                                     "sequence": verified.sequence,
+                                    "fence_epoch": fence_epoch,
                                 }
                         else:
                             logger.critical(
@@ -1713,10 +1725,13 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         effective_balance = ground_truth_balance - local_debit_total
 
         # Fence-epoch validation (R-05) - POAM-023: now enforced on commit path
+        # C4 Security Fix: Two-phase validation for complete protection:
+        # 1. Python-side regression detection (failover to stale replica)
+        # 2. Lua-side CAS validation (TOCTOU race prevention)
         current_fence_epoch = balance_metadata["fence_epoch"]
         if self._last_verified_fence_epoch is not None:
             if current_fence_epoch < self._last_verified_fence_epoch:
-                # Fence regression detected
+                # Fence regression detected (failover scenario)
                 logger.critical(
                     json.dumps(
                         {
@@ -1735,8 +1750,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     False,
                     f"Fence epoch regression: {current_fence_epoch} < {self._last_verified_fence_epoch}",
                 )
-
-        self._last_verified_fence_epoch = current_fence_epoch
 
         # PR C (Stage 2): Compile barrier parameters from InvariantModel
         # R-05: Include fence epoch key for atomic increment in Lua script
@@ -1760,8 +1773,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 resolved_threshold
             ),  # ARGV[2]: resolved threshold from InvariantModel or override
             str(self.gamma),  # ARGV[3]: gamma from InvariantModel or override
-            governance_signature,
+            governance_signature,  # ARGV[4]: governance signature
             str(effective_balance),  # ARGV[5]: ground truth balance (POAM-023)
+            str(current_fence_epoch),  # ARGV[6]: expected fence epoch for CAS (C4)
         ]
 
         # CRIT-4 fix: use public get_raw_client() instead of private _get().
@@ -1968,6 +1982,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         # R-05: Update epoch tracking and telemetry
         if committed and new_epoch > 0:
             self._last_seen_epoch = new_epoch
+            # C4: Update last verified fence epoch after successful atomic commit
+            self._last_verified_fence_epoch = new_epoch
             if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                 _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
 

@@ -17,7 +17,11 @@
 from typing import Any
 
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 class KinematicBarrierTier(GovernanceTierPlugin):
@@ -57,7 +61,8 @@ class KinematicBarrierTier(GovernanceTierPlugin):
                 Violation(
                     tier=self.tier_name,
                     code="KINEMATIC_BARRIER_VIOLATED",
-                    detail=reason,
+                    message=reason,
+                    kind=ViolationKind.HARD,
                 )
             ]
         return []
