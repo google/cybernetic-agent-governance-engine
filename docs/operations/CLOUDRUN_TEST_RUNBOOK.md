@@ -126,7 +126,17 @@ What this validates over the live wire:
 
 ## 5. Live Integration Test Invocations
 
-### Canonical Cloud Run Integration Run (Excluding GKE-Exclusive Tests):
+### Canonical Orchestrated Run (Recommended):
+
+To run all discovery, IAM authentication, smoke validation, GPU/agent warm-up, and integration tests in a single command with **explicit skip reporting**:
+
+```bash
+make test-cloudrun
+# Or directly via script:
+./scripts/run_cloudrun_integration_tests.sh
+```
+
+### Manual Cloud Run Integration Run:
 
 ```bash
 source .env && \
@@ -142,6 +152,7 @@ uv run pytest tests/ \
   -n 2 --dist loadscope \
   --no-cov \
   -p no:langsmith -p no:langsmith_plugin \
+  -ra -rs \
   --tb=short
 ```
 
@@ -149,9 +160,18 @@ uv run pytest tests/ \
 - **`-m "integration and not gke"`**: Runs all universal Layer 7 integration tests while excluding tests that require raw Kubernetes node primitives or self-managed container configs (e.g., `test_pod_restarts_are_zero` GKE path, `test_redis_dangerous_commands_disabled`).
 - **`--run-integration`**: Satisfies the fail-closed selection gate in [`tests/conftest.py`](../../tests/conftest.py), preventing accidental execution of live cloud suites during local development.
 - **`-n 2 --dist loadscope`**: Constrains worker concurrency to prevent a thundering herd of container cold starts on serverless Cloud Run revisions (`minScale=0`) while grouping tests by module (`loadscope`) to maintain fixture isolation.
+- **`-ra -rs` (Non-Silent Skip Invariant)**: Forces Pytest to explicitly print the exact reason for every skipped test in the terminal summary. This prevents silent skips (e.g., from unexported endpoints defaulting to `localhost` or missing IAM tokens) from masquerading as passes or bugs.
 - **`--no-cov`**: Disables local coverage instrumentation overhead, avoiding skewed coverage metrics from remote network assertions.
 - **`-p no:langsmith -p no:langsmith_plugin`**: Enforces the AGENTS.md § Observability invariant by disabling third-party LangSmith telemetry plugins in favor of sovereign self-hosted Langfuse.
 - **`--tb=short`**: Produces concise error tracebacks.
+
+### The Non-Silent Skip Contract (Why Tests Skip & How to Diagnose):
+If tests show as skipped (`s`), inspect the `-rs` summary at the end of the run:
+1. **`Integration test — requires live external services`**: You omitted `--run-integration` (or did not invoke `make test-cloudrun`).
+2. **`compliance-bridge not reachable at http://localhost:...`**: You did not export `COMPLIANCE_BRIDGE_URL` from Terraform, so the test fell back to an unreachable localhost address.
+3. **`Backend http://localhost:18080 unreachable`**: `BACKEND_URL` is missing from your environment.
+4. **`returned status=401 / 403`**: Google IAM identity token is missing or expired. Set `CLOUDRUN_TEST_SERVICE_ACCOUNT` or run `gcloud auth print-identity-token`.
+5. **`US_FED-specific framework filter tests skipped for region 'EU_ECB'`**: Legitimate jurisdictional skip per CAGE regional posture design.
 
 ### Dedicated Multi-Agent & Langfuse Test Suites against Cloud Run:
 
