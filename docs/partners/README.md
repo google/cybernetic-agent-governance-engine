@@ -22,6 +22,7 @@ specifications, and technical exchange artifacts.
 | `provider_05` | **Veraxis Execution Integrity Protocol (VEIP)** | Attestation Provider & Execution Warrant Verification | [`provider_05/`](provider_05/) | [`src/integrations/provider_05/`](../../src/integrations/provider_05/) |
 | `provider_06` | **Guardian Cyber Agent Integrity** | Synchronous Verifier & Conformance Harness (`1-alpha`) | [`provider_06/`](provider_06/) | [`src/integrations/provider_06/`](../../src/integrations/provider_06/) |
 | `provider_07` | **InferTheta** | Graph Topology & Governance Schema Provider | [`provider_07/`](provider_07/) | [`src/integrations/provider_07/`](../../src/integrations/provider_07/) |
+| `provider_08` | **Verdict Systems** | Synchronous Normative Provider (`NormativeProvider`) + external evidence custody (Sigstore Rekor) | [`provider_08/`](provider_08/) | [`src/integrations/provider_08/`](../../src/integrations/provider_08/) |
 
 ---
 

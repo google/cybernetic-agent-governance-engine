@@ -55,6 +55,7 @@ NORMATIVE_PROVIDERS = [
     "provider_03",
     "provider_06",
     "provider_07",
+    "provider_08",
 ]
 ATTESTATION_PROVIDERS = [
     "provider_02",
@@ -79,6 +80,8 @@ def test_factory_resolution_normative(provider_name: str) -> None:
         ("p01", "provider_01"),
         ("p03", "provider_03"),
         ("agent_integrity", "provider_06"),
+        ("verdict", "provider_08"),
+        ("p08", "provider_08"),
     ],
 )
 def test_factory_alias_resolution(alias: str, expected: str) -> None:
@@ -88,7 +91,9 @@ def test_factory_alias_resolution(alias: str, expected: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider_name", ["provider_01", "provider_03", "provider_06"])
+@pytest.mark.parametrize(
+    "provider_name", ["provider_01", "provider_03", "provider_06", "provider_08"]
+)
 async def test_normative_provider_interface(provider_name: str) -> None:
     """Verify that fetch_baseline, validate_fria, and submit_evidence return expected types."""
     provider = get_normative_provider(provider_name)

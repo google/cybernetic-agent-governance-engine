@@ -9,6 +9,18 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **provider_08 — Verdict runtime evidence `NormativeProvider`** (`src/integrations/provider_08/`):
+  synchronous adapter for https://verdict.systems/api/cage covering all three seam
+  endpoints (`/legal-baseline/{region}`, `/validate/fria`, `/evidence-chain/{thread_id}`),
+  tri-state ALLOW/REFUSE/ESCALATE mapping with kernel ConsequenceToken minting,
+  `EXTERNAL_HOLD` parking with provider-supplied `hold_ttl_seconds`, fail-closed
+  `ENDPOINT_ERROR`/`PARSE_ERROR` handling, optional `PROVIDER_08_REQUIRE_ANCHOR`
+  (refuse a seal whose Rekor anchor is deferred), factory aliases `verdict`/`p08`,
+  conformance-suite registration, hermetic respx tests, live over-the-wire test suite,
+  and partner specification (`docs/partners/provider_08/`).
+
 ### Fixed
 - **[CRITICAL]** Eliminated lost-update concurrency defect in DEFER dual-control approval flows. Concurrent approvals on `required_quorum >= 2` tokens no longer silently overwrite each other. Replaced broken WATCH-on-pool pattern with monotonic revision CAS primitive. Retries are bounded to 3 attempts with 5ms exponential jitter; exhaustion returns HTTP 409 Conflict.
 - Removed unreachable `TransactionAbortedError` exception handlers in `defer_queue.py` (dead code since v2.0).
@@ -87,6 +99,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 
 - **`src/integrations/provider_04/`** — orphaned package retired after the transition to `actuator_01`; zero residual references remain (`refactor(imports)`).
+>>>>>>> origin/main
 
 ---
 
