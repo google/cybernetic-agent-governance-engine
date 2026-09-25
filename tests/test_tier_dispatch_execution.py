@@ -27,7 +27,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 
@@ -93,6 +97,7 @@ class OrderTrackingTier:
                     tier=self._tier_name,
                     code=self._violation_rule,
                     message=f"Violation from {self._tier_name}",
+                    kind=ViolationKind.HARD,
                 )
             ]
         return []
@@ -106,6 +111,7 @@ class OrderTrackingTier:
                     tier=self._tier_name,
                     code=self._violation_rule,
                     message=f"Violation from {self._tier_name}",
+                    kind=ViolationKind.HARD,
                 )
             ]
         return []

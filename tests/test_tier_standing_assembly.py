@@ -27,7 +27,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.gateway.governance.contracts import Violation
+from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 
@@ -53,8 +53,8 @@ class TestStandingAssembly:
             Violation(
                 tier="test_tier",
                 code="TEST_RULE",
-                # severity removed - not in base Violation,
                 message="Test violation",
+                kind=ViolationKind.HARD,
             )
         ]
 
@@ -74,14 +74,14 @@ class TestStandingAssembly:
             Violation(
                 tier="tier_a",
                 code="RULE_A",
-                # severity removed - not in base Violation,
                 message="Violation A",
+                kind=ViolationKind.HARD,
             ),
             Violation(
                 tier="tier_b",
                 code="RULE_B",
-                # severity removed - not in base Violation,
                 message="Violation B",
+                kind=ViolationKind.HARD,
             ),
         ]
 
@@ -101,7 +101,7 @@ class TestStandingAssembly:
                 tier="finance_tier",
                 code="CBF_BARRIER",
                 message="Barrier violation",
-                needs_human_review=True,
+                kind=ViolationKind.HITL,
             )
         ]
 
@@ -111,7 +111,7 @@ class TestStandingAssembly:
         assert failure["tier"] == "finance_tier"
         assert failure["code"] == "CBF_BARRIER"
         assert failure["message"] == "Barrier violation"
-        assert failure["needs_human_review"] is True
+        # kind field is used for classification, not in failure dict
 
     def test_build_standing_with_empty_violations_list(
         self, mock_governor: SymbolicGovernor
@@ -132,14 +132,14 @@ class TestStandingAssembly:
             Violation(
                 tier="tier_a",
                 code="RULE_A",
-                # severity removed - not in base Violation,
                 message="Blocked by tier A",
+                kind=ViolationKind.HARD,
             ),
             Violation(
                 tier="tier_b",
                 code="RULE_B",
-                # severity removed - not in base Violation,
                 message="Review required",
+                kind=ViolationKind.HITL,
             ),
         ]
 
@@ -160,8 +160,8 @@ class TestStandingAssembly:
             Violation(
                 tier="example_tier",
                 code="EXAMPLE_RULE",
-                # severity removed - not in base Violation,
                 message="Example violation",
+                kind=ViolationKind.HARD,
             )
         ]
 
@@ -186,6 +186,7 @@ class TestStandingAssemblyEdgeCases:
                 tier="min_tier",
                 code="MIN_RULE",
                 message="Minimal",
+                kind=ViolationKind.HARD,
             )
         ]
 
@@ -200,22 +201,23 @@ class TestStandingAssemblyEdgeCases:
         assert "governing_state" not in failure
         assert "protected_consequence" not in failure
 
-    def test_violation_severity_preserved(
+    def test_violation_kind_included_in_failure_dict(
         self, mock_governor: SymbolicGovernor
     ) -> None:
-        """Violation severity is not included in tier_failures dict."""
+        """Violation kind is serialized in tier_failures dict."""
         gov = mock_governor
         violations = [
             Violation(
                 tier="tier",
                 code="RULE",
-                # severity removed - not in base Violation,
                 message="Test",
+                kind=ViolationKind.HARD,
             )
         ]
 
         standing = gov._build_standing(violations)
         failure = standing["failures"][0]
 
-        # severity is a Violation field but not included in the failure dict
-        assert "severity" not in failure
+        # kind field is serialized for classification routing
+        assert "kind" in failure
+        assert failure["kind"] == "hard"  # ViolationKind enum serialized to string value

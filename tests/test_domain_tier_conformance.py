@@ -26,7 +26,11 @@ from typing import Any
 
 import pytest
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 class MinimalTier:
@@ -88,6 +92,7 @@ class FailingTier(MinimalTier):
                 code="ALWAYS_FAIL",
                 # severity removed - not in base Violation,
                 message="Test violation",
+                kind=ViolationKind.HARD,
             )
         ]
 

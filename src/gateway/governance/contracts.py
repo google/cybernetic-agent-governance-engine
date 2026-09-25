@@ -22,7 +22,7 @@ import hashlib
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Sequence, runtime_checkable
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -219,6 +219,29 @@ class Violation:
     code: str  # machine-readable, e.g. "CBF_BARRIER_VIOLATED", "ROLLBACK_FAILED"
     message: str  # human-readable description (never parsed)
     kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
+
+
+@dataclass(frozen=True)
+class NarrowProposal:
+    """Proposal from a Narrower to clamp parameters."""
+    clamped_params: dict[str, Any]
+    constraints_applied: list[str]  # Human-readable constraints
+
+
+class Narrower(Protocol):
+    """Domain-provided parameter narrowing strategy.
+    
+    Registered via SymbolicGovernor(narrowers=[...]) constructor.
+    Classification returns NARROW only if a narrower proposes valid constraints.
+    """
+    def propose(
+        self,
+        action: str,
+        params: dict[str, Any],
+        violations: Sequence[Violation],
+    ) -> NarrowProposal | None:
+        """Return clamped params if violations are NARROWABLE, else None."""
+        ...
 
 
 # ---------------------------------------------------------------------------

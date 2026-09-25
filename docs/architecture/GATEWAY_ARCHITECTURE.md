@@ -102,6 +102,34 @@ The 8-tier symbolic governance pipeline (FTRA pre-pipeline boundary gate plus 7 
 | **Tier 6** | **DoWhy Causal Gatekeeper** | Causal backdoor linear regression plus 50-simulation placebo refutation against live telemetry. Redis-cached by `(action_type, regime)` with 60s TTL. Fails closed if telemetry is stale or causal packages are absent. |
 | **Tier 6b** | **Adaptive FRIA Enforcement** | Confidence-gated Fundamental Rights Impact Assessment: $\ge 0.95 \to$ async attestation; $0.70\text{--}0.95 \to$ synchronous blocking DEFER gate; $< 0.70 \to$ hard DENY. In `EU_ECB`, stamps FRIA attestation onto every OTel span (EU AI Act Art. 29a). |
 
+#### Violation Classification & Precedence
+
+After all tiers execute, violations are aggregated and classified by [`_classify_violation()`](../../src/gateway/governance/symbolic_governor.py) to determine the final governance decision. Classification operates on structured [`Violation`](../../src/gateway/governance/contracts.py) dataclasses, each carrying an explicit [`ViolationKind`](../../src/gateway/governance/contracts.py) field:
+
+**ViolationKind Precedence Hierarchy** (highest to lowest):
+1. **`HARD`** → `DENY` — Non-negotiable safety gates (STPA violations, CBF barrier breaches, explicit OPA DENY). Cannot be narrowed, deferred, or paused.
+2. **`HITL`** → `REQUIRE_APPROVAL` — Requires explicit human sign-off (OPA `MANUAL_REVIEW`, FTRA boundary hits).
+3. **`NARROWABLE`** → `NARROW` — Threshold violations that can be clamped to allowed values (e.g., `amount: 15000 → 10000`). Requires a registered [`Narrower`](../../src/gateway/governance/contracts.py) to propose valid constraints. If no narrower is available or re-run fails, falls back to `DENY`.
+4. **`TRANSIENT`** → `PAUSE` — Temporary conditions that will resolve without intervention (rate limits, circuit breakers). Feature flag: `CAGE_PAUSE_ENABLED` (default: `false`). When disabled, falls back to `DENY`.
+5. **`DEFERRABLE`** → `DEFER` — Soft violations indicating data starvation or ambiguity (low confidence `< FRIA_ZONE_DEFER`, missing context). Routes to `DeferQueue` for automated data-hydration.
+
+**Classification Invariants:**
+- **Fail-closed by construction**: Every `Violation` requires an explicit `kind` field (no default). Construction without `kind` raises `TypeError`.
+- **Precedence enforcement**: When multiple violation kinds are present, the highest-precedence kind wins. Example: `HARD` + `NARROWABLE` → `DENY`, not `NARROW`.
+- **No free-text inspection**: Classification operates exclusively on the `kind` field, never on message string patterns. A `HARD` violation with message `"amount exceeds max"` returns `DENY`, not `NARROW`.
+- **NARROW re-run requirement**: `NARROWABLE` violations can return `NARROW` only if:
+  1. A registered `Narrower` proposes clamped parameters, AND
+  2. Re-running the tier with clamped params yields zero violations.
+  
+  If either condition fails, classification falls back to `DENY`.
+
+**Deprecated Legacy Fields** (removed as of v3.0.1):
+- `recoverable: bool` — Replaced by `ViolationKind.DEFERRABLE` and `ViolationKind.TRANSIENT`.
+- `needs_human_review: bool` — Replaced by `ViolationKind.HITL`.
+- `detail: str` — Merged into `Violation.message` (never parsed by classifier).
+
+See [`tests/test_violation_kinds.py`](../../tests/test_violation_kinds.py) for classification precedence tests and adversarial cases.
+
 ### 2.3 ConsequenceGateway & Token Authority
 
 The `ConsequenceGateway` ([`src/gateway/governance/consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)) enforces a fail-closed post-governance execution boundary. It ensures that downstream `ExecutionActuator`s cannot execute side-effects without a valid, unexpired, mathematically bound, and cryptographically signed `ConsequenceToken` (JWS).

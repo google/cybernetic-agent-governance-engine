@@ -95,8 +95,8 @@ async def test_rollback_exception_does_not_stop_others(governor):
     assert len(violations) == 1
     assert violations[0].tier == "TierB"
     assert violations[0].code == "ROLLBACK_FAILED"
-    assert not violations[0].recoverable
-    assert violations[0].needs_human_review
+    from src.gateway.governance.contracts import ViolationKind
+    assert violations[0].kind == ViolationKind.HARD
 
 
 @pytest.mark.asyncio
@@ -121,10 +121,10 @@ async def test_rollback_multiple_failures(governor):
     assert violations[1].tier == "TierB"
     assert violations[2].tier == "TierA"
 
+    from src.gateway.governance.contracts import ViolationKind
     for v in violations:
         assert v.code == "ROLLBACK_FAILED"
-        assert not v.recoverable
-        assert v.needs_human_review
+        assert v.kind == ViolationKind.HARD
 
 
 @pytest.mark.asyncio
@@ -161,5 +161,5 @@ async def test_rollback_failed_violation_structure(governor):
     assert violation.code == "ROLLBACK_FAILED"
     assert "TierA" in violation.message
     assert "ValueError" in violation.message
-    assert not violation.recoverable
-    assert violation.needs_human_review
+    from src.gateway.governance.contracts import ViolationKind
+    assert violation.kind == ViolationKind.HARD

@@ -191,8 +191,8 @@ class TestRollbackFailClosedSemantics:
         # Action is blocked (violations list is populated)
         assert len(violations) == 1
         assert violations[0].code == "ROLLBACK_FAILED"
-        assert violations[0].needs_human_review is True
-        assert violations[0].recoverable is False
+        from src.gateway.governance.contracts import ViolationKind
+        assert violations[0].kind == ViolationKind.HARD
 
 
 class TestRollbackViolationStructure:

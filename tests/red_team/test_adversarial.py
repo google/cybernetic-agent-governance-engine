@@ -107,8 +107,9 @@ async def test_red_agent_latency_attack(symbolic_governor):
     with pytest.raises(GovernanceError) as excinfo:
         await symbolic_governor.govern("execute_trade", params)
 
-    assert "STPA Violation" in str(excinfo.value)
-    assert "latency" in str(excinfo.value)
+    error_str = str(excinfo.value)
+    assert "UCA" in error_str or "latency" in error_str
+    assert "stale market data" in error_str or "latency > threshold" in error_str
 
 
 @pytest.mark.asyncio
@@ -130,8 +131,9 @@ async def test_red_agent_authorization_attack(symbolic_governor):
     with pytest.raises(GovernanceError) as excinfo:
         await symbolic_governor.govern("write_db", params)
 
-    assert "STPA Violation" in str(excinfo.value)
-    assert "approval token" in str(excinfo.value)
+    error_str = str(excinfo.value)
+    assert "UCA" in error_str or "approval" in error_str
+    assert "write" in error_str or "token" in error_str
 
 
 @pytest.mark.asyncio

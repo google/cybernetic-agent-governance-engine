@@ -19,6 +19,7 @@ import pytest
 from src.cage_finance.safety.bounding.models import ContractSeverity
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
+from src.gateway.governance.contracts import ViolationKind
 
 # Hermetic: validates bounding tier integration in-memory.
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -104,11 +105,11 @@ class TestBoundingContractTierPlugin:
         assert len(violations) == 1
         assert violations[0].tier == "bounding"
         assert violations[0].code == "BOUNDING_B1_HARD_BLOCK"
-        assert violations[0].recoverable is False  # HARD_BLOCK → not recoverable
+        assert violations[0].kind == ViolationKind.HARD  # HARD_BLOCK → ViolationKind.HARD
 
     @pytest.mark.asyncio
-    async def test_hard_block_not_recoverable(self):
-        """HARD_BLOCK severity violations are not recoverable."""
+    async def test_hard_block_kind_is_hard(self):
+        """HARD_BLOCK severity violations have kind=HARD."""
         thresholds = {
             "bounding": {
                 "enabled_contracts": ["B1"],
@@ -127,11 +128,11 @@ class TestBoundingContractTierPlugin:
 
         violations = await tier.evaluate("execute_trade_bounded", params)
 
-        assert violations[0].recoverable is False
+        assert violations[0].kind == ViolationKind.HARD
 
     @pytest.mark.asyncio
-    async def test_hitl_escalate_recoverable(self):
-        """HITL_ESCALATE severity violations are recoverable (parks in DeferQueue)."""
+    async def test_hitl_escalate_kind_is_hitl(self):
+        """HITL_ESCALATE severity violations have kind=HITL (parks in DeferQueue)."""
         # Note: B6 uses confidence from trade params, but BoundedTradeRequest doesn't have that field
         # Use B3 (liquidity depth) instead, which is also HITL_ESCALATE
         thresholds = {
@@ -160,7 +161,7 @@ class TestBoundingContractTierPlugin:
 
         assert len(violations) == 1
         assert violations[0].code == "BOUNDING_B3_HITL_ESCALATE"
-        assert violations[0].recoverable is True  # HITL_ESCALATE → recoverable
+        assert violations[0].kind == ViolationKind.HITL  # HITL_ESCALATE → ViolationKind.HITL
 
     @pytest.mark.asyncio
     async def test_invalid_params_returns_violation(self):
@@ -186,7 +187,7 @@ class TestBoundingContractTierPlugin:
         assert len(violations) == 1
         assert violations[0].tier == "bounding"
         assert violations[0].code == "INVALID_REQUEST_PARAMS"
-        assert violations[0].recoverable is False
+        assert violations[0].kind == ViolationKind.HARD
 
     @pytest.mark.asyncio
     async def test_commit_returns_empty(self):
