@@ -43,6 +43,7 @@ ${BOLD}Usage${RESET}
 ${BOLD}Targets${RESET}
   agnostic     Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
   gcp-gke      Provision and deploy to Google Cloud GKE cluster
+  gcp-cloudrun Deploy to Google Cloud Run with serverless L4 GPU + ClickHouse VM
 
 ${BOLD}Environments${RESET}
   dev          Development (fast iteration, minimal security)
@@ -259,7 +260,7 @@ deploy_terraform_target() {
   # Validate target
   if [[ ! -d "$tf_dir" ]]; then
     error "Unknown target: $target"
-    echo "Available targets: agnostic, gcp-gke"
+    echo "Available targets: agnostic, gcp-gke, gcp-cloudrun"
     echo "Run './deploy_all.sh --help' for usage."
     exit 1
   fi

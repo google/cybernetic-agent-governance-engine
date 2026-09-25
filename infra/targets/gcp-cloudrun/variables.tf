@@ -19,6 +19,12 @@ variable "project_id" {
   type        = string
 }
 
+variable "organization_id" {
+  description = "GCP organization ID (required for VPC Service Controls in production). Only needed when enable_nist_compliance=true and environment=prod."
+  type        = string
+  default     = ""
+}
+
 # DEP-08: Remove default values for region and zone.
 # Defaulting to us-central1 silently violates GDPR Art. 44 (EU_ECB) and
 # MAS TRM §4.2 (APAC_MAS) when no var-file is supplied. Operators must
@@ -191,6 +197,12 @@ variable "enable_vllm_gpu" {
   description = "Enable vLLM GPU inference deployment (future phase — reserved for sidecar vLLM integration)"
   type        = bool
   default     = false
+}
+
+variable "vllm_region" {
+  description = "Region for vLLM GPU inference services (defaults to us-east4 for capacity availability in Argolis, or var.region)"
+  type        = string
+  default     = "us-east4"
 }
 
 variable "enable_nemo_guardrails" {
@@ -372,4 +384,51 @@ variable "advisor_max_instances" {
   description = "Governed Advisor service maximum instance count"
   type        = number
   default     = 5
+}
+
+# ─── ClickHouse Configuration ─────────────────────────────────────────────────
+
+variable "clickhouse_machine_type" {
+  description = "ClickHouse GCE instance machine type"
+  type        = string
+  default     = "e2-standard-4"
+}
+
+variable "clickhouse_disk_size_gb" {
+  description = "ClickHouse persistent disk size in GB"
+  type        = number
+  default     = 100
+}
+
+# ─── vLLM GPU Configuration ───────────────────────────────────────────────────
+
+variable "vllm_fast_image" {
+  description = "vLLM fast inference container image"
+  type        = string
+  default     = "vllm/vllm-openai:latest"
+}
+
+variable "vllm_fast_model" {
+  description = "Fast inference model (HuggingFace model ID)"
+  type        = string
+  default     = "Qwen/Qwen2.5-7B-Instruct"
+}
+
+variable "vllm_reasoning_image" {
+  description = "vLLM reasoning inference container image"
+  type        = string
+  default     = "vllm/vllm-openai:latest"
+}
+
+variable "vllm_reasoning_model" {
+  description = "Reasoning model (HuggingFace model ID)"
+  type        = string
+  default     = "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+}
+
+variable "huggingface_token" {
+  description = "HuggingFace API token for gated models"
+  type        = string
+  sensitive   = true
+  default     = ""
 }

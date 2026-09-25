@@ -1037,6 +1037,7 @@ class TestCmekStartupGuard:
             "if missing, the CMEK guard may have crashed before evidence was written"
         )
 
+    @pytest.mark.gke
     def test_pod_restarts_are_zero(self):
         """
         After deploy_all.sh, the compliance-bridge pod must have 0 restarts.

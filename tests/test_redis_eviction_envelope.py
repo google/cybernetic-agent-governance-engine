@@ -41,6 +41,8 @@ import os
 import pytest
 import redis
 
+pytestmark = [pytest.mark.integration, pytest.mark.gke]
+
 # ---------------------------------------------------------------------------
 # Test 1: noeviction policy invariant
 # ---------------------------------------------------------------------------

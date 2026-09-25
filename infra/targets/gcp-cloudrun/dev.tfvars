@@ -41,16 +41,18 @@ redis_memory_size_gb = 1
 
 gateway_min_instances = 0
 gateway_max_instances = 5
-gateway_cpu           = "1"
-gateway_memory        = "1Gi"
+gateway_cpu           = "2"
+gateway_memory        = "2Gi"
 
 advisor_min_instances = 0
 advisor_max_instances = 3
 advisor_cpu           = "1"
 advisor_memory        = "512Mi"
 
-# ─── Future Phase Toggles ─────────────────────────────────────────────────────
-# Reserved for Phase 1b (sidecars)
-
-enable_vllm_gpu        = false
+# ─── Workload Toggles ──────────────────────────────────────────────────────────
+# Cloud Run L4 GPU enabled in us-east4 (Argolis open GPU capacity with auto-grant quota)
+enable_vllm_gpu        = true
+vllm_region            = "us-east4"
 enable_nemo_guardrails = false
+
+
