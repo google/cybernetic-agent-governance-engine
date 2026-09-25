@@ -1077,13 +1077,21 @@ class SymbolicGovernor:
     def _violations_to_failures(
         self, violations: list[Violation]
     ) -> list[dict[str, Any]]:
-        """Convert Violation dataclasses into RefusalReceipt.failures schema."""
+        """Convert Violation dataclasses into RefusalReceipt.failures schema.
+        
+        Maps ViolationKind to failure metadata for receipt generation.
+        """
         out: list[dict[str, Any]] = []
         for v in violations:
-            failure: dict[str, Any] = {"code": v.code, "message": v.message}
+            failure: dict[str, Any] = {
+                "code": v.code,
+                "message": v.message,
+                "kind": v.kind.value,  # Serialize ViolationKind enum
+            }
             if v.tier:
                 failure["tier"] = v.tier
-            if v.needs_human_review:
+            # Map kind to legacy needs_human_review flag for backward compatibility
+            if v.kind == ViolationKind.HITL:
                 failure["needs_human_review"] = True
             # Optional fields (may not exist on all Violation instances)
             if hasattr(v, "severity") and v.severity:
