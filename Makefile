@@ -22,6 +22,7 @@ NAMESPACE ?= cage
         deploy-logs \
         deploy-kill \
         verify-deploy \
+        test-cloudrun \
         poam-drift-check \
         lint \
         security \
@@ -180,6 +181,10 @@ test-partner:
 	@echo "==> Running live external partner integration tests..."
 	@echo "NOTE: Requires partner sandbox credentials. See config/environments/partner-sandbox.env.example"
 	@uv run pytest tests/ -m partner_integration --run-partner-integration -v
+
+## Run live Cloud Run integration suite with automated pre-flight checks and explicit skip reporting
+test-cloudrun:
+	@bash scripts/run_cloudrun_integration_tests.sh
 
 ## Run R-22 regression guard test suite
 test-r22:

@@ -288,6 +288,16 @@ def pytest_configure(config: pytest.Config) -> None:
     # EVIDENCE_STREAM_ENABLED default true to satisfy EVIDENCE_CHAIN_BLOCKING precondition in tests
     _setdefault("EVIDENCE_STREAM_ENABLED", "true")
 
+    # For integration runs, unmask skip reasons in terminal summary (reportchars += 's')
+    # so skipped tests are never silent or mistaken for bugs.
+    if _is_integration_run:
+        try:
+            current_chars = getattr(config.option, "reportchars", "") or ""
+            if "s" not in current_chars and "a" not in current_chars:
+                config.option.reportchars = current_chars + "s"
+        except Exception:
+            pass
+
 
 def _ensure_env_loaded() -> None:
     """Ensure .env file is loaded for auth tokens and other config.
@@ -569,7 +579,7 @@ def pytest_collection_modifyitems(
     skip_integration = pytest.mark.skip(
         reason=(
             "Integration test — requires live external services. "
-            "Pass --run-integration to enable."
+            "Pass --run-integration to enable (or run 'make test-cloudrun' for Cloud Run live verification)."
         )
     )
     skip_live_external = pytest.mark.skip(

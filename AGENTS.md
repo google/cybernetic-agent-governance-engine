@@ -298,6 +298,20 @@ Every collected test must carry at least one selection marker (`local`, `unit`, 
 ### Live Cloud Run Testing & Test Automation Service Account
 > **Live Cloud Run Testing:** For Cloud Run endpoint verification, service smoke tests, and security parity validation, refer to [`docs/operations/CLOUDRUN_TEST_RUNBOOK.md`](docs/operations/CLOUDRUN_TEST_RUNBOOK.md).
 
+#### Canonical Cloud Run Test Suite
+The canonical command to execute pre-flight endpoint discovery, IAM authentication, smoke validation, GPU/agent warm-up, and integration tests:
+```bash
+make test-cloudrun
+# Or directly via script:
+bash scripts/run_cloudrun_integration_tests.sh
+```
+
+#### Live Cloud Run Testing Invariants (Fail-Closed)
+- **Pre-Flight Discovery & Warm-Up**: Never run Pytest against Cloud Run without discovery and warm-up. Cloud Run GPU container cold starts (vLLM DeepSeek/Qwen) require 3–5+ minutes; [`scripts/run_cloudrun_integration_tests.sh`](scripts/run_cloudrun_integration_tests.sh) runs discovery, smoke tests ([`scripts/test_live_cloudrun_services.py`](scripts/test_live_cloudrun_services.py)), and an end-to-end agent query flow ([`scripts/test_cloudrun_e2e_flow.py`](scripts/test_cloudrun_e2e_flow.py)) to absorb cold-start latency before Pytest begins.
+- **Worker Concurrency Limit (`-n 2 --dist loadscope`)**: Serverless revisions (`minScale=0`) scale on demand. Never run Cloud Run integration tests with `-n auto`; constrain concurrency strictly to `-n 2 --dist loadscope` to prevent thundering-herd cold starts and GPU quota exhaustion.
+- **Non-Silent Skip Invariant (`-ra -rs`)**: Never allow skipped tests to pass silently. Pytest must run with `-ra -rs` (automatically unmasked in [`tests/conftest.py`](tests/conftest.py) when `--run-integration` is present) so that missing endpoint variables (`BACKEND_URL`, `COMPLIANCE_BRIDGE_URL`) or expired IAM identity tokens immediately surface actionable skip rationales in the terminal summary instead of masquerading as phantom bugs.
+- **Platform Invariant Partitioning (`-m "integration and not gke"`)**: Universal Layer 7 HTTP/MCP workflows execute against Cloud Run; GKE-exclusive tests (`@pytest.mark.gke`) validating raw Kubernetes pod restarts or stateful Redis command rename configs are excluded.
+
 #### Cloud Run Authentication Invariant: Dedicated Test Service Account
 - **Never rely on personal credentials for test automation**: Live integration tests against Cloud Run staging and production must authenticate via the dedicated least-privilege test automation service account:
   ```text
