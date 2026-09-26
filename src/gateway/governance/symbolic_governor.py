@@ -913,273 +913,6 @@ class SymbolicGovernor:
         # PAPER REFERENCE: §4.2 (Tier 2), §7.2 (Limitations), CAGE_ARXIV.MD Issue #5.
         # ──────────────────────────────────────────────────────────────────────────────────────
 
-        # 1. Confidence threshold — local pre-check (fast-fail before network I/O).
-        # The OPA Rego policy (system_authz.rego) also enforces confidence.
-        # This local check fires first to avoid unnecessary CBF/OPA round-trips when
-        # the confidence score is obviously below threshold.
-        with tracer.start_as_current_span("cage.confidence_check") as conf_span:
-            conf_span.set_attribute(OBSERVATION_NAME, "confidence_threshold_check")
-            conf_span.set_attribute("governance.stage", "confidence")
-            _t0_conf = time.perf_counter()
-            if self._is_governed_action(tool_name, params):
-                # H3 Security Fix: Fail-closed confidence validation
-                # Prevents NaN/undefined/invalid values from bypassing tier validation
-                confidence_score = params.get("confidence")
-                
-                # POAM-TIER2-001: stamp the confidence provenance so every Tier 2 decision
-                # is auditable. The structural heuristic below provides independent
-                # corroboration after Tier-1 STPA and Tier-3 OPA results are available.
-                conf_span.set_attribute("tier2.confidence.source", "agent_self_report")
-                conf_span.set_attribute("tier2.confidence.independently_verified", True)
-                
-                # EV-2 Migration: Use config-based threshold with env var override support
-                _confidence_threshold = get_agent_confidence_threshold()
-                _conf_meta = ControlRegistry().get_mapping(
-                    GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
-                )
-                
-                # Fail closed: validate confidence before threshold check
-                _confidence_valid = True
-                _confidence = 0.0  # Default for telemetry
-                
-                if confidence_score is None:
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_INVALID",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score missing (required for all actions)",
-                        kind=ViolationKind.HARD
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description="confidence score missing",
-                            governing_state={
-                                "confidence": None,
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence="Action execution with missing confidence score",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": None,
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                elif not isinstance(confidence_score, (int, float)):
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_INVALID",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score invalid type: {type(confidence_score).__name__}",
-                        kind=ViolationKind.HARD
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description=f"confidence score invalid type: {type(confidence_score).__name__}",
-                            governing_state={
-                                "confidence": str(confidence_score),
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence=f"Action execution with invalid confidence type: {type(confidence_score).__name__}",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": str(confidence_score),
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                elif math.isnan(confidence_score):
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_INVALID",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score is NaN (invalid)",
-                        kind=ViolationKind.HARD
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description="confidence score is NaN",
-                            governing_state={
-                                "confidence": "NaN",
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence="Action execution with NaN confidence score",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": "NaN",
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                elif math.isinf(confidence_score):
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_INVALID",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score is infinite (invalid)",
-                        kind=ViolationKind.HARD
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description="confidence score is infinite",
-                            governing_state={
-                                "confidence": "inf" if confidence_score > 0 else "-inf",
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence="Action execution with infinite confidence score",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": "inf" if confidence_score > 0 else "-inf",
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                elif confidence_score < 0:
-                    _confidence = float(confidence_score)
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_INVALID",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score {_confidence} is negative (invalid)",
-                        kind=ViolationKind.HARD
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description=f"confidence score {_confidence} is negative",
-                            governing_state={
-                                "confidence": _confidence,
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence=f"Action execution with negative confidence: {_confidence}",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": _confidence,
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                elif confidence_score > 1.0:
-                    _confidence = float(confidence_score)
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_INVALID",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score {_confidence} exceeds maximum 1.0",
-                        kind=ViolationKind.HARD
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description=f"confidence score {_confidence} exceeds maximum 1.0",
-                            governing_state={
-                                "confidence": _confidence,
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence=f"Action execution with excessive confidence: {_confidence}",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": _confidence,
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                elif confidence_score < _confidence_threshold:
-                    _confidence = float(confidence_score)
-                    violations.append(Violation(
-                        tier="governance",
-                        code="CONFIDENCE_BELOW_THRESHOLD",
-                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. Violation: agent confidence below required minimum.",
-                        kind=ViolationKind.DEFERRABLE if _confidence < FRIA_ZONE_DEFER else ViolationKind.HITL
-                    ))
-                    tier_failures.append(
-                        GovernanceTierFailure(
-                            tier="NEURAL_CONFIDENCE",
-                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                            rule_description=f"confidence {_confidence:.2f} < threshold {_confidence_threshold:.2f}",
-                            governing_state={
-                                "confidence": _confidence,
-                                "threshold": _confidence_threshold,
-                                "framework": _conf_meta["primary_framework"],
-                            },
-                            protected_consequence=f"Trade execution at confidence {_confidence:.2f} "
-                            f"(below {_confidence_threshold:.2f} minimum)",
-                        )
-                    )
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "governing_state": {
-                            "confidence": _confidence,
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                    }
-                    _confidence_valid = False
-                else:
-                    # Valid confidence score that passes threshold
-                    _confidence = float(confidence_score)
-                
-                # Set telemetry attributes
-                conf_span.set_attribute("governance.confidence.score", _confidence)
-                conf_span.set_attribute(
-                    "governance.confidence.threshold", _confidence_threshold
-                )
-                conf_span.set_attribute(
-                    "governance.confidence.passed", _confidence_valid
-                )
-            conf_span.set_attribute(
-                "governance.stage.latency_ms",
-                round((time.perf_counter() - _t0_conf) * 1000, 2),
-            )
-
         # ======================================================================
         # PHASE 1: READ-ONLY VALIDATION GATES
         # ======================================================================
@@ -1343,83 +1076,58 @@ class SymbolicGovernor:
                 violations.append(Violation(tier="opa", code="OPA_ERROR", message=f"OPA Check Failed: {exc}", kind=ViolationKind.HARD))
 
         # ── Structural corroboration heuristic (POAM-TIER2-001 partial mitigation) ────
-        # Derive an independent confidence signal from Tier-1 STPA violations and
-        # Tier-3 OPA decision margin.  This runs AFTER both tiers have resolved so
-        # it can contradict a high self-reported confidence when structural evidence
-        # says otherwise — closing the self-authentication gap deterministically.
-        #
-        # Conservative treatment: if STPA or OPA results are unavailable (e.g. a tier
-        # raised an exception and we have no result at all), treat as structural risk.
         if self._is_governed_action(tool_name, params):
-            with tracer.start_as_current_span(
-                "cage.tier2_structural_corroboration"
-            ) as _t2_span:
-                _t2_span.set_attribute(
-                    OBSERVATION_NAME, "tier2_structural_corroboration"
-                )
-                _t2_span.set_attribute("governance.stage", "tier2_corroboration")
-                _t2_corr_t0 = time.perf_counter()
+            from src.gateway.governance.governor.stages.confidence import ConfidenceStage
+            from src.gateway.governance.governor.pipeline import StageContext, Profile
+            # OpaVerdict and decode_opa_verdict are already imported globally
+            
+            # Re-create ctx for confidence since OpaVerdict might be needed
+            # We already have policy_resp, we need to extract OPA verdict
+            opa_verdict = None
+            if policy_resp is not None and not isinstance(policy_resp, BaseException):
+                opa_verdict = decode_opa_verdict(policy_resp)
 
-                # STPA signal: any violation is structural risk.
-                # _stpa_violation_count was captured right after the STPA check above.
-                _opa_margin: float | None = None
-                if (
-                    policy_resp is not None
-                    and not isinstance(policy_resp, BaseException)
-                    and hasattr(policy_resp, "margin_to_deny")
-                ):
-                    _opa_margin = float(policy_resp.margin_to_deny)
-
-                _structural_risk_flagged: bool = (
-                    _stpa_violation_count > 0
-                    or (_opa_margin is not None and _opa_margin < 0.15)
-                    # Conservative: if policy_resp itself was an exception, treat as risk
-                    or isinstance(policy_resp, BaseException)
-                )
-
-                # Retrieve the self-reported confidence value (set in the confidence check
-                # block above; default 0.0 if tool_name branch was skipped somehow).
-                # H3 Security Fix: Safe conversion to handle invalid types already caught above
-                try:
-                    _self_reported_confidence: float = float(params.get("confidence", 0.0))
-                except (TypeError, ValueError):
-                    # Invalid type/value already caught by validation above; use safe default
-                    _self_reported_confidence = 0.0
-                # EV-2 Migration: Use config-based threshold with env var override support
-                _confidence_threshold_t2: float = get_agent_confidence_threshold()
-
-                if (
-                    _structural_risk_flagged
-                    and _self_reported_confidence >= _confidence_threshold_t2
-                ):
-                    # Independent structural signal contradicts high self-reported confidence:
-                    # force HITL regardless of self-reported value.
-                    _corroboration_source = "structural_heuristic_override"
-                    violations.append(Violation(
-                        tier="governance",
-                        code="TIER2_STRUCTURAL_OVERRIDE",
-                        message=f"POAM-TIER2-001 Structural Override: HITL required — self-reported confidence contradicted by structural evidence (stpa_violations={_stpa_violation_count}, opa_margin={_opa_margin!r}). Independent signal: structural_heuristic_override.",
-                        kind=ViolationKind.HITL
-                    ))
-                elif _structural_risk_flagged:
-                    _corroboration_source = "structural_heuristic_low_confidence"
-                else:
-                    _corroboration_source = "structural_heuristic_pass"
-
-                _t2_span.set_attribute("tier2.confidence.independently_verified", True)
-                _t2_span.set_attribute(
-                    "tier2.confidence.corroboration_source", _corroboration_source
-                )
-                _t2_span.set_attribute(
-                    "tier2.confidence.stpa_violations", _stpa_violation_count
-                )
-                _t2_span.set_attribute(
-                    "tier2.confidence.structural_risk_flagged", _structural_risk_flagged
-                )
-                _t2_span.set_attribute(
-                    "governance.stage.latency_ms",
-                    round((time.perf_counter() - _t2_corr_t0) * 1000, 2),
-                )
+            conf_ctx = StageContext(
+                action=tool_name,
+                params=params,
+                profile=Profile.FULL,
+                opa_verdict=opa_verdict,
+                stpa_violation_count=_stpa_violation_count,
+            )
+            
+            conf_stage = ConfidenceStage()
+            _conf_violations = await conf_stage.run(conf_ctx)
+            
+            # Check for confidence invalid/below threshold for pending payload
+            _conf_payload = None
+            for v in _conf_violations:
+                if v.code in ("CONFIDENCE_INVALID", "CONFIDENCE_BELOW_THRESHOLD"):
+                    _conf_meta = ControlRegistry().get_mapping(GovernanceControl.AGENT_CONFIDENCE_THRESHOLD)
+                    from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
+                    _confidence_threshold = get_agent_confidence_threshold()
+                    
+                    try:
+                        conf_val = float(params.get("confidence", 0.0))
+                    except:
+                        conf_val = params.get("confidence")
+                        
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": "NaN" if isinstance(conf_val, float) and __import__("math").isnan(conf_val) else ("inf" if isinstance(conf_val, float) and __import__("math").isinf(conf_val) and conf_val > 0 else ("-inf" if isinstance(conf_val, float) and __import__("math").isinf(conf_val) else conf_val)),
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    if conf_val is None:
+                        _conf_payload["governing_state"]["confidence"] = None
+                    elif isinstance(conf_val, str):
+                        _conf_payload["governing_state"]["confidence"] = conf_val
+                    break
+                    
+            violations.extend(_conf_violations)
 
         # ======================================================================
         # PHASE 1.2-1.4: Remaining read-only validation gates
