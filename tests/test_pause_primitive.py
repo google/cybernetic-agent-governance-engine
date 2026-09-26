@@ -806,6 +806,9 @@ class TestValidateActionPauseHandler:
     @pytest.fixture
     def mock_governor_deps(self):
         """Create mock dependencies for SymbolicGovernor."""
+        from src.gateway.governance.classification_engine import ClassificationResult
+        from src.gateway.governance.decisions import GovernanceDecision
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy = AsyncMock(return_value="ALLOW")
 
@@ -816,19 +819,34 @@ class TestValidateActionPauseHandler:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus = AsyncMock(return_value={"status": "APPROVE"})
 
-        return opa_client, safety_filter, consensus_engine
+        mock_engine = MagicMock()
+        mock_engine.classify.return_value = ClassificationResult(
+            decision=GovernanceDecision.PAUSE,
+            metadata={
+                "classification_reason": "Rate limit exceeded",
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 60,
+                "violation_types": ["RATE_LIMITED"],
+                "pausable_violations": ["Rate limit exceeded"],
+                "hard_violations": [],
+                "soft_violations": [],
+                "narrowable_violations": [],
+            },
+        )
+
+        return opa_client, safety_filter, consensus_engine, mock_engine
 
     @pytest.mark.asyncio
     async def test_pause_handler_returns_pause_verdict(
         self, mock_redis, mock_governor_deps
     ):
-        """validate_action() returns PAUSE verdict when _classify_violation returns PAUSE."""
+        """validate_action() returns PAUSE verdict when classification returns PAUSE."""
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
-        opa_client, safety_filter, consensus_engine = mock_governor_deps
+        opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
         # Mock _run_checks to return a rate limit violation
         mock_result = {
@@ -853,6 +871,7 @@ class TestValidateActionPauseHandler:
                 opa_client,
                 safety_filter,
                 consensus_engine,
+                classification_engine=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
@@ -884,7 +903,7 @@ class TestValidateActionPauseHandler:
         from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
-        opa_client, safety_filter, consensus_engine = mock_governor_deps
+        opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
         mock_result = {
             "violations": ["Circuit breaker open: service unavailable"],
@@ -892,6 +911,16 @@ class TestValidateActionPauseHandler:
             "opa_decision": "ALLOW",
             "policy_ambiguous": False,
         }
+
+        from src.gateway.governance.classification_engine import ClassificationResult
+        mock_engine.classify.return_value = ClassificationResult(
+            decision=GovernanceDecision.PAUSE,
+            metadata={
+                "classification_reason": "Circuit breaker open: service unavailable",
+                "pause_reason": "CIRCUIT_OPEN",
+                "estimated_wait_seconds": 30,
+            },
+        )
 
         with (
             patch(
@@ -908,6 +937,7 @@ class TestValidateActionPauseHandler:
                 opa_client,
                 safety_filter,
                 consensus_engine,
+                classification_engine=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
@@ -941,13 +971,14 @@ class TestValidateActionPauseHandler:
         """validate_action() falls back to DENY when CAGE_PAUSE_ENABLED=false."""
         from unittest.mock import patch
 
+        from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.symbolic_governor import (
             GovernanceError,
             SymbolicGovernor,
         )
 
-        opa_client, safety_filter, consensus_engine = mock_governor_deps
+        opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
         mock_result = {
             "violations": ["Rate limit exceeded: too many requests"],
@@ -956,11 +987,21 @@ class TestValidateActionPauseHandler:
             "policy_ambiguous": False,
         }
 
-        # Enable in _classify_violation but disable at handler level
+        mock_engine.classify.return_value = ClassificationResult(
+            decision=GovernanceDecision.PAUSE,
+            metadata={
+                "classification_reason": "Rate limit exceeded",
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 60,
+                "violation_types": ["RATE_LIMITED"],
+                "pausable_violations": ["Rate limit exceeded"],
+                "hard_violations": [],
+                "soft_violations": [],
+                "narrowable_violations": [],
+            },
+        )
+
         with (
-            patch(
-                "src.gateway.governance.symbolic_governor._classify_violation"
-            ) as mock_classify,
             patch(
                 "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
                 return_value=False,
@@ -968,21 +1009,6 @@ class TestValidateActionPauseHandler:
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False),
             patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
-            # Mock _classify_violation to return PAUSE
-            mock_classify.return_value = (
-                GovernanceDecision.PAUSE,
-                {
-                    "classification_reason": "Rate limit exceeded",
-                    "pause_reason": "RATE_LIMITED",
-                    "estimated_wait_seconds": 60,
-                    "violation_types": ["RATE_LIMITED"],
-                    "pausable_violations": ["Rate limit exceeded"],
-                    "hard_violations": [],
-                    "soft_violations": [],
-                    "narrowable_violations": [],
-                },
-            )
-
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -990,6 +1016,7 @@ class TestValidateActionPauseHandler:
                 opa_client,
                 safety_filter,
                 consensus_engine,
+                classification_engine=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
@@ -1013,10 +1040,11 @@ class TestValidateActionPauseHandler:
         """validate_action() includes retry_after_seconds for HTTP Retry-After header."""
         from unittest.mock import patch
 
+        from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
-        opa_client, safety_filter, consensus_engine = mock_governor_deps
+        opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
         mock_result = {
             "violations": ["Resource unavailable: quota exhausted"],
@@ -1024,6 +1052,20 @@ class TestValidateActionPauseHandler:
             "opa_decision": "ALLOW",
             "policy_ambiguous": False,
         }
+
+        mock_engine.classify.return_value = ClassificationResult(
+            decision=GovernanceDecision.PAUSE,
+            metadata={
+                "classification_reason": "Resource unavailable: quota exhausted",
+                "pause_reason": "RESOURCE_UNAVAILABLE",
+                "estimated_wait_seconds": 45,
+                "violation_types": ["RESOURCE_UNAVAILABLE"],
+                "pausable_violations": ["Resource unavailable: quota exhausted"],
+                "hard_violations": [],
+                "soft_violations": [],
+                "narrowable_violations": [],
+            },
+        )
 
         with (
             patch(
@@ -1040,6 +1082,7 @@ class TestValidateActionPauseHandler:
                 opa_client,
                 safety_filter,
                 consensus_engine,
+                classification_engine=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
@@ -1063,13 +1106,14 @@ class TestValidateActionPauseHandler:
         """validate_action() falls back to DENY when Redis is unavailable for PAUSE storage."""
         from unittest.mock import patch
 
+        from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.symbolic_governor import (
             GovernanceError,
             SymbolicGovernor,
         )
 
-        opa_client, safety_filter, consensus_engine = mock_governor_deps
+        opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
         mock_result = {
             "violations": ["Rate limit exceeded: too many requests"],
@@ -1082,10 +1126,21 @@ class TestValidateActionPauseHandler:
         mock_redis_broken = AsyncMock()
         mock_redis_broken.pipeline.side_effect = ConnectionError("Redis unavailable")
 
+        mock_engine.classify.return_value = ClassificationResult(
+            decision=GovernanceDecision.PAUSE,
+            metadata={
+                "classification_reason": "Rate limit exceeded",
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 60,
+                "violation_types": ["RATE_LIMITED"],
+                "pausable_violations": ["Rate limit exceeded"],
+                "hard_violations": [],
+                "soft_violations": [],
+                "narrowable_violations": [],
+            },
+        )
+
         with (
-            patch(
-                "src.gateway.governance.symbolic_governor._classify_violation"
-            ) as mock_classify,
             patch(
                 "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
                 return_value=True,
@@ -1096,20 +1151,6 @@ class TestValidateActionPauseHandler:
                 mock_redis_broken,
             ),
         ):
-            mock_classify.return_value = (
-                GovernanceDecision.PAUSE,
-                {
-                    "classification_reason": "Rate limit exceeded",
-                    "pause_reason": "RATE_LIMITED",
-                    "estimated_wait_seconds": 60,
-                    "violation_types": ["RATE_LIMITED"],
-                    "pausable_violations": ["Rate limit exceeded"],
-                    "hard_violations": [],
-                    "soft_violations": [],
-                    "narrowable_violations": [],
-                },
-            )
-
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
@@ -1117,6 +1158,7 @@ class TestValidateActionPauseHandler:
                 opa_client,
                 safety_filter,
                 consensus_engine,
+                classification_engine=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),

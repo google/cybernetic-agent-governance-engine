@@ -54,7 +54,7 @@ def mock_consensus_engine():
 
 
 @pytest.fixture
-def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine):
+def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine, classification_engine):
     from src.gateway.governance.ftra.models import FtraBoundaryResult
 
     stpa_validator = (
@@ -64,6 +64,7 @@ def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine
         opa_client=mock_opa_client,
         safety_filter=mock_safety_filter,
         consensus_engine=mock_consensus_engine,
+        classification_engine=classification_engine,
         stpa_validator=stpa_validator,
     )
 

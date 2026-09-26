@@ -35,7 +35,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
-def mock_governor_with_tiers():
+def mock_governor_with_tiers(classification_engine):
     """Create a governor with mock domain tiers for rollback testing."""
     mock_opa = Mock()
     mock_opa.evaluate_policy = AsyncMock(return_value={"allow": True})

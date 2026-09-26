@@ -32,7 +32,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
-def mock_governor():
+def mock_governor(classification_engine):
     """Create a SymbolicGovernor instance with mocked dependencies."""
     with patch("src.gateway.governance.symbolic_governor.tracer"):
         # Create mocked dependencies
@@ -45,7 +45,8 @@ def mock_governor():
             domain_tiers=[],
             opa_client=mock_opa_client,
             safety_filter=mock_safety_filter,
-            consensus_engine=mock_consensus_engine
+            consensus_engine=mock_consensus_engine,
+            classification_engine=classification_engine,
         )
         return gov
 

@@ -187,6 +187,7 @@ def symbolic_governor(
     mock_opa_client: MagicMock,
     mock_safety_filter: MagicMock,
     mock_consensus_engine: MagicMock,
+    classification_engine: Any,
 ) -> SymbolicGovernor:
     """Create a SymbolicGovernor instance with mocked dependencies."""
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
@@ -289,40 +290,48 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
 
 
 class TestBoundaryCheckRoutesToClassifyViolation:
-    """Test that boundary check violations are routed through _classify_violation."""
+    """Test that boundary check violations are routed through ClassificationEngine."""
 
     def test_boundary_check_routes_to_classify_violation(self) -> None:
         """Verify FTRA boundary violations are correctly classified.
 
         When the boundary check returns requires_hitl=True, the violation
-        should be routed through _classify_violation() and result in
+        should be routed through ClassificationEngine and result in
         REQUIRE_APPROVAL (not DENY).
         """
-        from src.gateway.governance.symbolic_governor import _classify_violation
-
-        # Simulate FTRA boundary check violation
-        violations = [
-            "FTRA Boundary Check: Action 'execute_trade' is classified as "
-            "IRREVERSIBLE_TERMINAL in terminal_registry.json. "
-            "Human-in-the-loop review required before execution."
-        ]
-
-        decision, metadata = _classify_violation(
-            violations=violations,
-            stpa_violation_count=0,
-            confidence=0.95,  # High confidence — should not trigger DEFER
-            context={},
+        from src.gateway.governance.classification_engine import (
+            ClassificationContext,
+            ClassificationEngine,
         )
-
-        # Should route to REQUIRE_APPROVAL, not DENY
+        from src.gateway.governance.contracts import Violation, ViolationKind
         from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.narrower import NarrowerRegistry
 
-        assert decision == GovernanceDecision.REQUIRE_APPROVAL
-        assert "FTRA_BOUNDARY_HITL" in metadata.get("violation_types", [])
-        assert metadata.get("ftra_boundary_triggered") is True
-        assert "Irreversible action caught at controller boundary" in metadata.get(
-            "classification_reason", ""
+        v = Violation(
+            tier="ftra",
+            code="FTRA_BOUNDARY_HITL",
+            message=(
+                "FTRA Boundary Check: Action 'execute_trade' is classified as "
+                "IRREVERSIBLE_TERMINAL in terminal_registry.json. "
+                "Human-in-the-loop review required before execution."
+            ),
+            kind=ViolationKind.HITL,
         )
+
+        engine = ClassificationEngine(NarrowerRegistry())
+        ctx = ClassificationContext(
+            violations=[v],
+            stpa_violation_count=0,
+            confidence=0.95,
+            opa_decision="ALLOW",
+            policy_ambiguous=False,
+            params={},
+            cbf_violation=False,
+        )
+        result = engine.classify(ctx, "execute_trade")
+
+        assert result.decision == GovernanceDecision.REQUIRE_APPROVAL
+        assert result.metadata.get("classification_reason") == "hitl_required"
 
     def test_boundary_check_with_hard_violation_results_in_deny(self) -> None:
         """Verify FTRA boundary + hard violation results in DENY, not REQUIRE_APPROVAL.
@@ -330,28 +339,45 @@ class TestBoundaryCheckRoutesToClassifyViolation:
         If there are hard violations (STPA, CBF, OPA DENY) alongside the FTRA
         boundary violation, the hard violations should take precedence.
         """
-        from src.gateway.governance.symbolic_governor import _classify_violation
+        from src.gateway.governance.classification_engine import (
+            ClassificationContext,
+            ClassificationEngine,
+        )
+        from src.gateway.governance.contracts import Violation, ViolationKind
+        from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.narrower import NarrowerRegistry
 
-        # Simulate FTRA boundary check violation + STPA hard violation
-        violations = [
-            "FTRA Boundary Check: Action 'execute_trade' is classified as "
-            "IRREVERSIBLE_TERMINAL in terminal_registry.json. "
-            "Human-in-the-loop review required before execution.",
-            "STPA UCA-7 Violation: Unsafe control action detected",
-        ]
-
-        decision, metadata = _classify_violation(
-            violations=violations,
-            stpa_violation_count=1,  # Hard violation
-            confidence=0.95,
-            context={},
+        v_hitl = Violation(
+            tier="ftra",
+            code="FTRA_BOUNDARY_HITL",
+            message=(
+                "FTRA Boundary Check: Action 'execute_trade' is classified as "
+                "IRREVERSIBLE_TERMINAL in terminal_registry.json. "
+                "Human-in-the-loop review required before execution."
+            ),
+            kind=ViolationKind.HITL,
+        )
+        v_hard = Violation(
+            tier="stpa",
+            code="UCA-7",
+            message="STPA UCA-7 Violation: Unsafe control action detected",
+            kind=ViolationKind.HARD,
         )
 
-        # Hard violation should take precedence — DENY
-        from src.gateway.governance.decisions import GovernanceDecision
+        engine = ClassificationEngine(NarrowerRegistry())
+        ctx = ClassificationContext(
+            violations=[v_hitl, v_hard],
+            stpa_violation_count=1,
+            confidence=0.95,
+            opa_decision="ALLOW",
+            policy_ambiguous=False,
+            params={},
+            cbf_violation=False,
+        )
+        result = engine.classify(ctx, "execute_trade")
 
-        assert decision == GovernanceDecision.DENY
-        assert "STPA_SAFETY" in metadata.get("violation_types", [])
+        assert result.decision == GovernanceDecision.DENY
+        assert result.metadata.get("classification_reason") == "hard_violation"
 
 
 class TestPrometheusMetrics:

@@ -119,7 +119,7 @@ class TestHealthcarePlugin:
         assert actions[0][0] == "CheckContraindicationAction"
         assert callable(actions[0][1])
 
-    def test_plugin_registration_does_not_raise(self):
+    def test_plugin_registration_does_not_raise(self, classification_engine):
         """Healthcare plugin registers without errors."""
         from src.cage_healthcare.plugin import HealthcareCagePlugin
         from src.gateway.core.policy import OPAClient
@@ -136,6 +136,7 @@ class TestHealthcarePlugin:
             opa_client=OPAClient("http://localhost:8181"),
             safety_filter=NullSafetyFilter(),
             consensus_engine=NullConsensusProvider(),
+            classification_engine=classification_engine,
             stpa_validator=GeneratedSTPAValidator(),
         )
 
