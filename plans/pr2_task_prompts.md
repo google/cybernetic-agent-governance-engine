@@ -13,7 +13,7 @@ Each prompt below is self-contained. You can paste it into a fresh agent session
 | T0 skeleton + contracts | **In review** | [#260](https://github.com/google/cybernetic-agent-governance-engine/pull/260) |
 | T1 typed violations | **Not started.** Nothing from the first run was worth keeping. | — |
 | T2–T5 stages / verdicts | **Not started.** Start once #260 merges. | — |
-| T6 remove `pre_check` | **In review** | [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261) |
+| T6 remove `pre_check` | **In review** (follow-up fixed) | [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261) |
 | T7 pipeline + delete monolith | Blocked on all of the above | — |
 | **T8 formal-model profiles** (new) | **Not started.** Can start now. | — |
 
@@ -26,6 +26,15 @@ Each prompt below is self-contained. You can paste it into a fresh agent session
   4. `CBF_FAIL_OPEN` is deleted (done in #259).
   5. `null_components.py` stays deny-by-default. The governor is built once, after plugins load (PR 4).
   6. One STPA rule set per domain package. Remove the duplicate `GeneratedSTPAValidator` (PR 4; T1 must not make that harder).
+
+## New questions raised 2026-09-26 (with recommendations)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q7 | At the input rail, three NeMo actions are always no-ops (`CheckApprovalTokenAction`, `CheckDataLatencyAction`, `CheckSlippageRiskAction`). Every STPA rule they depend on returns early unless the action is a real tool such as `execute_trade`, and no tool has been chosen at that point. Keep them? | **Delete them in PR 4b §4b.12**, together with their Colang flows (then run `make update-nemo-configmap`). They look like controls but never fire. The same rules are enforced at tool dispatch. Keep `CheckDrawdownLimitAction`: it checks CBF state that doesn't depend on the action name. |
+| Q8 | #259 removed the combined "`CBF_FAIL_OPEN` + HMAC fallback" startup check, so production has no HMAC-fallback check at all. Add one now? | **No, keep it in PR 4a §4a.3.** This isn't a regression: the old check only fired when `CBF_FAIL_OPEN=true`, and the default was `false`. |
+| Q9 | Is #259 a breaking change? | **Yes.** Setting `CBF_FAIL_OPEN=true` no longer bypasses the CBF, so setups without Redis now deny instead of allowing. The title now has `!` and the body a `BREAKING CHANGE:` footer. |
+| Q10 | `proof/model.py` still proves Gap 3, a CBF skip that `CBF_FAIL_OPEN` caused. Remove it? | **Yes, in T8.** The docs already say the gap is closed by removal and point to T8. |
 
 ## Still open at baseline
 - **The kernel still emits `list[str]` violations** in `_run_checks` (and, after #259, the OPA part of `revalidate_post_hitl`). Line numbers have shifted, so locate by symbol, not line.
@@ -382,7 +391,11 @@ No prompt needed. What landed:
 - `nemo_context.compute_nemo_context` replaces `pre_check` and fails closed.
 - NeMo actions now **deny** when `pre_check_results` is missing (previously they allowed); tests were flipped to match.
 
-**Known follow-up (not blocking T7):** `nemo_node_factory` now passes `state.get("action", "nemo_guardrail_node")`. No harness state type defines an `action` key, so in practice this probably always falls back to the literal. STPA rules keyed on real action names still won't match. Fix it when the graph state carries the pending tool name.
+**Follow-up resolved in #261:**
+- Input rails run before the model has chosen a tool, so no real action exists. Both callers (the inference proxy and the NeMo input node) now pass one named constant, `nemo_context.INPUT_RAIL_PROBE_ACTION`.
+- `NullSafetyFilter.verify_action` is now async, matching the `SafetyFilter` protocol. Bare-kernel mode therefore denies via its explicit verdict instead of a `TypeError`.
+
+**Open finding (decision needed, see the plan):** every STPA UCA check returns early unless the action is `execute_trade`, `execute_trade_bounded` or `write_db`. So at the input rail, `CheckApprovalTokenAction`, `CheckDataLatencyAction` and `CheckSlippageRiskAction` can never block. Only the CBF-backed `CheckDrawdownLimitAction` has any effect. These UCAs are still enforced at tool dispatch by the governor.
 
 ---
 
@@ -492,10 +505,13 @@ Do:
    passes; if finance's "bounding" tier is not in TIERS, report it rather than silently adding it.
 5. If STPA/proof artifacts are generated from the model, regenerate them:
    `uv run python scripts/check_stpa_freshness.py`.
-6. Update the NARROW and profile wording in docs/architecture/GATEWAY_ARCHITECTURE.md in the same PR.
+6. Remove the Gap 3 sub-proof (CBF tier skipped via CBF_FAIL_OPEN). #259 deleted the flag, so
+   the configuration is unreachable. Update tests/test_no_direct_bind_proof.py, proof/README.md and
+   docs/architecture/FORMAL_VERIFICATION.md (§ Gap table and §7.1) to match.
+7. Update the NARROW and profile wording in docs/architecture/GATEWAY_ARCHITECTURE.md in the same PR.
 
-Files you own: proof/**, tests/test_formal_profile_parity.py, the NARROW/profile sections of
-GATEWAY_ARCHITECTURE.md.
+Files you own: proof/**, tests/test_formal_profile_parity.py, tests/test_no_direct_bind_proof.py,
+the NARROW/profile sections of GATEWAY_ARCHITECTURE.md, the Gap 3 parts of FORMAL_VERIFICATION.md.
 Acceptance: each new model property has a failing counter-example test; parity test passes;
 stpa-freshness passes; `make docs-check` not made worse; `make test-fast` green.
 ```

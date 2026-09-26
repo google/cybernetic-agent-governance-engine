@@ -10,6 +10,13 @@
 - there is a single staged pipeline with `FULL` / `POST_HITL` / `DRY_RUN` profiles;
 - `ReservationScope` owns phase-2 commits.
 
+> [!IMPORTANT]
+> **Aligned with the resolved design decisions (2026-09-26)** in [governor_refactor_plan.md §Resolved design questions](./governor_refactor_plan.md). What changed in this plan:
+> - **`CBF_FAIL_OPEN` removal is already done** (#259). §4a.3, §4a.6 and §4a.7 no longer carry it.
+> - **Decision 5 keeps `null_components.py`.** The deny-by-default null objects stay. The composition root (§4a.1) passes them explicitly when no plugin fills a slot. §4a.4 no longer deletes the file.
+> - **Deleting `_violations_to_strings` moves to PR 2 task T1.**
+> - **Formal-model profiles and NARROW move to PR 2 task T8** (decisions 2 and 3). §5.1 keeps only the TLA+ side.
+
 ## Governing rules
 
 1. **The kernel hosts mechanisms; domains supply semantics.**
@@ -103,19 +110,18 @@ def assert_production_posture(posture: DeploymentPosture, *, components: Governo
 ```
 - It absorbs the import-time guards (P1) and `assert_safe_operational_state()`. All of them derive from `env_posture.resolve_posture()` only, which fixes P2.
 - **Checks in 4a:**
-  - `CBF_FAIL_OPEN` is off;
   - `dowhy` is importable, only if a causal tier is registered (the check is driven by the tier, not hard-coded);
   - KMS is ready;
   - Redis is ready;
-  - **the KMS signer isn't in HMAC fallback mode (K3).** The fallback is decided only by `resolve_posture()`, and HMAC is allowed only in development posture and hermetic tests. This replaces the old "`CBF_FAIL_OPEN` and HMAC not both set" check.
+  - **the KMS signer isn't in HMAC fallback mode (K3).** The fallback is decided only by `resolve_posture()`, and HMAC is allowed only in development posture and hermetic tests. This replaces the combined "`CBF_FAIL_OPEN` and HMAC" check, which #259 deleted together with the flag. Production posture has had no HMAC check at all since then, so this one closes that gap.
 - **Checks added by 4b** (§4b.1, §4b.2): every invariant marked `requires_external_ground_truth` has a reader and a resolvable `kid`; readings are KMS-signed; the reconciler runs under a separate identity. This replaces `RECONCILIATION_PROVIDER != stub`.
 - **Wiring:** the lifespan hook is in the gateway app factory. LangGraph and CLI entry points call the same function.
-- **Deleted:** `CBF_FAIL_OPEN` is removed completely. This deletes the fail-open branch of `revalidate_post_hitl` and every "audit gap" path. A reference architecture shouldn't ship a CBF bypass flag.
+- **Already done (#259):** `CBF_FAIL_OPEN` and the fail-open branch of `revalidate_post_hitl` are gone. The remaining POAM-023 check in `assert_safe_operational_state()` moves into this function.
 
 ### 4a.4 Remove leftover code
 Delete each of the following:
-- the `safety_filter`, `fiscal_limit_guard`, `consensus_engine` and `telemetry_provider` args, plus `null_components.py` if nothing else imports it;
-- `_violations_to_strings` and the legacy `list[str]` result format;
+- the `safety_filter`, `fiscal_limit_guard`, `consensus_engine` and `telemetry_provider` args. **Keep `null_components.py`** (decision 5): `assemble_governor` places a null object in every slot no plugin fills, so a bare kernel denies by construction;
+- any remaining legacy `list[str]` result format. `_violations_to_strings` itself is deleted by PR 2 task T1;
 - `_env_flag` (inline it, or move it to `env_posture`);
 - the obsolete Prometheus try/except-pass registration. Move it to `governor/metrics.py` with an explicit registry.
 - all "Legacy inline dispatch deleted", "CRIT-5 fix" and "Peer Review Fix" comment blocks that describe code which no longer exists.
@@ -138,7 +144,8 @@ After 4a, `scripts/verify_governor.py` and `scripts/measure_paper_metrics.py` mu
 
 ### 4a.6 Acceptance
 - `make test-fast` is green.
-- `grep -rnE 'singletons|install_domain_components|CBF_FAIL_OPEN|NullSafetyFilter' src/ tests/` returns zero hits.
+- `grep -rnE 'singletons|install_domain_components' src/ tests/` returns zero hits.
+- `NullSafetyFilter` / `NullConsensusProvider` are referenced only by `assembly.py` and their tests. A test builds a governor with no plugins and observes DENY on every entry point.
 - `make update-nemo-configmap` is run if `config/rails/actions.py` changed. NeMo nodes now receive the governor by injection, so it probably will.
 - `.github/workflows/test-hermetic.yml` and `policy_compile.yml` are updated for the new import paths.
 
@@ -146,7 +153,6 @@ After 4a, `scripts/verify_governor.py` and `scripts/measure_paper_metrics.py` mu
 | Risk | Mitigation |
 |---|---|
 | **Removing the singleton touches many call sites** (FastAPI, LangGraph nodes, NeMo actions, scripts). | Commit 1 adds `assemble_governor` alongside the singleton. Commit 2 migrates callers. Commit 3 deletes `singletons.py`. The PR is squash-merged, so `main` never sees the intermediate state. |
-| **Deleting `CBF_FAIL_OPEN` breaks local dev setups without Redis.** | Point developers to the `agnostic` target (`./deploy_all.sh --target agnostic --env dev`), which already provisions Redis. Document it in PR 5. |
 | **Rejecting HMAC in production posture breaks environments without KMS.** | Development posture still allows HMAC. Hermetic tests use the software Ed25519 provider (K4, §4b.3). |
 
 ---
@@ -491,8 +497,8 @@ Scope `docs` / `governance`. The formal-model changes are code, so the title typ
 ### 5.1 Formal model — [`proof/`](../proof/)
 | Change | File | Detail |
 |---|---|---|
-| **Profiles** | [`model.py`](../proof/model.py) | Add `PROFILES = {"FULL": TIERS, "POST_HITL": (...), "DRY_RUN": TIERS}`. Model `POST_HITL` as a successor of `REQUIRE_APPROVAL → CHECKING(POST_HITL)`. Prove `NoDirectBind` holds for both paths. |
-| **NARROW semantics** | `model.py`, [`LangGraphHarness.tla`](../proof/LangGraphHarness.tla#L353) | NARROW is reachable only after a *second* full `CHECKING` pass over clamped params with all tiers PASS. This matches PR 1 §1.4. The existing `soft_threshold_exceeded` flag becomes the trigger for that re-check, not a terminal shortcut. |
+| **Profiles** | [`LangGraphHarness.tla`](../proof/LangGraphHarness.tla) | `model.py` profiles (`POST_HITL = {opa, cbf, fiscal}`) are added by PR 2 task T8. Here, mirror them in TLA+: model `POST_HITL` as a successor of `REQUIRE_APPROVAL → CHECKING(POST_HITL)` and prove `NoDirectBind` holds for both paths. |
+| **NARROW semantics** | [`LangGraphHarness.tla`](../proof/LangGraphHarness.tla#L353) | `model.py` is updated by PR 2 task T8 (decision 3: the domain narrower decides what is narrowable). Mirror it in TLA+: NARROW is reachable only after a *second* full `CHECKING` pass over clamped params with all tiers PASS. |
 | **Reservation atomicity** | [`DistributedCBF.tla`](../proof/DistributedCBF.tla) | Add the invariant `SealIssued ⇒ AllCommitted ∧ ¬SealIssued ⇒ NoneCommitted` (ReservationScope, PR 3). Add the CAS on fence epoch if the C4 fix has landed; otherwise record it as an open property with a `\* TODO(C4)` marker. |
 | **Invariant-parametric CBF** | [`DistributedCBF.tla`](../proof/DistributedCBF.tla) | Add `CONSTANT Invariants` (symmetry set, 2 in `.cfg`) with per-invariant `state[i]`, `threshold[i]` and `groundTruth[i]`. New invariant `Isolation ≜ ∀ i ≠ j : Commit(i) ⇒ UNCHANGED state[j] ∧ groundTruth[j]` (A1/A2). |
 | **Signed ground truth** | [`DistributedCBF.tla`](../proof/DistributedCBF.tla) | `groundTruth[i]` is accepted only when `signedBy = ReconcilerKey ∧ kid ∈ Manifest`. Invariant: no commit consumes a reading signed by the gateway identity or by an unknown `kid`. |
