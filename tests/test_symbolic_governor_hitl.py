@@ -176,7 +176,7 @@ class TestC1PostHITLRevalidationFailClosed:
             )
 
         # Assert
-        assert "CBF Commit Refused" in str(exc_info.value)
+        assert "CBF_BARRIER_VIOLATED" in str(exc_info.value)
         assert exc_info.value.receipt is not None
 
 
