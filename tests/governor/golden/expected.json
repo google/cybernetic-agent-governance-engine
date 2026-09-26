@@ -142,7 +142,8 @@
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -193,7 +194,8 @@
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -244,7 +246,8 @@
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -292,7 +295,8 @@
         "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -339,7 +343,8 @@
         "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -386,7 +391,8 @@
         "first_violation_code": "Violation(tier='opa', code='OPA_UNKNOWN_VERDICT', message=\"[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]\", kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -433,7 +439,8 @@
         "first_violation_code": "Violation(tier='opa', code='OPA_MANUAL_REVIEW', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required [post-HITL revalidation].', kind=<ViolationKind.HITL: 'hitl'>)",
         "seal_issued": false,
         "collaborators_called": [
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -480,7 +487,8 @@
         "first_violation_code": "Violation(tier='opa', code='OPA_ERROR', message='OPA Check Failed [post-HITL revalidation]: OPA service unreachable', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -1236,7 +1244,8 @@
           "cbf.atomic_verify_and_commit",
           "cbf.rollback_state",
           "fiscal_guard.reserve",
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
@@ -1797,7 +1806,8 @@
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "opa_client.evaluate_policy"
+          "opa_client.evaluate_policy",
+          "publish_refusal"
         ]
       },
       "verify": {
