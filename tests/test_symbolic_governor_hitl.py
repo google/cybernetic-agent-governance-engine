@@ -26,6 +26,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.gateway.governance.symbolic_governor import SymbolicGovernor, GovernanceError
+from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 
 # Test markers per AGENTS.md
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -42,7 +43,7 @@ def mock_governor(classification_engine):
         
         # Instantiate SymbolicGovernor with mocked dependencies
         gov = SymbolicGovernor(
-            domain_tiers=[],
+            domain_tiers=[CBFTierPlugin(mock_safety_filter)],
             opa_client=mock_opa_client,
             safety_filter=mock_safety_filter,
             consensus_engine=mock_consensus_engine,

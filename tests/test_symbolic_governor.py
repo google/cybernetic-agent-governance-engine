@@ -1152,3 +1152,45 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert cbf_rollback_called is True, (
             "CBF must be rolled back when fiscal rejects after CBF commit"
         )
+
+@pytest.mark.asyncio
+async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification_engine):
+    """Fiscal limits are checked during post-HITL revalidation and can deny the request."""
+    opa_client = AsyncMock()
+    opa_client.evaluate_policy.return_value = "ALLOW"
+
+    safety_filter = AsyncMock()
+    safety_filter.atomic_verify_and_commit.return_value = (True, "SAFE")
+    
+    from src.gateway.governance.contracts import Violation, ViolationKind
+    
+    fiscal_tier = AsyncMock()
+    fiscal_tier.tier_name = "fiscal"
+    fiscal_tier.phase = 2
+    fiscal_tier.order = 4
+    fiscal_tier.claims_action.return_value = True
+    fiscal_tier.evaluate.return_value = []
+    # Mock fiscal commit returning a violation (budget exceeded)
+    fiscal_tier.commit.return_value = [
+        Violation(
+            tier="fiscal",
+            code="FISCAL_LIMIT_EXCEEDED",
+            message="Daily fiscal limit exceeded.",
+            kind=ViolationKind.NARROWABLE,
+        )
+    ]
+
+    governor = SymbolicGovernor(
+        opa_client=opa_client,
+        safety_filter=safety_filter,
+        consensus_engine=AsyncMock(),
+        classification_engine=classification_engine,
+        domain_tiers=(CBFTierPlugin(safety_filter), fiscal_tier),
+    )
+
+    params = {"amount": 10000000, "symbol": "AAPL"}
+
+    with pytest.raises(GovernanceError) as excinfo:
+        await governor.revalidate_post_hitl("execute_trade", params)
+
+    assert "Daily fiscal limit exceeded" in str(excinfo.value)

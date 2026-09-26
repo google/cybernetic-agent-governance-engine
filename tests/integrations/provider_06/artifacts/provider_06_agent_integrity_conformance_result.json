@@ -1,141 +1,141 @@
 {
-  "buildPolicy": {
-    "buildCommand": "npm run build",
-    "installCommand": "npm ci --ignore-scripts",
-    "lifecycleScriptsDisabled": true,
-    "networkRequiredForCleanInstall": true
-  },
+  "schemaVersion": 2,
   "experiment": "provider-06-agent-integrity-verification-conformance",
-  "protectedFiles": {
-    "src/integrations/provider_06/adapter.py": "ebc248ad9bb1917b5027f39d4aedd947d2306f61d08cffa9b2be9b197b318c99",
-    "src/integrations/provider_06/mock_endpoint.py": "0640a9a8dfffd92797b8803301e04cbf7717b93bd10dd327dae4c91a86a25ed0",
-    "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
-    "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"
-  },
-  "provenance": {
-    "agentIntegrityCliBuildSha256": "186c5619a156946d466cb5bc0a7486a7df9163f7ae6e4e46b68c56a1870d4e3b",
-    "agentIntegrityPackageLockSha256": "2d0f7cc5056eee9f6a742a2ffc7b1cfbafdd6f836ff854ade92aa4c4dda1b73b",
-    "agentIntegrityTree": "0f82b9a3e64d9ce7350a97b766878585ea0f2b06",
-    "cageBase": "94e9d717be22bafcf6307efd9434fdb04754ac6a",
-    "cageEvidenceBinding": "fixed-base-plus-protected-file-sha256",
-    "generatorVersion": 1
-  },
+  "verdict": "PASS",
   "requiredScenariosPassed": 7,
   "requiredScenariosTotal": 7,
   "scenarios": [
     {
-      "actual": {
-        "exitCode": 0,
-        "findingCodes": [],
-        "status": "PASS"
-      },
+      "name": "valid_fixture",
+      "fixture": "request-pass.json",
       "expected": {
         "exitCode": 0,
         "status": "PASS"
       },
-      "fixture": "request-pass.json",
-      "name": "valid_fixture",
+      "actual": {
+        "exitCode": 0,
+        "status": "PASS",
+        "findingCodes": []
+      },
       "passed": true
     },
     {
+      "name": "ambiguous_support",
+      "fixture": "request-review.json",
+      "expected": {
+        "exitCode": 2,
+        "status": "REVIEW"
+      },
       "actual": {
         "exitCode": 2,
+        "status": "REVIEW",
         "findingCodes": [
           "claim.support_ambiguous"
-        ],
-        "status": "REVIEW"
+        ]
       },
-      "expected": {
-        "exitCode": 2,
-        "status": "REVIEW"
-      },
-      "fixture": "request-review.json",
-      "name": "ambiguous_support",
       "passed": true
     },
     {
+      "name": "blocked_decision",
+      "fixture": "request-blocked.json",
+      "expected": {
+        "exitCode": 3,
+        "status": "BLOCKED"
+      },
       "actual": {
         "exitCode": 3,
+        "status": "BLOCKED",
         "findingCodes": [
           "decision.rejected"
-        ],
-        "status": "BLOCKED"
+        ]
       },
+      "passed": true
+    },
+    {
+      "name": "response_mutation",
+      "fixture": "request-pass.json with copied response mutation",
       "expected": {
         "exitCode": 3,
         "status": "BLOCKED"
       },
-      "fixture": "request-blocked.json",
-      "name": "blocked_decision",
-      "passed": true
-    },
-    {
       "actual": {
         "exitCode": 3,
+        "status": "BLOCKED",
         "findingCodes": [
           "checker.failure"
-        ],
-        "status": "BLOCKED"
+        ]
       },
+      "passed": true
+    },
+    {
+      "name": "source_mutation",
+      "fixture": "request-pass.json with copied source mutation",
       "expected": {
         "exitCode": 3,
         "status": "BLOCKED"
       },
-      "fixture": "request-pass.json with copied response mutation",
-      "name": "response_mutation",
-      "passed": true
-    },
-    {
       "actual": {
         "exitCode": 3,
+        "status": "BLOCKED",
         "findingCodes": [
           "source.size_mismatch",
           "source.digest_mismatch",
           "evidence.anchor_out_of_range"
-        ],
-        "status": "BLOCKED"
+        ]
       },
+      "passed": true
+    },
+    {
+      "name": "missing_source",
+      "fixture": "request-pass.json with copied missing mutation",
       "expected": {
         "exitCode": 3,
         "status": "BLOCKED"
       },
-      "fixture": "request-pass.json with copied source mutation",
-      "name": "source_mutation",
-      "passed": true
-    },
-    {
       "actual": {
         "exitCode": 3,
+        "status": "BLOCKED",
         "findingCodes": [
           "source.collection_failed"
-        ],
-        "status": "BLOCKED"
+        ]
       },
-      "expected": {
-        "exitCode": 3,
-        "status": "BLOCKED"
-      },
-      "fixture": "request-pass.json with copied missing mutation",
-      "name": "missing_source",
       "passed": true
     },
     {
-      "actual": {
-        "exitCode": 3,
-        "findingCodes": [
-          "trusted.context_invalid"
-        ],
-        "status": "BLOCKED"
-      },
+      "name": "invalid_trusted_config",
+      "fixture": "request-pass.json with copied config mutation",
       "expected": {
         "exitCode": 3,
         "status": "BLOCKED"
       },
-      "fixture": "request-pass.json with copied config mutation",
-      "name": "invalid_trusted_config",
+      "actual": {
+        "exitCode": 3,
+        "status": "BLOCKED",
+        "findingCodes": [
+          "trusted.context_invalid"
+        ]
+      },
       "passed": true
     }
   ],
-  "schemaVersion": 2,
-  "verdict": "PASS"
+  "protectedFiles": {
+    "src/integrations/provider_06/adapter.py": "868027e8ef3212c5313b59603d90cb2cf5c21c229c89105e3360c66089367f9c",
+    "src/integrations/provider_06/mock_endpoint.py": "8eda880da72c5bea03b16bcd938abfc00aa29bbf2041ec181ddb6ca4601d9b64",
+    "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
+    "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"
+  },
+  "provenance": {
+    "generatorVersion": 1,
+    "cageBase": "364e91b8164584062b434d72ee31719fa75d1a7b",
+    "cageEvidenceBinding": "fixed-base-plus-protected-file-sha256",
+    "agentIntegrityTree": "0f82b9a3e64d9ce7350a97b766878585ea0f2b06",
+    "agentIntegrityPackageLockSha256": "2d0f7cc5056eee9f6a742a2ffc7b1cfbafdd6f836ff854ade92aa4c4dda1b73b",
+    "agentIntegrityCliBuildSha256": "186c5619a156946d466cb5bc0a7486a7df9163f7ae6e4e46b68c56a1870d4e3b"
+  },
+  "buildPolicy": {
+    "installCommand": "npm ci --ignore-scripts",
+    "buildCommand": "npm run build",
+    "networkRequiredForCleanInstall": true,
+    "lifecycleScriptsDisabled": true
+  }
 }
