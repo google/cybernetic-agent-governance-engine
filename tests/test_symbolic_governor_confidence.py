@@ -252,11 +252,8 @@ class TestConfidenceEdgeCases:
         
         violations = result.get("violations", [])
         # Should have violation for below threshold (not for invalid type)
-        violations_str = str(violations).lower()
-        assert "threshold" in violations_str or "below" in violations_str, \
-            f"Expected threshold violation for 0.0, got: {violations}"
-        # Should NOT have type or NaN violations
-        assert "type" not in violations_str and "nan" not in violations_str
+        assert any(v.code == "CONFIDENCE_BELOW_THRESHOLD" for v in violations), f"Expected threshold violation for 0.0, got: {violations}"
+        assert not any(v.code == "CONFIDENCE_INVALID" for v in violations)
     
     @pytest.mark.asyncio
     async def test_exactly_at_threshold_passes(self, mock_governor, classification_engine):

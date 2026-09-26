@@ -109,12 +109,10 @@ def test_hard_violation_with_exceeds_max_message_still_denies():
     engine = ClassificationEngine(NarrowerRegistry())
     ctx = ClassificationContext(
         violations=[v],
-        stpa_violation_count=0,
         confidence=0.9,
         opa_decision="ALLOW",
         policy_ambiguous=False,
         params={},
-        cbf_violation=True,
     )
     result = engine.classify(ctx, "execute_trade")
     
@@ -152,12 +150,10 @@ def test_narrowable_without_narrower_is_deny():
     engine = ClassificationEngine(NarrowerRegistry(), narrow_enabled=True)
     ctx = ClassificationContext(
         violations=[v],
-        stpa_violation_count=0,
         confidence=0.9,
         opa_decision="ALLOW",
         policy_ambiguous=False,
         params={"amount": 15000},
-        cbf_violation=False,
     )
     result = engine.classify(ctx, "execute_trade")
     
@@ -204,12 +200,10 @@ def test_narrow_re_run_failure_is_deny():
     engine = ClassificationEngine(NarrowerRegistry(), narrow_enabled=True)
     ctx = ClassificationContext(
         violations=[v],
-        stpa_violation_count=0,
         confidence=0.9,
         opa_decision="ALLOW",
         policy_ambiguous=False,
         params={"amount": 15000},
-        cbf_violation=False,
     )
     result = engine.classify(ctx, "execute_trade")
     
@@ -251,12 +245,10 @@ def test_hard_precedence_over_narrowable():
     engine = ClassificationEngine(NarrowerRegistry(), narrow_enabled=True)
     ctx = ClassificationContext(
         violations=[hard_v, narrowable_v],
-        stpa_violation_count=1,
         confidence=0.9,
         opa_decision="ALLOW",
         policy_ambiguous=False,
         params={"amount": 15000},
-        cbf_violation=False,
     )
     result = engine.classify(ctx, "execute_trade")
     
@@ -294,12 +286,10 @@ def test_hitl_precedence_over_deferrable():
     engine = ClassificationEngine(NarrowerRegistry(), defer_enabled=True)
     ctx = ClassificationContext(
         violations=[hitl_v, deferrable_v],
-        stpa_violation_count=0,
         confidence=0.65,
         opa_decision="MANUAL_REVIEW",
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
     result = engine.classify(ctx, "execute_trade")
     

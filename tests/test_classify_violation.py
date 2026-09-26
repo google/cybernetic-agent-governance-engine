@@ -116,12 +116,10 @@ class TestClassifyViolationDeny:
         
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=1,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
         
         result = engine.classify(context, "test_action")
@@ -137,12 +135,10 @@ class TestClassifyViolationDeny:
         
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
         
         result = engine.classify(context, "test_action")
@@ -157,12 +153,10 @@ class TestClassifyViolationDeny:
         
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
         
         result = engine.classify(context, "test_action")
@@ -177,12 +171,10 @@ class TestClassifyViolationDeny:
         
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
         
         result = engine.classify(context, "test_action")
@@ -205,12 +197,10 @@ class TestClassifyViolationDefer:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.55,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -226,12 +216,10 @@ class TestClassifyViolationDefer:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.55,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -254,12 +242,10 @@ class TestClassifyViolationRequireApproval:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision="MANUAL_REVIEW",
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -280,12 +266,10 @@ class TestClassifyViolationRequireApproval:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision="MANUAL_REVIEW",
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -304,12 +288,10 @@ class TestClassifyViolationRequireApproval:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -332,12 +314,10 @@ class TestClassifyViolationPause:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -352,12 +332,10 @@ class TestClassifyViolationPause:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -379,12 +357,10 @@ class TestClassifyViolationEdgeCases:
 
         context = ClassificationContext(
             violations=[],
-            stpa_violation_count=0,
             confidence=0.99,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         with pytest.raises(ValueError, match="no violations"):
@@ -401,12 +377,10 @@ class TestClassifyViolationEdgeCases:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.70,  # Exactly at threshold
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -425,12 +399,10 @@ class TestClassifyViolationEdgeCases:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.699,  # Just below threshold
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")
@@ -457,12 +429,10 @@ class TestClassifyViolationEdgeCases:
 
         context = ClassificationContext(
             violations=violations,
-            stpa_violation_count=0,
             confidence=0.50,
             opa_decision=None,
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
 
         result = engine.classify(context, "test_action")

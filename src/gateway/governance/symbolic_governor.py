@@ -522,18 +522,6 @@ class SymbolicGovernor:
         """Return True if at least one tier claims responsibility for this action."""
         return any(t.claims_action(action, params) for t in self._domain_tiers)
 
-    def _violations_to_strings(self, violations: list[Violation]) -> list[str]:
-        """Convert a list of Violation dataclasses into the legacy list[str] format.
-
-        Used by the 5 sites that still expect standing_at_refusal to return
-        list[str] — these sites will be removed once all 8 execute_trade literals
-        are replaced.
-        """
-        return [
-            f"[{v.tier}] {v.code}: {v.message}" if v.tier else f"{v.code}: {v.message}"
-            for v in violations
-        ]
-
     def _violations_to_failures(
         self, violations: list[Violation]
     ) -> list[dict[str, Any]]:
@@ -784,7 +772,7 @@ class SymbolicGovernor:
 
         Returns a dict:
             {
-                "violations":     list[str],
+                "violations":     list[Violation],
                 "opa_results":    dict | None,
                 "pending_payload": dict | None,  # structured payload for GovernanceError
             }
@@ -807,7 +795,7 @@ class SymbolicGovernor:
         - Each stage is wrapped in a discrete OTel span so Telemetry shows the
           full 10-layer pipeline breakdown.
         """
-        violations: list[str] = []
+        violations: list[Violation] = []
         tier_failures: list[GovernanceTierFailure] = []
         policy_resp = None
         # CRIT-5 fix: local variable replaces self._pending_payload to eliminate
@@ -890,7 +878,7 @@ class SymbolicGovernor:
                 )
                 if tier_violations:
                     _all_tier_violations.extend(tier_violations)
-                    violations.extend(self._violations_to_strings(tier_violations))
+                    violations.extend(tier_violations)
 
                 tier1_span.set_attribute(
                     "governance.tier.violations", len(tier_violations)
@@ -950,12 +938,12 @@ class SymbolicGovernor:
                 _confidence = 0.0  # Default for telemetry
                 
                 if confidence_score is None:
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"Confidence score missing (required for all actions)"
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score missing (required for all actions)",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -981,12 +969,12 @@ class SymbolicGovernor:
                     }
                     _confidence_valid = False
                 elif not isinstance(confidence_score, (int, float)):
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"Confidence score invalid type: {type(confidence_score).__name__}"
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score invalid type: {type(confidence_score).__name__}",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -1012,12 +1000,12 @@ class SymbolicGovernor:
                     }
                     _confidence_valid = False
                 elif math.isnan(confidence_score):
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"Confidence score is NaN (invalid)"
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score is NaN (invalid)",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -1043,12 +1031,12 @@ class SymbolicGovernor:
                     }
                     _confidence_valid = False
                 elif math.isinf(confidence_score):
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"Confidence score is infinite (invalid)"
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score is infinite (invalid)",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -1075,12 +1063,12 @@ class SymbolicGovernor:
                     _confidence_valid = False
                 elif confidence_score < 0:
                     _confidence = float(confidence_score)
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"Confidence score {_confidence} is negative (invalid)"
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score {_confidence} is negative (invalid)",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -1107,12 +1095,12 @@ class SymbolicGovernor:
                     _confidence_valid = False
                 elif confidence_score > 1.0:
                     _confidence = float(confidence_score)
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"Confidence score {_confidence} exceeds maximum 1.0"
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: Confidence score {_confidence} exceeds maximum 1.0",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -1139,13 +1127,12 @@ class SymbolicGovernor:
                     _confidence_valid = False
                 elif confidence_score < _confidence_threshold:
                     _confidence = float(confidence_score)
-                    _conf_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{_conf_meta['primary_framework']} Confidence Violation: "
-                        f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
-                        f"Violation: agent confidence below required minimum."
-                    )
-                    violations.append(_conf_msg)
+                    violations.append(Violation(
+                        tier="governance",
+                        code="CONFIDENCE_BELOW_THRESHOLD",
+                        message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. Violation: agent confidence below required minimum.",
+                        kind=ViolationKind.DEFERRABLE if _confidence < FRIA_ZONE_DEFER else ViolationKind.HITL
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="NEURAL_CONFIDENCE",
@@ -1234,7 +1221,7 @@ class SymbolicGovernor:
                     )
                 except Exception as exc:
                     opa_span.record_exception(exc)
-                    violations.append(f"OPA Check Failed: {exc}")
+                    violations.append(Violation(tier="opa", code="OPA_ERROR", message=f"OPA Check Failed: {exc}", kind=ViolationKind.HARD))
                     policy_resp = None
 
             # Evaluate OPA result
@@ -1257,10 +1244,12 @@ class SymbolicGovernor:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"{_opa_meta['primary_framework']} Violation: OPA Denied Action."
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_DENY",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Violation: OPA Denied Action.",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="OPA",
@@ -1278,10 +1267,12 @@ class SymbolicGovernor:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"{_opa_meta['primary_framework']} Check: Manual Review Required."
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_MANUAL_REVIEW",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Check: Manual Review Required.",
+                        kind=ViolationKind.HITL
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="OPA",
@@ -1299,11 +1290,12 @@ class SymbolicGovernor:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"OPA Policy Violation: Unexpected verdict '{policy_decision}' "
-                        f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)"
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_UNKNOWN_VERDICT",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] OPA Policy Violation: Unexpected verdict '{policy_decision}' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+                        kind=ViolationKind.HARD
+                    ))
                     tier_failures.append(
                         GovernanceTierFailure(
                             tier="OPA",
@@ -1338,20 +1330,24 @@ class SymbolicGovernor:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"{_opa_meta['primary_framework']} Violation: OPA Denied Action."
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_DENY",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Violation: OPA Denied Action.",
+                        kind=ViolationKind.HARD
+                    ))
                 elif policy_decision == "MANUAL_REVIEW":
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"{_opa_meta['primary_framework']} Check: Manual Review Required."
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_MANUAL_REVIEW",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Check: Manual Review Required.",
+                        kind=ViolationKind.HITL
+                    ))
             except Exception as exc:
-                violations.append(f"OPA Check Failed: {exc}")
+                violations.append(Violation(tier="opa", code="OPA_ERROR", message=f"OPA Check Failed: {exc}", kind=ViolationKind.HARD))
 
         # ── Structural corroboration heuristic (POAM-TIER2-001 partial mitigation) ────
         # Derive an independent confidence signal from Tier-1 STPA violations and
@@ -1406,13 +1402,12 @@ class SymbolicGovernor:
                     # Independent structural signal contradicts high self-reported confidence:
                     # force HITL regardless of self-reported value.
                     _corroboration_source = "structural_heuristic_override"
-                    violations.append(
-                        "POAM-TIER2-001 Structural Override: HITL required — "
-                        "self-reported confidence contradicted by structural evidence "
-                        f"(stpa_violations={_stpa_violation_count}, "
-                        f"opa_margin={_opa_margin!r}). "
-                        "Independent signal: structural_heuristic_override."
-                    )
+                    violations.append(Violation(
+                        tier="governance",
+                        code="TIER2_STRUCTURAL_OVERRIDE",
+                        message=f"POAM-TIER2-001 Structural Override: HITL required — self-reported confidence contradicted by structural evidence (stpa_violations={_stpa_violation_count}, opa_margin={_opa_margin!r}). Independent signal: structural_heuristic_override.",
+                        kind=ViolationKind.HITL
+                    ))
                 elif _structural_risk_flagged:
                     _corroboration_source = "structural_heuristic_low_confidence"
                 else:
@@ -1484,7 +1479,7 @@ class SymbolicGovernor:
                 )
                 if tier_violations:
                     _all_tier_violations.extend(tier_violations)
-                    violations.extend(self._violations_to_strings(tier_violations))
+                    violations.extend(tier_violations)
 
                 tier2_span.set_attribute(
                     "governance.tier.violations", len(tier_violations)
@@ -1672,7 +1667,7 @@ class SymbolicGovernor:
         from src.gateway.governance.routing_seal import generate_seal_with_evidence
 
         tool_name = action
-        violations: list[str] = []
+        violations: list[Violation] = []
 
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
@@ -1727,9 +1722,12 @@ class SymbolicGovernor:
             
             # Evaluate OPA result before proceeding to Phase 2
             if isinstance(policy_resp, BaseException):
-                violations.append(
-                    f"OPA Check Failed [post-HITL revalidation]: {policy_resp}"
-                )
+                violations.append(Violation(
+                    tier="opa",
+                    code="OPA_ERROR",
+                    message=f"OPA Check Failed [post-HITL revalidation]: {policy_resp}",
+                    kind=ViolationKind.HARD
+                ))
                 policy_resp = None
             else:
                 if isinstance(policy_resp, dict):
@@ -1748,29 +1746,32 @@ class SymbolicGovernor:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"{_opa_meta['primary_framework']} Violation: OPA Denied "
-                        f"Action [post-HITL revalidation]."
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_DENY",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Violation: OPA Denied Action [post-HITL revalidation].",
+                        kind=ViolationKind.HARD
+                    ))
                 elif policy_decision == "MANUAL_REVIEW":
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"{_opa_meta['primary_framework']} Check: Manual Review "
-                        f"Required [post-HITL revalidation]."
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_MANUAL_REVIEW",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Check: Manual Review Required [post-HITL revalidation].",
+                        kind=ViolationKind.HITL
+                    ))
                 else:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
-                    violations.append(
-                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
-                        f"OPA Policy Violation: Unexpected verdict '{policy_decision}' "
-                        f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]"
-                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_UNKNOWN_VERDICT",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] OPA Policy Violation: Unexpected verdict '{policy_decision}' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]",
+                        kind=ViolationKind.HARD
+                    ))
             
             # --- Step 2: Phase 2 domain tiers (CBF, Fiscal) ---
             # Re-check Phase 2 tiers that mutate state/budgets and could have drifted.
@@ -1780,14 +1781,19 @@ class SymbolicGovernor:
                         tool_name, params, phase=2
                     )
                     if tier_violations:
-                        violations.extend(self._violations_to_strings(tier_violations))
+                        violations.extend(tier_violations)
                 except BaseException as phase2_exc:
                     logger.error(
                         "⛔ [revalidate_post_hitl] Phase 2 tier error (%s) — "
                         "fail-closed: blocking revalidation.",
                         phase2_exc,
                     )
-                    violations.append(f"Phase 2 Commit Error [post-HITL revalidation]: {phase2_exc}")
+                    violations.append(Violation(
+                        tier="governance",
+                        code="PHASE2_COMMIT_ERROR",
+                        message=f"Phase 2 Commit Error [post-HITL revalidation]: {phase2_exc}",
+                        kind=ViolationKind.HARD
+                    ))
             else:
                 logger.info(
                     "⏭️ [revalidate_post_hitl] OPA denied — skipping Phase 2 commits "
@@ -1854,7 +1860,7 @@ class SymbolicGovernor:
             # tier_violations intentionally not extracted here (used elsewhere in real validation)
             span.set_attribute(
                 OBSERVATION_OUTPUT,
-                json.dumps(violations) if violations else "APPROVED",
+                json.dumps([{'tier': v.tier, 'code': v.code, 'message': v.message, 'kind': v.kind.value} for v in violations]) if violations else "APPROVED",
             )
             return result
 
@@ -1972,12 +1978,10 @@ class SymbolicGovernor:
 
                     context = ClassificationContext(
                         violations=violations,
-                        stpa_violation_count=_stpa_count,
                         confidence=_confidence,
                         opa_decision=_opa_decision,
                         policy_ambiguous=result.get("policy_ambiguous", False),
                         params=params,
-                        cbf_violation=any("CBF" in str(v) for v in violations),
                     )
                     classification = self._classification_engine.classify(context, action)
                     decision = classification.decision
@@ -2314,7 +2318,7 @@ class SymbolicGovernor:
                     # This is the fallback for all other decisions (including
                     # explicitly classified DENY). Preserves existing behavior.
                     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
-                    span.set_attribute(OBSERVATION_OUTPUT, json.dumps(violations))
+                    span.set_attribute(OBSERVATION_OUTPUT, json.dumps([{'tier': v.tier, 'code': v.code, 'message': v.message, 'kind': v.kind.value} for v in violations]))
                     span.set_status(Status(StatusCode.ERROR))
                     logger.warning(
                         "🚫 validate_action DENIED: action=%s violations=%s reason=%s",
@@ -2459,7 +2463,7 @@ async def _park_defer_context(
     thread_id: str | None,
     confidence: float,
     classification_meta: dict[str, Any],
-    violations: list[str],
+    violations: list[Violation],
 ) -> str:
     """Park deferred action context in DeferQueue db=1 and return the defer_id.
 

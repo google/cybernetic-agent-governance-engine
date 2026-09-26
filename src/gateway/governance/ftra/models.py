@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from src.gateway.governance.contracts import Violation, ViolationKind
 
 from pydantic import BaseModel, Field
 
@@ -310,7 +311,7 @@ class FtraBoundaryResult:
     """The action name that matched in terminal_registry.json, or None if the
     action was not found in the registry (fail-closed to IRREVERSIBLE_TERMINAL)."""
 
-    violations: list[str] = field(default_factory=list)
+    violations: list[Violation] = field(default_factory=list)
     """List of violation strings to be added to the governance pipeline's
     violations list. Non-empty when requires_hitl=True."""
 
@@ -360,20 +361,26 @@ class FtraBoundaryResult:
             TerminalClassification.IRREVERSIBLE_TERMINAL,
             TerminalClassification.EXTERNALLY_REVERSIBLE,
         )
-        violations: list[str] = []
+        violations: list[Violation] = []
 
         if requires_hitl:
             if in_registry:
                 violations.append(
-                    f"FTRA Boundary Check: Action '{action_name}' is classified as "
-                    f"{classification.value} in terminal_registry.json. "
-                    "Human-in-the-loop review required before execution."
+                    Violation(
+                        tier="ftra",
+                        code="FTRA_IRREVERSIBLE",
+                        message=f"FTRA Boundary Check: Action '{action_name}' is classified as {classification.value} in terminal_registry.json. Human-in-the-loop review required before execution.",
+                        kind=ViolationKind.HITL
+                    )
                 )
             else:
                 violations.append(
-                    f"FTRA Boundary Check: Action '{action_name}' not found in "
-                    "terminal_registry.json — failing closed to IRREVERSIBLE_TERMINAL. "
-                    "Human-in-the-loop review required before execution."
+                    Violation(
+                        tier="ftra",
+                        code="FTRA_IRREVERSIBLE",
+                        message=f"FTRA Boundary Check: Action '{action_name}' not found in terminal_registry.json — failing closed to IRREVERSIBLE_TERMINAL. Human-in-the-loop review required before execution.",
+                        kind=ViolationKind.HITL
+                    )
                 )
 
         return cls(
@@ -410,15 +417,26 @@ class FtraBoundaryResult:
             FtraBoundaryResult with HITL required and semantic violations.
         """
         # Semantic breach always requires HITL (fail-closed)
-        violations: list[str] = [
-            f"FTRA Semantic Boundary Breach: Action '{action_name}' failed semantic "
-            f"validation. Failure code: {semantic_result.failure_code}."
+        violations: list[Violation] = [
+            Violation(
+                tier="ftra",
+                code="FTRA_SEMANTIC_BREACH",
+                message=f"FTRA Semantic Boundary Breach: Action '{action_name}' failed semantic validation. Failure code: {semantic_result.failure_code}.",
+                kind=ViolationKind.HARD
+            )
         ]
         violations.extend(semantic_result.violations)
 
         # Add diagnostic information if available
         if semantic_result.diagnostic_message:
-            violations.append(f"Diagnostic: {semantic_result.diagnostic_message}")
+            violations.append(
+                Violation(
+                    tier="ftra",
+                    code="FTRA_ERROR",
+                    message=f"Diagnostic: {semantic_result.diagnostic_message}",
+                    kind=ViolationKind.HARD
+                )
+            )
 
         return cls(
             requires_hitl=True,  # Always require HITL on semantic breach
@@ -460,6 +478,6 @@ class ExecutionPlan(BaseModel):
     confidence: float = Field(
         default=0.0, description="Agent's confidence in this plan [0.0, 1.0]"
     )
-    violations: list[str] = Field(
+    violations: list[Violation] = Field(
         default_factory=list, description="Policy violations detected"
     )

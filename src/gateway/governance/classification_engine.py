@@ -36,13 +36,11 @@ from src.gateway.governance.narrower import NarrowerRegistry
 class ClassificationContext:
     """Context required for violation classification."""
     
-    violations: list[Violation | str]
-    stpa_violation_count: int
+    violations: list[Violation]
     confidence: float
     opa_decision: str | None
     policy_ambiguous: bool
     params: dict[str, Any]
-    cbf_violation: bool
 
 
 @dataclass(frozen=True)
@@ -94,28 +92,11 @@ class ClassificationEngine:
             # Should not be called with empty violations
             raise ValueError("classify() called with no violations")
 
-        # Step 0: Normalize violations to Violation instances
-        normalized_violations: list[Violation] = []
         for v in context.violations:
-            if isinstance(v, Violation):
-                normalized_violations.append(v)
-            elif isinstance(v, str):
-                v_lower = v.lower()
-                if any(m in v for m in ["Manual Review", "[CTRL_OPA_001]"]) or "manual review required" in v_lower:
-                    kind = ViolationKind.HITL
-                elif any(m in v for m in ["STPA", "UCA-", "CBF", "OPA Denied", "Fiscal Limit Pre-Reservation REJECTED", "CTRL_OPA_005", "GOVERNANCE_VIOLATION"]) or any(m in v_lower for m in ["opa check: deny", "opa policy violation", "cbf barrier violated"]):
-                    kind = ViolationKind.HARD
-                elif any(m in v_lower for m in ["rate limit", "circuit breaker", "quota exhausted", "temporarily unavailable", "service unavailable", "too many requests"]):
-                    kind = ViolationKind.TRANSIENT
-                elif any(m in v_lower for m in ["amount exceeds", "scope exceeds", "date range exceeds", "exceeds limit", "exceeds max"]):
-                    kind = ViolationKind.NARROWABLE
-                elif "confidence" in v_lower or "poam-tier2" in v_lower:
-                    kind = ViolationKind.DEFERRABLE
-                else:
-                    kind = ViolationKind.HARD
-                normalized_violations.append(
-                    Violation(tier="governance", code="GOV_VIOLATION", message=v, kind=kind)
-                )
+            if isinstance(v, str):
+                raise TypeError(f"classify() received string violation instead of Violation object: {v}")
+
+        normalized_violations = context.violations
         
         # Step 1: Check for HARD violations (always DENY)
         if any(v.kind == ViolationKind.HARD for v in normalized_violations):

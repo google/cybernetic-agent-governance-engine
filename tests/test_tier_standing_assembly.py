@@ -125,34 +125,6 @@ class TestStandingAssembly:
         assert "failures" in standing
         assert standing["failures"] == []
 
-    def test_violations_to_strings_conversion(
-        self, mock_governor: SymbolicGovernor
-    ) -> None:
-        """_violations_to_strings() converts violations to readable strings."""
-        gov = mock_governor
-        violations = [
-            Violation(
-                tier="tier_a",
-                code="RULE_A",
-                message="Blocked by tier A",
-                kind=ViolationKind.HARD,
-            ),
-            Violation(
-                tier="tier_b",
-                code="RULE_B",
-                message="Review required",
-                kind=ViolationKind.HITL,
-            ),
-        ]
-
-        strings = gov._violations_to_strings(violations)
-
-        assert len(strings) == 2
-        assert "tier_a" in strings[0]
-        assert "RULE_A" in strings[0]
-        assert "tier_b" in strings[1]
-        assert "RULE_B" in strings[1]
-
     def test_violations_to_failures_dict_conversion(
         self, mock_governor: SymbolicGovernor
     ) -> None:

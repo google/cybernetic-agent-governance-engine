@@ -53,12 +53,10 @@ def test_hard_violation_returns_deny():
                 kind=ViolationKind.HARD,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.99,  # High confidence
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -84,12 +82,10 @@ def test_opa_manual_review_returns_require_approval():
                 kind=ViolationKind.DEFERRABLE,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,
         opa_decision="MANUAL_REVIEW",
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -114,12 +110,10 @@ def test_hitl_violation_returns_require_approval():
                 kind=ViolationKind.HITL,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -145,12 +139,10 @@ def test_transient_with_pause_enabled_returns_pause():
                 kind=ViolationKind.TRANSIENT,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -176,12 +168,10 @@ def test_transient_with_pause_disabled_returns_deny():
                 kind=ViolationKind.TRANSIENT,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -225,12 +215,10 @@ def test_narrowable_with_narrower_available_returns_narrow():
                 kind=ViolationKind.NARROWABLE,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,
         opa_decision=None,
         policy_ambiguous=False,
         params={"original": "value"},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -261,12 +249,10 @@ def test_narrowable_without_narrower_returns_deny():
                 kind=ViolationKind.NARROWABLE,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -291,12 +277,10 @@ def test_deferrable_with_low_confidence_returns_defer():
                 kind=ViolationKind.DEFERRABLE,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.65,  # Below threshold
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -326,12 +310,10 @@ def test_deferrable_with_high_confidence_returns_deny():
                 kind=ViolationKind.DEFERRABLE,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.85,  # Above threshold
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -362,12 +344,10 @@ def test_default_fallback_returns_deny():
                 kind=ViolationKind.DEFERRABLE,
             )
         ],
-        stpa_violation_count=0,
         confidence=0.65,  # Below threshold, but defer disabled
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
@@ -399,16 +379,56 @@ def test_multiple_violations_prioritize_hard():
                 kind=ViolationKind.HARD,
             ),
         ],
-        stpa_violation_count=0,
         confidence=0.65,  # Would trigger DEFER for deferrable
         opa_decision=None,
         policy_ambiguous=False,
         params={},
-        cbf_violation=False,
     )
 
     result = engine.classify(context, "test_action")
 
     # HARD should take precedence
+    assert result.decision == GovernanceDecision.DENY
+    assert result.metadata["classification_reason"] == "hard_violation"
+
+def test_string_input_raises_typeerror():
+    """Passing a string violation raises TypeError."""
+    engine = ClassificationEngine(
+        narrower_registry=NarrowerRegistry(),
+        confidence_threshold=0.70,
+    )
+    context = ClassificationContext(
+        violations=["this is a string violation"],
+        confidence=0.85,
+        opa_decision=None,
+        policy_ambiguous=False,
+        params={},
+    )
+    import pytest
+    with pytest.raises(TypeError, match="classify.. received string violation"):
+        engine.classify(context, "test_action")
+
+def test_adversarial_messages_do_not_override_hard_kind():
+    """HARD violations whose message contains softer keywords still yield DENY."""
+    engine = ClassificationEngine(
+        narrower_registry=NarrowerRegistry(),
+        confidence_threshold=0.70,
+    )
+    # Give a HARD violation a message containing words that used to map to NARROW, TRANSIENT, HITL, DEFER
+    context = ClassificationContext(
+        violations=[
+            Violation(
+                tier="test",
+                code="ADVERSARIAL",
+                message="amount exceeds max rate limit Manual Review Required confidence",
+                kind=ViolationKind.HARD,
+            )
+        ],
+        confidence=0.85,
+        opa_decision=None,
+        policy_ambiguous=False,
+        params={},
+    )
+    result = engine.classify(context, "test_action")
     assert result.decision == GovernanceDecision.DENY
     assert result.metadata["classification_reason"] == "hard_violation"

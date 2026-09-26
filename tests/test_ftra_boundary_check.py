@@ -65,8 +65,8 @@ class TestFtraBoundaryResult:
         assert result.terminal_match == "execute_trade"
         assert result.bypassed_ftra_node is True
         assert len(result.violations) == 1
-        assert "FTRA Boundary Check" in result.violations[0]
-        assert "Human-in-the-loop review required" in result.violations[0]
+        assert "FTRA Boundary Check" in result.violations[0].message
+        assert "Human-in-the-loop review required" in result.violations[0].message
         assert result.is_safe is False
 
     def test_from_classification_read_only(self) -> None:
@@ -111,8 +111,8 @@ class TestFtraBoundaryResult:
 
         assert result.requires_hitl is True
         assert result.terminal_match is None
-        assert "not found in terminal_registry.json" in result.violations[0]
-        assert "failing closed to IRREVERSIBLE_TERMINAL" in result.violations[0]
+        assert "not found in terminal_registry.json" in result.violations[0].message
+        assert "failing closed to IRREVERSIBLE_TERMINAL" in result.violations[0].message
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
         assert result.classification == "IRREVERSIBLE_TERMINAL"
         assert result.bypassed_ftra_node is True
         assert len(result.violations) > 0
-        assert "Human-in-the-loop review required" in result.violations[0]
+        assert "Human-in-the-loop review required" in result.violations[0].message
 
     @pytest.mark.asyncio
     async def test_boundary_check_allows_read_only_actions(
@@ -321,12 +321,10 @@ class TestBoundaryCheckRoutesToClassifyViolation:
         engine = ClassificationEngine(NarrowerRegistry())
         ctx = ClassificationContext(
             violations=[v],
-            stpa_violation_count=0,
             confidence=0.95,
             opa_decision="ALLOW",
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
         result = engine.classify(ctx, "execute_trade")
 
@@ -367,12 +365,10 @@ class TestBoundaryCheckRoutesToClassifyViolation:
         engine = ClassificationEngine(NarrowerRegistry())
         ctx = ClassificationContext(
             violations=[v_hitl, v_hard],
-            stpa_violation_count=1,
             confidence=0.95,
             opa_decision="ALLOW",
             policy_ambiguous=False,
             params={},
-            cbf_violation=False,
         )
         result = engine.classify(ctx, "execute_trade")
 
