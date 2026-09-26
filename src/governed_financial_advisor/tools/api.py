@@ -65,8 +65,8 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
     Matches the checks performed by GatewayClient.
 
     Each governed branch opens an explicit OTel root span (``cage.tool_execute``)
-    so that ``symbolic_governor.govern()`` child spans (``cage.opa_pre_check``,
-    ``cage.cbf_check``, ``cage.consensus_gate``, etc.) are attached to a live
+    so that ``symbolic_governor.govern()`` child spans (``cage.ftra_boundary_gate``,
+    ``cage.stpa_check``, ``governance.opa_check``, etc.) are attached to a live
     trace context and exported to Langfuse. Without the parent span, child spans
     are orphaned and silently dropped at the OTLP layer.
     """
