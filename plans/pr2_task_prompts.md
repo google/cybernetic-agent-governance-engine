@@ -5,17 +5,29 @@
 
 Each prompt below is self-contained. You can paste it into a fresh agent session, or hand it to a contributor, without other context.
 
-## Status (updated 2026-09-26)
+## Status (updated 2026-09-26, evening) — PR 2 complete
+
+All tasks have merged. `symbolic_governor.py` is gone; every entry point runs `run_pipeline()` under a `Profile`.
 
 | Task | State | Where |
 |---|---|---|
-| T-G golden corpus | **Re-run.** The first attempt recorded a `TypeError` in all 25 scenarios and was discarded. The prompt now names the real APIs. | — |
-| T0 skeleton + contracts | **In review** | [#260](https://github.com/google/cybernetic-agent-governance-engine/pull/260) |
-| T1 typed violations | **Not started.** Nothing from the first run was worth keeping. | — |
-| T2–T5 stages / verdicts | **Not started.** Start once #260 merges. | — |
-| T6 remove `pre_check` | **In review** (follow-up fixed) | [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261) |
-| T7 pipeline + delete monolith | Blocked on all of the above | — |
-| **T8 formal-model profiles** (new) | **Not started.** Can start now. | — |
+| T-G golden corpus | ✅ Merged | [#263](https://github.com/google/cybernetic-agent-governance-engine/pull/263) |
+| T0 skeleton + contracts | ✅ Merged | [#260](https://github.com/google/cybernetic-agent-governance-engine/pull/260) |
+| T1 typed violations | ✅ Merged | [#265](https://github.com/google/cybernetic-agent-governance-engine/pull/265) |
+| T2 OPA stage | ✅ Merged | [#266](https://github.com/google/cybernetic-agent-governance-engine/pull/266) |
+| T3 kernel stages | ✅ Merged | [#267](https://github.com/google/cybernetic-agent-governance-engine/pull/267) |
+| T4 domain-tier stage | ✅ Merged | [#268](https://github.com/google/cybernetic-agent-governance-engine/pull/268), fixes [#269](https://github.com/google/cybernetic-agent-governance-engine/pull/269), [#271](https://github.com/google/cybernetic-agent-governance-engine/pull/271) |
+| T5 verdicts module | ✅ Merged | [#270](https://github.com/google/cybernetic-agent-governance-engine/pull/270) |
+| T6 remove `pre_check` | ✅ Merged | [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261), doc cleanup [#273](https://github.com/google/cybernetic-agent-governance-engine/pull/273) |
+| T7 pipeline + delete monolith | ✅ Merged | [#272](https://github.com/google/cybernetic-agent-governance-engine/pull/272) |
+| T8 formal-model profiles | ✅ Merged | [#264](https://github.com/google/cybernetic-agent-governance-engine/pull/264) |
+
+**T7 deviations from the prompt below (intended):**
+- DRY_RUN does not skip mutating stages. It calls their side-effect-free `preview()` (a phase-2 tier's `evaluate()`), so `verify()` reports the barrier and fiscal refusals live execution would issue, and commits nothing. A mutating stage without `preview()` yields HARD `PREVIEW_UNAVAILABLE`.
+- All claiming domain tiers run under FULL and DRY_RUN (`PROFILE_RUNS_ALL_DOMAIN_TIERS`); the `PROFILE_STAGES` name filter applies to kernel stages and POST_HITL only.
+
+**Follow-ups found after T7:**
+- `scripts/measure_paper_metrics.py` `TIER_SPAN_MAP` names spans nothing emits anymore (`cage.cbf_check`, `cage.fiscal_limit_reserve`, `cage.consensus_gate`, `cage.fria_check`). Either emit spans from the tier plugins or remap the rows.
 
 **Merged outside this plan, which changes the baseline:**
 - **#259** deleted `CBF_FAIL_OPEN` everywhere. `revalidate_post_hitl` now evaluates OPA and then calls `_run_domain_tiers(..., phase=2)`, so **every phase-2 tier (CBF and fiscal) re-runs after human approval**, with LIFO rollback. CBF refusals surface as `CBF_BARRIER_VIOLATED`.
@@ -36,11 +48,8 @@ Each prompt below is self-contained. You can paste it into a fresh agent session
 | Q9 | Is #259 a breaking change? | **Yes.** Setting `CBF_FAIL_OPEN=true` no longer bypasses the CBF, so setups without Redis now deny instead of allowing. The title now has `!` and the body a `BREAKING CHANGE:` footer. |
 | Q10 | `proof/model.py` still proves Gap 3, a CBF skip that `CBF_FAIL_OPEN` caused. Remove it? | **Yes, in T8.** The docs already say the gap is closed by removal and point to T8. |
 
-## Still open at baseline
-- **The kernel still emits `list[str]` violations** in `_run_checks` (and, after #259, the OPA part of `revalidate_post_hitl`). Line numbers have shifted, so locate by symbol, not line.
-- **`ClassificationEngine.classify` still falls back to substring matching** on string violations. PR 1 §1.2 is therefore not finished. For example, the NaN-confidence message is classified DEFERRABLE instead of HARD.
-- **OPA verdicts are decoded inline in 3 places.** Find them with `rg -n "policy_resp" src/gateway/governance/symbolic_governor.py`.
-- **`symbolic_governor.py` is still one ~2,700-line file**, imported by about 66 modules.
+## Resolved since baseline
+All four items previously listed here are closed: kernel violations are typed (T1), substring classification is gone (T1), OPA is decoded once in `governor/stages/opa.py` (T2), and the monolith is deleted (T7).
 
 ## Dependency graph
 
@@ -81,7 +90,7 @@ Follow AGENTS.md at the repo root without exception. In particular:
 
 ---
 
-## T-G — Freeze golden verdict corpus (re-run)
+## T-G — Freeze golden verdict corpus ✅ merged (#263)
 **Branch:** `test/governor-golden-corpus` (delete and recreate it; do not reuse commit `412c81c`) · **Commit:** `test(governance): freeze golden verdict corpus for governor refactor`
 
 ```text
@@ -136,7 +145,7 @@ at least 5 distinct verdict types appear in expected.json; `make test-fast` gree
 
 ---
 
-## T0 — `governor/` package skeleton and pipeline contracts ✅ in review
+## T0 — `governor/` package skeleton and pipeline contracts ✅ merged (#260)
 **Branch:** `refactor/governor-skeleton` · **PR:** [#260](https://github.com/google/cybernetic-agent-governance-engine/pull/260)
 
 No prompt needed. What landed, for downstream tasks:
@@ -147,7 +156,7 @@ No prompt needed. What landed, for downstream tasks:
 
 ---
 
-## T1 — Typed kernel violations; delete substring classification
+## T1 — Typed kernel violations; delete substring classification ✅ merged (#265)
 **Branch:** `refactor/typed-kernel-violations` · **Commit:** `refactor(governance)!: emit typed kernel violations, drop string classification`
 
 
@@ -214,7 +223,7 @@ stpa-freshness check passes; `make test-fast` green.
 
 ---
 
-## T2 — Single OPA verdict decoder and OPA stage
+## T2 — Single OPA verdict decoder and OPA stage ✅ merged (#266)
 **Branch:** `refactor/governor-opa-stage` · **Commit:** `refactor(governance): centralise OPA verdict decoding in governor stage`
 **Requires:** T0 merged.
 
@@ -256,7 +265,7 @@ Acceptance: `grep -c "policy_resp.get(" src/gateway/governance/symbolic_governor
 
 ---
 
-## T3 — Kernel stages: FTRA, STPA, confidence
+## T3 — Kernel stages: FTRA, STPA, confidence ✅ merged (#267)
 **Branch:** `refactor/governor-kernel-stages` · **Commit:** `refactor(governance): extract ftra, stpa and confidence governor stages`
 **Requires:** T0 merged. Can land before or after T1; see the last step of the prompt.
 
@@ -298,7 +307,7 @@ diffs if T1 merged first); `make test-fast` green.
 
 ---
 
-## T4 — Domain-tier stage adapter
+## T4 — Domain-tier stage adapter ✅ merged (#268)
 **Branch:** `refactor/governor-tier-stage` · **Commit:** `refactor(governance): wrap domain tiers as governor stages`
 **Requires:** T0 merged.
 
@@ -337,7 +346,7 @@ Acceptance: golden corpus unchanged; `make test-fast` green.
 
 ---
 
-## T5 — Verdicts module: receipts, seals and verdict handlers
+## T5 — Verdicts module: receipts, seals and verdict handlers ✅ merged (#270)
 **Branch:** `refactor/governor-verdicts` · **Commit:** `refactor(governance): consolidate refusal receipts and seal issuance`
 **Requires:** T0 merged.
 
@@ -384,7 +393,7 @@ golden corpus unchanged except the new publish_refusal call (document it); `make
 
 ---
 
-## T6 — Remove `SymbolicGovernor.pre_check` ✅ in review
+## T6 — Remove `SymbolicGovernor.pre_check` ✅ merged (#261)
 **Branch:** `refactor/remove-pre-check` · **PR:** [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261)
 
 No prompt needed. What landed:
@@ -394,7 +403,7 @@ No prompt needed. What landed:
 
 ---
 
-## T7 — Unified pipeline, thin entry points, delete the monolith
+## T7 — Unified pipeline, thin entry points, delete the monolith ✅ merged (#272)
 **Branch:** `refactor/governor-pipeline` · **Commit:** `refactor(governance)!: unify governor entry points on one staged pipeline`
 **Requires:** T-G, T0–T6 and T8 merged.
 
@@ -467,7 +476,7 @@ Report golden diffs explicitly.
 
 ---
 
-## T8 — Execution profiles and NARROW in the formal model (new)
+## T8 — Execution profiles and NARROW in the formal model ✅ merged (#264)
 **Branch:** `feat/formal-model-profiles` · **Commit:** `feat(governance): model execution profiles and narrow seam in proof`
 **Requires:** nothing. Can run in parallel with T-G.
 
