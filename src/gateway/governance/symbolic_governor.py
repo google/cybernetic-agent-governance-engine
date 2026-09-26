@@ -168,7 +168,6 @@ from src.gateway.governance.contracts import (
     GovernanceTierPlugin,
     InvariantModel,
     RefusalReceipt,
-    Violation,
 )
 
 
@@ -304,6 +303,7 @@ def _classify_violation(
     stpa_violation_count: int,
     confidence: float,
     context: dict[str, Any] | None = None,
+    narrower_registry: Any | None = None,
 ) -> tuple[GovernanceDecision, dict[str, Any]]:
     """Classify violations into DENY, DEFER, NARROW, PAUSE, or REQUIRE_APPROVAL decisions.
 
@@ -648,8 +648,50 @@ def _classify_violation(
                 "narrowable_violations": narrowable_violations,
             }
 
-        # Compute narrowed parameters
+        # Attempt registry-based narrowing if registry is provided
+        # This allows pluggable narrowers to handle violations rather than
+        # relying on hardcoded string pattern matching
         original_params = ctx.get("params", {})
+        action = ctx.get("action", "")
+        
+        if narrower_registry is not None:
+            # Try to find a registered narrower for each narrowable violation
+            # We convert the string violations back to Violation objects if needed
+            # For now, create a synthetic Violation from the string representation
+            from src.gateway.governance.contracts import Violation, ViolationKind
+            
+            for violation_str in narrowable_violations:
+                # Create a Violation object from the string
+                synthetic_violation = Violation(
+                    tier="CLASSIFICATION",
+                    code="NARROWABLE",
+                    message=violation_str,
+                    kind=ViolationKind.NARROWABLE,
+                )
+                
+                # Find a narrower that can handle this violation
+                narrower = narrower_registry.find_narrower(
+                    synthetic_violation, action, original_params
+                )
+                
+                if narrower:
+                    # Use the registered narrower
+                    result = narrower.narrow(synthetic_violation, action, original_params)
+                    if result.can_narrow:
+                        return GovernanceDecision.NARROW, {
+                            "classification_reason": result.narrowing_reason,
+                            "violation_types": list(set(violation_types)),
+                            "deferrable": False,
+                            "hard_violations": hard_violations,
+                            "soft_violations": soft_violations,
+                            "narrowable_violations": narrowable_violations,
+                            "original_params": original_params,
+                            "narrowed_params": result.narrowed_params,
+                            "constraints_applied": result.constraints_applied,
+                            "narrowing_reason": result.narrowing_reason,
+                        }
+
+        # Fallback to legacy string-based narrowing if no registry or no narrower found
         threshold_config = ctx.get("threshold_config", {})
         narrowed_params, constraints_applied = _compute_narrowed_params(
             original_params=original_params,
@@ -844,6 +886,7 @@ class SymbolicGovernor:
         fiscal_limit_guard: Any | None = None,
         core_tiers: tuple[GovernanceTierPlugin, ...] = (),
         domain_tiers: tuple[GovernanceTierPlugin, ...] = (),
+        narrower_registry: Any | None = None,
     ):
         self.opa_client = opa_client
         # retained for direct-invocation callers; not part of the governance hot path
@@ -857,6 +900,8 @@ class SymbolicGovernor:
         # between the CBF balance check and actual trade execution.
         # retained for direct-invocation callers; not part of the governance hot path
         self.fiscal_limit_guard = fiscal_limit_guard
+        # NarrowerRegistry — pluggable parameter narrowing for NARROW decisions
+        self._narrower_registry = narrower_registry
 
         # Task 2.1 (ARCH-2): Immutable tier registration at construction time.
         # Tiers are provided as tuples (core_tiers, domain_tiers) and validated
@@ -2669,6 +2714,8 @@ class SymbolicGovernor:
                         "policy_ambiguous": result.get("policy_ambiguous", False),
                         # NARROW: Include original params for clamping computation
                         "params": params,
+                        # NARROW: Include action name for narrower selection
+                        "action": action,
                         # NARROW: Threshold config can be overridden per-request or from config
                         "threshold_config": params.get("_threshold_config", {}),
                     }
@@ -2679,6 +2726,7 @@ class SymbolicGovernor:
                         stpa_violation_count=_stpa_count,
                         confidence=_confidence,
                         context=_classify_ctx,
+                        narrower_registry=self._narrower_registry,
                     )
 
                     # Record classification metadata in OTel span
