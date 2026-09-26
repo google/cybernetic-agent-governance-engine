@@ -34,6 +34,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from src.gateway.governance.governor.verdicts import (
+    handle_require_approval,
+    handle_defer,
+    handle_pause,
+    handle_narrow,
+    handle_deny,
+)
+
 import math
 import os
 import time
@@ -1500,28 +1508,215 @@ class SymbolicGovernor:
 
             try:
                 if violations:
-                    thread_id = str(
-                        params.get("transaction_id", "")
-                        or params.get("thread_id", "")
-                        or "unknown"
-                    )
-                    receipt = RefusalReceipt(
-                        thread_id=thread_id,
-                        action=tool_name,
-                        violated_tier="SYMBOLIC_GOVERNOR",
-                        violated_rule=violations[0],
-                        standing_at_refusal=self._build_standing([]),
-                    )
-                    span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
-                    raise GovernanceError(violations[0], receipt=receipt)
+                    await handle_deny(tool_name, params, violations, [])
 
                 # Issue routing seal — attests that CBF+OPA re-check passed.
                 # Phase 2.1 (R-06 mitigation): Uses generate_seal_with_evidence()
                 # which blocks on evidence commit when EVIDENCE_CHAIN_BLOCKING=true.
-                with tracer.start_as_current_span("cage.routing_seal") as seal_span:
-                    seal = await generate_seal_with_evidence(tool_name, params)
-                    seal_span.set_attribute("cage.seal_issued", True)
-                    seal_span.set_attribute("cage.seal_path", "revalidate_post_hitl")
+                from src.gateway.governance.governor.verdicts import issue_seal
+                seal = await issue_seal(tool_name, params, path="revalidate_post_hitl")
+
+                logger.info(
+                    "✅ [revalidate_post_hitl] CBF+OPA re-check APPROVED: %s "
+                    "(seal issued, Tiers 3a/3b only)",
+                    tool_name,
+                )
+                span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
+                span.set_attribute("cage.seal_issued", True)
+                return seal
+
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR))
+                span.set_attribute(OBSERVATION_OUTPUT, str(exc))
+                raise
+
+    async def verify(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Dry-run governance checks.  Does NOT raise exceptions.
+
+        Used by the Evaluator Agent (System 3) for simulation.
+        """
+        with tracer.start_as_current_span("symbolic_governor.verify") as span:
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "governance_simulation")
+            span.set_attribute(
+                OBSERVATION_INPUT,
+                json.dumps({"tool": tool_name, "params": params}),
+            )
+            result = await self._run_checks(tool_name, params, sim_mode=True)
+            violations = result["violations"]
+            # tier_violations intentionally not extracted here (used elsewhere in real validation)
+            span.set_attribute(
+                OBSERVATION_OUTPUT,
+                json.dumps([{'tier': v.tier, 'code': v.code, 'message': v.message, 'kind': v.kind.value} for v in violations]) if violations else "APPROVED",
+            )
+            return result
+
+    async def validate_action(
+        self,
+        action: str,
+        params: dict[str, Any],
+        policy_version_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate a structured tool execution payload — Unified Gateway path.
+
+        This is the **Single Choke Point** for all tool execution.  Runs the
+        complete 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) via ``_run_checks()`` — STPA,
+        Confidence, CBF, OPA, Fiscal Limit Pre-Reservation, Consensus, Causal,
+        and FRIA — before issuing the routing seal.
+
+        Previously this method ran only Tiers 3a and 3b (CBF and OPA), which
+        meant 5 of 7 substantive tiers were bypassed while the seal implied full
+        governance approval.  That gap is now closed: the routing seal is issued
+        ONLY after ``_run_checks()`` completes successfully across all tiers.
+
+        On approval, a short-lived HMAC-SHA256 ``routing_seal`` is returned.
+        The downstream actuator MUST verify this seal before firing — ensuring
+        that execution cannot proceed by simply ignoring the HTTP response.
+
+        Verdict semantics (canonical — see decisions.py):
+          - ``"ALLOW"``            — approved; routing seal issued.
+          - ``"DENY"``             — blocked; violation details included.
+          - ``"REQUIRE_APPROVAL"`` — OPA returned MANUAL_REVIEW; human sign-off
+                                     required. Routing seal NOT issued. The
+                                     adapter returns HTTP 202 with this verdict
+                                     so clients can distinguish it from DEFER.
+          - ``"DEFER"``            — context missing or below confidence
+                                     threshold; routes to DeferQueue for
+                                     automated data-hydration.
+
+        Returns:
+            Dict with keys:
+                - ``verdict``:     ``"ALLOW"`` | ``"DENY"`` | ``"REQUIRE_APPROVAL"`` | ``"DEFER"``
+                - ``violations``:  list of violation strings (empty if ALLOW)
+                - ``seal``:        HMAC routing seal (non-empty only if ALLOW)
+                - ``latency_ms``:  total governance check wall-time in milliseconds
+
+        Raises:
+            GovernanceError: If any mandatory check fails with DENY verdict.
+        """
+        from src.gateway.governance.decisions import GovernanceDecision
+
+        with tracer.start_as_current_span("cage.validate_action") as span:
+            span.set_attribute("cage.action", action)
+            span.set_attribute("cage.governance", True)
+            span.set_attribute(OBSERVATION_TYPE, "span")
+            span.set_attribute(OBSERVATION_NAME, "cage.validate_action")
+            span.set_attribute(
+                OBSERVATION_INPUT,
+                json.dumps(
+                    {
+                        "action": action,
+                        "params": params,
+                        "policy_version_id": policy_version_id,
+                    }
+                )[:2000],
+            )
+
+            t0 = time.time()
+
+            try:
+                # ── Version-Pinning Enforcement Layer ────────────────────────
+                if policy_version_id is not None:
+                    active_hash = ControlRegistry().active_hash
+                    if policy_version_id != active_hash:
+                        raise GovernanceError(
+                            f"Substrate Policy Drift Detected. Session pinned to version signature '{policy_version_id}', "
+                            f"but active runtime baseline has evolved to hash '{active_hash}'."
+                        )
+
+                # ── Full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) ──
+                # _run_checks() executes: STPA → Confidence → CBF+OPA (parallel)
+                # → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA.
+                # The routing seal is issued ONLY after all tiers pass — a seal
+                # issued before full pipeline completion would imply governance
+                # approval that was never actually granted.
+                result = await self._run_checks(action, params, sim_mode=False)
+                violations = result["violations"]
+                tier_violations = result.get("tier_violations", [])
+
+                latency_ms = round((time.time() - t0) * 1000, 2)
+                span.set_attribute("cage.governance_latency_ms", latency_ms)
+
+                # ── Violation Classification (§2.1 CAGE Implementation Specs) ──
+                # Use the _classify_violation() helper to properly route violations
+                # to DENY, DEFER, or REQUIRE_APPROVAL instead of collapsing all
+                # non-REQUIRE_APPROVAL violations into DENY.
+                #
+                # Classification priorities:
+                #   1. REQUIRE_APPROVAL: OPA MANUAL_REVIEW, no hard violations
+                #   2. DENY: Hard violations (STPA, CBF, OPA DENY)
+                #   3. DEFER: Soft violations + confidence starvation
+                #   4. REQUIRE_APPROVAL fallback: Soft violations above threshold
+                if violations:
+                    # Extract STPA violation count from result metadata
+                    _stpa_count = result.get("stpa_violation_count", 0)
+                    # Extract confidence from params (agent self-reported)
+                    _confidence = float(params.get("confidence", 0.0))
+
+                    # Classify the violations using ClassificationEngine (mandatory)
+                    from src.gateway.governance.classification_engine import ClassificationContext
+                    
+                    _opa_res = result.get("opa_results")
+                    _opa_decision = (
+                        _opa_res.get("decision")
+                        if isinstance(_opa_res, dict)
+                        else (_opa_res if isinstance(_opa_res, str) else result.get("opa_decision"))
+                    )
+
+                    context = ClassificationContext(
+                        violations=violations,
+                        confidence=_confidence,
+                        opa_decision=_opa_decision,
+                        policy_ambiguous=result.get("policy_ambiguous", False),
+                        params=params,
+                    )
+                    classification = self._classification_engine.classify(context, action)
+                    decision = classification.decision
+                    classification_meta = classification.metadata
+
+                    # Record classification metadata in OTel span
+                    span.set_attribute(
+                        "cage.governance.classification_decision", decision.value
+                    )
+                    span.set_attribute(
+                        "cage.governance.classification_reason",
+                        classification_meta.get("classification_reason", "")[:200],
+                    )
+                    span.set_attribute(
+                        "cage.governance.deferrable",
+                        classification_meta.get("deferrable", False),
+                    )
+
+                    # ── Verdict handlers ──────────────────────────────────────
+                    if decision == GovernanceDecision.REQUIRE_APPROVAL:
+                        return handle_require_approval(
+                            action, params, classification, violations, tier_failures, latency_ms
+                        )
+
+                    if decision == GovernanceDecision.DEFER:
+                        return await handle_defer(
+                            action, params, classification, violations, tier_failures, latency_ms
+                        )
+
+                    if decision == GovernanceDecision.NARROW:
+                        return await handle_narrow(
+                            action, params, classification, violations, tier_failures, latency_ms
+                        )
+
+                    if decision == GovernanceDecision.PAUSE:
+                        return await handle_pause(
+                            action, params, classification, violations, tier_failures, latency_ms
+                        )
+
+                    # ── DENY fallback (all other violations) ───────────────────
+                    await handle_deny(action, params, violations, tier_failures)
+
+                # Issue routing seal — attests that CBF+OPA re-check passed.
+                # Phase 2.1 (R-06 mitigation): Uses generate_seal_with_evidence()
+                # which blocks on evidence commit when EVIDENCE_CHAIN_BLOCKING=true.
+                from src.gateway.governance.governor.verdicts import issue_seal
+                seal = await issue_seal(tool_name, params, path="revalidate_post_hitl")
 
                 logger.info(
                     "✅ [revalidate_post_hitl] CBF+OPA re-check APPROVED: %s "
@@ -2063,13 +2258,8 @@ class SymbolicGovernor:
                 #
                 # Phase 2.1 (R-06 mitigation): Uses generate_seal_with_evidence()
                 # which blocks on evidence commit when EVIDENCE_CHAIN_BLOCKING=true.
-                from src.gateway.governance.routing_seal import (
-                    generate_seal_with_evidence,
-                )
-
-                with tracer.start_as_current_span("cage.routing_seal") as seal_span:
-                    seal = await generate_seal_with_evidence(action, params)
-                    seal_span.set_attribute("cage.seal_issued", True)
+                from src.gateway.governance.governor.verdicts import issue_seal
+                seal = await issue_seal(action, params, path="validate_action")
 
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
