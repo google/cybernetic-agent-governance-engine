@@ -46,7 +46,7 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
     from src.gateway.governance.classification_engine import ClassificationEngine
     from src.gateway.governance.ftra.models import FtraBoundaryResult
     from src.gateway.governance.narrower import NarrowerRegistry
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     if classification_engine is None:
         classification_engine = ClassificationEngine(NarrowerRegistry())
@@ -98,7 +98,11 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
         violations=[],
         bypassed_ftra_node=False,
     )
-    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    from src.gateway.governance.governor.stages.ftra import FtraStage
+    for stage in governor.stages:
+        if isinstance(stage, FtraStage):
+            stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result) # Keep this for legacy methods
 
     return governor
 
@@ -118,7 +122,7 @@ def _clean_env(**overrides: str) -> dict[str, str]:
 
 def test_raises_in_production_with_stub_reconciliation():
     """Fail-closed path: production posture + stub ground truth must refuse to start."""
-    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
 
     env = _clean_env(CAGE_ENV="production", RECONCILIATION_PROVIDER="stub")
     with patch.dict(os.environ, env, clear=True):
@@ -128,7 +132,7 @@ def test_raises_in_production_with_stub_reconciliation():
 
 def test_raises_in_production_when_reconciliation_provider_unset():
     """An unset provider defaults to stub, so production must still refuse."""
-    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
 
     env = _clean_env(CAGE_ENV="production")
     with patch.dict(os.environ, env, clear=True):
@@ -138,7 +142,7 @@ def test_raises_in_production_when_reconciliation_provider_unset():
 
 @pytest.mark.parametrize("cage_env", ["development", "dev", "test", "ci"])
 def test_non_production_stub_logs_critical_without_raising(cage_env, caplog):
-    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
 
     env = _clean_env(CAGE_ENV=cage_env, RECONCILIATION_PROVIDER="stub")
     with patch.dict(os.environ, env, clear=True):
@@ -148,7 +152,7 @@ def test_non_production_stub_logs_critical_without_raising(cage_env, caplog):
 
 
 def test_production_with_real_provider_does_not_raise():
-    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
 
     env = _clean_env(CAGE_ENV="production", RECONCILIATION_PROVIDER="plaid")
     with patch.dict(os.environ, env, clear=True):
@@ -157,7 +161,7 @@ def test_production_with_real_provider_does_not_raise():
 
 def test_cbf_fail_open_flag_has_no_effect():
     """CBF_FAIL_OPEN was removed; setting it must neither rescue nor break startup."""
-    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
 
     for value in ("true", "false"):
         env = _clean_env(
@@ -279,7 +283,7 @@ async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
     import time
 
     from src.gateway.governance.safety.resource_guard import ReservationToken
-    from src.gateway.governance.symbolic_governor import GovernanceError
+    from src.gateway.governance.governor.governor import GovernanceError
 
     mock_guard = MagicMock()
     # Rejected token — reserve() returns a rejected token

@@ -17,6 +17,7 @@
 from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
+from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
     GovernanceTierPlugin,
     Violation,
@@ -51,8 +52,10 @@ class DoseBarrierTier(GovernanceTierPlugin):
         return action in HEALTHCARE_GOVERNED_ACTIONS
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        # Phase 1: read-only check (no state mutation)
-        return []
+        """Read-only preview of commit() (DRY_RUN); no state mutation."""
+        return await preview_barrier(
+            self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
+        )
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         # Phase 2: atomic verify-and-commit via kernel CBF engine

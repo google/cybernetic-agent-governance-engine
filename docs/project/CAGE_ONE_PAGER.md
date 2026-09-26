@@ -62,7 +62,7 @@ This discrete-time CBF condition ([`src/gateway/governance/safety/cbf_engine.py`
 
 > **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation checks emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
-Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+Source: [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
 
 ### FRIA Zone Thresholds (EU AI Act Art. 29a)
 

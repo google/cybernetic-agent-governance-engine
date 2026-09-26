@@ -45,7 +45,7 @@ from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 # symbolic_governor.py (dowhy import, reconciliation provider) do not fire.
 os.environ.setdefault("CAGE_ENV", "test")
 
-from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal SymbolicGovernor assembly
@@ -122,7 +122,11 @@ def _make_governor(
         violations=[],
         bypassed_ftra_node=False,
     )
-    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    from src.gateway.governance.governor.stages.ftra import FtraStage
+    for stage in governor.stages:
+        if isinstance(stage, FtraStage):
+            stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result) # Keep this for legacy methods
 
     return governor
 

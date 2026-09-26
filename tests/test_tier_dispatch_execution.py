@@ -14,7 +14,7 @@
 
 """Tier dispatch loop execution tests.
 
-Validates that SymbolicGovernor._run_domain_tiers() correctly orders tiers by
+Validates that run_pipeline() domain-tier dispatch correctly orders tiers by
 priority, filters by phase, executes only tiers that claim the action, and
 aggregates violations.
 
@@ -32,7 +32,7 @@ from src.gateway.governance.contracts import (
     Violation,
     ViolationKind,
 )
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 @pytest.fixture
@@ -141,7 +141,7 @@ class TestTierDispatchOrdering:
             classification_engine=classification_engine,
         )
 
-        await gov._run_domain_tiers("test_action", {}, phase=1)
+        await _run_tiers(gov, "test_action", {}, phase=1)
 
         # Should execute in order: tier_a (100), tier_b (200), tier_c (300)
         assert OrderTrackingTier.execution_log == [
@@ -159,7 +159,7 @@ class TestTierDispatchOrdering:
             classification_engine=classification_engine,
         )
 
-        await gov._run_domain_tiers("test_action", {}, phase=1)
+        await _run_tiers(gov, "test_action", {}, phase=1)
 
         # Only phase 1 tier should execute
         executed_tiers = [name for name, _ in OrderTrackingTier.execution_log]
@@ -174,7 +174,7 @@ class TestTierDispatchOrdering:
             classification_engine=classification_engine,
         )
 
-        await gov._run_domain_tiers("test_action", {}, phase=1)
+        await _run_tiers(gov, "test_action", {}, phase=1)
 
         # Only the claiming tier should execute
         executed_tiers = [name for name, _ in OrderTrackingTier.execution_log]
@@ -184,7 +184,7 @@ class TestTierDispatchOrdering:
     async def test_violations_aggregated_across_tiers(self, classification_engine) -> None:
         """When a tier returns violations, execution stops and violations are returned.
 
-        With the v3.0 architecture, _run_domain_tiers() returns early on first violation
+        With the v3.0 architecture, run_pipeline() returns early on first violation
         to enforce fail-fast semantics. This test verifies that behavior.
         """
         gov = make_governor(
@@ -193,7 +193,7 @@ class TestTierDispatchOrdering:
             classification_engine=classification_engine,
         )
 
-        violations = await gov._run_domain_tiers("test_action", {}, phase=1)
+        violations = await _run_tiers(gov, "test_action", {}, phase=1)
 
         # Only tier1 violation is returned - tier2 never executes due to early return
         assert len(violations) == 1
@@ -206,7 +206,7 @@ class TestTierDispatchOrdering:
     ) -> None:
         """Dispatch with no registered tiers returns empty list."""
         gov = mock_governor
-        violations = await gov._run_domain_tiers("test_action", {}, phase=1)
+        violations = await _run_tiers(gov, "test_action", {}, phase=1)
         assert violations == []
 
 
@@ -229,12 +229,12 @@ class TestTierDispatchPhaseIsolation:
 
         # Execute phase 1
         OrderTrackingTier.execution_log.clear()
-        await gov._run_domain_tiers("test_action", {}, phase=1)
+        await _run_tiers(gov, "test_action", {}, phase=1)
         assert OrderTrackingTier.execution_log == [("p1_tier", "test_action")]
 
         # Execute phase 2
         OrderTrackingTier.execution_log.clear()
-        await gov._run_domain_tiers("test_action", {}, phase=2)
+        await _run_tiers(gov, "test_action", {}, phase=2)
         assert OrderTrackingTier.execution_log == [("p2_tier", "test_action")]
 
     @pytest.mark.asyncio
@@ -247,7 +247,16 @@ class TestTierDispatchPhaseIsolation:
             classification_engine=classification_engine,
         )
 
-        await gov._run_domain_tiers("test_action", {}, phase=1)
+        await _run_tiers(gov, "test_action", {}, phase=1)
 
         executed_tiers = [name for name, _ in OrderTrackingTier.execution_log]
         assert executed_tiers == ["p1_a", "p1_b", "p1_c"]
+
+
+async def _run_tiers(gov, action, params, *, phase):
+    """Run one phase of gov's domain tiers through the real pipeline."""
+    from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
+    stages = [s for s in gov.stages if hasattr(s, "claims") and s.tier.phase == phase]
+    ctx = StageContext(action=action, params=params, profile=Profile.FULL)
+    result = await run_pipeline(stages, ctx, profile=Profile.FULL)
+    return list(result.violations)

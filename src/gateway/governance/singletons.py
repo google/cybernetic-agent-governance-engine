@@ -26,8 +26,9 @@ from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
-from src.gateway.governance.symbolic_governor import (
-    SymbolicGovernor,
+from src.gateway.governance.governor.governor import SymbolicGovernor
+from src.gateway.governance.governor._legacy_startup import (
+
     is_cage_defer_enabled,
     is_cage_narrow_enabled,
     is_cage_pause_enabled,

@@ -37,7 +37,7 @@ from opentelemetry import trace
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
 from src.gateway.governance.singletons import symbolic_governor
-from src.gateway.governance.symbolic_governor import GovernanceError
+from src.gateway.governance.governor.governor import GovernanceError
 from src.gateway.observability.attributes import (
     OBSERVATION_NAME,
     OBSERVATION_OUTPUT,

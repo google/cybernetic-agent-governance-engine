@@ -71,7 +71,7 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
 | `ControlBarrierFunction`            | [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) (**v3.0.1:** `safety.py` removed) | Redis-backed CBF with WATCH/MULTI/EXEC                                |
 | `ac_keyword_scan`                   | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) (**v3.0.1:** `safety.py` removed) | Aho-Corasick Tier-1 prompt-injection scan                             |
-| `SymbolicGovernor`                  | `src/gateway/governance/symbolic_governor.py`  | Orchestrates all 5 governance tiers                                   |
+| `SymbolicGovernor`                  | `src/gateway/governance/governor/governor.py`  | Orchestrates all 5 governance tiers                                   |
 | `GeneratedSTPAValidator`            | [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) (**v3.0.1:** `stpa_validator.py` removed) | Deterministic STPA UCA constraint checks                              |
 | `TradingKnowledgeGraph`             | `src/gateway/governance/ontology.py`                    | UCA/constraint ontology (6 UCAs, 3 constraints)                       |
 | `stamp_iso_control`                 | `src/gateway/governance/iso_control.py`              | ISO 42001 OTel evidence stamping                                      |

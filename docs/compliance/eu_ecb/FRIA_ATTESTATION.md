@@ -102,7 +102,7 @@ This document records the FRIA for the EU_ECB deployment profile.
 
 ## 5. FRIA Zone Mathematical Definition
 
-The CAGE governance kernel implements a three-zone FRIA scoring model in Tier 6b of the Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)). This model operationalises the EU AI Act Art. 29a requirement for proportionate human oversight of High-Risk AI decisions.
+The CAGE governance kernel implements a three-zone FRIA scoring model in Tier 6b of the Symbolic Governor pipeline ([`src/gateway/governance/governor/governor.py`](../../../src/gateway/governance/governor/governor.py)). This model operationalises the EU AI Act Art. 29a requirement for proportionate human oversight of High-Risk AI decisions.
 
 ### 5.1 Zone Thresholds
 

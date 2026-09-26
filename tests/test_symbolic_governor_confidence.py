@@ -24,15 +24,36 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+
+class _ClaimAllTier:
+    """No-op phase-1 tier that claims every action, so the action is governed
+    and ConfidenceStage runs (confidence is only enforced on governed actions)."""
+
+    tier_name = "claim_all"
+    phase = 1
+    order = 0
+
+    def claims_action(self, action, params):
+        return True
+
+    async def evaluate(self, action, params):
+        return []
+
+    async def commit(self, action, params):
+        return []
+
+    async def rollback(self, action, params):
+        return None
 
 
 @pytest.fixture
 def mock_governor(classification_engine):
     """Create a SymbolicGovernor instance with mocked dependencies."""
-    with patch("src.gateway.governance.symbolic_governor.tracer"):
+    with patch("src.gateway.governance.governor.governor.tracer"):
         # Create mocked dependencies
         mock_opa_client = MagicMock()
         mock_opa_client.evaluate_policy = AsyncMock(return_value={
@@ -47,14 +68,11 @@ def mock_governor(classification_engine):
         # Create governor with mocked dependencies
         governor = SymbolicGovernor(
             classification_engine=classification_engine,
-            domain_tiers=(),
+            domain_tiers=(_ClaimAllTier(),),
             opa_client=mock_opa_client,
             safety_filter=mock_safety_filter,
             consensus_engine=mock_consensus_engine
         )
-        
-        # Mock _is_governed_action to return True so confidence validation runs
-        governor._is_governed_action = MagicMock(return_value=True)
         
         yield governor
 

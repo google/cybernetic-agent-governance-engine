@@ -265,7 +265,7 @@ class TestPostHitlRevalidateNode:
     @pytest.mark.asyncio
     async def test_governance_error_blocks_trade(self):
         """GovernanceError from SymbolicGovernor → BLOCKED."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             post_hitl_revalidate_node,
         )
@@ -364,7 +364,7 @@ class TestPostHitlRevalidateNode:
     @pytest.mark.asyncio
     async def test_replay_under_mutated_standing_fails(self):
         """Terry Snyder Seam Protocol: Replay under mutated standing fails-closed with drift/governance error."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             post_hitl_revalidate_node,
         )

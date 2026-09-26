@@ -706,6 +706,31 @@ class FiscalLimitGuard:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)
             return 0.0
 
+    async def would_accept(self, amount_usd: float) -> bool:
+        """Read-only: would ``reserve(amount_usd=...)`` be accepted right now?
+
+        Mirrors reserve()'s rule (cents rounding, ``current + amount > cap``
+        rejects) without writing anything.  Fail-closed: invalid amounts and
+        Redis errors return False — unlike ``current_spend_usd()``, which
+        reports 0.0 spend on error and would overstate headroom.
+        """
+        if not isinstance(amount_usd, (int, float)) or not math.isfinite(amount_usd) or amount_usd <= 0:
+            return False
+        amount_cents = int(round(amount_usd * 100))
+        cap_cents = int(round(self._daily_cap_usd * 100))
+        try:
+            key = self._window_key()
+            if self._is_async_client():
+                raw = await self._redis.get(key)  # type: ignore[attr-defined]
+            else:
+                loop = asyncio.get_running_loop()
+                raw = await loop.run_in_executor(None, self._redis.get, key)  # type: ignore[attr-defined]
+            current_cents = int(raw) if raw else 0
+        except Exception as exc:
+            logger.error("FiscalLimitGuard.would_accept: Redis error — failing closed: %s", exc)
+            return False
+        return current_cents + amount_cents <= cap_cents
+
     async def remaining_usd(self) -> float:
         """Return remaining headroom in today's window."""
         return max(0.0, self._daily_cap_usd - await self.current_spend_usd())

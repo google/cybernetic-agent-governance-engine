@@ -281,6 +281,31 @@ class TestMCPToolServerFunctions:
             assert res["message"] == "No violations detected."
 
     @pytest.mark.asyncio
+    async def test_simulate_governance_check_reports_rejection(self):
+        """verify() returns Violation objects; the tool must serialize, not crash."""
+        import json
+        import sys
+
+        from src.gateway.governance.contracts import Violation, ViolationKind
+
+        stubs = _mcp_import_stubs()
+        refusal = Violation(
+            tier="cbf", code="CBF_BARRIER_VIOLATED", message="UNSAFE: bankruptcy", kind=ViolationKind.HARD
+        )
+        stubs["src.gateway.governance.singletons"].symbolic_governor.verify = AsyncMock(
+            return_value={"violations": [refusal]}
+        )
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.simulate_governance_check("execute_trade", {"amount": 100})
+            assert res["status"] == "REJECTED"
+            assert res["message"] == "[CBF_BARRIER_VIOLATED] UNSAFE: bankruptcy"
+            assert res["violations"][0]["kind"] == "hard"
+            json.dumps(res)  # MCP responses must be JSON-serializable
+
+    @pytest.mark.asyncio
     async def test_evaluate_policy_internal_allow(self):
         import sys
 

@@ -24,7 +24,7 @@ from src.gateway.governance.governor import (
 )
 from src.gateway.governance.governor.pipeline import PROFILE_STAGES
 from src.gateway.governance.governor.errors import GovernanceError as NewGovernanceError
-from src.gateway.governance.symbolic_governor import GovernanceError as OldGovernanceError
+from src.gateway.governance.governor.governor import GovernanceError as OldGovernanceError
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 

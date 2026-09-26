@@ -57,7 +57,7 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 | Capability | Location | Description |
 |---|---|---|
-| **6 Governance Decision Primitives** | `src/gateway/governance/symbolic_governor.py` | Full first-class runtime routing for all six decisions: `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE` (`validate_action()`). |
+| **6 Governance Decision Primitives** | `src/gateway/governance/governor/verdicts.py` | Full first-class runtime routing for all six decisions: `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE` (`validate_action()`). |
 | **Seams Contract Extraction** | `src/gateway/governance/seams/` | Decoupled `NormativeProvider`, `AttestationProvider`, and `ExecutionActuator` into dedicated seam protocols with zero kernel imports, eliminating circular vendor dependencies. |
 | **Full Refusal & Pause Receipt Ingestion** | `src/gateway/server/governance_middleware.py` | Complete serialization of `RefusalReceipt` v3 and `PauseReceipt` into the evidence stream, preserving 5-part proof chains and byte-identical `proof_hash` calculations. |
 | **External Hold Generalization** | `src/gateway/governance/defer_queue.py` | Generalized `DeferReason.EXTERNAL_HOLD` driven dynamically by finding fields (`hold_ttl_seconds`), removing hardcoded vendor branches. |
@@ -560,7 +560,7 @@ This guarantees that the cash balance never drops below the minimum threshold in
 
 ### 8-Tier Symbolic Governor Pipeline
 
-Sources: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
+Sources: [`src/gateway/governance/governor/governor.py`](src/gateway/governance/governor/governor.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
 
 Every `execute_trade` action passes through the following two-phase pipeline before a routing seal is issued. Tier 0.5 (FTRA) executes at the LangGraph graph level before the first node fires; Tiers 0–6b run inside `SymbolicGovernor._run_checks()`:
 

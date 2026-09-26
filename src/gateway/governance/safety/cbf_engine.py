@@ -1186,7 +1186,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 if state.get("source") == "epoch_regression"
                 else "reconciliation unavailable"
             )
-            from src.gateway.governance.symbolic_governor import GovernanceError
+            from src.gateway.governance.governor.governor import GovernanceError
 
             raise GovernanceError(
                 f"CBF strict mode: {fallback_reason}",

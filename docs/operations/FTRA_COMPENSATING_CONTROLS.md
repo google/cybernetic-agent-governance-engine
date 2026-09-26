@@ -11,7 +11,7 @@
 
 As of 2026-08-16, the `CAGE_FTRA_BOUNDARY_ENABLED` feature flag has been
 **removed** from the codebase. The FTRA boundary check now runs unconditionally
-in [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py)
+in [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/governor/pipeline.py)
 (lines 970–999) for every governance request — there is no way to disable it.
 
 This document now serves two purposes:

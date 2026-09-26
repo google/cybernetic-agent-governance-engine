@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.red_team, pytest.mark.unit, pytest.mark.local]
 from unittest.mock import AsyncMock, MagicMock
 
 from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
-from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.governed_financial_advisor.agents.evaluator.red_agent import (
     RedAgent,  # Updated import
 )
@@ -79,7 +79,11 @@ def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine
         violations=[],
         bypassed_ftra_node=False,
     )
-    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    from src.gateway.governance.governor.stages.ftra import FtraStage
+    for stage in governor.stages:
+        if isinstance(stage, FtraStage):
+            stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result) # Keep this for legacy methods
 
     return governor
 

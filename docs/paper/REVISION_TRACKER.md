@@ -408,8 +408,8 @@ make previously optional security controls mandatory.
 | # | Change | Current paper framing | Updated framing | Files affected | Paper sections |
 |---|---|---|---|---|---|
 | G1 | **NARROW/PAUSE Governance Decisions** | "four-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER)" | "six-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER/NARROW/PAUSE)" | [`decisions.py`](../../src/gateway/governance/decisions.py), [`pause_primitive.py`](../../src/gateway/governance/pause_primitive.py) | Abstract (line 7), §3.1, §7.1 |
-| G2 | **`_classify_violation()` Classification Helper** | No description of violation routing | New five-way classification routing (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) | [`symbolic_governor.py:227`](../../src/gateway/governance/symbolic_governor.py:227) | §4.2 (add explanation of violation routing) |
-| G3 | **FTRA Boundary Check Now Mandatory** | Gated by `CAGE_FTRA_BOUNDARY_ENABLED` flag (default false) | Runs unconditionally, flag removed per POAM-2026-030-B | [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/symbolic_governor.py) | §4.7 (update zero-trust controls description) |
+| G2 | **`ClassificationEngine.classify()` Classification Helper** | No description of violation routing | New five-way classification routing (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) | [`symbolic_governor.py:227`](../../src/gateway/governance/governor/verdicts.py) | §4.2 (add explanation of violation routing) |
+| G3 | **FTRA Boundary Check Now Mandatory** | Gated by `CAGE_FTRA_BOUNDARY_ENABLED` flag (default false) | Runs unconditionally, flag removed per POAM-2026-030-B | [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/governor/stages/ftra.py) | §4.7 (update zero-trust controls description) |
 | G4 | **Reconciliation Replay Defense Now Implemented** | §7.2/§7.3 describe this as "open, unmitigated vulnerability" | Now implemented as opt-in via `CAGE_RECONCILIATION_REPLAY_DEFENSE` | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py) | §7.2/§7.3 (update to reflect implemented status) |
 | G5 | **Evidence Chain Blocking Gate Default Changed** | `EVIDENCE_CHAIN_BLOCKING` default unspecified or false | Now defaults to `"true"` | [`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py) | Appendix C env-var table |
 
@@ -437,7 +437,7 @@ updated to reflect the six-state model.
 decision based on violation type, severity, and context.
 
 **Evidence:**
-- [`symbolic_governor.py:227`](../../src/gateway/governance/symbolic_governor.py:227) —
+- [`symbolic_governor.py:227`](../../src/gateway/governance/governor/governor.py) —
   `_classify_violation()` implements five-way routing:
   - `DENY`: Hard policy violations (e.g., PII in output, prohibited actions)
   - `DEFER`: Requires additional context or escalation
@@ -466,7 +466,7 @@ self._ftra_boundary_check(...)  # Always runs
 ```
 
 **Evidence:**
-- [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/symbolic_governor.py) —
+- [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/governor/stages/ftra.py) —
   flag removed, method called unconditionally
 - POAM-2026-030-B (closed 2026-08-16) — tracked the flag removal as a security hardening item
 

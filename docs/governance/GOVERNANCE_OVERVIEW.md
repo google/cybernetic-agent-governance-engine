@@ -56,7 +56,7 @@ NeMo Guardrails runs **before** `_run_checks()` is invoked. It is integrated int
 
 #### The 7-Step Governance Pipeline (`SymbolicGovernor._run_checks()`)
 
-The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the central enforcement engine. Every tool execution request passes through the following steps in order:
+The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` is the central enforcement engine. Every tool execution request passes through the following steps in order:
 
 | Step | Name | Implementation | Notes |
 |------|------|---------------|-------|
@@ -114,7 +114,7 @@ The following components are essential infrastructure but are **not** numbered g
 
 ## Symbolic Governor Pipeline
 
-> **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+> **Source:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
 
 The `SymbolicGovernor._run_checks()` method implements a strict **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers; Tiers 2 and 4 execute concurrently). Every tool execution request must pass all applicable tiers before a routing seal is issued. This table uses the same numbering as the Step 0–6 table in §2 above — both describe the in-pipeline tiers.
 
@@ -165,7 +165,7 @@ The Fundamental Rights Impact Assessment (FRIA) at Tier 6b classifies each reque
 | **DEFER** | 0.70 ≤ score < 0.95 (`FRIA_ZONE_DEFER`) | Synchronous blocking gate | Request held; pushed to DEFER queue (Redis db=1, 4 h TTL) for human review |
 | **BLOCK** | score < 0.70 | Hard deny | Request rejected; violation logged with `[CTRL_FRIA_006]` prefix |
 
-Constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (defined in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py), overridable via env vars).
+Constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (defined in [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py), overridable via env vars).
 
 ---
 
@@ -219,7 +219,7 @@ score ≥ 0.95              →  ALLOW  (async attestation)
 score < 0.70              →  BLOCK  (hard deny)
 ```
 
-> **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+> **Source:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
 
 ---
 

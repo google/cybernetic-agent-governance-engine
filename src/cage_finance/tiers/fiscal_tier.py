@@ -46,8 +46,12 @@ class FiscalTierPlugin(GovernanceTierPlugin):
         return action == "execute_trade"
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        # Phase 2 tiers only implement commit and rollback.
-        return []
+        """Read-only preview of commit() (DRY_RUN); reserves nothing."""
+        amount = float(params.get("amount", 0.0))
+        agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
+        if await self.guard.would_accept(amount_usd=amount):
+            return []
+        return [self._limit_violation(agent_id)]
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         amount = float(params.get("amount", 0.0))
@@ -56,14 +60,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
         if token.rejected:
-            return [
-                Violation(
-                    tier=self.tier_name,
-                    code="FISCAL_LIMIT_EXCEEDED",
-                    message=f"Daily fiscal limit exceeded for {agent_id}. Fiscal Limit Pre-Reservation REJECTED",
-                    kind=ViolationKind.NARROWABLE,
-                )
-            ]
+            return [self._limit_violation(agent_id)]
 
         self._tokens[transaction_id] = token
         await self.guard.confirm(token)
@@ -74,3 +71,11 @@ class FiscalTierPlugin(GovernanceTierPlugin):
         token = self._tokens.get(transaction_id)
         if token:
             await self.guard.release(token)
+
+    def _limit_violation(self, agent_id: str) -> Violation:
+        return Violation(
+            tier=self.tier_name,
+            code="FISCAL_LIMIT_EXCEEDED",
+            message=f"Daily fiscal limit exceeded for {agent_id}. Fiscal Limit Pre-Reservation REJECTED",
+            kind=ViolationKind.NARROWABLE,
+        )

@@ -844,11 +844,11 @@ class TestValidateActionPauseHandler:
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+        from src.gateway.governance.governor.governor import SymbolicGovernor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
-        # Mock _run_checks to return a rate limit violation
+        # Stub the pipeline to return a rate limit violation
         mock_result = {
             "violations": ["Rate limit exceeded: too many requests"],
             "stpa_violation_count": 0,
@@ -858,7 +858,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
+                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -878,8 +878,8 @@ class TestValidateActionPauseHandler:
                 ),
             )
 
-            # Patch _run_checks to return our mock result
-            with patch.object(governor, "_run_checks", return_value=mock_result):
+            # Stub the pipeline to return our mock result
+            with _stub_pipeline(mock_result):
                 result = await governor.validate_action(
                     action="test_action",
                     params={"symbol": "AAPL", "amount": 100, "confidence": 0.9},
@@ -901,7 +901,7 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.contracts import PauseReceipt
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+        from src.gateway.governance.governor.governor import SymbolicGovernor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -924,7 +924,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
+                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -944,7 +944,7 @@ class TestValidateActionPauseHandler:
                 ),
             )
 
-            with patch.object(governor, "_run_checks", return_value=mock_result):
+            with _stub_pipeline(mock_result):
                 result = await governor.validate_action(
                     action="test_action",
                     params={
@@ -973,7 +973,7 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.symbolic_governor import (
+        from src.gateway.governance.governor.governor import (
             GovernanceError,
             SymbolicGovernor,
         )
@@ -1003,7 +1003,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
+                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
                 return_value=False,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False),
@@ -1023,7 +1023,7 @@ class TestValidateActionPauseHandler:
                 ),
             )
 
-            with patch.object(governor, "_run_checks", return_value=mock_result):
+            with _stub_pipeline(mock_result):
                 # Should raise GovernanceError (DENY fallback)
                 with pytest.raises(GovernanceError) as exc_info:
                     await governor.validate_action(
@@ -1042,7 +1042,7 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+        from src.gateway.governance.governor.governor import SymbolicGovernor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -1069,7 +1069,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
+                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -1089,7 +1089,7 @@ class TestValidateActionPauseHandler:
                 ),
             )
 
-            with patch.object(governor, "_run_checks", return_value=mock_result):
+            with _stub_pipeline(mock_result):
                 result = await governor.validate_action(
                     action="test_action",
                     params={"symbol": "MSFT", "amount": 200},
@@ -1108,7 +1108,7 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.symbolic_governor import (
+        from src.gateway.governance.governor.governor import (
             GovernanceError,
             SymbolicGovernor,
         )
@@ -1142,7 +1142,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.symbolic_governor.is_cage_pause_enabled",
+                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -1165,7 +1165,7 @@ class TestValidateActionPauseHandler:
                 ),
             )
 
-            with patch.object(governor, "_run_checks", return_value=mock_result):
+            with _stub_pipeline(mock_result):
                 with pytest.raises(GovernanceError) as exc_info:
                     await governor.validate_action(
                         action="test_action",
@@ -1266,3 +1266,22 @@ class TestPauseReceipt:
 
         with pytest.raises(Exception):  # FrozenInstanceError
             receipt.pause_reason = "CIRCUIT_OPEN"
+
+
+def _stub_pipeline(mock_result):
+    """Patch run_pipeline (validate_action's only check path) with a canned result."""
+    from unittest.mock import AsyncMock, patch
+    from src.gateway.governance.contracts import Violation, ViolationKind
+    from src.gateway.governance.governor.pipeline import PipelineResult
+    violations = tuple(
+        v if isinstance(v, Violation)
+        else Violation(tier="test", code="TEST", message=str(v), kind=ViolationKind.TRANSIENT)
+        for v in mock_result.get("violations", [])
+    )
+    result = PipelineResult(
+        violations=violations, tier_failures=(), opa_verdict=None, ftra=None, committed_stages=(),
+    )
+    return patch(
+        "src.gateway.governance.governor.governor.run_pipeline",
+        new=AsyncMock(return_value=result),
+    )

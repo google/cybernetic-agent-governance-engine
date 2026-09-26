@@ -128,7 +128,7 @@ on the OTel span at override time.
 
 ## Automated Governance Thresholds
 
-**Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+**Source:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
 
 The `SymbolicGovernor` Tier 6b FRIA zone classification determines whether a
 governance decision is handled automatically or escalated to human review. The
@@ -198,7 +198,7 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    - `UPHOLD` — confirm the block; decision is logged
    - `DEFER` — escalate to senior reviewer; re-queued with extended SLA
 6. **Post-HITL re-validation:** On human approval, `revalidate_post_hitl()` in
-   [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+   [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py)
    re-runs **only Tiers 2 and 4** (CBF + OPA) — the tiers most likely to drift
    during a HITL review window (cash balance and policy state may have changed).
    STPA, consensus, causal, and FRIA tiers are **not** re-run.

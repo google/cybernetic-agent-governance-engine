@@ -1,11 +1,27 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import os
+import re
 import uuid
 from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import GovernanceTierFailure, Violation, ViolationKind
 from src.gateway.governance.contracts import RefusalReceipt
 from src.gateway.governance import routing_seal
@@ -157,10 +173,10 @@ async def _park_defer_context(
 def handle_require_approval(
     action: str,
     params: dict[str, Any],
-    classification: ClassificationResult,
     violations: list[Violation],
     tier_failures: list[GovernanceTierFailure],
-    latency_ms: float,
+    classification_meta: dict[str, Any],
+    latency_ms: float = 0.0,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.REQUIRE_APPROVAL)
@@ -169,7 +185,7 @@ def handle_require_approval(
     logger.info(
         "🔶 handle_require_approval REQUIRE_APPROVAL: action=%s reason=%s (%.1fms)",
         action,
-        classification.metadata.get("classification_reason", ""),
+        classification_meta.get("classification_reason", ""),
         latency_ms,
     )
     return {
@@ -177,23 +193,23 @@ def handle_require_approval(
         "violations": violations,
         "seal": "",
         "latency_ms": latency_ms,
-        "classification_meta": classification.metadata,
+        "classification_meta": classification_meta,
     }
 
 
 async def handle_defer(
     action: str,
     params: dict[str, Any],
-    classification: ClassificationResult,
     violations: list[Violation],
     tier_failures: list[GovernanceTierFailure],
-    latency_ms: float,
+    classification_meta: dict[str, Any],
+    latency_ms: float = 0.0,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
     defer_metadata = {
         "cbf_violation": any("CBF" in str(v) for v in violations),
-        "opa_decision": classification.metadata.get("opa_decision"),
-        "policy_ambiguous": classification.metadata.get("policy_ambiguous", False),
+        "opa_decision": classification_meta.get("opa_decision"),
+        "policy_ambiguous": classification_meta.get("policy_ambiguous", False),
         "params": params,
         "action": action,
     }
@@ -204,7 +220,7 @@ async def handle_defer(
         metadata=defer_metadata,
         thread_id=params.get("thread_id"),
         confidence=_confidence,
-        classification_meta=classification.metadata,
+        classification_meta=classification_meta,
         violations=violations,
     )
 
@@ -215,7 +231,7 @@ async def handle_defer(
     logger.info(
         "🕒 handle_defer DEFER: action=%s reason=%s (%.1fms)",
         action,
-        classification.metadata.get("classification_reason", ""),
+        classification_meta.get("classification_reason", ""),
         latency_ms,
     )
 
@@ -225,10 +241,10 @@ async def handle_defer(
         "violations": violations,
         "seal": "",
         "latency_ms": latency_ms,
-        "classification_meta": classification.metadata,
+        "classification_meta": classification_meta,
         "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
         "defer_token": defer_token,
-        "deferrable": classification.metadata.get("deferrable", True),
+        "deferrable": classification_meta.get("deferrable", True),
         "retry_after_seconds": 300,
         "agent_id": agent_id,
     }
@@ -237,19 +253,19 @@ async def handle_defer(
 async def handle_pause(
     action: str,
     params: dict[str, Any],
-    classification: ClassificationResult,
     violations: list[Violation],
     tier_failures: list[GovernanceTierFailure],
-    latency_ms: float,
+    classification_meta: dict[str, Any],
+    latency_ms: float = 0.0,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
     from src.gateway.governance.contracts import PauseReceipt
     from src.gateway.governance.pause_primitive import PauseManager, build_resume_endpoint
     from src.gateway.infrastructure.redis_client import redis_client
-    from src.gateway.governance.symbolic_governor import is_cage_pause_enabled
+    from src.gateway.governance.governor._legacy_startup import is_cage_pause_enabled
 
-    pause_reason: str = classification.metadata.get("pause_reason", "RATE_LIMITED")
-    estimated_wait: int = classification.metadata.get("estimated_wait_seconds", 60)
+    pause_reason: str = classification_meta.get("pause_reason", "RATE_LIMITED")
+    estimated_wait: int = classification_meta.get("estimated_wait_seconds", 60)
     _va_pause_thread_id = resolve_thread_id(params)
 
     if not is_cage_pause_enabled():
@@ -334,12 +350,14 @@ async def handle_pause(
         "violations": violations,
         "seal": "",
         "latency_ms": latency_ms,
-        "classification_meta": classification.metadata,
+        "classification_meta": classification_meta,
         "pause_token": pause_token,
         "pause_reason": pause_reason,
         "resume_endpoint": build_resume_endpoint(pause_token),
         "expires_at_utc": expires_at_utc,
         "estimated_wait_seconds": estimated_wait,
+        "retry_after_seconds": estimated_wait,
+        "pause_receipt": pause_receipt,
         "agent_id": agent_id,
         "execution_allowed": False,
     }
@@ -348,16 +366,16 @@ async def handle_pause(
 async def handle_narrow(
     action: str,
     params: dict[str, Any],
-    classification: ClassificationResult,
     violations: list[Violation],
     tier_failures: list[GovernanceTierFailure],
-    latency_ms: float,
+    classification_meta: dict[str, Any],
+    latency_ms: float = 0.0,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
-    original_params = classification.metadata.get("original_params", params)
-    narrowed_params = classification.metadata.get("narrowed_params", params)
-    narrowing_reason = classification.metadata.get("narrowing_reason", "Constraints applied")
-    constraints_applied = classification.metadata.get("constraints_applied", {})
+    original_params = classification_meta.get("original_params", params)
+    narrowed_params = classification_meta.get("narrowed_params", params)
+    narrowing_reason = classification_meta.get("narrowing_reason", "Constraints applied")
+    constraints_applied = classification_meta.get("constraints_applied", {})
 
     seal = await issue_seal(action, narrowed_params, path="narrow")
 
@@ -379,7 +397,7 @@ async def handle_narrow(
         "seal": seal,
         "latency_ms": latency_ms,
         "agent_id": agent_id,
-        "classification_meta": classification.metadata,
+        "classification_meta": classification_meta,
         "original_params": original_params,
         "narrowed_params": narrowed_params,
         "narrowing_reason": narrowing_reason,
@@ -393,6 +411,8 @@ async def handle_deny(
     params: dict[str, Any],
     violations: list[Violation],
     tier_failures: list[GovernanceTierFailure],
+    classification_meta: dict[str, Any] | None = None,
+    latency_ms: float = 0.0,
 ) -> None:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
@@ -405,5 +425,43 @@ async def handle_deny(
     )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
     await publish_refusal(receipt)
-    raise GovernanceError(violations[0], receipt=receipt)
+    raise GovernanceError(
+        _error_message(violations[0]),
+        payload={**(classification_meta or {}), **_control_payload(violations[0])},
+        receipt=receipt,
+    )
 
+
+
+_CONTROL_ID_RE = re.compile(r"^\[(CTRL_[A-Z0-9_]+)\]")
+
+
+def _control_payload(violation: Violation) -> dict[str, Any]:
+    """Resolve control metadata (incl. ``legacy_citation``) for SIEM consumers.
+
+    Control IDs are carried as a ``[CTRL_xxx]`` message prefix; unknown or
+    absent IDs yield an empty dict rather than a guessed citation.
+    """
+    m = _CONTROL_ID_RE.match(violation.message)
+    if not m:
+        return {}
+    try:
+        control = GovernanceControl(m.group(1))
+        meta = ControlRegistry().get_mapping(control)
+    except (ValueError, KeyError):
+        return {}
+    return {
+        "control_id": control.value,
+        "primary_framework": meta.get("primary_framework", ""),
+        "legacy_citation": meta.get("legacy_citation", ""),
+    }
+
+
+def _error_message(violation: Violation) -> str:
+    """Human-readable denial text that always carries a machine-greppable tag.
+
+    Messages that already lead with a ``[TAG]`` (control ID or UCA code) are
+    kept verbatim; otherwise the violation code is prefixed.
+    """
+    msg = violation.message
+    return msg if msg.startswith("[") else f"[{violation.code}] {msg}"

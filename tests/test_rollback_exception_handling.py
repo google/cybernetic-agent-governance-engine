@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.gateway.governance.contracts import Violation
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 # Hermetic: uses mock governor with mock tiers, no live services.
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -104,7 +104,7 @@ class TestRollbackLifoOrder:
         tier_c.rollback.side_effect = rollback_c
 
         # Trigger rollback
-        violations = await gov._rollback_committed(committed, "test_action", {})
+        violations = await _rollback(committed)
 
         # All three tiers should have been called
         tier_a.rollback.assert_awaited_once_with("test_action", {})
@@ -131,7 +131,7 @@ class TestRollbackExceptionIsolation:
         # Make tier_b's rollback fail
         tier_b.rollback.side_effect = RuntimeError("Redis connection lost")
 
-        violations = await gov._rollback_committed(committed, "test_action", {})
+        violations = await _rollback(committed)
 
         # All three tiers should have been ATTEMPTED
         tier_c.rollback.assert_awaited_once_with("test_action", {})
@@ -155,7 +155,7 @@ class TestRollbackExceptionIsolation:
         tier_b.rollback.side_effect = RuntimeError("B failed")
         tier_a.rollback.side_effect = ValueError("A failed")
 
-        violations = await gov._rollback_committed(committed, "test_action", {})
+        violations = await _rollback(committed)
 
         # All tiers attempted
         tier_c.rollback.assert_awaited_once_with("test_action", {})
@@ -187,7 +187,7 @@ class TestRollbackFailClosedSemantics:
         # Tier C rollback fails
         tier_c.rollback.side_effect = Exception("State corruption")
 
-        violations = await gov._rollback_committed(committed, "test_action", {})
+        violations = await _rollback(committed)
 
         # Action is blocked (violations list is populated)
         assert len(violations) == 1
@@ -209,7 +209,7 @@ class TestRollbackViolationStructure:
         committed = [tier_b]
         tier_b.rollback.side_effect = RuntimeError("Rollback error")
 
-        violations = await gov._rollback_committed(committed, "test_action", {})
+        violations = await _rollback(committed)
 
         assert len(violations) == 1
         v = violations[0]
@@ -229,7 +229,7 @@ class TestRollbackViolationStructure:
         committed = [tier_a, tier_b, tier_c]
 
         # All rollbacks succeed (no exceptions)
-        violations = await gov._rollback_committed(committed, "test_action", {})
+        violations = await _rollback(committed)
 
         # No violations should be added
         assert len(violations) == 0
@@ -238,3 +238,10 @@ class TestRollbackViolationStructure:
         tier_c.rollback.assert_awaited_once_with("test_action", {})
         tier_b.rollback.assert_awaited_once_with("test_action", {})
         tier_a.rollback.assert_awaited_once_with("test_action", {})
+
+
+async def _rollback(committed):
+    from src.gateway.governance.governor.pipeline import Profile, StageContext, rollback_lifo
+    from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
+    ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
+    return await rollback_lifo([DomainTierStage(t) for t in committed], ctx)

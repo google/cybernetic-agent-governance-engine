@@ -173,7 +173,7 @@ class ExampleTierPlugin(GovernanceTierPlugin):
 
 ### Registering Tiers with the Governor
 
-Tiers are registered in the kernel's [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py) initialization:
+Tiers are registered in the kernel's [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) initialization:
 
 ```python
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
@@ -466,7 +466,7 @@ Before submitting a new plugin PR, verify all gates pass locally:
 
 **Wrong:**
 ```python
-# src/gateway/governance/symbolic_governor.py
+# src/gateway/governance/governor/governor.py
 from src.cage_finance.ontology import TRADING_ACTIONS  # ❌ VIOLATES G3
 ```
 
@@ -484,7 +484,7 @@ governor = SymbolicGovernor(..., domain_tiers=tiers)
 
 **Wrong:**
 ```python
-# src/gateway/governance/symbolic_governor.py
+# src/gateway/governance/governor/governor.py
 if action == "execute_trade":  # ❌ VIOLATES G6
     # domain-specific logic
 ```

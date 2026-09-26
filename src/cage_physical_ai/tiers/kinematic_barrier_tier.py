@@ -17,6 +17,7 @@
 from typing import Any
 
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
+from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
     GovernanceTierPlugin,
     Violation,
@@ -50,7 +51,12 @@ class KinematicBarrierTier(GovernanceTierPlugin):
         return action in PHYSICAL_AI_GOVERNED_ACTIONS
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        return []
+        """Read-only preview of commit() (DRY_RUN); mirrors commit()'s no-CBF case."""
+        if self.cbf is None:
+            return []
+        return await preview_barrier(
+            self.cbf, tier=self.tier_name, code="KINEMATIC_BARRIER_VIOLATED", action=action, params=params
+        )
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.cbf is None:

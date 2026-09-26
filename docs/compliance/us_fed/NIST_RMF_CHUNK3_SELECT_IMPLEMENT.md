@@ -287,7 +287,7 @@
 
 **Current State:**
 
-- `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (8-tier: FTRA + 7 in-pipeline tiers). OPA enforces a uniform minimum confidence threshold (0.95; `EU_ECB` elevates to 0.97). Fail-closed on any gate failure.
+- `src/gateway/governance/governor/stages/confidence.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (8-tier: FTRA + 7 in-pipeline tiers). OPA enforces a uniform minimum confidence threshold (0.95; `EU_ECB` elevates to 0.97). Fail-closed on any gate failure.
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain. (**v3.0.1:** deprecated `stpa_validator.py` shim removed)
 - [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog). (**v3.0.1:** `safety.py` removed)
 - `scripts/automated_auditor.py` — `TraceAuditor.audit_trace()` implements span invariant checking: every `tool.execution` span must have a causally preceding `governance.check` span with `decision=ALLOW`. Detects "Missing Governance Check," "Execution despite DENY," and "Orphaned Execution" violations. **However, it uses mock traces (see AU-12 gap).**

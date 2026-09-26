@@ -52,7 +52,7 @@ committed code.
 |---|---|---|
 | Compiled hazard model (not interpreted at runtime) | STPA UCAs compiled to OPA Rego AST at build time via `stpa_compiler.py`; the compiled artifact is immutable at runtime — an agent cannot modify its own invariants even during a full container compromise | [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | Math-backed safety certificate | Discrete-time CBF: `h(S(t+1)) >= (1-γ)*h(S(t))` — a theorem, not a policy rule | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
-| Out-of-process policy engine | OPA runs as a separate process; CAGE calls it over HTTP — the agent cannot tamper with the policy evaluator | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| Out-of-process policy engine | OPA runs as a separate process; CAGE calls it over HTTP — the agent cannot tamper with the policy evaluator | [`src/gateway/governance/governor/stages/opa.py`](../../src/gateway/governance/governor/stages/opa.py) |
 | Multi-jurisdiction compliance registry | `ControlRegistry` resolves `CTRL_*` IDs to jurisdiction-specific regulatory citations at runtime from `config/compliance/{REGION}_BASELINE.json` | [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) |
 
 ### 2.2 "Physically gate the runtime"
@@ -61,7 +61,7 @@ committed code.
 |---|---|---|
 | Zero-TOCTOU database commit gate | `atomic_verify_and_commit()` collapses CBF check and state commit into a single Redis Lua script — no Python round-trip between check and write | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | Cryptographic routing seal | HMAC-SHA256 seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers); downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
-| Fail-closed startup assertion | `RuntimeError` at startup in production if the causal tier's `dowhy` dependency is absent or `RECONCILIATION_PROVIDER=stub` — the container fails to start rather than degrading to an unguarded state. The CBF tier has no bypass flag to guard. | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| Fail-closed startup assertion | `RuntimeError` at startup in production if the causal tier's `dowhy` dependency is absent or `RECONCILIATION_PROVIDER=stub` — the container fails to start rather than degrading to an unguarded state. The CBF tier has no bypass flag to guard. | [`src/gateway/governance/governor/_legacy_startup.py`](../../src/gateway/governance/governor/_legacy_startup.py) |
 | DEFER state machine | 4-state machine (PARK → HYDRATE → REPLAY) prevents binary forced decisions on incomplete context; parked in Redis `db=1` with 4-hour TTL | [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) |
 | Human-gated HITL interrupt | `approval_node` calls the LangGraph dynamic `interrupt()` primitive, suspending the graph; it resumes only on an explicit `Command(resume=...)` carrying reviewer identity and rationale | [`src/governed_financial_advisor/graph/nodes/approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) |
 

@@ -38,7 +38,7 @@ The comparative matrix claims CAGE enforces at the **container network interface
 [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) and [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.1, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
 
 **No-Direct-Bind startup assertions:**  
-[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:91) raises `RuntimeError` at startup in production if `dowhy` is absent or ground truth is a stub; the CBF tier has no bypass flag at all. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
+[`symbolic_governor.py`](../../src/gateway/governance/governor/_legacy_startup.py) raises `RuntimeError` at startup in production if `dowhy` is absent or ground truth is a stub; the CBF tier has no bypass flag at all. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
 
 **Gap vs. matrix claim:** The matrix references "CNI kernel edge" enforcement. The current implementation enforces at the Redis database commit tier (application-layer substrate), not at the CNI/eBPF layer. This is a positioning gap, not a security gap — the Redis atomic Lua enforcement is functionally equivalent for any high-reliability state mutation use case, but the CNI framing implies network-level enforcement that does not yet exist.
 
@@ -86,13 +86,13 @@ The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic 
 The matrix claims CAGE uses a **4-state asymmetric router** where high-confidence paths (c ≥ 0.95) bypass blocking gates via async routines, while lower confidence tiers freeze and park.
 
 **4-state routing:**  
-[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:202) defines three zones:
+[`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py) defines three zones:
 - `FRIA_ZONE_ALLOW` (≥ 0.95): async fire-and-forget attestation — zero blocking latency on hot path
 - `FRIA_ZONE_DEFER` (0.70–0.95): synchronous blocking gate via `enforce_fria_boundary()`
 - `< 0.70`: hard local deny, no external call
 
 **Two-phase read/mutate ordering:**  
-[`_run_checks()`](../../src/gateway/governance/symbolic_governor.py:1305) evaluates the read-only tiers (OPA, structural corroboration, consensus, causal gatekeeper, adaptive FRIA) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after OPA. The concurrent gather survives on the post-approval revalidation path only.
+[`_run_checks()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (OPA, structural corroboration, consensus, causal gatekeeper, adaptive FRIA) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after OPA. The concurrent gather survives on the post-approval revalidation path only.
 
 **DeferQueue parking:**  
 [`DeferQueue`](../../src/gateway/governance/defer_queue.py:377) parks tokens in Redis `db=1` (isolated, `noeviction` policy) with a 4-hour TTL. The three-phase replay flow (PARK → HYDRATE → REPLAY) allows automated data-hydration to re-admit parked tokens without human intervention.
@@ -137,7 +137,7 @@ However, there is no **public substrate contract** — a versioned, documented A
 
 **What is missing:**
 1. A **Substrate Contract Specification** — a versioned OpenAPI/gRPC schema defining the ingress surface for external policy specifications.
-2. A **Policy Version Pinning API** — the `policy_version_id` parameter in [`validate_action()`](../../src/gateway/governance/symbolic_governor.py:2238) already enforces version pinning against `ControlRegistry.active_hash`, but this is not exposed as a public contract that external policy authors can use to pin their ACS/AAIF specs to a specific CAGE baseline.
+2. A **Policy Version Pinning API** — the `policy_version_id` parameter in [`validate_action()`](../../src/gateway/governance/governor/governor.py) already enforces version pinning against `ControlRegistry.active_hash`, but this is not exposed as a public contract that external policy authors can use to pin their ACS/AAIF specs to a specific CAGE baseline.
 3. A **Developer SDK** — a thin client library (Python, TypeScript) that wraps the governance endpoint and handles seal verification, making it trivial for any high-reliability agentic application to adopt CAGE as their execution substrate.
 
 ---
@@ -148,7 +148,7 @@ However, there is no **public substrate contract** — a versioned, documented A
 > "Purely handles structural consequence containment; it relies on integrations to pass down user intent."
 
 **Current state:**  
-The [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py:830) pipeline is structurally focused: CBF checks resource invariants (cash balance in the financial deployment; any continuous safety variable in other domains), OPA checks policy rules, STPA checks unsafe control actions. The [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) and [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) provide some semantic context, but they are not integrated into the main `_run_checks()` pipeline as first-class tiers.
+The [`SymbolicGovernor`](../../src/gateway/governance/governor/pipeline.py) pipeline is structurally focused: CBF checks resource invariants (cash balance in the financial deployment; any continuous safety variable in other domains), OPA checks policy rules, STPA checks unsafe control actions. The [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) and [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) provide some semantic context, but they are not integrated into the main `_run_checks()` pipeline as first-class tiers.
 
 **What is missing:**
 1. A **Semantic Intent Tier** — a governance tier (Tier 0 or Tier 8) that validates the semantic coherence of the agent's stated intent against the action being requested. This would use the existing NeMo Guardrails infrastructure ([`nemo/`](../../src/gateway/governance/nemo/)) to check that the action is semantically consistent with the declared user intent.
@@ -216,7 +216,7 @@ The following work items are ordered by strategic priority. Items marked **[BLOC
 
 | Work Item | Priority | Owner | Files |
 |---|---|---|---|
-| Semantic Intent Tier | MEDIUM | TBD | Extend `src/gateway/governance/symbolic_governor.py` |
+| Semantic Intent Tier | MEDIUM | TBD | Extend `src/gateway/governance/governor/governor.py` |
 | Provenance Chain Gate | MEDIUM | TBD | Integrate `src/gateway/governance/provenance_chain.py` into `_run_checks()` |
 | Context Corruption Detection | MEDIUM | TBD | New tier in `_run_checks()` |
 
@@ -242,7 +242,7 @@ The following capabilities are **fully implemented** in v2.0.0 and constitute ge
 
 3. **Math-Backed Safety Certificate** — The discrete-time CBF (`h(S(t+1)) >= (1-γ)*h(S(t))`) provides a formal proof of safety that text-based behavioral constraints (ACS) and trace-schema comparison (AAIF) cannot provide.
 
-4. **Fail-Closed Startup Assertions** — Production startup `RuntimeError`s ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), and the absence of any CBF bypass flag, mean the governance substrate cannot be silently degraded. Competitors rely on application-tier hooks that can be bypassed.
+4. **Fail-Closed Startup Assertions** — Production startup `RuntimeError`s ([`symbolic_governor.py`](../../src/gateway/governance/governor/_legacy_startup.py)), and the absence of any CBF bypass flag, mean the governance substrate cannot be silently degraded. Competitors rely on application-tier hooks that can be bypassed.
 
 5. **Multi-Jurisdiction Compliance Registry** — [`ControlRegistry`](../../src/gateway/governance/constants.py:229) with `US_FED`, `EU_ECB`, and `APAC_MAS` profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. The registry is domain-agnostic: the same `CTRL_*` enum members and JSON profile mechanism extend to any regulated vertical (pharmaceutical GxP, critical infrastructure, autonomous systems). Neither competitor has a comparable multi-jurisdiction enforcement substrate.
 
@@ -264,9 +264,9 @@ The following claims from the competitive analysis are now technically substanti
 
 | Claim | Substantiation | File |
 |---|---|---|
-| "Immune to Prompt Breakouts" | The CBF tier has no fail-open flag; missing `dowhy` or stub ground truth raises `RuntimeError` at startup in production | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| "Immune to Prompt Breakouts" | The CBF tier has no fail-open flag; missing `dowhy` or stub ground truth raises `RuntimeError` at startup in production | [`symbolic_governor.py`](../../src/gateway/governance/governor/_legacy_startup.py) |
 | "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf_engine.py:1632`](../../src/gateway/governance/safety/cbf_engine.py:1632) |
-| "Telco-Grade Velocity" | Asymmetric hot path — confidence ≥ `FRIA_ZONE_ALLOW` (0.95) contacts the normative provider fire-and-forget, never blocking the action | [`symbolic_governor.py:202`](../../src/gateway/governance/symbolic_governor.py:202) |
+| "Telco-Grade Velocity" | Asymmetric hot path — confidence ≥ `FRIA_ZONE_ALLOW` (0.95) contacts the normative provider fire-and-forget, never blocking the action | [`symbolic_governor.py:202`](../../src/gateway/governance/governor/stages/confidence.py) |
 | "Compiled AST Invariants" | STPA UCAs compiled to OPA Rego at build time | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf_engine.py:19`](../../src/gateway/governance/safety/cbf_engine.py:19) |
 | "Multi-Jurisdiction" | US_FED / EU_ECB / APAC_MAS regional profiles | [`constants.py:158`](../../src/gateway/governance/constants.py:158) |
@@ -300,7 +300,7 @@ When implementing the Phase 1 ingress adapters:
 | NIST AI 600-1 Implementation Plan | [`docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md`](../compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md) |
 | POAM | [`docs/POAM.md`](../POAM.md) |
 | Control Barrier Function | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
-| Symbolic Governor | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| Symbolic Governor | [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py) |
 | STPA Compiler | [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | Normative Provider | [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py) |
 | Routing Seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
@@ -407,7 +407,7 @@ CAGE has no integration with Google Agent Gateway's Service Extensions mechanism
 **Full protocol and implementation analysis:** see the proposed implementation steps below.
 
 **Proposed implementation:**
-1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py:2238), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.
+1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.
 2. A **Deployment Template** (`infra/agw/`, new) — a Terraform module (GCP-specific, optional) that registers the Service Extension with AGW and configures the callout to CAGE's endpoint with `fail_open = false` (fail-closed). Operators on other platforms should use the equivalent service mesh or API gateway extension mechanism.
 3. A **Joint Reference Architecture** (`docs/architecture/CAGE_AGW_REFERENCE_ARCH.md`, new) — describing the CAGE + AGW defense-in-depth stack for GCP-native deployments.
 

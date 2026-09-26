@@ -49,7 +49,7 @@ from src.gateway.governance.singletons import (
     install_domain_components,
     symbolic_governor,
 )
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
 

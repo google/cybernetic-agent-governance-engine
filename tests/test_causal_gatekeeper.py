@@ -554,7 +554,7 @@ class TestCausalGatekeeperIntegration:
         """Helper to create a SymbolicGovernor with all checks mocked except causal."""
         from src.gateway.core.policy import OPAClient
         from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+        from src.gateway.governance.governor.governor import SymbolicGovernor
 
         opa_client = MagicMock(spec=OPAClient)
         opa_client.evaluate_policy = AsyncMock(return_value={"decision": "ALLOW"})

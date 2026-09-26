@@ -25,7 +25,7 @@ not just those starting with "UNSAFE".
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.gateway.governance.symbolic_governor import SymbolicGovernor, GovernanceError
+from src.gateway.governance.governor.governor import SymbolicGovernor, GovernanceError
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 
 # Test markers per AGENTS.md
@@ -35,7 +35,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 @pytest.fixture
 def mock_governor(classification_engine):
     """Create a SymbolicGovernor instance with mocked dependencies."""
-    with patch("src.gateway.governance.symbolic_governor.tracer"):
+    with patch("src.gateway.governance.governor.governor.tracer"):
         # Create mocked dependencies
         mock_opa_client = MagicMock()
         mock_safety_filter = MagicMock()
@@ -81,7 +81,8 @@ class TestC1PostHITLRevalidationFailClosed:
         # Assert: Violation message contains the refusal reason
         assert "RECONCILIATION_UNAVAILABLE" in str(exc_info.value)
         assert exc_info.value.receipt is not None
-        assert exc_info.value.receipt.violated_tier == "SYMBOLIC_GOVERNOR"
+        # The receipt names the tier that actually refused, not a generic source.
+        assert exc_info.value.receipt.violated_tier == "cbf"
 
     @pytest.mark.asyncio
     async def test_revalidate_fails_on_fence_regression(self, mock_governor):

@@ -130,7 +130,7 @@ class TestHealthcarePlugin:
             NullConsensusProvider,
             NullSafetyFilter,
         )
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+        from src.gateway.governance.governor.governor import SymbolicGovernor
 
         governor = SymbolicGovernor(
             opa_client=OPAClient("http://localhost:8181"),

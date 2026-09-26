@@ -65,7 +65,7 @@ def test_symbolic_governor_requires_safety_filter_at_initialization() -> None:
     # Verify signature requires safety_filter
     import inspect
 
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     sig = inspect.signature(SymbolicGovernor.__init__)
     params = sig.parameters
@@ -94,7 +94,7 @@ def test_symbolic_governor_requires_consensus_engine_at_initialization() -> None
     """
     import inspect
 
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     sig = inspect.signature(SymbolicGovernor.__init__)
     params = sig.parameters
@@ -117,7 +117,7 @@ def test_symbolic_governor_requires_context_at_initialization() -> None:
     govern() method (not __init__). This allows a single governor instance
     to process multiple requests with different contexts.
     """
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     init_params = inspect.signature(SymbolicGovernor.__init__).parameters
     assert "context" not in init_params, "context must not be a parameter to SymbolicGovernor.__init__"
@@ -148,7 +148,7 @@ def test_domain_plugins_must_not_import_from_kernel() -> None:
 
 def test_governor_initialization_creates_empty_tier_registry(classification_engine) -> None:
     """SymbolicGovernor initializes with an empty tier registry when domain_tiers=[]."""
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     gov = SymbolicGovernor(classification_engine, MagicMock(), MagicMock(), MagicMock(), domain_tiers=[])
     assert len(gov._domain_tiers) == 0, "Initial domain_tiers list must be empty"
@@ -321,7 +321,7 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     Enforcement: SymbolicGovernor._run_checks() logic.
     """
     from unittest.mock import MagicMock
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
     from src.gateway.governance.contracts import GovernanceTierPlugin
 
     class BrokenTier(GovernanceTierPlugin):
@@ -356,7 +356,7 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
         consensus_engine=MagicMock(),
         domain_tiers=(BrokenTier(),),
     )
-    violations = await gov._run_domain_tiers("execute_trade", {}, phase=1)
+    violations = await _run_tiers(gov, "execute_trade", {}, phase=1)
     assert len(violations) == 1
     assert violations[0].tier == "broken_tier"
     assert violations[0].code == "TIER_EXCEPTION"
@@ -376,7 +376,7 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     """
     import asyncio
     from unittest.mock import MagicMock
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
     from src.gateway.governance.contracts import GovernanceTierPlugin
 
     class TimeoutTier(GovernanceTierPlugin):
@@ -411,7 +411,7 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
         consensus_engine=MagicMock(),
         domain_tiers=(TimeoutTier(),),
     )
-    violations = await gov._run_domain_tiers("execute_trade", {}, phase=1)
+    violations = await _run_tiers(gov, "execute_trade", {}, phase=1)
     assert len(violations) == 1
     assert violations[0].tier == "timeout_tier"
     assert violations[0].code == "TIER_EXCEPTION"
@@ -435,7 +435,7 @@ def test_every_tier_must_emit_evidence_artifact() -> None:
     validation (NIST SP 800-53 AU-2, AU-3).
     """
     import dataclasses
-    from src.gateway.governance.symbolic_governor import Violation
+    from src.gateway.governance.governor.governor import Violation
     from src.gateway.governance.evidence.stream import (
         EvidenceRecord,
         EvidenceCommitResult,
@@ -590,3 +590,12 @@ def test_tier_contracts_are_documented_in_architecture_md() -> None:
     )
 
     # This is a smoke test; full documentation validation is manual
+
+
+async def _run_tiers(gov, action, params, *, phase):
+    """Run one phase of gov's domain tiers through the real pipeline."""
+    from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
+    stages = [s for s in gov.stages if hasattr(s, "claims") and s.tier.phase == phase]
+    ctx = StageContext(action=action, params=params, profile=Profile.FULL)
+    result = await run_pipeline(stages, ctx, profile=Profile.FULL)
+    return list(result.violations)

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from src.gateway.governance.contracts import PolicyClient, Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import OpaVerdict
+from src.gateway.governance.governor.pipeline import Profile, OpaVerdict
 from src.gateway.governance.governor.stages.opa import OpaStage, decode_opa_verdict
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -57,7 +57,9 @@ async def test_opa_stage_returns_empty_list_for_allow():
     client = MockPolicyClient({"allow": True})
     stage = OpaStage(client)
     
-    violations = await stage.run("execute_trade", {"amount": 100})
+    from src.gateway.governance.governor.pipeline import StageContext
+    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+    violations = await stage.run(ctx)
     assert violations == []
     assert stage.decoded_verdict == OpaVerdict.ALLOW
 
@@ -68,7 +70,9 @@ async def test_opa_stage_returns_hard_violation_for_deny():
     client = MockPolicyClient("DENY")
     stage = OpaStage(client)
     
-    violations = await stage.run("execute_trade", {"amount": 100})
+    from src.gateway.governance.governor.pipeline import StageContext
+    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+    violations = await stage.run(ctx)
     assert len(violations) == 1
     assert violations[0].code == "OPA_DENY"
     assert violations[0].kind == ViolationKind.HARD
@@ -81,7 +85,9 @@ async def test_opa_stage_returns_hitl_violation_for_manual_review():
     client = MockPolicyClient("MANUAL_REVIEW")
     stage = OpaStage(client)
     
-    violations = await stage.run("execute_trade", {"amount": 100})
+    from src.gateway.governance.governor.pipeline import StageContext
+    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+    violations = await stage.run(ctx)
     assert len(violations) == 1
     assert violations[0].code == "OPA_MANUAL_REVIEW"
     assert violations[0].kind == ViolationKind.HITL
@@ -94,7 +100,9 @@ async def test_opa_stage_returns_hard_violation_for_unknown():
     client = MockPolicyClient("SOMETHING_ELSE")
     stage = OpaStage(client)
     
-    violations = await stage.run("execute_trade", {"amount": 100})
+    from src.gateway.governance.governor.pipeline import StageContext
+    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+    violations = await stage.run(ctx)
     assert len(violations) == 1
     assert violations[0].code == "OPA_UNKNOWN_VERDICT"
     assert violations[0].kind == ViolationKind.HARD
@@ -107,7 +115,9 @@ async def test_opa_stage_returns_hard_violation_on_exception():
     client = MockPolicyClient(RuntimeError("Connection lost"))
     stage = OpaStage(client)
     
-    violations = await stage.run("execute_trade", {"amount": 100})
+    from src.gateway.governance.governor.pipeline import StageContext
+    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+    violations = await stage.run(ctx)
     assert len(violations) == 1
     assert violations[0].code == "OPA_ERROR"
     assert violations[0].kind == ViolationKind.HARD

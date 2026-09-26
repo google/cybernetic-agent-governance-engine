@@ -165,7 +165,7 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 | *(pre-pipeline)* | NeMo Guardrails (incl. Presidio PII masking) | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
 | **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`src/gateway/governance/ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`src/gateway/governance/ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`src/gateway/governance/ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
 | Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
-| Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
+| Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/governor/stages/confidence.py) |
 | Tier 2 / 4 | CBF + OPA (concurrent) | [`safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), OPA `system_authz.rego` |
 | Tier 3 | Fiscal Limit Pre-Reservation | [`safety/resource_guard.py`](../src/gateway/governance/safety/resource_guard.py) |
 | Tier 5 | Multi-Agent Consensus | [`consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
@@ -277,6 +277,6 @@ When submitting policies via `POST /governance/ingest-policy`:
 | [`docs/CAGE_OPEN_INTEROP_SPEC.md`](CAGE_OPEN_INTEROP_SPEC.md) | Full external API surface contract |
 | [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py) | Unified ingress pipeline |
 | [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) | `ControlRegistry` and `GovernanceControl` enum |
-| [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) | `validate_action()` — the single choke point |
+| [`src/gateway/governance/governor/governor.py`](../src/gateway/governance/governor/governor.py) | `validate_action()` — the single choke point |
 | [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) | Routing seal implementation |
 | [`scripts/check_policy_drift.py`](../scripts/check_policy_drift.py) | Policy drift detection gate |

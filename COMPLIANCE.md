@@ -26,13 +26,13 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
-| **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/symbolic_governor.py` |
+| **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` |
 | **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** · **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** · **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` |
 | **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `src/compliance_bridge/aarm_mapper.py` |
-| **Security Gates** | Open Policy Agent (OPA) Guardrail & Constraints | **ISO/IEC 42001 §A.6.1** (Enterprise Policy) | `CTRL_OPA_005` | `src/gateway/governance/symbolic_governor.py` |
+| **Security Gates** | Open Policy Agent (OPA) Guardrail & Constraints | **ISO/IEC 42001 §A.6.1** (Enterprise Policy) | `CTRL_OPA_005` | `src/gateway/governance/governor/stages/opa.py` |
 
 ### 1.2 US_FED Only Controls (NIST SP 800-53 / AI 600-1)
 
@@ -52,7 +52,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
-| **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/symbolic_governor.py` |
+| **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/governor/governor.py` |
 | **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` |
 | **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 
@@ -71,14 +71,14 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | --- | --- | --- | --- | --- | --- |
 | **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
-| **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/symbolic_governor.py` | *All Regions* |
+| **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` | *All Regions* |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` | *All Regions* |
 | **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** <br> **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` | *All Regions* |
-| **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/symbolic_governor.py` | `EU_ECB` only |
+| **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/governor/governor.py` | `EU_ECB` only |
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** <br> **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` | *All Regions* |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** <br> **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` | *All Regions* |
 | **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `src/compliance_bridge/aarm_mapper.py` | *All Regions* |
-| **Security Gates** | Open Policy Agent (OPA) Guardrail & Constraints | **ISO/IEC 42001 §A.6.1** <br> (Enterprise Policy) | `CTRL_OPA_005` | `src/gateway/governance/symbolic_governor.py` | *All Regions* |
+| **Security Gates** | Open Policy Agent (OPA) Guardrail & Constraints | **ISO/IEC 42001 §A.6.1** <br> (Enterprise Policy) | `CTRL_OPA_005` | `src/gateway/governance/governor/stages/opa.py` | *All Regions* |
 | **AI Safety (US_FED)** | Confabulation / Hallucination Rate Enforcement | **NIST AI 600-1 §2.1** | `CTRL_AGT_001` | `src/gateway/governance/confabulation_scorer.py` | `US_FED` only |
 | **AI Safety (US_FED)** | PII Sanitization & Data Privacy Audit Logging | **NIST AI 600-1 §2.2** | `CTRL_PII_010` | `src/gateway/governance/pii_sanitizer.py` | `US_FED` only |
 | **AI Safety (US_FED)** | Prompt Injection Detection & CausalGatekeeper WAL Integrity | **NIST AI 600-1 §2.3** | `CTRL_WAL_002` | `src/gateway/governance/prompt_injection_detector.py` | `US_FED` only |
@@ -140,7 +140,7 @@ The `PlaceboTreatmentRefuter` runs **50 simulations**; the causal effect is cons
 
 ### 2.4 FRIA Zone Thresholds
 
-**Source:** [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py) · **Control:** `CTRL_FRIA_006`
+**Source:** [`src/gateway/governance/governor/governor.py`](src/gateway/governance/governor/governor.py) · **Control:** `CTRL_FRIA_006`
 
 | Constant | Value | Semantic |
 |----------|-------|----------|

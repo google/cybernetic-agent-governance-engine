@@ -44,7 +44,8 @@ def __getattr__(name: str) -> object:  # noqa: N807
     """
     if name in ("GovernanceError", "SymbolicGovernor"):
         try:
-            from .symbolic_governor import GovernanceError, SymbolicGovernor
+            from .governor.errors import GovernanceError
+            from .governor.governor import SymbolicGovernor
 
             globals()["GovernanceError"] = GovernanceError
             globals()["SymbolicGovernor"] = SymbolicGovernor

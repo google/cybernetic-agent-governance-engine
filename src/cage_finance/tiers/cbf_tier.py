@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
     GovernanceTierPlugin,
     Violation,
@@ -44,7 +45,10 @@ class CBFTierPlugin(GovernanceTierPlugin):
         return action == "execute_trade"
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        return []
+        """Read-only preview of commit() (DRY_RUN); spends no barrier headroom."""
+        return await preview_barrier(
+            self.cbf, tier=self.tier_name, code="CBF_BARRIER_VIOLATED", action=action, params=params
+        )
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
         success, reason = await self.cbf.atomic_verify_and_commit(action, params)
