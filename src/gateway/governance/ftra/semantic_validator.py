@@ -38,6 +38,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from src.gateway.governance.contracts import Violation, ViolationKind
 
 logger = logging.getLogger("Gateway.Governance.FTRA.SemanticValidator")
 
@@ -117,7 +118,7 @@ class SemanticValidationResult:
     failure_code: ValidationFailureCode
     """Diagnostic code for the validation outcome."""
 
-    violations: list[str] = field(default_factory=list)
+    violations: list[Violation] = field(default_factory=list)
     """List of violation messages."""
 
     failed_parameter: str | None = None

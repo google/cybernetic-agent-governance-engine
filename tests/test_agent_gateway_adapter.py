@@ -290,7 +290,7 @@ class TestHandleCheckRequest:
         assert resp["denied_response"]["status"]["code"] == 403
         body_parsed = json.loads(resp["denied_response"]["body"])
         assert body_parsed["verdict"] == GovernanceDecision.DENY
-        assert "trade amount exceeds limit" in body_parsed["violations"]
+        assert any("trade amount exceeds limit" in str(v).lower() for v in body_parsed["violations"])
 
     @pytest.mark.asyncio
     async def test_require_approval_returns_202_with_require_approval_verdict(self):

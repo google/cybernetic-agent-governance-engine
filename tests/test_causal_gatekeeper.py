@@ -586,15 +586,17 @@ class TestCausalGatekeeperIntegration:
             ),
         )
 
+    @patch("src.gateway.infrastructure.redis_client.sync_redis_client", MagicMock())
     @pytest.mark.asyncio
     async def test_governor_passes_with_stable_model(self, stable_telemetry, classification_engine):
         """Governor should approve when the causal model is stable."""
         governor = self._create_mock_governor(classification_engine, stable_telemetry)
         intent = {"amount": 1, "confidence": 0.99, "symbol": "AAPL"}
         result = await governor.verify("execute_trade", intent)
-        causal_violations = [v for v in result["violations"] if "Causal" in v]
+        causal_violations = [v for v in result["violations"] if v.code == "CAUSAL_CHECK_FAILED"]
         assert len(causal_violations) == 0
 
+    @patch("src.gateway.infrastructure.redis_client.sync_redis_client", MagicMock())
     @pytest.mark.asyncio
     async def test_governor_blocks_when_causal_check_fails(self, stable_telemetry, classification_engine):
         """Governor should block when the causal safety check returns False."""
@@ -608,17 +610,18 @@ class TestCausalGatekeeperIntegration:
             result = await governor.verify("execute_trade", intent)
 
         causal_violations = [
-            v for v in result["violations"] if "DoWhy refutation failed" in v
+            v for v in result["violations"] if v.code == "CAUSAL_CHECK_FAILED"
         ]
         assert len(causal_violations) > 0
 
+    @patch("src.gateway.infrastructure.redis_client.sync_redis_client", MagicMock())
     @pytest.mark.asyncio
     async def test_governor_skips_causal_for_non_trade(self, stable_telemetry, classification_engine):
         """Causal gatekeeper should NOT run for non-trade actions."""
         governor = self._create_mock_governor(classification_engine, stable_telemetry)
         intent = {"query": "What is AAPL price?"}
         result = await governor.verify("market_lookup", intent)
-        causal_violations = [v for v in result["violations"] if "Causal" in v]
+        causal_violations = [v for v in result["violations"] if v.code == "CAUSAL_CHECK_FAILED"]
         assert len(causal_violations) == 0
 
 

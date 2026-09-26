@@ -305,7 +305,7 @@ def test_execute_trade_missing_symbol_fails():
     assert not result.is_valid
     assert result.failure_code == ValidationFailureCode.MISSING_REQUIRED_PARAMETER
     assert result.failed_parameter == "symbol"
-    assert "Required parameter 'symbol' is missing" in result.violations[0]
+    assert "Required parameter 'symbol' is missing" in result.violations[0].message
 
 
 def test_execute_trade_missing_amount_fails():
@@ -348,7 +348,7 @@ def test_execute_trade_symbol_wrong_type_fails():
     assert not result.is_valid
     assert result.failure_code == ValidationFailureCode.TYPE_MISMATCH
     assert result.failed_parameter == "symbol"
-    assert "Expected str, got int" in result.violations[0]
+    assert "Expected str, got int" in result.violations[0].message
 
 
 def test_execute_trade_amount_wrong_type_fails():
@@ -380,7 +380,7 @@ def test_execute_trade_negative_amount_fails():
     assert not result.is_valid
     assert result.failure_code == ValidationFailureCode.NUMERICAL_BOUND_VIOLATION
     assert result.failed_parameter == "amount"
-    assert "below minimum" in result.violations[0]
+    assert "below minimum" in result.violations[0].message
 
 
 def test_execute_trade_zero_amount_fails():
@@ -407,7 +407,7 @@ def test_execute_trade_exceeds_max_amount_fails():
     assert not result.is_valid
     assert result.failure_code == ValidationFailureCode.NUMERICAL_BOUND_VIOLATION
     assert result.failed_parameter == "amount"
-    assert "exceeds maximum" in result.violations[0]
+    assert "exceeds maximum" in result.violations[0].message
 
 
 def test_execute_trade_bounded_exceeds_lower_max_fails():
@@ -467,7 +467,7 @@ def test_execute_trade_invalid_currency_fails():
     assert not result.is_valid
     assert result.failure_code == ValidationFailureCode.INVALID_ENUM_VALUE
     assert result.failed_parameter == "currency"
-    assert "not in allowed set" in result.violations[0]
+    assert "not in allowed set" in result.violations[0].message
 
 
 def test_execute_trade_invalid_order_type_fails():
@@ -512,7 +512,7 @@ def test_execute_trade_invalid_symbol_pattern_fails():
     assert not result.is_valid
     assert result.failure_code == ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION
     assert result.failed_parameter == "symbol"
-    assert "does not match required pattern" in result.violations[0]
+    assert "does not match required pattern" in result.violations[0].message
 
 
 def test_release_wire_invalid_wire_id_pattern_fails():
@@ -557,7 +557,7 @@ def test_execute_trade_null_byte_injection_fails():
     assert result.failure_code == ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION
     assert result.failed_parameter == "symbol"
     # Either pattern mismatch or forbidden pattern detected is acceptable
-    assert "pattern" in result.violations[0].lower()
+    assert "pattern" in result.violations[0].message.lower()
 
 
 def test_execute_trade_path_traversal_injection_fails():

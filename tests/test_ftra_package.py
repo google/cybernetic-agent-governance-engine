@@ -1703,7 +1703,7 @@ class TestFtraIntegration:
         assert result.classification == "IRREVERSIBLE_TERMINAL"
         assert result.terminal_match == "execute_trade"
         assert len(result.violations) == 1
-        assert "IRREVERSIBLE_TERMINAL" in result.violations[0]
+        assert "IRREVERSIBLE_TERMINAL" in result.violations[0].message
 
         # READ_ONLY → requires_hitl=False, score=0.0
         result = FtraBoundaryResult.from_classification(
@@ -1737,7 +1737,7 @@ class TestFtraIntegration:
         assert result.requires_hitl is True
         assert result.terminal_match is None
         assert result.bypassed_ftra_node is True
-        assert "not found" in result.violations[0]
+        assert "not found" in result.violations[0].message
 
     def test_ftra_integration_with_mixed_plan_actions(self, tmp_path):
         """Test FTRA handling of plans with mixed action types.
