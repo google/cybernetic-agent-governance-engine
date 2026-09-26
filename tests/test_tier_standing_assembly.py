@@ -32,12 +32,14 @@ from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 
 @pytest.fixture
-def mock_governor() -> SymbolicGovernor:
+def mock_governor(classification_engine) -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies."""
     opa_client = MagicMock()
     safety_filter = MagicMock()
     consensus_engine = MagicMock()
-    return SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+    return SymbolicGovernor(
+        opa_client, safety_filter, consensus_engine, classification_engine
+    )
 
 
 @pytest.mark.local

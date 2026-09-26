@@ -64,11 +64,12 @@ class _FakeTier:
         pass
 
 
-def _make_governor(**overrides):
+def _make_governor(classification_engine, **overrides):
     """Create a SymbolicGovernor with mocked dependencies."""
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
     kwargs = {
+        "classification_engine": classification_engine,
         "opa_client": MagicMock(),
         "safety_filter": MagicMock(),
         "consensus_engine": MagicMock(),
@@ -80,7 +81,7 @@ def _make_governor(**overrides):
 class TestFormalModelParity:
     """Verify registered tier names match the formal model's TIERS tuple."""
 
-    def test_financial_tiers_match_formal_model_subsequence(self):
+    def test_financial_tiers_match_formal_model_subsequence(self, classification_engine):
         """Register tiers matching the formal model's financial-domain tiers.
 
         The formal model in proof/model.py defines:
@@ -106,7 +107,7 @@ class TestFormalModelParity:
             )
             for idx, name in enumerate(expected_tiers)
         )
-        governor = _make_governor(domain_tiers=tiers)
+        governor = _make_governor(classification_engine, domain_tiers=tiers)
 
         # Verify the registered tier names, within each phase, preserve
         # the relative order from the formal model.
@@ -130,7 +131,7 @@ class TestFormalModelParity:
             f"expected {phase_2_expected}"
         )
 
-    def test_explicit_order_prevents_alphabetic_inversion(self):
+    def test_explicit_order_prevents_alphabetic_inversion(self, classification_engine):
         """D5 regression: alphabetic sort would put 'causal' before 'consensus'.
 
         The formal model requires consensus (order=5) before causal (order=6).
@@ -143,7 +144,7 @@ class TestFormalModelParity:
             _FakeTier("causal", phase=1, order=6),
             _FakeTier("consensus", phase=1, order=5),
         )
-        governor = _make_governor(domain_tiers=tiers)
+        governor = _make_governor(classification_engine, domain_tiers=tiers)
 
         names = governor.registered_tier_names()
         assert names == ["consensus", "causal"], (

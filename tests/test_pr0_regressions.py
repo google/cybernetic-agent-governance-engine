@@ -56,7 +56,7 @@ def mock_ftra_safe():
 
 
 @pytest.mark.asyncio
-async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe):
+async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe, classification_engine):
     """
     C1: Verify CBF reconciliation unavailable (Redis unreachable) blocks execution.
     
@@ -82,6 +82,7 @@ async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -105,7 +106,7 @@ async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe):
+async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe, classification_engine):
     """
     C2: Verify OPA DENY verdict skips CBF commit (no budget leakage).
     
@@ -131,6 +132,7 @@ async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -157,7 +159,7 @@ async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe):
+async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe, classification_engine):
     """
     H2: Verify OPA unknown/typo verdicts fail-closed (deny execution).
     
@@ -182,6 +184,7 @@ async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -210,7 +213,7 @@ async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_h3_confidence_nan_blocks(mock_ftra_safe):
+async def test_h3_confidence_nan_blocks(mock_ftra_safe, classification_engine):
     """
     H3: Verify NaN confidence scores fail-closed (block execution).
     
@@ -239,6 +242,7 @@ async def test_h3_confidence_nan_blocks(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),

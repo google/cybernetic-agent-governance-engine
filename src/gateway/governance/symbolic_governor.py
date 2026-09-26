@@ -2153,11 +2153,18 @@ class SymbolicGovernor:
                     # Classify the violations using ClassificationEngine (mandatory)
                     from src.gateway.governance.classification_engine import ClassificationContext
                     
+                    _opa_res = result.get("opa_results")
+                    _opa_decision = (
+                        _opa_res.get("decision")
+                        if isinstance(_opa_res, dict)
+                        else (_opa_res if isinstance(_opa_res, str) else result.get("opa_decision"))
+                    )
+
                     context = ClassificationContext(
                         violations=violations,
                         stpa_violation_count=_stpa_count,
                         confidence=_confidence,
-                        opa_decision=result.get("opa_results", {}).get("decision") if isinstance(result.get("opa_results"), dict) else None,
+                        opa_decision=_opa_decision,
                         policy_ambiguous=result.get("policy_ambiguous", False),
                         params=params,
                         cbf_violation=any("CBF" in str(v) for v in violations),

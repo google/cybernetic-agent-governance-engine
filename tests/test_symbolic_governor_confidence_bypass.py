@@ -57,6 +57,7 @@ def _make_governor(
     cbf_committed: bool = True,
     cbf_reason: str = "COMMITTED",
     opa_decision: str = "ALLOW",
+    classification_engine: Any = None,
 ) -> SymbolicGovernor:
     """Assemble a SymbolicGovernor with all I/O mocked.
 
@@ -64,12 +65,22 @@ def _make_governor(
         cbf_committed: Return value of atomic_verify_and_commit (True=commit).
         cbf_reason:    Accompanying reason string.
         opa_decision:  What OPA's evaluate_policy returns as the "allow" key.
+        classification_engine: Optional ClassificationEngine instance.
 
     Returns:
         A fully wired SymbolicGovernor ready for ``_run_checks()``/``govern()``
         without hitting live Redis, OPA, or consensus network endpoints.
     """
+    from src.gateway.governance.classification_engine import ClassificationEngine
     from src.gateway.governance.ftra.models import FtraBoundaryResult
+    from src.gateway.governance.narrower import NarrowerRegistry
+
+    if classification_engine is None:
+        classification_engine = ClassificationEngine(
+            NarrowerRegistry(),
+            confidence_threshold=0.70,
+            defer_enabled=True,
+        )
 
     # --- CBF mock ---
     mock_cbf = AsyncMock()
@@ -92,6 +103,7 @@ def _make_governor(
         opa_client=mock_opa,
         safety_filter=mock_cbf,
         consensus_engine=mock_consensus,
+        classification_engine=classification_engine,
         stpa_validator=mock_stpa,
         domain_tiers=(
             CBFTierPlugin(mock_cbf),

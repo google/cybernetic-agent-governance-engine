@@ -25,9 +25,13 @@ Verifies that the structured Violation dataclass correctly enforces:
 
 import pytest
 
+from src.gateway.governance.classification_engine import (
+    ClassificationContext,
+    ClassificationEngine,
+)
 from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.symbolic_governor import _classify_violation
+from src.gateway.governance.narrower import NarrowerRegistry
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -102,26 +106,25 @@ def test_hard_violation_with_exceeds_max_message_still_denies():
         kind=ViolationKind.HARD,  # But kind is HARD
     )
     
-    # Simulate classification with a HARD violation
-    # The message contains "exceeds max", but kind=HARD should dominate
-    violations_list = [f"{v.tier.upper()}: {v.message}"]
-    
-    decision, meta = _classify_violation(
-        violations=violations_list,
+    engine = ClassificationEngine(NarrowerRegistry())
+    ctx = ClassificationContext(
+        violations=[v],
         stpa_violation_count=0,
         confidence=0.9,
-        context={"cbf_violation": True},  # CBF violations are HARD
+        opa_decision="ALLOW",
+        policy_ambiguous=False,
+        params={},
+        cbf_violation=True,
     )
+    result = engine.classify(ctx, "execute_trade")
     
     # Classification should return DENY, not NARROW
     # (proves free-text inspection is disabled — kind takes precedence)
-    assert decision == GovernanceDecision.DENY, (
-        f"HARD violation with 'exceeds max' message returned {decision.value}, "
+    assert result.decision == GovernanceDecision.DENY, (
+        f"HARD violation with 'exceeds max' message returned {result.decision.value}, "
         f"expected DENY. Free-text pattern matching may still be active."
     )
-    assert "CBF_CONSTRAINT" in meta.get("violation_types", []) or any(
-        "cbf" in v.lower() for v in meta.get("hard_violations", [])
-    ), "CBF violation should be classified as hard"
+    assert result.metadata.get("classification_reason") == "hard_violation"
 
 
 def test_narrowable_without_narrower_is_deny():
@@ -146,30 +149,27 @@ def test_narrowable_without_narrower_is_deny():
         kind=ViolationKind.NARROWABLE,
     )
     
-    # Simulate classification with a NARROWABLE violation but no narrower registered
-    violations_list = [f"{v.tier.upper()}: {v.message}"]
-    
-    decision, meta = _classify_violation(
-        violations=violations_list,
+    engine = ClassificationEngine(NarrowerRegistry(), narrow_enabled=True)
+    ctx = ClassificationContext(
+        violations=[v],
         stpa_violation_count=0,
         confidence=0.9,
-        context={
-            "params": {"amount": 15000},
-            # No threshold_config or narrower registered
-        },
+        opa_decision="ALLOW",
+        policy_ambiguous=False,
+        params={"amount": 15000},
+        cbf_violation=False,
     )
+    result = engine.classify(ctx, "execute_trade")
     
     # Without a narrower, NARROWABLE violations should fall back to DENY
-    # (Current implementation may return DENY directly; future implementation
-    # with NARROW support should still DENY if no narrower is available)
-    assert decision in (GovernanceDecision.DENY, GovernanceDecision.NARROW), (
-        f"NARROWABLE violation without narrower returned {decision.value}, "
+    assert result.decision in (GovernanceDecision.DENY, GovernanceDecision.NARROW), (
+        f"NARROWABLE violation without narrower returned {result.decision.value}, "
         f"expected DENY or NARROW"
     )
     
     # If NARROW is returned, verify no clamped params were generated
-    if decision == GovernanceDecision.NARROW:
-        narrowed = meta.get("narrowed_params", {})
+    if result.decision == GovernanceDecision.NARROW:
+        narrowed = result.metadata.get("narrowed_params", {})
         assert narrowed == {} or narrowed.get("amount") is None, (
             "NARROW verdict without narrower should not produce clamped params"
         )
@@ -201,36 +201,28 @@ def test_narrow_re_run_failure_is_deny():
         kind=ViolationKind.NARROWABLE,
     )
     
-    violations_list = [f"{v.tier.upper()}: {v.message}"]
-    
-    # Simulate a narrower that proposes clamped params but would fail re-run
-    # (e.g., the clamped amount still violates a different constraint)
-    decision, _meta = _classify_violation(
-        violations=violations_list,
+    engine = ClassificationEngine(NarrowerRegistry(), narrow_enabled=True)
+    ctx = ClassificationContext(
+        violations=[v],
         stpa_violation_count=0,
         confidence=0.9,
-        context={
-            "params": {"amount": 15000},
-            # Narrower would clamp to 10000, but 10000 still violates another rule
-            # (This scenario requires tier re-run support, not yet implemented)
-        },
+        opa_decision="ALLOW",
+        policy_ambiguous=False,
+        params={"amount": 15000},
+        cbf_violation=False,
     )
+    result = engine.classify(ctx, "execute_trade")
     
     # Current implementation: NARROWABLE without narrower → DENY
-    # Future implementation: NARROWABLE with failing re-run → DENY
-    assert decision in (GovernanceDecision.DENY, GovernanceDecision.NARROW), (
-        f"NARROW candidate with re-run failure returned {decision.value}, "
+    assert result.decision in (GovernanceDecision.DENY, GovernanceDecision.NARROW), (
+        f"NARROW candidate with re-run failure returned {result.decision.value}, "
         f"expected DENY"
     )
     
-    # If NARROW support is implemented, verify re-run failure is recorded
-    if decision == GovernanceDecision.NARROW:
-        # Future: meta should contain re_run_failures or similar
-        # For now, just verify the decision is stable
+    if result.decision == GovernanceDecision.NARROW:
         pass
     else:
-        # DENY is the expected fail-closed behavior
-        assert decision == GovernanceDecision.DENY
+        assert result.decision == GovernanceDecision.DENY
 
 
 def test_hard_precedence_over_narrowable():
@@ -256,27 +248,24 @@ def test_hard_precedence_over_narrowable():
         kind=ViolationKind.NARROWABLE,
     )
     
-    # Simulate classification with both HARD and NARROWABLE violations
-    violations_list = [
-        f"STPA: {hard_v.message}",
-        f"FISCAL: {narrowable_v.message}",
-    ]
-    
-    decision, meta = _classify_violation(
-        violations=violations_list,
-        stpa_violation_count=1,  # STPA violation count > 0 triggers HARD
+    engine = ClassificationEngine(NarrowerRegistry(), narrow_enabled=True)
+    ctx = ClassificationContext(
+        violations=[hard_v, narrowable_v],
+        stpa_violation_count=1,
         confidence=0.9,
-        context={"params": {"amount": 15000}},
+        opa_decision="ALLOW",
+        policy_ambiguous=False,
+        params={"amount": 15000},
+        cbf_violation=False,
     )
+    result = engine.classify(ctx, "execute_trade")
     
     # HARD takes precedence over NARROWABLE
-    assert decision == GovernanceDecision.DENY, (
-        f"Mixed HARD+NARROWABLE violations returned {decision.value}, expected DENY. "
+    assert result.decision == GovernanceDecision.DENY, (
+        f"Mixed HARD+NARROWABLE violations returned {result.decision.value}, expected DENY. "
         f"HARD precedence not enforced."
     )
-    assert meta.get("violation_types") and "STPA_SAFETY" in meta["violation_types"], (
-        "STPA violation should be classified as HARD"
-    )
+    assert result.metadata.get("classification_reason") == "hard_violation"
 
 
 def test_hitl_precedence_over_deferrable():
@@ -302,22 +291,21 @@ def test_hitl_precedence_over_deferrable():
         kind=ViolationKind.DEFERRABLE,
     )
     
-    # Simulate classification with both HITL and DEFERRABLE violations
-    violations_list = [
-        f"OPA: {hitl_v.message}",
-        f"CONFIDENCE: {deferrable_v.message}",
-    ]
-    
-    decision, _meta = _classify_violation(
-        violations=violations_list,
+    engine = ClassificationEngine(NarrowerRegistry(), defer_enabled=True)
+    ctx = ClassificationContext(
+        violations=[hitl_v, deferrable_v],
         stpa_violation_count=0,
         confidence=0.65,
-        context={"opa_decision": "MANUAL_REVIEW"},
+        opa_decision="MANUAL_REVIEW",
+        policy_ambiguous=False,
+        params={},
+        cbf_violation=False,
     )
+    result = engine.classify(ctx, "execute_trade")
     
     # HITL takes precedence over DEFERRABLE
     # (Should route to REQUIRE_APPROVAL, not DEFER)
-    assert decision == GovernanceDecision.REQUIRE_APPROVAL, (
-        f"Mixed HITL+DEFERRABLE violations returned {decision.value}, "
+    assert result.decision == GovernanceDecision.REQUIRE_APPROVAL, (
+        f"Mixed HITL+DEFERRABLE violations returned {result.decision.value}, "
         f"expected REQUIRE_APPROVAL. HITL precedence not enforced."
     )

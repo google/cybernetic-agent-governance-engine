@@ -146,11 +146,11 @@ def test_domain_plugins_must_not_import_from_kernel() -> None:
     assert not violations, f"Gate G3 import boundary violations detected in kernel: {violations}"
 
 
-def test_governor_initialization_creates_empty_tier_registry() -> None:
+def test_governor_initialization_creates_empty_tier_registry(classification_engine) -> None:
     """SymbolicGovernor initializes with an empty tier registry when domain_tiers=[]."""
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
-    gov = SymbolicGovernor(MagicMock(), MagicMock(), MagicMock(), domain_tiers=[])
+    gov = SymbolicGovernor(classification_engine, MagicMock(), MagicMock(), MagicMock(), domain_tiers=[])
     assert len(gov._domain_tiers) == 0, "Initial domain_tiers list must be empty"
 
 
@@ -309,7 +309,7 @@ def test_any_tier_failure_must_block_execution() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_tier_result_must_block_execution() -> None:
+async def test_unknown_tier_result_must_block_execution(classification_engine) -> None:
     """If any tier returns UNKNOWN, the action must be blocked.
 
     Contract: Governance tiers must return explicit ALLOW or DENY.
@@ -350,6 +350,7 @@ async def test_unknown_tier_result_must_block_execution() -> None:
             pass
 
     gov = SymbolicGovernor(
+        classification_engine=classification_engine,
         opa_client=MagicMock(),
         safety_filter=MagicMock(),
         consensus_engine=MagicMock(),
@@ -364,7 +365,7 @@ async def test_unknown_tier_result_must_block_execution() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tier_timeout_must_block_execution() -> None:
+async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     """If a tier times out (exceeds SLA budget), the action must be blocked.
 
     Contract: Tier evaluation must complete within allocated latency
@@ -404,6 +405,7 @@ async def test_tier_timeout_must_block_execution() -> None:
             pass
 
     gov = SymbolicGovernor(
+        classification_engine=classification_engine,
         opa_client=MagicMock(),
         safety_filter=MagicMock(),
         consensus_engine=MagicMock(),

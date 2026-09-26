@@ -35,7 +35,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
-def mock_governor_with_tiers():
+def mock_governor_with_tiers(classification_engine):
     """Create a governor with mock domain tiers for rollback testing."""
     mock_opa = Mock()
     mock_opa.evaluate_policy = AsyncMock(return_value={"allow": True})
@@ -46,6 +46,7 @@ def mock_governor_with_tiers():
         opa_client=mock_opa,
         safety_filter=mock_safety,
         consensus_engine=mock_consensus,
+        classification_engine=classification_engine,
     )
 
     tier_a = Mock()
@@ -79,7 +80,7 @@ class TestRollbackLifoOrder:
     """Verify rollback happens in LIFO order (reverse of commit)."""
 
     @pytest.mark.asyncio
-    async def test_rollback_reverses_commit_order(self, mock_governor_with_tiers):
+    async def test_rollback_reverses_commit_order(self, mock_governor_with_tiers, classification_engine):
         """D6 FIX VERIFICATION: rollback must happen in LIFO order."""
         gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
@@ -121,7 +122,7 @@ class TestRollbackExceptionIsolation:
     @pytest.mark.asyncio
     async def test_one_tier_failure_does_not_stop_others(
         self, mock_governor_with_tiers
-    ):
+    , classification_engine):
         """D6 FIX VERIFICATION: exception in one tier's rollback must not stop others."""
         gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
@@ -144,7 +145,7 @@ class TestRollbackExceptionIsolation:
         assert "RuntimeError" in violations[0].message
 
     @pytest.mark.asyncio
-    async def test_multiple_tier_failures_all_recorded(self, mock_governor_with_tiers):
+    async def test_multiple_tier_failures_all_recorded(self, mock_governor_with_tiers, classification_engine):
         """D6 FIX VERIFICATION: multiple rollback failures are all recorded."""
         gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
@@ -177,7 +178,7 @@ class TestRollbackFailClosedSemantics:
     @pytest.mark.asyncio
     async def test_partial_rollback_failure_still_blocks_action(
         self, mock_governor_with_tiers
-    ):
+    , classification_engine):
         """D6 FIX VERIFICATION: action must be blocked even if rollback fails."""
         gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
@@ -201,7 +202,7 @@ class TestRollbackViolationStructure:
     @pytest.mark.asyncio
     async def test_rollback_violation_contains_tier_name(
         self, mock_governor_with_tiers
-    ):
+    , classification_engine):
         """D6 FIX VERIFICATION: ROLLBACK_FAILED violation must include tier name."""
         gov, _tier_a, tier_b, _tier_c = mock_governor_with_tiers
 
@@ -221,7 +222,7 @@ class TestRollbackViolationStructure:
     @pytest.mark.asyncio
     async def test_successful_rollback_produces_no_violations(
         self, mock_governor_with_tiers
-    ):
+    , classification_engine):
         """D6 FIX VERIFICATION: successful rollback must not produce violations."""
         gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 

@@ -84,7 +84,7 @@ def mock_ftra_safe():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_confidence_pass(mock_ftra_safe):
+async def test_symbolic_governor_confidence_pass(mock_ftra_safe, classification_engine):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -99,6 +99,7 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -113,7 +114,7 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_confidence_fail(mock_ftra_safe):
+async def test_symbolic_governor_confidence_fail(mock_ftra_safe, classification_engine):
     opa_client = AsyncMock()
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
@@ -123,6 +124,7 @@ async def test_symbolic_governor_confidence_fail(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -141,7 +143,7 @@ async def test_symbolic_governor_confidence_fail(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_opa_fail(mock_ftra_safe):
+async def test_symbolic_governor_opa_fail(mock_ftra_safe, classification_engine):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "DENY"
 
@@ -155,6 +157,7 @@ async def test_symbolic_governor_opa_fail(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -171,7 +174,7 @@ async def test_symbolic_governor_opa_fail(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe):
+async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe, classification_engine):
     """A GOVERNANCE_VIOLATION verdict from OPA must block like DENY, not fall through."""
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "GOVERNANCE_VIOLATION"
@@ -187,6 +190,7 @@ async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -205,6 +209,7 @@ async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe):
 @pytest.mark.asyncio
 async def test_symbolic_governor_opa_governance_violation_non_governed_action(
     mock_ftra_safe,
+    classification_engine,
 ):
     """The OPA-only branch for actions no tier claims must also block on it."""
     opa_client = AsyncMock()
@@ -217,6 +222,7 @@ async def test_symbolic_governor_opa_governance_violation_non_governed_action(
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -232,7 +238,7 @@ async def test_symbolic_governor_opa_governance_violation_non_governed_action(
 
 
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe):
+async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe, classification_engine):
     """Post-HITL revalidation must not issue a seal on a GOVERNANCE_VIOLATION verdict."""
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "GOVERNANCE_VIOLATION"
@@ -244,6 +250,7 @@ async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=AsyncMock(),
+        classification_engine=classification_engine,
         domain_tiers=(CBFTierPlugin(safety_filter),),
     )
 
@@ -256,7 +263,7 @@ async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_violation_payload_contains_legacy_citation(mock_ftra_safe):
+async def test_violation_payload_contains_legacy_citation(mock_ftra_safe, classification_engine):
     """Structured payload preserves legacy_citation for SIEM backward-compatibility.
 
     The GovernanceError message itself must NOT contain 'SR 26-2' (framework
@@ -273,6 +280,7 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -301,7 +309,7 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_cbf_fail(mock_ftra_safe):
+async def test_symbolic_governor_cbf_fail(mock_ftra_safe, classification_engine):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -318,6 +326,7 @@ async def test_symbolic_governor_cbf_fail(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -333,7 +342,7 @@ async def test_symbolic_governor_cbf_fail(mock_ftra_safe):
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_consensus_fail(mock_ftra_safe):
+async def test_symbolic_governor_consensus_fail(mock_ftra_safe, classification_engine):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -351,6 +360,7 @@ async def test_symbolic_governor_consensus_fail(mock_ftra_safe):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -380,7 +390,7 @@ class TestSymbolicGovernorDefer:
 
     @pytest.mark.asyncio
     async def test_validate_action_returns_defer_verdict_not_governance_error(
-        self, monkeypatch, mock_ftra_safe
+        self, monkeypatch, mock_ftra_safe, classification_engine
     ):
         """DEFER violations should return a DEFER verdict, not raise GovernanceError.
 
@@ -404,6 +414,7 @@ class TestSymbolicGovernorDefer:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -426,7 +437,7 @@ class TestSymbolicGovernorDefer:
         assert "defer_token" in result or "defer_id" in result
 
     @pytest.mark.asyncio
-    async def test_defer_includes_defer_token(self, monkeypatch, mock_ftra_safe):
+    async def test_defer_includes_defer_token(self, monkeypatch, mock_ftra_safe, classification_engine):
         """DEFER verdict includes a defer_token UUID for tracking."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
@@ -445,6 +456,7 @@ class TestSymbolicGovernorDefer:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -486,7 +498,7 @@ class TestSymbolicGovernorNarrow:
 
     @pytest.mark.asyncio
     async def test_narrow_verdict_includes_original_and_narrowed_params(
-        self, monkeypatch
+        self, monkeypatch, classification_engine
     ):
         """NARROW verdict includes both original_params and narrowed_params.
 
@@ -513,6 +525,7 @@ class TestSymbolicGovernorNarrow:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -542,7 +555,7 @@ class TestSymbolicGovernorNarrow:
         assert result["original_params"]["amount"] == 150000
 
     @pytest.mark.asyncio
-    async def test_narrow_clamps_amount_to_max(self, monkeypatch):
+    async def test_narrow_clamps_amount_to_max(self, monkeypatch, classification_engine):
         """NARROW correctly clamps amount to max_allowed.
 
         This test verifies the narrowing constraint is correctly applied
@@ -568,6 +581,7 @@ class TestSymbolicGovernorNarrow:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -595,7 +609,7 @@ class TestSymbolicGovernorNarrow:
         assert result["narrowed_params"]["amount"] == 100000
 
     @pytest.mark.asyncio
-    async def test_narrow_restricts_scope_to_allowed(self, monkeypatch):
+    async def test_narrow_restricts_scope_to_allowed(self, monkeypatch, classification_engine):
         """NARROW correctly filters scope to allowed operations.
 
         This test verifies that unauthorized scopes are removed from the
@@ -621,6 +635,7 @@ class TestSymbolicGovernorNarrow:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -665,7 +680,7 @@ class TestSymbolicGovernorPause:
     """
 
     @pytest.mark.asyncio
-    async def test_pause_verdict_includes_pause_token(self, monkeypatch):
+    async def test_pause_verdict_includes_pause_token(self, monkeypatch, classification_engine):
         """PAUSE verdict includes a pause_token for resumption.
 
         This test verifies the expected response structure when the governor
@@ -691,6 +706,7 @@ class TestSymbolicGovernorPause:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -721,7 +737,7 @@ class TestSymbolicGovernorPause:
         assert meta.get("pausable") is True
 
     @pytest.mark.asyncio
-    async def test_pause_verdict_includes_resume_endpoint(self, monkeypatch):
+    async def test_pause_verdict_includes_resume_endpoint(self, monkeypatch, classification_engine):
         """PAUSE response provides classification_meta for HTTP layer to build resume_endpoint.
 
         This test verifies the classification_meta includes circuit breaker
@@ -747,6 +763,7 @@ class TestSymbolicGovernorPause:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -790,7 +807,7 @@ class TestValidateActionDecisionRouting:
     """
 
     @pytest.mark.asyncio
-    async def test_allow_decision_returns_seal(self, mock_ftra_safe):
+    async def test_allow_decision_returns_seal(self, mock_ftra_safe, classification_engine):
         """ALLOW verdict returns a routing seal."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
@@ -806,6 +823,7 @@ class TestValidateActionDecisionRouting:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -823,7 +841,7 @@ class TestValidateActionDecisionRouting:
         assert result["violations"] == []
 
     @pytest.mark.asyncio
-    async def test_deny_decision_raises_governance_error(self, mock_ftra_safe):
+    async def test_deny_decision_raises_governance_error(self, mock_ftra_safe, classification_engine):
         """DENY verdict raises GovernanceError with violation details."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "DENY"
@@ -839,6 +857,7 @@ class TestValidateActionDecisionRouting:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -853,7 +872,7 @@ class TestValidateActionDecisionRouting:
         assert "CTRL_OPA_005" in str(excinfo.value) or "OPA" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_require_approval_decision_returns_verdict(self, mock_ftra_safe):
+    async def test_require_approval_decision_returns_verdict(self, mock_ftra_safe, classification_engine):
         """REQUIRE_APPROVAL verdict returns result dict (not exception)."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "MANUAL_REVIEW"
@@ -869,6 +888,7 @@ class TestValidateActionDecisionRouting:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -908,7 +928,7 @@ class TestPipelineReorderZeroBudgetLeakage:
             yield mock
 
     @pytest.mark.asyncio
-    async def test_consensus_rejection_does_not_debit_cbf_balance(self, mock_ftra_safe):
+    async def test_consensus_rejection_does_not_debit_cbf_balance(self, mock_ftra_safe, classification_engine):
         """Consensus rejection must NOT debit CBF balance (zero budget leakage).
 
         Before the fix, CBF ran concurrently with OPA and committed balance
@@ -940,6 +960,7 @@ class TestPipelineReorderZeroBudgetLeakage:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -969,7 +990,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         # confirming that governance rejected due to consensus.
 
     @pytest.mark.asyncio
-    async def test_causal_rejection_does_not_debit_cbf_balance(self, mock_ftra_safe):
+    async def test_causal_rejection_does_not_debit_cbf_balance(self, mock_ftra_safe, classification_engine):
         """Causal gatekeeper rejection must NOT debit CBF balance.
 
         Similar to consensus test: causal gatekeeper runs in Phase 1 (read-only),
@@ -995,6 +1016,7 @@ class TestPipelineReorderZeroBudgetLeakage:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -1014,7 +1036,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert "CAUSAL_CHECK_FAILED" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_opa_rejection_runs_before_cbf(self, mock_ftra_safe):
+    async def test_opa_rejection_runs_before_cbf(self, mock_ftra_safe, classification_engine):
         """OPA rejection in Phase 1.1 prevents CBF from running in Phase 2.
 
         With the pipeline reorder, OPA runs in Phase 1.1 (read-only), and
@@ -1039,6 +1061,7 @@ class TestPipelineReorderZeroBudgetLeakage:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -1056,7 +1079,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert cbf_called is False, "CBF should not run when OPA rejects in Phase 1"
 
     @pytest.mark.asyncio
-    async def test_phase2_cbf_rollback_on_fiscal_rejection(self, mock_ftra_safe):
+    async def test_phase2_cbf_rollback_on_fiscal_rejection(self, mock_ftra_safe, classification_engine):
         """If fiscal reservation fails after CBF commits, CBF must be rolled back.
 
         This tests the compensation logic between Phase 2 mutations.
@@ -1105,6 +1128,7 @@ class TestPipelineReorderZeroBudgetLeakage:
             opa_client,
             safety_filter,
             consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),

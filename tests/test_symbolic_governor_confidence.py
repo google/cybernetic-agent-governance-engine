@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
-def mock_governor():
+def mock_governor(classification_engine):
     """Create a SymbolicGovernor instance with mocked dependencies."""
     with patch("src.gateway.governance.symbolic_governor.tracer"):
         # Create mocked dependencies
@@ -46,6 +46,7 @@ def mock_governor():
         
         # Create governor with mocked dependencies
         governor = SymbolicGovernor(
+            classification_engine=classification_engine,
             domain_tiers=(),
             opa_client=mock_opa_client,
             safety_filter=mock_safety_filter,
@@ -62,7 +63,7 @@ class TestConfidenceValidPassCases:
     """Test cases for valid confidence scores that should pass."""
     
     @pytest.mark.asyncio
-    async def test_valid_confidence_096_passes(self, mock_governor):
+    async def test_valid_confidence_096_passes(self, mock_governor, classification_engine):
         """Valid confidence score 0.96 should pass validation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -75,7 +76,7 @@ class TestConfidenceValidPassCases:
             f"Unexpected confidence violation for 0.96: {violations}"
     
     @pytest.mark.asyncio
-    async def test_valid_confidence_098_passes(self, mock_governor):
+    async def test_valid_confidence_098_passes(self, mock_governor, classification_engine):
         """Valid confidence score 0.98 should pass validation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -88,7 +89,7 @@ class TestConfidenceValidPassCases:
             f"Unexpected confidence violation for 0.98: {violations}"
     
     @pytest.mark.asyncio
-    async def test_valid_confidence_10_passes(self, mock_governor):
+    async def test_valid_confidence_10_passes(self, mock_governor, classification_engine):
         """Valid confidence score 1.0 (maximum) should pass validation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -105,7 +106,7 @@ class TestConfidenceFailClosedValidation:
     """Test cases for fail-closed confidence validation."""
     
     @pytest.mark.asyncio
-    async def test_none_confidence_triggers_violation(self, mock_governor):
+    async def test_none_confidence_triggers_violation(self, mock_governor, classification_engine):
         """None confidence score should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -118,7 +119,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected missing confidence violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_nan_confidence_triggers_violation(self, mock_governor):
+    async def test_nan_confidence_triggers_violation(self, mock_governor, classification_engine):
         """NaN confidence score should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -131,7 +132,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected NaN violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_positive_inf_triggers_violation(self, mock_governor):
+    async def test_positive_inf_triggers_violation(self, mock_governor, classification_engine):
         """Positive infinity confidence should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -144,7 +145,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected infinite violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_negative_inf_triggers_violation(self, mock_governor):
+    async def test_negative_inf_triggers_violation(self, mock_governor, classification_engine):
         """Negative infinity confidence should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -159,7 +160,7 @@ class TestConfidenceFailClosedValidation:
         ), f"Expected infinite/negative violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_negative_confidence_triggers_violation(self, mock_governor):
+    async def test_negative_confidence_triggers_violation(self, mock_governor, classification_engine):
         """Negative confidence score should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -172,7 +173,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected negative violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_confidence_exceeds_max_triggers_violation(self, mock_governor):
+    async def test_confidence_exceeds_max_triggers_violation(self, mock_governor, classification_engine):
         """Confidence score > 1.0 should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -185,7 +186,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected maximum exceeded violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_string_confidence_triggers_violation(self, mock_governor):
+    async def test_string_confidence_triggers_violation(self, mock_governor, classification_engine):
         """String confidence score should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -198,7 +199,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected type violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_list_confidence_triggers_violation(self, mock_governor):
+    async def test_list_confidence_triggers_violation(self, mock_governor, classification_engine):
         """List confidence score should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -211,7 +212,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected type violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_dict_confidence_triggers_violation(self, mock_governor):
+    async def test_dict_confidence_triggers_violation(self, mock_governor, classification_engine):
         """Dict confidence score should trigger fail-closed violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -224,7 +225,7 @@ class TestConfidenceFailClosedValidation:
             f"Expected type violation, got: {violations}"
     
     @pytest.mark.asyncio
-    async def test_below_threshold_triggers_violation(self, mock_governor):
+    async def test_below_threshold_triggers_violation(self, mock_governor, classification_engine):
         """Confidence below threshold should trigger violation."""
         # Threshold is 0.95, so 0.5 should fail
         result = await mock_governor._run_checks(
@@ -242,7 +243,7 @@ class TestConfidenceEdgeCases:
     """Test edge cases for confidence validation."""
     
     @pytest.mark.asyncio
-    async def test_zero_confidence_valid_but_below_threshold(self, mock_governor):
+    async def test_zero_confidence_valid_but_below_threshold(self, mock_governor, classification_engine):
         """Zero confidence is valid numeric value but should fail threshold check."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -258,7 +259,7 @@ class TestConfidenceEdgeCases:
         assert "type" not in violations_str and "nan" not in violations_str
     
     @pytest.mark.asyncio
-    async def test_exactly_at_threshold_passes(self, mock_governor):
+    async def test_exactly_at_threshold_passes(self, mock_governor, classification_engine):
         """Confidence exactly at threshold (0.95) should pass."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -271,7 +272,7 @@ class TestConfidenceEdgeCases:
             f"Unexpected confidence violation for 0.95 (threshold): {violations}"
     
     @pytest.mark.asyncio
-    async def test_integer_confidence_valid(self, mock_governor):
+    async def test_integer_confidence_valid(self, mock_governor, classification_engine):
         """Integer confidence score (1) should be valid."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",
@@ -284,7 +285,7 @@ class TestConfidenceEdgeCases:
             f"Unexpected confidence violation for integer 1: {violations}"
     
     @pytest.mark.asyncio
-    async def test_missing_key_entirely_triggers_violation(self, mock_governor):
+    async def test_missing_key_entirely_triggers_violation(self, mock_governor, classification_engine):
         """Missing confidence_score key entirely should trigger violation."""
         result = await mock_governor._run_checks(
             tool_name="check_balance",

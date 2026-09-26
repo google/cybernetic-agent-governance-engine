@@ -40,10 +40,15 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def _make_governor(fiscal_limit_guard=None):
+def _make_governor(fiscal_limit_guard=None, classification_engine=None):
     """Construct a SymbolicGovernor with all dependencies mocked."""
+    from src.gateway.governance.classification_engine import ClassificationEngine
     from src.gateway.governance.ftra.models import FtraBoundaryResult
+    from src.gateway.governance.narrower import NarrowerRegistry
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
+
+    if classification_engine is None:
+        classification_engine = ClassificationEngine(NarrowerRegistry())
 
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
@@ -74,6 +79,7 @@ def _make_governor(fiscal_limit_guard=None):
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         stpa_validator=None,
         telemetry_provider=None,
         domain_tiers=tuple(tiers),

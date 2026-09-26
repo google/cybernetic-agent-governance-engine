@@ -60,7 +60,7 @@ class MockTier(GovernanceTierPlugin):
 
 
 @pytest.fixture
-def mock_governor() -> SymbolicGovernor:
+def mock_governor(classification_engine) -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies and a mock tier."""
     opa_client = MagicMock()
     safety_filter = MagicMock()
@@ -69,6 +69,7 @@ def mock_governor() -> SymbolicGovernor:
         opa_client,
         safety_filter,
         consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(MockTier(),),
     )
 

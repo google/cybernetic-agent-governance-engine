@@ -46,7 +46,7 @@ def mock_dependencies():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_version_matching(registry, mock_dependencies):
+async def test_symbolic_governor_version_matching(registry, mock_dependencies, classification_engine):
     """SymbolicGovernor validate_action should succeed when policy_version_id matches active_hash."""
     from src.gateway.governance.ftra.models import FtraBoundaryResult
 
@@ -58,6 +58,7 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
         opa_client,
         safety_filter,
         consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -108,7 +109,7 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
 
 @pytest.mark.asyncio
 async def test_symbolic_governor_version_mismatch_raises_governance_error(
-    registry, mock_dependencies
+    registry, mock_dependencies, classification_engine
 ):
     """SymbolicGovernor validate_action should raise GovernanceError on mismatched policy_version_id."""
     opa_client, safety_filter, consensus_engine = mock_dependencies
@@ -119,6 +120,7 @@ async def test_symbolic_governor_version_mismatch_raises_governance_error(
         opa_client,
         safety_filter,
         consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),

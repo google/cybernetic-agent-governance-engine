@@ -112,7 +112,7 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
 
     @pytest.mark.asyncio
     async def test_bare_kernel_evaluates_deny_offline(
-        self, hermetic_network_guard: None, monkeypatch: pytest.MonkeyPatch
+        self, hermetic_network_guard: None, monkeypatch: pytest.MonkeyPatch, classification_engine
     ) -> None:
         """Verify kernel evaluates a governance request and returns DENY without network calls."""
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
@@ -134,6 +134,7 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
             opa_client=mock_opa,
             safety_filter=mock_safety,
             consensus_engine=mock_consensus,
+            classification_engine=classification_engine,
         )
 
         # Governance evaluation must fail closed with GovernanceError (DENY / HITL)
