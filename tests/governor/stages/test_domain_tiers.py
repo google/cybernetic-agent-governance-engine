@@ -60,7 +60,7 @@ def test_claims_exception_fails_closed(mock_tier, ctx):
     
     # Exception treated as claimed
     assert stage.claims(ctx) is True
-    assert getattr(ctx, "claims_failed", False) is True
+    assert hasattr(stage, "_claims_exception")
 
 @pytest.mark.asyncio
 async def test_run_claims_exception(mock_tier, ctx):

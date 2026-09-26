@@ -32,17 +32,16 @@ class DomainTierStage(Stage):
             return self.tier.claims_action(ctx.action, ctx.params)
         except Exception as exc:
             # An exception in claims_action: treat as claimed so that `run` fails closed
-            self._claims_failed = True
-            ctx.claims_exception = exc
+            self._claims_exception = exc
             return True
 
     async def run(self, ctx: StageContext) -> list[Violation]:
-        if getattr(ctx, "claims_failed", False):
+        if hasattr(self, "_claims_exception"):
             return [
                 Violation(
                     tier=self.name,
                     code="TIER_EXCEPTION",
-                    message=f"Exception in claims_action: {ctx.claims_exception}",
+                    message=f"Exception in claims_action: {self._claims_exception}",
                     kind=ViolationKind.HARD,
                 )
             ]
