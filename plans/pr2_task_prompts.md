@@ -1,38 +1,58 @@
 # PR 2 — Independent Task Prompts
 
 **Source plan:** [governor_refactor_plan.md §PR 2](./governor_refactor_plan.md).
-**Baseline:** `main` @ `6b71b2d`.
+**Baseline:** `main` @ `6b71b2d` **plus open PRs #259, #260, #261**. Every task below assumes those three have merged. If one hasn't, rebase on it first or wait.
 
 Each prompt below is self-contained. You can paste it into a fresh agent session, or hand it to a contributor, without other context.
 
-## What's still open at baseline (checked 2026-09-26)
-- **The kernel still emits `list[str]` violations.** `_run_checks` L841 and `revalidate_post_hitl` L1706 both build string lists.
-- **`ClassificationEngine` still classifies by substring when given a string violation.** See [classification_engine.py:102-118](../src/gateway/governance/classification_engine.py#L102-L118).
-  - PR 1 §1.2 is therefore **not finished**.
-  - One consequence: the NaN-confidence message *"Confidence Violation…"* is classified DEFERRABLE, not HARD.
-- **OPA verdicts are decoded in 3 places:** L1274, L1361, L1815.
-- **`symbolic_governor.py` is still one 2,782-line file.** 66 files import it.
+## Status (updated 2026-09-26)
+
+| Task | State | Where |
+|---|---|---|
+| T-G golden corpus | **Re-run.** The first attempt recorded a `TypeError` in all 25 scenarios and was discarded. The prompt now names the real APIs. | — |
+| T0 skeleton + contracts | **In review** | [#260](https://github.com/google/cybernetic-agent-governance-engine/pull/260) |
+| T1 typed violations | **Not started.** Nothing from the first run was worth keeping. | — |
+| T2–T5 stages / verdicts | **Not started.** Start once #260 merges. | — |
+| T6 remove `pre_check` | **In review** | [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261) |
+| T7 pipeline + delete monolith | Blocked on all of the above | — |
+| **T8 formal-model profiles** (new) | **Not started.** Can start now. | — |
+
+**Merged outside this plan, which changes the baseline:**
+- **#259** deleted `CBF_FAIL_OPEN` everywhere. `revalidate_post_hitl` now evaluates OPA and then calls `_run_domain_tiers(..., phase=2)`, so **every phase-2 tier (CBF and fiscal) re-runs after human approval**, with LIFO rollback. CBF refusals surface as `CBF_BARRIER_VIOLATED`.
+- **Design decisions** are recorded in [governor_refactor_plan.md §Resolved design questions](./governor_refactor_plan.md). Several prompts below depend on them:
+  1. Fiscal re-runs after human approval, so `POST_HITL = {opa, cbf, fiscal}`.
+  2. The formal model gains execution profiles (T8).
+  3. NARROW: keep the code's seam and fix the model (T8).
+  4. `CBF_FAIL_OPEN` is deleted (done in #259).
+  5. `null_components.py` stays deny-by-default. The governor is built once, after plugins load (PR 4).
+  6. One STPA rule set per domain package. Remove the duplicate `GeneratedSTPAValidator` (PR 4; T1 must not make that harder).
+
+## Still open at baseline
+- **The kernel still emits `list[str]` violations** in `_run_checks` (and, after #259, the OPA part of `revalidate_post_hitl`). Line numbers have shifted, so locate by symbol, not line.
+- **`ClassificationEngine.classify` still falls back to substring matching** on string violations. PR 1 §1.2 is therefore not finished. For example, the NaN-confidence message is classified DEFERRABLE instead of HARD.
+- **OPA verdicts are decoded inline in 3 places.** Find them with `rg -n "policy_resp" src/gateway/governance/symbolic_governor.py`.
+- **`symbolic_governor.py` is still one ~2,700-line file**, imported by about 66 modules.
 
 ## Dependency graph
 
 ```mermaid
 flowchart LR
-  G["T-G golden corpus"] --> T7
-  T0["T0 package skeleton + contracts"] --> T2 & T3 & T4 & T5
+  G["T-G golden corpus"] --> T1 & T7
+  T0["T0 skeleton (#260)"] --> T2 & T3 & T4 & T5
   T1["T1 typed kernel violations"] --> T7
   T2["T2 OPA stage"] --> T7
   T3["T3 kernel stages"] --> T7
   T4["T4 domain-tier stage"] --> T7
   T5["T5 verdicts module"] --> T7
-  T6["T6 remove pre_check"] --> T7
+  T6["T6 remove pre_check (#261)"] --> T7
+  T8["T8 formal-model profiles"] --> T7
   T7["T7 pipeline + entry points + delete monolith"]
 ```
 
-- **Can start immediately, in parallel:** T-G, T0, T1, T6.
-- **Parallel once T0 has merged:** T2, T3, T4, T5.
-- **Integration task:** T7 runs last.
-
-T-G **must merge before any task that changes behaviour** (T1, T7), so the golden corpus reflects the old behaviour.
+- **Can start now, in parallel:** T-G, T8.
+- **After T-G merges:** T1. T1 changes behaviour, so the corpus must be frozen first.
+- **After #260 merges, in parallel:** T2, T3, T4, T5.
+- **T7 runs last**, after everything above.
 
 ## Shared rules — include verbatim in every prompt
 ```text
@@ -52,8 +72,8 @@ Follow AGENTS.md at the repo root without exception. In particular:
 
 ---
 
-## T-G — Freeze golden verdict corpus
-**Branch:** `test/governor-golden-corpus` · **Commit:** `test(governance): freeze golden verdict corpus for governor refactor`
+## T-G — Freeze golden verdict corpus (re-run)
+**Branch:** `test/governor-golden-corpus` (delete and recreate it; do not reuse commit `412c81c`) · **Commit:** `test(governance): freeze golden verdict corpus for governor refactor`
 
 ```text
 <shared rules>
@@ -61,84 +81,75 @@ Follow AGENTS.md at the repo root without exception. In particular:
 Goal: capture the CURRENT observable behaviour of SymbolicGovernor so later refactor tasks can
 prove they changed nothing except the intended fixes.
 
+WHY THIS IS A RE-RUN: the previous attempt recorded `TypeError: 'coroutine' object is not
+iterable` for every scenario because it mocked the wrong APIs. Get these right:
+- GeneratedSTPAValidator.validate(...) is SYNCHRONOUS. Mock it with MagicMock, never AsyncMock.
+- The narrower lookup method is `find_narrower` (there is no `get_narrower`).
+- ClassificationEngine.classify has signature `classify(context, action)`.
+- There are no methods `validate_action` on the STPA validator or `evaluate_boundary` on the FTRA
+  classifier. Before mocking ANY collaborator method, open its source and confirm the name,
+  sync/async-ness, and signature. Prefer `create_autospec(RealClass, instance=True)` so a wrong
+  name or signature fails at test time instead of being recorded as behaviour.
+- Domain tiers are passed as `SymbolicGovernor(domain_tiers=[...])`. If a scenario needs CBF or
+  fiscal behaviour, inject the real tier plugin (e.g. CBFTierPlugin) wrapping a mocked backend;
+  with no tiers injected, _run_domain_tiers trivially passes.
+
 Context: src/gateway/governance/symbolic_governor.py exposes validate_action(), govern(),
 revalidate_post_hitl() and verify(). A multi-PR refactor will split this file into a package.
+CBF_FAIL_OPEN no longer exists (#259). revalidate_post_hitl re-runs OPA and ALL phase-2 tiers.
 
 Do:
-1. Create tests/governor/golden/fixtures.py with ~40 deterministic scenarios covering:
-   ALLOW; DENY via STPA, CBF refusal (each reason string: "UNSAFE:", "RECONCILIATION_UNAVAILABLE:",
+1. tests/governor/golden/fixtures.py — ~40 deterministic scenarios covering:
+   ALLOW; DENY via STPA, CBF refusal (reason strings "UNSAFE:", "RECONCILIATION_UNAVAILABLE:",
    "Fence epoch regression:"), OPA DENY, OPA unknown verdict, OPA MANUAL_REVIEW; confidence below
    threshold, NaN, inf, >1.0, non-numeric; FTRA irreversible; FTRA semantic breach; consensus
-   REJECT/ESCALATE; bounding HARD_BLOCK/HITL_ESCALATE; fiscal rejection; ungoverned action;
-   DEFER, PAUSE (flag on/off), NARROW (narrower present/absent).
-   Use AsyncMock/fakes for OPA, CBF, consensus, FTRA classifier, Redis, seal generation.
+   REJECT/ESCALATE; bounding HARD_BLOCK/HITL_ESCALATE; fiscal rejection (FULL and POST_HITL);
+   ungoverned action; DEFER; PAUSE (flag on/off); NARROW (narrower present/absent).
    No network, no real Redis.
-2. Create tests/governor/golden/test_golden_verdicts.py that, for each scenario, runs each
-   applicable entry point and records: verdict/exception type, first violation's control id or
-   code (not full message text), whether a seal was issued, which mocks were called and in what
-   order (e.g. opa.evaluate_policy before cbf.atomic_verify_and_commit).
-3. Store expected results in tests/governor/golden/expected.json, generated by a
-   `--regen-golden` pytest option (add to tests/conftest.py ONLY that option; nothing else).
-   Default run compares against the file and fails on any diff with a readable per-scenario diff.
-4. Add tests/governor/golden/README.md: how to regenerate, and the rule that any regen must be
-   justified in the PR description scenario-by-scenario.
+2. tests/governor/golden/test_golden_verdicts.py — for each scenario, run each applicable entry
+   point and record: verdict or exception type; first violation's control id/code (not full
+   message text); whether a seal was issued; which collaborator methods were called, in order.
+3. Expected results in tests/governor/golden/expected.json, generated by a `--regen-golden`
+   pytest option (add ONLY that option to tests/conftest.py). The default run compares and fails
+   on any diff with a readable per-scenario diff.
+4. HARD GUARD: the test module must fail if ANY recorded outcome is TypeError, AttributeError or
+   NameError, and regen must refuse to write such an outcome. Those mean the harness is wrong,
+   not that the governor behaves that way.
+5. tests/governor/golden/README.md: how to regenerate; any regen must be justified
+   scenario-by-scenario in the PR description.
 
 Files you own: tests/governor/golden/**, the --regen-golden option in tests/conftest.py.
 Do NOT modify anything under src/.
-Acceptance: golden test passes on origin/main; `make test-fast` green; regen is deterministic
-(two consecutive regens produce identical expected.json).
+Acceptance: golden test passes on main; the HARD GUARD has its own test that feeds a TypeError
+outcome and observes the failure; two consecutive regens produce identical expected.json;
+at least 5 distinct verdict types appear in expected.json; `make test-fast` green.
 ```
 
 ---
 
-## T0 — `governor/` package skeleton and pipeline contracts
-**Branch:** `refactor/governor-skeleton` · **Commit:** `refactor(governance): add governor package skeleton and pipeline contracts`
+## T0 — `governor/` package skeleton and pipeline contracts ✅ in review
+**Branch:** `refactor/governor-skeleton` · **PR:** [#260](https://github.com/google/cybernetic-agent-governance-engine/pull/260)
 
-```text
-<shared rules>
-
-Goal: create the empty-but-typed package that later tasks fill in, so T2–T5 can work in parallel
-against stable interfaces. No behaviour change.
-
-Create src/gateway/governance/governor/ with:
-- __init__.py — exports Profile, Stage, StageContext, PipelineResult, OpaVerdict, GovernanceError.
-- errors.py — MOVE GovernanceError here from symbolic_governor.py unchanged (message, payload,
-  receipt). In symbolic_governor.py replace the class with
-  `from src.gateway.governance.governor.errors import GovernanceError` (transitional re-export;
-  T7 deletes symbolic_governor.py). `except GovernanceError` identity must be preserved.
-- pipeline.py — contracts only, no run logic:
-    class Profile(StrEnum): FULL, POST_HITL, DRY_RUN
-    class OpaVerdict(StrEnum): ALLOW, DENY, MANUAL_REVIEW
-    @dataclass(frozen=True) class StageContext: action: str; params: Mapping[str, Any];
-        profile: Profile; opa_verdict: OpaVerdict | None = None
-    class Stage(Protocol): name: str; mutating: bool;
-        async def run(self, ctx: StageContext) -> list[Violation]: ...
-        async def rollback(self, ctx: StageContext) -> None: ...   # no-op for read-only stages
-    @dataclass(frozen=True) class PipelineResult: violations: tuple[Violation, ...];
-        tier_failures: tuple[GovernanceTierFailure, ...]; opa_verdict: OpaVerdict | None;
-        ftra: FtraBoundaryResult | None; committed_stages: tuple[str, ...]
-    PROFILE_STAGES: Mapping[Profile, frozenset[str]] — FULL and DRY_RUN = every stage name;
-        POST_HITL = {"opa", "cbf"}. Stage names must be members of proof/model.py TIERS.
-- stages/__init__.py — empty package marker.
-Violation and GovernanceTierFailure come from src/gateway/governance/contracts.py (do not modify).
-
-Tests (tests/governor/test_contracts.py): Profile/OpaVerdict values; StageContext and
-PipelineResult are frozen; every name in PROFILE_STAGES is in proof.model.TIERS; GovernanceError
-imported from both old and new paths is the same class object.
-
-Files you own: src/gateway/governance/governor/**, the GovernanceError definition in
-symbolic_governor.py, tests/governor/test_contracts.py.
-Acceptance: no behaviour change (golden corpus, if merged, unchanged); import boundary check
-passes; `make test-fast` green.
-```
+No prompt needed. What landed, for downstream tasks:
+- `governor/errors.py` holds `GovernanceError`, re-exported from `symbolic_governor.py` so identity is preserved.
+- `governor/pipeline.py` holds `Profile`, `OpaVerdict`, `StageContext`, `Stage`, `PipelineResult`, `PROFILE_STAGES`.
+- `pipeline.py` does **not** import `proof.model` (a Layer 1 kernel module must not depend on the proof package). Membership in `proof.model.TIERS` is checked in `tests/governor/test_contracts.py`.
+- `PROFILE_STAGES[POST_HITL] = {"opa", "cbf", "fiscal"}`, per design decision 1.
 
 ---
 
 ## T1 — Typed kernel violations; delete substring classification
 **Branch:** `refactor/typed-kernel-violations` · **Commit:** `refactor(governance)!: emit typed kernel violations, drop string classification`
 
+
 ```text
 <shared rules>
+
+CHANGES SINCE THIS PROMPT WAS FIRST WRITTEN (these override anything below):
+- #259 rewrote revalidate_post_hitl. Its CBF and fiscal checks now run through _run_domain_tiers(phase=2) and already return Violation objects, which are stringified by _violations_to_strings(). Only its OPA block still builds strings. Delete _violations_to_strings() once nothing needs it. The CBF_REFUSED / CBF_ERROR rows in the mapping below are superseded: keep the tier's own codes (e.g. CBF_BARRIER_VIOLATED).
+- Decision 6 moves each domain's STPA rule set into its domain package in PR 4. When you change the generator template, keep the generic compiler/validator domain-agnostic, and don't add finance-specific codes to Layer 1.
+- Locate code by symbol, not by the line numbers quoted below; they have drifted.
+- Requires T-G merged first.
 
 Goal: finish PR 1 §1.2. The kernel still builds `violations: list[str]` in
 SymbolicGovernor._run_checks (≈L841) and revalidate_post_hitl (≈L1706), and
@@ -364,48 +375,29 @@ golden corpus unchanged except the new publish_refusal call (document it); `make
 
 ---
 
-## T6 — Remove `SymbolicGovernor.pre_check`
-**Branch:** `refactor/remove-pre-check` · **Commit:** `refactor(governance)!: remove governor pre_check; nemo uses fail-closed probe`
+## T6 — Remove `SymbolicGovernor.pre_check` ✅ in review
+**Branch:** `refactor/remove-pre-check` · **PR:** [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261)
 
-```text
-<shared rules>
+No prompt needed. What landed:
+- `nemo_context.compute_nemo_context` replaces `pre_check` and fails closed.
+- NeMo actions now **deny** when `pre_check_results` is missing (previously they allowed); tests were flipped to match.
 
-Goal: SymbolicGovernor.pre_check (≈L1953) treats an STPA exception as "no violations" (fail-open)
-and duplicates pipeline logic for NeMo Layer-0 context. Remove it.
-
-Callers to migrate: src/gateway/server/inference_proxy.py (~L372),
-src/gateway/governance/langgraph_harness/nemo_node_factory.py (~L405); docs in
-src/integrations/nemo/actions.py and manager.py mention it.
-
-Do:
-1. Add src/gateway/governance/nemo_context.py:
-   async def compute_nemo_context(stpa_validator, safety_filter, action, params) -> dict
-   returning the same shape as pre_check ({"stpa_result": {...}, "cbf_result": {...}}), but:
-   STPA exception → allowed=False with the error recorded; CBF: allowed only when verify_action
-   returns a string starting with "SAFE" (allowlist), everything else or an exception → False.
-2. Point both callers at compute_nemo_context, passing the components they already have access to.
-3. Delete pre_check from SymbolicGovernor. BREAKING CHANGE footer required.
-4. Update the NeMo docstrings that reference pre_check.
-5. If config/rails/actions.py changes: `make update-nemo-configmap`.
-
-Tests (tests/test_nemo_context.py): STPA raises → allowed False; CBF raises → False; CBF returns
-"UNSAFE…", "[…", "RECONCILIATION_UNAVAILABLE…" → False; "SAFE" → True. Update existing tests that
-called pre_check.
-
-Files you own: nemo_context.py, pre_check in symbolic_governor.py, the two callers, NeMo
-docstrings, related tests.
-Acceptance: `grep -rn "pre_check(" src/ tests/` → zero hits; nemo-freshness check passes;
-`make test-fast` green.
-```
+**Known follow-up (not blocking T7):** `nemo_node_factory` now passes `state.get("action", "nemo_guardrail_node")`. No harness state type defines an `action` key, so in practice this probably always falls back to the literal. STPA rules keyed on real action names still won't match. Fix it when the graph state carries the pending tool name.
 
 ---
 
 ## T7 — Unified pipeline, thin entry points, delete the monolith
 **Branch:** `refactor/governor-pipeline` · **Commit:** `refactor(governance)!: unify governor entry points on one staged pipeline`
-**Requires:** T-G, T0–T6 merged.
+**Requires:** T-G, T0–T6 and T8 merged.
 
 ```text
 <shared rules>
+
+CHANGES SINCE THIS PROMPT WAS FIRST WRITTEN (these override anything below):
+- POST_HITL = {opa, cbf, fiscal} (decision 1), not {opa, cbf}. In rule (a), "domain tiers only if they claim the action" applies under every profile. Add a pipeline test: after approval, a fiscal budget exhausted while the request waited → DENY, with the CBF commit rolled back.
+- CBF_FAIL_OPEN and assert_safe_operational_state's fail-open branch were deleted in #259. Don't recreate them in _legacy_startup.py.
+- The profile-parity test should use T8's proof/model.py profiles as its source of truth once T8 has merged.
+- T-G's golden corpus already reflects #259 behaviour (fiscal re-check post-HITL).
 
 Goal: every entry point runs ONE pipeline under a Profile; symbolic_governor.py is deleted.
 Prerequisite modules exist: governor/pipeline.py (contracts), stages/{ftra,stpa,confidence,opa,
@@ -467,13 +459,57 @@ Report golden diffs explicitly.
 
 ---
 
+## T8 — Execution profiles and NARROW in the formal model (new)
+**Branch:** `feat/formal-model-profiles` · **Commit:** `feat(governance): model execution profiles and narrow seam in proof`
+**Requires:** nothing. Can run in parallel with T-G.
+
+```text
+<shared rules>
+
+Goal: make proof/model.py describe what the code does, per design decisions 2 and 3 in
+plans/governor_refactor_plan.md §Resolved design questions.
+
+Context: proof/model.py defines TIERS (ftra, stpa, confidence, cbf, opa, fiscal, consensus, causal,
+fria) and PHASES, and models NARROW as "all tiers PASS + soft_threshold_exceeded → seal on clamped
+params". The code (PR 1 §1.4 seam) instead lets a domain Narrower propose clamped params for
+NARROWABLE violations; NARROW is issued only if a full re-run on the clamped params passes.
+revalidate_post_hitl runs only OPA + phase-2 tiers. The model does not describe that path.
+
+Do:
+1. Add execution profiles to proof/model.py: FULL, POST_HITL, DRY_RUN, each mapped to the set of
+   tiers it evaluates. POST_HITL = {opa, cbf, fiscal}. DRY_RUN evaluates everything but commits
+   nothing. Keep the names identical to src/gateway/governance/governor/pipeline.py Profile and
+   PROFILE_STAGES (from #260). Do NOT import src/ from proof/ or vice versa; parity is a test.
+2. Model property: under every profile, an ALLOW (seal) requires every tier in that profile to
+   PASS. Add a property/exhaustive check in the model's existing style, plus a negative case: a
+   profile whose tier FAILs never yields ALLOW.
+3. Rewrite NARROW in the model to match the code: NARROW requires (a) every violation is
+   NARROWABLE, (b) a domain narrower returned a proposal, (c) re-evaluating the FULL profile on the
+   clamped params yields zero violations. Otherwise DENY. Remove the "all tiers PASS +
+   soft_threshold_exceeded" definition. Add a negative case: narrower present but re-run fails → DENY.
+4. Parity test (tests/test_formal_profile_parity.py): proof profiles == PROFILE_STAGES, and every
+   tier name in PROFILE_STAGES is in TIERS. Check tests/test_tier_registry_formal_parity.py still
+   passes; if finance's "bounding" tier is not in TIERS, report it rather than silently adding it.
+5. If STPA/proof artifacts are generated from the model, regenerate them:
+   `uv run python scripts/check_stpa_freshness.py`.
+6. Update the NARROW and profile wording in docs/architecture/GATEWAY_ARCHITECTURE.md in the same PR.
+
+Files you own: proof/**, tests/test_formal_profile_parity.py, the NARROW/profile sections of
+GATEWAY_ARCHITECTURE.md.
+Acceptance: each new model property has a failing counter-example test; parity test passes;
+stpa-freshness passes; `make docs-check` not made worse; `make test-fast` green.
+```
+
+---
+
 ## Suggested assignment
 | Parallel lane | Tasks |
 |---|---|
-| Lane A | T-G → (review) |
-| Lane B | T0 → T2 → T5 |
-| Lane C | T1 → T3 |
-| Lane D | T6 → T4 |
+| Lane A | T-G → T1 |
+| Lane B | (after #260) T2 → T5 |
+| Lane C | (after #260) T3 |
+| Lane D | (after #260) T4 |
+| Lane E | T8 |
 | Integrator | T7 after all lanes merge |
 
 If two lanes race on `symbolic_governor.py`, the second to merge rebases. Each task edits a disjoint block, so conflicts should be textual only.
