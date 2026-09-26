@@ -64,7 +64,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[STPA_UCA_001] Hazardous trade execution under severe market stress",
+        "first_violation_code": "Violation(tier='stpa', code='STPA_UCA_001', message='[STPA_UCA_001] Hazardous trade execution under severe market stress', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -75,7 +75,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[STPA_UCA_001] Hazardous trade execution under severe market stress",
+        "first_violation_code": "Violation(tier='stpa', code='STPA_UCA_001', message='[STPA_UCA_001] Hazardous trade execution under severe market stress', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -97,7 +97,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[STPA_UCA_001] Hazardous trade execution under severe market stress",
+        "first_violation_code": "STPA_UCA_001",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -114,7 +114,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='UNSAFE: position limit exceeded', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -126,7 +126,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='UNSAFE: position limit exceeded', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -138,7 +138,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='UNSAFE: position limit exceeded', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -147,7 +147,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "first_violation_code": "CBF_BARRIER_VIOLATED",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -165,7 +165,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='RECONCILIATION_UNAVAILABLE: ledger sync timeout', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -177,7 +177,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='RECONCILIATION_UNAVAILABLE: ledger sync timeout', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -189,7 +189,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='RECONCILIATION_UNAVAILABLE: ledger sync timeout', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -198,7 +198,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "first_violation_code": "CBF_BARRIER_VIOLATED",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -216,7 +216,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='Fence epoch regression: current 5 < seen 6', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -228,7 +228,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='Fence epoch regression: current 5 < seen 6', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -240,7 +240,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='Fence epoch regression: current 5 < seen 6', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -249,7 +249,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "first_violation_code": "CBF_BARRIER_VIOLATED",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -267,7 +267,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -278,7 +278,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -289,7 +289,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy"
@@ -297,7 +297,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "OPA_DENY",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -314,7 +314,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -325,7 +325,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -336,7 +336,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy"
@@ -344,7 +344,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "OPA_DENY",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -361,7 +361,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+        "first_violation_code": "Violation(tier='opa', code='OPA_UNKNOWN_VERDICT', message=\"[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)\", kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -372,7 +372,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+        "first_violation_code": "Violation(tier='opa', code='OPA_UNKNOWN_VERDICT', message=\"[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)\", kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -383,7 +383,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]",
+        "first_violation_code": "Violation(tier='opa', code='OPA_UNKNOWN_VERDICT', message=\"[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]\", kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy"
@@ -391,7 +391,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+        "first_violation_code": "OPA_UNKNOWN_VERDICT",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -408,7 +408,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "REQUIRE_APPROVAL",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
+        "first_violation_code": "OPA_MANUAL_REVIEW",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -419,7 +419,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_MANUAL_REVIEW', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.', kind=<ViolationKind.HITL: 'hitl'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -430,7 +430,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required [post-HITL revalidation].",
+        "first_violation_code": "Violation(tier='opa', code='OPA_MANUAL_REVIEW', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required [post-HITL revalidation].', kind=<ViolationKind.HITL: 'hitl'>)",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy"
@@ -438,7 +438,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
+        "first_violation_code": "OPA_MANUAL_REVIEW",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -455,7 +455,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "OPA Check Failed: OPA service unreachable",
+        "first_violation_code": "Violation(tier='opa', code='OPA_ERROR', message='OPA Check Failed: OPA service unreachable', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -466,7 +466,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "OPA Check Failed: OPA service unreachable",
+        "first_violation_code": "Violation(tier='opa', code='OPA_ERROR', message='OPA Check Failed: OPA service unreachable', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -477,7 +477,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "OPA Check Failed [post-HITL revalidation]: OPA service unreachable",
+        "first_violation_code": "Violation(tier='opa', code='OPA_ERROR', message='OPA Check Failed [post-HITL revalidation]: OPA service unreachable', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy"
@@ -485,7 +485,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "OPA Check Failed: OPA service unreachable",
+        "first_violation_code": "OPA_ERROR",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -502,7 +502,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "DEFER",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -513,7 +513,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_BELOW_THRESHOLD', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.', kind=<ViolationKind.DEFERRABLE: 'deferrable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -535,7 +535,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -551,8 +551,8 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "outcome": "REQUIRE_APPROVAL",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -563,7 +563,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_BELOW_THRESHOLD', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.', kind=<ViolationKind.HITL: 'hitl'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -585,7 +585,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -635,7 +635,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is NaN (invalid)",
+        "first_violation_code": "CONFIDENCE_INVALID",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -685,7 +685,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is infinite (invalid)",
+        "first_violation_code": "CONFIDENCE_INVALID",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -702,7 +702,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -713,7 +713,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -735,7 +735,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0",
+        "first_violation_code": "CONFIDENCE_INVALID",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -751,8 +751,8 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "DEFER",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)",
+        "outcome": "GovernanceError",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -763,7 +763,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -785,7 +785,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)",
+        "first_violation_code": "CONFIDENCE_INVALID",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -813,7 +813,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score invalid type: str",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score invalid type: str', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -835,7 +835,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score invalid type: str",
+        "first_violation_code": "CONFIDENCE_INVALID",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -851,8 +851,8 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "DEFER",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)",
+        "outcome": "GovernanceError",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -863,7 +863,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_INVALID', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -885,7 +885,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)",
+        "first_violation_code": "CONFIDENCE_INVALID",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -901,8 +901,8 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "outcome": "REQUIRE_APPROVAL",
+        "first_violation_code": "FTRA_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -913,7 +913,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "first_violation_code": "Violation(tier='ftra', code='FTRA_IRREVERSIBLE', message=\"FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL\", kind=<ViolationKind.HITL: 'hitl'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -935,7 +935,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "first_violation_code": "FTRA_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -951,8 +951,8 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "outcome": "REQUIRE_APPROVAL",
+        "first_violation_code": "FTRA_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -963,7 +963,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "first_violation_code": "Violation(tier='ftra', code='FTRA_IRREVERSIBLE', message=\"FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE\", kind=<ViolationKind.HITL: 'hitl'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -985,7 +985,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "first_violation_code": "FTRA_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1002,7 +1002,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "first_violation_code": "Violation(tier='ftra', code='FTRA_SEMANTIC_BREACH', message=\"FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.\", kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1013,7 +1013,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "first_violation_code": "Violation(tier='ftra', code='FTRA_SEMANTIC_BREACH', message=\"FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.\", kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1035,7 +1035,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "first_violation_code": "FTRA_SEMANTIC_BREACH",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1052,7 +1052,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Risk manager vetoed order",
+        "first_violation_code": "Violation(tier='consensus', code='CONSENSUS_REJECTED', message='Risk manager vetoed order', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1063,7 +1063,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Risk manager vetoed order",
+        "first_violation_code": "Violation(tier='consensus', code='CONSENSUS_REJECTED', message='Risk manager vetoed order', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1085,7 +1085,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Risk manager vetoed order",
+        "first_violation_code": "CONSENSUS_REJECTED",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1102,7 +1102,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Consensus evaluation timed out",
+        "first_violation_code": "Violation(tier='consensus', code='CONSENSUS_REJECTED', message='Consensus evaluation timed out', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1113,7 +1113,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Consensus evaluation timed out",
+        "first_violation_code": "Violation(tier='consensus', code='CONSENSUS_REJECTED', message='Consensus evaluation timed out', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1135,7 +1135,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Consensus evaluation timed out",
+        "first_violation_code": "CONSENSUS_REJECTED",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1152,7 +1152,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[causal] CAUSAL_CHECK_FAILED: World model untrustworthy",
+        "first_violation_code": "Violation(tier='causal', code='CAUSAL_CHECK_FAILED', message='World model untrustworthy', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1163,7 +1163,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[causal] CAUSAL_CHECK_FAILED: World model untrustworthy",
+        "first_violation_code": "Violation(tier='causal', code='CAUSAL_CHECK_FAILED', message='World model untrustworthy', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1185,7 +1185,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[causal] CAUSAL_CHECK_FAILED: World model untrustworthy",
+        "first_violation_code": "CAUSAL_CHECK_FAILED",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1202,7 +1202,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "first_violation_code": "Violation(tier='fiscal', code='FISCAL_LIMIT_EXCEEDED', message='Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED', kind=<ViolationKind.NARROWABLE: 'narrowable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -1216,7 +1216,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "first_violation_code": "Violation(tier='fiscal', code='FISCAL_LIMIT_EXCEEDED', message='Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED', kind=<ViolationKind.NARROWABLE: 'narrowable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -1230,7 +1230,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "first_violation_code": "Violation(tier='fiscal', code='FISCAL_LIMIT_EXCEEDED', message='Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED', kind=<ViolationKind.NARROWABLE: 'narrowable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -1241,7 +1241,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "first_violation_code": "FISCAL_LIMIT_EXCEEDED",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -1261,7 +1261,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "first_violation_code": "Violation(tier='bounding', code='INVALID_REQUEST_PARAMS', message='Invalid parameters for execute_trade_bounded: venue must not be empty', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1271,7 +1271,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "first_violation_code": "Violation(tier='bounding', code='INVALID_REQUEST_PARAMS', message='Invalid parameters for execute_trade_bounded: venue must not be empty', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1289,7 +1289,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "first_violation_code": "INVALID_REQUEST_PARAMS",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1305,7 +1305,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "first_violation_code": "Violation(tier='bounding', code='INVALID_REQUEST_PARAMS', message='Invalid parameters for execute_trade_bounded: venue must not be empty', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1315,7 +1315,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "first_violation_code": "Violation(tier='bounding', code='INVALID_REQUEST_PARAMS', message='Invalid parameters for execute_trade_bounded: venue must not be empty', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1333,7 +1333,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "first_violation_code": "INVALID_REQUEST_PARAMS",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1385,7 +1385,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1395,7 +1395,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1405,7 +1405,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "OPA_DENY",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1421,7 +1421,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "DEFER",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1432,7 +1432,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_BELOW_THRESHOLD', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.', kind=<ViolationKind.DEFERRABLE: 'deferrable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1454,7 +1454,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1471,7 +1471,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_BELOW_THRESHOLD', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.', kind=<ViolationKind.DEFERRABLE: 'deferrable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1482,7 +1482,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "Violation(tier='governance', code='CONFIDENCE_BELOW_THRESHOLD', message='[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.', kind=<ViolationKind.DEFERRABLE: 'deferrable'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1504,7 +1504,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1521,7 +1521,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "Transient condition (RESOURCE_UNAVAILABLE) detected; CAGE_PAUSE_ENABLED=false \u2014 request denied",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='rate limit exceeded on upstream venue', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1532,7 +1532,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "rate limit exceeded on upstream venue",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='rate limit exceeded on upstream venue', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1554,7 +1554,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "rate limit exceeded on upstream venue",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1571,7 +1571,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "rate limit exceeded on upstream venue",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='rate limit exceeded on upstream venue', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1582,7 +1582,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "rate limit exceeded on upstream venue",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='rate limit exceeded on upstream venue', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1604,7 +1604,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "rate limit exceeded on upstream venue",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1620,9 +1620,9 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "NARROW",
-        "first_violation_code": "amount exceeds limit",
-        "seal_issued": true,
+        "outcome": "GovernanceError",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='amount exceeds limit', kind=<ViolationKind.HARD: 'hard'>)",
+        "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
           "governor._ftra_boundary_check",
@@ -1632,7 +1632,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='amount exceeds limit', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1654,7 +1654,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1671,7 +1671,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='amount exceeds limit', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1682,7 +1682,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='amount exceeds limit', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1704,7 +1704,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1721,7 +1721,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='amount exceeds limit', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1732,7 +1732,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='amount exceeds limit', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1754,7 +1754,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "amount exceeds limit",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1771,7 +1771,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[STPA_UCA_001] Hazardous trade",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='[STPA_UCA_001] Hazardous trade', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1782,7 +1782,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[STPA_UCA_001] Hazardous trade",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='[STPA_UCA_001] Hazardous trade', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1793,7 +1793,7 @@
       },
       "revalidate_post_hitl": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit",
+        "first_violation_code": "Violation(tier='cbf', code='CBF_BARRIER_VIOLATED', message='UNSAFE: position limit', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
@@ -1802,7 +1802,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[STPA_UCA_001] Hazardous trade",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1819,7 +1819,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "STPA violation flagged",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='STPA violation flagged', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1830,7 +1830,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "STPA violation flagged",
+        "first_violation_code": "Violation(tier='stpa', code='TEST_VIOLATION', message='STPA violation flagged', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1852,7 +1852,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "STPA violation flagged",
+        "first_violation_code": "TEST_VIOLATION",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1905,7 +1905,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1915,7 +1915,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "Violation(tier='opa', code='OPA_DENY', message='[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.', kind=<ViolationKind.HARD: 'hard'>)",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",
@@ -1925,7 +1925,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "first_violation_code": "OPA_DENY",
         "seal_issued": false,
         "collaborators_called": [
           "governor._ftra_boundary_check",

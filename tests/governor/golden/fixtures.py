@@ -212,7 +212,7 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
             irreversibility_score=1.0,
             classification=f"{scenario.ftra_classification.value}_SEMANTIC_BREACH",
             terminal_match=scenario.action,
-            violations=[f"FTRA Semantic Boundary Breach: Action '{scenario.action}' failed semantic validation."],
+            violations=[Violation(tier="ftra", code="FTRA_SEMANTIC_BREACH", message=f"FTRA Semantic Boundary Breach: Action '{scenario.action}' failed semantic validation.", kind=ViolationKind.HARD)],
             bypassed_ftra_node=False,
         )
     else:
@@ -225,7 +225,7 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
             irreversibility_score=1.0 if req_hitl else 0.0,
             classification=scenario.ftra_classification.value,
             terminal_match=scenario.action if req_hitl else None,
-            violations=[f"FTRA Boundary Check: Action '{scenario.action}' is classified as {scenario.ftra_classification.value}"] if req_hitl else [],
+            violations=[Violation(tier="ftra", code="FTRA_IRREVERSIBLE", message=f"FTRA Boundary Check: Action '{scenario.action}' is classified as {scenario.ftra_classification.value}", kind=ViolationKind.HITL)] if req_hitl else [],
             bypassed_ftra_node=False,
         )
     mock_ftra_check = AsyncMock(return_value=ftra_res)
@@ -250,7 +250,7 @@ SCENARIOS: list[Scenario] = [
         description="STPA validator reports UCA-1 hazardous trade condition",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
-        stpa_violations=["[STPA_UCA_001] Hazardous trade execution under severe market stress"],
+        stpa_violations=[Violation(tier="stpa", code="STPA_UCA_001", message="[STPA_UCA_001] Hazardous trade execution under severe market stress", kind=ViolationKind.HARD)],
     ),
 
     # 3. CBF Refusal: UNSAFE: position limit
@@ -534,7 +534,7 @@ SCENARIOS: list[Scenario] = [
         description="Transient condition routes to PAUSE when enabled",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
-        stpa_violations=["rate limit exceeded on upstream venue"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="rate limit exceeded on upstream venue", kind=ViolationKind.HARD)],
         pause_enabled=True,
     ),
 
@@ -544,7 +544,7 @@ SCENARIOS: list[Scenario] = [
         description="Transient condition falls back to DENY when PAUSE is disabled",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
-        stpa_violations=["rate limit exceeded on upstream venue"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="rate limit exceeded on upstream venue", kind=ViolationKind.HARD)],
         pause_enabled=False,
     ),
 
@@ -554,7 +554,7 @@ SCENARIOS: list[Scenario] = [
         description="Narrowable violation clamped by narrower plugin",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 25000.0, "confidence": 0.99},
-        stpa_violations=["amount exceeds limit"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="amount exceeds limit", kind=ViolationKind.HARD)],
         narrow_enabled=True,
         register_narrower=True,
     ),
@@ -565,7 +565,7 @@ SCENARIOS: list[Scenario] = [
         description="Narrowable violation without registered narrower falls back to DENY",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 25000.0, "confidence": 0.99},
-        stpa_violations=["amount exceeds limit"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="amount exceeds limit", kind=ViolationKind.HARD)],
         narrow_enabled=True,
         register_narrower=False,
     ),
@@ -576,7 +576,7 @@ SCENARIOS: list[Scenario] = [
         description="Narrowable violation with narrow disabled falls back to DENY",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 25000.0, "confidence": 0.99},
-        stpa_violations=["amount exceeds limit"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="amount exceeds limit", kind=ViolationKind.HARD)],
         narrow_enabled=False,
         register_narrower=True,
     ),
@@ -587,7 +587,7 @@ SCENARIOS: list[Scenario] = [
         description="Both STPA and CBF fail (Phase 1 fails so CBF commit is skipped)",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
-        stpa_violations=["[STPA_UCA_001] Hazardous trade"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="[STPA_UCA_001] Hazardous trade", kind=ViolationKind.HARD)],
         cbf_allowed=False,
         cbf_reason="UNSAFE: position limit",
     ),
@@ -598,7 +598,7 @@ SCENARIOS: list[Scenario] = [
         description="High confidence (0.98) with STPA violation triggers structural override",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.98},
-        stpa_violations=["STPA violation flagged"],
+        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="STPA violation flagged", kind=ViolationKind.HARD)],
     ),
 
     # 39. Non-trade action with OPA ALLOW

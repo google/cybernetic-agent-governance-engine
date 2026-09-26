@@ -85,13 +85,13 @@ async def _execute_scenario_entry_point(
                     v = res["verdict"]
                     outcome = v.value if hasattr(v, "value") else str(v)
                     viols = res.get("violations", [])
-                    first_violation_code = viols[0] if viols else None
+                    first_violation_code = (viols[0].code if hasattr(viols[0], 'code') else str(viols[0])) if viols else None
                     seal_issued = bool(res.get("seal"))
                 else:
                     # verify entry point returns dict with 'violations'
                     viols = res.get("violations", [])
                     outcome = "ALLOW" if not viols else "DENY"
-                    first_violation_code = viols[0] if viols else None
+                    first_violation_code = (viols[0].code if hasattr(viols[0], 'code') else str(viols[0])) if viols else None
                     seal_issued = False
             elif isinstance(res, str):
                 outcome = "ALLOW"
@@ -102,13 +102,15 @@ async def _execute_scenario_entry_point(
                 first_violation_code = None
                 seal_issued = False
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             outcome = type(e).__name__
             if hasattr(e, "receipt") and getattr(e.receipt, "violations", None):
-                first_violation_code = str(e.receipt.violations[0])
+                first_violation_code = e.receipt.violations[0].code if hasattr(e.receipt.violations[0], "code") else str(e.receipt.violations[0])
             elif hasattr(e, "violations") and getattr(e, "violations", None):
-                first_violation_code = str(e.violations[0])
+                first_violation_code = e.violations[0].code if hasattr(e.violations[0], "code") else str(e.violations[0])
             elif hasattr(e, "violation") and getattr(e, "violation", None):
-                first_violation_code = str(e.violation)
+                first_violation_code = e.violation.code if hasattr(e.violation, "code") else str(e.violation)
             else:
                 first_violation_code = str(e)
             seal_issued = False

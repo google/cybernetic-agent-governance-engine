@@ -44,6 +44,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
+from src.gateway.governance.governor.stages.opa import decode_opa_verdict, OpaVerdict
 from src.gateway.governance.contracts import (
     ConsensusProvider,
     SafetyFilter,
@@ -756,8 +757,12 @@ class SymbolicGovernor:
                     classification=TerminalClassification.IRREVERSIBLE_TERMINAL.value,
                     terminal_match=None,
                     violations=[
-                        f"FTRA Boundary Check: Error classifying action '{tool_name}' — "
-                        f"failing closed to IRREVERSIBLE_TERMINAL. Error: {exc}"
+                        Violation(
+                            tier="ftra",
+                            code="FTRA_ERROR",
+                            message=f"FTRA Boundary Check: Error classifying action '{tool_name}' — failing closed to IRREVERSIBLE_TERMINAL. Error: {exc}",
+                            kind=ViolationKind.HARD
+                        )
                     ],
                     bypassed_ftra_node=True,
                 )
@@ -1226,20 +1231,14 @@ class SymbolicGovernor:
 
             # Evaluate OPA result
             if policy_resp is not None and not isinstance(policy_resp, BaseException):
-                if isinstance(policy_resp, dict):
-                    policy_decision = policy_resp.get(
-                        "allow", policy_resp.get("decision", "DENY")
-                    )
-                elif isinstance(policy_resp, str):
-                    policy_decision = policy_resp
-                else:
-                    policy_decision = "DENY"
+                verdict = decode_opa_verdict(policy_resp)
+                policy_decision = verdict.value if verdict else str(policy_resp)
                 
                 # Fail-closed allowlist pattern (H2 security fix)
-                if policy_decision == "ALLOW":
+                if verdict == OpaVerdict.ALLOW:
                     # Only explicit ALLOW proceeds - no violations added
                     pass
-                elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                elif verdict == OpaVerdict.DENY:
                     # Explicit denials with specific violation message
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
@@ -1262,7 +1261,7 @@ class SymbolicGovernor:
                             protected_consequence=f"Execution of {tool_name} denied by OPA policy",
                         )
                     )
-                elif policy_decision == "MANUAL_REVIEW":
+                elif verdict == OpaVerdict.MANUAL_REVIEW:
                     # Manual review required
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
@@ -1318,15 +1317,9 @@ class SymbolicGovernor:
                     opa_span.set_attribute(OBSERVATION_NAME, "opa_policy_pre_check")
                     opa_span.set_attribute("governance.stage", "opa")
                     policy_resp = await self.opa_client.evaluate_policy(opa_payload)
-                if isinstance(policy_resp, dict):
-                    policy_decision = policy_resp.get(
-                        "allow", policy_resp.get("decision", "DENY")
-                    )
-                elif isinstance(policy_resp, str):
-                    policy_decision = policy_resp
-                else:
-                    policy_decision = "DENY"
-                if policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                verdict = decode_opa_verdict(policy_resp)
+                policy_decision = verdict.value if verdict else str(policy_resp)
+                if verdict == OpaVerdict.DENY:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1336,7 +1329,7 @@ class SymbolicGovernor:
                         message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Violation: OPA Denied Action.",
                         kind=ViolationKind.HARD
                     ))
-                elif policy_decision == "MANUAL_REVIEW":
+                elif verdict == OpaVerdict.MANUAL_REVIEW:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1730,19 +1723,13 @@ class SymbolicGovernor:
                 ))
                 policy_resp = None
             else:
-                if isinstance(policy_resp, dict):
-                    policy_decision = policy_resp.get(
-                        "allow", policy_resp.get("decision", "DENY")
-                    )
-                elif isinstance(policy_resp, str):
-                    policy_decision = policy_resp
-                else:
-                    policy_decision = "DENY"
+                verdict = decode_opa_verdict(policy_resp)
+                policy_decision = verdict.value if verdict else str(policy_resp)
                 
                 # Fail-closed allowlist pattern (H2 security fix)
-                if policy_decision == "ALLOW":
+                if verdict == OpaVerdict.ALLOW:
                     pass
-                elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                elif verdict == OpaVerdict.DENY:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1752,7 +1739,7 @@ class SymbolicGovernor:
                         message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Violation: OPA Denied Action [post-HITL revalidation].",
                         kind=ViolationKind.HARD
                     ))
-                elif policy_decision == "MANUAL_REVIEW":
+                elif verdict == OpaVerdict.MANUAL_REVIEW:
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
