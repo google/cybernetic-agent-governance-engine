@@ -1,0 +1,1938 @@
+{
+  "01_happy_path_allow": {
+    "description": "Clean execution trade with high confidence",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "02_stpa_uca1_violation": {
+    "description": "STPA validator reports UCA-1 hazardous trade condition",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[STPA_UCA_001] Hazardous trade execution under severe market stress",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[STPA_UCA_001] Hazardous trade execution under severe market stress",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[STPA_UCA_001] Hazardous trade execution under severe market stress",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "03_cbf_refusal_unsafe": {
+    "description": "CBF barrier violated with UNSAFE position limit",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit exceeded",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "04_cbf_refusal_reconciliation_unavailable": {
+    "description": "CBF barrier violated because reconciliation provider is down",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "05_cbf_refusal_fence_epoch": {
+    "description": "CBF barrier violated with fence epoch regression",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: Fence epoch regression: current 5 < seen 6",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "06_opa_deny": {
+    "description": "OPA policy explicitly denies the action",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].",
+        "seal_issued": false,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "07_opa_governance_violation": {
+    "description": "OPA policy returns GOVERNANCE_VIOLATION",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action [post-HITL revalidation].",
+        "seal_issued": false,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "08_opa_unknown_verdict": {
+    "description": "OPA policy returns an unrecognized verdict string",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]",
+        "seal_issued": false,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict 'UNKNOWN_ARBITRARY_VERDICT' (expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "09_opa_manual_review": {
+    "description": "OPA policy returns MANUAL_REVIEW",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "REQUIRE_APPROVAL",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required [post-HITL revalidation].",
+        "seal_issued": false,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "10_opa_exception": {
+    "description": "OPA client raises connection error",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "OPA Check Failed: OPA service unreachable",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "OPA Check Failed: OPA service unreachable",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "OPA Check Failed [post-HITL revalidation]: OPA service unreachable",
+        "seal_issued": false,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "OPA Check Failed: OPA service unreachable",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "11_confidence_below_threshold_defer": {
+    "description": "Confidence score 0.60 is in deferrable zone below 0.70",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "DEFER",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "12_confidence_mid_range": {
+    "description": "Confidence score 0.85 is below agent minimum (0.95) but >= 0.70",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "13_confidence_nan": {
+    "description": "Confidence score is NaN",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "ValueError",
+        "first_violation_code": "Invalid JSON number: nan",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "ValueError",
+        "first_violation_code": "Invalid JSON number: nan",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is NaN (invalid)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "14_confidence_inf": {
+    "description": "Confidence score is infinity",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "ValueError",
+        "first_violation_code": "Invalid JSON number: inf",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "ValueError",
+        "first_violation_code": "Invalid JSON number: inf",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is infinite (invalid)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "15_confidence_greater_than_one": {
+    "description": "Confidence score is 1.5 exceeding 1.0",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score 1.5 exceeds maximum 1.0",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "16_confidence_negative": {
+    "description": "Confidence score is negative",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "DEFER",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score -0.1 is negative (invalid)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "17_confidence_non_numeric": {
+    "description": "Confidence score is string",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "ValueError",
+        "first_violation_code": "could not convert string to float: 'high'",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score invalid type: str",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score invalid type: str",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "18_confidence_missing": {
+    "description": "Confidence score is None",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "DEFER",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score missing (required for all actions)",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "19_ftra_irreversible_terminal": {
+    "description": "FTRA boundary check classifies action as IRREVERSIBLE_TERMINAL",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "20_ftra_externally_reversible": {
+    "description": "FTRA boundary check classifies action as EXTERNALLY_REVERSIBLE",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "21_ftra_semantic_breach": {
+    "description": "FTRA boundary check detects semantic breach in action parameters",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "22_consensus_reject": {
+    "description": "Multi-agent consensus engine returns REJECT",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Risk manager vetoed order",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Risk manager vetoed order",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Risk manager vetoed order",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "23_consensus_error": {
+    "description": "Multi-agent consensus engine returns ERROR",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Consensus evaluation timed out",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Consensus evaluation timed out",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[consensus] CONSENSUS_REJECTED: Consensus evaluation timed out",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "24_causal_check_failed": {
+    "description": "DoWhy causal gatekeeper refutation fails",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[causal] CAUSAL_CHECK_FAILED: World model untrustworthy",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[causal] CAUSAL_CHECK_FAILED: World model untrustworthy",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[causal] CAUSAL_CHECK_FAILED: World model untrustworthy",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "25_fiscal_reservation_rejected": {
+    "description": "Fiscal guard daily limit exceeded",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "cbf.rollback_state",
+          "consensus_engine.check_consensus",
+          "fiscal_guard.reserve",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "cbf.rollback_state",
+          "consensus_engine.check_consensus",
+          "fiscal_guard.reserve",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "cbf.rollback_state",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[fiscal] FISCAL_LIMIT_EXCEEDED: Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "cbf.rollback_state",
+          "consensus_engine.check_consensus",
+          "fiscal_guard.reserve",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "26_bounding_hard_block": {
+    "description": "Bounding tier contracts return HARD_BLOCK",
+    "action": "execute_trade_bounded",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "27_bounding_hitl_escalate": {
+    "description": "Bounding tier contracts return HITL_ESCALATE",
+    "action": "execute_trade_bounded",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[bounding] INVALID_REQUEST_PARAMS: Invalid parameters for execute_trade_bounded: venue must not be empty",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "28_ungoverned_action_allow": {
+    "description": "Action not claimed by any domain tier passes through if OPA allows",
+    "action": "read_market_news",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "verify": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "29_ungoverned_action_deny": {
+    "description": "Action not claimed by domain tiers but blocked by OPA",
+    "action": "query_restricted_database",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "30_defer_path_enabled": {
+    "description": "Low confidence routes to DEFER when defer is enabled",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "DEFER",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "31_defer_path_disabled": {
+    "description": "Low confidence falls back to DENY when defer is disabled",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "32_pause_path_enabled": {
+    "description": "Transient condition routes to PAUSE when enabled",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "Transient condition (RESOURCE_UNAVAILABLE) detected; CAGE_PAUSE_ENABLED=false \u2014 request denied",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "rate limit exceeded on upstream venue",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "rate limit exceeded on upstream venue",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "33_pause_path_disabled": {
+    "description": "Transient condition falls back to DENY when PAUSE is disabled",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "rate limit exceeded on upstream venue",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "rate limit exceeded on upstream venue",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "rate limit exceeded on upstream venue",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "34_narrow_path_resolved": {
+    "description": "Narrowable violation clamped by narrower plugin",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "NARROW",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": true,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "35_narrow_path_no_narrower": {
+    "description": "Narrowable violation without registered narrower falls back to DENY",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "36_narrow_path_disabled": {
+    "description": "Narrowable violation with narrow disabled falls back to DENY",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "amount exceeds limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "37_multiple_violations_stpa_and_cbf": {
+    "description": "Both STPA and CBF fail (Phase 1 fails so CBF commit is skipped)",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[STPA_UCA_001] Hazardous trade",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[STPA_UCA_001] Hazardous trade",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[cbf] CBF_BARRIER_VIOLATED: UNSAFE: position limit",
+        "seal_issued": false,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[STPA_UCA_001] Hazardous trade",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "38_structural_override_stpa_contradiction": {
+    "description": "High confidence (0.98) with STPA violation triggers structural override",
+    "action": "execute_trade",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "STPA violation flagged",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "STPA violation flagged",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "revalidate_post_hitl": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
+          "opa_client.evaluate_policy"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "STPA violation flagged",
+        "seal_issued": false,
+        "collaborators_called": [
+          "consensus_engine.check_consensus",
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "39_non_trade_action_allow": {
+    "description": "Non-trade action (check_balance) allows without CBF/consensus evaluation",
+    "action": "check_balance",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": true,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "verify": {
+        "outcome": "ALLOW",
+        "first_violation_code": null,
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  },
+  "40_non_trade_action_deny": {
+    "description": "Non-trade action (transfer_funds) denied by OPA",
+    "action": "transfer_funds",
+    "entry_points": {
+      "validate_action": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "govern": {
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      },
+      "verify": {
+        "outcome": "DENY",
+        "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Violation: OPA Denied Action.",
+        "seal_issued": false,
+        "collaborators_called": [
+          "governor._ftra_boundary_check",
+          "opa_client.evaluate_policy",
+          "stpa_validator.validate"
+        ]
+      }
+    }
+  }
+}

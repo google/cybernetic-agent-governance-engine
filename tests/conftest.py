@@ -487,6 +487,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run chaos tests (Redis failover scenarios). Skipped by default.",
     )
+    parser.addoption(
+        "--regen-golden",
+        action="store_true",
+        default=False,
+        help="Regenerate golden expected outcomes in tests/governor/golden/expected.json.",
+    )
 
 
 # ── Selection-marker contract ─────────────────────────────────────────────────
