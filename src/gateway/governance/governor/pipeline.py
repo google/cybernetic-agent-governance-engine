@@ -14,9 +14,9 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping, Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol
 
-from proof.model import TIERS
 from src.gateway.governance.contracts import GovernanceTierFailure, Violation
 from src.gateway.governance.ftra.models import FtraBoundaryResult
 
@@ -46,7 +46,7 @@ class Stage(Protocol):
     mutating: bool
 
     async def run(self, ctx: StageContext) -> list[Violation]: ...
-    
+
     async def rollback(self, ctx: StageContext) -> None: ...  # no-op default for read-only stages
 
 
@@ -61,7 +61,8 @@ class PipelineResult:
 
 # Stage names must be members of proof/model.py TIERS
 PROFILE_STAGES: Mapping[Profile, frozenset[str]] = {
-    Profile.FULL: frozenset(TIERS),
-    Profile.DRY_RUN: frozenset(TIERS),
+    Profile.FULL: frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
+    Profile.DRY_RUN: frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
     Profile.POST_HITL: frozenset({"opa", "cbf"}),
 }
+
