@@ -115,9 +115,9 @@ class TestGetPreCheck:
 
 class TestCheckApprovalTokenAction:
     @pytest.mark.asyncio
-    async def test_fail_open_when_no_pre_check(self):
+    async def test_fail_closed_when_no_pre_check(self):
         result = await CheckApprovalTokenAction(context={})
-        assert result is True
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_passes_when_no_sc1_violations(self):
@@ -197,10 +197,10 @@ class TestCheckDataLatencyAction:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_fail_open_when_latency_present_no_pre_check(self):
+    async def test_fail_closed_when_latency_present_no_pre_check(self):
         ctx = _make_context(latency_ms=100)
         result = await CheckDataLatencyAction(context=ctx)
-        assert result is True
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_passes_when_no_fin2_violations(self):
@@ -249,9 +249,9 @@ class TestCheckDataLatencyAction:
 
 class TestCheckDrawdownLimitAction:
     @pytest.mark.asyncio
-    async def test_fail_open_when_no_pre_check(self):
+    async def test_fail_closed_when_no_pre_check(self):
         result = await CheckDrawdownLimitAction(context={})
-        assert result is True
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_passes_when_cbf_allows(self):
@@ -287,9 +287,9 @@ class TestCheckDrawdownLimitAction:
 
 class TestCheckSlippageRiskAction:
     @pytest.mark.asyncio
-    async def test_fail_open_when_no_pre_check(self):
+    async def test_fail_closed_when_no_pre_check(self):
         result = await CheckSlippageRiskAction(context={})
-        assert result is True
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_passes_when_no_uca6_violations(self):

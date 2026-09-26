@@ -406,7 +406,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         pre_check_results = await compute_nemo_context(
                             governor.stpa_validator,
                             governor.safety_filter,
-                            "nemo_node",
+                            state.get("action", "nemo_guardrail_node"),
                             governance_params
                         )
                         logger.debug(

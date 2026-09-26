@@ -76,15 +76,15 @@ async def CheckApprovalTokenAction(
     """
     Validates that an approval token is present (SC-1).
     Reads pre-computed STPA result from NeMo context.
-    Fail Open: Returns True (ALLOW) with WARNING if pre_check_results is absent.
+    Fail Closed: Returns False (DENY) with WARNING if pre_check_results is absent.
     """
     pre_check = _get_pre_check(context)
     if pre_check is None:
         logger.warning(
-            "⚠️ NeMo Action WARN: CheckApprovalTokenAction — pre_check_results not in context "
-            "(fail-open; full pipeline will still run)."
+            "⚠️ NeMo Action BLOCKED: CheckApprovalTokenAction — pre_check_results not in context "
+            "(fail-closed default)."
         )
-        return True
+        return False
 
     stpa_result = pre_check.get("stpa_result", {})
     violations = stpa_result.get("violations", [])
@@ -119,7 +119,7 @@ async def CheckDataLatencyAction(
     """
     Validates market data latency (FIN-2).
     Reads pre-computed STPA result from NeMo context.
-    Fail Open: Returns True (ALLOW) with WARNING if pre_check_results is absent.
+    Fail Closed: Returns False (DENY) with WARNING if pre_check_results is absent.
     """
     latency = context.get("latency_ms")
     if latency is None:
@@ -131,10 +131,10 @@ async def CheckDataLatencyAction(
     pre_check = _get_pre_check(context)
     if pre_check is None:
         logger.warning(
-            "⚠️ NeMo Action WARN: CheckDataLatencyAction — pre_check_results not in context "
-            "(fail-open; full pipeline will still run)."
+            "⚠️ NeMo Action BLOCKED: CheckDataLatencyAction — pre_check_results not in context "
+            "(fail-closed default)."
         )
-        return True
+        return False
 
     stpa_result = pre_check.get("stpa_result", {})
     violations = stpa_result.get("violations", [])
@@ -158,15 +158,15 @@ async def CheckDrawdownLimitAction(
     """
     Validates daily drawdown limit (UCA-5).
     Reads pre-computed CBF result from NeMo context.
-    Fail Open: Returns True (ALLOW) with WARNING if pre_check_results is absent.
+    Fail Closed: Returns False (DENY) with WARNING if pre_check_results is absent.
     """
     pre_check = _get_pre_check(context)
     if pre_check is None:
         logger.warning(
-            "⚠️ NeMo Action WARN: CheckDrawdownLimitAction — pre_check_results not in context "
-            "(fail-open; full pipeline will still run)."
+            "⚠️ NeMo Action BLOCKED: CheckDrawdownLimitAction — pre_check_results not in context "
+            "(fail-closed default)."
         )
-        return True
+        return False
 
     cbf_result = pre_check.get("cbf_result", {})
     allowed = cbf_result.get("allowed", True)
@@ -186,15 +186,15 @@ async def CheckSlippageRiskAction(
     """
     Validates slippage risk (UCA-6).
     Reads pre-computed STPA result from NeMo context (UCA-6 covers slippage/volume).
-    Fail Open: Returns True (ALLOW) with WARNING if pre_check_results is absent.
+    Fail Closed: Returns False (DENY) with WARNING if pre_check_results is absent.
     """
     pre_check = _get_pre_check(context)
     if pre_check is None:
         logger.warning(
-            "⚠️ NeMo Action WARN: CheckSlippageRiskAction — pre_check_results not in context "
-            "(fail-open; full pipeline will still run)."
+            "⚠️ NeMo Action BLOCKED: CheckSlippageRiskAction — pre_check_results not in context "
+            "(fail-closed default)."
         )
-        return True
+        return False
 
     stpa_result = pre_check.get("stpa_result", {})
     violations = stpa_result.get("violations", [])
