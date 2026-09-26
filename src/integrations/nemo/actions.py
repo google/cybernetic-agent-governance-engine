@@ -29,7 +29,7 @@ Architecture note (re-entrant loop fix):
     Doing so created a cyclic dependency: NeMo (Layer 0) → SymbolicGovernor sub-components
     → which then ran again inside ``_run_checks()`` moments later (double execution).
 
-    Instead, ``NeMoManager`` calls ``symbolic_governor.pre_check(params)`` BEFORE invoking
+    Instead, ``NeMoManager`` calls ``compute_nemo_context(...)`` BEFORE invoking
     NeMo rails and injects the results into the NeMo context under the key
     ``"pre_check_results"``.  Actions read from that pre-computed dict.
 

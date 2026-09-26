@@ -163,7 +163,7 @@ def _ensure_presidio_engines() -> None:
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
-# Used to call pre_check() before NeMo rails so actions receive pre-computed
+# Used to call compute_nemo_context() before NeMo rails so actions receive pre-computed
 # STPA/CBF results via context instead of calling back into the governor.
 # ---------------------------------------------------------------------------
 _symbolic_governor = None
@@ -372,7 +372,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 rails = get_nemo_rails()
 
                 # --- Pre-check injection (re-entrant loop fix) ---
-                # Call symbolic_governor.pre_check() ONCE here, before NeMo rails
+                # Call compute_nemo_context() ONCE here, before NeMo rails
                 # run, and inject the results into the NeMo context.  NeMo actions
                 # (CheckApprovalTokenAction, CheckDataLatencyAction, etc.) will read
                 # from context["pre_check_results"] instead of calling back into the
@@ -402,9 +402,15 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                             if k in state
                         }
                     try:
-                        pre_check_results = await governor.pre_check(governance_params)
+                        from src.gateway.governance.nemo_context import compute_nemo_context
+                        pre_check_results = await compute_nemo_context(
+                            governor.stpa_validator,
+                            governor.safety_filter,
+                            "nemo_node",
+                            governance_params
+                        )
                         logger.debug(
-                            "🔍 nemo_guardrail_node: pre_check complete "
+                            "🔍 nemo_guardrail_node: compute_nemo_context complete "
                             "(stpa_allowed=%s, cbf_allowed=%s)",
                             pre_check_results.get("stpa_result", {}).get(
                                 "allowed", "?"
@@ -413,8 +419,8 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         )
                     except Exception as pre_exc:
                         logger.warning(
-                            "⚠️ nemo_guardrail_node: pre_check failed (%s) — "
-                            "NeMo actions will use fail-open defaults.",
+                            "⚠️ nemo_guardrail_node: compute_nemo_context failed (%s) — "
+                            "NeMo actions will use fail-closed defaults.",
                             pre_exc,
                         )
 

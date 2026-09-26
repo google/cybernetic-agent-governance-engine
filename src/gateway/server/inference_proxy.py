@@ -55,7 +55,7 @@ from src.gateway.infrastructure.privacy import scrub_pii
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
-# Used to call pre_check() before NeMo rails so actions receive pre-computed
+# Used to call compute_nemo_context() before NeMo rails so actions receive pre-computed
 # STPA/CBF results via context instead of calling back into the governor.
 # ---------------------------------------------------------------------------
 _symbolic_governor = None
@@ -345,7 +345,7 @@ async def chat_completions(
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
         nemo_input_text = last_user_msg if last_user_msg else all_messages_text
         try:
-            # Call pre_check() once here so NeMo actions read pre-computed
+            # Call compute_nemo_context() once here so NeMo actions read pre-computed
             # STPA/CBF results from context instead of calling back into the
             # governor (breaks the re-entrant dependency loop).
             pre_check_results: dict | None = None
@@ -369,19 +369,23 @@ async def chat_completions(
                     if k in body
                 }
                 try:
-                    pre_check_results = await governor.pre_check(
-                        "inference", governance_params
+                    from src.gateway.governance.nemo_context import compute_nemo_context
+                    pre_check_results = await compute_nemo_context(
+                        governor.stpa_validator,
+                        governor.safety_filter,
+                        "inference",
+                        governance_params
                     )
                     logger.debug(
-                        "🔍 InferenceProxy: pre_check complete "
+                        "🔍 InferenceProxy: compute_nemo_context complete "
                         "(stpa_allowed=%s, cbf_allowed=%s)",
                         pre_check_results.get("stpa_result", {}).get("allowed", "?"),
                         pre_check_results.get("cbf_result", {}).get("allowed", "?"),
                     )
                 except Exception as pre_exc:
                     logger.warning(
-                        "⚠️ InferenceProxy: pre_check failed (%s) — "
-                        "NeMo actions will use fail-open defaults.",
+                        "⚠️ InferenceProxy: compute_nemo_context failed (%s) — "
+                        "NeMo actions will use fail-closed defaults.",
                         pre_exc,
                     )
             nemo_result = await verify_input(

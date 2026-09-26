@@ -540,7 +540,7 @@ async def validate_with_nemo(
         user_input: The raw user message to validate.
         rails: The LLMRails instance to use for validation.
         pre_check_results: Optional pre-computed governance results from
-            ``SymbolicGovernor.pre_check()``.  When provided, these are
+            ``compute_nemo_context()``.  When provided, these are
             injected into the NeMo context under ``"pre_check_results"`` so
             that NeMo actions can read them without calling back into the
             governor's sub-components (breaking the re-entrant loop).
@@ -824,7 +824,7 @@ async def verify_input(
         rails: The LLMRails instance to use for verification.
         text: The input text to verify.
         pre_check_results: Optional pre-computed governance results from
-            ``SymbolicGovernor.pre_check()``.  When provided, these are
+            ``compute_nemo_context()``.  When provided, these are
             injected into the NeMo context under ``"pre_check_results"`` so
             that NeMo actions can read them without calling back into the
             governor's sub-components (breaking the re-entrant loop).

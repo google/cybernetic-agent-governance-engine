@@ -22,7 +22,7 @@ C-01 — Trade side inversion (tools.py):
     the previously hardcoded "buy", and that an invalid side is rejected.
 
 C-02 — CBF fail-closed on Redis unavailability (symbolic_governor.py):
-    Verifies that SymbolicGovernor.pre_check() returns cbf_allowed=False when
+    Verifies that compute_nemo_context() returns cbf_allowed=False when
     the CBF Redis call raises an exception, rather than the previous fail-open
     behaviour that returned True.
 """
@@ -224,7 +224,7 @@ class TestC01TradeSide:
 
 
 class TestC02CbfFailClosed:
-    """C-02: pre_check() must return cbf_allowed=False when CBF/Redis raises."""
+    """C-02: compute_nemo_context() must return cbf_allowed=False when CBF/Redis raises."""
 
     def _make_governor(self):
         """Build a minimal SymbolicGovernor with mocked sub-components."""
@@ -239,7 +239,7 @@ class TestC02CbfFailClosed:
         gov = SymbolicGovernor.__new__(SymbolicGovernor)
         gov.stpa_validator = mock_stpa
         gov.opa_client = mock_opa
-        gov.safety_filter = mock_cbf  # Add safety_filter attribute for pre_check()
+        gov.safety_filter = mock_cbf  # Add safety_filter attribute for compute_nemo_context()
 
         mock_cbf.tier_name = "cbf"
         mock_cbf.claims_action.return_value = True
@@ -248,11 +248,12 @@ class TestC02CbfFailClosed:
 
     @pytest.mark.asyncio
     async def test_cbf_redis_error_returns_denied(self):
-        """When CBF raises (Redis down), pre_check must return cbf_allowed=False."""
+        """When CBF raises (Redis down), compute_nemo_context must return cbf_allowed=False."""
+        from src.gateway.governance.nemo_context import compute_nemo_context
         gov, mock_cbf = self._make_governor()
         mock_cbf.verify_action.side_effect = ConnectionError("Redis connection refused")
 
-        result = await gov.pre_check("execute_trade", {"symbol": "AAPL", "qty": 100})
+        result = await compute_nemo_context(gov.stpa_validator, gov.safety_filter, "execute_trade", {"symbol": "AAPL", "qty": 100})
 
         assert result["cbf_result"]["allowed"] is False, (
             "CBF fail-closed: allowed must be False when Redis is unavailable"
@@ -265,45 +266,49 @@ class TestC02CbfFailClosed:
     async def test_cbf_timeout_returns_denied(self):
         """A timeout from the CBF Redis call must also result in cbf_allowed=False."""
         import asyncio
+        from src.gateway.governance.nemo_context import compute_nemo_context
 
         gov, mock_cbf = self._make_governor()
         mock_cbf.verify_action.side_effect = asyncio.TimeoutError("CBF timed out")
 
-        result = await gov.pre_check("execute_trade", {"symbol": "MSFT", "qty": 50})
+        result = await compute_nemo_context(gov.stpa_validator, gov.safety_filter, "execute_trade", {"symbol": "MSFT", "qty": 50})
 
         assert result["cbf_result"]["allowed"] is False
         assert "CBF unavailable" in result["cbf_result"]["reason"]
 
     @pytest.mark.asyncio
     async def test_cbf_success_returns_allowed_when_safe(self):
-        """When CBF returns SAFE, pre_check must return cbf_allowed=True."""
+        """When CBF returns SAFE, compute_nemo_context must return cbf_allowed=True."""
+        from src.gateway.governance.nemo_context import compute_nemo_context
         gov, mock_cbf = self._make_governor()
-        # pre_check calls safety_filter.verify_action, not evaluate
+        # compute_nemo_context calls safety_filter.verify_action, not evaluate
         mock_cbf.verify_action = AsyncMock(return_value="SAFE")
 
-        result = await gov.pre_check("execute_trade", {"symbol": "GOOG", "qty": 10})
+        result = await compute_nemo_context(gov.stpa_validator, gov.safety_filter, "execute_trade", {"symbol": "GOOG", "qty": 10})
 
         assert result["cbf_result"]["allowed"] is True
         assert result["cbf_result"]["reason"] == "SAFE"
 
     @pytest.mark.asyncio
     async def test_cbf_unsafe_result_returns_denied(self):
-        """When CBF returns an UNSAFE verdict, pre_check must return cbf_allowed=False."""
+        """When CBF returns an UNSAFE verdict, compute_nemo_context must return cbf_allowed=False."""
+        from src.gateway.governance.nemo_context import compute_nemo_context
         gov, mock_cbf = self._make_governor()
         mock_cbf.verify_action.return_value = "UNSAFE: position limit exceeded"
 
-        result = await gov.pre_check("execute_trade", {"symbol": "TSLA", "qty": 9999})
+        result = await compute_nemo_context(gov.stpa_validator, gov.safety_filter, "execute_trade", {"symbol": "TSLA", "qty": 9999})
 
         assert result["cbf_result"]["allowed"] is False
 
     @pytest.mark.asyncio
     async def test_cbf_error_does_not_propagate_exception(self):
-        """A Redis error must be caught — pre_check must not raise to the caller."""
+        """A Redis error must be caught — compute_nemo_context must not raise to the caller."""
+        from src.gateway.governance.nemo_context import compute_nemo_context
         gov, mock_cbf = self._make_governor()
         mock_cbf.verify_action.side_effect = RuntimeError("unexpected Redis failure")
 
         # Must not raise — the exception is swallowed and converted to a deny.
-        result = await gov.pre_check("execute_trade", {"symbol": "AMZN", "qty": 1})
+        result = await compute_nemo_context(gov.stpa_validator, gov.safety_filter, "execute_trade", {"symbol": "AMZN", "qty": 1})
 
         assert isinstance(result, dict)
         assert "cbf_result" in result
