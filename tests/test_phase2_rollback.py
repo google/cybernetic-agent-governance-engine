@@ -46,7 +46,7 @@ def governor():
 @pytest.mark.asyncio
 @pytest.mark.local
 @pytest.mark.unit
-async def test_rollback_lifo_order(governor):
+async def test_rollback_lifo_order(governor, classification_engine):
     tier_a = MockTier("TierA")
     tier_b = MockTier("TierB")
     tier_c = MockTier("TierC")
@@ -78,7 +78,7 @@ async def test_rollback_lifo_order(governor):
 @pytest.mark.asyncio
 @pytest.mark.local
 @pytest.mark.unit
-async def test_rollback_exception_does_not_stop_others(governor):
+async def test_rollback_exception_does_not_stop_others(governor, classification_engine):
     tier_a = MockTier("TierA")
     tier_b = MockTier("TierB")
     tier_c = MockTier("TierC")
@@ -102,7 +102,7 @@ async def test_rollback_exception_does_not_stop_others(governor):
 @pytest.mark.asyncio
 @pytest.mark.local
 @pytest.mark.unit
-async def test_rollback_multiple_failures(governor):
+async def test_rollback_multiple_failures(governor, classification_engine):
     tier_a = MockTier("TierA")
     tier_b = MockTier("TierB")
     tier_c = MockTier("TierC")
@@ -130,7 +130,7 @@ async def test_rollback_multiple_failures(governor):
 @pytest.mark.asyncio
 @pytest.mark.local
 @pytest.mark.unit
-async def test_rollback_success_returns_empty(governor):
+async def test_rollback_success_returns_empty(governor, classification_engine):
     tier_a = MockTier("TierA")
     tier_b = MockTier("TierB")
     tier_c = MockTier("TierC")
@@ -145,7 +145,7 @@ async def test_rollback_success_returns_empty(governor):
 @pytest.mark.asyncio
 @pytest.mark.local
 @pytest.mark.unit
-async def test_rollback_failed_violation_structure(governor):
+async def test_rollback_failed_violation_structure(governor, classification_engine):
     tier_a = MockTier("TierA")
 
     committed = [tier_a]

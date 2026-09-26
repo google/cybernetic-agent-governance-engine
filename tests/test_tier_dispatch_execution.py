@@ -36,12 +36,12 @@ from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 
 @pytest.fixture
-def mock_governor() -> SymbolicGovernor:
+def mock_governor(classification_engine) -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies."""
-    return make_governor()
+    return make_governor(classification_engine=classification_engine)
 
 
-def make_governor(*tiers: Any) -> SymbolicGovernor:
+def make_governor(*tiers: Any, classification_engine) -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies and specified tiers."""
     opa_client = MagicMock()
     safety_filter = MagicMock()
@@ -50,6 +50,7 @@ def make_governor(*tiers: Any) -> SymbolicGovernor:
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=tiers,
     )
 

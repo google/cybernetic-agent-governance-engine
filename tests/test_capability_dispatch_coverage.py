@@ -69,6 +69,7 @@ def mock_governor() -> SymbolicGovernor:
         opa_client,
         safety_filter,
         consensus_engine,
+        classification_engine=classification_engine,
         domain_tiers=(MockTier(),),
     )
 

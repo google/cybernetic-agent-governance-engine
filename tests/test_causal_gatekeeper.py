@@ -578,6 +578,7 @@ class TestCausalGatekeeperIntegration:
             opa_client=opa_client,
             safety_filter=safety_filter,
             consensus_engine=consensus_engine,
+            classification_engine=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -586,7 +587,7 @@ class TestCausalGatekeeperIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_governor_passes_with_stable_model(self, stable_telemetry):
+    async def test_governor_passes_with_stable_model(self, stable_telemetry, classification_engine):
         """Governor should approve when the causal model is stable."""
         governor = self._create_mock_governor(stable_telemetry)
         intent = {"amount": 1, "confidence": 0.99, "symbol": "AAPL"}
@@ -595,7 +596,7 @@ class TestCausalGatekeeperIntegration:
         assert len(causal_violations) == 0
 
     @pytest.mark.asyncio
-    async def test_governor_blocks_when_causal_check_fails(self, stable_telemetry):
+    async def test_governor_blocks_when_causal_check_fails(self, stable_telemetry, classification_engine):
         """Governor should block when the causal safety check returns False."""
         governor = self._create_mock_governor(stable_telemetry)
         intent = {"amount": 1, "confidence": 0.99, "symbol": "AAPL"}
@@ -612,7 +613,7 @@ class TestCausalGatekeeperIntegration:
         assert len(causal_violations) > 0
 
     @pytest.mark.asyncio
-    async def test_governor_skips_causal_for_non_trade(self, stable_telemetry):
+    async def test_governor_skips_causal_for_non_trade(self, stable_telemetry, classification_engine):
         """Causal gatekeeper should NOT run for non-trade actions."""
         governor = self._create_mock_governor(stable_telemetry)
         intent = {"query": "What is AAPL price?"}

@@ -195,6 +195,7 @@ def symbolic_governor(
         opa_client=mock_opa_client,
         safety_filter=mock_safety_filter,
         consensus_engine=mock_consensus_engine,
+        classification_engine=classification_engine,
         stpa_validator=None,
         telemetry_provider=None,
     )
