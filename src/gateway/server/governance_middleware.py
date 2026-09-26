@@ -436,7 +436,7 @@ async def governance_check(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="'tool_name' is required.")
 
     result = await symbolic_governor.verify(tool_name, params)
-    violations = result.get("violations", [])
+    violations = [v.to_dict() for v in result.get("violations", [])]
     return JSONResponse(
         content={
             "status": "APPROVED" if not violations else "REJECTED",

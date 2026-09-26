@@ -47,7 +47,9 @@
         "first_violation_code": null,
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -142,10 +144,11 @@
         ]
       },
       "verify": {
-        "outcome": "ALLOW",
-        "first_violation_code": null,
+        "outcome": "DENY",
+        "first_violation_code": "CBF_BARRIER_VIOLATED",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -195,10 +198,11 @@
         ]
       },
       "verify": {
-        "outcome": "ALLOW",
-        "first_violation_code": null,
+        "outcome": "DENY",
+        "first_violation_code": "CBF_BARRIER_VIOLATED",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -248,10 +252,11 @@
         ]
       },
       "verify": {
-        "outcome": "ALLOW",
-        "first_violation_code": null,
+        "outcome": "DENY",
+        "first_violation_code": "CBF_BARRIER_VIOLATED",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -1237,11 +1242,13 @@
         ]
       },
       "verify": {
-        "outcome": "ALLOW",
-        "first_violation_code": null,
+        "outcome": "DENY",
+        "first_violation_code": "FISCAL_LIMIT_EXCEEDED",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"

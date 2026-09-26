@@ -292,27 +292,29 @@ mcp = FastMCP(
 async def simulate_governance_check(
     target_tool: str, target_params: dict, risk_profile: str = "Medium"
 ) -> dict[str, Any]:
-    """Dry-run simulation of the Symbolic Governor on a proposed action.
+    """Dry-run preview of the governor on a proposed action.
 
-    This is a SIMULATION ONLY — it calls ``symbolic_governor.verify()`` in
-    sim_mode and does NOT enforce governance or block execution.  It exists
-    solely to let the Evaluator Agent preview policy decisions before
-    committing to a trade.  Mandatory enforcement happens in infrastructure
-    via the ``safety_check`` LangGraph node (direct OPA invocation).
+    Calls ``symbolic_governor.verify()``, which runs the pipeline under the
+    ``DRY_RUN`` profile: stateless stages run normally and mutating stages
+    (CBF, fiscal, dose/kinematic barriers) run only their side-effect-free
+    ``evaluate()`` preview, so a refusal live execution would issue is
+    reported here too. Nothing is committed, and this tool does not enforce
+    or block execution — enforcement happens when the action is dispatched
+    through ``validate_action`` / ``govern()``.
     """
     logger.info(
         "🔍 Simulating governance check for: %s (Risk: %s)", target_tool, risk_profile
     )
     vp = {**target_params, "risk_profile": risk_profile}
     result = await symbolic_governor.verify(target_tool, vp)
-    violations = result.get("violations", [])
+    violations = [v.to_dict() for v in result.get("violations", [])]
     return {
         "status": "APPROVED" if not violations else "REJECTED",
         "violations": violations,
         "opa_results": result.get("opa_results"),
         "message": "No violations detected."
         if not violations
-        else "; ".join(violations),
+        else "; ".join(f"[{v['code']}] {v['message']}" for v in violations),
     }
 
 

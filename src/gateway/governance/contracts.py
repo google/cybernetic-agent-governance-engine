@@ -220,6 +220,10 @@ class Violation:
     message: str  # human-readable description (never parsed)
     kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
 
+    def to_dict(self) -> dict[str, str]:
+        """JSON-safe form for API / MCP / agent-tool boundaries."""
+        return {"tier": self.tier, "code": self.code, "message": self.message, "kind": self.kind.value}
+
 
 @dataclass(frozen=True)
 class NarrowProposal:
@@ -296,7 +300,12 @@ class GovernanceTierPlugin(Protocol):
         ...
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        """Phase 1: read-only evaluation.  Return violations (may be empty)."""
+        """Read-only evaluation.  Return violations (may be empty).
+
+        Phase 1: the tier's validation.  Phase 2: a side-effect-free preview
+        of ``commit()``, run under DRY_RUN so ``verify()`` reports the refusal
+        live execution would produce.  Must never mutate state.
+        """
         ...
 
     async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:

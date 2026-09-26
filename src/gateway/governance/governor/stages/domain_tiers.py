@@ -46,11 +46,17 @@ class DomainTierStage(Stage):
                 )
             ]
 
+        call = self.tier.commit if self.mutating else self.tier.evaluate
+        return await self._guarded(call, ctx)
+
+    async def preview(self, ctx: StageContext) -> list[Violation]:
+        """DRY_RUN stand-in for run(): the tier's side-effect-free evaluate()."""
+        return await self._guarded(self.tier.evaluate, ctx)
+
+    async def _guarded(self, call, ctx: StageContext) -> list[Violation]:
+        """Invoke a tier hook; any exception becomes a HARD violation (fail-closed)."""
         try:
-            if self.tier.phase == 1:
-                return await self.tier.evaluate(ctx.action, ctx.params)
-            else:
-                return await self.tier.commit(ctx.action, ctx.params)
+            return await call(ctx.action, ctx.params)
         except Exception as exc:
             return [
                 Violation(

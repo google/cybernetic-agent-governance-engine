@@ -155,7 +155,7 @@ async def test_dry_run_never_commits() -> None:
     log: list[str] = []
     stages = order_stages([_Tier("m", phase=2, log=log)])
     await run_pipeline(stages, _ctx(Profile.DRY_RUN), profile=Profile.DRY_RUN)
-    assert log == []
+    assert log == ["evaluate:m"]  # read-only preview only; no commit/rollback
 
 
 @pytest.mark.asyncio

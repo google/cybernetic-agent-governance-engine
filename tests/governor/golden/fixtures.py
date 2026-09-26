@@ -140,6 +140,7 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
         )
     mock_cbf_backend.rollback_state = AsyncMock()
     mock_cbf_backend.verify_action = AsyncMock(return_value=scenario.cbf_reason if not scenario.cbf_allowed else "SAFE")
+    collaborators["cbf.verify_action"] = mock_cbf_backend.verify_action
     collaborators["cbf.atomic_verify_and_commit"] = mock_cbf_backend.atomic_verify_and_commit
     collaborators["cbf.rollback_state"] = mock_cbf_backend.rollback_state
     cbf_tier = CBFTierPlugin(mock_cbf_backend)
@@ -157,6 +158,8 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
     mock_fiscal_guard.reserve = AsyncMock(return_value=fiscal_token)
     mock_fiscal_guard.confirm = AsyncMock()
     mock_fiscal_guard.release = AsyncMock()
+    mock_fiscal_guard.would_accept = AsyncMock(return_value=not scenario.fiscal_rejected)
+    collaborators["fiscal_guard.would_accept"] = mock_fiscal_guard.would_accept
     collaborators["fiscal_guard.reserve"] = mock_fiscal_guard.reserve
     collaborators["fiscal_guard.confirm"] = mock_fiscal_guard.confirm
     collaborators["fiscal_guard.release"] = mock_fiscal_guard.release

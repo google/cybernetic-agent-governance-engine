@@ -60,6 +60,9 @@ class Stage(Protocol):
 
     async def rollback(self, ctx: StageContext) -> None: ...  # no-op default for read-only stages
 
+    # Mutating stages only: side-effect-free stand-in for run() under DRY_RUN.
+    async def preview(self, ctx: StageContext) -> list[Violation]: ...
+
 
 @dataclass(frozen=True)
 class PipelineResult:
@@ -192,8 +195,29 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
     # c. Mutating stages run ONLY if (b) produced zero violations
     if not has_violations:
         if profile == Profile.DRY_RUN:
-            # DRY_RUN never calls a mutating stage's run()
-            pass
+            # DRY_RUN never calls a mutating stage's run(); it calls the
+            # side-effect-free preview() so verify() reports the refusal a live
+            # commit would produce.  Nothing is committed, so nothing to roll back.
+            for stage in mutating:
+                preview = getattr(stage, "preview", None)
+                if preview is None:
+                    # Can't predict this commit: say so rather than report ALLOW.
+                    stage_violations = [Violation(
+                        tier=stage.name,
+                        code="PREVIEW_UNAVAILABLE",
+                        message=f"{stage.name} cannot be previewed; dry run cannot vouch for it",
+                        kind=ViolationKind.HARD,
+                    )]
+                else:
+                    stage_violations = await preview(current_ctx)
+                if stage_violations:
+                    violations.extend(stage_violations)
+                    tier_failures.append(GovernanceTierFailure(
+                        tier=stage.name,
+                        control_id=stage_violations[0].code,
+                        rule_description=stage_violations[0].message,
+                    ))
+                    break
         else:
             # run mutating in order
             for stage in mutating:

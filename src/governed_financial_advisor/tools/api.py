@@ -95,13 +95,11 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             target_params = params.get("target_params") or {}
             # Call Symbolic Governor in sim (dry-run) mode — does NOT enforce
             result = await symbolic_governor.verify(target_tool, target_params)  # type: ignore[arg-type]
-            violations = (
-                result.get("violations", []) if isinstance(result, dict) else []
-            )
+            violations = result.get("violations", [])
             if not violations:
                 output = "APPROVED: No violations detected."
             else:
-                output = f"REJECTED: {'; '.join(violations)}"
+                output = "REJECTED: " + "; ".join(f"[{v.code}] {v.message}" for v in violations)
 
         elif tool == "trigger_safety_intervention":
             reason = params.get("reason", "Unknown")
