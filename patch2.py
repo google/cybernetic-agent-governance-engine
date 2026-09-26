@@ -1,29 +1,59 @@
 import re
 
-with open("tests/test_inference_proxy_extended.py", "r") as f:
-    lines = f.readlines()
+with open("src/gateway/governance/symbolic_governor.py", "r") as f:
+    content = f.read()
 
-for i, line in enumerate(lines):
-    if "def test_nemo_block_returns_403(proxy_deps" in line:
-        lines[i] = line.replace("(proxy_deps):", "(proxy_deps, monkeypatch):")
-    elif "mod.verify_input = AsyncMock" in line:
-        lines[i] = line.replace("mod.verify_input =", 'monkeypatch.setattr("src.integrations.nemo.manager.verify_input",') + ")"
-    elif "def test_nemo_exception_triggers_quota_rollback(proxy_deps" in line:
-        lines[i] = line.replace("(proxy_deps):", "(proxy_deps, monkeypatch):")
-    elif "mod.verify_input = _bad_verify" in line:
-        lines[i] = line.replace("mod.verify_input = _bad_verify", 'monkeypatch.setattr("src.integrations.nemo.manager.verify_input", _bad_verify)')
-    elif "def test_output_content_passed_through_nemo_filter(proxy_deps" in line:
-        lines[i] = line.replace("(proxy_deps):", "(proxy_deps, monkeypatch):")
-    elif "mod.verify_and_mask_output = _capture_mask" in line:
-        lines[i] = line.replace("mod.verify_and_mask_output = _capture_mask", 'monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _capture_mask)')
-    elif "def test_masked_content_replaces_original(proxy_deps" in line:
-        lines[i] = line.replace("(proxy_deps):", "(proxy_deps, monkeypatch):")
-    elif "mod.verify_and_mask_output = _mask" in line:
-        lines[i] = line.replace("mod.verify_and_mask_output = _mask", 'monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _mask)')
-    elif "def test_tool_call_arguments_filtered_by_nemo(proxy_deps" in line:
-        lines[i] = line.replace("(proxy_deps):", "(proxy_deps, monkeypatch):")
-    elif "mod.verify_and_mask_output = _capture_tool_mask" in line:
-        lines[i] = line.replace("mod.verify_and_mask_output = _capture_tool_mask", 'monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _capture_tool_mask)')
+pattern = r'''                if isinstance\(policy_resp, dict\):
+                    policy_decision = policy_resp\.get\(
+                        "allow", policy_resp\.get\("decision", "DENY"\)
+                    \)
+                elif isinstance\(policy_resp, str\):
+                    policy_decision = policy_resp
+                else:
+                    policy_decision = "DENY"
+                if policy_decision in \("DENY", "GOVERNANCE_VIOLATION"\):'''
 
-with open("tests/test_inference_proxy_extended.py", "w") as f:
-    f.writelines(lines)
+replacement = '''                verdict = decode_opa_verdict(policy_resp)
+                if verdict == OpaVerdict.DENY:'''
+
+content = re.sub(pattern, replacement, content)
+
+pattern2 = r'''                elif policy_decision == "MANUAL_REVIEW":
+                    _opa_meta = ControlRegistry\(\)\.get_mapping\(
+                        GovernanceControl\.OPA_POLICY_ENFORCEMENT
+                    \)
+                    violations\.append\(Violation\(
+                        tier="opa",
+                        code="OPA_MANUAL_REVIEW",
+                        message=f"\[\{GovernanceControl\.OPA_POLICY_ENFORCEMENT\.value\}\] \{_opa_meta\['primary_framework'\]\} Warning: Manual Review required\.",
+                        kind=ViolationKind\.HITL
+                    \)\)
+                else:
+                    pass'''
+
+replacement2 = '''                elif verdict == OpaVerdict.MANUAL_REVIEW:
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_MANUAL_REVIEW",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Warning: Manual Review required.",
+                        kind=ViolationKind.HITL
+                    ))
+                elif verdict != OpaVerdict.ALLOW:
+                    # Unknown verdicts fail closed
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
+                    violations.append(Violation(
+                        tier="opa",
+                        code="OPA_UNKNOWN_VERDICT",
+                        message=f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] {_opa_meta['primary_framework']} Error: Unknown OPA decision format.",
+                        kind=ViolationKind.HARD
+                    ))'''
+
+content = re.sub(pattern2, replacement2, content)
+
+with open("src/gateway/governance/symbolic_governor.py", "w") as f:
+    f.write(content)

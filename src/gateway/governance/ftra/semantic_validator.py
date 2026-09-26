@@ -231,9 +231,7 @@ def _validate_parameter(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.MISSING_REQUIRED_PARAMETER,
-                violations=[
-                    f"Required parameter '{param_name}' is missing from tool_input."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Required parameter '{param_name}' is missing from tool_input.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
             )
         else:
@@ -255,10 +253,8 @@ def _validate_parameter(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.TYPE_MISMATCH,
-                violations=[
-                    f"Parameter '{param_name}' has incorrect type. "
-                    f"Expected {type_names}, got {type(value).__name__}."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Parameter '{param_name}' has incorrect type. "
+                    f"Expected {type_names}, got {type(value).__name__}.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
                 diagnostic_message=f"Value: {value!r}",
             )
@@ -269,20 +265,16 @@ def _validate_parameter(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.NUMERICAL_BOUND_VIOLATION,
-                violations=[
-                    f"Parameter '{param_name}' value {value} is below minimum "
-                    f"allowed value {constraint.min_value}."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Parameter '{param_name}' value {value} is below minimum "
+                    f"allowed value {constraint.min_value}.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
             )
         if constraint.max_value is not None and value > constraint.max_value:
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.NUMERICAL_BOUND_VIOLATION,
-                violations=[
-                    f"Parameter '{param_name}' value {value} exceeds maximum "
-                    f"allowed value {constraint.max_value}."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Parameter '{param_name}' value {value} exceeds maximum "
+                    f"allowed value {constraint.max_value}.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
             )
 
@@ -292,10 +284,8 @@ def _validate_parameter(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.INVALID_ENUM_VALUE,
-                violations=[
-                    f"Parameter '{param_name}' value '{value}' is not in allowed set: "
-                    f"{sorted(constraint.allowed_values)}."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Parameter '{param_name}' value '{value}' is not in allowed set: "
+                    f"{sorted(constraint.allowed_values)}.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
             )
 
@@ -305,10 +295,8 @@ def _validate_parameter(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION,
-                violations=[
-                    f"Parameter '{param_name}' value '{value}' does not match "
-                    f"required pattern {constraint.pattern!r}."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Parameter '{param_name}' value '{value}' does not match "
+                    f"required pattern {constraint.pattern!r}.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
             )
 
@@ -321,10 +309,8 @@ def _validate_parameter(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION,
-                violations=[
-                    f"Parameter '{param_name}' contains forbidden pattern: {matched_pattern!r}. "
-                    "Potential injection or control override attempt detected."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Parameter '{param_name}' contains forbidden pattern: {matched_pattern!r}. "
+                    "Potential injection or control override attempt detected.", kind=ViolationKind.HARD)],
                 failed_parameter=param_name,
                 diagnostic_message=f"Value: {value!r} (masked for security)",
             )
@@ -392,10 +378,8 @@ def validate_tool_input(
             return SemanticValidationResult(
                 is_valid=False,
                 failure_code=ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION,
-                violations=[
-                    f"Unexpected parameters in tool_input: {sorted(extra_params)}. "
-                    f"Schema does not allow extra parameters."
-                ],
+                violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Unexpected parameters in tool_input: {sorted(extra_params)}. "
+                    f"Schema does not allow extra parameters.", kind=ViolationKind.HARD)],
                 diagnostic_message=f"Expected parameters: {sorted(expected_params)}",
             )
 
@@ -410,10 +394,8 @@ def validate_tool_input(
                 return SemanticValidationResult(
                     is_valid=False,
                     failure_code=ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION,
-                    violations=[
-                        f"Extra parameter name '{param_name}' contains forbidden pattern: {matched_pattern_name!r}. "
-                        "Potential control override attempt detected."
-                    ],
+                    violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Extra parameter name '{param_name}' contains forbidden pattern: {matched_pattern_name!r}. "
+                        "Potential control override attempt detected.", kind=ViolationKind.HARD)],
                     failed_parameter=param_name,
                     diagnostic_message="Forbidden parameter name detected",
                 )
@@ -427,10 +409,8 @@ def validate_tool_input(
                 return SemanticValidationResult(
                     is_valid=False,
                     failure_code=ValidationFailureCode.FORBIDDEN_PAYLOAD_INJECTION,
-                    violations=[
-                        f"Extra parameter '{param_name}' value contains forbidden pattern: {matched_pattern_value!r}. "
-                        "Potential injection or control override attempt detected."
-                    ],
+                    violations=[Violation(tier="ftra", code="FTRA_VALIDATION_ERROR", message=f"Extra parameter '{param_name}' value contains forbidden pattern: {matched_pattern_value!r}. "
+                        "Potential injection or control override attempt detected.", kind=ViolationKind.HARD)],
                     failed_parameter=param_name,
                     diagnostic_message=f"Value: {param_value!r} (masked for security)",
                 )
