@@ -78,7 +78,7 @@ Where:
 - $x$ = continuous state variable (currently: `cash_balance`)
 - $\gamma$ = decay coefficient (sourced from `THRESHOLDS.cbf.gamma`)
 - $h(x) = 0$ defines the critical safety boundary
-- **Fail-Closed Substrate**: If the CBF state source (e.g., Redis) is unreachable, the evaluation defaults to `BLOCKED` (`CBF_FAIL_OPEN=false`). This fail-safe property is invariant across all applied domains.
+- **Fail-Closed Substrate**: If the CBF state source (e.g., Redis) is unreachable, the evaluation defaults to `BLOCKED`; there is no fail-open override. This fail-safe property is invariant across all applied domains.
 - **TOCTOU Resolution via Safe Set**: The post-HITL re-validation phase ensures that execution remains within the mathematical Safe Set by strictly re-evaluating both physical thresholds (CBF) and logical policies (OPA) on a fresh state snapshot immediately prior to actuation.
 - **External Provider Determinism**: All integrations with external normative data providers are structurally constrained. Network calls cannot block the hot-path; external validations are strictly asynchronous or handled via the DeferQueue, preserving sub-millisecond local invariant enforcement.
 
@@ -139,7 +139,7 @@ Every tier's decision boundary is parameterized through [`governance_thresholds.
 
 ### 1.5 Fail-Closed Posture
 
-The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v2.0.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).
+The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This fail-closed enforcement (now unconditional: the former `CBF_FAIL_OPEN` override has been removed) was verified in the v2.0.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).
 
 The system will not permit an action it cannot independently verify as safe. This property is invariant across all domains.
 
@@ -595,7 +595,7 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 | 7-Tier SymbolicGovernor            | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)            | ✅ Production |
 | Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)                         | ✅ Production |
 | Heterogeneous multi-model consensus | [`consensus.py`](../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
-| Fail-closed CBF enforcement        | `CBF_FAIL_OPEN=false` in `.env`                                                          | ✅ Verified   |
+| Fail-closed CBF enforcement        | Unconditional (no `CBF_FAIL_OPEN` override exists)                                       | ✅ Verified   |
 | DoWhy causal gatekeeper            | [`causal_gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)            | ✅ Production |
 | STPA-to-Policy Compiler            | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)                    | ✅ Production |
 | External CBF reconciliation        | [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py)         | ✅ Production |

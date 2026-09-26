@@ -79,10 +79,9 @@ The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the c
 5. `NARROW` — policy violation with partial-authority option; clamps execution parameters to safe bounds.
 6. `PAUSE` — system or market transient overload; issues `pause_token` via `PausePrimitiveManager` with retry metadata.
 
-**HITL (Human-in-the-Loop):** Handled by `defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; after human approval, `revalidate_post_hitl()` re-runs only the state-sensitive tiers (CBF+OPA, Tiers 2/4) before proceeding.
+**HITL (Human-in-the-Loop):** Handled by `defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; after human approval, `revalidate_post_hitl()` re-runs OPA and every phase-2 domain tier (e.g. CBF and fiscal) before proceeding, rolling back committed tiers LIFO on failure.
 
 **Startup guards:** `symbolic_governor.py` runs module-level assertions that raise `RuntimeError` at import time if:
-- `CBF_FAIL_OPEN=true` in a production `CAGE_ENV`
 - `dowhy` is not installed in production (Tier 6 would be silently absent)
 - KMS readiness probe fails (`KMSGovernanceSigner.validate_ready()`)
 - Redis readiness probe fails

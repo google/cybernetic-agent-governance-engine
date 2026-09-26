@@ -42,7 +42,7 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
 # Ensure CAGE_ENV=test so module-level production startup guards in
-# symbolic_governor.py (CBF_FAIL_OPEN=false, dowhy import) do not fire.
+# symbolic_governor.py (dowhy import, reconciliation provider) do not fire.
 os.environ.setdefault("CAGE_ENV", "test")
 
 from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor

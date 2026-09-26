@@ -61,7 +61,7 @@ committed code.
 |---|---|---|
 | Zero-TOCTOU database commit gate | `atomic_verify_and_commit()` collapses CBF check and state commit into a single Redis Lua script — no Python round-trip between check and write | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | Cryptographic routing seal | HMAC-SHA256 seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers); downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
-| Fail-closed startup assertion | `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production — the container fails to start rather than degrading to an unguarded state | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| Fail-closed startup assertion | `RuntimeError` at startup in production if the causal tier's `dowhy` dependency is absent or `RECONCILIATION_PROVIDER=stub` — the container fails to start rather than degrading to an unguarded state. The CBF tier has no bypass flag to guard. | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | DEFER state machine | 4-state machine (PARK → HYDRATE → REPLAY) prevents binary forced decisions on incomplete context; parked in Redis `db=1` with 4-hour TTL | [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) |
 | Human-gated HITL interrupt | `approval_node` calls the LangGraph dynamic `interrupt()` primitive, suspending the graph; it resumes only on an explicit `Command(resume=...)` carrying reviewer identity and rationale | [`src/governed_financial_advisor/graph/nodes/approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) |
 
@@ -262,7 +262,7 @@ proprietary "how" that should not be disclosed in external positioning:
 | Redis Lua script for atomic CBF check+commit | The specific Lua implementation of `h(S(t+1)) >= (1-γ)*h(S(t))` at the database commit tier is the core substrate moat — it is not replicable without understanding the CBF formulation and the Redis WATCH/MULTI/EXEC interaction |
 | 4-state DEFER router thresholds (0.95 / 0.70) | The specific FRIA zone thresholds and the PARK → HYDRATE → REPLAY state machine are implementation IP |
 | DoWhy causal gatekeeper (placebo refutation, 50 sims, p < 0.05) | The causal world-model validation is a unique capability with no competitor equivalent |
-| `CBF_FAIL_OPEN=true` startup assertion | The specific fail-closed mechanism at module import time is an implementation detail that should not be disclosed to adversaries |
+| Production startup assertions | The specific fail-closed mechanism at module import time is an implementation detail that should not be disclosed to adversaries |
 | `ControlRegistry.active_hash` policy version pinning | The version pinning mechanism that detects runtime policy drift is implementation IP |
 
 The framing correctly keeps the public narrative at the architectural level:

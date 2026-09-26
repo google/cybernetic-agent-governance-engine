@@ -39,7 +39,7 @@ class NullSafetyFilter:
 
     Every method returns a denial verdict. This ensures that a missing plugin
     produces explicit DENY verdicts rather than silent failures or AttributeError
-    exceptions that might be caught by CBF_FAIL_OPEN error handlers.
+    exceptions that a broad error handler might misinterpret.
     """
 
     def verify_action(self, action_name: str, payload: dict) -> str:
@@ -51,10 +51,8 @@ class NullSafetyFilter:
         """Always denies. Returns (False, reason).
 
         Critical: This must return (False, ...) NOT raise an exception.
-        If it raised, the exception would be caught by broad exception handlers
-        in the CBF tier, and with CBF_FAIL_OPEN=true that could produce a
-        silent fail-open. Returning False ensures the denial travels the normal
-        verdict path.
+        Returning False ensures the denial travels the normal verdict path
+        (and its refusal receipt) instead of an exception-handling path.
         """
         return (
             False,

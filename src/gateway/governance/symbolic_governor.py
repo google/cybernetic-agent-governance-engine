@@ -2497,20 +2497,16 @@ class SymbolicGovernor:
 
 
 def assert_safe_operational_state() -> None:
-    """Raise RuntimeError if the system is in a combined high-risk operational state.
+    """Refuse unsafe startup posture.
 
-    Specifically, raises if BOTH of the following are true simultaneously:
-      - KMSGovernanceSigner is in HMAC fallback mode (no non-repudiation)
+    Raises ``RuntimeError`` in production (logs CRITICAL elsewhere) when
+    ``RECONCILIATION_PROVIDER=stub``: the CBF would evaluate against
+    self-reported balances with no external ground truth (POAM-023).
 
-    Either condition alone is a compliance gap. Together they mean:
-      - No independent cash balance verification (CBF bypassed)
-      - No externally verifiable governance attestation (HMAC fallback)
-    This combined state is the highest-risk operational posture and must
-    never occur in production.
-
-    Also warns (CRITICAL log) or raises (production) when
-    RECONCILIATION_PROVIDER=stub, which means the CBF is evaluating against
-    self-reported balances — POAM-023 open gap.
+    The former ``CBF_FAIL_OPEN`` + HMAC-fallback combined check was removed
+    with the ``CBF_FAIL_OPEN`` flag itself; the CBF tier can no longer be
+    bypassed. A standalone HMAC-fallback posture check is planned for the
+    PR 4a composition root (``governor/posture.py``).
 
     Call this during application startup.
     """

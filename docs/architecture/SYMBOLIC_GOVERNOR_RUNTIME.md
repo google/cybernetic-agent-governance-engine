@@ -67,5 +67,5 @@ The Governor's execution paths are manipulated via the following environment and
   - `CAGE_DEFER_ENABLED` (default: `true`): If `false`, confidence starvation falls back directly to `DENY`.
   - `CAGE_PAUSE_ENABLED` (default: `false`): If `false`, transient violations fall back to `DENY`.
   - `CAGE_NARROW_ENABLED` (default: `false`): If `false`, clampable threshold limits fall back to `DENY` or `DEFER`.
-- **Production Guardrails**: Setting `CBF_FAIL_OPEN=true` or omitting `dowhy` in production environments triggers an immediate `RuntimeError` at startup to prevent direct-bind shortcutting.
+- **Production Guardrails**: The CBF tier has no fail-open flag. Omitting `dowhy`, or running with `RECONCILIATION_PROVIDER=stub`, in production environments triggers an immediate `RuntimeError` at startup to prevent direct-bind shortcutting.
 
