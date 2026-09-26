@@ -138,12 +138,21 @@ class GovernanceDecision(str, Enum):
         → narrow to allowed scope
       - date_range: 365 days with max 90 days → narrow to 90 days
 
+    Classification Requirements (fail-closed):
+      1. Tier must emit a Violation with kind=ViolationKind.NARROWABLE
+      2. A registered Narrower must propose valid clamped parameters
+      3. Re-running the tier with clamped params must yield zero violations
+      
+      If any requirement fails, classification falls back to DENY.
+      
+      NARROWABLE violations are never classified based on free-text message
+      patterns (e.g., "exceeds max"). Classification operates exclusively on
+      the ViolationKind field. A HARD violation with message "exceeds max"
+      returns DENY, not NARROW.
+
     HTTP response: 200 OK with ``verdict: NARROW``, ``original_params``,
     ``narrowed_params``, and ``X-Governance-Narrowed: true`` header.
     Client action: proceed with narrowed parameters.
-
-    Feature flag: CAGE_NARROW_ENABLED (default: false — opt-in).
-    When disabled, NARROW candidates fall back to DEFER or DENY.
 
     Control mapping: CTRL_NARROW_001 (see config/control_mappings.json)
     """
@@ -295,9 +304,6 @@ class NarrowResponse(BaseModel):
         - scope: ["read", "write", "delete"] with only ["read", "write"] allowed
           → narrow to allowed scope
         - date_range: 365 days with max 90 days → narrow to 90 days
-
-    Feature flag: CAGE_NARROW_ENABLED (default: false — opt-in).
-    When disabled, NARROW candidates fall back to DEFER or DENY.
 
     ISO 42001 mapping: A.8.4 (AI System Operation Controls)
     """

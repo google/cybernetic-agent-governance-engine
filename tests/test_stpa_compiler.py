@@ -588,28 +588,37 @@ class TestPythonGeneratedLessThanFiniteness:
     def test_nan_yields_violation(self) -> None:
         v = self._make_validator()
         result = v.validate("check_signal", {"signal_strength": float("nan")})
-        assert any("Non-finite" in msg for msg in result), (
+        assert any("Non-finite" in getattr(msg, "message", str(msg)) for msg in result), (
             f"Expected non-finite violation, got: {result}"
         )
 
     def test_inf_yields_violation(self) -> None:
         v = self._make_validator()
         result = v.validate("check_signal", {"signal_strength": float("inf")})
-        assert any("Non-finite" in msg for msg in result), (
+        assert any("Non-finite" in getattr(msg, "message", str(msg)) for msg in result), (
             f"Expected non-finite violation, got: {result}"
         )
 
     def test_neg_inf_yields_violation(self) -> None:
         v = self._make_validator()
         result = v.validate("check_signal", {"signal_strength": float("-inf")})
-        assert any("Non-finite" in msg or "UCA-LT1" in msg for msg in result), (
+        assert any(
+            "Non-finite" in getattr(msg, "message", str(msg))
+            or "UCA_LT1" in getattr(msg, "code", str(msg))
+            or "UCA-LT1" in getattr(msg, "code", str(msg))
+            for msg in result
+        ), (
             f"Expected violation, got: {result}"
         )
 
     def test_valid_below_threshold_triggers(self) -> None:
         v = self._make_validator()
         result = v.validate("check_signal", {"signal_strength": 0.1})
-        assert any("UCA-LT1" in msg for msg in result)
+        assert any(
+            "UCA_LT1" in getattr(msg, "code", str(msg))
+            or "UCA-LT1" in getattr(msg, "code", str(msg))
+            for msg in result
+        )
 
     def test_valid_above_threshold_passes(self) -> None:
         v = self._make_validator()

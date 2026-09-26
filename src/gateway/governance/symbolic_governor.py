@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from typing import Any
@@ -43,7 +44,12 @@ from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
-from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
+from src.gateway.governance.contracts import (
+    ConsensusProvider,
+    SafetyFilter,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.ftra.models import FtraBoundaryResult
 
@@ -162,7 +168,6 @@ from src.gateway.governance.contracts import (
     GovernanceTierPlugin,
     InvariantModel,
     RefusalReceipt,
-    Violation,
 )
 
 
@@ -291,522 +296,9 @@ def is_cage_pause_enabled() -> bool:
 # ---------------------------------------------------------------------------
 # Violation Classification (§2.1 CAGE Implementation Specs)
 # ---------------------------------------------------------------------------
-
-
-def _classify_violation(
-    violations: list[str],
-    stpa_violation_count: int,
-    confidence: float,
-    context: dict[str, Any] | None = None,
-) -> tuple[GovernanceDecision, dict[str, Any]]:
-    """Classify violations into DENY, DEFER, NARROW, PAUSE, or REQUIRE_APPROVAL decisions.
-
-    This helper implements the five-way classification required by §2.1 of the
-    CAGE Implementation Specs. The current implementation collapses every non-
-    REQUIRE_APPROVAL violation into DENY — this function restores the DEFER path
-    for soft violations that can be resolved via automated data-hydration, the
-    NARROW path for threshold violations that can be clamped, and the PAUSE path
-    for transient conditions that will resolve without intervention.
-
-    Classification logic:
-        DENY: Hard violations — STPA safety violations, CBF constraint violations,
-              explicit OPA DENY responses. These are non-negotiable safety gates.
-
-        NARROW: Threshold violations that can be clamped to allowed values.
-                Candidates:
-                - Amount/value exceeds soft threshold but is below hard limit
-                - Scope requested is broader than allowed but can be constrained
-                - Date range exceeds max allowed but can be narrowed
-                Feature flag: CAGE_NARROW_ENABLED (default: false — opt-in).
-
-        PAUSE: Transient conditions that will resolve without human intervention
-               or data-hydration. Unlike DEFER, the client waits for an explicit
-               resume signal. Candidates:
-               - Rate limit exceeded (soft, will clear with time)
-               - Circuit breaker open (external dependency unavailable)
-               - Resource temporarily unavailable
-               Feature flag: CAGE_PAUSE_ENABLED (default: false — opt-in).
-
-        DEFER: Soft violations that indicate data starvation or ambiguity, not
-               fundamental safety issues. Candidates:
-               - Low confidence (< FRIA_ZONE_DEFER) with no hard violations
-               - Ambiguous policy interpretation indicators
-               - Multiple soft violations but no hard violations
-
-        REQUIRE_APPROVAL: Existing HITL triggers — OPA MANUAL_REVIEW responses.
-                          Preserved for backward compatibility.
-
-    Args:
-        violations: List of violation strings from the governance pipeline.
-        stpa_violation_count: Number of STPA-specific violations (Tier 1).
-        confidence: Agent's self-reported confidence score [0.0, 1.0].
-        context: Optional dict with additional classification hints:
-            - "cbf_violation": bool — True if CBF barrier was violated
-            - "opa_decision": str — Raw OPA decision (ALLOW/DENY/MANUAL_REVIEW)
-            - "policy_ambiguous": bool — True if OPA returned marginal decision
-            - "params": dict — Original request parameters (for NARROW)
-            - "threshold_config": dict — Threshold limits for NARROW clamping
-
-    Returns:
-        Tuple of (GovernanceDecision, metadata_dict) where metadata_dict contains:
-            - classification_reason: str — Human-readable explanation
-            - violation_types: list[str] — Categorized violation types
-            - deferrable: bool — True if violations are soft/deferrable
-            - hard_violations: list[str] — List of hard violation strings
-            - soft_violations: list[str] — List of soft violation strings
-            - narrowable_violations: list[str] — List of narrowable violation strings
-            - original_params: dict — Original params (if NARROW)
-            - narrowed_params: dict — Narrowed params (if NARROW)
-            - constraints_applied: list[str] — Applied constraints (if NARROW)
-
-    Environment variables:
-        CAGE_DEFER_ENABLED: When "false", DEFER falls back to DENY for rollback
-                            safety. Default: "true".
-        CAGE_NARROW_ENABLED: When "false", NARROW falls back to DEFER or DENY.
-                             Default: "false" (opt-in).
-        CAGE_PAUSE_ENABLED: When "false", PAUSE falls back to DENY.
-                            Default: "false" (opt-in).
-        FRIA_ZONE_DEFER: Confidence threshold below which context is considered
-                         starved. Default: 0.70.
-
-    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
-    AARM mapping: CSA AARM-V7 "Context Window Overflow" (DEFER path)
-    """
-    from src.gateway.governance.decisions import GovernanceDecision
-
-    ctx = context or {}
-    hard_violations: list[str] = []
-    soft_violations: list[str] = []
-    narrowable_violations: list[str] = []
-    pausable_violations: list[str] = []
-    violation_types: list[str] = []
-
-    # ── Categorize each violation ──────────────────────────────────────────────
-    for v in violations:
-        # Hard violation indicators
-        is_stpa = "STPA" in v or "UCA-" in v or "Unsafe Control Action" in v.lower()
-        is_cbf = (
-            "CBF" in v or "Safety Violation (RBC" in v or "cash barrier" in v.lower()
-        )
-        is_fiscal_reject = "Fiscal Limit Pre-Reservation REJECTED" in v
-        is_opa_deny = "OPA Denied Action" in v
-
-        # Pausable violation indicators (transient conditions that will resolve)
-        is_rate_limited = (
-            "rate limit" in v.lower()
-            or "rate exceeded" in v.lower()
-            or "throttl" in v.lower()  # throttle, throttled, throttling
-            or "too many requests" in v.lower()
-        )
-        is_circuit_open = (
-            "circuit breaker" in v.lower()
-            or "circuit open" in v.lower()
-            or "service unavailable" in v.lower()
-        )
-        is_resource_unavailable = (
-            "resource unavailable" in v.lower()
-            or "temporarily unavailable" in v.lower()
-            or "quota exhausted" in v.lower()
-            or "capacity exceeded" in v.lower()
-        )
-
-        # Narrowable violation indicators (can be clamped)
-        is_amount_exceeded = (
-            "amount exceeds" in v.lower()
-            or "exceeds limit" in v.lower()
-            or "exceeds max" in v.lower()
-            or "above threshold" in v.lower()
-        )
-        is_scope_exceeded = (
-            "scope exceeds" in v.lower()
-            or "unauthorized scope" in v.lower()
-            or "scope not allowed" in v.lower()
-        )
-        is_date_range_exceeded = (
-            "date range exceeds" in v.lower()
-            or "range too wide" in v.lower()
-            or "exceeds max days" in v.lower()
-        )
-
-        # Soft violation indicators (deferrable)
-        is_confidence = "Confidence Violation" in v or "confidence below" in v.lower()
-        is_manual_review = "Manual Review Required" in v
-        is_tier2_structural = "POAM-TIER2-001" in v
-
-        # FTRA boundary check indicators (Phase 3.3 — routes to REQUIRE_APPROVAL)
-        # These violations indicate the action was caught at the controller boundary
-        # and requires Human-In-The-Loop review before execution.
-        is_ftra_boundary_hitl = (
-            "FTRA Boundary Check" in v and "Human-in-the-loop review required" in v
-        )
-
-        if is_stpa:
-            hard_violations.append(v)
-            violation_types.append("STPA_SAFETY")
-        elif is_cbf or is_fiscal_reject:
-            hard_violations.append(v)
-            violation_types.append("CBF_CONSTRAINT")
-        elif is_opa_deny:
-            # OPA explicit DENY is a hard violation
-            hard_violations.append(v)
-            violation_types.append("OPA_DENY")
-        elif is_rate_limited or is_circuit_open or is_resource_unavailable:
-            # Pausable violations — transient conditions that will resolve
-            pausable_violations.append(v)
-            if is_rate_limited:
-                violation_types.append("RATE_LIMITED")
-            if is_circuit_open:
-                violation_types.append("CIRCUIT_OPEN")
-            if is_resource_unavailable:
-                violation_types.append("RESOURCE_UNAVAILABLE")
-        elif is_amount_exceeded or is_scope_exceeded or is_date_range_exceeded:
-            # Narrowable violations — can be clamped to allowed values
-            narrowable_violations.append(v)
-            if is_amount_exceeded:
-                violation_types.append("AMOUNT_THRESHOLD_EXCEEDED")
-            if is_scope_exceeded:
-                violation_types.append("SCOPE_EXCEEDED")
-            if is_date_range_exceeded:
-                violation_types.append("DATE_RANGE_EXCEEDED")
-        elif is_manual_review:
-            # Manual review is neither hard nor soft — it's REQUIRE_APPROVAL
-            soft_violations.append(v)
-            violation_types.append("REQUIRE_APPROVAL")
-        elif is_confidence:
-            soft_violations.append(v)
-            violation_types.append("CONFIDENCE_STARVATION")
-        elif is_tier2_structural:
-            # Tier 2 structural override forces HITL, treat as soft
-            soft_violations.append(v)
-            violation_types.append("TIER2_STRUCTURAL")
-        elif is_ftra_boundary_hitl:
-            # FTRA boundary check caught an irreversible action at controller boundary
-            # Route to REQUIRE_APPROVAL for human review (Phase 3.3)
-            soft_violations.append(v)
-            violation_types.append("FTRA_BOUNDARY_HITL")
-        else:
-            # Unknown violation type — default to hard for safety
-            hard_violations.append(v)
-            violation_types.append("UNKNOWN_HARD")
-
-    # ── Explicit context overrides ──────────────────────────────────────────────
-    if ctx.get("cbf_violation"):
-        if "CBF_CONSTRAINT" not in violation_types:
-            violation_types.append("CBF_CONSTRAINT_CTX")
-
-    # ── Classification decision ─────────────────────────────────────────────────
-    has_manual_review = "REQUIRE_APPROVAL" in violation_types
-    has_ftra_boundary_hitl = "FTRA_BOUNDARY_HITL" in violation_types
-    has_hard_violations = len(hard_violations) > 0 or stpa_violation_count > 0
-    has_soft_violations = len(soft_violations) > 0
-    has_narrowable_violations = len(narrowable_violations) > 0
-    has_pausable_violations = len(pausable_violations) > 0
-    confidence_starved = confidence < get_fria_zone_defer()
-
-    # Priority 0: FTRA Boundary HITL (Phase 3.3) — irreversible action caught at boundary
-    # This takes highest priority because it represents a direct HTTP bypass of the
-    # in-graph ftra_node. Route to REQUIRE_APPROVAL for human review.
-    if has_ftra_boundary_hitl and not has_hard_violations:
-        return GovernanceDecision.REQUIRE_APPROVAL, {
-            "classification_reason": (
-                "FTRA Boundary Check: Irreversible action caught at controller "
-                "boundary — requires human sign-off before execution"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-            "ftra_boundary_triggered": True,
-        }
-
-    # Priority 1: REQUIRE_APPROVAL takes precedence (preserves existing HITL behavior)
-    if has_manual_review and not has_hard_violations:
-        return GovernanceDecision.REQUIRE_APPROVAL, {
-            "classification_reason": (
-                "OPA returned MANUAL_REVIEW — action requires human sign-off"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Priority 2: Hard violations always result in DENY
-    if has_hard_violations:
-        reasons = []
-        if stpa_violation_count > 0:
-            reasons.append(f"{stpa_violation_count} STPA safety violation(s)")
-        if (
-            "CBF_CONSTRAINT" in violation_types
-            or "CBF_CONSTRAINT_CTX" in violation_types
-        ):
-            reasons.append("CBF cash barrier violation")
-        if "OPA_DENY" in violation_types:
-            reasons.append("OPA explicit DENY")
-        if not reasons:
-            reasons.append("unknown hard violation")
-
-        return GovernanceDecision.DENY, {
-            "classification_reason": f"Hard violation(s): {'; '.join(reasons)}",
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Priority 3: Pausable violations → PAUSE candidate (transient conditions)
-    # PAUSE takes priority over NARROW because transient conditions should be
-    # paused and retried, not narrowed.
-    if (
-        has_pausable_violations
-        and not has_soft_violations
-        and not has_narrowable_violations
-    ):
-        # Check feature flag — if disabled, fall back to DENY
-        if not is_cage_pause_enabled():
-            return GovernanceDecision.DENY, {
-                "classification_reason": (
-                    "PAUSE candidate but CAGE_PAUSE_ENABLED=false — "
-                    "falling back to DENY"
-                ),
-                "violation_types": list(set(violation_types)),
-                "deferrable": False,
-                "hard_violations": hard_violations,
-                "soft_violations": soft_violations,
-                "narrowable_violations": narrowable_violations,
-                "pausable_violations": pausable_violations,
-            }
-
-        # Determine pause reason from violation types
-        if "RATE_LIMITED" in violation_types:
-            pause_reason = "RATE_LIMITED"
-            estimated_wait = 60  # 1 minute default for rate limits
-        elif "CIRCUIT_OPEN" in violation_types:
-            pause_reason = "CIRCUIT_OPEN"
-            estimated_wait = 30  # 30 seconds default for circuit breakers
-        elif "RESOURCE_UNAVAILABLE" in violation_types:
-            pause_reason = "RESOURCE_UNAVAILABLE"
-            estimated_wait = 120  # 2 minutes default for resource unavailability
-        else:
-            pause_reason = "RATE_LIMITED"
-            estimated_wait = 60
-
-        return GovernanceDecision.PAUSE, {
-            "classification_reason": (
-                f"Transient condition detected: {pause_reason} — "
-                "request paused pending external resume"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "pausable": True,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-            "pause_reason": pause_reason,
-            "estimated_wait_seconds": estimated_wait,
-        }
-
-    # Priority 4: Narrowable violations → NARROW candidate (if enabled and no soft/hard)
-    if has_narrowable_violations and not has_soft_violations:
-        # Check feature flag — if disabled, fall back to DEFER or DENY
-        if not is_cage_narrow_enabled():
-            # Fall back to DEFER if enabled, otherwise DENY
-            if is_cage_defer_enabled() and confidence_starved:
-                return GovernanceDecision.DEFER, {
-                    "classification_reason": (
-                        "NARROW candidate but CAGE_NARROW_ENABLED=false — "
-                        "falling back to DEFER"
-                    ),
-                    "violation_types": list(set(violation_types)),
-                    "deferrable": True,
-                    "hard_violations": hard_violations,
-                    "soft_violations": soft_violations,
-                    "narrowable_violations": narrowable_violations,
-                }
-            return GovernanceDecision.DENY, {
-                "classification_reason": (
-                    "NARROW candidate but CAGE_NARROW_ENABLED=false — "
-                    "falling back to DENY"
-                ),
-                "violation_types": list(set(violation_types)),
-                "deferrable": False,
-                "hard_violations": hard_violations,
-                "soft_violations": soft_violations,
-                "narrowable_violations": narrowable_violations,
-            }
-
-        # Compute narrowed parameters
-        original_params = ctx.get("params", {})
-        threshold_config = ctx.get("threshold_config", {})
-        narrowed_params, constraints_applied = _compute_narrowed_params(
-            original_params=original_params,
-            threshold_config=threshold_config,
-            violation_types=violation_types,
-        )
-
-        narrow_reasons = []
-        if "AMOUNT_THRESHOLD_EXCEEDED" in violation_types:
-            narrow_reasons.append("amount clamped to max allowed")
-        if "SCOPE_EXCEEDED" in violation_types:
-            narrow_reasons.append("scope narrowed to allowed operations")
-        if "DATE_RANGE_EXCEEDED" in violation_types:
-            narrow_reasons.append("date range clamped to max allowed")
-
-        return GovernanceDecision.NARROW, {
-            "classification_reason": (
-                f"Threshold violation(s) narrowed: {'; '.join(narrow_reasons)}"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "original_params": original_params,
-            "narrowed_params": narrowed_params,
-            "constraints_applied": constraints_applied,
-            "narrowing_reason": "; ".join(narrow_reasons),
-        }
-
-    # Priority 5: Soft violations with confidence starvation → DEFER candidate
-    if has_soft_violations and confidence_starved:
-        # Check feature flag — if disabled, fall back to DENY
-        if not is_cage_defer_enabled():
-            return GovernanceDecision.DENY, {
-                "classification_reason": (
-                    "DEFER candidate but CAGE_DEFER_ENABLED=false — falling back to DENY"
-                ),
-                "violation_types": list(set(violation_types)),
-                "deferrable": True,
-                "hard_violations": hard_violations,
-                "soft_violations": soft_violations,
-                "narrowable_violations": narrowable_violations,
-                "pausable_violations": pausable_violations,
-            }
-
-        defer_reasons = []
-        if confidence_starved:
-            defer_reasons.append(
-                f"confidence {confidence:.2f} < FRIA_ZONE_DEFER {get_fria_zone_defer()}"
-            )
-        if "CONFIDENCE_STARVATION" in violation_types:
-            defer_reasons.append("confidence threshold violation")
-        if ctx.get("policy_ambiguous"):
-            defer_reasons.append("ambiguous policy interpretation")
-
-        return GovernanceDecision.DEFER, {
-            "classification_reason": (
-                f"Soft violation(s) with data starvation: {'; '.join(defer_reasons)}"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": True,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Priority 6: Soft violations above confidence threshold → REQUIRE_APPROVAL
-    # (These could have been autonomous but have other soft issues)
-    if has_soft_violations:
-        return GovernanceDecision.REQUIRE_APPROVAL, {
-            "classification_reason": (
-                "Soft violation(s) above confidence threshold — requires human review"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Fallback: No categorized violations — should not reach here if called correctly
-    return GovernanceDecision.DENY, {
-        "classification_reason": "Unclassified violation(s) — defaulting to DENY for safety",
-        "violation_types": list(set(violation_types)),
-        "deferrable": False,
-        "hard_violations": hard_violations,
-        "soft_violations": soft_violations,
-        "narrowable_violations": narrowable_violations,
-        "pausable_violations": pausable_violations,
-    }
-
-
-def _compute_narrowed_params(
-    original_params: dict[str, Any],
-    threshold_config: dict[str, Any],
-    violation_types: list[str],
-) -> tuple[dict[str, Any], list[str]]:
-    """Compute narrowed parameters by clamping values to allowed thresholds.
-
-    This helper clamps request parameters to fit within allowed thresholds
-    while preserving action semantics. The narrowing is applied in-place
-    without transforming the action type.
-
-    Narrowing rules:
-        - amount > max_allowed → clamp to max_allowed
-        - scope: ["read", "write", "delete"] with only ["read", "write"] allowed
-          → narrow to allowed scope
-        - date_range: 365 days with max 90 days → narrow to 90 days
-
-    Args:
-        original_params: Original request parameters.
-        threshold_config: Threshold configuration dict with keys:
-            - "max_amount": float — Maximum allowed amount (default: 100000.0)
-            - "allowed_scopes": list[str] — Allowed scope operations
-            - "max_date_range_days": int — Maximum date range in days (default: 90)
-        violation_types: List of violation type strings to guide narrowing.
-
-    Returns:
-        Tuple of (narrowed_params, constraints_applied) where:
-            - narrowed_params: Dict with clamped parameter values
-            - constraints_applied: List of constraint description strings
-    """
-    narrowed = original_params.copy()
-    constraints: list[str] = []
-
-    # Default threshold values
-    max_amount = threshold_config.get("max_amount", 100000.0)
-    allowed_scopes = threshold_config.get("allowed_scopes", ["read", "write"])
-    max_date_range_days = threshold_config.get("max_date_range_days", 90)
-
-    # ── Clamp amount if exceeded ────────────────────────────────────────────────
-    if "AMOUNT_THRESHOLD_EXCEEDED" in violation_types:
-        original_amount = original_params.get("amount", 0.0)
-        if isinstance(original_amount, (int, float)) and original_amount > max_amount:
-            narrowed["amount"] = max_amount
-            constraints.append(
-                f"amount clamped: {original_amount} → {max_amount} (max_allowed)"
-            )
-
-    # ── Narrow scope if exceeded ────────────────────────────────────────────────
-    if "SCOPE_EXCEEDED" in violation_types:
-        original_scope = original_params.get("scope", [])
-        if isinstance(original_scope, list):
-            narrowed_scope = [s for s in original_scope if s in allowed_scopes]
-            if narrowed_scope != original_scope:
-                narrowed["scope"] = narrowed_scope
-                constraints.append(
-                    f"scope narrowed: {original_scope} → {narrowed_scope} (allowed only)"
-                )
-
-    # ── Clamp date range if exceeded ────────────────────────────────────────────
-    if "DATE_RANGE_EXCEEDED" in violation_types:
-        original_days = original_params.get("date_range_days", 0)
-        if isinstance(original_days, int) and original_days > max_date_range_days:
-            narrowed["date_range_days"] = max_date_range_days
-            constraints.append(
-                f"date_range clamped: {original_days} → {max_date_range_days} days (max_allowed)"
-            )
-
-    return narrowed, constraints
+# Legacy _classify_violation() and _compute_narrowed_params() deleted per
+# AGENTS.md compliance refactoring. All classification now flows through
+# ClassificationEngine (mandatory constructor parameter).
 
 
 # ---------------------------------------------------------------------------
@@ -833,6 +325,7 @@ class SymbolicGovernor:
         opa_client: OPAClient,
         safety_filter: SafetyFilter,
         consensus_engine: ConsensusProvider,
+        classification_engine: "ClassificationEngine",
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
@@ -851,6 +344,10 @@ class SymbolicGovernor:
         # between the CBF balance check and actual trade execution.
         # retained for direct-invocation callers; not part of the governance hot path
         self.fiscal_limit_guard = fiscal_limit_guard
+        # ClassificationEngine — centralized violation classification (MANDATORY)
+        # Enforces single-choke-point principle from AGENTS.md refactoring.
+        # narrower_registry is now internal to ClassificationEngine, not exposed here.
+        self._classification_engine = classification_engine
 
         # Task 2.1 (ARCH-2): Immutable tier registration at construction time.
         # Tiers are provided as tuples (core_tiers, domain_tiers) and validated
@@ -979,8 +476,7 @@ class SymbolicGovernor:
                             f"{type(exc).__name__} — resource state may be "
                             f"inconsistent; manual reconciliation required"
                         ),
-                        recoverable=False,
-                        needs_human_review=True,
+                        kind=ViolationKind.HARD,
                     )
                 )
         return failures
@@ -1033,8 +529,7 @@ class SymbolicGovernor:
                                 f"{tier.tier_name} raised {type(exc).__name__} — "
                                 f"failing closed"
                             ),
-                            recoverable=False,
-                            needs_human_review=True,
+                            kind=ViolationKind.HARD,
                         )
                     ]
                 span.set_attribute(
@@ -1073,13 +568,21 @@ class SymbolicGovernor:
     def _violations_to_failures(
         self, violations: list[Violation]
     ) -> list[dict[str, Any]]:
-        """Convert Violation dataclasses into RefusalReceipt.failures schema."""
+        """Convert Violation dataclasses into RefusalReceipt.failures schema.
+        
+        Maps ViolationKind to failure metadata for receipt generation.
+        """
         out: list[dict[str, Any]] = []
         for v in violations:
-            failure: dict[str, Any] = {"code": v.code, "message": v.message}
+            failure: dict[str, Any] = {
+                "code": v.code,
+                "message": v.message,
+                "kind": v.kind.value,  # Serialize ViolationKind enum
+            }
             if v.tier:
                 failure["tier"] = v.tier
-            if v.needs_human_review:
+            # Map kind to legacy needs_human_review flag for backward compatibility
+            if v.kind == ViolationKind.HITL:
                 failure["needs_human_review"] = True
             # Optional fields (may not exist on all Violation instances)
             if hasattr(v, "severity") and v.severity:
@@ -1457,35 +960,222 @@ class SymbolicGovernor:
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
             if self._is_governed_action(tool_name, params):
-                _confidence = float(params.get("confidence", 0.0))
+                # H3 Security Fix: Fail-closed confidence validation
+                # Prevents NaN/undefined/invalid values from bypassing tier validation
+                confidence_score = params.get("confidence")
+                
                 # POAM-TIER2-001: stamp the confidence provenance so every Tier 2 decision
                 # is auditable. The structural heuristic below provides independent
                 # corroboration after Tier-1 STPA and Tier-3 OPA results are available.
                 conf_span.set_attribute("tier2.confidence.source", "agent_self_report")
                 conf_span.set_attribute("tier2.confidence.independently_verified", True)
+                
                 # EV-2 Migration: Use config-based threshold with env var override support
                 _confidence_threshold = get_agent_confidence_threshold()
-                if _confidence < _confidence_threshold:
-                    _conf_meta = ControlRegistry().get_mapping(
-                        GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
+                _conf_meta = ControlRegistry().get_mapping(
+                    GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
+                )
+                
+                # Fail closed: validate confidence before threshold check
+                _confidence_valid = True
+                _confidence = 0.0  # Default for telemetry
+                
+                if confidence_score is None:
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score missing (required for all actions)"
                     )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description="confidence score missing",
+                            governing_state={
+                                "confidence": None,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence="Action execution with missing confidence score",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": None,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif not isinstance(confidence_score, (int, float)):
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score invalid type: {type(confidence_score).__name__}"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence score invalid type: {type(confidence_score).__name__}",
+                            governing_state={
+                                "confidence": str(confidence_score),
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Action execution with invalid confidence type: {type(confidence_score).__name__}",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": str(confidence_score),
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif math.isnan(confidence_score):
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score is NaN (invalid)"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description="confidence score is NaN",
+                            governing_state={
+                                "confidence": "NaN",
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence="Action execution with NaN confidence score",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": "NaN",
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif math.isinf(confidence_score):
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score is infinite (invalid)"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description="confidence score is infinite",
+                            governing_state={
+                                "confidence": "inf" if confidence_score > 0 else "-inf",
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence="Action execution with infinite confidence score",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": "inf" if confidence_score > 0 else "-inf",
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif confidence_score < 0:
+                    _confidence = float(confidence_score)
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score {_confidence} is negative (invalid)"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence score {_confidence} is negative",
+                            governing_state={
+                                "confidence": _confidence,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Action execution with negative confidence: {_confidence}",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": _confidence,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif confidence_score > 1.0:
+                    _confidence = float(confidence_score)
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"Confidence score {_confidence} exceeds maximum 1.0"
+                    )
+                    violations.append(_conf_msg)
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence score {_confidence} exceeds maximum 1.0",
+                            governing_state={
+                                "confidence": _confidence,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Action execution with excessive confidence: {_confidence}",
+                        )
+                    )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": _confidence,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                elif confidence_score < _confidence_threshold:
+                    _confidence = float(confidence_score)
                     _conf_msg = (
                         f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
                         f"{_conf_meta['primary_framework']} Confidence Violation: "
                         f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
                         f"Violation: agent confidence below required minimum."
                     )
-                    # CRIT-5 fix: store in a local variable, not on self.
-                    # self._pending_payload was a data race — concurrent requests on
-                    # the singleton could overwrite each other's payload.
-                    _conf_payload = {
-                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        "primary_framework": _conf_meta["primary_framework"],
-                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                        "scope": _conf_meta.get("scope", ""),
-                        "confidence": _confidence,
-                        "threshold": _confidence_threshold,
-                    }
                     violations.append(_conf_msg)
                     tier_failures.append(
                         GovernanceTierFailure(
@@ -1501,12 +1191,28 @@ class SymbolicGovernor:
                             f"(below {_confidence_threshold:.2f} minimum)",
                         )
                     )
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "governing_state": {
+                            "confidence": _confidence,
+                            "threshold": _confidence_threshold,
+                            "framework": _conf_meta["primary_framework"],
+                        },
+                    }
+                    _confidence_valid = False
+                else:
+                    # Valid confidence score that passes threshold
+                    _confidence = float(confidence_score)
+                
+                # Set telemetry attributes
                 conf_span.set_attribute("governance.confidence.score", _confidence)
                 conf_span.set_attribute(
                     "governance.confidence.threshold", _confidence_threshold
                 )
                 conf_span.set_attribute(
-                    "governance.confidence.passed", _confidence >= _confidence_threshold
+                    "governance.confidence.passed", _confidence_valid
                 )
             conf_span.set_attribute(
                 "governance.stage.latency_ms",
@@ -1572,7 +1278,13 @@ class SymbolicGovernor:
                     policy_decision = policy_resp
                 else:
                     policy_decision = "DENY"
-                if policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                
+                # Fail-closed allowlist pattern (H2 security fix)
+                if policy_decision == "ALLOW":
+                    # Only explicit ALLOW proceeds - no violations added
+                    pass
+                elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                    # Explicit denials with specific violation message
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1593,12 +1305,47 @@ class SymbolicGovernor:
                         )
                     )
                 elif policy_decision == "MANUAL_REVIEW":
+                    # Manual review required
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
                     violations.append(
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Check: Manual Review Required."
+                    )
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="OPA",
+                            control_id=GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+                            rule_description="OPA manual review required",
+                            governing_state={
+                                "policy_decision": policy_decision,
+                                "framework": _opa_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Execution of {tool_name} requires manual review",
+                        )
+                    )
+                else:
+                    # Everything else (typos, unknown verdicts, unexpected values) triggers violation
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
+                    violations.append(
+                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
+                        f"OPA Policy Violation: Unexpected verdict '{policy_decision}' "
+                        f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW)"
+                    )
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="OPA",
+                            control_id=GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+                            rule_description="OPA unexpected verdict",
+                            governing_state={
+                                "policy_decision": policy_decision,
+                                "framework": _opa_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Execution of {tool_name} blocked due to unexpected OPA verdict",
+                        )
                     )
 
         else:
@@ -1674,7 +1421,12 @@ class SymbolicGovernor:
 
                 # Retrieve the self-reported confidence value (set in the confidence check
                 # block above; default 0.0 if tool_name branch was skipped somehow).
-                _self_reported_confidence: float = float(params.get("confidence", 0.0))
+                # H3 Security Fix: Safe conversion to handle invalid types already caught above
+                try:
+                    _self_reported_confidence: float = float(params.get("confidence", 0.0))
+                except (TypeError, ValueError):
+                    # Invalid type/value already caught by validation above; use safe default
+                    _self_reported_confidence = 0.0
                 # EV-2 Migration: Use config-based threshold with env var override support
                 _confidence_threshold_t2: float = get_agent_confidence_threshold()
 
@@ -1975,8 +1727,14 @@ class SymbolicGovernor:
             _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
 
             # --- CBF coroutine ---
-            async def _cbf_revalidate() -> str | None:
-                """Atomic CBF verify-and-commit inside a dedicated span."""
+            async def _cbf_revalidate() -> tuple[bool, str]:
+                """Atomic CBF verify-and-commit inside a dedicated span.
+                
+                Returns:
+                    tuple[bool, str]: (committed, reason) where committed=True means
+                                      the CBF balance was successfully debited, and
+                                      reason describes the outcome or refusal reason.
+                """
                 with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
                     cbf_span.set_attribute(OBSERVATION_NAME, "cbf_barrier_check")
                     cbf_span.set_attribute("governance.stage", "cbf")
@@ -1991,14 +1749,14 @@ class SymbolicGovernor:
                             action_name=tool_name,
                             payload=params,
                         )
-                        result = "SAFE" if committed else reason
-                        cbf_span.set_attribute("governance.cbf.result", result[:80])
+                        result_str = "SAFE" if committed else reason
+                        cbf_span.set_attribute("governance.cbf.result", result_str[:80])
                         cbf_span.set_attribute("governance.cbf.committed", committed)
                         cbf_span.set_attribute(
                             "governance.stage.latency_ms",
                             round((time.perf_counter() - _t) * 1000, 2),
                         )
-                        return result
+                        return (committed, reason)
                     except Exception as exc:
                         cbf_span.record_exception(exc)
                         cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
@@ -2026,48 +1784,27 @@ class SymbolicGovernor:
                         opa_span.record_exception(exc)
                         raise
 
-            # Fire CBF and OPA concurrently — same as Tiers 3a and 3b in the full pipeline.
-            _t_parallel_start = time.perf_counter()
-            _gather_results2 = await asyncio.gather(
-                _cbf_revalidate(),
-                _opa_revalidate(),
-                return_exceptions=True,
-            )
-            cbf_result: str | BaseException | None = _gather_results2[0]
-            policy_resp: Any = _gather_results2[1]
-            _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
-            logger.debug(
-                "⚡ [revalidate_post_hitl] CBF+OPA parallel re-check completed "
-                "in %.1fms (tool=%s)",
-                _parallel_ms,
-                tool_name,
-            )
-
-            # --- Evaluate CBF result ---
-            if isinstance(cbf_result, BaseException):
-                if _cbf_fail_open:
-                    logger.warning(
-                        "⚠️ [revalidate_post_hitl] CBF check unavailable (%s) — "
-                        "CBF_FAIL_OPEN=true, skipping CBF gate (audit gap).",
-                        cbf_result,
-                    )
-                else:
-                    logger.error(
-                        "⛔ [revalidate_post_hitl] CBF check unavailable (%s) — "
-                        "fail-closed: blocking revalidation.",
-                        cbf_result,
-                    )
-                    violations.append(
-                        "CBF Fail-Closed (post-HITL revalidation): Redis unavailable "
-                        "— cannot verify cash barrier. Set CBF_FAIL_OPEN=true to "
-                        "override (audit gap)."
-                    )
-            elif isinstance(cbf_result, str) and cbf_result.startswith("UNSAFE"):
-                violations.append(
-                    f"Safety Violation (RBC/CBF) [post-HITL revalidation]: {cbf_result}"
-                )
-
-            # --- Evaluate OPA result ---
+            # C2 Fix: Run OPA first (read-only), then CBF commit only if OPA passes.
+            # This prevents budget leakage where CBF debits balance but OPA subsequently denies.
+            #
+            # Phase ordering (sequential):
+            #   1. OPA policy evaluation (read-only, no side effects)
+            #   2. CBF atomic commit (mutating, debits balance) — only if OPA passed
+            #   3. Seal generation with rollback on failure
+            #
+            # Latency trade-off: Sequential execution adds OPA_ms + CBF_ms instead of max(OPA_ms, CBF_ms).
+            # This is acceptable because correctness (no budget leakage) takes precedence over latency.
+            
+            _t_sequential_start = time.perf_counter()
+            cbf_committed = False  # Track whether CBF actually committed (for rollback)
+            
+            # --- Step 1: OPA revalidation (read-only) ---
+            try:
+                policy_resp = await _opa_revalidate()
+            except BaseException as opa_exc:
+                policy_resp = opa_exc
+            
+            # Evaluate OPA result before proceeding to CBF
             if isinstance(policy_resp, BaseException):
                 violations.append(
                     f"OPA Check Failed [post-HITL revalidation]: {policy_resp}"
@@ -2082,7 +1819,13 @@ class SymbolicGovernor:
                     policy_decision = policy_resp
                 else:
                     policy_decision = "DENY"
-                if policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                
+                # Fail-closed allowlist pattern (H2 security fix)
+                if policy_decision == "ALLOW":
+                    # Only explicit ALLOW proceeds - no violations added
+                    pass
+                elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
+                    # Explicit denials with specific violation message
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -2092,6 +1835,7 @@ class SymbolicGovernor:
                         f"Action [post-HITL revalidation]."
                     )
                 elif policy_decision == "MANUAL_REVIEW":
+                    # Manual review required
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -2100,8 +1844,71 @@ class SymbolicGovernor:
                         f"{_opa_meta['primary_framework']} Check: Manual Review "
                         f"Required [post-HITL revalidation]."
                     )
-
-            span.set_attribute("toctou.revalidation.cbf_opa_parallel_ms", _parallel_ms)
+                else:
+                    # Everything else (typos, unknown verdicts, unexpected values) triggers violation
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
+                    violations.append(
+                        f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
+                        f"OPA Policy Violation: Unexpected verdict '{policy_decision}' "
+                        f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]"
+                    )
+            
+            # --- Step 2: CBF commit (only if OPA passed) ---
+            if not violations:
+                try:
+                    cbf_result = await _cbf_revalidate()
+                except BaseException as cbf_exc:
+                    cbf_result = cbf_exc
+                
+                # Evaluate CBF result
+                # C1 Fix: Check the committed boolean directly instead of relying on
+                # reason string prefix matching. This catches all CBF refusals:
+                #   - "UNSAFE: ..." (barrier violation)
+                #   - "RECONCILIATION_UNAVAILABLE: ..." (ground truth unavailable)
+                #   - "Fence epoch regression: ..." (concurrent modification)
+                #   - "Ground truth balance unavailable" (data fetch failure)
+                if isinstance(cbf_result, BaseException):
+                    if _cbf_fail_open:
+                        logger.warning(
+                            "⚠️ [revalidate_post_hitl] CBF check unavailable (%s) — "
+                            "CBF_FAIL_OPEN=true, skipping CBF gate (audit gap).",
+                            cbf_result,
+                        )
+                    else:
+                        logger.error(
+                            "⛔ [revalidate_post_hitl] CBF check unavailable (%s) — "
+                            "fail-closed: blocking revalidation.",
+                            cbf_result,
+                        )
+                        violations.append(
+                            "CBF Fail-Closed (post-HITL revalidation): Redis unavailable "
+                            "— cannot verify cash barrier. Set CBF_FAIL_OPEN=true to "
+                            "override (audit gap)."
+                        )
+                elif isinstance(cbf_result, tuple):
+                    committed, reason = cbf_result
+                    cbf_committed = committed  # Track for potential rollback
+                    if not committed:
+                        # C1 Fix: Any CBF refusal (committed=False) is a hard violation,
+                        # regardless of the reason string content.
+                        violations.append(
+                            f"CBF Commit Refused [post-HITL revalidation]: {reason}"
+                        )
+                        logger.warning(
+                            "⛔ [revalidate_post_hitl] CBF refused to commit: %s",
+                            reason,
+                        )
+            else:
+                logger.info(
+                    "⏭️ [revalidate_post_hitl] OPA denied — skipping CBF commit "
+                    "(budget leakage prevented)"
+                )
+            
+            _sequential_ms = round((time.perf_counter() - _t_sequential_start) * 1000, 2)
+            span.set_attribute("toctou.revalidation.sequential_ms", _sequential_ms)
+            span.set_attribute("toctou.revalidation.cbf_committed", cbf_committed)
 
             try:
                 if violations:
@@ -2343,27 +2150,21 @@ class SymbolicGovernor:
                     # Extract confidence from params (agent self-reported)
                     _confidence = float(params.get("confidence", 0.0))
 
-                    # Build classification context (includes params for NARROW)
-                    _classify_ctx: dict[str, Any] = {
-                        "cbf_violation": any(
-                            "CBF" in v or "cash barrier" in v.lower()
-                            for v in violations
-                        ),
-                        "opa_decision": result.get("opa_decision"),
-                        "policy_ambiguous": result.get("policy_ambiguous", False),
-                        # NARROW: Include original params for clamping computation
-                        "params": params,
-                        # NARROW: Threshold config can be overridden per-request or from config
-                        "threshold_config": params.get("_threshold_config", {}),
-                    }
-
-                    # Classify the violations
-                    decision, classification_meta = _classify_violation(
+                    # Classify the violations using ClassificationEngine (mandatory)
+                    from src.gateway.governance.classification_engine import ClassificationContext
+                    
+                    context = ClassificationContext(
                         violations=violations,
                         stpa_violation_count=_stpa_count,
                         confidence=_confidence,
-                        context=_classify_ctx,
+                        opa_decision=result.get("opa_results", {}).get("decision") if isinstance(result.get("opa_results"), dict) else None,
+                        policy_ambiguous=result.get("policy_ambiguous", False),
+                        params=params,
+                        cbf_violation=any("CBF" in str(v) for v in violations),
                     )
+                    classification = self._classification_engine.classify(context, action)
+                    decision = classification.decision
+                    classification_meta = classification.metadata
 
                     # Record classification metadata in OTel span
                     span.set_attribute(
@@ -2406,11 +2207,17 @@ class SymbolicGovernor:
                     if decision == GovernanceDecision.DEFER:
                         # Park the deferred context in DeferQueue for later retrieval
                         # via GET /v1/defer/pending or resolution via POST /v1/defer/{id}/escalate
-                        # Note: _classify_ctx contains the context built from params and result
+                        defer_metadata = {
+                            "cbf_violation": any("CBF" in str(v) for v in violations),
+                            "opa_decision": result.get("opa_decision"),
+                            "policy_ambiguous": result.get("policy_ambiguous", False),
+                            "params": params,
+                            "action": action,
+                        }
                         defer_token = await _park_defer_context(
                             action=action,
                             params=params,
-                            metadata=_classify_ctx,
+                            metadata=defer_metadata,
                             thread_id=params.get("thread_id"),
                             confidence=_confidence,
                             classification_meta=classification_meta,

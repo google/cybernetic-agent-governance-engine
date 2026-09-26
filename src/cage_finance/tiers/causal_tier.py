@@ -15,7 +15,11 @@
 from typing import Any
 
 from src.gateway.governance.causal import gatekeeper
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 def causal_safety_check(params: dict[str, Any]) -> bool:
@@ -52,7 +56,7 @@ class CausalTierPlugin(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="CAUSAL_CHECK_FAILED",
                     message="World-model is untrustworthy or predicted risk exceeds safety boundary (DoWhy refutation failed).",
-                    recoverable=False,
+                    kind=ViolationKind.HARD,
                 )
             ]
         return []

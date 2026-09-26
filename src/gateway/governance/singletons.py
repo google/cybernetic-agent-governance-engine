@@ -16,15 +16,22 @@ import logging
 from typing import Any
 
 from src.gateway.core.policy import OPAClient
+from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.contracts import GovernanceTierPlugin
 from src.gateway.governance.generated_stpa_validator import (
     GeneratedSTPAValidator as STPAValidator,
 )
+from src.gateway.governance.narrower import NarrowerRegistry
 from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.symbolic_governor import (
+    SymbolicGovernor,
+    is_cage_defer_enabled,
+    is_cage_narrow_enabled,
+    is_cage_pause_enabled,
+)
 
 logger = logging.getLogger("Gateway.Governance.Singletons")
 
@@ -41,11 +48,27 @@ stpa_validator = STPAValidator()
 safety_filter = NullSafetyFilter()
 consensus_engine = NullConsensusProvider()
 
+# Classification Engine (mandatory as of AGENTS.md compliance refactoring)
+# Domains register narrowers via install_domain_components(narrowers=[...])
+narrower_registry = NarrowerRegistry(narrowers=[])
+
+# Feature flags read from environment at construction time
+from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
+
+classification_engine = ClassificationEngine(
+    narrower_registry=narrower_registry,
+    confidence_threshold=get_agent_confidence_threshold(),
+    defer_enabled=is_cage_defer_enabled(),
+    narrow_enabled=is_cage_narrow_enabled(),
+    pause_enabled=is_cage_pause_enabled(),
+)
+
 symbolic_governor = SymbolicGovernor(
     opa_client=opa_client,
     safety_filter=safety_filter,
     consensus_engine=consensus_engine,
     stpa_validator=stpa_validator,
+    classification_engine=classification_engine,
 )
 
 
@@ -55,6 +78,7 @@ def install_domain_components(
     consensus_engine_impl: Any = None,
     resource_guard: Any = None,
     domain_tiers: tuple[GovernanceTierPlugin, ...] | None = None,
+    narrowers: list[Any] | None = None,
 ) -> None:
     """Called by CagePlugin.register() to supply domain implementations.
 
@@ -67,6 +91,7 @@ def install_domain_components(
         consensus_engine_impl: ConsensusProvider implementation (e.g. ConsensusGate)
         resource_guard: ResourceGuard implementation (e.g. FiscalLimitGuard)
         domain_tiers: Domain governance tiers for construction-time registration
+        narrowers: List of Narrower implementations for parameter narrowing
 
     Raises:
         RuntimeError: If a component is already installed by another plugin.
@@ -110,6 +135,12 @@ def install_domain_components(
         logger.info(
             f"✅ Installed {len(domain_tiers)} domain tiers onto symbolic_governor"
         )
+
+    # Narrower registration (AGENTS.md compliance refactoring)
+    if narrowers is not None:
+        for narrower in narrowers:
+            narrower_registry.register(narrower)
+        logger.info(f"✅ Registered {len(narrowers)} narrower(s) onto classification_engine")
 
 
 def _has_null_components() -> bool:

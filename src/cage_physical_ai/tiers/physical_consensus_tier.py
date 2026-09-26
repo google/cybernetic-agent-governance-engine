@@ -17,7 +17,11 @@
 from typing import Any
 
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
@@ -56,7 +60,8 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
                 Violation(
                     tier=self.tier_name,
                     code="PHYSICAL_SAFETY_CONSENSUS_REJECTED",
-                    detail=result.get("reason", "Consensus rejected physical action"),
+                    message=result.get("reason", "Consensus rejected physical action"),
+                    kind=ViolationKind.HITL,
                 )
             ]
         return []

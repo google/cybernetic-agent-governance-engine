@@ -17,7 +17,11 @@
 from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 class DoseBarrierTier(GovernanceTierPlugin):
@@ -59,7 +63,7 @@ class DoseBarrierTier(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="DOSE_BARRIER_VIOLATED",
                     message=reason,
-                    recoverable=True,
+                    kind=ViolationKind.HARD,
                 )
             ]
         return []

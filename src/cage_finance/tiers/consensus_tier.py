@@ -15,7 +15,11 @@
 from typing import Any
 
 from src.gateway.governance.consensus.engine import ConsensusGate
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 
 
 class ConsensusTierPlugin(GovernanceTierPlugin):
@@ -51,7 +55,7 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="CONSENSUS_REJECTED",
                     message=reason,
-                    recoverable=True,
+                    kind=ViolationKind.HARD,
                 )
             ]
         elif status == "ESCALATE":
@@ -60,8 +64,7 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="CONSENSUS_ESCALATED",
                     message=reason,
-                    recoverable=True,
-                    needs_human_review=True,
+                    kind=ViolationKind.HITL,
                 )
             ]
         return []

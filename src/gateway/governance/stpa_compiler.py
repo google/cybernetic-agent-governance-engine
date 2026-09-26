@@ -818,7 +818,7 @@ def generate_python(cs: ControlStructureModel) -> str:
         )
 
         body_lines: list[str] = [
-            f"    def {method_name}(self, action_name: str, params: dict) -> str | None:",
+            f"    def {method_name}(self, action_name: str, params: dict) -> Violation | None:",
             f'        """{uca.id}: {uca.description}"""',
             "        try:",
         ]
@@ -831,67 +831,113 @@ def generate_python(cs: ControlStructureModel) -> str:
         op = cond.operator
 
         if param and op == "is_null":
+            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            if params.get("{param}") is None:',
-                "                return (",
-                f'                    "STPA Violation {uca.id}: {uca.description}"',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="{uca.description}",',
+                "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
         elif param and op == "is_false":
+            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            if params.get("{param}") is False:',
-                "                return (",
-                f'                    "STPA Violation {uca.id}: {uca.description}"',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="{uca.description}",',
+                "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
         elif param and op == "greater_than" and cond.threshold_ref:
             # Map dot-path to THRESHOLDS singleton access
             attr_path = cond.threshold_ref.replace(".", ".")
+            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f"            threshold = THRESHOLDS.{attr_path}",
                 f'            val = params.get("{param}")',
                 "            if val is None:",
                 f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
-                f'                return "STPA Violation {uca.id}: Missing required param `{param}`."',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Missing required param `{param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
                 "            if float(val) > threshold:",
-                "                return (",
-                f'                    f"STPA Violation {uca.id}: {uca.description} '
-                f'({{float(val):.4f}} > {{threshold}})"',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message=f"{uca.description} ({{float(val):.4f}} > {{threshold}})",',
+                "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
         elif param and op == "greater_than" and cond.threshold is not None:
+            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            val = params.get("{param}")',
                 f"            if val is not None and float(val) > {cond.threshold}:",
-                f'                return "STPA Violation {uca.id}: {uca.description}"',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="{uca.description}",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
             ]
         elif param and op == "less_than" and cond.threshold_ref:
             # Map dot-path to THRESHOLDS singleton access
             attr_path = cond.threshold_ref.replace(".", ".")
+            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f"            threshold = THRESHOLDS.{attr_path}",
                 f'            val = params.get("{param}")',
                 "            if val is None:",
                 f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
-                f'                return "STPA Violation {uca.id}: Missing required param `{param}`."',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Missing required param `{param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
                 "            f_val = float(val)",
                 "            if not math.isfinite(f_val):",
-                f'                return "STPA Violation {uca.id}: Non-finite param `{param}`."',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Non-finite param `{param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
                 "            if f_val < threshold:",
-                "                return (",
-                f'                    f"STPA Violation {uca.id}: {uca.description} '
-                f'({{f_val:.4f}} < {{threshold}})"',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message=f"{uca.description} ({{f_val:.4f}} < {{threshold}})",',
+                "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
         elif param and op == "less_than" and cond.threshold is not None:
+            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            val = params.get("{param}")',
                 "            if val is not None:",
                 "                f_val = float(val)",
                 "                if not math.isfinite(f_val):",
-                f'                    return "STPA Violation {uca.id}: Non-finite param `{param}`."',
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="Non-finite param `{param}`.",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
                 f"                if f_val < {cond.threshold}:",
-                f'                    return "STPA Violation {uca.id}: {uca.description}"',
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="{uca.description}",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
             ]
         elif cond.composite:
             body_lines += [
@@ -900,11 +946,17 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "            pass",
             ]
 
+        uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
         body_lines += [
             "            return None",
             "        except Exception as exc:",
             f'            logger.error("Error evaluating {uca.id}: %s", exc)',
-            f'            return f"STPA Violation {uca.id}: Evaluation error — failing closed ({{exc}})."',
+            "            return Violation(",
+            '                tier="stpa",',
+            f'                code="{uca_code}",',
+            f'                message=f"Evaluation error — failing closed ({{exc}}).",',
+            "                kind=ViolationKind.HARD,",
+            "            )",
             "",
         ]
         method_bodies.append("\n".join(body_lines))
@@ -927,6 +979,7 @@ import logging
 import math
 from typing import Any
 
+from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger("Gateway.Governance.GeneratedSTPAValidator")
@@ -943,7 +996,7 @@ class GeneratedSTPAValidator:
         python -m src.gateway.governance.stpa_compiler compile
     """
 
-    def validate(self, action_name: str, params: dict[str, Any]) -> list[str]:
+    def validate(self, action_name: str, params: dict[str, Any]) -> list[Violation]:
         """Public entry-point — delegates to validate_generated().
 
         Call-sites that previously used STPAValidator.validate() can use this
@@ -952,9 +1005,9 @@ class GeneratedSTPAValidator:
         """
         return self.validate_generated(action_name, params)
 
-    def validate_generated(self, action_name: str, params: dict[str, Any]) -> list[str]:
-        """Run all generated UCA checks. Returns list of violation strings."""
-        violations: list[str] = []
+    def validate_generated(self, action_name: str, params: dict[str, Any]) -> list[Violation]:
+        """Run all generated UCA checks. Returns list of Violation objects."""
+        violations: list[Violation] = []
 {dispatch_str}
         return violations
 

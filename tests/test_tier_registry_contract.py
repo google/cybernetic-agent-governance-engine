@@ -359,8 +359,8 @@ async def test_unknown_tier_result_must_block_execution() -> None:
     assert len(violations) == 1
     assert violations[0].tier == "broken_tier"
     assert violations[0].code == "TIER_EXCEPTION"
-    assert violations[0].recoverable is False
-    assert violations[0].needs_human_review is True
+    from src.gateway.governance.contracts import ViolationKind
+    assert violations[0].kind == ViolationKind.HARD
 
 
 @pytest.mark.asyncio
@@ -414,7 +414,8 @@ async def test_tier_timeout_must_block_execution() -> None:
     assert violations[0].tier == "timeout_tier"
     assert violations[0].code == "TIER_EXCEPTION"
     assert "TimeoutError" in violations[0].message
-    assert violations[0].recoverable is False
+    from src.gateway.governance.contracts import ViolationKind
+    assert violations[0].kind == ViolationKind.HARD
 
 
 # ---------------------------------------------------------------------------

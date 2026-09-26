@@ -14,7 +14,11 @@
 
 from typing import Any
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
@@ -50,7 +54,7 @@ class CBFTierPlugin(GovernanceTierPlugin):
                     tier=self.tier_name,
                     code="CBF_BARRIER_VIOLATED",
                     message=reason,
-                    recoverable=True,
+                    kind=ViolationKind.HARD,
                 )
             ]
         return []
