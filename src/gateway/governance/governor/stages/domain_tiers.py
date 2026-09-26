@@ -32,7 +32,7 @@ class DomainTierStage(Stage):
             return self.tier.claims_action(ctx.action, ctx.params)
         except Exception as exc:
             # An exception in claims_action: treat as claimed so that `run` fails closed
-            ctx.claims_failed = True
+            self._claims_failed = True
             ctx.claims_exception = exc
             return True
 
