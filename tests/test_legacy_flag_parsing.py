@@ -14,7 +14,7 @@
 
 import pytest
 
-from src.gateway.governance.symbolic_governor import _env_flag
+from src.gateway.governance.governor._legacy_startup import _env_flag
 
 
 @pytest.mark.local

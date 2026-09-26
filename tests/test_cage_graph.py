@@ -129,7 +129,7 @@ async def test_safety_node_approved_routes_to_governed_trader(minimal_trade_stat
 @pytest.mark.asyncio
 async def test_safety_node_blocked_routes_to_explainer(minimal_trade_state):
     """GovernanceError (DENY) must set safety_status=BLOCKED and route to explainer."""
-    from src.gateway.governance.symbolic_governor import GovernanceError
+    from src.gateway.governance.governor.governor import GovernanceError
 
     mock_governor = AsyncMock()
     mock_governor.govern = AsyncMock(
@@ -151,7 +151,7 @@ async def test_safety_node_blocked_routes_to_explainer(minimal_trade_state):
 @pytest.mark.asyncio
 async def test_safety_node_escalated_routes_to_explainer(minimal_trade_state):
     """GovernanceError with 'Manual Review' must set safety_status=ESCALATED → explainer."""
-    from src.gateway.governance.symbolic_governor import GovernanceError
+    from src.gateway.governance.governor.governor import GovernanceError
 
     mock_governor = AsyncMock()
     mock_governor.govern = AsyncMock(

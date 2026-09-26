@@ -122,7 +122,7 @@ Three production profiles are implemented and loadable via `CAGE_DEPLOYMENT_REGI
 
 ### 1.4 The SymbolicGovernor Pipeline
 
-The [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py) orchestrates an ordered interceptor chain. Each tier is domain-agnostic — it evaluates a mathematical or logical predicate, not a domain-specific business rule:
+The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) orchestrates an ordered interceptor chain. Each tier is domain-agnostic — it evaluates a mathematical or logical predicate, not a domain-specific business rule:
 
 | Tier | Interceptor                | Invariant                                              | Domain Coupling |
 | ---- | -------------------------- | ------------------------------------------------------ | --------------- |
@@ -377,7 +377,7 @@ The binary async-vs-sync choice has been rejected. Instead, [`enforce_fria_bound
 
 This anchors to the existing `DEFER` state machine ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)) via the new `DeferReason.EXTERNAL_VALIDATION` enum member. The adaptive gate is positioned after all 7 local tiers — if local governance already DENY'd, the external provider is never contacted.
 
-The gate runs as tier 6b in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py), activated only when `CAGE_NORMATIVE_PROVIDER != "static"`.
+The gate runs as tier 6b in [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py), activated only when `CAGE_NORMATIVE_PROVIDER != "static"`.
 
 ##### Endpoint 3: `GET /evidence-chain/{thread_id}` — Attestation Logging
 
@@ -592,7 +592,7 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 | ---------------------------------- | ---------------------------------------------------------------------------------------- | ------------ |
 | CBF with `h(x) = cash - floor`    | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) (Lua atomic script `LUA_ATOMIC_CBF`)  | ✅ Production |
 | ControlRegistry (3 regions)        | [`constants.py`](../../src/gateway/governance/constants.py) L121-308                  | ✅ Production |
-| 7-Tier SymbolicGovernor            | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)            | ✅ Production |
+| 7-Tier SymbolicGovernor            | [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py)            | ✅ Production |
 | Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)                         | ✅ Production |
 | Heterogeneous multi-model consensus | [`consensus.py`](../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
 | Fail-closed CBF enforcement        | Unconditional (no `CBF_FAIL_OPEN` override exists)                                       | ✅ Verified   |

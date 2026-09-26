@@ -85,7 +85,7 @@ CAGE was created as a concrete open-source implementation of the architecture in
 
 4. **Six-Primitive Interruption Taxonomy Alignment:**
    Caught that the runtime vocabulary had collapsed toward binary allow/deny, with `DEFER` falling back to `DENY` and `PAUSE`/`NARROW` lacking execution branches.
-   - **Remediation:** Implemented HTTP 202 parking for `DEFER` and added dedicated execution branches for `PAUSE` and `NARROW` in [`src/gateway/governance/pause_primitive.py`](../src/gateway/governance/pause_primitive.py) and [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py).
+   - **Remediation:** Implemented HTTP 202 parking for `DEFER` and added dedicated execution branches for `PAUSE` and `NARROW` in [`src/gateway/governance/pause_primitive.py`](../src/gateway/governance/pause_primitive.py) and [`src/gateway/governance/governor/verdicts.py`](../src/gateway/governance/governor/verdicts.py).
 
 ---
 

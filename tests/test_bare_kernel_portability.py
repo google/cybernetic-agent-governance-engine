@@ -78,7 +78,7 @@ initial_violations = [
 assert not initial_violations, f"Pre-existing vendor modules: {initial_violations}"
 
 # 2. Import core kernel modules
-import src.gateway.governance.symbolic_governor as sg
+import src.gateway.governance.governor.governor as sg
 import src.gateway.governance.evidence.stream as es
 import src.gateway.governance.evidence.factory as ef
 import src.gateway.governance.routing_seal as rs
@@ -118,7 +118,7 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "false")
 
-        from src.gateway.governance.symbolic_governor import (
+        from src.gateway.governance.governor.governor import (
             GovernanceError,
             SymbolicGovernor,
         )

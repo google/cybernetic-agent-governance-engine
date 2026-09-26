@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.gateway.governance.constants import ControlRegistry
-from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.server.governance_middleware import governance_app
 
 pytestmark = pytest.mark.unit
@@ -80,15 +80,14 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies, c
     active_hash = registry.active_hash
     assert active_hash != ""  # Should be populated from baseline loading
 
-    # Mock _run_checks to return no violations, and generate_seal_with_evidence to avoid Redis
+    # Stub the pipeline to return no violations, and generate_seal_with_evidence to avoid Redis
     with (
-        patch.object(gov, "_run_checks", new_callable=AsyncMock) as mock_run,
+        _stub_pipeline({"violations": []}),
         patch(
             "src.gateway.governance.routing_seal.generate_seal_with_evidence",
             new=AsyncMock(return_value="mock-seal-token"),
         ),
     ):
-        mock_run.return_value = {"violations": []}
 
         # 1. Matching version
         res = await gov.validate_action(
@@ -322,3 +321,22 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
         assert res["seal"] == "valid-retry-seal"
         # Verify 3 calls total: 2 POSTs and 1 GET
         assert len(mock_api.calls) == 3
+
+
+def _stub_pipeline(mock_result):
+    """Patch run_pipeline (validate_action's only check path) with a canned result."""
+    from unittest.mock import AsyncMock, patch
+    from src.gateway.governance.contracts import Violation, ViolationKind
+    from src.gateway.governance.governor.pipeline import PipelineResult
+    violations = tuple(
+        v if isinstance(v, Violation)
+        else Violation(tier="test", code="TEST", message=str(v), kind=ViolationKind.TRANSIENT)
+        for v in mock_result.get("violations", [])
+    )
+    result = PipelineResult(
+        violations=violations, tier_failures=(), opa_verdict=None, ftra=None, committed_stages=(),
+    )
+    return patch(
+        "src.gateway.governance.governor.governor.run_pipeline",
+        new=AsyncMock(return_value=result),
+    )

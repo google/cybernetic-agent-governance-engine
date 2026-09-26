@@ -75,7 +75,7 @@ Layer 3 (rails like Langfuse) provides external integrations.
 
 **Breaking Change:** the consensus gate, causal gatekeeper, FRIA/normative
 provider, and CBF/fiscal blocks have been deleted from
-[`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)
+[`src/gateway/governance/governor/governor.py`](../src/gateway/governance/governor/governor.py)
 `_run_checks()` method.
 
 | Deleted block | Lines removed | Replacement |
@@ -136,8 +136,8 @@ now scans `src/gateway/` for forbidden domain literals and fails CI on violation
 
 #### Method Signature Changes
 
-**Breaking Change:** [`SymbolicGovernor.revalidate_post_hitl()`](../src/gateway/governance/symbolic_governor.py:1971)
-and [`pre_check()`](../src/gateway/governance/symbolic_governor.py:2213) no longer
+**Breaking Change:** [`SymbolicGovernor.revalidate_post_hitl()`](../src/gateway/governance/governor/governor.py)
+and [`pre_check()`](../src/gateway/governance/governor/governor.py) no longer
 accept `tool_name` with a default value.
 
 | Method | Old signature | New signature |
@@ -162,7 +162,7 @@ plugin in PR C. No interim adapter is provided.
 
 ### New Infrastructure
 
-- **Tier Dispatch Loop** — [`SymbolicGovernor._run_domain_tiers()`](../src/gateway/governance/symbolic_governor.py:856)
+- **Tier Dispatch Loop** — [`run_pipeline()`](../src/gateway/governance/governor/pipeline.py)
   executes registered `GovernanceTierPlugin` instances for a given phase (1 or 2).
 - **Helper Methods** — `_is_governed_action()`, `_violations_to_strings()`,
   `_violations_to_failures()`, `_build_standing()` provide tier dispatch utilities.
@@ -250,7 +250,7 @@ corresponding module is migrated; use the config file instead.
 | Variable | Replacement | Migration |
 |----------|-------------|-----------|
 | `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | `config/thresholds/*.json` (per-region FTRA boundary thresholds) | Move the values you previously set via env var into the appropriate region file under [`config/thresholds/`](../config/thresholds/). This migration also fixes a latent drift bug where [`src/gateway/governance/ftra/graph_analyzer.py:73-74`](../src/gateway/governance/ftra/graph_analyzer.py:73) hardcoded `0.70` independent of the env var — after migration, both `symbolic_governor.py` and `graph_analyzer.py` read the same config value via `get_fria_zone_defer()`. |
-| `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`symbolic_governor.py:1088-1097,1366-1368`](../src/gateway/governance/symbolic_governor.py:1088) are consolidated into a single read via `get_agent_confidence_threshold()`. |
+| `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`symbolic_governor.py:1088-1097,1366-1368`](../src/gateway/governance/governor/stages/confidence.py) are consolidated into a single read via `get_agent_confidence_threshold()`. |
 | `CAUSAL_LOCK_P_VALUE_THRESHOLD`, `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE`, `CAUSAL_LOCK_RISK_BOUNDARY` | `config/thresholds/*.json` | Move MRM/ISO 42001 §A.9.4-governed threshold values from env vars ([`src/gateway/governance/causal/gatekeeper.py:80-110`](../src/gateway/governance/causal/gatekeeper.py:80)) into the versioned config file. This also gives an audit trail for threshold changes. |
 | `NEMO_AUTO_APPLY_ENABLED` | *(deleted, not migrated)* | This variable is removed entirely as part of CR-2 (the legacy auto-apply code path is deleted). Setting it in v3.0.1 has no effect regardless of value. |
 | `KMS_BATCH_MAX_SIZE`, `KMS_BATCH_ENABLED` | `config/thresholds/*.json` | **Resolved:** The default is standardized to `"false"` across `kms_batch_signer.py` and `main.py`. Batch configuration is loaded via schema thresholds. |
@@ -261,7 +261,7 @@ corresponding module is migrated; use the config file instead.
 | Config | Purpose | Default |
 |--------|---------|---------|
 | `config/thresholds/<REGION>_BASELINE.json` — FTRA zone keys (`fria_zone_allow`, `fria_zone_defer`) | Replaces `FRIA_ZONE_ALLOW`/`FRIA_ZONE_DEFER` env vars | `0.95` / `0.70` (matches current env var defaults) |
-| `config/thresholds/<REGION>_BASELINE.json` — `agent_confidence_threshold` key | Replaces `AGENT_CONFIDENCE_THRESHOLD` | Matches current env var default (confirm exact value in [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py:1088) before upgrading) |
+| `config/thresholds/<REGION>_BASELINE.json` — `agent_confidence_threshold` key | Replaces `AGENT_CONFIDENCE_THRESHOLD` | Matches current env var default (confirm exact value in [`symbolic_governor.py`](../src/gateway/governance/governor/stages/confidence.py) before upgrading) |
 | `config/thresholds/<REGION>_BASELINE.json` — `causal_lock_*` keys | Replaces the three `CAUSAL_LOCK_*` env vars | Matches current env var defaults; confirm with MRM/ISO 42001 owner before upgrading |
 | `config/thresholds/<REGION>_BASELINE.json` — `kms_batch_*` keys | Replaces `KMS_BATCH_MAX_SIZE`/`KMS_BATCH_ENABLED` | `32` / `false` (standardized across modules) |
 | `config/thresholds/<REGION>_BASELINE.json` — `causal_min_samples`, `causal_cache_ttl_seconds`, `telemetry_max_staleness_seconds` keys | Replaces the three misc causal/telemetry env vars | Matches current defaults (`30`, `300`, `300`) |
@@ -629,7 +629,7 @@ response body and from the `DeferResponse` model.
 | Removed field | Canonical replacement | Emitted by (before) |
 |---|---|---|
 | `verdict` | `decision` | [`decisions.py`](../src/gateway/governance/decisions.py), [`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py) |
-| `defer_id` | `defer_token` | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
+| `defer_id` | `defer_token` | [`symbolic_governor.py`](../src/gateway/governance/governor/governor.py) |
 | `missing_input_reason` | `classification_reason` | [`decisions.py`](../src/gateway/governance/decisions.py), [`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py) |
 
 **Migration:** clients parsing DEFER responses must read `decision`,

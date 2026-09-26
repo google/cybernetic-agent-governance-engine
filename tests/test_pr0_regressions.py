@@ -48,7 +48,7 @@ def _create_safe_ftra_result():
 def mock_ftra_safe():
     """Fixture that mocks FTRA boundary check to return safe result."""
     with patch(
-        "src.gateway.governance.symbolic_governor.SymbolicGovernor._ftra_boundary_check",
+        "src.gateway.governance.governor.stages.ftra.FtraStage._ftra_boundary_check",
         new_callable=AsyncMock,
         return_value=_create_safe_ftra_result(),
     ):

@@ -190,7 +190,7 @@ def symbolic_governor(
     classification_engine: Any,
 ) -> SymbolicGovernor:
     """Create a SymbolicGovernor instance with mocked dependencies."""
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     return SymbolicGovernor(
         opa_client=mock_opa_client,
@@ -240,7 +240,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
         check should classify it as IRREVERSIBLE_TERMINAL and require HITL.
         """
         # Test execute_trade with complete valid payload
-        result = await symbolic_governor._ftra_boundary_check(
+        result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="execute_trade",
             tool_input={"amount": 50000, "symbol": "TSLA", "currency": "USD"},
             detect_bypass=True,
@@ -259,7 +259,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
     ) -> None:
         """Verify READ_ONLY actions pass through without HITL requirement."""
         # Test prompt_injection_check — should be READ_ONLY
-        result = await symbolic_governor._ftra_boundary_check(
+        result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="prompt_injection_check",
             tool_input={"prompt": "test prompt"},
             detect_bypass=True,
@@ -278,7 +278,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
     ) -> None:
         """Verify unknown actions fail closed to IRREVERSIBLE_TERMINAL."""
         # Test unknown action — should fail closed
-        result = await symbolic_governor._ftra_boundary_check(
+        result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="unknown_dangerous_action",
             tool_input={},
             detect_bypass=True,
@@ -390,7 +390,7 @@ class TestPrometheusMetrics:
 
         # The Counter will be created and incremented during the check
         # We just verify no exceptions are raised
-        result = await symbolic_governor._ftra_boundary_check(
+        result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="execute_trade",
             tool_input={},
             detect_bypass=True,
@@ -448,7 +448,7 @@ class TestFtraBoundaryCheckInputValidation:
     ) -> None:
         """Verify _ftra_boundary_check raises TypeError when tool_input is None."""
         with pytest.raises(TypeError) as exc_info:
-            await symbolic_governor._ftra_boundary_check(
+            await _ftra_stage(symbolic_governor)._ftra_boundary_check(
                 tool_name="execute_trade",
                 tool_input=None,  # type: ignore[arg-type]
                 detect_bypass=True,
@@ -465,7 +465,7 @@ class TestFtraBoundaryCheckInputValidation:
     ) -> None:
         """Verify _ftra_boundary_check raises TypeError when tool_input is a string."""
         with pytest.raises(TypeError) as exc_info:
-            await symbolic_governor._ftra_boundary_check(
+            await _ftra_stage(symbolic_governor)._ftra_boundary_check(
                 tool_name="execute_trade",
                 tool_input="invalid_string",  # type: ignore[arg-type]
                 detect_bypass=True,
@@ -482,7 +482,7 @@ class TestFtraBoundaryCheckInputValidation:
     ) -> None:
         """Verify _ftra_boundary_check raises TypeError when tool_input is a list."""
         with pytest.raises(TypeError) as exc_info:
-            await symbolic_governor._ftra_boundary_check(
+            await _ftra_stage(symbolic_governor)._ftra_boundary_check(
                 tool_name="execute_trade",
                 tool_input=[{"amount": 100}],  # type: ignore[arg-type]
                 detect_bypass=True,
@@ -499,7 +499,7 @@ class TestFtraBoundaryCheckInputValidation:
     ) -> None:
         """Verify _ftra_boundary_check accepts valid dict input with complete payload."""
         # Should not raise — valid dict input with all required parameters
-        result = await symbolic_governor._ftra_boundary_check(
+        result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="execute_trade",
             tool_input={"amount": 100, "symbol": "AAPL", "currency": "USD"},
             detect_bypass=True,
@@ -519,7 +519,7 @@ class TestFtraBoundaryCheckInputValidation:
         for actions with required parameters like execute_trade.
         """
         # Empty dict triggers semantic validation failure for execute_trade
-        result = await symbolic_governor._ftra_boundary_check(
+        result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="execute_trade",
             tool_input={},
             detect_bypass=True,
@@ -531,3 +531,9 @@ class TestFtraBoundaryCheckInputValidation:
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+
+def _ftra_stage(gov):
+    """Return the governor's FtraStage (the boundary check lives on the stage)."""
+    from src.gateway.governance.governor.stages.ftra import FtraStage
+    return next(s for s in gov.stages if isinstance(s, FtraStage))

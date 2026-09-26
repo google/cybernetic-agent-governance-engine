@@ -65,7 +65,7 @@ async def _execute_scenario_entry_point(
         new_callable=AsyncMock,
         return_value="mock-seal-" + "a" * 32,
     ), patch(
-        "src.gateway.governance.symbolic_governor._park_defer_context",
+        "src.gateway.governance.governor.verdicts._park_defer_context",
         new_callable=AsyncMock,
         return_value="mock-defer-token",
     ), patch(

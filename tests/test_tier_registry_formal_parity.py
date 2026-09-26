@@ -66,7 +66,7 @@ class _FakeTier:
 
 def _make_governor(classification_engine, **overrides):
     """Create a SymbolicGovernor with mocked dependencies."""
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     kwargs = {
         "classification_engine": classification_engine,

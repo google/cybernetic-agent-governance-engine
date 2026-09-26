@@ -18,13 +18,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 class MockTier:
     def __init__(self, name: str):
         self._name = name
         self.rollback = AsyncMock()
+        self.phase = 2
+        self.order = 0
 
     @property
     def tier_name(self) -> str:
@@ -70,7 +72,7 @@ async def test_rollback_lifo_order(governor, classification_engine):
     tier_b.rollback.side_effect = rollback_b
     tier_c.rollback.side_effect = rollback_c
 
-    violations = await governor._rollback_committed(committed, "test_action", {})
+    violations = await _rollback(committed)
 
     assert not violations
     assert execution_order == ["C", "B", "A"]
@@ -88,7 +90,7 @@ async def test_rollback_exception_does_not_stop_others(governor, classification_
 
     tier_b.rollback.side_effect = RuntimeError("failed")
 
-    violations = await governor._rollback_committed(committed, "test_action", {})
+    violations = await _rollback(committed)
 
     tier_c.rollback.assert_called_once()
     tier_a.rollback.assert_called_once()
@@ -114,7 +116,7 @@ async def test_rollback_multiple_failures(governor, classification_engine):
     tier_b.rollback.side_effect = Exception("failed B")
     tier_c.rollback.side_effect = Exception("failed C")
 
-    violations = await governor._rollback_committed(committed, "test_action", {})
+    violations = await _rollback(committed)
 
     assert len(violations) == 3
     # Order will be C, B, A
@@ -138,7 +140,7 @@ async def test_rollback_success_returns_empty(governor, classification_engine):
 
     committed = [tier_a, tier_b, tier_c]
 
-    violations = await governor._rollback_committed(committed, "test_action", {})
+    violations = await _rollback(committed)
 
     assert not violations
 
@@ -153,7 +155,7 @@ async def test_rollback_failed_violation_structure(governor, classification_engi
 
     tier_a.rollback.side_effect = ValueError("test error")
 
-    violations = await governor._rollback_committed(committed, "test_action", {})
+    violations = await _rollback(committed)
 
     assert len(violations) == 1
     violation = violations[0]
@@ -164,3 +166,10 @@ async def test_rollback_failed_violation_structure(governor, classification_engi
     assert "ValueError" in violation.message
     from src.gateway.governance.contracts import ViolationKind
     assert violation.kind == ViolationKind.HARD
+
+
+async def _rollback(committed):
+    from src.gateway.governance.governor.pipeline import Profile, StageContext, rollback_lifo
+    from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
+    ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
+    return await rollback_lifo([DomainTierStage(t) for t in committed], ctx)

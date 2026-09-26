@@ -101,7 +101,7 @@ OpaDecision = Literal["DENY", "GOVERNANCE_VIOLATION", "MANUAL_REVIEW", "ALLOW"]
 # generate_python() and generate_langgraph() interpolate control-structure
 # string fields directly into Python source that write_artifacts() writes to
 # generated_stpa_validator.py / generated_saga_nodes.py, which singletons.py,
-# symbolic_governor.py and auditor.py import at process start; generate_opa()
+# governor/stages/stpa.py and auditor.py import at process start; generate_opa()
 # and generate_nemo() do the same for Rego / Colang.  A field that carries a
 # quote, brace, or newline can break out of a generated string literal,
 # f-string, or comment and inject executable code into the compiled artifact.

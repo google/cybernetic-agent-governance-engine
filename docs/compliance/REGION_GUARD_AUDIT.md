@@ -44,7 +44,7 @@
 | `src/gateway/governance/constants.py` | 455 | ControlRegistry JSON load |
 | `src/gateway/governance/singletons.py` | 84 | Redis client init |
 | `src/gateway/governance/safety/cbf_engine.py` | 290 | Redis cash-balance state |
-| `src/gateway/governance/symbolic_governor.py` | 876 | Governance orchestration |
+| `src/gateway/governance/governor/governor.py` | 876 | Governance orchestration |
 | `src/gateway/governance/provenance_chain.py` | 225 | Hash chain (pure computation) |
 | `src/gateway/governance/routing_seal.py` | 327 | HMAC seal (pure computation) |
 | ~~`src/gateway/governance/safety/cbf_engine.py`~~ | — | **v3.0.1:** Removed (deprecated shim) |
@@ -443,7 +443,7 @@ These locations perform pure computation or local filesystem operations with no 
 | N/A-01 | [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | 110–127 | SHA-256 hash chain computation only; no storage writes |
 | N/A-02 | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) | 162–181 | HMAC seal generation/verification; no storage writes |
 | ~~N/A-03~~ | ~~`src/gateway/governance/safety/cbf_engine.py`~~ | — | **v3.0.1:** Removed (deprecated shim) |
-| N/A-04 | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | 110–823 | Governance orchestration; delegates all storage to other modules |
+| N/A-04 | [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py) | 110–823 | Governance orchestration; delegates all storage to other modules |
 | N/A-05 | [`src/gateway/infrastructure/telemetry.py`](../../src/gateway/infrastructure/telemetry.py) | 28–45 | OTel tracer factory (`get_tracer()`); no storage writes |
 | N/A-06 | [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py) | 1–366 | SHA-256 hash chain computation; serialization delegated to `audit_workflow.py` |
 | N/A-07 | [`src/compliance_bridge/lula_scheduler.py`](../../src/compliance_bridge/lula_scheduler.py) | 1–309 | Runs `lula validate` subprocess and POSTs to loopback `localhost:3001`; no cross-region I/O |
@@ -623,7 +623,7 @@ env { name = "CAGE_DEPLOYMENT_REGION";   value = var.cage_deployment_region }
 | N/A-01 | `src/gateway/governance/provenance_chain.py` | 110–127 | Pure computation | — | ➖ N/A |
 | N/A-02 | `src/gateway/governance/routing_seal.py` | 162–181 | Pure computation | — | ➖ N/A |
 | ~~N/A-03~~ | ~~`src/gateway/governance/safety/cbf_engine.py`~~ | — | **v3.0.1:** Removed | — | ➖ N/A |
-| N/A-04 | `src/gateway/governance/symbolic_governor.py` | 110–823 | Orchestration only | — | ➖ N/A |
+| N/A-04 | `src/gateway/governance/governor/governor.py` | 110–823 | Orchestration only | — | ➖ N/A |
 | N/A-05 | `src/gateway/infrastructure/telemetry.py` | 28–45 | Tracer factory | — | ➖ N/A |
 | N/A-06 | `src/compliance_bridge/context_accumulator.py` | 1–366 | Pure computation | — | ➖ N/A |
 | N/A-07 | `src/compliance_bridge/lula_scheduler.py` | 1–309 | Loopback HTTP only | — | ➖ N/A |

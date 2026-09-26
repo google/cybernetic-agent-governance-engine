@@ -38,7 +38,7 @@ The GFA implements a **multi-agent wealth advisory workflow** using:
 ### 1.3 Non-Dependence of Layer 1 on Layer 4
 
 The Layer 1 kernel ([`src/gateway/`](../../../src/gateway/)) has **zero awareness** of the GFA application. The governance substrate provides:
-- Universal dispatch loop ([`symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py))
+- Universal dispatch loop ([`symbolic_governor.py`](../../../src/gateway/governance/governor/governor.py))
 - FTRA reachability analysis ([`src/gateway/governance/ftra/`](../../../src/gateway/governance/ftra/))
 - Consequence Gateway atomic verification ([`consequence_gateway.py`](../../../src/gateway/governance/consequence_gateway.py))
 - Evidence accumulation ([`provenance_chain.py`](../../../src/gateway/governance/provenance_chain.py))

@@ -251,9 +251,18 @@ class TestGovernanceCheckEndpoint:
         self, enforce_client, mock_symbolic_governor
     ):
         """When symbolic_governor.verify() returns violations, status is REJECTED."""
+        from src.gateway.governance.contracts import Violation, ViolationKind
+
         mock_symbolic_governor.verify = AsyncMock(
             return_value={
-                "violations": ["drawdown_limit_exceeded"],
+                "violations": [
+                    Violation(
+                        tier="cbf",
+                        code="drawdown_limit_exceeded",
+                        message="Drawdown barrier breached",
+                        kind=ViolationKind.HARD,
+                    )
+                ],
                 "opa_results": {"allow": False},
             }
         )
@@ -269,7 +278,7 @@ class TestGovernanceCheckEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "REJECTED"
-        assert "drawdown_limit_exceeded" in data["violations"]
+        assert [v["code"] for v in data["violations"]] == ["drawdown_limit_exceeded"]
 
     def test_check_missing_tool_name_returns_400(self, enforce_client):
         """Body without tool_name returns HTTP 400."""
@@ -450,7 +459,7 @@ class TestValidateActionEndpoint:
         self, client, mock_symbolic_governor
     ):
         """GovernanceError from the governor returns 403 DENIED — not 500."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
 
         mock_symbolic_governor.validate_action = AsyncMock(
             side_effect=GovernanceError("OPA policy denied execute_trade")
@@ -523,7 +532,7 @@ class TestValidateActionEndpoint:
         self, client, mock_symbolic_governor, mock_kms_signer
     ):
         """GovernanceError triggers _emit_refusal_receipt (P6 compliance receipt)."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
 
         mock_symbolic_governor.validate_action = AsyncMock(
             side_effect=GovernanceError("fiscal_limit_exceeded")
@@ -1021,7 +1030,7 @@ class TestEnforceGovernanceHelper:
 
     async def test_governance_error_raises_permission_error(self):
         """GovernanceError from the governor is converted to PermissionError."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
         from src.gateway.server.governance_middleware import enforce_governance
 
         mock_gov = MagicMock()
