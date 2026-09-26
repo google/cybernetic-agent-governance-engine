@@ -405,15 +405,7 @@ Move `TradingKnowledgeGraph` from [ontology.py](../src/gateway/governance/ontolo
 The only consumers of [ftra/bounding_contract.py](../src/gateway/governance/ftra/bounding_contract.py) are in `cage_finance`: `safety/bounding/*`, `plugin.py` and `__init__.py`. Move it into `src/cage_finance/safety/bounding/` and delete it from the kernel.
 
 ### 4b.12 LangGraph harness and inference proxy — fixes B7
-- **Delete the dead NeMo pre-check path (Q7, approved 2026-09-26).** No Colang flow calls the finance NeMo actions, so the per-request `compute_nemo_context` probe feeds nothing. Delete:
-  - the probe calls in both input rails, and `nemo_context.py`;
-  - the five finance actions in `src/integrations/nemo/actions.py` and their pass-through stubs in `config/rails/actions.py`, with the matching registry entries, `nemo_exporter.py` mappings and tests;
-  - the `pre_check_results` parameter on the NeMo manager.
-  Run `make update-nemo-configmap`. Keep the financial-advisor signed-token `check_approval_token`. If this is already done in PR 2 (#261), delete this bullet.
-  - Once the probe is gone, the `governance_params` extraction below may have no consumers left. Delete it rather than generalise it if so.
-- [nemo_node_factory.py:385-400](../src/gateway/governance/langgraph_harness/nemo_node_factory.py#L385-L400) and [inference_proxy.py:352+](../src/gateway/server/inference_proxy.py#L352): delete the implicit extraction of `amount, symbol, drawdown_pct, order_size…`.
-  - `governance_params` must be present in state, or the node config must provide a `params_extractor`.
-  - If neither exists, fail closed with a DENY receipt.
+- **Already done in PR 2 (#261):** the dead NeMo pre-check path (Q7) was deleted, including the implicit `amount, symbol, drawdown_pct, order_size…` extraction into `governance_params` in `nemo_node_factory.py` and `inference_proxy.py`. The NeMo input node no longer reads governance parameters, so no `params_extractor` is needed.
 - [opa_node_factory.py](../src/gateway/governance/langgraph_harness/opa_node_factory.py):
   - span keys come from `config.span_keys: tuple[str, ...] = ()` (L138);
   - `approved_target` and `blocked_target` become required args with no `"governed_trader"` default (L262).
@@ -466,7 +458,6 @@ The allowlist covers test fixtures only; `src/integrations/` is out of scope (La
 | Causal | Missing treatment → BLOCK (`TREATMENT_UNRESOLVED`); no filesystem access outside the spec | ✅ (A5) |
 | Thresholds | A missing domain section → assembly raises; an orphan section → raises | ✅ |
 | STPA | Finance golden corpus gives violations identical to the pre-PR validator; healthcare contributes 0 rules; generated finance Rego is identical except for renamed spec fields | ✅ |
-| Harness | A NeMo node with no `governance_params` and no extractor → DENY | ✅ |
 | Detectors | The finance corpus gives identical detections; a healthcare "administer … I authorize" sample is detected | ✅ |
 | Gate G3 | Negative tests for each of the four §4b.17 rules | ✅ |
 

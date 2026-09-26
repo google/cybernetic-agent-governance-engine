@@ -31,7 +31,7 @@ Each prompt below is self-contained. You can paste it into a fresh agent session
 
 | # | Question | Recommendation |
 |---|---|---|
-| Q7 | ~~At the input rail, three NeMo actions are always no-ops.~~ **Corrected after approval:** none of the five finance NeMo actions (approval token, data latency, drawdown, slippage, atomic execution) is called by any Colang flow. The flows were removed on 2026-03-10 (note in `config/rails/definitions.co`). `action_registry.get_all_actions()` registers pass-through stubs from `config/rails/actions.py` under the same names. So `compute_nemo_context` runs an STPA check and a Redis read on every input request, and **nothing reads the result**. That includes the drawdown check I originally said to keep. | **Approved: delete.** Corrected scope: the `compute_nemo_context` calls in `inference_proxy.py` and `nemo_node_factory.py`; `nemo_context.py`; the five finance actions in `src/integrations/nemo/actions.py` (keep `InvokeVllmFallbackAction`); the five pass-through stubs in `config/rails/actions.py`, plus the registry entries and `make update-nemo-configmap`; the `nemo_exporter.py` mappings; the `pre_check_results` parameter on the NeMo manager; and their tests. The financial-advisor `check_approval_token` (signed-token verification) is a different function and stays. **Timing is still open** (#261 now or PR 4b); see the PR 4–5 plan §4b.12. |
+| Q7 | ~~At the input rail, three NeMo actions are always no-ops.~~ **Corrected after approval:** none of the five finance NeMo actions (approval token, data latency, drawdown, slippage, atomic execution) is called by any Colang flow. The flows were removed on 2026-03-10 (note in `config/rails/definitions.co`). `action_registry.get_all_actions()` registers pass-through stubs from `config/rails/actions.py` under the same names. So `compute_nemo_context` runs an STPA check and a Redis read on every input request, and **nothing reads the result**. That includes the drawdown check I originally said to keep. | **Approved: delete.** Corrected scope: the `compute_nemo_context` calls in `inference_proxy.py` and `nemo_node_factory.py`; `nemo_context.py`; the five finance actions in `src/integrations/nemo/actions.py` (keep `InvokeVllmFallbackAction`); the five pass-through stubs in `config/rails/actions.py`, plus the registry entries and `make update-nemo-configmap`; the `nemo_exporter.py` mappings; the `pre_check_results` parameter on the NeMo manager; and their tests. The financial-advisor `check_approval_token` (signed-token verification) is a different function and stays. **Done in #261** (commit `f254b32`), together with the implicit `governance_params` extraction in both input rails. |
 | Q8 | #259 removed the combined "`CBF_FAIL_OPEN` + HMAC fallback" startup check, so production has no HMAC-fallback check at all. Add one now? | **No, keep it in PR 4a §4a.3.** This isn't a regression: the old check only fired when `CBF_FAIL_OPEN=true`, and the default was `false`. |
 | Q9 | Is #259 a breaking change? | **Yes.** Setting `CBF_FAIL_OPEN=true` no longer bypasses the CBF, so setups without Redis now deny instead of allowing. The title now has `!` and the body a `BREAKING CHANGE:` footer. |
 | Q10 | `proof/model.py` still proves Gap 3, a CBF skip that `CBF_FAIL_OPEN` caused. Remove it? | **Yes, in T8.** The docs already say the gap is closed by removal and point to T8. |
@@ -388,14 +388,9 @@ golden corpus unchanged except the new publish_refusal call (document it); `make
 **Branch:** `refactor/remove-pre-check` · **PR:** [#261](https://github.com/google/cybernetic-agent-governance-engine/pull/261)
 
 No prompt needed. What landed:
-- `nemo_context.compute_nemo_context` replaces `pre_check` and fails closed.
-- NeMo actions now **deny** when `pre_check_results` is missing (previously they allowed); tests were flipped to match.
-
-**Follow-up resolved in #261:**
-- Input rails run before the model has chosen a tool, so no real action exists. Both callers (the inference proxy and the NeMo input node) now pass one named constant, `nemo_context.INPUT_RAIL_PROBE_ACTION`.
+- `SymbolicGovernor.pre_check` is removed.
+- The NeMo pre-check path it fed is deleted as dead code (Q7): `nemo_context.py` (`compute_nemo_context`, `INPUT_RAIL_PROBE_ACTION`), the probe blocks in both input rails, the five finance NeMo actions and their `config/rails/actions.py` stubs, the registry and `nemo_exporter` entries, and the `pre_check_results` parameter on the NeMo manager. No Colang flow ever called those actions.
 - `NullSafetyFilter.verify_action` is now async, matching the `SafetyFilter` protocol. Bare-kernel mode therefore denies via its explicit verdict instead of a `TypeError`.
-
-**Open finding — approved for deletion (Q7):** the whole NeMo pre-check path is dead. No Colang flow calls the actions that read `pre_check_results`. See Q7 for the full scope.
 
 ---
 
