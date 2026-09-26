@@ -38,7 +38,7 @@ from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter, Vi
 from src.gateway.governance.ftra.models import FtraBoundaryResult, TerminalClassification
 from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
 from src.gateway.governance.narrower import Narrower, NarrowerRegistry, NarrowingResult
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 @dataclass(frozen=True)
@@ -229,8 +229,10 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
             bypassed_ftra_node=False,
         )
     mock_ftra_check = AsyncMock(return_value=ftra_res)
-    governor._ftra_boundary_check = mock_ftra_check
-    collaborators["governor._ftra_boundary_check"] = mock_ftra_check
+    from src.gateway.governance.governor.stages.ftra import FtraStage
+    ftra_stage = next(s for s in governor.stages if isinstance(s, FtraStage))
+    ftra_stage._ftra_boundary_check = mock_ftra_check
+    collaborators["ftra_stage._ftra_boundary_check"] = mock_ftra_check
 
     return governor, collaborators
 

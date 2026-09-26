@@ -560,7 +560,7 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         toctou.revalidation.max_slippage_pct — reviewer's approved tolerance
     """
     from src.gateway.governance.singletons import symbolic_governor
-    from src.gateway.governance.symbolic_governor import GovernanceError
+    from src.gateway.governance.governor.governor import GovernanceError
 
     tracer = get_tracer()
 

@@ -75,13 +75,13 @@ _AAIF_STAGE_TO_CAGE_TIER: dict[str, dict[str, Any]] = {
         "tier": 3.5,  # 3b
         "name": "OPA Rego policy",
         "enforcement": ["opa"],
-        "module": "src.gateway.governance.symbolic_governor",
+        "module": "src.gateway.governance.governor.governor",
     },
     "access_control": {
         "tier": 3.5,  # 3b
         "name": "OPA RBAC",
         "enforcement": ["opa"],
-        "module": "src.gateway.governance.symbolic_governor",
+        "module": "src.gateway.governance.governor.governor",
     },
     "rate_limiting": {
         "tier": 3.0,  # 3a
@@ -105,7 +105,7 @@ _AAIF_STAGE_TO_CAGE_TIER: dict[str, dict[str, Any]] = {
         "tier": 7,
         "name": "FRIA Normative Boundary",
         "enforcement": ["python"],
-        "module": "src.gateway.governance.symbolic_governor",
+        "module": "src.gateway.governance.governor.governor",
     },
 }
 

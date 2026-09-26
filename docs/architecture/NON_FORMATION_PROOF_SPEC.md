@@ -77,10 +77,10 @@ own evidence.
 [`GovernanceTierFailure`](../../src/gateway/governance/contracts.py:28) is
 the structured per-tier failure record — one is emitted per failing tier
 (CBF, OPA, NEURAL_CONFIDENCE, FISCAL, FTRA, etc.) inside
-[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:1102)
+[`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py)
 (`_run_checks()`), and the first failing tier's record seeds the receipt's
 `control_id` / `standing_snapshot` / `protected_consequence` at
-[`symbolic_governor.py:1820-1849`](../../src/gateway/governance/symbolic_governor.py:1820).
+[`symbolic_governor.py:1820-1849`](../../src/gateway/governance/governor/governor.py).
 
 ### 2.2 `decisions.py` — canonical decision vocabulary
 
@@ -187,9 +187,9 @@ the **positive** claim ("this seal was issued, is unexpired, matches this
 action_hash, and has not been replayed"). The non-formation receipt needs the
 **negative mirror**: cryptographic proof that **no seal was ever issued** for
 the attempted action/params combination. Because seal issuance
-([`generate_seal_with_evidence()`](../../src/gateway/governance/symbolic_governor.py:1865))
+([`generate_seal_with_evidence()`](../../src/gateway/governance/governor/governor.py))
 only happens after `_run_checks()` returns zero violations
-([`symbolic_governor.py:1857-1867`](../../src/gateway/governance/symbolic_governor.py:1857)),
+([`symbolic_governor.py:1857-1867`](../../src/gateway/governance/governor/governor.py)),
 the **absence of a seal record** for a given `action_hash` + `thread_id` in
 the evidence stream is itself the "no-bind" evidence (§6.5, §4 proof element
 4).
@@ -249,10 +249,10 @@ in §5-§8 is justified by exactly one row below.
 
 | # | Proof Element | Question Answered | Primary CAGE Mechanism (existing) | Gap Closed By (new, §5) |
 |---|---|---|---|---|
-| 1 | **Intent (Movement)** | What action did the agent attempt? | `attempted_params` field, already captured in `RefusalReceipt` v2 ([`symbolic_governor.py:1836`](../../src/gateway/governance/symbolic_governor.py:1836)) | `intent` sub-object with full pre-normalization params + `action_hash` (JCS) |
+| 1 | **Intent (Movement)** | What action did the agent attempt? | `attempted_params` field, already captured in `RefusalReceipt` v2 ([`symbolic_governor.py:1836`](../../src/gateway/governance/governor/verdicts.py)) | `intent` sub-object with full pre-normalization params + `action_hash` (JCS) |
 | 2 | **Baseline (Present standing)** | By what authority did it claim permission? | `standing_snapshot` from `GovernanceTierFailure.governing_state` ([`contracts.py:48`](../../src/gateway/governance/contracts.py:48)) + `agent_catalog.rego` SPIFFE scope check | `baseline` sub-object: agent identity, claimed scope, `policy_version` hash at evaluation time |
 | 3 | **Failure (Lost standing)** | Which specific rule/threshold caused refusal? | `control_id` + `violated_rule` + `tier_failures[]` ([`contracts.py:69-81`](../../src/gateway/governance/contracts.py:69)) | `failure` sub-object: full `tier_failures[]` array (not just first), each resolved through `ControlRegistry.get_mapping()` to external citation |
-| 4 | **Block (No-bind)** | Cryptographic proof governance seal was rejected/never issued | Implicit: `govern()` raises `GovernanceError` **before** `generate_seal_with_evidence()` is reached ([`symbolic_governor.py:1853` vs `:1865`](../../src/gateway/governance/symbolic_governor.py:1853)) | Explicit `no_bind_proof` sub-object: signed attestation that no `routing_seal` record exists for this `action_hash`+`thread_id` in the evidence stream (§6.5) |
+| 4 | **Block (No-bind)** | Cryptographic proof governance seal was rejected/never issued | Implicit: `govern()` raises `GovernanceError` **before** `generate_seal_with_evidence()` is reached ([`symbolic_governor.py:1853` vs `:1865`](../../src/gateway/governance/governor/governor.py)) | Explicit `no_bind_proof` sub-object: signed attestation that no `routing_seal` record exists for this `action_hash`+`thread_id` in the evidence stream (§6.5) |
 | 5 | **Protection (Unformed consequence)** | Proof external API/consequence was never touched | `protected_consequence` string field (human-readable only) ([`contracts.py:79`](../../src/gateway/governance/contracts.py:79)) | `protection_proof` sub-object: `formation_boundary` enum (§6.3) + reference to CBF/actuator state showing no mutation occurred, or rollback evidence if it did (Saga case) |
 | 6 | **Containment (Route closure)** | Proof no backdoors or alternate routes existed | `proof/model.py` BFS exhaustive state-space proof (all reachable states satisfy `NoDirectBind`) — a **static, system-wide** proof, not per-transaction | `containment_attestation` sub-object: per-receipt reference to the pinned proof artifact hash (`proof/model.py` output digest) + confirmation the deployed commit matches the proved commit (§6.6) |
 | 7 | **Evidence (Receipt)** | Immutable signed hash proving all above | `proof_hash` (SHA-256 over JCS bytes) — **computed but never KMS-signed or persisted to WORM** ([`contracts.py:83-117`](../../src/gateway/governance/contracts.py:83)) | Full `GovernanceEnvelope`-wrapped, KMS-signed, WORM-persisted receipt (§5, §6) |
@@ -474,10 +474,10 @@ here for readability is, in the actual wire format, the envelope's own
   strings in Python source (§2.11).
 - **Design note:** schema v2 only stores the *first* failing
   `GovernanceTierFailure` in the top-level `control_id`/`violated_rule`
-  fields (see [`symbolic_governor.py:1820-1821`](../../src/gateway/governance/symbolic_governor.py:1820),
+  fields (see [`symbolic_governor.py:1820-1821`](../../src/gateway/governance/governor/governor.py),
   `_first_tf = _tier_failures[0]`). v3's `tier_failures[]` is the **full
   array already collected** in `result["tier_failures"]`
-  ([`symbolic_governor.py:1819`](../../src/gateway/governance/symbolic_governor.py:1819)) —
+  ([`symbolic_governor.py:1819`](../../src/gateway/governance/governor/governor.py)) —
   no new data collection is needed, only a change to what is copied into the
   receipt.
 
@@ -497,7 +497,7 @@ here for readability is, in the actual wire format, the envelope's own
 - `formation_boundary` — **new** enum (§5 decision 5):
   - `NEVER_FORMED` — refusal occurred in Phase 1 (read-only checks: STPA,
     confidence, CBF *check* without commit, OPA) — see
-    [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:1144)
+    [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py)
     "Phase 1 (no mutations)" comment. No state was ever written.
   - `FORMED_AND_ROLLED_BACK` — refusal occurred in Phase 2 *after*
     `atomic_verify_and_commit()` succeeded but a later tier (e.g. Fiscal)
@@ -510,7 +510,7 @@ here for readability is, in the actual wire format, the envelope's own
   directly derivable from which Phase 2 sub-step (if any) executed before
   the failure — this information already exists as local variables
   (`_cbf_committed`, `_fiscal_token`) in `_run_checks()`
-  ([`symbolic_governor.py:1733`](../../src/gateway/governance/symbolic_governor.py:1733))
+  ([`symbolic_governor.py:1733`](../../src/gateway/governance/governor/governor.py))
   but is currently discarded rather than recorded.
 - `external_api_calls_made` — **new**, always `[]` for a true non-formation
   receipt; a non-empty list here would itself be evidence the claim does

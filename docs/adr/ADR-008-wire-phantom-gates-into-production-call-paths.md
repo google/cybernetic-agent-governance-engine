@@ -25,7 +25,7 @@ The CSA AI Agent Risk Matrix (AARM) v1.0 specifies a "Deferral Service" primitiv
 We implement a **two-stage execution boundary** with cryptographic binding and a fail-closed deferral path:
 
 ### Phase 1: Governance Decision (FRIA Evaluation)
-The [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py) evaluates the action through domain-specific governance tiers and consensus scoring:
+The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) evaluates the action through domain-specific governance tiers and consensus scoring:
 
 1. **Input**: Action name, parameters, optional result preview
 2. **Evaluation**: Execute domain tiers (STPA, CBF, OPA, FRIA, Bounding Contracts)
@@ -212,7 +212,7 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 - **CAGE Internal References**:
   - [`src/gateway/governance/decisions.py`](../../src/gateway/governance/decisions.py) — GovernanceDecision enumeration (ALLOW, DENY, DEFER, MANUAL_REVIEW)
   - [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) — UCA-7 (Confidence-Starvation Boundary)
-  - [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:2412) — DeferQueue integration for DEFER path
+  - [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py) — DeferQueue integration for DEFER path
   - [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py:251) — AARM compliance mapping
 
 - **Related ADRs**:

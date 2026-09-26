@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol, Sequence, runtime_checkable
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-    from src.gateway.governance.symbolic_governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 @dataclass(frozen=True)

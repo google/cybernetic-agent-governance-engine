@@ -66,7 +66,7 @@ The **Explainer** ensures the output is grounded in reality, addressing the "Bla
 
 ### 4.4. 8-Tier Governance Pipeline
 
-The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) implements an 8-tier pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `_run_checks()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
+The [`SymbolicGovernor`](../../../src/gateway/governance/governor/pipeline.py) implements an 8-tier pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `_run_checks()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
 
 | Tier | Name | Mechanism | Formal Property |
 | :--- | :--- | :-------- | :-------------- |
@@ -99,7 +99,7 @@ The CBF condition guarantees that the system cannot transition from a safe state
 
 ### 5.2. FRIA Zone Thresholds
 
-**Source:** [`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)
+**Source:** [`src/gateway/governance/governor/governor.py`](../../../src/gateway/governance/governor/governor.py)
 
 The Fundamental Rights Impact Assessment (FRIA) zone thresholds determine the disposition of each governance decision at Tier 6b:
 

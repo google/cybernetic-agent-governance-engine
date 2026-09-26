@@ -450,7 +450,7 @@ class TestValidateActionEndpoint:
         self, client, mock_symbolic_governor
     ):
         """GovernanceError from the governor returns 403 DENIED — not 500."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
 
         mock_symbolic_governor.validate_action = AsyncMock(
             side_effect=GovernanceError("OPA policy denied execute_trade")
@@ -523,7 +523,7 @@ class TestValidateActionEndpoint:
         self, client, mock_symbolic_governor, mock_kms_signer
     ):
         """GovernanceError triggers _emit_refusal_receipt (P6 compliance receipt)."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
 
         mock_symbolic_governor.validate_action = AsyncMock(
             side_effect=GovernanceError("fiscal_limit_exceeded")
@@ -1021,7 +1021,7 @@ class TestEnforceGovernanceHelper:
 
     async def test_governance_error_raises_permission_error(self):
         """GovernanceError from the governor is converted to PermissionError."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
         from src.gateway.server.governance_middleware import enforce_governance
 
         mock_gov = MagicMock()

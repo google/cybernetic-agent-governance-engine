@@ -246,7 +246,7 @@ The gated architecture has exactly **one** reachable `EXECUTED` state, and in th
 
 ### Concurrency: Order-Independence of the CBF ∥ OPA Gate
 
-`gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
+`gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/governor/pipeline.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
 
 `concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 49 states versus 44 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
 
@@ -265,7 +265,7 @@ A caller that caught `GovernanceError` from the old `govern()` path and proceede
 
 **Remediation (v2.0.0-rc.2 / v3.0.0):**
 
-[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed every in-pipeline tier (the FTRA boundary gate having already cleared at the LangGraph level). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing, invalid, or already-consumed seal produces an immediate `BLOCKED` response.
+[`symbolic_governor.govern()`](../../src/gateway/governance/governor/stages/ftra.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed every in-pipeline tier (the FTRA boundary gate having already cleared at the LangGraph level). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing, invalid, or already-consumed seal produces an immediate `BLOCKED` response.
 
 Both `govern()` and `validate_action()` now satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
@@ -285,7 +285,7 @@ For Gaps 3 and 4, the structural invariant is preserved because the seal is stil
 ### 7.1 Gate Completeness at Startup (Gaps 3 & 4)
 
 
-A module-level assertion in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces the remaining gap at pod startup, before the first request is served:
+A module-level assertion in [`symbolic_governor.py`](../../src/gateway/governance/governor/_legacy_startup.py) enforces the remaining gap at pod startup, before the first request is served:
 
 **Gap 4 — DoWhy production import assertion:**
 

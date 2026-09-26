@@ -232,7 +232,7 @@ class TestEnvelopeTransportDenied:
     @pytest.fixture()
     def client_for_denial(self, mock_kms_signer):
         """Client with symbolic_governor configured to deny requests."""
-        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.governance.governor.governor import GovernanceError
 
         gov = MagicMock()
         gov.validate_action = AsyncMock(

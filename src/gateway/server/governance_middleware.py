@@ -52,7 +52,7 @@ from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.singletons import symbolic_governor
-from src.gateway.governance.symbolic_governor import GovernanceError
+from src.gateway.governance.governor.governor import GovernanceError
 from src.gateway.governance.text_filter import ac_keyword_scan
 
 logger = logging.getLogger("Gateway.GovernanceMiddleware")

@@ -34,7 +34,7 @@ from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
 from src.gateway.governance.constants import register_overlay_dir
 from src.gateway.governance.contracts import CagePlugin
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 class HealthcareCagePlugin(CagePlugin):

@@ -27,7 +27,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.gateway.governance.contracts import GovernanceTierPlugin
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 class MockTier(GovernanceTierPlugin):

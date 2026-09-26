@@ -45,7 +45,7 @@ Both model pools are deployed on cost-optimized Spot/preemptible GPU nodes (e.g.
 
 ### 2.1 Symbolic Governor Dispatch Loop
 
-The `SymbolicGovernor` ([`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)) is the primary neuro-symbolic governance engine in the CAGE kernel, implementing the Governance/Reasoning Plane from Tallam's Five-Plane Reference Architecture. It evaluates requested actions against multiple domain-agnostic invariant tiers.
+The `SymbolicGovernor` ([`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)) is the primary neuro-symbolic governance engine in the CAGE kernel, implementing the Governance/Reasoning Plane from Tallam's Five-Plane Reference Architecture. It evaluates requested actions against multiple domain-agnostic invariant tiers.
 
 ```mermaid
 stateDiagram-v2
@@ -104,7 +104,7 @@ The 8-tier symbolic governance pipeline (FTRA pre-pipeline boundary gate plus 7 
 
 #### Violation Classification & Precedence
 
-After all tiers execute, violations are aggregated and classified by [`_classify_violation()`](../../src/gateway/governance/symbolic_governor.py) to determine the final governance decision. Classification operates on structured [`Violation`](../../src/gateway/governance/contracts.py) dataclasses, each carrying an explicit [`ViolationKind`](../../src/gateway/governance/contracts.py) field:
+After all tiers execute, violations are aggregated and classified by [`ClassificationEngine.classify()`](../../src/gateway/governance/governor/verdicts.py) to determine the final governance decision. Classification operates on structured [`Violation`](../../src/gateway/governance/contracts.py) dataclasses, each carrying an explicit [`ViolationKind`](../../src/gateway/governance/contracts.py) field:
 
 **ViolationKind Precedence Hierarchy** (highest to lowest):
 1. **`HARD`** → `DENY` — Non-negotiable safety gates (STPA violations, CBF barrier breaches, explicit OPA DENY). Cannot be narrowed, deferred, or paused.
@@ -558,7 +558,7 @@ src/gateway/
 | `src/gateway/server/agent_gateway_adapter.py` | AGW / ext_authz | Envoy `ext_authz` gRPC servicer bridging proxy traffic into `SymbolicGovernor.validate_action()`. |
 | `src/gateway/server/inference_proxy.py` | Inference Proxy | Reverse proxy routing chat completions to backend Reasoning and Governance Model Pools. |
 | `src/gateway/server/mcp_tool_server.py` | Tool Server | FastMCP server exposing tool endpoints and executing verified actuators via `ActuatorRegistry`. |
-| `src/gateway/governance/symbolic_governor.py` | Governor Loop | Neuro-symbolic governance dispatch loop coordinating the 8-tier admissibility checks. |
+| `src/gateway/governance/governor/governor.py` | Governor Loop | Neuro-symbolic governance dispatch loop coordinating the 8-tier admissibility checks. |
 | `src/gateway/governance/consequence_gateway.py` | Execution Gate | Atomic single-use `ConsequenceToken` verification and TOCTOU defense before execution. |
 | `src/gateway/governance/execution_actuator.py` | Actuator Registry | Registration and invocation boundary for concrete domain execution actuators. |
 | `src/gateway/governance/evidence/stream.py` | Evidence Stream | Hot-path Redis Stream append with SHA-256 hash chaining and optional KMS signing. |

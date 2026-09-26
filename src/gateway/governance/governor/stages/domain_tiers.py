@@ -41,7 +41,7 @@ class DomainTierStage(Stage):
                 Violation(
                     tier=self.name,
                     code="TIER_EXCEPTION",
-                    message=f"Exception in claims_action: {self._claims_exception}",
+                    message=f"Exception in claims_action: {type(self._claims_exception).__name__}: {self._claims_exception}",
                     kind=ViolationKind.HARD,
                 )
             ]
@@ -56,16 +56,26 @@ class DomainTierStage(Stage):
                 Violation(
                     tier=self.name,
                     code="TIER_EXCEPTION",
-                    message=f"Exception in tier execution: {exc}",
+                    message=f"Exception in tier execution: {type(exc).__name__}: {exc}",
                     kind=ViolationKind.HARD,
                 )
             ]
 
     async def rollback(self, ctx: StageContext) -> None:
-        if self.tier.phase == 2:
+        # Phase-1 tiers are read-only: there is nothing to undo.
+        if self.mutating:
             await self.tier.rollback(ctx.action, ctx.params)
 
 def order_stages(tiers: Sequence[GovernanceTierPlugin]) -> tuple[DomainTierStage, ...]:
-    """Sort tiers by phase, order, tier_name and wrap them as DomainTierStages."""
+    """Validate, sort by (phase, order, tier_name) and wrap tiers as DomainTierStages.
+
+    Duplicate ``tier_name`` registrations are rejected: a later tier must never
+    silently shadow an earlier one's verdict or rollback.
+    """
+    seen: set[str] = set()
+    for t in tiers:
+        if t.tier_name in seen:
+            raise ValueError(f"duplicate tier registration at construction: {t.tier_name}")
+        seen.add(t.tier_name)
     sorted_tiers = sorted(tiers, key=lambda t: (t.phase, t.order, t.tier_name))
     return tuple(DomainTierStage(t) for t in sorted_tiers)

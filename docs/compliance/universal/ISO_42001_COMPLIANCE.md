@@ -33,7 +33,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 ### Clause 8: Operation
 
 - **8.1 Operational planning and control:**
-  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **8-tier governance pipeline** (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via [`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → FRIA zones.
+  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **8-tier governance pipeline** (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via [`src/gateway/governance/governor/stages/opa.py`](../../../src/gateway/governance/governor/stages/opa.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → FRIA zones.
   - **Code:** [`src/gateway/server/governance_middleware.py`](../../../src/gateway/server/governance_middleware.py)
 - **8.2 AI Risk Assessment:**
   - **Implementation:** The **8-tier governance pipeline** (FTRA + 7 in-pipeline tiers) performs real-time risk assessment (STPA, CBF, causal SCM) on every tool call. OPA Rego policies enforce fiscal limits and RBAC. The Control Barrier Function provides a formal mathematical safety guarantee via `h(S(t+1)) ≥ (1−γ)·h(S(t))`.
@@ -97,7 +97,7 @@ If the CBF condition is satisfied at every time step, the system is mathematical
 
 ### 8-Tier Governance Pipeline (A.8.4 — AI System Operation Controls)
 
-The 8-tier pipeline (FTRA + 7 in-pipeline tiers via [`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)) is the primary runtime enforcement mechanism for ISO 42001 A.8.4:
+The 8-tier pipeline (FTRA + 7 in-pipeline tiers via [`src/gateway/governance/governor/governor.py`](../../../src/gateway/governance/governor/governor.py)) is the primary runtime enforcement mechanism for ISO 42001 A.8.4:
 
 | Tier | Control | ISO 42001 Mapping |
 |------|---------|-------------------|
@@ -153,5 +153,5 @@ The `PlaceboTreatmentRefuter` runs 50 simulations with significance threshold p 
 ## System Description (Annex A)
 
 - **A.1 AI System Lifecycle:** Managed via the LangGraph workflow ([`src/governed_financial_advisor/graph/graph.py`](../../../src/governed_financial_advisor/graph/graph.py)).
-- **A.2 Data Quality:** Enforced via `GeneratedSTPAValidator` checks on data inputs (e.g., latency thresholds, order volume fractions). The 8-tier governance pipeline (FTRA + 7 in-pipeline tiers via [`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)) provides the primary runtime enforcement layer.
+- **A.2 Data Quality:** Enforced via `GeneratedSTPAValidator` checks on data inputs (e.g., latency thresholds, order volume fractions). The 8-tier governance pipeline (FTRA + 7 in-pipeline tiers via [`src/gateway/governance/governor/stages/stpa.py`](../../../src/gateway/governance/governor/stages/stpa.py)) provides the primary runtime enforcement layer.
 - **A.5.2/A.5.3/A.9.2/SC-4:** Automatically validated every 6 hours by the Lula CronJob ([`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml)).

@@ -40,7 +40,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.skip(reason="CageClient refactor pen
 
 from langchain_core.messages import HumanMessage
 
-from src.gateway.governance.symbolic_governor import GovernanceError
+from src.gateway.governance.governor.governor import GovernanceError
 from src.governed_financial_advisor.graph.nodes.safety_node import (
     route_safety,
     safety_check_node,
@@ -411,7 +411,7 @@ class TestSafetyNodeIntegration:
                 return_value=True,
             ),
             patch(
-                "src.gateway.governance.symbolic_governor.SymbolicGovernor._ftra_boundary_check",
+                "src.gateway.governance.governor.stages.ftra.FtraStage._ftra_boundary_check",
                 new=AsyncMock(return_value=safe_ftra),
             ),
         ):
@@ -462,7 +462,7 @@ class TestSafetyNodeIntegration:
                 return_value=True,
             ),
             patch(
-                "src.gateway.governance.symbolic_governor.SymbolicGovernor._ftra_boundary_check",
+                "src.gateway.governance.governor.stages.ftra.FtraStage._ftra_boundary_check",
                 new=AsyncMock(return_value=safe_ftra),
             ),
         ):

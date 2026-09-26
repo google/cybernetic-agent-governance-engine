@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.gateway.governance.contracts import Violation, ViolationKind
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 @pytest.fixture

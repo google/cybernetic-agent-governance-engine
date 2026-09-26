@@ -33,7 +33,7 @@ from src.gateway.governance.langgraph_harness import (
     create_opa_safety_node,
     create_opa_safety_router,
 )
-from src.gateway.governance.symbolic_governor import GovernanceError
+from src.gateway.governance.governor.governor import GovernanceError
 
 pytestmark = pytest.mark.unit
 
