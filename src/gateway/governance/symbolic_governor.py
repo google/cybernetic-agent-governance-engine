@@ -296,565 +296,9 @@ def is_cage_pause_enabled() -> bool:
 # ---------------------------------------------------------------------------
 # Violation Classification (§2.1 CAGE Implementation Specs)
 # ---------------------------------------------------------------------------
-
-
-def _classify_violation(
-    violations: list[str],
-    stpa_violation_count: int,
-    confidence: float,
-    context: dict[str, Any] | None = None,
-    narrower_registry: Any | None = None,
-) -> tuple[GovernanceDecision, dict[str, Any]]:
-    """Classify violations into DENY, DEFER, NARROW, PAUSE, or REQUIRE_APPROVAL decisions.
-
-    This helper implements the five-way classification required by §2.1 of the
-    CAGE Implementation Specs. The current implementation collapses every non-
-    REQUIRE_APPROVAL violation into DENY — this function restores the DEFER path
-    for soft violations that can be resolved via automated data-hydration, the
-    NARROW path for threshold violations that can be clamped, and the PAUSE path
-    for transient conditions that will resolve without intervention.
-
-    Classification logic:
-        DENY: Hard violations — STPA safety violations, CBF constraint violations,
-              explicit OPA DENY responses. These are non-negotiable safety gates.
-
-        NARROW: Threshold violations that can be clamped to allowed values.
-                Candidates:
-                - Amount/value exceeds soft threshold but is below hard limit
-                - Scope requested is broader than allowed but can be constrained
-                - Date range exceeds max allowed but can be narrowed
-                Feature flag: CAGE_NARROW_ENABLED (default: false — opt-in).
-
-        PAUSE: Transient conditions that will resolve without human intervention
-               or data-hydration. Unlike DEFER, the client waits for an explicit
-               resume signal. Candidates:
-               - Rate limit exceeded (soft, will clear with time)
-               - Circuit breaker open (external dependency unavailable)
-               - Resource temporarily unavailable
-               Feature flag: CAGE_PAUSE_ENABLED (default: false — opt-in).
-
-        DEFER: Soft violations that indicate data starvation or ambiguity, not
-               fundamental safety issues. Candidates:
-               - Low confidence (< FRIA_ZONE_DEFER) with no hard violations
-               - Ambiguous policy interpretation indicators
-               - Multiple soft violations but no hard violations
-
-        REQUIRE_APPROVAL: Existing HITL triggers — OPA MANUAL_REVIEW responses.
-                          Preserved for backward compatibility.
-
-    Args:
-        violations: List of violation strings from the governance pipeline.
-        stpa_violation_count: Number of STPA-specific violations (Tier 1).
-        confidence: Agent's self-reported confidence score [0.0, 1.0].
-        context: Optional dict with additional classification hints:
-            - "cbf_violation": bool — True if CBF barrier was violated
-            - "opa_decision": str — Raw OPA decision (ALLOW/DENY/MANUAL_REVIEW)
-            - "policy_ambiguous": bool — True if OPA returned marginal decision
-            - "params": dict — Original request parameters (for NARROW)
-            - "threshold_config": dict — Threshold limits for NARROW clamping
-
-    Returns:
-        Tuple of (GovernanceDecision, metadata_dict) where metadata_dict contains:
-            - classification_reason: str — Human-readable explanation
-            - violation_types: list[str] — Categorized violation types
-            - deferrable: bool — True if violations are soft/deferrable
-            - hard_violations: list[str] — List of hard violation strings
-            - soft_violations: list[str] — List of soft violation strings
-            - narrowable_violations: list[str] — List of narrowable violation strings
-            - original_params: dict — Original params (if NARROW)
-            - narrowed_params: dict — Narrowed params (if NARROW)
-            - constraints_applied: list[str] — Applied constraints (if NARROW)
-
-    Environment variables:
-        CAGE_DEFER_ENABLED: When "false", DEFER falls back to DENY for rollback
-                            safety. Default: "true".
-        CAGE_NARROW_ENABLED: When "false", NARROW falls back to DEFER or DENY.
-                             Default: "false" (opt-in).
-        CAGE_PAUSE_ENABLED: When "false", PAUSE falls back to DENY.
-                            Default: "false" (opt-in).
-        FRIA_ZONE_DEFER: Confidence threshold below which context is considered
-                         starved. Default: 0.70.
-
-    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
-    AARM mapping: CSA AARM-V7 "Context Window Overflow" (DEFER path)
-    """
-    from src.gateway.governance.decisions import GovernanceDecision
-
-    ctx = context or {}
-    hard_violations: list[str] = []
-    soft_violations: list[str] = []
-    narrowable_violations: list[str] = []
-    pausable_violations: list[str] = []
-    violation_types: list[str] = []
-
-    # ── Categorize each violation ──────────────────────────────────────────────
-    for v in violations:
-        # Hard violation indicators
-        is_stpa = "STPA" in v or "UCA-" in v or "Unsafe Control Action" in v.lower()
-        is_cbf = (
-            "CBF" in v or "Safety Violation (RBC" in v or "cash barrier" in v.lower()
-        )
-        is_fiscal_reject = "Fiscal Limit Pre-Reservation REJECTED" in v
-        is_opa_deny = "OPA Denied Action" in v
-
-        # Pausable violation indicators (transient conditions that will resolve)
-        is_rate_limited = (
-            "rate limit" in v.lower()
-            or "rate exceeded" in v.lower()
-            or "throttl" in v.lower()  # throttle, throttled, throttling
-            or "too many requests" in v.lower()
-        )
-        is_circuit_open = (
-            "circuit breaker" in v.lower()
-            or "circuit open" in v.lower()
-            or "service unavailable" in v.lower()
-        )
-        is_resource_unavailable = (
-            "resource unavailable" in v.lower()
-            or "temporarily unavailable" in v.lower()
-            or "quota exhausted" in v.lower()
-            or "capacity exceeded" in v.lower()
-        )
-
-        # Narrowable violation indicators (can be clamped)
-        is_amount_exceeded = (
-            "amount exceeds" in v.lower()
-            or "exceeds limit" in v.lower()
-            or "exceeds max" in v.lower()
-            or "above threshold" in v.lower()
-        )
-        is_scope_exceeded = (
-            "scope exceeds" in v.lower()
-            or "unauthorized scope" in v.lower()
-            or "scope not allowed" in v.lower()
-        )
-        is_date_range_exceeded = (
-            "date range exceeds" in v.lower()
-            or "range too wide" in v.lower()
-            or "exceeds max days" in v.lower()
-        )
-
-        # Soft violation indicators (deferrable)
-        is_confidence = "Confidence Violation" in v or "confidence below" in v.lower()
-        is_manual_review = "Manual Review Required" in v
-        is_tier2_structural = "POAM-TIER2-001" in v
-
-        # FTRA boundary check indicators (Phase 3.3 — routes to REQUIRE_APPROVAL)
-        # These violations indicate the action was caught at the controller boundary
-        # and requires Human-In-The-Loop review before execution.
-        is_ftra_boundary_hitl = (
-            "FTRA Boundary Check" in v and "Human-in-the-loop review required" in v
-        )
-
-        if is_stpa:
-            hard_violations.append(v)
-            violation_types.append("STPA_SAFETY")
-        elif is_cbf or is_fiscal_reject:
-            hard_violations.append(v)
-            violation_types.append("CBF_CONSTRAINT")
-        elif is_opa_deny:
-            # OPA explicit DENY is a hard violation
-            hard_violations.append(v)
-            violation_types.append("OPA_DENY")
-        elif is_rate_limited or is_circuit_open or is_resource_unavailable:
-            # Pausable violations — transient conditions that will resolve
-            pausable_violations.append(v)
-            if is_rate_limited:
-                violation_types.append("RATE_LIMITED")
-            if is_circuit_open:
-                violation_types.append("CIRCUIT_OPEN")
-            if is_resource_unavailable:
-                violation_types.append("RESOURCE_UNAVAILABLE")
-        elif is_amount_exceeded or is_scope_exceeded or is_date_range_exceeded:
-            # Narrowable violations — can be clamped to allowed values
-            narrowable_violations.append(v)
-            if is_amount_exceeded:
-                violation_types.append("AMOUNT_THRESHOLD_EXCEEDED")
-            if is_scope_exceeded:
-                violation_types.append("SCOPE_EXCEEDED")
-            if is_date_range_exceeded:
-                violation_types.append("DATE_RANGE_EXCEEDED")
-        elif is_manual_review:
-            # Manual review is neither hard nor soft — it's REQUIRE_APPROVAL
-            soft_violations.append(v)
-            violation_types.append("REQUIRE_APPROVAL")
-        elif is_confidence:
-            soft_violations.append(v)
-            violation_types.append("CONFIDENCE_STARVATION")
-        elif is_tier2_structural:
-            # Tier 2 structural override forces HITL, treat as soft
-            soft_violations.append(v)
-            violation_types.append("TIER2_STRUCTURAL")
-        elif is_ftra_boundary_hitl:
-            # FTRA boundary check caught an irreversible action at controller boundary
-            # Route to REQUIRE_APPROVAL for human review (Phase 3.3)
-            soft_violations.append(v)
-            violation_types.append("FTRA_BOUNDARY_HITL")
-        else:
-            # Unknown violation type — default to hard for safety
-            hard_violations.append(v)
-            violation_types.append("UNKNOWN_HARD")
-
-    # ── Explicit context overrides ──────────────────────────────────────────────
-    if ctx.get("cbf_violation"):
-        if "CBF_CONSTRAINT" not in violation_types:
-            violation_types.append("CBF_CONSTRAINT_CTX")
-
-    # ── Classification decision ─────────────────────────────────────────────────
-    has_manual_review = "REQUIRE_APPROVAL" in violation_types
-    has_ftra_boundary_hitl = "FTRA_BOUNDARY_HITL" in violation_types
-    has_hard_violations = len(hard_violations) > 0 or stpa_violation_count > 0
-    has_soft_violations = len(soft_violations) > 0
-    has_narrowable_violations = len(narrowable_violations) > 0
-    has_pausable_violations = len(pausable_violations) > 0
-    confidence_starved = confidence < get_fria_zone_defer()
-
-    # Priority 0: FTRA Boundary HITL (Phase 3.3) — irreversible action caught at boundary
-    # This takes highest priority because it represents a direct HTTP bypass of the
-    # in-graph ftra_node. Route to REQUIRE_APPROVAL for human review.
-    if has_ftra_boundary_hitl and not has_hard_violations:
-        return GovernanceDecision.REQUIRE_APPROVAL, {
-            "classification_reason": (
-                "FTRA Boundary Check: Irreversible action caught at controller "
-                "boundary — requires human sign-off before execution"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-            "ftra_boundary_triggered": True,
-        }
-
-    # Priority 1: REQUIRE_APPROVAL takes precedence (preserves existing HITL behavior)
-    if has_manual_review and not has_hard_violations:
-        return GovernanceDecision.REQUIRE_APPROVAL, {
-            "classification_reason": (
-                "OPA returned MANUAL_REVIEW — action requires human sign-off"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Priority 2: Hard violations always result in DENY
-    if has_hard_violations:
-        reasons = []
-        if stpa_violation_count > 0:
-            reasons.append(f"{stpa_violation_count} STPA safety violation(s)")
-        if (
-            "CBF_CONSTRAINT" in violation_types
-            or "CBF_CONSTRAINT_CTX" in violation_types
-        ):
-            reasons.append("CBF cash barrier violation")
-        if "OPA_DENY" in violation_types:
-            reasons.append("OPA explicit DENY")
-        if not reasons:
-            reasons.append("unknown hard violation")
-
-        return GovernanceDecision.DENY, {
-            "classification_reason": f"Hard violation(s): {'; '.join(reasons)}",
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Priority 3: Pausable violations → PAUSE candidate (transient conditions)
-    # PAUSE takes priority over NARROW because transient conditions should be
-    # paused and retried, not narrowed.
-    if (
-        has_pausable_violations
-        and not has_soft_violations
-        and not has_narrowable_violations
-    ):
-        # Check feature flag — if disabled, fall back to DENY
-        if not is_cage_pause_enabled():
-            return GovernanceDecision.DENY, {
-                "classification_reason": (
-                    "PAUSE candidate but CAGE_PAUSE_ENABLED=false — "
-                    "falling back to DENY"
-                ),
-                "violation_types": list(set(violation_types)),
-                "deferrable": False,
-                "hard_violations": hard_violations,
-                "soft_violations": soft_violations,
-                "narrowable_violations": narrowable_violations,
-                "pausable_violations": pausable_violations,
-            }
-
-        # Determine pause reason from violation types
-        if "RATE_LIMITED" in violation_types:
-            pause_reason = "RATE_LIMITED"
-            estimated_wait = 60  # 1 minute default for rate limits
-        elif "CIRCUIT_OPEN" in violation_types:
-            pause_reason = "CIRCUIT_OPEN"
-            estimated_wait = 30  # 30 seconds default for circuit breakers
-        elif "RESOURCE_UNAVAILABLE" in violation_types:
-            pause_reason = "RESOURCE_UNAVAILABLE"
-            estimated_wait = 120  # 2 minutes default for resource unavailability
-        else:
-            pause_reason = "RATE_LIMITED"
-            estimated_wait = 60
-
-        return GovernanceDecision.PAUSE, {
-            "classification_reason": (
-                f"Transient condition detected: {pause_reason} — "
-                "request paused pending external resume"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "pausable": True,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-            "pause_reason": pause_reason,
-            "estimated_wait_seconds": estimated_wait,
-        }
-
-    # Priority 4: Narrowable violations → NARROW candidate (if enabled and no soft/hard)
-    if has_narrowable_violations and not has_soft_violations:
-        # Check feature flag — if disabled, fall back to DEFER or DENY
-        if not is_cage_narrow_enabled():
-            # Fall back to DEFER if enabled, otherwise DENY
-            if is_cage_defer_enabled() and confidence_starved:
-                return GovernanceDecision.DEFER, {
-                    "classification_reason": (
-                        "NARROW candidate but CAGE_NARROW_ENABLED=false — "
-                        "falling back to DEFER"
-                    ),
-                    "violation_types": list(set(violation_types)),
-                    "deferrable": True,
-                    "hard_violations": hard_violations,
-                    "soft_violations": soft_violations,
-                    "narrowable_violations": narrowable_violations,
-                }
-            return GovernanceDecision.DENY, {
-                "classification_reason": (
-                    "NARROW candidate but CAGE_NARROW_ENABLED=false — "
-                    "falling back to DENY"
-                ),
-                "violation_types": list(set(violation_types)),
-                "deferrable": False,
-                "hard_violations": hard_violations,
-                "soft_violations": soft_violations,
-                "narrowable_violations": narrowable_violations,
-            }
-
-        # Attempt registry-based narrowing if registry is provided
-        # This allows pluggable narrowers to handle violations rather than
-        # relying on hardcoded string pattern matching
-        original_params = ctx.get("params", {})
-        action = ctx.get("action", "")
-        
-        if narrower_registry is not None:
-            # Try to find a registered narrower for each narrowable violation
-            # We convert the string violations back to Violation objects if needed
-            # For now, create a synthetic Violation from the string representation
-            from src.gateway.governance.contracts import Violation, ViolationKind
-            
-            for violation_str in narrowable_violations:
-                # Create a Violation object from the string
-                synthetic_violation = Violation(
-                    tier="CLASSIFICATION",
-                    code="NARROWABLE",
-                    message=violation_str,
-                    kind=ViolationKind.NARROWABLE,
-                )
-                
-                # Find a narrower that can handle this violation
-                narrower = narrower_registry.find_narrower(
-                    synthetic_violation, action, original_params
-                )
-                
-                if narrower:
-                    # Use the registered narrower
-                    result = narrower.narrow(synthetic_violation, action, original_params)
-                    if result.can_narrow:
-                        return GovernanceDecision.NARROW, {
-                            "classification_reason": result.narrowing_reason,
-                            "violation_types": list(set(violation_types)),
-                            "deferrable": False,
-                            "hard_violations": hard_violations,
-                            "soft_violations": soft_violations,
-                            "narrowable_violations": narrowable_violations,
-                            "original_params": original_params,
-                            "narrowed_params": result.narrowed_params,
-                            "constraints_applied": result.constraints_applied,
-                            "narrowing_reason": result.narrowing_reason,
-                        }
-
-        # Fallback to legacy string-based narrowing if no registry or no narrower found
-        threshold_config = ctx.get("threshold_config", {})
-        narrowed_params, constraints_applied = _compute_narrowed_params(
-            original_params=original_params,
-            threshold_config=threshold_config,
-            violation_types=violation_types,
-        )
-
-        narrow_reasons = []
-        if "AMOUNT_THRESHOLD_EXCEEDED" in violation_types:
-            narrow_reasons.append("amount clamped to max allowed")
-        if "SCOPE_EXCEEDED" in violation_types:
-            narrow_reasons.append("scope narrowed to allowed operations")
-        if "DATE_RANGE_EXCEEDED" in violation_types:
-            narrow_reasons.append("date range clamped to max allowed")
-
-        return GovernanceDecision.NARROW, {
-            "classification_reason": (
-                f"Threshold violation(s) narrowed: {'; '.join(narrow_reasons)}"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "original_params": original_params,
-            "narrowed_params": narrowed_params,
-            "constraints_applied": constraints_applied,
-            "narrowing_reason": "; ".join(narrow_reasons),
-        }
-
-    # Priority 5: Soft violations with confidence starvation → DEFER candidate
-    if has_soft_violations and confidence_starved:
-        # Check feature flag — if disabled, fall back to DENY
-        if not is_cage_defer_enabled():
-            return GovernanceDecision.DENY, {
-                "classification_reason": (
-                    "DEFER candidate but CAGE_DEFER_ENABLED=false — falling back to DENY"
-                ),
-                "violation_types": list(set(violation_types)),
-                "deferrable": True,
-                "hard_violations": hard_violations,
-                "soft_violations": soft_violations,
-                "narrowable_violations": narrowable_violations,
-                "pausable_violations": pausable_violations,
-            }
-
-        defer_reasons = []
-        if confidence_starved:
-            defer_reasons.append(
-                f"confidence {confidence:.2f} < FRIA_ZONE_DEFER {get_fria_zone_defer()}"
-            )
-        if "CONFIDENCE_STARVATION" in violation_types:
-            defer_reasons.append("confidence threshold violation")
-        if ctx.get("policy_ambiguous"):
-            defer_reasons.append("ambiguous policy interpretation")
-
-        return GovernanceDecision.DEFER, {
-            "classification_reason": (
-                f"Soft violation(s) with data starvation: {'; '.join(defer_reasons)}"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": True,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Priority 6: Soft violations above confidence threshold → REQUIRE_APPROVAL
-    # (These could have been autonomous but have other soft issues)
-    if has_soft_violations:
-        return GovernanceDecision.REQUIRE_APPROVAL, {
-            "classification_reason": (
-                "Soft violation(s) above confidence threshold — requires human review"
-            ),
-            "violation_types": list(set(violation_types)),
-            "deferrable": False,
-            "hard_violations": hard_violations,
-            "soft_violations": soft_violations,
-            "narrowable_violations": narrowable_violations,
-            "pausable_violations": pausable_violations,
-        }
-
-    # Fallback: No categorized violations — should not reach here if called correctly
-    return GovernanceDecision.DENY, {
-        "classification_reason": "Unclassified violation(s) — defaulting to DENY for safety",
-        "violation_types": list(set(violation_types)),
-        "deferrable": False,
-        "hard_violations": hard_violations,
-        "soft_violations": soft_violations,
-        "narrowable_violations": narrowable_violations,
-        "pausable_violations": pausable_violations,
-    }
-
-
-def _compute_narrowed_params(
-    original_params: dict[str, Any],
-    threshold_config: dict[str, Any],
-    violation_types: list[str],
-) -> tuple[dict[str, Any], list[str]]:
-    """Compute narrowed parameters by clamping values to allowed thresholds.
-
-    This helper clamps request parameters to fit within allowed thresholds
-    while preserving action semantics. The narrowing is applied in-place
-    without transforming the action type.
-
-    Narrowing rules:
-        - amount > max_allowed → clamp to max_allowed
-        - scope: ["read", "write", "delete"] with only ["read", "write"] allowed
-          → narrow to allowed scope
-        - date_range: 365 days with max 90 days → narrow to 90 days
-
-    Args:
-        original_params: Original request parameters.
-        threshold_config: Threshold configuration dict with keys:
-            - "max_amount": float — Maximum allowed amount (default: 100000.0)
-            - "allowed_scopes": list[str] — Allowed scope operations
-            - "max_date_range_days": int — Maximum date range in days (default: 90)
-        violation_types: List of violation type strings to guide narrowing.
-
-    Returns:
-        Tuple of (narrowed_params, constraints_applied) where:
-            - narrowed_params: Dict with clamped parameter values
-            - constraints_applied: List of constraint description strings
-    """
-    narrowed = original_params.copy()
-    constraints: list[str] = []
-
-    # Default threshold values
-    max_amount = threshold_config.get("max_amount", 100000.0)
-    allowed_scopes = threshold_config.get("allowed_scopes", ["read", "write"])
-    max_date_range_days = threshold_config.get("max_date_range_days", 90)
-
-    # ── Clamp amount if exceeded ────────────────────────────────────────────────
-    if "AMOUNT_THRESHOLD_EXCEEDED" in violation_types:
-        original_amount = original_params.get("amount", 0.0)
-        if isinstance(original_amount, (int, float)) and original_amount > max_amount:
-            narrowed["amount"] = max_amount
-            constraints.append(
-                f"amount clamped: {original_amount} → {max_amount} (max_allowed)"
-            )
-
-    # ── Narrow scope if exceeded ────────────────────────────────────────────────
-    if "SCOPE_EXCEEDED" in violation_types:
-        original_scope = original_params.get("scope", [])
-        if isinstance(original_scope, list):
-            narrowed_scope = [s for s in original_scope if s in allowed_scopes]
-            if narrowed_scope != original_scope:
-                narrowed["scope"] = narrowed_scope
-                constraints.append(
-                    f"scope narrowed: {original_scope} → {narrowed_scope} (allowed only)"
-                )
-
-    # ── Clamp date range if exceeded ────────────────────────────────────────────
-    if "DATE_RANGE_EXCEEDED" in violation_types:
-        original_days = original_params.get("date_range_days", 0)
-        if isinstance(original_days, int) and original_days > max_date_range_days:
-            narrowed["date_range_days"] = max_date_range_days
-            constraints.append(
-                f"date_range clamped: {original_days} → {max_date_range_days} days (max_allowed)"
-            )
-
-    return narrowed, constraints
+# Legacy _classify_violation() and _compute_narrowed_params() deleted per
+# AGENTS.md compliance refactoring. All classification now flows through
+# ClassificationEngine (mandatory constructor parameter).
 
 
 # ---------------------------------------------------------------------------
@@ -881,13 +325,12 @@ class SymbolicGovernor:
         opa_client: OPAClient,
         safety_filter: SafetyFilter,
         consensus_engine: ConsensusProvider,
+        classification_engine: "ClassificationEngine",
         stpa_validator: STPAValidator | None = None,
         telemetry_provider: Any | None = None,
         fiscal_limit_guard: Any | None = None,
         core_tiers: tuple[GovernanceTierPlugin, ...] = (),
         domain_tiers: tuple[GovernanceTierPlugin, ...] = (),
-        narrower_registry: Any | None = None,
-        classification_engine: Any | None = None,
     ):
         self.opa_client = opa_client
         # retained for direct-invocation callers; not part of the governance hot path
@@ -901,9 +344,9 @@ class SymbolicGovernor:
         # between the CBF balance check and actual trade execution.
         # retained for direct-invocation callers; not part of the governance hot path
         self.fiscal_limit_guard = fiscal_limit_guard
-        # NarrowerRegistry — pluggable parameter narrowing for NARROW decisions
-        self._narrower_registry = narrower_registry
-        # ClassificationEngine — centralized violation classification
+        # ClassificationEngine — centralized violation classification (MANDATORY)
+        # Enforces single-choke-point principle from AGENTS.md refactoring.
+        # narrower_registry is now internal to ClassificationEngine, not exposed here.
         self._classification_engine = classification_engine
 
         # Task 2.1 (ARCH-2): Immutable tier registration at construction time.
@@ -2707,48 +2150,21 @@ class SymbolicGovernor:
                     # Extract confidence from params (agent self-reported)
                     _confidence = float(params.get("confidence", 0.0))
 
-                    # Classify the violations using ClassificationEngine if available
-                    if self._classification_engine is not None:
-                        from src.gateway.governance.classification_engine import ClassificationContext
-                        
-                        context = ClassificationContext(
-                            violations=violations,
-                            stpa_violation_count=_stpa_count,
-                            confidence=_confidence,
-                            opa_decision=result.get("opa_results", {}).get("decision") if isinstance(result.get("opa_results"), dict) else None,
-                            policy_ambiguous=result.get("policy_ambiguous", False),
-                            params=params,
-                            cbf_violation=any("CBF" in str(v) for v in violations),
-                        )
-                        classification = self._classification_engine.classify(context, action)
-                        decision = classification.decision
-                        classification_meta = classification.metadata
-                    else:
-                        # Fallback to legacy classification if engine not provided
-                        # Build classification context (includes params for NARROW)
-                        _classify_ctx: dict[str, Any] = {
-                            "cbf_violation": any(
-                                "CBF" in v or "cash barrier" in v.lower()
-                                for v in violations
-                            ),
-                            "opa_decision": result.get("opa_decision"),
-                            "policy_ambiguous": result.get("policy_ambiguous", False),
-                            # NARROW: Include original params for clamping computation
-                            "params": params,
-                            # NARROW: Include action name for narrower selection
-                            "action": action,
-                            # NARROW: Threshold config can be overridden per-request or from config
-                            "threshold_config": params.get("_threshold_config", {}),
-                        }
-
-                        # Classify the violations
-                        decision, classification_meta = _classify_violation(
-                            violations=violations,
-                            stpa_violation_count=_stpa_count,
-                            confidence=_confidence,
-                            context=_classify_ctx,
-                            narrower_registry=self._narrower_registry,
-                        )
+                    # Classify the violations using ClassificationEngine (mandatory)
+                    from src.gateway.governance.classification_engine import ClassificationContext
+                    
+                    context = ClassificationContext(
+                        violations=violations,
+                        stpa_violation_count=_stpa_count,
+                        confidence=_confidence,
+                        opa_decision=result.get("opa_results", {}).get("decision") if isinstance(result.get("opa_results"), dict) else None,
+                        policy_ambiguous=result.get("policy_ambiguous", False),
+                        params=params,
+                        cbf_violation=any("CBF" in str(v) for v in violations),
+                    )
+                    classification = self._classification_engine.classify(context, action)
+                    decision = classification.decision
+                    classification_meta = classification.metadata
 
                     # Record classification metadata in OTel span
                     span.set_attribute(
@@ -2791,11 +2207,17 @@ class SymbolicGovernor:
                     if decision == GovernanceDecision.DEFER:
                         # Park the deferred context in DeferQueue for later retrieval
                         # via GET /v1/defer/pending or resolution via POST /v1/defer/{id}/escalate
-                        # Note: _classify_ctx contains the context built from params and result
+                        defer_metadata = {
+                            "cbf_violation": any("CBF" in str(v) for v in violations),
+                            "opa_decision": result.get("opa_decision"),
+                            "policy_ambiguous": result.get("policy_ambiguous", False),
+                            "params": params,
+                            "action": action,
+                        }
                         defer_token = await _park_defer_context(
                             action=action,
                             params=params,
-                            metadata=_classify_ctx,
+                            metadata=defer_metadata,
                             thread_id=params.get("thread_id"),
                             confidence=_confidence,
                             classification_meta=classification_meta,
