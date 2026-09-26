@@ -223,10 +223,6 @@ def _nemo_input_patches(safe: bool = True):
             return_value=(safe, "", False),
         ),
         patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory._get_symbolic_governor",
-            return_value=None,
-        ),
-        patch(
             "src.gateway.governance.langgraph_harness.nemo_node_factory._presidio_analyzer",
             None,
         ),

@@ -52,15 +52,10 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
 
     # Generic kernel rails — always loaded, independent of any plugin.
     # These are domain-agnostic guardrails: PII masking is regulatory,
-    # not financial; knowledge retrieval is generic RAG; approval token
-    # and atomic execution are governance primitives.
+    # not financial; knowledge retrieval is generic RAG. Financial policy is
+    # enforced at tool dispatch by the governor pipeline, not by NeMo.
     try:
         from config.rails.actions import (
-            check_approval_token_action,
-            check_atomic_execution_action,
-            check_data_latency_action,
-            check_drawdown_limit_action,
-            check_slippage_risk_action,
             custom_self_check_input,
             custom_self_check_output,
             log_safety_audit_action,
@@ -76,11 +71,6 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
                 ("mask_sensitive_data", mask_pii_action),
                 ("detect_sensitive_data", mask_pii_action),
                 ("RetrieveKnowledgeAction", retrieve_knowledge),
-                ("CheckApprovalTokenAction", check_approval_token_action),
-                ("CheckAtomicExecutionAction", check_atomic_execution_action),
-                ("CheckDataLatencyAction", check_data_latency_action),
-                ("CheckDrawdownLimitAction", check_drawdown_limit_action),
-                ("CheckSlippageRiskAction", check_slippage_risk_action),
                 ("LogSafetyAuditAction", log_safety_audit_action),
             ]
         )

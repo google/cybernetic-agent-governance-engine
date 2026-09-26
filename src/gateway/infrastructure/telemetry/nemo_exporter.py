@@ -38,16 +38,6 @@ tracer = trace.get_tracer("src.governance.nemo")
 _ACTION_TO_ISO_CONTROL: dict[str, str] = {
     "self_check_input": "A.6.1.2",
     "self_check_output": "A.6.1.2",
-    "check_approval_token": "SC-1",
-    "CheckApprovalTokenAction": "SC-1",
-    "check_data_latency": "FIN-2",
-    "CheckDataLatencyAction": "FIN-2",
-    "check_drawdown_limit": "UCA-5",
-    "CheckDrawdownLimitAction": "UCA-5",
-    "check_slippage_risk": "UCA-6",
-    "CheckSlippageRiskAction": "UCA-6",
-    "check_atomic_execution": "SC-4",
-    "CheckAtomicExecutionAction": "SC-4",
     "detect_sensitive_data": "A.6.2.8",
     "InvokeVllmFallbackAction": "A.6.1.2",
 }

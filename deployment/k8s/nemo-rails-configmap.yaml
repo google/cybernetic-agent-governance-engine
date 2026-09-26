@@ -801,133 +801,6 @@ data:
                 return False  # Conservative: block if we can't verify safety
 
 
-    # ---------------------------------------------------------------------------
-    # Financial Policy Pass-Through Stubs (R-22 fix)
-    # ---------------------------------------------------------------------------
-    # These actions exist so the standalone nemo-service pod resolves its action
-    # registry without falling back to the synchronous stubs in nemo_actions.py.
-    #
-    # DESIGN: Financial policy enforcement was intentionally moved to the
-    # safety_check_node → OPA path on 2026-03-10 (see ARCHITECTURE.md §R-22).
-    # No active Colang flow in config/rails/main_logic.co invokes these actions.
-    # They are registered purely to keep nemo_action_registry.get_all_actions()
-    # operating on Priority 1 (config.rails.actions) without an ImportError.
-    #
-    # Audit visibility: every invocation emits an OTel span stamped
-    # PASS_THROUGH_OPA_AUTHORITATIVE so compliance reviewers can confirm
-    # these stubs are never called instead of real policy enforcement.
-    # ---------------------------------------------------------------------------
-
-
-    @action(name="CheckApprovalTokenAction")
-    async def check_approval_token_action(
-        context: dict[str, Any] | None = None, **kwargs: Any
-    ) -> bool:
-        """Pass-through stub — approval-token enforcement owned by OPA safety_check_node.
-
-        Financial policy (SC-1) is enforced by the safety_check_node → OPA path
-        in the LangGraph graph.  This stub prevents action-not-found errors if a
-        Colang flow referencing this action is ever re-enabled, and eliminates the
-        ImportError fallback path in nemo_action_registry.get_all_actions().
-        """
-        with _tracer.start_as_current_span("nemo.action.check_approval_token") as span:
-            span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckApprovalTokenAction")
-            span.set_attribute("iso42001.control_id", "A.6.1.2")
-            span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
-            span.set_attribute("nemo.action.stpa_ref", "SC-1")
-            logger.debug(
-                "CheckApprovalTokenAction: pass-through (OPA/safety_check_node is authoritative)"
-            )
-            return True
-
-
-    @action(name="CheckDataLatencyAction")
-    async def check_data_latency_action(
-        context: dict[str, Any] | None = None, **kwargs: Any
-    ) -> bool:
-        """Pass-through stub — market data latency enforcement owned by OPA safety_check_node.
-
-        Financial policy (FIN-2) is enforced by the safety_check_node → OPA path.
-        See CheckApprovalTokenAction for rationale.
-        """
-        with _tracer.start_as_current_span("nemo.action.check_data_latency") as span:
-            span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckDataLatencyAction")
-            span.set_attribute("iso42001.control_id", "A.6.1.2")
-            span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
-            span.set_attribute("nemo.action.stpa_ref", "FIN-2")
-            logger.debug(
-                "CheckDataLatencyAction: pass-through (OPA/safety_check_node is authoritative)"
-            )
-            return True
-
-
-    @action(name="CheckDrawdownLimitAction")
-    async def check_drawdown_limit_action(
-        context: dict[str, Any] | None = None, **kwargs: Any
-    ) -> bool:
-        """Pass-through stub — drawdown limit enforcement owned by OPA safety_check_node.
-
-        Financial policy (UCA-5) is enforced by the safety_check_node → OPA path.
-        See CheckApprovalTokenAction for rationale.
-        """
-        with _tracer.start_as_current_span("nemo.action.check_drawdown_limit") as span:
-            span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckDrawdownLimitAction")
-            span.set_attribute("iso42001.control_id", "A.6.1.2")
-            span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
-            span.set_attribute("nemo.action.stpa_ref", "UCA-5")
-            logger.debug(
-                "CheckDrawdownLimitAction: pass-through (OPA/safety_check_node is authoritative)"
-            )
-            return True
-
-
-    @action(name="CheckSlippageRiskAction")
-    async def check_slippage_risk_action(
-        context: dict[str, Any] | None = None, **kwargs: Any
-    ) -> bool:
-        """Pass-through stub — slippage risk enforcement owned by OPA safety_check_node.
-
-        Financial policy (UCA-6) is enforced by the safety_check_node → OPA path.
-        See CheckApprovalTokenAction for rationale.
-        """
-        with _tracer.start_as_current_span("nemo.action.check_slippage_risk") as span:
-            span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(TRACE_METADATA_GUARDRAIL_ACTION, "CheckSlippageRiskAction")
-            span.set_attribute("iso42001.control_id", "A.6.1.2")
-            span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
-            span.set_attribute("nemo.action.stpa_ref", "UCA-6")
-            logger.debug(
-                "CheckSlippageRiskAction: pass-through (OPA/safety_check_node is authoritative)"
-            )
-            return True
-
-
-    @action(name="CheckAtomicExecutionAction")
-    async def check_atomic_execution_action(
-        context: dict[str, Any] | None = None, **kwargs: Any
-    ) -> bool:
-        """Pass-through stub — atomic execution enforcement owned by OPA safety_check_node.
-
-        Multi-leg trade atomicity (UCA-4) is enforced by the LangGraph Saga WAL path.
-        See CheckApprovalTokenAction for rationale.
-        """
-        with _tracer.start_as_current_span("nemo.action.check_atomic_execution") as span:
-            span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(
-                TRACE_METADATA_GUARDRAIL_ACTION, "CheckAtomicExecutionAction"
-            )
-            span.set_attribute("iso42001.control_id", "A.6.1.2")
-            span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
-            span.set_attribute("nemo.action.stpa_ref", "UCA-4")
-            logger.debug(
-                "CheckAtomicExecutionAction: pass-through (Saga WAL is authoritative)"
-            )
-            return True
-
-
     @action(name="LogSafetyAuditAction")
     async def log_safety_audit_action(
         context: dict[str, Any] | None = None, **kwargs: Any
@@ -952,11 +825,6 @@ data:
 
 
     __all__ = [
-        "check_approval_token_action",
-        "check_atomic_execution_action",
-        "check_data_latency_action",
-        "check_drawdown_limit_action",
-        "check_slippage_risk_action",
         "custom_self_check_input",
         "custom_self_check_output",
         "log_safety_audit_action",
@@ -1054,8 +922,8 @@ data:
     # check_slippage_risk, check_atomic_execution) were removed from this file
     # together with their corresponding Colang flows in main_logic.co.
     # Financial policy enforcement is owned by the safety_check_node → OPA path.
-    # The corresponding Python implementations are pass-through stubs in
-    # config/rails/actions.py registered by nemo_action_registry.get_all_actions().
+    # The pass-through Python stubs and the gateway-internal implementations were
+    # deleted on 2026-09-26 (no flow referenced them).
     action MaskPIIAction
     action InvokeVllmFallbackAction
     action CustomSelfCheckInputAction
