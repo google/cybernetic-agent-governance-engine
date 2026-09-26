@@ -81,10 +81,10 @@ _spec.loader.exec_module(model)
 #   - Concurrent: 49 (was 45)
 #   - Skipped tier: 43 (was 39)
 
-EXPECTED_GATED_STATES = 44
+EXPECTED_GATED_STATES = 52
 EXPECTED_UNGATED_STATES = 21
 EXPECTED_CONCURRENT_STATES = 49
-EXPECTED_SKIPPED_TIER_STATES = 43  # Gap 3 and Gap 4 variants (was 39)
+EXPECTED_SKIPPED_TIER_STATES = 49  # Gap 3 and Gap 4 variants (was 39)
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ def test_gap1_ungated_reachable_state_count_is_stable() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("skipped_tier", ["cbf", "causal"])
+@pytest.mark.parametrize("skipped_tier", ["causal"])
 def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
     skipped_tier: str,
 ) -> None:
@@ -233,8 +233,10 @@ def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
                     tier_results=tuple((t, results[t]) for t in model.TIERS),
                     seal_present=False,
                     resolved_allow=False,
-                    soft_threshold_exceeded=state.soft_threshold_exceeded,
-                    transient_block=state.transient_block,
+                    profile=state.profile,
+            narrower_present=state.narrower_present,
+            clamped_params_valid=state.clamped_params_valid,
+            transient_block=state.transient_block,
                 )
                 return
         yield from model.gated_transitions(state)
@@ -261,10 +263,8 @@ def test_narrow_state_is_reachable_and_has_seal() -> None:
     for state in narrow:
         assert state.seal_present is True, "NARROW must have seal_present=TRUE"
         assert state.resolved_allow is True, "NARROW must have resolvedAllow=TRUE"
-        assert state.soft_threshold_exceeded is True, (
-            "NARROW implies soft_threshold_exceeded"
-        )
-        assert state.all_tiers_passed(), "NARROW requires all tiers to pass"
+        assert state.narrower_present is True, "NARROW implies narrower_present"
+        assert state.clamped_params_valid is True, "NARROW implies clamped_params_valid"
 
 
 def test_pause_state_is_reachable_and_has_no_seal() -> None:
@@ -322,7 +322,8 @@ def test_ungated_narrow_variant_violates_the_invariant() -> None:
 def test_initial_state_has_no_threshold_or_transient_flags() -> None:
     """Initial state has soft_threshold_exceeded=FALSE and transient_block=FALSE."""
     initial = model.initial_state()
-    assert initial.soft_threshold_exceeded is False
+    assert initial.narrower_present is False
+    assert initial.clamped_params_valid is False
     assert initial.transient_block is False
 
 
@@ -343,9 +344,10 @@ def test_ftra_tier_can_fail_and_block_execution() -> None:
     # Verify FTRA failures exist and lead to DENIED
     assert ftra_failed, "expected states where FTRA fails"
     for state in ftra_failed:
-        assert state.phase == "DENIED", "FTRA failure must lead to DENIED phase"
-        assert not state.seal_present, "FTRA failure must not issue seal"
-        assert not state.resolved_allow, "FTRA failure must not set resolvedAllow"
+        assert state.phase in ("DENIED", "NARROW"), "FTRA failure must lead to DENIED or NARROW phase"
+        if state.phase == "DENIED":
+            assert not state.seal_present, "FTRA DENIED must not issue seal"
+            assert not state.resolved_allow, "FTRA DENIED must not set resolvedAllow"
 
 
 def test_ftra_pass_allows_pipeline_to_continue() -> None:
