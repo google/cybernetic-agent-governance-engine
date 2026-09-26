@@ -519,7 +519,6 @@ _deterministic_verdict: _ContextVar[bool] = _ContextVar(
 async def validate_with_nemo(
     user_input: str,
     rails: LLMRails,
-    pre_check_results: dict[str, Any] | None = None,
 ) -> tuple[bool, str, bool]:
     """Validates user input using NeMo Guardrails.
 
@@ -539,11 +538,6 @@ async def validate_with_nemo(
     Args:
         user_input: The raw user message to validate.
         rails: The LLMRails instance to use for validation.
-        pre_check_results: Optional pre-computed governance results from
-            ``compute_nemo_context()``.  When provided, these are
-            injected into the NeMo context under ``"pre_check_results"`` so
-            that NeMo actions can read them without calling back into the
-            governor's sub-components (breaking the re-entrant loop).
     """
     from src.gateway.infrastructure.privacy import scrub_pii
 
@@ -641,14 +635,6 @@ async def validate_with_nemo(
             span.set_attribute("input", scrub_pii(user_input))
             span.set_attribute(TRACE_METADATA_GUARDRAILS_FRAMEWORK, "nemo")
             span.set_attribute(TRACE_METADATA_GUARDRAILS_INPUT_LENGTH, len(user_input))
-
-            if pre_check_results is not None:
-                logger.debug(
-                    "🔍 validate_with_nemo: pre_check_results available "
-                    "(stpa_allowed=%s, cbf_allowed=%s) — OPA/STPA remain active",
-                    pre_check_results.get("stpa_result", {}).get("allowed", "?"),
-                    pre_check_results.get("cbf_result", {}).get("allowed", "?"),
-                )
 
             # Reset the ContextVar BEFORE generate_async so that any residual
             # True from a previous request (same async task recycled) doesn't
@@ -813,7 +799,6 @@ except ImportError:
 async def verify_input(
     rails: LLMRails,
     text: str,
-    pre_check_results: dict[str, Any] | None = None,
 ) -> SafetyResult:
     """Verify an input string as a pure filter (Interceptor pattern).
 
@@ -823,11 +808,6 @@ async def verify_input(
     Args:
         rails: The LLMRails instance to use for verification.
         text: The input text to verify.
-        pre_check_results: Optional pre-computed governance results from
-            ``compute_nemo_context()``.  When provided, these are
-            injected into the NeMo context under ``"pre_check_results"`` so
-            that NeMo actions can read them without calling back into the
-            governor's sub-components (breaking the re-entrant loop).
     """
     with tracer.start_as_current_span("guardrails.verify_input") as span:
         span.set_attribute(OBSERVATION_TYPE, "span")
@@ -888,19 +868,6 @@ async def verify_input(
                 span.set_attribute("output", "PASS_THROUGH_ACTIVE")
                 span.set_status(Status(StatusCode.OK))
                 return SafetyResult(is_safe=True)
-
-        # Build NeMo context — inject pre-computed governance results so that
-        # NeMo actions read from this dict instead of calling back into the
-        # governor's sub-components (breaks the re-entrant dependency loop).
-        nemo_context: dict[str, Any] = {}
-        if pre_check_results is not None:
-            nemo_context["pre_check_results"] = pre_check_results
-            logger.debug(
-                "🔍 verify_input: injecting pre_check_results into NeMo context "
-                "(stpa_allowed=%s, cbf_allowed=%s)",
-                pre_check_results.get("stpa_result", {}).get("allowed", "?"),
-                pre_check_results.get("cbf_result", {}).get("allowed", "?"),
-            )
 
         try:
             res = await rails.generate_async(

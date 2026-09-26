@@ -53,30 +53,6 @@ from src.gateway.governance.uca_logger import _get_uca_logger
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.infrastructure.privacy import scrub_pii
 
-# ---------------------------------------------------------------------------
-# SymbolicGovernor singleton — imported lazily to avoid circular imports.
-# Used to call compute_nemo_context() before NeMo rails so actions receive pre-computed
-# STPA/CBF results via context instead of calling back into the governor.
-# ---------------------------------------------------------------------------
-_symbolic_governor = None
-
-
-def _get_symbolic_governor():  # type: ignore[no-untyped-def]
-    """Return the SymbolicGovernor singleton, or None if unavailable."""
-    global _symbolic_governor
-    if _symbolic_governor is None:
-        try:
-            from src.gateway.governance.singletons import symbolic_governor
-
-            _symbolic_governor = symbolic_governor
-        except Exception as exc:
-            logger.warning(
-                "⚠️ InferenceProxy: Could not import symbolic_governor (%s) — "
-                "NeMo actions will use fail-open defaults.",
-                exc,
-            )
-    return _symbolic_governor
-
 
 logger = logging.getLogger("Gateway.InferenceProxy")
 
@@ -345,55 +321,7 @@ async def chat_completions(
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
         nemo_input_text = last_user_msg if last_user_msg else all_messages_text
         try:
-            # Call compute_nemo_context() once here so NeMo actions read pre-computed
-            # STPA/CBF results from context instead of calling back into the
-            # governor (breaks the re-entrant dependency loop).
-            pre_check_results: dict | None = None
-            governor = _get_symbolic_governor()
-            if governor is not None:
-                # Extract governance params from the request body
-                governance_params = {
-                    k: body[k]
-                    for k in (
-                        "approval_token",
-                        "amount",
-                        "symbol",
-                        "latency_ms",
-                        "drawdown_pct",
-                        "order_size",
-                        "daily_vol",
-                        "confidence",
-                        "risk_assessed",
-                        "compliance_checked",
-                    )
-                    if k in body
-                }
-                try:
-                    from src.gateway.governance.nemo_context import (
-                        INPUT_RAIL_PROBE_ACTION,
-                        compute_nemo_context,
-                    )
-                    pre_check_results = await compute_nemo_context(
-                        governor.stpa_validator,
-                        governor.safety_filter,
-                        INPUT_RAIL_PROBE_ACTION,
-                        governance_params
-                    )
-                    logger.debug(
-                        "🔍 InferenceProxy: compute_nemo_context complete "
-                        "(stpa_allowed=%s, cbf_allowed=%s)",
-                        pre_check_results.get("stpa_result", {}).get("allowed", "?"),
-                        pre_check_results.get("cbf_result", {}).get("allowed", "?"),
-                    )
-                except Exception as pre_exc:
-                    logger.warning(
-                        "⚠️ InferenceProxy: compute_nemo_context failed (%s) — "
-                        "NeMo actions will use fail-closed defaults.",
-                        pre_exc,
-                    )
-            nemo_result = await verify_input(
-                rails, nemo_input_text, pre_check_results=pre_check_results
-            )
+            nemo_result = await verify_input(rails, nemo_input_text)
             if not nemo_result.is_safe:
                 stamp_iso_control(
                     span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"

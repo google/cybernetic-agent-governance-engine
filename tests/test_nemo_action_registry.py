@@ -16,12 +16,13 @@
 R-22 Regression Guard — NeMo Action Registry completeness.
 
 Asserts that:
-1. ``config.rails.actions`` exports all expected financial pass-through stubs,
-   i.e. the Priority-1 import path in ``nemo_action_registry.get_all_actions()``
+1. ``config.rails.actions`` exports every action the registry imports, i.e.
+   the Priority-1 import path in ``nemo_action_registry.get_all_actions()``
    does NOT trigger an ImportError for any action.
-2. All stubs are async callables.
-3. The stubs return True (pass-through / fail-open semantics consistent with
-   OPA being the authoritative financial policy enforcer).
+2. The audit stub is an async callable that tolerates arbitrary context.
+3. The deleted finance pre-check actions (approval token, data latency,
+   drawdown, slippage, atomic execution) stay deleted: no Colang flow calls
+   them and the SymbolicGovernor evaluates those rules directly.
 4. ``nemo_action_registry.get_all_actions()`` returns all required action names
    without falling back to the synchronous Priority-2 stubs.
 """
@@ -44,25 +45,32 @@ SEMANTIC_ACTIONS = [
     "custom_self_check_output",
 ]
 
-FINANCIAL_STUB_ACTIONS = [
+AUDIT_ACTIONS = [
+    "log_safety_audit_action",
+]
+
+ALL_EXPECTED_ACTIONS = SEMANTIC_ACTIONS + AUDIT_ACTIONS
+
+# Finance pre-check actions deleted with the dead NeMo pre-check path.
+DELETED_FINANCE_ACTIONS = [
     "check_approval_token_action",
     "check_data_latency_action",
     "check_drawdown_limit_action",
     "check_slippage_risk_action",
     "check_atomic_execution_action",
-    "log_safety_audit_action",
 ]
 
-ALL_EXPECTED_ACTIONS = SEMANTIC_ACTIONS + FINANCIAL_STUB_ACTIONS
-
-# Registry names (as registered with rails.register_action)
-REGISTRY_ACTION_NAMES = [
-    "RetrieveKnowledgeAction",
+DELETED_REGISTRY_NAMES = [
     "CheckApprovalTokenAction",
     "CheckDataLatencyAction",
     "CheckDrawdownLimitAction",
     "CheckSlippageRiskAction",
     "CheckAtomicExecutionAction",
+]
+
+# Registry names (as registered with rails.register_action)
+REGISTRY_ACTION_NAMES = [
+    "RetrieveKnowledgeAction",
     "MaskPIIAction",
     "CustomSelfCheckInputAction",
     "CustomSelfCheckOutputAction",
@@ -87,12 +95,11 @@ class TestConfigRailsActionsExports:
     def test_action_exported(self, name):
         assert hasattr(self.module, name), (
             f"config.rails.actions is missing '{name}' — "
-            f"nemo_action_registry Priority-1 will ImportError and fall back to sync stubs. "
-            f"Add a pass-through stub for this action. (R-22)"
+            f"nemo_action_registry Priority-1 will ImportError and fall back to sync stubs. (R-22)"
         )
 
-    @pytest.mark.parametrize("name", FINANCIAL_STUB_ACTIONS)
-    def test_financial_stub_is_async(self, name):
+    @pytest.mark.parametrize("name", AUDIT_ACTIONS)
+    def test_audit_stub_is_async(self, name):
         fn = getattr(self.module, name)
         assert inspect.iscoroutinefunction(fn), (
             f"config.rails.actions.{name} must be an async function "
@@ -106,40 +113,35 @@ class TestConfigRailsActionsExports:
             f"'{name}' is defined in config.rails.actions but not listed in __all__."
         )
 
-
-# ---------------------------------------------------------------------------
-# 2. Financial pass-through stubs return True
-# ---------------------------------------------------------------------------
-
-
-class TestFinancialStubReturnValues:
-    """Financial pass-through stubs must return True (fail-open; OPA is authoritative)."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("name", FINANCIAL_STUB_ACTIONS)
-    async def test_stub_returns_true(self, name):
-        module = importlib.import_module("config.rails.actions")
-        fn = getattr(module, name)
-        result = await fn(context={})
-        assert result is True, (
-            f"config.rails.actions.{name} returned {result!r} — "
-            f"financial stubs must return True (pass-through; OPA enforces policy)."
+    @pytest.mark.parametrize("name", DELETED_FINANCE_ACTIONS)
+    def test_deleted_finance_stub_absent(self, name):
+        assert not hasattr(self.module, name), (
+            f"config.rails.actions.{name} was deleted with the dead NeMo pre-check "
+            f"path; the SymbolicGovernor is the only evaluator of finance rules."
         )
+
+
+# ---------------------------------------------------------------------------
+# 2. Audit stub tolerates arbitrary context
+# ---------------------------------------------------------------------------
+
+
+class TestAuditStubReturnValues:
+    """The audit stub is a logging no-op and must not crash on odd inputs."""
 
     @pytest.mark.asyncio
     async def test_stub_handles_none_context(self):
-        """Stubs must not crash when called with context=None."""
-        from config.rails.actions import check_approval_token_action
+        from config.rails.actions import log_safety_audit_action
 
-        result = await check_approval_token_action(context=None)
+        result = await log_safety_audit_action(context=None)
         assert result is True
 
     @pytest.mark.asyncio
     async def test_stub_handles_extra_kwargs(self):
         """Stubs must accept arbitrary kwargs (NeMo may pass extra arguments)."""
-        from config.rails.actions import check_drawdown_limit_action
+        from config.rails.actions import log_safety_audit_action
 
-        result = await check_drawdown_limit_action(
+        result = await log_safety_audit_action(
             context={"amount": 5000.0}, event={"type": "execute_trade"}
         )
         assert result is True
@@ -167,6 +169,15 @@ class TestNemoActionRegistryCompleteness:
                 f"This means the Priority-1 config.rails.actions import failed and "
                 f"the system fell back to synchronous stubs (R-22 regression)."
             )
+
+    @pytest.mark.parametrize("name", DELETED_REGISTRY_NAMES)
+    def test_deleted_finance_action_not_registered(self, name):
+        from src.integrations.nemo.action_registry import (
+            get_all_actions,
+        )
+
+        registered_names = {n for n, _ in get_all_actions()}
+        assert name not in registered_names
 
     def test_no_duplicate_names(self):
         from src.integrations.nemo.action_registry import (

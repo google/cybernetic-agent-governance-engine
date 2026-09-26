@@ -156,7 +156,6 @@ def proxy_deps(monkeypatch):
     monkeypatch.setattr(_mod, "stamp_iso_control", MagicMock())
     monkeypatch.setattr(_mod, "scrub_pii", lambda x: x)
     monkeypatch.setattr(_mod, "_get_http_client", lambda: http_client)
-    monkeypatch.setattr(_mod, "_get_symbolic_governor", lambda: None)
 
     # Patch config_manager.get so _resolve_backend_url returns fake URLs
     cfg_map = {
@@ -776,28 +775,6 @@ async def test_stream_vllm_emits_error_event_on_4xx():
 
     assert len(collected) == 1
     assert b"vLLM backend error 503" in collected[0]
-
-
-# ---------------------------------------------------------------------------
-# Tests — _get_symbolic_governor caching
-# ---------------------------------------------------------------------------
-
-
-def test_get_symbolic_governor_returns_none_on_import_failure():
-    """_get_symbolic_governor returns None when singletons cannot be imported."""
-    import src.gateway.server.inference_proxy as _mod
-
-    original = _mod._symbolic_governor
-    _mod._symbolic_governor = None
-    try:
-        with patch.dict(
-            "sys.modules",
-            {"src.gateway.governance.singletons": None},
-        ):
-            result = _mod._get_symbolic_governor()
-        assert result is None
-    finally:
-        _mod._symbolic_governor = original
 
 
 # ---------------------------------------------------------------------------
