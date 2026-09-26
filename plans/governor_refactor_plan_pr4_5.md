@@ -405,6 +405,12 @@ Move `TradingKnowledgeGraph` from [ontology.py](../src/gateway/governance/ontolo
 The only consumers of [ftra/bounding_contract.py](../src/gateway/governance/ftra/bounding_contract.py) are in `cage_finance`: `safety/bounding/*`, `plugin.py` and `__init__.py`. Move it into `src/cage_finance/safety/bounding/` and delete it from the kernel.
 
 ### 4b.12 LangGraph harness and inference proxy — fixes B7
+- **Delete the dead NeMo pre-check path (Q7, approved 2026-09-26).** No Colang flow calls the finance NeMo actions, so the per-request `compute_nemo_context` probe feeds nothing. Delete:
+  - the probe calls in both input rails, and `nemo_context.py`;
+  - the five finance actions in `src/integrations/nemo/actions.py` and their pass-through stubs in `config/rails/actions.py`, with the matching registry entries, `nemo_exporter.py` mappings and tests;
+  - the `pre_check_results` parameter on the NeMo manager.
+  Run `make update-nemo-configmap`. Keep the financial-advisor signed-token `check_approval_token`. If this is already done in PR 2 (#261), delete this bullet.
+  - Once the probe is gone, the `governance_params` extraction below may have no consumers left. Delete it rather than generalise it if so.
 - [nemo_node_factory.py:385-400](../src/gateway/governance/langgraph_harness/nemo_node_factory.py#L385-L400) and [inference_proxy.py:352+](../src/gateway/server/inference_proxy.py#L352): delete the implicit extraction of `amount, symbol, drawdown_pct, order_size…`.
   - `governance_params` must be present in state, or the node config must provide a `params_extractor`.
   - If neither exists, fail closed with a DENY receipt.

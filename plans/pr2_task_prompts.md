@@ -27,11 +27,11 @@ Each prompt below is self-contained. You can paste it into a fresh agent session
   5. `null_components.py` stays deny-by-default. The governor is built once, after plugins load (PR 4).
   6. One STPA rule set per domain package. Remove the duplicate `GeneratedSTPAValidator` (PR 4; T1 must not make that harder).
 
-## New questions raised 2026-09-26 (with recommendations)
+## New questions raised 2026-09-26 — all recommendations approved
 
 | # | Question | Recommendation |
 |---|---|---|
-| Q7 | At the input rail, three NeMo actions are always no-ops (`CheckApprovalTokenAction`, `CheckDataLatencyAction`, `CheckSlippageRiskAction`). Every STPA rule they depend on returns early unless the action is a real tool such as `execute_trade`, and no tool has been chosen at that point. Keep them? | **Delete them in PR 4b §4b.12**, together with their Colang flows (then run `make update-nemo-configmap`). They look like controls but never fire. The same rules are enforced at tool dispatch. Keep `CheckDrawdownLimitAction`: it checks CBF state that doesn't depend on the action name. |
+| Q7 | ~~At the input rail, three NeMo actions are always no-ops.~~ **Corrected after approval:** none of the five finance NeMo actions (approval token, data latency, drawdown, slippage, atomic execution) is called by any Colang flow. The flows were removed on 2026-03-10 (note in `config/rails/definitions.co`). `action_registry.get_all_actions()` registers pass-through stubs from `config/rails/actions.py` under the same names. So `compute_nemo_context` runs an STPA check and a Redis read on every input request, and **nothing reads the result**. That includes the drawdown check I originally said to keep. | **Approved: delete.** Corrected scope: the `compute_nemo_context` calls in `inference_proxy.py` and `nemo_node_factory.py`; `nemo_context.py`; the five finance actions in `src/integrations/nemo/actions.py` (keep `InvokeVllmFallbackAction`); the five pass-through stubs in `config/rails/actions.py`, plus the registry entries and `make update-nemo-configmap`; the `nemo_exporter.py` mappings; the `pre_check_results` parameter on the NeMo manager; and their tests. The financial-advisor `check_approval_token` (signed-token verification) is a different function and stays. **Timing is still open** (#261 now or PR 4b); see the PR 4–5 plan §4b.12. |
 | Q8 | #259 removed the combined "`CBF_FAIL_OPEN` + HMAC fallback" startup check, so production has no HMAC-fallback check at all. Add one now? | **No, keep it in PR 4a §4a.3.** This isn't a regression: the old check only fired when `CBF_FAIL_OPEN=true`, and the default was `false`. |
 | Q9 | Is #259 a breaking change? | **Yes.** Setting `CBF_FAIL_OPEN=true` no longer bypasses the CBF, so setups without Redis now deny instead of allowing. The title now has `!` and the body a `BREAKING CHANGE:` footer. |
 | Q10 | `proof/model.py` still proves Gap 3, a CBF skip that `CBF_FAIL_OPEN` caused. Remove it? | **Yes, in T8.** The docs already say the gap is closed by removal and point to T8. |
@@ -395,7 +395,7 @@ No prompt needed. What landed:
 - Input rails run before the model has chosen a tool, so no real action exists. Both callers (the inference proxy and the NeMo input node) now pass one named constant, `nemo_context.INPUT_RAIL_PROBE_ACTION`.
 - `NullSafetyFilter.verify_action` is now async, matching the `SafetyFilter` protocol. Bare-kernel mode therefore denies via its explicit verdict instead of a `TypeError`.
 
-**Open finding (decision needed, see the plan):** every STPA UCA check returns early unless the action is `execute_trade`, `execute_trade_bounded` or `write_db`. So at the input rail, `CheckApprovalTokenAction`, `CheckDataLatencyAction` and `CheckSlippageRiskAction` can never block. Only the CBF-backed `CheckDrawdownLimitAction` has any effect. These UCAs are still enforced at tool dispatch by the governor.
+**Open finding — approved for deletion (Q7):** the whole NeMo pre-check path is dead. No Colang flow calls the actions that read `pre_check_results`. See Q7 for the full scope.
 
 ---
 
