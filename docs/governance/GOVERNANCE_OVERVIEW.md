@@ -51,7 +51,7 @@ NeMo Guardrails runs **before** `_run_checks()` is invoked. It is integrated int
 
 - **PII Filtering:** **Microsoft Presidio** (15 entity types) detects and masks PII in both user input and agent output. Spacy `en_core_web_sm` provides entity recognition.
 - **Implementation:** `src/gateway/governance/nemo/manager.py` & `config/rails/`
-- **Context Injection:** NeMo actions receive pre-computed STPA and CBF results via context injection (injected by `pre_check()` before the guardrail fires). This eliminates the re-entrant loop where NeMo actions previously called back into `SymbolicGovernor` sub-components, causing each check to run twice per request.
+- **No governance context injection:** NeMo input rails do not run STPA/CBF checks or receive their results. The former `pre_check()` context injection was removed (#261) because no Colang flow consumed it; all governance checks run once, in the governor pipeline.
 - **Observability (ISO 42001):** A custom `NeMoOTelCallback` intercepts every guardrail intervention and emits an OpenTelemetry span with `langfuse.trace.metadata.guardrail.outcome` and `langfuse.trace.metadata.iso.control_id="A.6.2.8"`.
 
 #### The 7-Step Governance Pipeline (`SymbolicGovernor._run_checks()`)

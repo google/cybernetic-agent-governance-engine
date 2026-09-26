@@ -137,8 +137,8 @@ now scans `src/gateway/` for forbidden domain literals and fails CI on violation
 #### Method Signature Changes
 
 **Breaking Change:** [`SymbolicGovernor.revalidate_post_hitl()`](../src/gateway/governance/governor/governor.py)
-and [`pre_check()`](../src/gateway/governance/governor/governor.py) no longer
-accept `tool_name` with a default value.
+and `pre_check()` no longer accept `tool_name` with a default value. (`pre_check()`
+was later removed entirely, together with the dead NeMo pre-check path — see #261.)
 
 | Method | Old signature | New signature |
 |---|---|---|

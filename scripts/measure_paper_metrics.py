@@ -160,7 +160,7 @@ TIER_SPAN_MAP: dict[str, str] = {
     "STPA (Tier 1)": "cage.stpa_check",
     "Confidence (Tier 2)": "cage.confidence_check",
     "CBF (Tier 3a)": "cage.cbf_check",
-    "OPA (Tier 3b)": "cage.opa_pre_check",
+    "OPA (Tier 3b)": "governance.opa_check",
     "Fiscal (Tier 4)": "cage.fiscal_limit_reserve",
     "Consensus (Tier 5)": "cage.consensus_gate",
     # Causal (Tier 6) runs in asyncio.to_thread — no dedicated span yet;
