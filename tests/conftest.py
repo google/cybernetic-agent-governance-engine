@@ -1288,3 +1288,28 @@ def assert_formal_tier_ordering_matches():
 pytest_plugins = [
     "tests.fixtures.cbf",
 ]
+
+
+# ── Classification Engine & Narrower Registry Fixtures ───────────────────────
+
+
+@pytest.fixture()
+def narrower_registry():
+    """Provide a NarrowerRegistry instance for testing."""
+    from src.gateway.governance.narrower import NarrowerRegistry
+
+    return NarrowerRegistry()
+
+
+@pytest.fixture()
+def classification_engine(narrower_registry):
+    """Provide a ClassificationEngine instance for testing."""
+    from src.gateway.governance.classification_engine import ClassificationEngine
+
+    return ClassificationEngine(
+        narrower_registry=narrower_registry,
+        confidence_threshold=0.70,
+        defer_enabled=True,
+        narrow_enabled=False,
+        pause_enabled=False,
+    )

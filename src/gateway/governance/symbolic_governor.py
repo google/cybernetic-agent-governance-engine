@@ -887,6 +887,7 @@ class SymbolicGovernor:
         core_tiers: tuple[GovernanceTierPlugin, ...] = (),
         domain_tiers: tuple[GovernanceTierPlugin, ...] = (),
         narrower_registry: Any | None = None,
+        classification_engine: Any | None = None,
     ):
         self.opa_client = opa_client
         # retained for direct-invocation callers; not part of the governance hot path
@@ -902,6 +903,8 @@ class SymbolicGovernor:
         self.fiscal_limit_guard = fiscal_limit_guard
         # NarrowerRegistry — pluggable parameter narrowing for NARROW decisions
         self._narrower_registry = narrower_registry
+        # ClassificationEngine — centralized violation classification
+        self._classification_engine = classification_engine
 
         # Task 2.1 (ARCH-2): Immutable tier registration at construction time.
         # Tiers are provided as tuples (core_tiers, domain_tiers) and validated
@@ -2704,30 +2707,48 @@ class SymbolicGovernor:
                     # Extract confidence from params (agent self-reported)
                     _confidence = float(params.get("confidence", 0.0))
 
-                    # Build classification context (includes params for NARROW)
-                    _classify_ctx: dict[str, Any] = {
-                        "cbf_violation": any(
-                            "CBF" in v or "cash barrier" in v.lower()
-                            for v in violations
-                        ),
-                        "opa_decision": result.get("opa_decision"),
-                        "policy_ambiguous": result.get("policy_ambiguous", False),
-                        # NARROW: Include original params for clamping computation
-                        "params": params,
-                        # NARROW: Include action name for narrower selection
-                        "action": action,
-                        # NARROW: Threshold config can be overridden per-request or from config
-                        "threshold_config": params.get("_threshold_config", {}),
-                    }
+                    # Classify the violations using ClassificationEngine if available
+                    if self._classification_engine is not None:
+                        from src.gateway.governance.classification_engine import ClassificationContext
+                        
+                        context = ClassificationContext(
+                            violations=violations,
+                            stpa_violation_count=_stpa_count,
+                            confidence=_confidence,
+                            opa_decision=result.get("opa_results", {}).get("decision") if isinstance(result.get("opa_results"), dict) else None,
+                            policy_ambiguous=result.get("policy_ambiguous", False),
+                            params=params,
+                            cbf_violation=any("CBF" in str(v) for v in violations),
+                        )
+                        classification = self._classification_engine.classify(context, action)
+                        decision = classification.decision
+                        classification_meta = classification.metadata
+                    else:
+                        # Fallback to legacy classification if engine not provided
+                        # Build classification context (includes params for NARROW)
+                        _classify_ctx: dict[str, Any] = {
+                            "cbf_violation": any(
+                                "CBF" in v or "cash barrier" in v.lower()
+                                for v in violations
+                            ),
+                            "opa_decision": result.get("opa_decision"),
+                            "policy_ambiguous": result.get("policy_ambiguous", False),
+                            # NARROW: Include original params for clamping computation
+                            "params": params,
+                            # NARROW: Include action name for narrower selection
+                            "action": action,
+                            # NARROW: Threshold config can be overridden per-request or from config
+                            "threshold_config": params.get("_threshold_config", {}),
+                        }
 
-                    # Classify the violations
-                    decision, classification_meta = _classify_violation(
-                        violations=violations,
-                        stpa_violation_count=_stpa_count,
-                        confidence=_confidence,
-                        context=_classify_ctx,
-                        narrower_registry=self._narrower_registry,
-                    )
+                        # Classify the violations
+                        decision, classification_meta = _classify_violation(
+                            violations=violations,
+                            stpa_violation_count=_stpa_count,
+                            confidence=_confidence,
+                            context=_classify_ctx,
+                            narrower_registry=self._narrower_registry,
+                        )
 
                     # Record classification metadata in OTel span
                     span.set_attribute(
