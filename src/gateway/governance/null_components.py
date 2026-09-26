@@ -42,7 +42,13 @@ class NullSafetyFilter:
     exceptions that might be caught by CBF_FAIL_OPEN error handlers.
     """
 
-    def verify_action(self, action_name: str, payload: dict) -> str:
+    async def verify_action(self, action_name: str, payload: dict) -> str:
+        """Always denies. Async to match the ``SafetyFilter`` protocol.
+
+        A sync implementation made ``await safety_filter.verify_action(...)``
+        raise ``TypeError``; callers then denied via their exception path
+        rather than via this explicit verdict.
+        """
         return "UNSAFE: no domain safety filter registered (bare-kernel mode)"
 
     async def atomic_verify_and_commit(

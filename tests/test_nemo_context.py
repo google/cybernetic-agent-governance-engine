@@ -15,7 +15,11 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from src.gateway.governance.nemo_context import compute_nemo_context
+from src.gateway.governance.nemo_context import (
+    INPUT_RAIL_PROBE_ACTION,
+    compute_nemo_context,
+)
+from src.gateway.governance.null_components import NullSafetyFilter
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -93,3 +97,32 @@ async def test_compute_nemo_context_cbf_safe_explanation(stpa_validator, safety_
     )
     assert result["cbf_result"]["allowed"] is True
     assert result["cbf_result"]["reason"] == "SAFE: some explanation"
+
+
+@pytest.mark.asyncio
+async def test_null_safety_filter_denies_via_verdict_not_exception(stpa_validator):
+    """Bare-kernel mode must deny through NullSafetyFilter's explicit verdict.
+
+    If verify_action were sync, awaiting it would raise TypeError and the
+    denial would come from the exception path ("CBF unavailable") instead.
+    """
+    result = await compute_nemo_context(
+        stpa_validator, NullSafetyFilter(), INPUT_RAIL_PROBE_ACTION, {}
+    )
+    assert result["cbf_result"]["allowed"] is False
+    assert result["cbf_result"]["reason"].startswith("UNSAFE: no domain safety filter")
+
+
+def test_input_rail_callers_use_named_probe_action():
+    """Both input rails pass the shared constant, not ad-hoc literals or state keys."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        "src/gateway/server/inference_proxy.py",
+        "src/gateway/governance/langgraph_harness/nemo_node_factory.py",
+    ):
+        src = (root / rel).read_text(encoding="utf-8")
+        assert "INPUT_RAIL_PROBE_ACTION," in src, rel
+        assert 'state.get("action"' not in src, rel
+        assert '"nemo_node"' not in src, rel

@@ -117,9 +117,10 @@ class TestNullColdStore:
 class TestNullSafetyFilterAndConsensus:
     """Bare kernel fallback contracts."""
 
-    def test_safety_filter_denies_actions(self):
+    @pytest.mark.asyncio
+    async def test_safety_filter_denies_actions(self):
         filter_ = NullSafetyFilter()
-        verdict = filter_.verify_action("execute_trade", {"symbol": "AAPL"})
+        verdict = await filter_.verify_action("execute_trade", {"symbol": "AAPL"})
         assert "UNSAFE" in verdict
 
     @pytest.mark.asyncio

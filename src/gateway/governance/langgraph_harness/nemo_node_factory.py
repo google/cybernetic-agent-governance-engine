@@ -402,11 +402,14 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                             if k in state
                         }
                     try:
-                        from src.gateway.governance.nemo_context import compute_nemo_context
+                        from src.gateway.governance.nemo_context import (
+                            INPUT_RAIL_PROBE_ACTION,
+                            compute_nemo_context,
+                        )
                         pre_check_results = await compute_nemo_context(
                             governor.stpa_validator,
                             governor.safety_filter,
-                            state.get("action", "nemo_guardrail_node"),
+                            INPUT_RAIL_PROBE_ACTION,
                             governance_params
                         )
                         logger.debug(

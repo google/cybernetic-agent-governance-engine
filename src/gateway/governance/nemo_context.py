@@ -18,6 +18,18 @@ from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
+#: Action name used when probing STPA/CBF from an input rail.
+#:
+#: Input rails (the inference proxy and the LangGraph NeMo input node) run
+#: before the model has chosen a tool, so no real action exists yet. Both call
+#: sites pass this single named constant instead of ad-hoc literals.
+#:
+#: Consequence: action-scoped STPA UCAs (e.g. those keyed on
+#: ``execute_trade``) cannot fire at the input rail. They are enforced at tool
+#: dispatch, where the governor evaluates the real action. Action-independent
+#: CBF state checks (fence epoch, cash availability) still apply here.
+INPUT_RAIL_PROBE_ACTION = "inference"
+
 async def compute_nemo_context(
     stpa_validator: Any,
     safety_filter: Any,

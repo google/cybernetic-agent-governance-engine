@@ -369,11 +369,14 @@ async def chat_completions(
                     if k in body
                 }
                 try:
-                    from src.gateway.governance.nemo_context import compute_nemo_context
+                    from src.gateway.governance.nemo_context import (
+                        INPUT_RAIL_PROBE_ACTION,
+                        compute_nemo_context,
+                    )
                     pre_check_results = await compute_nemo_context(
                         governor.stpa_validator,
                         governor.safety_filter,
-                        "inference",
+                        INPUT_RAIL_PROBE_ACTION,
                         governance_params
                     )
                     logger.debug(
