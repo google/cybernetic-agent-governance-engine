@@ -159,6 +159,13 @@ TIER_LABELS: dict[str, str] = {
 #   - PAUSE:  Transient condition (rate limiting, circuit breaker) detected;
 #             no seal issued, retryable without action modification
 PHASES = ("PENDING", "CHECKING", "SEAL_ISSUED", "EXECUTED", "DENIED", "NARROW", "PAUSE")
+PROFILES = ("FULL", "POST_HITL", "DRY_RUN")
+
+PROFILE_STAGES: dict[str, frozenset[str]] = {
+    "FULL": frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
+    "POST_HITL": frozenset({"opa", "cbf", "fiscal"}),
+    "DRY_RUN": frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
+}
 
 
 @dataclass(frozen=True)
@@ -175,8 +182,10 @@ class State:
                         This is the ``resolvedAllow`` variable in the TLA+ spec.
                         NARROW states have resolved_allow=TRUE (they are ALLOW variants).
                         PAUSE states have resolved_allow=FALSE (retryable, not allowed).
-        soft_threshold_exceeded: True if action parameters exceeded soft thresholds.
-                        Only relevant for NARROW state transitions.
+        profile:        The execution profile defining which tiers are evaluated.
+        narrower_present: True if a domain narrower proposed clamped parameters.
+        clamped_params_valid: True if re-evaluating the FULL profile on the clamped
+                              parameters yielded 0 violations.
         transient_block: True if a transient condition (rate limit, circuit breaker)
                         caused the PAUSE. Only relevant for PAUSE state transitions.
         seal_consumed:  (Peer Review Fix - Gap 2 alignment) True if the seal has been
@@ -192,7 +201,9 @@ class State:
     tier_results: tuple[tuple[str, str], ...]
     seal_present: bool
     resolved_allow: bool
-    soft_threshold_exceeded: bool = False
+    profile: str = "FULL"
+    narrower_present: bool = False
+    clamped_params_valid: bool = False
     transient_block: bool = False
     seal_consumed: bool = False
     seal_expired: bool = False
@@ -205,6 +216,14 @@ class State:
 
     def any_tier_failed(self) -> bool:
         return any(r == "FAIL" for _, r in self.tier_results)
+
+    def all_profile_tiers_passed(self) -> bool:
+        required_tiers = PROFILE_STAGES[self.profile]
+        return all(dict(self.tier_results).get(t, "PENDING") == "PASS" for t in required_tiers)
+
+    def any_profile_tier_failed(self) -> bool:
+        required_tiers = PROFILE_STAGES[self.profile]
+        return any(dict(self.tier_results).get(t, "PENDING") == "FAIL" for t in required_tiers)
 
     def is_allow_variant(self) -> bool:
         """True if this state represents an ALLOW decision (SEAL_ISSUED, EXECUTED, NARROW)."""
@@ -222,7 +241,9 @@ def initial_state() -> State:
         tier_results=tuple((t, "PENDING") for t in TIERS),
         seal_present=False,
         resolved_allow=False,
-        soft_threshold_exceeded=False,
+        profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
         transient_block=False,
         seal_consumed=False,
         seal_expired=False,
@@ -235,214 +256,200 @@ def initial_state() -> State:
 
 
 def gated_transitions(state: State) -> Iterator[State]:
-    """Generate all successor states from *state* under the gated architecture.
-
-    Rules (mirror the CAGE symbolic_governor._run_checks() pipeline):
-      - From PENDING: begin checking (move to CHECKING).
-      - From CHECKING: each tier can PASS or FAIL in sequence.
-        - If any tier FAILs → move to DENIED immediately (fail-closed).
-        - If all tiers PASS:
-          - If soft_threshold_exceeded → move to NARROW (seal on clamped params)
-          - If transient_block → move to PAUSE (no seal, retryable)
-          - Otherwise → issue seal → move to SEAL_ISSUED
-      - From SEAL_ISSUED: actuator verifies seal.
-        - Seal valid → move to EXECUTED (resolvedAllow=TRUE).
-        - Seal invalid/expired → move to DENIED.
-      - EXECUTED, DENIED, NARROW, and PAUSE are terminal.
-        - NARROW has seal_present=TRUE, resolved_allow=TRUE (ALLOW variant)
-        - PAUSE has seal_present=FALSE, resolved_allow=FALSE (retryable)
-
-    The key invariant: EXECUTED is only reachable from SEAL_ISSUED, and
-    SEAL_ISSUED is only reachable when all tiers have passed.
-    NARROW also requires all tiers to pass (it's an ALLOW variant).
-    PAUSE does NOT lead to EXECUTED without re-entering CHECKING.
-    """
+    """Generate all successor states from *state* under the gated architecture."""
     if state.phase == "PENDING":
-        # Begin the governance pipeline
         yield State(
             phase="CHECKING",
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            soft_threshold_exceeded=False,
             transient_block=False,
+            seal_consumed=False,
+            seal_expired=False,
+            profile=state.profile,
+            narrower_present=state.narrower_present,
+            clamped_params_valid=state.clamped_params_valid,
         )
 
     elif state.phase == "CHECKING":
-        # Find the first PENDING tier
         results = dict(state.tier_results)
-        pending_tiers = [t for t in TIERS if results[t] == "PENDING"]
+        required_tiers = PROFILE_STAGES[state.profile]
+        pending_tiers = [t for t in TIERS if t in required_tiers and results.get(t, "PENDING") == "PENDING"]
 
         if not pending_tiers:
-            # All tiers resolved
-            if state.any_tier_failed():
-                yield State(
-                    phase="DENIED",
-                    tier_results=state.tier_results,
-                    seal_present=False,
-                    resolved_allow=False,
-                    soft_threshold_exceeded=False,
-                    transient_block=False,
-                )
-            elif state.transient_block:
-                # Transient condition detected (rate limit, circuit breaker)
-                # PAUSE: no seal issued, retryable without action modification
+            if state.transient_block:
                 yield State(
                     phase="PAUSE",
                     tier_results=state.tier_results,
                     seal_present=False,
-                    resolved_allow=False,  # PAUSE is NOT an ALLOW
-                    soft_threshold_exceeded=False,
+                    resolved_allow=False,
                     transient_block=True,
-                )
-            elif state.soft_threshold_exceeded:
-                # Soft threshold exceeded → NARROW with clamped params
-                # NARROW is an ALLOW variant: seal on clamped params
-                yield State(
-                    phase="NARROW",
-                    tier_results=state.tier_results,
-                    seal_present=True,  # seal issued on clamped params
-                    resolved_allow=True,  # NARROW is an ALLOW variant
-                    soft_threshold_exceeded=True,
-                    transient_block=False,
+                    seal_consumed=False,
+                    seal_expired=False,
+                    profile=state.profile,
+                    narrower_present=state.narrower_present,
+                    clamped_params_valid=state.clamped_params_valid,
                 )
             else:
-                # All passed, no soft threshold or transient block
-                # Normal path: issue routing seal
-                yield State(
-                    phase="SEAL_ISSUED",
-                    tier_results=state.tier_results,
-                    seal_present=True,
-                    resolved_allow=True,  # resolvedAllow = TRUE only here
-                    soft_threshold_exceeded=False,
-                    transient_block=False,
-                )
+                if state.profile != "DRY_RUN":
+                    yield State(
+                        phase="SEAL_ISSUED",
+                        tier_results=state.tier_results,
+                        seal_present=True,
+                        resolved_allow=True,
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=state.narrower_present,
+                        clamped_params_valid=state.clamped_params_valid,
+                    )
+                else:
+                    # Dry run never issues a seal, but doesn't block execution in test/dry modes
+                    yield State(
+                        phase="EXECUTED",
+                        tier_results=state.tier_results,
+                        seal_present=False,
+                        resolved_allow=True,
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=state.narrower_present,
+                        clamped_params_valid=state.clamped_params_valid,
+                    )
         else:
-            # Advance the next pending tier: it can PASS or FAIL
-            # Additionally, when a tier passes, we non-deterministically
-            # model the possibility of soft_threshold_exceeded or transient_block
             next_tier = pending_tiers[0]
             for outcome in ("PASS", "FAIL"):
                 new_results = dict(state.tier_results)
                 new_results[next_tier] = outcome
-                new_tier_results = tuple((t, new_results[t]) for t in TIERS)
+                new_tier_results = tuple((t, new_results.get(t, "PENDING")) for t in TIERS)
 
                 if outcome == "FAIL":
-                    # Fail-closed: any failure → DENIED immediately
+                    # Fail-closed optimization: if a tier fails, we either NARROW or DENIED
+                    # NARROW requires narrower_present=True and clamped_params_valid=True
+                    
+                    # 1. Deny (no narrower, or clamped params invalid)
                     yield State(
                         phase="DENIED",
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        soft_threshold_exceeded=False,
                         transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=False,
+                        clamped_params_valid=False,
+                    )
+                    # Narrower present, but rerun fails (negative case) -> DENIED
+                    yield State(
+                        phase="DENIED",
+                        tier_results=new_tier_results,
+                        seal_present=False,
+                        resolved_allow=False,
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=True,
+                        clamped_params_valid=False,
+                    )
+                    # Narrower present, and rerun passes -> NARROW (ALLOW variant)
+                    yield State(
+                        phase="NARROW",
+                        tier_results=new_tier_results,
+                        seal_present=True,
+                        resolved_allow=True,
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=True,
+                        clamped_params_valid=True,
                     )
                 else:
                     # PASS: continue checking
-                    # Model without any threshold/transient condition
                     yield State(
                         phase="CHECKING",
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        soft_threshold_exceeded=state.soft_threshold_exceeded,
                         transient_block=state.transient_block,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=False,
+                        clamped_params_valid=False,
                     )
-                    # Model with soft_threshold_exceeded condition
-                    # (only if not already set and no transient_block)
-                    if not state.soft_threshold_exceeded and not state.transient_block:
+                    # Model transient block (only if not already set)
+                    if not state.transient_block:
                         yield State(
                             phase="CHECKING",
                             tier_results=new_tier_results,
                             seal_present=False,
                             resolved_allow=False,
-                            soft_threshold_exceeded=True,
-                            transient_block=False,
-                        )
-                        # Model with transient_block condition
-                        yield State(
-                            phase="CHECKING",
-                            tier_results=new_tier_results,
-                            seal_present=False,
-                            resolved_allow=False,
-                            soft_threshold_exceeded=False,
                             transient_block=True,
+                            seal_consumed=False,
+                            seal_expired=False,
+                            profile=state.profile,
+                            narrower_present=False,
+                            clamped_params_valid=False,
                         )
 
     elif state.phase == "SEAL_ISSUED":
-        # ======================================================================
-        # Peer Review Fix: Gap 2 alignment — seal single-use consumption model
-        # ======================================================================
-        # The actuator verifies the seal before executing. Seals are SINGLE-USE:
-        # once consumed (seal_consumed=True), the same seal cannot authorize
-        # another EXECUTED transition. This models routing_seal.consume_seal()
-        # which atomically validates + marks the seal as consumed in Redis.
-        #
-        # Transitions from SEAL_ISSUED:
-        #   1. Seal valid AND not consumed AND not expired → consume → EXECUTED
-        #   2. Seal already consumed (replay attack) → DENIED (no re-execution)
-        #   3. Seal expired (TTL elapsed) → DENIED (must re-enter governance)
-        #   4. Seal invalid (HMAC mismatch, tampered) → DENIED
-        # ======================================================================
-
         if not state.seal_consumed and not state.seal_expired:
-            # Path 1: Seal valid, not consumed, not expired → consume and execute
             yield State(
                 phase="EXECUTED",
                 tier_results=state.tier_results,
                 seal_present=True,
                 resolved_allow=True,
-                soft_threshold_exceeded=False,
-                transient_block=False,
-                seal_consumed=True,  # Mark as consumed (single-use)
-                seal_expired=False,
-            )
-            # Path 3: Seal expires before consumption (non-deterministic TTL race)
-            yield State(
-                phase="DENIED",
-                tier_results=state.tier_results,
-                seal_present=False,
-                resolved_allow=False,
-                soft_threshold_exceeded=False,
-                transient_block=False,
-                seal_consumed=False,
-                seal_expired=True,  # TTL elapsed
-            )
-
-        if state.seal_consumed:
-            # Path 2: Seal already consumed → replay attack blocked → DENIED
-            # This models the atomic Redis check in consume_seal() that prevents
-            # the same seal from being used twice.
-            yield State(
-                phase="DENIED",
-                tier_results=state.tier_results,
-                seal_present=False,
-                resolved_allow=False,
-                soft_threshold_exceeded=False,
                 transient_block=False,
                 seal_consumed=True,
                 seal_expired=False,
+                profile=state.profile,
+                narrower_present=state.narrower_present,
+                clamped_params_valid=state.clamped_params_valid,
+            )
+            yield State(
+                phase="DENIED",
+                tier_results=state.tier_results,
+                seal_present=False,
+                resolved_allow=False,
+                transient_block=False,
+                seal_consumed=False,
+                seal_expired=True,
+                profile=state.profile,
+                narrower_present=state.narrower_present,
+                clamped_params_valid=state.clamped_params_valid,
             )
 
-        # Path 4: Seal invalid (HMAC mismatch) — always possible
+        if state.seal_consumed:
+            yield State(
+                phase="DENIED",
+                tier_results=state.tier_results,
+                seal_present=False,
+                resolved_allow=False,
+                transient_block=False,
+                seal_consumed=True,
+                seal_expired=False,
+                profile=state.profile,
+                narrower_present=state.narrower_present,
+                clamped_params_valid=state.clamped_params_valid,
+            )
+
         yield State(
             phase="DENIED",
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            soft_threshold_exceeded=False,
             transient_block=False,
             seal_consumed=False,
             seal_expired=False,
+            profile=state.profile,
+            narrower_present=state.narrower_present,
+            clamped_params_valid=state.clamped_params_valid,
         )
-
-    # EXECUTED, DENIED, NARROW, and PAUSE are terminal — no successors
-
-
-# ---------------------------------------------------------------------------
-# Ungated (direct-bind) transition function — the violation variant
-# ---------------------------------------------------------------------------
-
 
 def ungated_transitions(state: State) -> Iterator[State]:
     """Generate successor states under the UNGATED (direct-bind) architecture.
@@ -463,7 +470,9 @@ def ungated_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            soft_threshold_exceeded=False,
+            profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
             transient_block=False,
         )
 
@@ -478,7 +487,9 @@ def ungated_transitions(state: State) -> Iterator[State]:
                     tier_results=state.tier_results,
                     seal_present=False,
                     resolved_allow=False,
-                    soft_threshold_exceeded=False,
+                    profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
                     transient_block=False,
                 )
             else:
@@ -490,7 +501,9 @@ def ungated_transitions(state: State) -> Iterator[State]:
                     tier_results=state.tier_results,
                     seal_present=False,
                     resolved_allow=False,  # ← authority never resolved
-                    soft_threshold_exceeded=False,
+                    profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
                     transient_block=False,
                 )
         else:
@@ -506,7 +519,9 @@ def ungated_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        soft_threshold_exceeded=False,
+                        profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
                         transient_block=False,
                     )
                 else:
@@ -515,7 +530,9 @@ def ungated_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        soft_threshold_exceeded=False,
+                        profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
                         transient_block=False,
                     )
 
@@ -526,7 +543,9 @@ def ungated_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=True,
             resolved_allow=True,
-            soft_threshold_exceeded=False,
+            profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
             transient_block=False,
         )
 
@@ -537,65 +556,86 @@ def ungated_transitions(state: State) -> Iterator[State]:
 
 
 def ungated_narrow_transitions(state: State) -> Iterator[State]:
-    """Generate successor states where NARROW can bypass seal verification.
-
-    This is a negative control variant that models a hypothetical bug where
-    NARROW states allow execution without proper seal verification.
-
-    The violation: NARROW → EXECUTED without seal verification, which should
-    produce a counterexample demonstrating the seal gate is load-bearing
-    for NARROW states as well.
-    """
     if state.phase == "PENDING":
         yield State(
             phase="CHECKING",
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            soft_threshold_exceeded=False,
             transient_block=False,
+            seal_consumed=False,
+            seal_expired=False,
+            profile=state.profile,
+            narrower_present=False,
+            clamped_params_valid=False,
         )
 
     elif state.phase == "CHECKING":
         results = dict(state.tier_results)
-        pending_tiers = [t for t in TIERS if results[t] == "PENDING"]
+        required_tiers = PROFILE_STAGES[state.profile]
+        pending_tiers = [t for t in TIERS if t in required_tiers and results.get(t, "PENDING") == "PENDING"]
 
         if not pending_tiers:
-            if state.any_tier_failed():
+            if state.any_profile_tier_failed():
+                if state.narrower_present and state.clamped_params_valid:
+                    # Bug: NARROW without seal, then allow EXECUTED transition
+                    yield State(
+                        phase="NARROW",
+                        tier_results=state.tier_results,
+                        seal_present=False,  # ← No seal issued!
+                        resolved_allow=False,  # ← Authority not resolved!
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=True,
+                        clamped_params_valid=True,
+                    )
+                else:
+                    yield State(
+                        phase="DENIED",
+                        tier_results=state.tier_results,
+                        seal_present=False,
+                        resolved_allow=False,
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=state.narrower_present,
+                        clamped_params_valid=state.clamped_params_valid,
+                    )
+            elif state.transient_block:
                 yield State(
-                    phase="DENIED",
+                    phase="PAUSE",
                     tier_results=state.tier_results,
                     seal_present=False,
                     resolved_allow=False,
-                    soft_threshold_exceeded=False,
-                    transient_block=False,
-                )
-            elif state.soft_threshold_exceeded:
-                # Bug: NARROW without seal, then allow EXECUTED transition
-                yield State(
-                    phase="NARROW",
-                    tier_results=state.tier_results,
-                    seal_present=False,  # ← No seal issued!
-                    resolved_allow=False,  # ← Authority not resolved!
-                    soft_threshold_exceeded=True,
-                    transient_block=False,
+                    transient_block=True,
+                    seal_consumed=False,
+                    seal_expired=False,
+                    profile=state.profile,
+                    narrower_present=state.narrower_present,
+                    clamped_params_valid=state.clamped_params_valid,
                 )
             else:
-                # Normal SEAL_ISSUED path (for comparison)
                 yield State(
                     phase="SEAL_ISSUED",
                     tier_results=state.tier_results,
                     seal_present=True,
                     resolved_allow=True,
-                    soft_threshold_exceeded=False,
                     transient_block=False,
+                    seal_consumed=False,
+                    seal_expired=False,
+                    profile=state.profile,
+                    narrower_present=state.narrower_present,
+                    clamped_params_valid=state.clamped_params_valid,
                 )
         else:
             next_tier = pending_tiers[0]
             for outcome in ("PASS", "FAIL"):
                 new_results = dict(state.tier_results)
                 new_results[next_tier] = outcome
-                new_tier_results = tuple((t, new_results[t]) for t in TIERS)
+                new_tier_results = tuple((t, new_results.get(t, "PENDING")) for t in TIERS)
 
                 if outcome == "FAIL":
                     yield State(
@@ -603,39 +643,65 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        soft_threshold_exceeded=False,
                         transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=False,
+                        clamped_params_valid=False,
+                    )
+                    yield State(
+                        phase="NARROW",
+                        tier_results=new_tier_results,
+                        seal_present=False,
+                        resolved_allow=False,
+                        transient_block=False,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=True,
+                        clamped_params_valid=True,
                     )
                 else:
-                    # Continue checking, with possibility of soft_threshold
                     yield State(
                         phase="CHECKING",
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        soft_threshold_exceeded=False,
-                        transient_block=False,
+                        transient_block=state.transient_block,
+                        seal_consumed=False,
+                        seal_expired=False,
+                        profile=state.profile,
+                        narrower_present=False,
+                        clamped_params_valid=False,
                     )
-                    # Also model soft_threshold path
-                    yield State(
-                        phase="CHECKING",
-                        tier_results=new_tier_results,
-                        seal_present=False,
-                        resolved_allow=False,
-                        soft_threshold_exceeded=True,
-                        transient_block=False,
-                    )
+                    if not state.transient_block:
+                        yield State(
+                            phase="CHECKING",
+                            tier_results=new_tier_results,
+                            seal_present=False,
+                            resolved_allow=False,
+                            transient_block=True,
+                            seal_consumed=False,
+                            seal_expired=False,
+                            profile=state.profile,
+                            narrower_present=False,
+                            clamped_params_valid=False,
+                        )
 
     elif state.phase == "NARROW":
         # Bug: NARROW can transition to EXECUTED without seal verification
-        # This should produce a counterexample
         yield State(
             phase="EXECUTED",
             tier_results=state.tier_results,
             seal_present=False,  # ← No seal!
             resolved_allow=False,  # ← Authority not resolved! VIOLATION
-            soft_threshold_exceeded=True,
             transient_block=False,
+            seal_consumed=False,
+            seal_expired=False,
+            profile=state.profile,
+            narrower_present=True,
+            clamped_params_valid=True,
         )
 
     elif state.phase == "SEAL_ISSUED":
@@ -644,15 +710,13 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=True,
             resolved_allow=True,
-            soft_threshold_exceeded=False,
             transient_block=False,
+            seal_consumed=False,
+            seal_expired=False,
+            profile=state.profile,
+            narrower_present=False,
+            clamped_params_valid=False,
         )
-
-
-# ---------------------------------------------------------------------------
-# Concurrent transition function — models the CBF/OPA parallel gate
-# ---------------------------------------------------------------------------
-
 
 def enumerate_reachable(
     transition_fn,
@@ -773,43 +837,6 @@ def main() -> None:
     print("    seal gate in gated_transitions() is load-bearing.")
     print()
 
-    # Gap 3: CBF_FAIL_OPEN — model as CBF tier always PASS regardless of check
-    def cbf_fail_open_transitions(state: State) -> Iterator[State]:
-        """CBF tier is skipped (always PASS) — models CBF_FAIL_OPEN=true."""
-        if state.phase == "CHECKING":
-            results = dict(state.tier_results)
-            pending_tiers = [t for t in TIERS if results[t] == "PENDING"]
-            if pending_tiers and pending_tiers[0] == "cbf":
-                # Skip CBF: mark as PASS without any check
-                new_results = dict(state.tier_results)
-                new_results["cbf"] = "PASS"
-                new_tier_results = tuple((t, new_results[t]) for t in TIERS)
-                yield State(
-                    phase="CHECKING",
-                    tier_results=new_tier_results,
-                    seal_present=False,
-                    resolved_allow=False,
-                    soft_threshold_exceeded=state.soft_threshold_exceeded,
-                    transient_block=state.transient_block,
-                )
-                return
-        yield from gated_transitions(state)
-
-    cbf_states = enumerate_reachable(cbf_fail_open_transitions)
-    # CBF_FAIL_OPEN alone doesn't violate the invariant structurally (seal is
-    # still issued after all remaining tiers pass), but it removes a mandatory
-    # tier from the gate.  The proof here confirms the seal path is preserved
-    # even with CBF skipped — the Gap 3 fix (RuntimeError at startup) prevents
-    # this configuration from being reachable in production at all.
-    cbf_holds, _cbf_cex = check_no_direct_bind(cbf_states)
-    print(
-        f"  Gap 3 (CBF_FAIL_OPEN): reachable states={len(cbf_states)}, "
-        f"invariant holds={cbf_holds}"
-    )
-    print("  → Structural invariant preserved, but CBF tier is absent from gate.")
-    print("  → Production startup RuntimeError prevents this configuration.")
-    print()
-
     # Gap 4: DoWhy absent — causal tier always PASS (silently skipped)
     def dowhy_absent_transitions(state: State) -> Iterator[State]:
         """Causal tier is silently skipped — models DoWhy ImportError."""
@@ -826,7 +853,7 @@ def main() -> None:
                     tier_results=new_tier_results,
                     seal_present=False,
                     resolved_allow=False,
-                    soft_threshold_exceeded=state.soft_threshold_exceeded,
+                    profile=state.profile, narrower_present=state.narrower_present, clamped_params_valid=state.clamped_params_valid,
                     transient_block=state.transient_block,
                 )
                 return
@@ -879,7 +906,9 @@ def main() -> None:
                     tier_results=state.tier_results,
                     seal_present=False,
                     resolved_allow=False,  # ← VIOLATION: No seal → no resolution
-                    soft_threshold_exceeded=False,
+                    profile="FULL",
+        narrower_present=False,
+        clamped_params_valid=False,
                     transient_block=False,
                     seal_consumed=False,
                     seal_expired=False,
@@ -910,7 +939,7 @@ def main() -> None:
         print(
             f"    → resolvedAllow={s.resolved_allow}  "
             f"seal_present={s.seal_present}  "
-            f"soft_threshold_exceeded={s.soft_threshold_exceeded}"
+            f"narrower_present={s.narrower_present}  clamped_params_valid={s.clamped_params_valid}"
         )
     print(f"  PAUSE states: {len(pause_states)}")
     for s in pause_states:
@@ -926,6 +955,18 @@ def main() -> None:
     print(
         f"  NARROW states have resolvedAllow=TRUE and seal_present=TRUE: {narrow_valid}"
     )
+
+    # Verify profile ALLOW property
+    # under every profile, an ALLOW (SEAL_ISSUED) requires every tier in that profile to PASS.
+    seal_issued_states = [s for s in gated_states if s.phase == "SEAL_ISSUED"]
+    profile_allow_valid = all(s.all_profile_tiers_passed() for s in seal_issued_states)
+    print(f"  SEAL_ISSUED states have all profile tiers passed: {profile_allow_valid}")
+
+    # Negative case: a profile whose tier FAILs never yields ALLOW
+    # i.e., no SEAL_ISSUED state has any_profile_tier_failed() == True
+    profile_fail_blocks = all(not s.any_profile_tier_failed() for s in seal_issued_states)
+    print(f"  No SEAL_ISSUED states have any failed profile tier: {profile_fail_blocks}")
+
 
     # Verify PAUSE states do NOT have seal_present=TRUE (they are retryable, not ALLOW)
     pause_no_seal = all(
@@ -950,7 +991,7 @@ def main() -> None:
         print(f"     resolvedAllow={ungated_narrow_cex.resolved_allow}")
         print(f"     seal_present={ungated_narrow_cex.seal_present}")
         print(
-            f"     soft_threshold_exceeded={ungated_narrow_cex.soft_threshold_exceeded}"
+            f"     narrower_present={ungated_narrow_cex.narrower_present}\n     clamped_params_valid={ungated_narrow_cex.clamped_params_valid}"
         )
     print()
 
@@ -967,6 +1008,9 @@ def main() -> None:
     assert narrow_valid, (
         "PROOF FAILED: NARROW states must have resolvedAllow=TRUE and seal_present=TRUE!"
     )
+    assert profile_allow_valid, "PROOF FAILED: SEAL_ISSUED requires all profile tiers to pass!"
+    assert profile_fail_blocks, "PROOF FAILED: SEAL_ISSUED state with failed profile tier!"
+
     assert pause_no_seal, (
         "PROOF FAILED: PAUSE states must have seal_present=FALSE and resolvedAllow=FALSE!"
     )
