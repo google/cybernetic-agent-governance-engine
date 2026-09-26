@@ -39,6 +39,7 @@ class StageContext:
     params: Mapping[str, Any]
     profile: Profile
     opa_verdict: OpaVerdict | None = None
+    stpa_violation_count: int = 0
 
 
 class Stage(Protocol):

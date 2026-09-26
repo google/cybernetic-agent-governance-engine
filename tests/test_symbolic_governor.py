@@ -116,6 +116,7 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe, classification_
 @pytest.mark.asyncio
 async def test_symbolic_governor_confidence_fail(mock_ftra_safe, classification_engine):
     opa_client = AsyncMock()
+    opa_client.evaluate_policy.return_value = "ALLOW"
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
@@ -272,6 +273,7 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe, classi
     without requiring changes to their alert rules.
     """
     opa_client = AsyncMock()
+    opa_client.evaluate_policy.return_value = "ALLOW"
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
