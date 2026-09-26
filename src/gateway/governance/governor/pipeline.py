@@ -63,6 +63,6 @@ class PipelineResult:
 PROFILE_STAGES: Mapping[Profile, frozenset[str]] = {
     Profile.FULL: frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
     Profile.DRY_RUN: frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
-    Profile.POST_HITL: frozenset({"opa", "cbf"}),
+    Profile.POST_HITL: frozenset({"opa", "cbf", "fiscal"}),  # decision 1: fiscal re-checked post-approval
 }
 

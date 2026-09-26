@@ -66,7 +66,7 @@ def test_profile_stages_match_proof_tiers():
         
     assert PROFILE_STAGES[Profile.FULL] == proof_tiers
     assert PROFILE_STAGES[Profile.DRY_RUN] == proof_tiers
-    assert PROFILE_STAGES[Profile.POST_HITL] == frozenset({"opa", "cbf"})
+    assert PROFILE_STAGES[Profile.POST_HITL] == frozenset({"opa", "cbf", "fiscal"})
 
 
 def test_governance_error_identity_preserved():
