@@ -105,12 +105,11 @@ from src.governed_financial_advisor.governance.structs import (  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Force CAGE_ENV=development before importing symbolic_governor so the
-# module-level production startup guards (CBF_FAIL_OPEN, dowhy, RECONCILIATION)
+# module-level production startup guards (dowhy, RECONCILIATION)
 # do not fire during measurement.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("CAGE_ENV", "development")
 os.environ.setdefault("ENVIRONMENT", "development")
-os.environ.setdefault("CBF_FAIL_OPEN", "true")  # allow Redis mock
 os.environ.setdefault("RECONCILIATION_PROVIDER", "stub")  # allow stub in dev
 
 logging.basicConfig(

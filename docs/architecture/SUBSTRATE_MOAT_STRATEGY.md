@@ -38,7 +38,7 @@ The comparative matrix claims CAGE enforces at the **container network interface
 [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) and [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py) use Redis `WATCH/MULTI/EXEC` with up to `_MAX_RETRIES=5` retries. A concurrent writer that modifies `safety:current_cash` between the WATCH and EXEC causes the transaction to abort and retry. In v3.0.1, the canonical serving path uses `atomic_verify_and_commit()` via atomic Lua execution.
 
 **No-Direct-Bind startup assertions:**  
-[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:91) raises `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production, and if `dowhy` is absent. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
+[`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py:91) raises `RuntimeError` at startup in production if `dowhy` is absent or ground truth is a stub; the CBF tier has no bypass flag at all. This means the enforcement substrate cannot be silently bypassed by environment misconfiguration — the container fails to start rather than degrading to an unguarded state.
 
 **Gap vs. matrix claim:** The matrix references "CNI kernel edge" enforcement. The current implementation enforces at the Redis database commit tier (application-layer substrate), not at the CNI/eBPF layer. This is a positioning gap, not a security gap — the Redis atomic Lua enforcement is functionally equivalent for any high-reliability state mutation use case, but the CNI framing implies network-level enforcement that does not yet exist.
 
@@ -242,7 +242,7 @@ The following capabilities are **fully implemented** in v2.0.0 and constitute ge
 
 3. **Math-Backed Safety Certificate** — The discrete-time CBF (`h(S(t+1)) >= (1-γ)*h(S(t))`) provides a formal proof of safety that text-based behavioral constraints (ACS) and trace-schema comparison (AAIF) cannot provide.
 
-4. **Fail-Closed Startup Assertions** — The module-level `RuntimeError` on `CBF_FAIL_OPEN=true` in production ([`symbolic_governor.py:91`](../../src/gateway/governance/symbolic_governor.py:91)) means the governance substrate cannot be silently degraded. Competitors rely on application-tier hooks that can be bypassed.
+4. **Fail-Closed Startup Assertions** — Production startup `RuntimeError`s ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), and the absence of any CBF bypass flag, mean the governance substrate cannot be silently degraded. Competitors rely on application-tier hooks that can be bypassed.
 
 5. **Multi-Jurisdiction Compliance Registry** — [`ControlRegistry`](../../src/gateway/governance/constants.py:229) with `US_FED`, `EU_ECB`, and `APAC_MAS` profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. The registry is domain-agnostic: the same `CTRL_*` enum members and JSON profile mechanism extend to any regulated vertical (pharmaceutical GxP, critical infrastructure, autonomous systems). Neither competitor has a comparable multi-jurisdiction enforcement substrate.
 
@@ -264,7 +264,7 @@ The following claims from the competitive analysis are now technically substanti
 
 | Claim | Substantiation | File |
 |---|---|---|
-| "Immune to Prompt Breakouts" | `CBF_FAIL_OPEN=true` raises `RuntimeError` at startup in production | [`symbolic_governor.py:91`](../../src/gateway/governance/symbolic_governor.py:91) |
+| "Immune to Prompt Breakouts" | The CBF tier has no fail-open flag; missing `dowhy` or stub ground truth raises `RuntimeError` at startup in production | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf_engine.py:1632`](../../src/gateway/governance/safety/cbf_engine.py:1632) |
 | "Telco-Grade Velocity" | Asymmetric hot path — confidence ≥ `FRIA_ZONE_ALLOW` (0.95) contacts the normative provider fire-and-forget, never blocking the action | [`symbolic_governor.py:202`](../../src/gateway/governance/symbolic_governor.py:202) |
 | "Compiled AST Invariants" | STPA UCAs compiled to OPA Rego at build time | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |

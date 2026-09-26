@@ -212,12 +212,14 @@ def test_gap1_ungated_reachable_state_count_is_stable() -> None:
 def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
     skipped_tier: str,
 ) -> None:
-    """Gap 3 (CBF_FAIL_OPEN) and Gap 4 (DoWhy absent).
+    """Gap 3 (CBF tier skipped) and Gap 4 (DoWhy absent).
 
     Marking a tier PASS without evaluating it does not break the structural
     invariant — the seal is still issued only after the remaining tiers pass —
-    but it removes one check from the gate, which is why CAGE backs both with
-    a production startup ``RuntimeError`` rather than relying on the model.
+    but it removes one check from the gate. Gap 3's former trigger, the
+    ``CBF_FAIL_OPEN`` flag, has been deleted from the code; Gap 4 is backed by
+    a production startup ``RuntimeError``. Removing Gap 3 from the model is
+    tracked in PR 2 task T8.
     """
 
     def skipping_transitions(state):  # type: ignore[no-untyped-def]

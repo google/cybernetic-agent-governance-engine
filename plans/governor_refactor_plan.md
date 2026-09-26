@@ -254,7 +254,11 @@ flowchart LR
 | **The formal model says the confidence tier runs before cbf/opa, but `POST_HITL` skips it.** | Already true today. Record it explicitly as a profile in `proof/model.py` (Open Q2). |
 | **Large diff to review.** | Each PR is mechanical after its contract commit. Structure each PR as commit 1 = contract + core, commit 2 = migrations, commit 3 = tests/docs. |
 
-## Open questions
-1. **Should `POST_HITL` include the fiscal stage?** Today fiscal is skipped because it was "already reserved at check-time". With PR 3, though, reservations taken before the HITL pause are rolled back when the pipeline returns REQUIRE_APPROVAL. So after approval nothing is reserved any more. **Recommendation:** include `fiscal` in POST_HITL.
-2. **Should the formal model have a profile concept?** For example, `POST_HITL` modelled as a subset path in `proof/model.py` plus the TLA+ spec. **Recommendation:** yes, in PR 2, so the parity test covers both paths.
-3. **Should NARROW be deleted outright** instead of kept behind the `Narrower` seam with no implementation? Deleting it is cleaner. Keeping the seam preserves the NARROW state already in the formal model. **Recommendation:** keep the seam (small) and add no narrower until a domain needs one.
+## Resolved design questions (from PR 1–5 planning)
+
+1. **Re-run fiscal checks after human approval:** **Yes.** Add `fiscal` to the post-approval profile and test that an approved request is denied if the budget is used up while it waited.
+2. **Add execution profiles to the formal model:** **Yes.** Add a `profile` field to `proof/model.py` to formally model subset paths like `POST_HITL`, and prove an allow requires every check in the profile to pass.
+3. **Keep the NARROW seam:** **Keep the code's version; fix the model.** The model incorrectly defines NARROW as "every check passed, but soft threshold exceeded". Update the model to match the code's design (the domain plugin decides what is narrowable).
+4. **Delete `CBF_FAIL_OPEN`:** **Yes.** Delete it entirely from the codebase (it was a dead development-mode switch with no test coverage).
+5. **Delete `null_components.py`:** **No, but change how it's used.** Keep the deny-by-default null objects for when no plugin is present, but build the governor once after plugins load, passing everything in explicitly.
+6. **STPA rules, one module per domain:** **Yes.** Remove the duplicate `GeneratedSTPAValidator` class, keep the generic compiler/validator in Layer 1, and move each domain's rule set into its own domain package.

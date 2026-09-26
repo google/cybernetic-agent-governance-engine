@@ -59,7 +59,7 @@ The model proves four concrete CAGE gaps:
 
 - **Gap 1**: Ungated architecture violates NoDirectBind (seal gate is load-bearing)
 - **Gap 2**: `govern()` without seal issuance violates NoDirectBind
-- **Gap 3**: `CBF_FAIL_OPEN` preserves structure but removes a mandatory check
+- **Gap 3**: skipping the CBF tier preserves structure but removes a mandatory check (its code trigger, `CBF_FAIL_OPEN`, has been deleted)
 - **Gap 4**: DoWhy `ImportError` (causal tier silently skipped) preserves structure but removes a mandatory check
 
 ### NARROW/PAUSE States (C1-sub Audit Remediation)

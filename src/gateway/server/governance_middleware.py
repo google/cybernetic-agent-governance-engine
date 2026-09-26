@@ -73,7 +73,6 @@ _IS_PRODUCTION: bool = _ENVIRONMENT not in ("development", "test", "dev", "ci")
 # CAGE-SEC-001: CAGE_SEAL_ENFORCEMENT=log is prohibited in production.
 # In log mode, requests with invalid routing seals are allowed through with only
 # a warning — this creates a bypass vector equivalent to disabling seal enforcement.
-# Mirror of the CBF_FAIL_OPEN guard in symbolic_governor.py (No-Direct-Bind §3).
 if _SEAL_ENFORCEMENT == "log" and _IS_PRODUCTION:
     raise RuntimeError(
         f"CAGE STARTUP FAILURE (CAGE-SEC-001): CAGE_SEAL_ENFORCEMENT=log is set in "

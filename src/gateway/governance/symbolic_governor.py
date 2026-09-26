@@ -91,17 +91,6 @@ _ENVIRONMENT: str = (
 ).lower()
 _IS_PRODUCTION: bool = _ENVIRONMENT not in ("development", "test", "dev", "ci")
 
-# Gap 3 fix: CBF_FAIL_OPEN=true in production is a direct-bind shortcut —
-# it removes the cash-barrier tier from the gate entirely.  Fail fast.
-_CBF_FAIL_OPEN: bool = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
-if _CBF_FAIL_OPEN and _IS_PRODUCTION:
-    raise RuntimeError(
-        "CAGE STARTUP FAILURE (No-Direct-Bind Gap 3): CBF_FAIL_OPEN=true is set in "
-        f"environment '{_ENVIRONMENT}'. This removes the Control Barrier Function tier "
-        "from the governance gate, creating a direct-bind shortcut to EXECUTED without "
-        "resolved cash-barrier authority. "
-        "Set CBF_FAIL_OPEN=false or set CAGE_ENV=development to bypass (not for production)."
-    )
 
 # Gap 4 fix: DoWhy absence in production silently removes Tier 6 (causal
 # gatekeeper).  Fail fast so the gap is surfaced at startup, not at runtime.
@@ -1674,7 +1663,7 @@ class SymbolicGovernor:
                 trade). Callers must pass the real action.
 
         After a human approves a plan, market prices and account balances may
-        have changed. Only Tier 3a (CBF cash solvency) and Tier 3b (OPA policy)
+        have changed. Only Phase 2 tiers (CBF, Fiscal) and OPA policy
         are sensitive to real-time state — the other tiers are deterministic
         with respect to the static plan and do not need re-evaluation.
 
@@ -1719,48 +1708,10 @@ class SymbolicGovernor:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
 
             logger.info(
-                "⚖️ [revalidate_post_hitl] Re-checking CBF+OPA only (Tiers 3a/3b) "
+                "⚖️ [revalidate_post_hitl] Re-checking Phase 2+OPA only "
                 "for post-HITL TOCTOU revalidation: %s",
                 tool_name,
             )
-
-            _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
-
-            # --- CBF coroutine ---
-            async def _cbf_revalidate() -> tuple[bool, str]:
-                """Atomic CBF verify-and-commit inside a dedicated span.
-                
-                Returns:
-                    tuple[bool, str]: (committed, reason) where committed=True means
-                                      the CBF balance was successfully debited, and
-                                      reason describes the outcome or refusal reason.
-                """
-                with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
-                    cbf_span.set_attribute(OBSERVATION_NAME, "cbf_barrier_check")
-                    cbf_span.set_attribute("governance.stage", "cbf")
-                    cbf_span.set_attribute("governance.cbf.atomic", True)
-                    cbf_span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
-                    _t = time.perf_counter()
-                    try:
-                        (
-                            committed,
-                            reason,
-                        ) = await self.safety_filter.atomic_verify_and_commit(
-                            action_name=tool_name,
-                            payload=params,
-                        )
-                        result_str = "SAFE" if committed else reason
-                        cbf_span.set_attribute("governance.cbf.result", result_str[:80])
-                        cbf_span.set_attribute("governance.cbf.committed", committed)
-                        cbf_span.set_attribute(
-                            "governance.stage.latency_ms",
-                            round((time.perf_counter() - _t) * 1000, 2),
-                        )
-                        return (committed, reason)
-                    except Exception as exc:
-                        cbf_span.record_exception(exc)
-                        cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
-                        raise
 
             # --- OPA coroutine ---
             opa_payload = params.copy()
@@ -1784,19 +1735,9 @@ class SymbolicGovernor:
                         opa_span.record_exception(exc)
                         raise
 
-            # C2 Fix: Run OPA first (read-only), then CBF commit only if OPA passes.
-            # This prevents budget leakage where CBF debits balance but OPA subsequently denies.
-            #
-            # Phase ordering (sequential):
-            #   1. OPA policy evaluation (read-only, no side effects)
-            #   2. CBF atomic commit (mutating, debits balance) — only if OPA passed
-            #   3. Seal generation with rollback on failure
-            #
-            # Latency trade-off: Sequential execution adds OPA_ms + CBF_ms instead of max(OPA_ms, CBF_ms).
-            # This is acceptable because correctness (no budget leakage) takes precedence over latency.
-            
+            # C2 Fix: Run OPA first (read-only), then Phase 2 commits only if OPA passes.
+            # This prevents budget leakage where balance is debited but OPA subsequently denies.
             _t_sequential_start = time.perf_counter()
-            cbf_committed = False  # Track whether CBF actually committed (for rollback)
             
             # --- Step 1: OPA revalidation (read-only) ---
             try:
@@ -1804,7 +1745,7 @@ class SymbolicGovernor:
             except BaseException as opa_exc:
                 policy_resp = opa_exc
             
-            # Evaluate OPA result before proceeding to CBF
+            # Evaluate OPA result before proceeding to Phase 2
             if isinstance(policy_resp, BaseException):
                 violations.append(
                     f"OPA Check Failed [post-HITL revalidation]: {policy_resp}"
@@ -1822,10 +1763,8 @@ class SymbolicGovernor:
                 
                 # Fail-closed allowlist pattern (H2 security fix)
                 if policy_decision == "ALLOW":
-                    # Only explicit ALLOW proceeds - no violations added
                     pass
                 elif policy_decision in ("DENY", "GOVERNANCE_VIOLATION"):
-                    # Explicit denials with specific violation message
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1835,7 +1774,6 @@ class SymbolicGovernor:
                         f"Action [post-HITL revalidation]."
                     )
                 elif policy_decision == "MANUAL_REVIEW":
-                    # Manual review required
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1845,7 +1783,6 @@ class SymbolicGovernor:
                         f"Required [post-HITL revalidation]."
                     )
                 else:
-                    # Everything else (typos, unknown verdicts, unexpected values) triggers violation
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
                     )
@@ -1855,60 +1792,30 @@ class SymbolicGovernor:
                         f"(expected ALLOW, DENY, GOVERNANCE_VIOLATION, or MANUAL_REVIEW) [post-HITL revalidation]"
                     )
             
-            # --- Step 2: CBF commit (only if OPA passed) ---
+            # --- Step 2: Phase 2 domain tiers (CBF, Fiscal) ---
+            # Re-check Phase 2 tiers that mutate state/budgets and could have drifted.
             if not violations:
                 try:
-                    cbf_result = await _cbf_revalidate()
-                except BaseException as cbf_exc:
-                    cbf_result = cbf_exc
-                
-                # Evaluate CBF result
-                # C1 Fix: Check the committed boolean directly instead of relying on
-                # reason string prefix matching. This catches all CBF refusals:
-                #   - "UNSAFE: ..." (barrier violation)
-                #   - "RECONCILIATION_UNAVAILABLE: ..." (ground truth unavailable)
-                #   - "Fence epoch regression: ..." (concurrent modification)
-                #   - "Ground truth balance unavailable" (data fetch failure)
-                if isinstance(cbf_result, BaseException):
-                    if _cbf_fail_open:
-                        logger.warning(
-                            "⚠️ [revalidate_post_hitl] CBF check unavailable (%s) — "
-                            "CBF_FAIL_OPEN=true, skipping CBF gate (audit gap).",
-                            cbf_result,
-                        )
-                    else:
-                        logger.error(
-                            "⛔ [revalidate_post_hitl] CBF check unavailable (%s) — "
-                            "fail-closed: blocking revalidation.",
-                            cbf_result,
-                        )
-                        violations.append(
-                            "CBF Fail-Closed (post-HITL revalidation): Redis unavailable "
-                            "— cannot verify cash barrier. Set CBF_FAIL_OPEN=true to "
-                            "override (audit gap)."
-                        )
-                elif isinstance(cbf_result, tuple):
-                    committed, reason = cbf_result
-                    cbf_committed = committed  # Track for potential rollback
-                    if not committed:
-                        # C1 Fix: Any CBF refusal (committed=False) is a hard violation,
-                        # regardless of the reason string content.
-                        violations.append(
-                            f"CBF Commit Refused [post-HITL revalidation]: {reason}"
-                        )
-                        logger.warning(
-                            "⛔ [revalidate_post_hitl] CBF refused to commit: %s",
-                            reason,
-                        )
+                    tier_violations = await self._run_domain_tiers(
+                        tool_name, params, phase=2
+                    )
+                    if tier_violations:
+                        violations.extend(self._violations_to_strings(tier_violations))
+                except BaseException as phase2_exc:
+                    logger.error(
+                        "⛔ [revalidate_post_hitl] Phase 2 tier error (%s) — "
+                        "fail-closed: blocking revalidation.",
+                        phase2_exc,
+                    )
+                    violations.append(f"Phase 2 Commit Error [post-HITL revalidation]: {phase2_exc}")
             else:
                 logger.info(
-                    "⏭️ [revalidate_post_hitl] OPA denied — skipping CBF commit "
+                    "⏭️ [revalidate_post_hitl] OPA denied — skipping Phase 2 commits "
                     "(budget leakage prevented)"
                 )
             
             _sequential_ms = round((time.perf_counter() - _t_sequential_start) * 1000, 2)
             span.set_attribute("toctou.revalidation.sequential_ms", _sequential_ms)
-            span.set_attribute("toctou.revalidation.cbf_committed", cbf_committed)
 
             try:
                 if violations:
@@ -2590,21 +2497,16 @@ class SymbolicGovernor:
 
 
 def assert_safe_operational_state() -> None:
-    """Raise RuntimeError if the system is in a combined high-risk operational state.
+    """Refuse unsafe startup posture.
 
-    Specifically, raises if BOTH of the following are true simultaneously:
-      - CBF_FAIL_OPEN=true (CBF gate is bypassed)
-      - KMSGovernanceSigner is in HMAC fallback mode (no non-repudiation)
+    Raises ``RuntimeError`` in production (logs CRITICAL elsewhere) when
+    ``RECONCILIATION_PROVIDER=stub``: the CBF would evaluate against
+    self-reported balances with no external ground truth (POAM-023).
 
-    Either condition alone is a compliance gap. Together they mean:
-      - No independent cash balance verification (CBF bypassed)
-      - No externally verifiable governance attestation (HMAC fallback)
-    This combined state is the highest-risk operational posture and must
-    never occur in production.
-
-    Also warns (CRITICAL log) or raises (production) when
-    RECONCILIATION_PROVIDER=stub, which means the CBF is evaluating against
-    self-reported balances — POAM-023 open gap.
+    The former ``CBF_FAIL_OPEN`` + HMAC-fallback combined check was removed
+    with the ``CBF_FAIL_OPEN`` flag itself; the CBF tier can no longer be
+    bypassed. A standalone HMAC-fallback posture check is planned for the
+    PR 4a composition root (``governor/posture.py``).
 
     Call this during application startup.
     """
@@ -2640,43 +2542,6 @@ def assert_safe_operational_state() -> None:
                 )
             )
 
-    cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
-    if not cbf_fail_open:
-        return  # CBF is active — combined risk state is not present
-
-    # CBF is bypassed — check if KMS is also in fallback mode
-    try:
-        from src.gateway.governance.kms_signer import get_governance_signer
-
-        signer = get_governance_signer()
-        kms_active = signer.is_kms_active
-    except Exception:
-        kms_active = False  # Cannot determine — assume worst case
-
-    if not kms_active:
-        msg = (
-            "CAGE STARTUP FAILURE: Combined high-risk operational state detected. "
-            "CBF_FAIL_OPEN=true (CBF gate bypassed) AND KMSGovernanceSigner is in "
-            "HMAC fallback mode (no non-repudiation). "
-            "This means: (1) cash balance cannot be independently verified, "
-            "(2) governance attestations cannot be externally verified. "
-            "Resolve by: setting KMS_GOVERNANCE_KEY and/or setting CBF_FAIL_OPEN=false."
-        )
-        if _is_production:
-            raise RuntimeError(msg)
-        else:
-            logger.critical(
-                json.dumps(
-                    {
-                        "event": "COMBINED_HIGH_RISK_STATE",
-                        "severity": "CRITICAL",
-                        "cbf_fail_open": True,
-                        "kms_active": False,
-                        "environment": env,
-                        "audit_note": msg,
-                    }
-                )
-            )
 
 
 # ---------------------------------------------------------------------------

@@ -277,27 +277,17 @@ The proof file also verifies five additional sub-cases:
 | --------- | ---------------------- | ---------------- | -------------- |
 | Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (21 states) | Confirms the seal gate is load-bearing, not decorative |
 | Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** — violation confirmed (21 states) | Proves both seal issuance and actuator verification are load-bearing |
-| Gap 3 (`CBF_FAIL_OPEN`) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally, 43 states) | Seal path preserved, but CBF tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| Gap 3 (CBF tier skipped) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally, 43 states) | Seal path preserved, but CBF tier absent from gate. The only code path to this configuration, the `CBF_FAIL_OPEN` flag, has been deleted |
 | Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally, 43 states) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
 | C1-sub (ungated NARROW negative control) | NARROW decision reaches `EXECUTED` without seal verification | ❌ **No** — violation confirmed (33 states) | Proves the seal gate is load-bearing for the NARROW path, not only for plain ALLOW |
 
 For Gaps 3 and 4, the structural invariant is preserved because the seal is still issued after the remaining tiers pass. However, the *completeness* of the gate is degraded — a mandatory tier is absent. The production startup assertions (see Step 7.1 below) prevent these configurations from being reachable in production at all, closing the gap at the deployment boundary rather than the runtime boundary.
 
-### 7.1 Production Startup Assertions (Gaps 3 & 4)
+### 7.1 Gate Completeness at Startup (Gaps 3 & 4)
 
-Two module-level assertions in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforce gate completeness at pod startup, before the first request is served:
+**Gap 3 — closed by removal.** The `CBF_FAIL_OPEN` flag, the only way to skip the CBF tier, has been deleted from the code. No startup assertion is needed. The model still contains the Gap 3 sub-proof; removing it is tracked in PR 2 task T8.
 
-**Gap 3 — `CBF_FAIL_OPEN` production block:**
-
-```python
-if _CBF_FAIL_OPEN and _IS_PRODUCTION:
-    raise RuntimeError(
-        "CAGE STARTUP FAILURE (No-Direct-Bind Gap 3): CBF_FAIL_OPEN=true is set "
-        "in a production environment. This removes the Control Barrier Function tier "
-        "from the governance gate, creating a direct-bind shortcut to EXECUTED without "
-        "resolved cash-barrier authority."
-    )
-```
+A module-level assertion in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces the remaining gap at pod startup, before the first request is served:
 
 **Gap 4 — DoWhy production import assertion:**
 

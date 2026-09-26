@@ -17,15 +17,16 @@ Security tests for SymbolicGovernor and assert_safe_operational_state().
 
 Covers:
   1. assert_safe_operational_state() — environment-gated enforcement
-     - Does NOT raise when CBF_FAIL_OPEN=false (regardless of KMS state)
-     - Does NOT raise in development even when both CBF_FAIL_OPEN=true and KMS inactive
-     - Raises RuntimeError in production when CBF_FAIL_OPEN=true AND KMS inactive
-     - Does NOT raise in production when CBF_FAIL_OPEN=true but KMS IS active
+     - Raises RuntimeError in production when RECONCILIATION_PROVIDER=stub (POAM-023)
+     - Logs CRITICAL but does not raise in development / test / ci
+     - Does not raise in production with a non-stub reconciliation provider
+     - CBF_FAIL_OPEN has no effect (the flag was removed)
 
   2. fiscal_limit_guard.reserve() is awaited
      - SymbolicGovernor awaits reserve() (AsyncMock is actually awaited)
      - SymbolicGovernor awaits release() on violation after reservation
 """
+
 
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -102,295 +103,71 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
     return governor
 
 
+
 # ---------------------------------------------------------------------------
 # 1. assert_safe_operational_state()
 # ---------------------------------------------------------------------------
 
 
-def test_assert_safe_operational_state_does_not_raise_when_cbf_not_fail_open():
-    """assert_safe_operational_state() does NOT raise when CBF_FAIL_OPEN=false, regardless of KMS state."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = (
-        False  # KMS inactive — but CBF is active, so combined risk is absent
-    )
-
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN",)}
-    env["CBF_FAIL_OPEN"] = "false"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            return_value=mock_signer,
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        # Should not raise — CBF is active, so combined risk state is not present
-        assert_safe_operational_state()
+def _clean_env(**overrides: str) -> dict[str, str]:
+    drop = {"CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER", "CBF_FAIL_OPEN"}
+    env = {k: v for k, v in os.environ.items() if k not in drop}
+    env.update(overrides)
+    return env
 
 
-def test_assert_safe_operational_state_does_not_raise_when_cbf_not_fail_open_kms_active():
-    """assert_safe_operational_state() does NOT raise when CBF_FAIL_OPEN=false and KMS is active."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = True
+def test_raises_in_production_with_stub_reconciliation():
+    """Fail-closed path: production posture + stub ground truth must refuse to start."""
+    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN",)}
-    env["CBF_FAIL_OPEN"] = "false"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            return_value=mock_signer,
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        assert_safe_operational_state()
-
-
-def test_assert_safe_operational_state_does_not_raise_in_development_combined_risk():
-    """assert_safe_operational_state() does NOT raise in CAGE_ENV=development even when CBF_FAIL_OPEN=true and KMS inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
-
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "development"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            return_value=mock_signer,
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        # Should not raise — development environment is exempt
-        assert_safe_operational_state()
-
-
-def test_assert_safe_operational_state_does_not_raise_in_test_combined_risk():
-    """assert_safe_operational_state() does NOT raise in CAGE_ENV=test even when CBF_FAIL_OPEN=true and KMS inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
-
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "test"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            return_value=mock_signer,
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        assert_safe_operational_state()
-
-
-def test_assert_safe_operational_state_does_not_raise_in_ci_combined_risk():
-    """assert_safe_operational_state() does NOT raise in CAGE_ENV=ci even when CBF_FAIL_OPEN=true and KMS inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
-
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "ci"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            return_value=mock_signer,
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        assert_safe_operational_state()
-
-
-def test_assert_safe_operational_state_raises_in_production_combined_risk():
-    """assert_safe_operational_state() raises RuntimeError in CAGE_ENV=production when CBF_FAIL_OPEN=true AND KMS inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
-
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k
-        not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "production"
-    env["RECONCILIATION_PROVIDER"] = "plaid"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        # assert_safe_operational_state() does a local import from kms_signer,
-        # so the correct patch target is the kms_signer module, not symbolic_governor.
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        with pytest.raises(RuntimeError, match="Combined high-risk operational state"):
+    env = _clean_env(CAGE_ENV="production", RECONCILIATION_PROVIDER="stub")
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(RuntimeError, match="POAM-023"):
             assert_safe_operational_state()
 
 
-def test_assert_safe_operational_state_raises_message_mentions_cbf_fail_open():
-    """assert_safe_operational_state() RuntimeError message mentions CBF_FAIL_OPEN."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
+def test_raises_in_production_when_reconciliation_provider_unset():
+    """An unset provider defaults to stub, so production must still refuse."""
+    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
 
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k
-        not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "production"
-    env["RECONCILIATION_PROVIDER"] = "plaid"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        # assert_safe_operational_state() does a local import from kms_signer,
-        # so the correct patch target is the kms_signer module, not symbolic_governor.
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        with pytest.raises(RuntimeError) as exc_info:
+    env = _clean_env(CAGE_ENV="production")
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(RuntimeError, match="POAM-023"):
             assert_safe_operational_state()
-        assert "CBF_FAIL_OPEN" in str(exc_info.value)
 
 
-def test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active():
-    """assert_safe_operational_state() does NOT raise in production when CBF_FAIL_OPEN=true but KMS IS active."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = (
-        True  # KMS is active — combined risk state is not present
-    )
+@pytest.mark.parametrize("cage_env", ["development", "dev", "test", "ci"])
+def test_non_production_stub_logs_critical_without_raising(cage_env, caplog):
+    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
 
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k
-        not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "production"
-    env["RECONCILIATION_PROVIDER"] = "plaid"
+    env = _clean_env(CAGE_ENV=cage_env, RECONCILIATION_PROVIDER="stub")
+    with patch.dict(os.environ, env, clear=True):
+        with caplog.at_level("CRITICAL"):
+            assert_safe_operational_state()
+    assert "POAM_023_STUB_PROVIDER_IN_USE" in caplog.text
 
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
 
-        # Should not raise — KMS is active, so non-repudiation gap is closed
+def test_production_with_real_provider_does_not_raise():
+    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+
+    env = _clean_env(CAGE_ENV="production", RECONCILIATION_PROVIDER="plaid")
+    with patch.dict(os.environ, env, clear=True):
         assert_safe_operational_state()
 
 
-def test_assert_safe_operational_state_uses_environment_fallback():
-    """assert_safe_operational_state() uses ENVIRONMENT var when CAGE_ENV is not set."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
+def test_cbf_fail_open_flag_has_no_effect():
+    """CBF_FAIL_OPEN was removed; setting it must neither rescue nor break startup."""
+    from src.gateway.governance.symbolic_governor import assert_safe_operational_state
 
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["ENVIRONMENT"] = "production"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            return_value=mock_signer,
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
+    for value in ("true", "false"):
+        env = _clean_env(
+            CAGE_ENV="production", RECONCILIATION_PROVIDER="stub", CBF_FAIL_OPEN=value
         )
-
-        with pytest.raises(RuntimeError):
-            assert_safe_operational_state()
-
-
-def test_assert_safe_operational_state_handles_signer_exception_as_kms_inactive():
-    """assert_safe_operational_state() treats a signer load exception as KMS inactive (worst case)."""
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
-    }
-    env["CBF_FAIL_OPEN"] = "true"
-    env["CAGE_ENV"] = "production"
-
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
-            side_effect=RuntimeError("KMS unavailable"),
-            create=True,
-        ),
-    ):
-        from src.gateway.governance.symbolic_governor import (
-            assert_safe_operational_state,
-        )
-
-        # Exception from get_governance_signer → kms_active=False → combined risk → RuntimeError
-        with pytest.raises(RuntimeError):
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(RuntimeError, match="POAM-023"):
+                assert_safe_operational_state()
+        env["RECONCILIATION_PROVIDER"] = "plaid"
+        with patch.dict(os.environ, env, clear=True):
             assert_safe_operational_state()
 
 

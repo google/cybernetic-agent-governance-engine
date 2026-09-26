@@ -83,8 +83,6 @@ spec:
           env:
             - name: CAGE_ENV
               value: "development"
-            - name: CBF_FAIL_OPEN
-              value: "false"
             - name: CAGE_SEAL_ENFORCEMENT
               value: "enforce"
             - name: BACKEND_URL
