@@ -160,27 +160,7 @@ from src.gateway.governance.contracts import (
 )
 
 
-class GovernanceError(Exception):
-    """Raised when a symbolic rule is violated.
-
-    Args:
-        message: Human-readable violation description.  Begins with the stable
-                 ``[CTRL_*]`` control ID so log aggregators can key on it.
-        payload: Optional structured dict emitted to OTel / SIEM consumers.
-                 Contains ``control_id``, ``primary_framework``,
-                 ``legacy_citation``, etc. sourced from control_mappings.json.
-        receipt: Optional immutable RefusalReceipt proof object.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        payload: dict[str, Any] | None = None,
-        receipt: RefusalReceipt | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.payload: dict[str, Any] = payload or {}
-        self.receipt: RefusalReceipt | None = receipt
+from src.gateway.governance.governor.errors import GovernanceError  # noqa: F401  # transitional re-export
 
 
 # ---------------------------------------------------------------------------
