@@ -81,6 +81,7 @@ class TestHealthcarePlugin:
         """ClinicalConsensusTier has correct phase, order, tier_name."""
         from src.cage_healthcare.tiers.clinical_consensus_tier import (
             ClinicalConsensusTier,
+            load_healthcare_critics,
         )
         from src.gateway.governance.null_components import NullConsensusProvider
 
@@ -89,6 +90,12 @@ class TestHealthcarePlugin:
         assert tier.tier_name == "clinical_consensus"
         assert tier.phase == 1
         assert tier.order == 5
+        critics = load_healthcare_critics()
+        assert [c.role for c in critics] == [
+            "Pharmacist Reviewer",
+            "Attending Physician",
+            "Clinical Ethics",
+        ]
 
     def test_healthcare_constants_defined(self):
         """HEALTHCARE_GOVERNED_ACTIONS frozenset is populated."""

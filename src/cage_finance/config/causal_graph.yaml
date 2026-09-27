@@ -21,6 +21,8 @@
 
 treatment: trade_amount
 outcome: risk_score
+treatment_param: amount
+context_key: market_regime
 
 common_causes:
   - market_volatility

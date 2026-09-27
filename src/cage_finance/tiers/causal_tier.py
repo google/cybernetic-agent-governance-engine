@@ -12,24 +12,73 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from typing import Any
 
+import yaml
+
+from src.cage_finance.causal.synthetic_telemetry import generate_mock_telemetry
 from src.gateway.governance.causal import gatekeeper
+from src.gateway.governance.causal.gatekeeper import (
+    CAUSAL_NORMALIZATION_SCALE,
+    CausalGatekeeper,
+)
 from src.gateway.governance.contracts import (
+    CausalSpec,
     CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
 )
 
+_CAUSAL_GRAPH_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "causal_graph.yaml"
+)
+_DEFAULT_GATEKEEPER_CHECK = gatekeeper.causal_safety_check
 
-def causal_safety_check(params: dict[str, Any]) -> bool:
+
+def build_finance_causal_spec(path: Path = _CAUSAL_GRAPH_PATH) -> CausalSpec:
+    """Build the finance domain :class:`CausalSpec` from ``causal_graph.yaml``."""
+    with open(path) as f:
+        cfg = yaml.safe_load(f) or {}
+    return CausalSpec(
+        graph_dot=str(cfg.get("graph", "")).strip(),
+        treatment_col=str(cfg.get("treatment", "trade_amount")),
+        outcome_col=str(cfg.get("outcome", "risk_score")),
+        treatment_extractor=lambda p: (
+            float(p["amount"])
+            if "amount" in p
+            and p["amount"] is not None
+            and not isinstance(p["amount"], bool)
+            else None
+        ),
+        context_extractor=lambda p: str(p.get("market_regime", "unknown")),
+        normalization_scale=CAUSAL_NORMALIZATION_SCALE,
+        synthetic_telemetry_factory=generate_mock_telemetry,
+    )
+
+
+def build_finance_causal_gatekeeper() -> CausalGatekeeper:
+    """Construct a :class:`CausalGatekeeper` configured for the finance domain."""
+    return CausalGatekeeper(build_finance_causal_spec())
+
+
+def causal_safety_check(
+    params: dict[str, Any], current_telemetry: Any = None
+) -> bool:
     """Forwarding wrapper for causal safety check, supporting both module-level and gatekeeper patching."""
-    return gatekeeper.causal_safety_check(params)
+    if gatekeeper.causal_safety_check is not _DEFAULT_GATEKEEPER_CHECK:
+        return gatekeeper.causal_safety_check(params, current_telemetry)
+    return build_finance_causal_gatekeeper().causal_safety_check(
+        params, current_telemetry
+    )
 
 
 class CausalTierPlugin(GovernanceTierPlugin):
     """Causal guard tier (phase 1, order 6)."""
+
+    def __init__(self, causal_gatekeeper: CausalGatekeeper | None = None) -> None:
+        self._gatekeeper = causal_gatekeeper
 
     @property
     def tier_name(self) -> str:
@@ -56,7 +105,14 @@ class CausalTierPlugin(GovernanceTierPlugin):
         # Calling the module-level causal_safety_check function allows patching at either
         # src.cage_finance.tiers.causal_tier.causal_safety_check or
         # src.gateway.governance.causal.gatekeeper.causal_safety_check.
-        is_safe = causal_safety_check(params)
+        if (
+            self._gatekeeper is not None
+            and gatekeeper.causal_safety_check is _DEFAULT_GATEKEEPER_CHECK
+            and causal_safety_check is _DEFAULT_TIER_CHECK
+        ):
+            is_safe = self._gatekeeper.causal_safety_check(params)
+        else:
+            is_safe = causal_safety_check(params)
         if not is_safe:
             return [
                 Violation(
@@ -77,3 +133,6 @@ class CausalTierPlugin(GovernanceTierPlugin):
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
         pass
+
+
+_DEFAULT_TIER_CHECK = causal_safety_check

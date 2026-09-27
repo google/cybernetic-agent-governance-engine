@@ -21,7 +21,6 @@ __all__ = [
     "SymbolicGovernor",
     "causal_gatekeeper",
     "causal_safety_check",
-    "generate_mock_telemetry",
     "langgraph_harness",
 ]
 
@@ -68,15 +67,12 @@ def __getattr__(name: str) -> object:  # noqa: N807
         except ImportError:
             return None
 
-    if name in ("causal_gatekeeper", "causal_safety_check", "generate_mock_telemetry"):
+    if name in ("causal_gatekeeper", "causal_safety_check"):
         try:
-            # See note above re: avoiding `from . import causal_gatekeeper`.
-            causal_gatekeeper = importlib.import_module(f"{__name__}.causal_gatekeeper")
+            causal_gatekeeper = importlib.import_module(f"{__name__}.causal.gatekeeper")
             causal_safety_check = causal_gatekeeper.causal_safety_check
-            generate_mock_telemetry = causal_gatekeeper.generate_mock_telemetry
             globals()["causal_gatekeeper"] = causal_gatekeeper
             globals()["causal_safety_check"] = causal_safety_check
-            globals()["generate_mock_telemetry"] = generate_mock_telemetry
         except ImportError:
             pass
         return globals().get(name)

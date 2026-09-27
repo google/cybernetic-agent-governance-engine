@@ -41,6 +41,7 @@ from typing import Any
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.contracts import (
     CagePlugin,
+    ConsensusContribution,
     ConsensusProvider,
     GovernanceTierPlugin,
     InvariantModel,
@@ -198,6 +199,15 @@ def assemble_governor(
 
     standing_projector = _single_slot("standing_projector", contributions) or default_standing_projector
     execution_verbs = frozenset(v for c in contributions for v in c.execution_verbs)
+    raw_consensus = _single_slot("consensus", contributions)
+    if isinstance(raw_consensus, ConsensusContribution):
+        from src.gateway.governance.consensus.engine import ConsensusGate
+
+        resolved_consensus: ConsensusProvider = ConsensusGate.from_contribution(raw_consensus)
+    elif raw_consensus is not None:
+        resolved_consensus = raw_consensus  # type: ignore[assignment]
+    else:
+        resolved_consensus = NullConsensusProvider()
 
     components = GovernorComponents(
         opa=opa,
@@ -216,7 +226,7 @@ def assemble_governor(
         saga_compensators=saga_compensators,
         ground_truth_providers=ground_truth_providers,
         safety_filter=_single_slot("safety_filter", contributions) or NullSafetyFilter(),
-        consensus=_single_slot("consensus", contributions) or NullConsensusProvider(),
+        consensus=resolved_consensus,
         standing_projector=standing_projector,  # type: ignore[arg-type]
         execution_verbs=execution_verbs,
         contributions=contributions,

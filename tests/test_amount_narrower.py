@@ -23,100 +23,120 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 class TestAmountNarrower:
-    """Test suite for AmountNarrower."""
-    
-    def test_can_narrow_with_valid_narrowable_violation(self):
-        """Narrower accepts NARROWABLE violations with amount field and 'exceeds'."""
-        narrower = AmountNarrower()
-        
-        violation = Violation(
-            tier="fiscal",
-            code="SOFT_LIMIT_EXCEEDED",
-            message="Amount $50000 exceeds soft limit of $25000",
-            kind=ViolationKind.NARROWABLE,
-        )
-        
-        params = {"amount": 50000, "symbol": "AAPL", "side": "buy"}
-        
-        assert narrower.can_narrow(violation, "execute_trade", params) is True
-    
+    """Test suite for structured AmountNarrower (no regex message parsing)."""
+
+    def test_can_narrow_with_valid_narrowable_violation_regardless_of_message(self):
+        """Narrower accepts NARROWABLE violations when amount > limit regardless of message text."""
+        narrower = AmountNarrower(limit_resolver=25000.0)
+
+        for msg in (
+            "",
+            "Arbitrary policy rejection text without numbers",
+            "Amount $50000 exceeds soft limit of $25000",
+        ):
+            violation = Violation(
+                tier="fiscal",
+                code="SOFT_LIMIT_EXCEEDED",
+                message=msg,
+                kind=ViolationKind.NARROWABLE,
+            )
+            params = {"amount": 50000, "symbol": "AAPL", "side": "buy"}
+            assert narrower.can_narrow(violation, "execute_trade", params) is True
+
     def test_can_narrow_rejects_hard_violation(self):
-        """Narrower rejects HARD violations."""
-        narrower = AmountNarrower()
-        
+        """Narrower rejects HARD violations even when amount > limit."""
+        narrower = AmountNarrower(limit_resolver=25000.0)
+
         violation = Violation(
             tier="fiscal",
             code="HARD_LIMIT_EXCEEDED",
-            message="Amount $50000 exceeds hard limit of $25000",
+            message="Hard limit exceeded",
             kind=ViolationKind.HARD,
         )
-        
         params = {"amount": 50000, "symbol": "AAPL"}
-        
         assert narrower.can_narrow(violation, "execute_trade", params) is False
-    
-    def test_can_narrow_rejects_missing_amount_field(self):
-        """Narrower rejects violations when params lack 'amount' field."""
-        narrower = AmountNarrower()
-        
+        assert narrower.narrow(violation, "execute_trade", params) is None
+
+    def test_can_narrow_rejects_missing_or_invalid_amount_field(self):
+        """Narrower rejects violations when params lack a valid numeric 'amount' field."""
+        narrower = AmountNarrower(limit_resolver=25000.0)
+
         violation = Violation(
             tier="fiscal",
             code="SOFT_LIMIT_EXCEEDED",
-            message="Amount exceeds soft limit",
+            message="Soft limit",
             kind=ViolationKind.NARROWABLE,
         )
-        
-        params = {"symbol": "AAPL", "side": "buy"}  # No amount field
-        
-        assert narrower.can_narrow(violation, "execute_trade", params) is False
-    
-    def test_can_narrow_rejects_non_exceeds_message(self):
-        """Narrower rejects violations without 'exceeds' in message."""
-        narrower = AmountNarrower()
-        
-        violation = Violation(
-            tier="fiscal",
-            code="INVALID_AMOUNT",
-            message="Amount is invalid",
-            kind=ViolationKind.NARROWABLE,
-        )
-        
-        params = {"amount": 50000, "symbol": "AAPL"}
-        
-        assert narrower.can_narrow(violation, "execute_trade", params) is False
-    
-    def test_narrow_clamps_amount_to_threshold(self):
-        """Narrower clamps amount to max_allowed extracted from message."""
-        narrower = AmountNarrower()
-        
+
+        assert narrower.can_narrow(violation, "execute_trade", {"symbol": "AAPL"}) is False
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": None}) is False
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": "not-a-num"}) is False
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": True}) is False
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": float("nan")}) is False
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": float("inf")}) is False
+
+    def test_can_narrow_rejects_when_amount_already_within_limit(self):
+        """Narrower refuses to narrow when amount <= limit."""
+        narrower = AmountNarrower(limit_resolver=25000.0)
+
         violation = Violation(
             tier="fiscal",
             code="SOFT_LIMIT_EXCEEDED",
-            message="Amount $50000 exceeds soft limit of $25000",
+            message="Soft limit",
             kind=ViolationKind.NARROWABLE,
         )
-        
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": 25000.0}) is False
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": 10000.0}) is False
+        assert narrower.narrow(violation, "execute_trade", {"amount": 25000.0}) is None
+
+    def test_can_narrow_rejects_nonpositive_limit(self):
+        """Narrower refuses to narrow when resolved limit <= 0."""
+        narrower = AmountNarrower(limit_resolver=lambda: 0.0)
+
+        violation = Violation(
+            tier="fiscal",
+            code="SOFT_LIMIT_EXCEEDED",
+            message="Soft limit",
+            kind=ViolationKind.NARROWABLE,
+        )
+        assert narrower.can_narrow(violation, "execute_trade", {"amount": 50000.0}) is False
+        assert narrower.narrow(violation, "execute_trade", {"amount": 50000.0}) is None
+
+    def test_narrow_clamps_amount_to_99_percent_of_limit(self):
+        """Narrower clamps amount to round(limit * 0.99, 2)."""
+        narrower = AmountNarrower(limit_resolver=lambda: 25000.0)
+
+        violation = Violation(
+            tier="fiscal",
+            code="SOFT_LIMIT_EXCEEDED",
+            message="",
+            kind=ViolationKind.NARROWABLE,
+        )
         params = {"amount": 50000, "symbol": "AAPL", "side": "buy"}
-        
+
         result = narrower.narrow(violation, "execute_trade", params)
-        
+
+        assert result is not None
         assert result.can_narrow is True
-        assert result.narrowed_params == {"amount": 25000, "symbol": "AAPL", "side": "buy"}
-        assert result.constraints_applied == ["amount <= 25000.0"]
+        assert result.narrowed_params == {
+            "amount": 24750.0,
+            "symbol": "AAPL",
+            "side": "buy",
+        }
+        assert result.constraints_applied == ["amount <= 24750.0"]
         assert "50000" in result.narrowing_reason
-        assert "25000" in result.narrowing_reason
-    
+        assert "24750.0" in result.narrowing_reason
+
     def test_narrow_preserves_other_parameters(self):
         """Narrower preserves all non-amount parameters unchanged."""
-        narrower = AmountNarrower()
-        
+        narrower = AmountNarrower(limit_resolver=10000.0)
+
         violation = Violation(
             tier="fiscal",
             code="SOFT_LIMIT_EXCEEDED",
-            message="Amount exceeds soft limit of 10000",
+            message="arbitrary text",
             kind=ViolationKind.NARROWABLE,
         )
-        
         params = {
             "amount": 15000,
             "symbol": "GOOGL",
@@ -124,85 +144,29 @@ class TestAmountNarrower:
             "order_type": "limit",
             "limit_price": 150.50,
         }
-        
+
         result = narrower.narrow(violation, "execute_trade", params)
-        
+
+        assert result is not None
         assert result.can_narrow is True
-        assert result.narrowed_params["amount"] == 10000
+        assert result.narrowed_params["amount"] == 9900.0
         assert result.narrowed_params["symbol"] == "GOOGL"
         assert result.narrowed_params["side"] == "sell"
         assert result.narrowed_params["order_type"] == "limit"
         assert result.narrowed_params["limit_price"] == 150.50
-    
-    def test_narrow_handles_decimal_amounts(self):
-        """Narrower handles decimal amounts in violation message."""
+
+    def test_narrow_uses_default_thresholds_resolver(self):
+        """Default AmountNarrower() resolves limit from THRESHOLDS.consensus.threshold_usd."""
+        from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
         narrower = AmountNarrower()
-        
+        limit = float(THRESHOLDS.consensus.threshold_usd)
         violation = Violation(
-            tier="fiscal",
-            code="SOFT_LIMIT_EXCEEDED",
-            message="Amount exceeds soft limit of $12500.50",
+            tier="consensus",
+            code="CONSENSUS_ESCALATED",
+            message="Escalated",
             kind=ViolationKind.NARROWABLE,
         )
-        
-        params = {"amount": 20000, "symbol": "MSFT"}
-        
-        result = narrower.narrow(violation, "execute_trade", params)
-        
-        assert result.can_narrow is True
-        assert result.narrowed_params["amount"] == 12500.50
-    
-    def test_narrow_handles_amount_without_dollar_sign(self):
-        """Narrower extracts amounts without $ prefix."""
-        narrower = AmountNarrower()
-        
-        violation = Violation(
-            tier="fiscal",
-            code="SOFT_LIMIT_EXCEEDED",
-            message="Amount exceeds soft limit of 30000",
-            kind=ViolationKind.NARROWABLE,
-        )
-        
-        params = {"amount": 45000, "symbol": "TSLA"}
-        
-        result = narrower.narrow(violation, "execute_trade", params)
-        
-        assert result.can_narrow is True
-        assert result.narrowed_params["amount"] == 30000
-    
-    def test_narrow_handles_unparseable_message(self):
-        """Narrower gracefully handles violation message without extractable limit."""
-        narrower = AmountNarrower()
-        
-        violation = Violation(
-            tier="fiscal",
-            code="SOFT_LIMIT_EXCEEDED",
-            message="Amount is too large",  # No limit value
-            kind=ViolationKind.NARROWABLE,
-        )
-        
-        params = {"amount": 50000, "symbol": "AAPL"}
-        
-        result = narrower.narrow(violation, "execute_trade", params)
-        
-        assert result.can_narrow is False
-        assert "Could not extract max_allowed" in result.narrowing_reason
-        assert result.narrowed_params == params  # Unchanged
-    
-    def test_narrow_no_op_when_amount_already_within_limit(self):
-        """Narrower returns same amount when already within threshold."""
-        narrower = AmountNarrower()
-        
-        violation = Violation(
-            tier="fiscal",
-            code="SOFT_LIMIT_EXCEEDED",
-            message="Amount exceeds soft limit of 50000",
-            kind=ViolationKind.NARROWABLE,
-        )
-        
-        params = {"amount": 30000, "symbol": "AAPL"}  # Already below limit
-        
-        result = narrower.narrow(violation, "execute_trade", params)
-        
-        assert result.can_narrow is True
-        assert result.narrowed_params["amount"] == 30000  # Unchanged
+        result = narrower.narrow(violation, "execute_trade", {"amount": limit * 2})
+        assert result is not None
+        assert result.narrowed_params["amount"] == round(limit * 0.99, 2)

@@ -148,12 +148,12 @@ class TestCausalGatekeeperAuthorizedActionSpace:
     """CausalGatekeeper must block tool calls outside the authorized action space."""
 
     def test_causal_safety_check_blocks_zero_amount(self):
-        """causal_safety_check returns True (no-op) for zero-amount actions."""
+        """causal_safety_check fails closed (returns False) for zero-amount actions (Defect A5)."""
         from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
-        # Zero amount is not a meaningful trade — should pass through
+        # Zero amount is invalid/non-positive treatment value — must fail closed
         result = causal_safety_check({"amount": 0, "action_type": "get_portfolio"})
-        assert result is True
+        assert result is False
 
     def test_agentic_scope_statement_file_exists(self):
         """docs/AGENTIC_SCOPE_STATEMENT.md must exist (AI 600-1 §2.5.1 prerequisite)."""

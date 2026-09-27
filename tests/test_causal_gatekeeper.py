@@ -320,8 +320,8 @@ class TestCausalCacheHelpers:
 class TestCausalSafetyCheckNoDoWhy:
     """Tests for causal_safety_check() paths that don't require dowhy."""
 
-    def test_zero_amount_returns_true_without_dowhy(self):
-        """amount <= 0 returns True immediately — no dowhy needed."""
+    def test_zero_amount_returns_false_without_dowhy(self):
+        """amount <= 0 fails closed (returns False) immediately — Defect A5 fix."""
         from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         df = pd.DataFrame(
@@ -332,10 +332,10 @@ class TestCausalSafetyCheckNoDoWhy:
                 "timestamp": [time.time() - 10],
             }
         )
-        assert causal_safety_check({"amount": 0}, df) is True
+        assert causal_safety_check({"amount": 0}, df) is False
 
-    def test_negative_amount_returns_true_without_dowhy(self):
-        """Negative amount returns True immediately — no dowhy needed."""
+    def test_negative_amount_returns_false_without_dowhy(self):
+        """Negative amount fails closed (returns False) immediately — Defect A5 fix."""
         from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         df = pd.DataFrame(
@@ -346,7 +346,45 @@ class TestCausalSafetyCheckNoDoWhy:
                 "timestamp": [time.time() - 5],
             }
         )
-        assert causal_safety_check({"amount": -1}, df) is True
+        assert causal_safety_check({"amount": -1}, df) is False
+
+    def test_missing_or_nan_treatment_fails_closed(self):
+        """Missing or NaN treatment value fails closed (Defect A5)."""
+        from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+        from src.gateway.governance.contracts import CausalSpec
+
+        spec = CausalSpec(
+            graph_dot="digraph { c -> x; c -> y; x -> y; }",
+            treatment_col="x",
+            outcome_col="y",
+            treatment_extractor=lambda p: p.get("dose_mg"),
+        )
+        gk = CausalGatekeeper(spec)
+        df = pd.DataFrame(
+            {"c": [0.5], "x": [10.0], "y": [0.2], "timestamp": [time.time() - 5]}
+        )
+        assert gk.causal_safety_check({}, df) is False
+        assert gk.causal_safety_check({"dose_mg": 0.0}, df) is False
+        assert gk.causal_safety_check({"dose_mg": -500.0}, df) is False
+        assert gk.causal_safety_check({"dose_mg": float("nan")}, df) is False
+
+    def test_missing_telemetry_without_synthetic_factory_fails_closed_in_all_postures(
+        self, monkeypatch
+    ):
+        """When current_telemetry is None and synthetic_telemetry_factory is None, fails closed in dev too."""
+        from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+        from src.gateway.governance.contracts import CausalSpec
+
+        spec = CausalSpec(
+            graph_dot="digraph { c -> x; c -> y; x -> y; }",
+            treatment_col="x",
+            outcome_col="y",
+            treatment_extractor=lambda p: float(p.get("dose_mg", 0.0)),
+            synthetic_telemetry_factory=None,
+        )
+        gk = CausalGatekeeper(spec)
+        monkeypatch.setenv("CAGE_ENV", "development")
+        assert gk.causal_safety_check({"dose_mg": 50.0}, None) is False
 
     def test_production_env_without_telemetry_returns_false(self):
         """In production (CAGE_ENV=production), missing telemetry → fail-closed."""
@@ -454,31 +492,80 @@ def stable_telemetry():
 class TestCausalSafetyCheckUnit:
     """Unit tests for the causal_safety_check function."""
 
-    def test_zero_amount_is_safe(self, stable_telemetry):
-        """A trade with amount <= 0 should always be considered safe."""
+    def test_zero_amount_fails_closed(self, stable_telemetry):
+        """A trade with amount <= 0 must fail closed (Defect A5)."""
         from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         result = causal_safety_check({"amount": 0}, stable_telemetry)
-        assert result is True
+        assert result is False
 
-    def test_negative_amount_is_safe(self, stable_telemetry):
-        """A trade with negative amount should always be considered safe."""
+    def test_negative_amount_fails_closed(self, stable_telemetry):
+        """A trade with negative amount must fail closed (Defect A5)."""
         from src.gateway.governance.causal.gatekeeper import causal_safety_check
 
         result = causal_safety_check({"amount": -100}, stable_telemetry)
-        assert result is True
+        assert result is False
+
+    def test_non_finance_causal_spec_evaluates_correctly(self):
+        """CausalGatekeeper evaluates a healthcare-style CausalSpec (dose_mg -> adverse_event_prob)."""
+        from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+        from src.gateway.governance.contracts import CausalSpec
+
+        np.random.seed(7)
+        n = 200
+        renal_function = np.random.uniform(0.2, 1.0, n)
+        dose_mg = np.clip(np.random.normal(100, 20, n) * renal_function, 10, 200)
+        adverse_event_prob = np.clip(
+            (1.0 - renal_function) * 0.4
+            + (dose_mg / 200.0) * 0.5
+            + np.random.normal(0, 0.03, n),
+            0.0,
+            1.0,
+        )
+        now = time.time()
+        clinical_df = pd.DataFrame(
+            {
+                "renal_function": renal_function,
+                "dose_mg": dose_mg,
+                "adverse_event_prob": adverse_event_prob,
+                "timestamp": now - np.random.uniform(0, 600, n),
+            }
+        )
+        spec = CausalSpec(
+            graph_dot=(
+                "digraph { renal_function -> dose_mg; "
+                "renal_function -> adverse_event_prob; "
+                "dose_mg -> adverse_event_prob; }"
+            ),
+            treatment_col="dose_mg",
+            outcome_col="adverse_event_prob",
+            treatment_extractor=lambda p: (
+                float(p["dose_mg"]) if "dose_mg" in p and p["dose_mg"] is not None else None
+            ),
+            context_extractor=lambda p: str(p.get("ward", "icu")),
+            normalization_scale=200.0,
+        )
+        gk = CausalGatekeeper(spec)
+        with (
+            patch(
+                "src.gateway.governance.causal.gatekeeper._causal_cache_get_sync",
+                return_value=None,
+            ),
+            patch(
+                "src.gateway.governance.causal.gatekeeper._causal_cache_set_sync",
+                return_value=None,
+            ),
+        ):
+            assert (
+                gk.causal_safety_check(
+                    {"action_type": "administer_dose", "dose_mg": 25.0, "ward": "icu"},
+                    clinical_df,
+                )
+                is True
+            )
 
     def test_small_trade_with_stable_data_passes(self, stable_telemetry):
-        """A small trade against stable telemetry should pass the causal check.
-
-        Redis (cache get/set) is mocked out here because this is a unit test
-        of the causal-inference logic, not of Redis connectivity — in this
-        test environment there is no live Redis/OPA to connect to, and the
-        cache is purely an optimisation layered on top of the DoWhy checks
-        below. Production fail-closed behaviour on genuine Redis errors is
-        preserved and is exercised separately by
-        test_causal_check_fails_safe_on_error.
-        """
+        """A small trade against stable telemetry should pass the causal check."""
         from unittest.mock import patch
 
         from src.gateway.governance.causal.gatekeeper import causal_safety_check
@@ -497,12 +584,8 @@ class TestCausalSafetyCheckUnit:
         assert result is True
 
     def test_generate_mock_telemetry_shape(self):
-        """The mock telemetry generator should produce the expected columns.
-
-        generate_mock_telemetry() now includes a 'timestamp' column so that
-        the telemetry freshness check treats synthetic data as fresh.
-        """
-        from src.gateway.governance.causal.gatekeeper import generate_mock_telemetry
+        """The finance mock telemetry generator should produce the expected columns."""
+        from src.cage_finance.causal.synthetic_telemetry import generate_mock_telemetry
 
         df = generate_mock_telemetry(n_samples=100)
         assert len(df) == 100
@@ -515,7 +598,7 @@ class TestCausalSafetyCheckUnit:
 
     def test_generate_mock_telemetry_deterministic(self):
         """Mock telemetry should be deterministic (seeded)."""
-        from src.gateway.governance.causal.gatekeeper import generate_mock_telemetry
+        from src.cage_finance.causal.synthetic_telemetry import generate_mock_telemetry
 
         df1 = generate_mock_telemetry(50)
         df2 = generate_mock_telemetry(50)

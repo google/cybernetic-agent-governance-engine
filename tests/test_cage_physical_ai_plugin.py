@@ -124,6 +124,11 @@ class TestPhysicalAIPlugin:
         assert consensus_tier.phase == 1
         assert consensus_tier.order == 5
         assert consensus_tier.claims_action("actuate_joint", {}) is True
+        assert consensus_tier.claims_action("disengage_e_stop", {}) is True
+        assert [c.role for c in consensus_tier.consensus_engine.critics] == [
+            "Kinematics Safety Critic",
+            "Proximity Safety Critic",
+        ]
 
     def test_plugin_registration(self):
         """Plugin contributes invariants and tiers; assembly installs them on the governor."""

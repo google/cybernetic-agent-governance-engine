@@ -21,7 +21,7 @@
 
 critics:
   - id: risk_critic
-    role: "Risk Analyst"
+    role: "Risk Manager"
     prompt_template: |
       You are a {role} for a financial institution.
       Review the following trade proposal:

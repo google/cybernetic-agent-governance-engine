@@ -38,6 +38,11 @@ class DeploymentPosture(Enum):
     LOCAL = "local"
     CI = "ci"
 
+    @property
+    def enforces_controls(self) -> bool:
+        """Return True when this posture enforces production safety/telemetry controls."""
+        return is_enforcing(self)
+
 
 def resolve_posture() -> DeploymentPosture:
     """

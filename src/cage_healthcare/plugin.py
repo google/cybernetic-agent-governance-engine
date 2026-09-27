@@ -30,10 +30,12 @@ from src.cage_healthcare.ground_truth import (
 )
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
-from src.cage_healthcare.tiers.clinical_consensus_tier import ClinicalConsensusTier
+from src.cage_healthcare.tiers.clinical_consensus_tier import (
+    ClinicalConsensusTier,
+    build_healthcare_consensus_contribution,
+)
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
-from src.gateway.governance.consensus.engine import ConsensusGate
 from src.gateway.governance.contracts import (
     CagePlugin,
     DomainConfig,
@@ -69,11 +71,12 @@ class HealthcareCagePlugin(CagePlugin):
             domain=self.name,
             tiers=(
                 DoseBarrierTier(cbf),
-                ClinicalConsensusTier(ConsensusGate()),
+                ClinicalConsensusTier(),
             ),
             invariants=(barrier,),  # declarative, no logic
             ground_truth_providers={barrier.invariant_id: assay_provider},
             safety_filter=cbf,
+            consensus=build_healthcare_consensus_contribution(),
             tool_provider=ClinicalToolProvider(),
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction

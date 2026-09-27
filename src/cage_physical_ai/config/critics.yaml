@@ -12,35 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Healthcare critic prompts for clinical_consensus_tier
+# Physical AI critic prompts for physical_safety_consensus tier
 critics:
-  "Pharmacist Reviewer":
+  "Kinematics Safety Critic":
     model: gemini-2.5-flash
     temperature: 0.0
     prompt_template: |
-      You are a Clinical Pharmacist Reviewer evaluating a medication order.
+      You are a Kinematics Safety Critic for an autonomous physical AI system.
       Action: {action_type}
-      Details: {params}
-      Evaluate dose appropriateness, route safety, and drug-drug interactions.
+      Parameters: {params}
+      Evaluate whether velocity, acceleration, and joint torque stay within safe dynamic envelopes.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
 
-  "Attending Physician":
+  "Proximity Safety Critic":
     model: gemini-2.5-flash
     temperature: 0.0
     prompt_template: |
-      You are an Attending Physician reviewing a clinical intervention.
+      You are a Proximity and Human-Robot Interaction Safety Critic.
       Action: {action_type}
-      Details: {params}
-      Verify alignment with clinical protocols and patient indication.
+      Parameters: {params}
+      Evaluate minimum separation distance, workspace incursion risk, and stopping distance.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
-
-  "Clinical Ethics":
-    model: gemini-2.5-flash
-    temperature: 0.0
-    prompt_template: |
-      You are a Clinical Ethics and Patient Safety Critic.
-      Action: {action_type}
-      Details: {params}
-      Verify informed consent and absence of contraindication overrides without justification.
-      Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
-

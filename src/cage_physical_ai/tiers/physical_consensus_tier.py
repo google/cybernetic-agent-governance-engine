@@ -14,15 +14,46 @@
 
 """Physical safety consensus tier — multi-critic agreement for physical AI (phase 1, order 5)."""
 
+from pathlib import Path
 from typing import Any
 
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
+from src.gateway.governance.consensus import ConsensusGate, load_critic_specs
 from src.gateway.governance.contracts import (
     CommitReceipt,
+    ConsensusContribution,
+    CriticSpec,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
 )
+
+_CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
+HIGH_STAKES_PHYSICAL_ACTIONS: frozenset[str] = frozenset(
+    {
+        "execute_high_speed_trajectory",
+        "override_safety_envelope",
+        "disengage_e_stop",
+    }
+)
+
+
+def load_physical_critics(path: Path = _CRITICS_PATH) -> tuple[CriticSpec, ...]:
+    return load_critic_specs(path)
+
+
+def build_physical_consensus_contribution() -> ConsensusContribution:
+    return ConsensusContribution(
+        critics=load_physical_critics(),
+        threshold=2.0,
+        magnitude_extractor=lambda p: float(p.get("velocity_m_s", 0.0) or 0.0),
+        quorum=1.0,
+        high_stakes_actions=HIGH_STAKES_PHYSICAL_ACTIONS,
+    )
+
+
+def build_physical_consensus_gate() -> ConsensusGate:
+    return ConsensusGate.from_contribution(build_physical_consensus_contribution())
 
 
 class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
@@ -33,6 +64,10 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
     """
 
     def __init__(self, consensus_engine: Any = None) -> None:
+        if consensus_engine is None or (
+            isinstance(consensus_engine, ConsensusGate) and not consensus_engine.critics
+        ):
+            consensus_engine = build_physical_consensus_gate()
         self.consensus_engine = consensus_engine
 
     @property
@@ -48,7 +83,10 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
         return 5
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action in PHYSICAL_AI_GOVERNED_ACTIONS
+        return (
+            action in PHYSICAL_AI_GOVERNED_ACTIONS
+            or action in HIGH_STAKES_PHYSICAL_ACTIONS
+        )
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.consensus_engine is None:
@@ -56,7 +94,7 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
         result = await self.consensus_engine.check_consensus(
             action_type=action, params=params
         )
-        if result.get("status") != "APPROVED":
+        if result.get("status") not in ("APPROVE", "APPROVED", "SKIPPED"):
             return [
                 Violation(
                     tier=self.tier_name,
@@ -76,3 +114,6 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
         pass  # read-only tier: commit() never issues a receipt
+
+
+PhysicalConsensusTier = PhysicalSafetyConsensusTier
