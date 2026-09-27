@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from src.gateway.governance.contracts import Violation, ViolationKind
+from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
@@ -77,11 +77,17 @@ class _Tier:
         self.log.append(f"evaluate:{self._name}")
         return self._verdict()
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         self.log.append(f"commit:{self._name}")
-        return self._verdict()
+        verdict = self._verdict()
+        return verdict, (None if verdict else CommitReceipt(tier=self._name))
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        assert receipt.tier == self._name
         self.log.append(f"rollback:{self._name}")
         if self._rollback_raises:
             raise RuntimeError("rollback exploded")
@@ -145,8 +151,8 @@ async def test_failed_commit_rolls_back_lifo_and_records_rollback_failure() -> N
 
 @pytest.mark.asyncio
 async def test_rollback_lifo_never_raises() -> None:
-    stages = [DomainTierStage(_Tier("a", phase=2, rollback_raises=True))]
-    failures = await rollback_lifo(stages, _ctx())
+    stage = DomainTierStage(_Tier("a", phase=2, rollback_raises=True))
+    failures = await rollback_lifo([(stage, CommitReceipt(tier="a"))], _ctx())
     assert [(v.tier, v.code) for v in failures] == [("a", "ROLLBACK_FAILED")]
 
 

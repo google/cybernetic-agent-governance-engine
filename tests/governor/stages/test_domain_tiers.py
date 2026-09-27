@@ -15,7 +15,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import CommitReceipt, GovernanceTierPlugin
 from src.gateway.governance.governor.pipeline import StageContext
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage, order_stages
 from src.gateway.governance.contracts import Violation, ViolationKind
@@ -30,7 +30,7 @@ def mock_tier():
     tier.order = 10
     tier.claims_action.return_value = True
     tier.evaluate = AsyncMock(return_value=[])
-    tier.commit = AsyncMock(return_value=[])
+    tier.commit = AsyncMock(return_value=([], None))
     tier.rollback = AsyncMock()
     return tier
 
@@ -85,14 +85,71 @@ async def test_run_phase_1_success(mock_tier, ctx):
     mock_tier.commit.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_run_phase_2_success(mock_tier, ctx):
+async def test_run_phase_2_is_read_only(mock_tier, ctx):
     mock_tier.phase = 2
     stage = DomainTierStage(mock_tier)
-    
+
     violations = await stage.run(ctx)
     assert violations == []
+    mock_tier.evaluate.assert_called_once_with("execute_trade", {"amount": 100})
+    mock_tier.commit.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_commit_phase_2_returns_receipt(mock_tier, ctx):
+    mock_tier.phase = 2
+    receipt = CommitReceipt(tier="test_tier", magnitude=100.0)
+    mock_tier.commit = AsyncMock(return_value=([], receipt))
+    stage = DomainTierStage(mock_tier)
+
+    assert await stage.commit(ctx) == ([], receipt)
     mock_tier.commit.assert_called_once_with("execute_trade", {"amount": 100})
     mock_tier.evaluate.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_commit_exception_fails_closed_without_receipt(mock_tier, ctx):
+    mock_tier.phase = 2
+    mock_tier.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+    stage = DomainTierStage(mock_tier)
+
+    violations, receipt = await stage.commit(ctx)
+    assert receipt is None
+    assert [(v.code, v.kind) for v in violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
+    assert "commit failed" in violations[0].message
+
+@pytest.mark.asyncio
+async def test_commit_claims_exception_never_commits(mock_tier, ctx):
+    mock_tier.phase = 2
+    mock_tier.claims_action.side_effect = Exception("Claims failed")
+    stage = DomainTierStage(mock_tier)
+    stage.claims(ctx)
+
+    violations, receipt = await stage.commit(ctx)
+    assert receipt is None
+    assert violations[0].code == "TIER_EXCEPTION"
+    mock_tier.commit.assert_not_called()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [[], None, ([], "not-a-receipt"), ("x", None)])
+async def test_commit_malformed_result_fails_closed(mock_tier, ctx, bad):
+    """An old-style or malformed commit result is a HARD denial, never an ALLOW."""
+    mock_tier.phase = 2
+    mock_tier.commit = AsyncMock(return_value=bad)
+    stage = DomainTierStage(mock_tier)
+
+    violations, receipt = await stage.commit(ctx)
+    assert receipt is None
+    assert [(v.code, v.kind) for v in violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
+
+@pytest.mark.asyncio
+async def test_commit_malformed_violations_keeps_receipt_for_rollback(mock_tier, ctx):
+    mock_tier.phase = 2
+    receipt = CommitReceipt(tier="test_tier", magnitude=1.0)
+    mock_tier.commit = AsyncMock(return_value=("not-a-list", receipt))
+    stage = DomainTierStage(mock_tier)
+
+    violations, kept = await stage.commit(ctx)
+    assert kept is receipt
+    assert violations[0].code == "TIER_EXCEPTION"
 
 @pytest.mark.asyncio
 async def test_run_exception(mock_tier, ctx):
@@ -106,20 +163,13 @@ async def test_run_exception(mock_tier, ctx):
     assert violations[0].kind == ViolationKind.HARD
 
 @pytest.mark.asyncio
-async def test_rollback_phase_2(mock_tier, ctx):
+async def test_rollback_forwards_receipt(mock_tier, ctx):
     mock_tier.phase = 2
     stage = DomainTierStage(mock_tier)
-    
-    await stage.rollback(ctx)
-    mock_tier.rollback.assert_called_once_with("execute_trade", {"amount": 100})
+    receipt = CommitReceipt(tier="test_tier", magnitude=7.0)
 
-@pytest.mark.asyncio
-async def test_rollback_phase_1(mock_tier, ctx):
-    mock_tier.phase = 1
-    stage = DomainTierStage(mock_tier)
-    
-    await stage.rollback(ctx)
-    mock_tier.rollback.assert_not_called()
+    await stage.rollback(ctx, receipt)
+    mock_tier.rollback.assert_called_once_with("execute_trade", {"amount": 100}, receipt)
 
 def test_order_stages():
     t1 = MagicMock(spec=GovernanceTierPlugin)

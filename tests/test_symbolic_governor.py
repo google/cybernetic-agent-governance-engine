@@ -90,7 +90,7 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe, classification_
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
-    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -150,7 +150,7 @@ async def test_symbolic_governor_opa_fail(mock_ftra_safe, classification_engine)
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
-    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
 
@@ -182,7 +182,7 @@ async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe, classi
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
-    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -245,7 +245,7 @@ async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe, cla
     opa_client.evaluate_policy.return_value = "GOVERNANCE_VIOLATION"
 
     safety_filter = AsyncMock()
-    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     governor = SymbolicGovernor(
         opa_client=opa_client,
@@ -319,7 +319,7 @@ async def test_symbolic_governor_cbf_fail(mock_ftra_safe, classification_engine)
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "UNSAFE: Bankruptcy"
     safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(False, "UNSAFE: Bankruptcy")
+        return_value=(False, "UNSAFE: Bankruptcy", 0.0)
     )
 
     consensus_engine = AsyncMock()
@@ -350,7 +350,7 @@ async def test_symbolic_governor_consensus_fail(mock_ftra_safe, classification_e
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
-    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {
@@ -407,7 +407,7 @@ class TestSymbolicGovernorDefer:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -449,7 +449,7 @@ class TestSymbolicGovernorDefer:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -518,7 +518,7 @@ class TestSymbolicGovernorNarrow:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -574,7 +574,7 @@ class TestSymbolicGovernorNarrow:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -628,7 +628,7 @@ class TestSymbolicGovernorNarrow:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -699,7 +699,7 @@ class TestSymbolicGovernorPause:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -756,7 +756,7 @@ class TestSymbolicGovernorPause:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -816,7 +816,7 @@ class TestValidateActionDecisionRouting:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -850,7 +850,7 @@ class TestValidateActionDecisionRouting:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -881,7 +881,7 @@ class TestValidateActionDecisionRouting:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -1090,15 +1090,17 @@ class TestPipelineReorderZeroBudgetLeakage:
         opa_client.evaluate_policy.return_value = {"allow": "ALLOW"}
 
         cbf_rollback_called = False
+        rolled_back_magnitude = None
 
         async def mock_cbf_commit(action_name, payload):
-            return (True, "SAFE")
+            return (True, "SAFE", 100.0)
 
         async def mock_cbf_rollback(
             magnitude=None, cost=None, governance_signature=None
         ):
-            nonlocal cbf_rollback_called
+            nonlocal cbf_rollback_called, rolled_back_magnitude
             cbf_rollback_called = True
+            rolled_back_magnitude = magnitude
 
         safety_filter = AsyncMock()
         safety_filter.atomic_verify_and_commit = mock_cbf_commit
@@ -1154,6 +1156,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert cbf_rollback_called is True, (
             "CBF must be rolled back when fiscal rejects after CBF commit"
         )
+        assert rolled_back_magnitude == 100.0, "rollback must restore the committed magnitude"
 
 @pytest.mark.asyncio
 async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification_engine):
@@ -1162,7 +1165,7 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
     opa_client.evaluate_policy.return_value = "ALLOW"
 
     safety_filter = AsyncMock()
-    safety_filter.atomic_verify_and_commit.return_value = (True, "SAFE")
+    safety_filter.atomic_verify_and_commit.return_value = (True, "SAFE", 0.0)
     
     from src.gateway.governance.contracts import Violation, ViolationKind
     
@@ -1173,14 +1176,14 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
     fiscal_tier.claims_action.return_value = True
     fiscal_tier.evaluate.return_value = []
     # Mock fiscal commit returning a violation (budget exceeded)
-    fiscal_tier.commit.return_value = [
+    fiscal_tier.commit.return_value = ([
         Violation(
             tier="fiscal",
             code="FISCAL_LIMIT_EXCEEDED",
             message="Daily fiscal limit exceeded.",
             kind=ViolationKind.NARROWABLE,
         )
-    ]
+    ], None)
 
     governor = SymbolicGovernor(
         opa_client=opa_client,

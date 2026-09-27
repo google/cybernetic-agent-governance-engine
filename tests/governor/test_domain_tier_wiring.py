@@ -183,7 +183,9 @@ def test_second_domain_plugin_on_one_governor_fails_closed() -> None:
 @pytest.mark.parametrize("hook", ["evaluate", "commit"])
 async def test_kinematic_barrier_without_cbf_refuses(hook: str) -> None:
     tier = KinematicBarrierTier(cbf=None)
-    violations = await getattr(tier, hook)("dispatch_trajectory", {})
+    out = await getattr(tier, hook)("dispatch_trajectory", {})
+    violations, receipt = (out, None) if hook == "evaluate" else out
+    assert receipt is None  # nothing mutated
     assert [(v.code, v.kind) for v in violations] == [("KINEMATIC_BARRIER_UNCONFIGURED", ViolationKind.HARD)]
 
 

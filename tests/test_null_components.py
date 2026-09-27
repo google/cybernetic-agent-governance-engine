@@ -126,7 +126,7 @@ class TestNullSafetyFilterAndConsensus:
     @pytest.mark.asyncio
     async def test_atomic_verify_denies(self):
         filter_ = NullSafetyFilter()
-        allowed, reason = await filter_.atomic_verify_and_commit("execute_trade", {})
+        allowed, reason, _ = await filter_.atomic_verify_and_commit("execute_trade", {})
         assert allowed is False
         assert "UNSAFE" in reason
 

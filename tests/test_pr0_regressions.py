@@ -72,7 +72,7 @@ async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe, classifi
     # Mock CBF to return reconciliation unavailable
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(False, "RECONCILIATION_UNAVAILABLE: Redis unreachable")
+        return_value=(False, "RECONCILIATION_UNAVAILABLE: Redis unreachable", 0.0)
     )
 
     consensus_engine = AsyncMock()
@@ -122,7 +122,7 @@ async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe, classification_engin
     # Mock CBF as a spy to verify it was NEVER called
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(True, "SAFE")
+        return_value=(True, "SAFE", 0.0)
     )
 
     consensus_engine = AsyncMock()
@@ -174,7 +174,7 @@ async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe, classification_engi
 
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(True, "SAFE")
+        return_value=(True, "SAFE", 0.0)
     )
 
     consensus_engine = AsyncMock()
@@ -232,7 +232,7 @@ async def test_h3_confidence_nan_blocks(mock_ftra_safe, classification_engine):
 
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(True, "SAFE")
+        return_value=(True, "SAFE", 0.0)
     )
 
     consensus_engine = AsyncMock()

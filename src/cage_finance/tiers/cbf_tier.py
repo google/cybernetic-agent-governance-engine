@@ -16,6 +16,7 @@ from typing import Any
 
 from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -50,8 +51,10 @@ class CBFTierPlugin(GovernanceTierPlugin):
             self.cbf, tier=self.tier_name, code="CBF_BARRIER_VIOLATED", action=action, params=params
         )
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        success, reason = await self.cbf.atomic_verify_and_commit(action, params)
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        success, reason, magnitude = await self.cbf.atomic_verify_and_commit(action, params)
         if not success:
             return [
                 Violation(
@@ -60,9 +63,10 @@ class CBFTierPlugin(GovernanceTierPlugin):
                     message=reason,
                     kind=ViolationKind.HARD,
                 )
-            ]
-        return []
+            ], None
+        return [], CommitReceipt(tier=self.tier_name, magnitude=magnitude)
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
-        amount = float(params.get("amount", 0.0))
-        await self.cbf.rollback_state(magnitude=amount)
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        await self.cbf.rollback_state(magnitude=receipt.magnitude)

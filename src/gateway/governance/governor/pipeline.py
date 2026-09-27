@@ -19,7 +19,12 @@ from enum import StrEnum
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from src.gateway.governance.contracts import GovernanceTierFailure, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    GovernanceTierFailure,
+    Violation,
+    ViolationKind,
+)
 
 from opentelemetry import trace
 
@@ -53,15 +58,27 @@ class StageContext:
 
 
 class Stage(Protocol):
+    """A pipeline stage.  Instances are shared across concurrent requests.
+
+    Read-only stages implement ``run()``.  Mutating stages implement
+    ``preview()`` (side-effect-free, used under DRY_RUN), ``commit()`` and
+    ``rollback()``.  A stage must never keep per-request state such as a
+    ``CommitReceipt`` on itself; ``run_pipeline`` holds receipts locally.
+    """
+
     name: str
     mutating: bool
 
     async def run(self, ctx: StageContext) -> list[Violation]: ...
 
-    async def rollback(self, ctx: StageContext) -> None: ...  # no-op default for read-only stages
-
-    # Mutating stages only: side-effect-free stand-in for run() under DRY_RUN.
+    # Mutating stages only: side-effect-free stand-in for commit() under DRY_RUN.
     async def preview(self, ctx: StageContext) -> list[Violation]: ...
+
+    # Mutating stages only.  The receipt is not None iff state was mutated.
+    async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]: ...
+
+    # Mutating stages only: undo exactly what ``receipt`` records.
+    async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -71,6 +88,9 @@ class PipelineResult:
     opa_verdict: OpaVerdict | None
     ftra: FtraBoundaryResult | None
     committed_stages: tuple[str, ...]
+    # Receipts still outstanding when the pipeline returns (empty after a
+    # rollback).  The caller owns undoing these if it later refuses the action.
+    commits: tuple[tuple[Stage, CommitReceipt], ...] = ()
 
 
 # Stage names must be members of proof/model.py TIERS
@@ -85,17 +105,19 @@ PROFILE_RUNS_ALL_DOMAIN_TIERS: frozenset[Profile] = frozenset({Profile.FULL, Pro
 
 
 
-async def rollback_lifo(committed: Sequence[Stage], ctx: StageContext) -> list[Violation]:
-    """Roll back committed stages in reverse order.  Never raises.  Fails closed.
+async def rollback_lifo(
+    committed: Sequence[tuple[Stage, CommitReceipt]], ctx: StageContext
+) -> list[Violation]:
+    """Undo each ``(stage, receipt)`` commit in reverse order.  Never raises.  Fails closed.
 
     D6: every rollback is attempted even if an earlier one fails, so one faulty
     stage cannot strand reservations held by the others.  Each failure yields a
     HARD ``ROLLBACK_FAILED`` violation so the action is denied, never retried.
     """
     failures: list[Violation] = []
-    for stage in reversed(committed):
+    for stage, receipt in reversed(committed):
         try:
-            await stage.rollback(ctx)
+            await stage.rollback(ctx, receipt)
         except Exception as exc:
             logger.exception("stage %s rollback FAILED", stage.name)
             failures.append(Violation(
@@ -161,6 +183,8 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
     violations: list[Violation] = []
     tier_failures: list[GovernanceTierFailure] = []
     committed_stages: list[str] = []
+    # Per-request receipts.  Kept local: stages are shared across requests.
+    commits: list[tuple[Stage, CommitReceipt]] = []
     current_ctx = ctx
     
     ftra_result: FtraBoundaryResult | None = None
@@ -195,7 +219,7 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
     # c. Mutating stages run ONLY if (b) produced zero violations
     if not has_violations:
         if profile == Profile.DRY_RUN:
-            # DRY_RUN never calls a mutating stage's run(); it calls the
+            # DRY_RUN never calls a mutating stage's commit(); it calls the
             # side-effect-free preview() so verify() reports the refusal a live
             # commit would produce.  Nothing is committed, so nothing to roll back.
             for stage in mutating:
@@ -219,9 +243,13 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
                     ))
                     break
         else:
-            # run mutating in order
+            # commit mutating stages in order
             for stage in mutating:
-                stage_violations = await stage.run(current_ctx)
+                stage_violations, receipt = await stage.commit(current_ctx)
+                if receipt is not None:
+                    # Recorded even alongside violations: a commit that mutated
+                    # state and then refused must still be undone.
+                    commits.append((stage, receipt))
                 if stage_violations:
                     violations.extend(stage_violations)
                     # e. A CBF/domain commit is a violation whenever it reports not committed
@@ -230,17 +258,16 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
                         control_id=stage_violations[0].code,
                         rule_description=stage_violations[0].message
                     ))
-                    
-                    committed = [s for s in mutating if s.name in committed_stages]
-                    violations.extend(await rollback_lifo(committed, current_ctx))
+                    violations.extend(await rollback_lifo(commits, current_ctx))
+                    commits = []
                     break
-                else:
-                    committed_stages.append(stage.name)
-                    
+                committed_stages.append(stage.name)
+
     return PipelineResult(
         violations=tuple(violations),
         tier_failures=tuple(tier_failures),
         opa_verdict=opa_verdict,
         ftra=ftra_result,
-        committed_stages=tuple(committed_stages)
+        committed_stages=tuple(committed_stages),
+        commits=tuple(commits),
     )

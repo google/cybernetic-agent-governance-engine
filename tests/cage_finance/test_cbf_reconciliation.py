@@ -321,7 +321,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
         ),
     ):
         # Attempt small trade (should succeed with reconciled balance)
-        committed, message = asyncio.run(
+        committed, message, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
                 "execute_trade", {"amount": 100.0}, governance_signature="test_sig"
             )
@@ -372,7 +372,7 @@ def test_strict_mode_fails_closed_without_reconciliation() -> None:
         patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", True),
     ):
         # Attempt trade with strict mode enabled and no reconciliation
-        committed, message = asyncio.run(
+        committed, message, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
                 "execute_trade", {"amount": 100.0}, governance_signature="test_sig"
             )
@@ -440,7 +440,7 @@ def test_fence_epoch_regression_rejected() -> None:
             return_value=mock_signer,
         ),
     ):
-        committed, message = asyncio.run(
+        committed, message, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
                 "execute_trade", {"amount": 100.0}, governance_signature="test_sig"
             )
@@ -596,7 +596,7 @@ def test_kms_signature_verified_before_commit() -> None:
         patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", False),
     ):
         # Attempt commit with invalid signature (should fall back to self-reported in non-strict mode)
-        committed, message = asyncio.run(
+        committed, message, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
                 "execute_trade", {"amount": 100.0}, governance_signature="test_sig"
             )

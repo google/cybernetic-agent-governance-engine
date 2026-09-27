@@ -92,7 +92,7 @@ async def test_atomic_verify_rejects_invalid_amount_without_mutating_balance() -
         )
 
         for amount in _INVALID_AMOUNTS:
-            committed, reason = await cbf.atomic_verify_and_commit(
+            committed, reason, _ = await cbf.atomic_verify_and_commit(
                 action_name="execute_trade",
                 payload={"amount": amount},
             )
@@ -107,7 +107,7 @@ async def test_atomic_verify_rejects_invalid_amount_without_mutating_balance() -
             )
 
         # A valid trade still commits and debits the balance.
-        committed, reason = await cbf.atomic_verify_and_commit(
+        committed, reason, _ = await cbf.atomic_verify_and_commit(
             action_name="execute_trade",
             payload={"amount": 1_000.0},
         )

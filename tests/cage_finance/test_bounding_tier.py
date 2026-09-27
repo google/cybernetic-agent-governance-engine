@@ -208,9 +208,10 @@ class TestBoundingContractTierPlugin:
             "venue": "NYSE",
         }
 
-        violations = await tier.commit("execute_trade_bounded", params)
+        violations, receipt = await tier.commit("execute_trade_bounded", params)
 
         assert len(violations) == 0
+        assert receipt is None  # read-only tier: nothing mutated, no receipt
 
     @pytest.mark.asyncio
     async def test_rollback_noop(self):
@@ -231,5 +232,7 @@ class TestBoundingContractTierPlugin:
             "venue": "NYSE",
         }
 
+        from src.gateway.governance.contracts import CommitReceipt
+
         # Should not raise
-        await tier.rollback("execute_trade_bounded", params)
+        await tier.rollback("execute_trade_bounded", params, CommitReceipt(tier=tier.tier_name))

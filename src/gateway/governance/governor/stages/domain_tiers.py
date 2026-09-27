@@ -13,14 +13,24 @@
 # limitations under the License.
 
 from collections.abc import Sequence
+from typing import Any
 
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.governor.pipeline import Stage, StageContext
-from src.gateway.governance.contracts import Violation, ViolationKind
 
 
 class DomainTierStage(Stage):
-    """Wraps a GovernanceTierPlugin as a Stage."""
+    """Wraps a GovernanceTierPlugin as a Stage.
+
+    ``run()`` and ``preview()`` call the tier's read-only ``evaluate()``.
+    Phase-2 tiers are driven through ``commit()`` / ``rollback(receipt)``;
+    receipts are returned to the pipeline, never stored on this instance.
+    """
 
     def __init__(self, tier: GovernanceTierPlugin) -> None:
         self.tier = tier
@@ -37,40 +47,66 @@ class DomainTierStage(Stage):
 
     async def run(self, ctx: StageContext) -> list[Violation]:
         if hasattr(self, "_claims_exception"):
-            return [
-                Violation(
-                    tier=self.name,
-                    code="TIER_EXCEPTION",
-                    message=f"Exception in claims_action: {type(self._claims_exception).__name__}: {self._claims_exception}",
-                    kind=ViolationKind.HARD,
-                )
-            ]
-
-        call = self.tier.commit if self.mutating else self.tier.evaluate
-        return await self._guarded(call, ctx)
-
-    async def preview(self, ctx: StageContext) -> list[Violation]:
-        """DRY_RUN stand-in for run(): the tier's side-effect-free evaluate()."""
+            return self._claims_failure()
         return await self._guarded(self.tier.evaluate, ctx)
 
+    async def preview(self, ctx: StageContext) -> list[Violation]:
+        """DRY_RUN stand-in for commit(): the tier's side-effect-free evaluate()."""
+        return await self._guarded(self.tier.evaluate, ctx)
+
+    async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
+        """Phase 2: commit the tier.  Fail-closed: a raise mutates nothing by contract."""
+        if hasattr(self, "_claims_exception"):
+            return self._claims_failure(), None
+        try:
+            result = await self.tier.commit(ctx.action, ctx.params)
+        except Exception as exc:
+            return [self._exception_violation("tier execution", exc)], None
+        return self._checked_commit_result(result)
+
+    async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None:
+        await self.tier.rollback(ctx.action, ctx.params, receipt)
+
+    def _checked_commit_result(self, result: Any) -> tuple[list[Violation], CommitReceipt | None]:
+        """Enforce the ``(list[Violation], CommitReceipt | None)`` commit contract.
+
+        A malformed result is a HARD violation.  A well-formed receipt found in
+        a malformed result is kept so the pipeline still undoes its mutation.
+        """
+        pair = result if isinstance(result, tuple) and len(result) == 2 else (None, None)
+        violations, receipt = pair
+        receipt_ok = receipt is None or isinstance(receipt, CommitReceipt)
+        if isinstance(violations, list) and receipt_ok:
+            return violations, receipt
+        return [
+            Violation(
+                tier=self.name,
+                code="TIER_EXCEPTION",
+                message=(
+                    f"commit() returned {type(result).__name__}, not "
+                    "(list[Violation], CommitReceipt | None)"
+                ),
+                kind=ViolationKind.HARD,
+            )
+        ], (receipt if isinstance(receipt, CommitReceipt) else None)
+
     async def _guarded(self, call, ctx: StageContext) -> list[Violation]:
-        """Invoke a tier hook; any exception becomes a HARD violation (fail-closed)."""
+        """Invoke a read-only tier hook; any exception becomes a HARD violation (fail-closed)."""
         try:
             return await call(ctx.action, ctx.params)
         except Exception as exc:
-            return [
-                Violation(
-                    tier=self.name,
-                    code="TIER_EXCEPTION",
-                    message=f"Exception in tier execution: {type(exc).__name__}: {exc}",
-                    kind=ViolationKind.HARD,
-                )
-            ]
+            return [self._exception_violation("tier execution", exc)]
 
-    async def rollback(self, ctx: StageContext) -> None:
-        # Phase-1 tiers are read-only: there is nothing to undo.
-        if self.mutating:
-            await self.tier.rollback(ctx.action, ctx.params)
+    def _claims_failure(self) -> list[Violation]:
+        return [self._exception_violation("claims_action", self._claims_exception)]
+
+    def _exception_violation(self, where: str, exc: BaseException) -> Violation:
+        return Violation(
+            tier=self.name,
+            code="TIER_EXCEPTION",
+            message=f"Exception in {where}: {type(exc).__name__}: {exc}",
+            kind=ViolationKind.HARD,
+        )
 
 def order_stages(tiers: Sequence[GovernanceTierPlugin]) -> tuple[DomainTierStage, ...]:
     """Validate, sort by (phase, order, tier_name) and wrap tiers as DomainTierStages.

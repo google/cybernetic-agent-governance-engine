@@ -103,7 +103,7 @@ class OrderTrackingTier:
             ]
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], Any]:
         # Phase 2 commit - log execution and check for violations
         OrderTrackingTier.execution_log.append((self._tier_name, action))
         if self._violation_rule:
@@ -114,10 +114,10 @@ class OrderTrackingTier:
                     message=f"Violation from {self._tier_name}",
                     kind=ViolationKind.HARD,
                 )
-            ]
-        return []
+            ], None
+        return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
         pass
 
 

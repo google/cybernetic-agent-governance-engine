@@ -64,7 +64,7 @@ class TestC1PostHITLRevalidationFailClosed:
         """C1: Assert DENY + violation when CBF returns (False, 'RECONCILIATION_UNAVAILABLE')."""
         # Setup: CBF refuses with RECONCILIATION_UNAVAILABLE
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(False, "RECONCILIATION_UNAVAILABLE: Redis unavailable")
+            return_value=(False, "RECONCILIATION_UNAVAILABLE: Redis unavailable", 0.0)
         )
         # OPA approves (to isolate CBF failure)
         mock_governor.opa_client.evaluate_policy = AsyncMock(
@@ -89,7 +89,7 @@ class TestC1PostHITLRevalidationFailClosed:
         """C1: Assert DENY + violation when CBF returns (False, 'Fence epoch regression')."""
         # Setup: CBF refuses with fence epoch regression (concurrent modification)
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(False, "Fence epoch regression: expected 42, got 43")
+            return_value=(False, "Fence epoch regression: expected 42, got 43", 0.0)
         )
         # OPA approves
         mock_governor.opa_client.evaluate_policy = AsyncMock(
@@ -112,7 +112,7 @@ class TestC1PostHITLRevalidationFailClosed:
         """C1: Assert DENY + violation when CBF returns (False, 'Ground truth balance unavailable')."""
         # Setup: CBF refuses with balance fetch failure
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(False, "Ground truth balance unavailable")
+            return_value=(False, "Ground truth balance unavailable", 0.0)
         )
         # OPA approves
         mock_governor.opa_client.evaluate_policy = AsyncMock(
@@ -135,7 +135,7 @@ class TestC1PostHITLRevalidationFailClosed:
         """C1: Assert ALLOW when CBF returns (True, 'OK') and OPA approves."""
         # Setup: CBF commits successfully
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(True, "OK")
+            return_value=(True, "OK", 0.0)
         )
         # OPA approves
         mock_governor.opa_client.evaluate_policy = AsyncMock(
@@ -162,7 +162,7 @@ class TestC1PostHITLRevalidationFailClosed:
         """C1: Assert existing UNSAFE behavior still works (regression check)."""
         # Setup: CBF refuses with UNSAFE prefix (original behavior)
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(False, "UNSAFE: CBF barrier violated")
+            return_value=(False, "UNSAFE: CBF barrier violated", 0.0)
         )
         # OPA approves
         mock_governor.opa_client.evaluate_policy = AsyncMock(
@@ -198,7 +198,7 @@ class TestC2PostHITLSequentialOrdering:
         )
         # Setup: CBF mock (should never be called)
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(True, "OK")
+            return_value=(True, "OK", 0.0)
         )
 
         # Execute: revalidate_post_hitl should raise GovernanceError
@@ -224,7 +224,7 @@ class TestC2PostHITLSequentialOrdering:
         )
         # Setup: CBF mock (should never be called)
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(True, "OK")
+            return_value=(True, "OK", 0.0)
         )
 
         # Execute
@@ -249,7 +249,7 @@ class TestC2PostHITLSequentialOrdering:
         )
         # Setup: CBF commits successfully
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(True, "OK")
+            return_value=(True, "OK", 0.0)
         )
 
         # Mock generate_seal_with_evidence
@@ -277,7 +277,7 @@ class TestC2PostHITLSequentialOrdering:
         )
         # Setup: CBF mock (should never be called)
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(True, "OK")
+            return_value=(True, "OK", 0.0)
         )
 
         # Execute: revalidate_post_hitl should raise GovernanceError
@@ -307,7 +307,7 @@ class TestC2PostHITLSequentialOrdering:
         # Setup: CBF commits and records call
         async def cbf_side_effect(*args, **kwargs):
             call_order.append("CBF")
-            return (True, "OK")
+            return (True, "OK", 100.0)
         mock_governor.safety_filter.atomic_verify_and_commit = AsyncMock(side_effect=cbf_side_effect)
 
         # Mock generate_seal_with_evidence

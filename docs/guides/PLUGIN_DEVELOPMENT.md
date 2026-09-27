@@ -101,7 +101,7 @@ Every plugin must expose one or more concrete subclasses of [`GovernanceTierPlug
 # src/cage_{domain}/tiers/example_tier.py
 from typing import Any
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import CommitReceipt, GovernanceTierPlugin, Violation
 
 
 class ExampleTierPlugin(GovernanceTierPlugin):
@@ -154,22 +154,32 @@ class ExampleTierPlugin(GovernanceTierPlugin):
         
         return violations
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         """
-        Post-execution commit gate.
-        
-        Called after action execution to finalize state changes.
-        """
-        return []  # Most tiers have no commit logic
+        Phase 2 only: atomic state mutation.
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+        Return ``(violations, receipt)``. The receipt is not None if and only
+        if state was mutated; it records exactly what to undo (``magnitude``
+        and/or an opaque ``token``). Never store it on the tier — tiers are
+        shared across concurrent requests.
         """
-        Rollback handler for failed transactions.
-        
-        Called if any tier in the pipeline fails.
+        return [], None  # Phase 1 tiers mutate nothing
+
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         """
-        pass  # Most tiers have no rollback logic
+        Phase 2 only: undo the commit described by ``receipt``.
+
+        Called in LIFO order if a later tier refuses. Decide what to undo from
+        the receipt alone; never re-read ``params`` for a magnitude.
+        """
+        pass  # Phase 1 tiers never issue a receipt
 ```
+
+The receipt type is [`CommitReceipt`](../../src/gateway/governance/contracts.py). A phase-2 tier backed by the CBF engine records the magnitude that `atomic_verify_and_commit()` reports it deducted, for example [`CBFTierPlugin`](../../src/cage_finance/tiers/cbf_tier.py).
 
 ### Registering Tiers with the Governor
 

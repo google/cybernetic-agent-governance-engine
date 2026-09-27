@@ -19,6 +19,7 @@ from typing import Any
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
 from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -57,9 +58,11 @@ class DoseBarrierTier(GovernanceTierPlugin):
             self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
         )
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         # Phase 2: atomic verify-and-commit via kernel CBF engine
-        ok, reason = await self.cbf.atomic_verify_and_commit(action, params)
+        ok, reason, magnitude = await self.cbf.atomic_verify_and_commit(action, params)
         if not ok:
             return [
                 Violation(
@@ -68,9 +71,11 @@ class DoseBarrierTier(GovernanceTierPlugin):
                     message=reason,
                     kind=ViolationKind.HARD,
                 )
-            ]
-        return []
+            ], None
+        return [], CommitReceipt(tier=self.tier_name, magnitude=magnitude)
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
-        # LIFO rollback: restore serum concentration state
-        await self.cbf.rollback_state(magnitude=float(params.get("dose_mg", 0.0)))
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        # LIFO rollback: restore exactly the magnitude the engine applied
+        await self.cbf.rollback_state(magnitude=receipt.magnitude)

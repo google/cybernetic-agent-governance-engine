@@ -74,7 +74,7 @@ async def test_sequential_operations_pass(cbf_instance, mock_redis_client, mock_
 
             # First debit succeeds (fence=1 → 2)
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 2]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -89,7 +89,7 @@ async def test_sequential_operations_pass(cbf_instance, mock_redis_client, mock_
                 )
             )
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "98000.0", 3]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "GOOGL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -112,7 +112,7 @@ async def test_concurrent_race_prevented(cbf_instance, mock_redis_client, mock_r
 
             # Request A executes first: fence=1 → 2 (succeeds)
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 2]
-            committed_a, msg_a = await cbf_instance.atomic_verify_and_commit(
+            committed_a, msg_a, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed_a is True
@@ -125,7 +125,7 @@ async def test_concurrent_race_prevented(cbf_instance, mock_redis_client, mock_r
                 "0",
                 2,
             ]
-            committed_b, msg_b = await cbf_instance.atomic_verify_and_commit(
+            committed_b, msg_b, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "GOOGL", "shares": 10, "price": 100.0}
             )
             assert committed_b is False
@@ -147,7 +147,7 @@ async def test_fence_regression_rejected(cbf_instance, mock_redis_client, mock_r
                 )
             )
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 6]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -166,7 +166,7 @@ async def test_fence_regression_rejected(cbf_instance, mock_redis_client, mock_r
                 "0",
                 6,
             ]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "TSLA", "shares": 10, "price": 100.0}
             )
             assert committed is False
@@ -186,7 +186,7 @@ async def test_balance_exactly_equal_to_cost(cbf_instance, mock_redis_client, mo
                 )
             )
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "0.0", 2]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -211,7 +211,7 @@ async def test_negative_balance_prevented(cbf_instance, mock_redis_client, mock_
                 "900.0",
                 1,
             ]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is False
@@ -233,7 +233,7 @@ async def test_missing_fence_key_handled(cbf_instance, mock_redis_client, mock_r
             )
             # Lua script: current_fence=0 (nil → 0), expected_fence=0 → passes CAS
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 1]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -274,7 +274,7 @@ async def test_successful_commit_increments_fence(cbf_instance, mock_redis_clien
             )
             # Lua script increments fence: 10 → 11
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 11]
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -303,7 +303,7 @@ async def test_failed_verification_no_fence_increment(cbf_instance, mock_redis_c
                 5,
             ]
             cbf_instance._last_verified_fence_epoch = None  # Reset for clean test
-            committed, msg = await cbf_instance.atomic_verify_and_commit(
+            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is False
@@ -343,7 +343,7 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
 
             # Request A executes: CAS passes (expected=1, current=1), fence → 2
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 2]
-            committed_a, _ = await cbf.atomic_verify_and_commit(
+            committed_a, _, _ = await cbf.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed_a is True
@@ -356,7 +356,7 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
                 "0",
                 2,
             ]
-            committed_b, msg_b = await cbf.atomic_verify_and_commit(
+            committed_b, msg_b, _ = await cbf.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "GOOGL", "shares": 10, "price": 100.0}
             )
             assert committed_b is False

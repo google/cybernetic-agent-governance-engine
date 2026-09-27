@@ -84,7 +84,7 @@ def _make_governor(
 
     # --- CBF mock ---
     mock_cbf = AsyncMock()
-    mock_cbf.atomic_verify_and_commit.return_value = (cbf_committed, cbf_reason)
+    mock_cbf.atomic_verify_and_commit.return_value = (cbf_committed, cbf_reason, 0.0)
     mock_cbf.verify_action.return_value = "SAFE" if cbf_committed else cbf_reason
 
     # --- OPA mock ---

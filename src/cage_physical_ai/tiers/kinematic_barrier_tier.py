@@ -19,6 +19,7 @@ from typing import Any
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
 from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -68,10 +69,12 @@ class KinematicBarrierTier(GovernanceTierPlugin):
             self.cbf, tier=self.tier_name, code="KINEMATIC_BARRIER_VIOLATED", action=action, params=params
         )
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         if self.cbf is None:
-            return [self._unconfigured()]
-        ok, reason = await self.cbf.atomic_verify_and_commit(action, params)
+            return [self._unconfigured()], None  # fail closed; nothing mutated
+        ok, reason, magnitude = await self.cbf.atomic_verify_and_commit(action, params)
         if not ok:
             return [
                 Violation(
@@ -80,5 +83,11 @@ class KinematicBarrierTier(GovernanceTierPlugin):
                     message=reason,
                     kind=ViolationKind.HARD,
                 )
-            ]
-        return []
+            ], None
+        return [], CommitReceipt(tier=self.tier_name, magnitude=magnitude)
+
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        # Restore exactly the kinematic margin the engine consumed.
+        await self.cbf.rollback_state(magnitude=receipt.magnitude)

@@ -66,11 +66,11 @@ class MinimalTier:
         """Phase 1: Always pass."""
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], Any]:
         """Phase 2: Always pass."""
-        return []
+        return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
         """Phase 2: No-op rollback."""
         pass
 

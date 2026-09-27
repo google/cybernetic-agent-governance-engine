@@ -87,15 +87,15 @@ class TestRollbackLifoOrder:
         committed = [tier_a, tier_b, tier_c]
         execution_order = []
 
-        async def rollback_a(action, params):
+        async def rollback_a(action, params, receipt):
             execution_order.append("tier_a")
             return []
 
-        async def rollback_b(action, params):
+        async def rollback_b(action, params, receipt):
             execution_order.append("tier_b")
             return []
 
-        async def rollback_c(action, params):
+        async def rollback_c(action, params, receipt):
             execution_order.append("tier_c")
             return []
 
@@ -107,9 +107,9 @@ class TestRollbackLifoOrder:
         violations = await _rollback(committed)
 
         # All three tiers should have been called
-        tier_a.rollback.assert_awaited_once_with("test_action", {})
-        tier_b.rollback.assert_awaited_once_with("test_action", {})
-        tier_c.rollback.assert_awaited_once_with("test_action", {})
+        tier_a.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_a))
+        tier_b.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_b))
+        tier_c.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_c))
 
         # Verify LIFO order: C -> B -> A
         assert execution_order == ["tier_c", "tier_b", "tier_a"]
@@ -134,9 +134,9 @@ class TestRollbackExceptionIsolation:
         violations = await _rollback(committed)
 
         # All three tiers should have been ATTEMPTED
-        tier_c.rollback.assert_awaited_once_with("test_action", {})
-        tier_b.rollback.assert_awaited_once_with("test_action", {})
-        tier_a.rollback.assert_awaited_once_with("test_action", {})
+        tier_c.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_c))
+        tier_b.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_b))
+        tier_a.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_a))
 
         # Violations list should contain a ROLLBACK_FAILED entry for tier_b
         assert len(violations) == 1
@@ -158,9 +158,9 @@ class TestRollbackExceptionIsolation:
         violations = await _rollback(committed)
 
         # All tiers attempted
-        tier_c.rollback.assert_awaited_once_with("test_action", {})
-        tier_b.rollback.assert_awaited_once_with("test_action", {})
-        tier_a.rollback.assert_awaited_once_with("test_action", {})
+        tier_c.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_c))
+        tier_b.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_b))
+        tier_a.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_a))
 
         # Both failures recorded (in LIFO order: tier_b first, tier_a second)
         assert len(violations) == 2
@@ -235,13 +235,21 @@ class TestRollbackViolationStructure:
         assert len(violations) == 0
 
         # All tiers rolled back cleanly
-        tier_c.rollback.assert_awaited_once_with("test_action", {})
-        tier_b.rollback.assert_awaited_once_with("test_action", {})
-        tier_a.rollback.assert_awaited_once_with("test_action", {})
+        tier_c.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_c))
+        tier_b.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_b))
+        tier_a.rollback.assert_awaited_once_with("test_action", {}, _receipt(tier_a))
 
 
 async def _rollback(committed):
     from src.gateway.governance.governor.pipeline import Profile, StageContext, rollback_lifo
     from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
-    return await rollback_lifo([DomainTierStage(t) for t in committed], ctx)
+    return await rollback_lifo(
+        [(DomainTierStage(t), _receipt(t)) for t in committed], ctx
+    )
+
+
+def _receipt(tier):
+    """Deterministic per-tier receipt so assertions can name exactly what was undone."""
+    from src.gateway.governance.contracts import CommitReceipt
+    return CommitReceipt(tier=tier.tier_name, magnitude=1.0)

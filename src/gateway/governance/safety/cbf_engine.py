@@ -1648,7 +1648,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
         """Collapse CBF check and state commit into one atomic Redis Lua hop.
 
         Eliminates the TOCTOU window between ``verify_action()`` (read-only,
@@ -1669,8 +1669,10 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                   Persisted to ``audit:state_ledger`` on commit.
 
         Returns:
-            ``(True, "COMMITTED")`` on success.
-            ``(False, reason_string)`` when the CBF envelope is violated.
+            ``(True, "COMMITTED", magnitude)`` on success. ``magnitude`` is the
+            exact cost the Lua hop deducted (from ``_resolve_action_cost``);
+            callers pass it to ``rollback_state()`` to undo this commit.
+            ``(False, reason_string, 0.0)`` when nothing was committed.
 
         Raises:
             RuntimeError: If Redis is unavailable.
@@ -1683,7 +1685,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         except (TypeError, ValueError) as exc:
             reason = f"UNSAFE: {exc}"
             logger.warning("⛔ CBF atomic check rejected trade: %s", exc)
-            return (False, reason)
+            return (False, reason, 0.0)
 
         # POAM-023: Resolve ground truth balance with KMS verification before commit
         try:
@@ -1695,7 +1697,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             # GroundTruthUnavailableError or GovernanceError in strict mode
             reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
             logger.error("⛔ CBF atomic check rejected: %s", reason)
-            return (False, reason)
+            return (False, reason, 0.0)
 
         # Handle local debits to prevent double-spend within reconciliation window
         local_debit_total = 0.0
@@ -1749,6 +1751,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 return (
                     False,
                     f"Fence epoch regression: {current_fence_epoch} < {self._last_verified_fence_epoch}",
+                    0.0,
                 )
 
         # PR C (Stage 2): Compile barrier parameters from InvariantModel
@@ -1863,6 +1866,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             return (
                                 False,
                                 "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                                0.0,
                             )
                         else:
                             # Legacy behavior: Log but don't fail
@@ -1871,7 +1875,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                 "(strict_replication=False, not rolling back)"
                             )
 
-                return (committed, message)
+                return (committed, message, cost if committed else 0.0)
         else:
             result_list = await self._evalsha_with_noscript_retry(
                 client, keys, argv, _run_evalsha, _load_and_run
@@ -1919,6 +1923,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                         return (
                             False,
                             "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                            0.0,
                         )
                     else:
                         # Legacy behavior: Log but don't fail
@@ -1927,7 +1932,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             "(strict_replication=False, not rolling back)"
                         )
 
-            return (committed, message)
+            return (committed, message, cost if committed else 0.0)
 
     async def _evalsha_with_noscript_retry(
         self,

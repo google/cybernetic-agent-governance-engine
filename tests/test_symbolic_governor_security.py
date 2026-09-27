@@ -59,7 +59,7 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
     # atomic_verify_and_commit is called by _run_checks() instead of verify_action()
     # for the CBF gate. Stub it to return (True, "SAFE") so tests that don't
     # specifically exercise CBF-block behavior pass through the CBF tier cleanly.
-    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
