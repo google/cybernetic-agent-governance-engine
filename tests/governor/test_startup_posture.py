@@ -45,6 +45,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 _PROD = DeploymentPosture.PRODUCTION
 _DEV = DeploymentPosture.DEV
+_GATEWAY_KEY = "projects/p/locations/l/keyRings/r/cryptoKeys/cage-gateway-seal-signer"
+_RECONCILER_KEY = "projects/p/locations/l/keyRings/r/cryptoKeys/cage-reconciler-snapshot-signer"
 
 
 class _Signer:
@@ -55,6 +57,11 @@ class _Signer:
     def validate_ready(self) -> None:
         if not self._ready:
             raise RuntimeError("KMS key version is DISABLED")
+
+
+class _Verifier:
+    def __init__(self, kids: tuple[str, ...] = ("projects/p/cryptoKeys/reconciler/cryptoKeyVersions/1",)) -> None:
+        self.trust_anchor_kids = kids
 
 
 class _Redis:
@@ -84,7 +91,10 @@ def healthy(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     """Every probe healthy; each test breaks exactly one."""
     monkeypatch.setattr(posture_mod, "_signer", lambda: _Signer())
     monkeypatch.setattr(posture_mod, "_redis", lambda: _Redis())
+    monkeypatch.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier())
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
+    monkeypatch.setenv("KMS_GOVERNANCE_KEY", _GATEWAY_KEY)
+    monkeypatch.setenv("RECONCILER_KMS_KEY", _RECONCILER_KEY)
     monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
     return monkeypatch
 
@@ -105,6 +115,15 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
         ("redis_ready", lambda mp: mp.setattr(posture_mod, "_redis", lambda: _Redis(up=False))),
         ("reconciliation_provider", lambda mp: mp.setenv("RECONCILIATION_PROVIDER", "stub")),
         ("governance_salt", lambda mp: mp.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", True)),
+        ("reconciler_trust_anchor.*unset", lambda mp: mp.delenv("RECONCILER_KMS_KEY")),
+        (
+            "reconciler_trust_anchor.*gateway signing key",
+            lambda mp: mp.setenv("RECONCILER_KMS_KEY", _GATEWAY_KEY + "/cryptoKeyVersions/2"),
+        ),
+        (
+            "reconciler_trust_anchor.*no reconciler public key",
+            lambda mp: mp.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier(kids=())),
+        ),
     ],
 )
 def test_each_violation_refuses_production(healthy: pytest.MonkeyPatch, check: str, breakage: Any) -> None:

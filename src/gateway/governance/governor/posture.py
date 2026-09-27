@@ -32,6 +32,9 @@ Checks:
 * ``redis_ready``: Redis answers PING.
 * ``reconciliation_provider`` (POAM-023): CBF ground truth is not the
   self-reported stub.
+* ``reconciler_trust_anchor`` (G8): ``RECONCILER_KMS_KEY`` is set, is not
+  the gateway key, and resolves to at least one reconciler public key, so
+  the CBF can verify ground-truth snapshots by ``kid``.
 * ``governance_salt`` (C-03/C-04): ``GOVERNANCE_SALT`` is not the
   well-known default, which would let anyone forge routing seals.
 """
@@ -67,6 +70,12 @@ def _redis() -> Any:
     from src.gateway.infrastructure.redis_client import get_redis_client
 
     return get_redis_client()
+
+
+def _reconciler_verifier() -> Any:
+    from src.gateway.governance.reconciliation.trust import get_reconciler_verifier
+
+    return get_reconciler_verifier()
 
 
 def _check_tier_runtime_requirements(components: GovernorComponents) -> None:
@@ -118,6 +127,30 @@ def _check_reconciliation_provider(components: GovernorComponents) -> None:
         )
 
 
+def _check_reconciler_trust_anchor(components: GovernorComponents) -> None:
+    from src.gateway.governance.reconciliation.trust import (
+        RECONCILER_KMS_KEY_ENV,
+        is_gateway_kid,
+    )
+
+    key = os.environ.get(RECONCILER_KMS_KEY_ENV, "").strip()
+    if not key:
+        raise RuntimeError(
+            f"{RECONCILER_KMS_KEY_ENV} is unset: the CBF has no trust anchor for "
+            "ground-truth snapshots and every reconciled balance would be rejected (G8)"
+        )
+    if is_gateway_kid(key):
+        raise RuntimeError(
+            f"{RECONCILER_KMS_KEY_ENV} references the gateway signing key; the "
+            "reconciler must sign ground truth with a separate key (G8)"
+        )
+    if not _reconciler_verifier().trust_anchor_kids:
+        raise RuntimeError(
+            f"no reconciler public key resolved for {RECONCILER_KMS_KEY_ENV}; "
+            "check the key exists and the gateway has publicKeyViewer on it (G8)"
+        )
+
+
 def _check_governance_salt(components: GovernorComponents) -> None:
     from src.gateway.governance.routing_seal import is_default_salt
 
@@ -134,6 +167,7 @@ CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("kms_ready", _check_kms_ready),
     ("redis_ready", _check_redis_ready),
     ("reconciliation_provider", _check_reconciliation_provider),
+    ("reconciler_trust_anchor", _check_reconciler_trust_anchor),
     ("governance_salt", _check_governance_salt),
 )
 
