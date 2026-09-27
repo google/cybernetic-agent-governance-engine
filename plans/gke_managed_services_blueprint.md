@@ -113,12 +113,15 @@ No manifest sets any of these today, so every value below is the code default ap
 | `CAGE_STRICT_REPLICATION` | same | `false` | `true` | `true` |
 | `CAGE_REDIS_SYNCHRONOUS_REPLICATION` (fence epoch) | `true` | `true` | `true` | `true` |
 | `CAGE_REDIS_WAIT_REPLICAS` | `1` | **`0`** (no replica, saves 1 s per commit) | `1` | `1` |
-| `CAGE_REDIS_WAIT_TIMEOUT_MS` | `1000` | n/a | `100` | `100` (pending the `WAIT 1 100` check, §8) |
+| `CAGE_REDIS_WAIT_TIMEOUT_MS` | `1000` | n/a | `100` | `100` |
 | `CAGE_RECONCILIATION_REPLAY_DEFENSE` | `false` | **`true`** | **`true`** | **`true`** |
 | `RECONCILER_KMS_KEY` | unset | dev key | reconciler key | reconciler key (HSM) |
 
 Invariant: in `staging` and `prod`, `CAGE_REDIS_WAIT_REPLICAS ≤` the governance instance's replica count.
 A Terraform `precondition` in the gateway module enforces it.
+
+Memorystore supports `WAIT` (§8, item 1, resolved). With zero replicas, `WAIT 1 <timeout>` blocks for the
+full timeout, because no replica can acknowledge. That is why dev sets `0` rather than relying on the default.
 
 ---
 
@@ -292,6 +295,13 @@ One `EC_SIGN_P256_SHA256` key per signer. P-256 is supported at both SOFTWARE an
 
 - **Dataplane V2 on at cluster creation in every posture.** It is create-time only, so dev must be recreated.
 - GKE's Cilium doesn't enforce L7 rules. [`egress-lockdown.yaml`](../deployment/k8s/cilium/egress-lockdown.yaml) (L7 `dns` and `http` rules) and the two other files are rewritten as Kubernetes `NetworkPolicy` plus GKE `FQDNNetworkPolicy`.
+- **`FQDNNetworkPolicy` prerequisites** (§8, item 6, resolved). GKE Enterprise isn't required; Standard is enough. The cluster needs:
+  - Dataplane V2;
+  - GKE ≥ 1.26.4-gke.500 or ≥ 1.27.1-gke.400;
+  - kube-dns or Cloud DNS, not a custom CoreDNS;
+  - FQDN network policy enabled.
+- The cluster module sets no `dns_config` today ([gcp_gke_cluster/main.tf](../infra/modules/gcp_gke_cluster/main.tf)), so it uses kube-dns. 6f either keeps that or moves to Cloud DNS, never custom CoreDNS. 6f also pins a release channel or minimum version at or above the floor.
+- Enable FQDN network policy **at cluster creation**, alongside DPv2. If it is ever enabled in place (`gcloud container clusters update --enable-fqdn-network-policy`), Standard clusters enforce policies only after `kubectl rollout restart ds -n kube-system anetd`.
 - Memorystore can't be matched by `toEndpoints: app: redis-stack`. Use an `ipBlock` for the PSC endpoint CIDR on the TLS port.
 - The policy set is **identical in every posture**. Only CIDRs and FQDNs differ, and they come from tfvars.
 - Reconciler egress stays at KMS + `governance` + DNS + Langfuse OTLP (C7, already on `main`).
@@ -323,7 +333,7 @@ flowchart LR
 |---|---|---|---|
 | 6a | `refactor/infra-shared-modules` | Extract `vpc_network`, `memorystore_redis`/`memorystore_valkey`, `cloudsql_postgres`, `worm_bucket`, `kms`. Cloud Run consumes them unchanged. | `terraform plan` shows no diff for Cloud Run dev |
 | 6b.0 | `fix/cbf-atomic-debit` | §2.3 items 1–5 (Layer 1) | Each item has a test that observes the failure; `make test-fast` green |
-| 6b | `feat/gke-memorystore` | §2.1, §2.2, §2.4, §1.2 flags; delete Sentinel stub and `redis-*.yaml` | Live `WAIT 1 100` passes on staging; fault matrix passes; static gate covers Memorystore |
+| 6b | `feat/gke-memorystore` | §2.1, §2.2, §2.4, §1.2 flags; delete Sentinel stub and `redis-*.yaml` | Live `WAIT 1 100` smoke test succeeds on the staging `governance` instance (Valkey caveat, §8 item 1); fault matrix passes; static gate covers Memorystore |
 | 6c | `feat/gke-cloudsql` | §2.5 | Langfuse up with no static DB password |
 | 6d | `feat/kms-signing-keys` | §5.1, §5.2 | Enforcing posture starts ([`reconciler_trust_anchor`](../src/gateway/governance/governor/posture.py#L130)); forged-`kid` snapshot → BLOCK on live KMS; OSCAL updated |
 | 6e | `feat/clickhouse-operator` | §2.6 | Evidence reaches the locked bucket; ClickHouse node loss causes no evidence loss |
@@ -352,6 +362,8 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 | `RECONCILER_KMS_KEY` points at the gateway key | Already rejected at startup ([trust.py](../src/gateway/governance/reconciliation/trust.py)); Terraform keeps them as distinct resources |
 | DPv2 toggled on an existing cluster | Create-time only: recreate dev in 6f; never plan it as an in-place change |
 | L7 CNP rules silently unenforced on GKE | Rewrite as FQDN policy (§5.3); verify on a DPv2 dev cluster (§8 item 2) |
+| FQDN policies applied but not enforced | Enable at cluster creation; restart `anetd` after any in-place enable; a live probe in 6f asserts a denied FQDN is blocked |
+| Custom CoreDNS introduced later | Unsupported by FQDN policy; the module allows only kube-dns or Cloud DNS |
 | ClickHouse pods land on general nodes | Taint + toleration + node affinity |
 | Spot preemption during CI or measurement | GPU Spot off; `general-spot` has an on-demand fallback; governance pods have anti-Spot affinity |
 | KMS cold start inflates P95 | Anchors fetched out of band and cached (§4.2); a lightweight live-KMS gate runs in dev |
@@ -362,11 +374,18 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 
 ## 8. Verify before implementing
 
+### Open
+
 | # | Question | Blocks | How |
 |---|---|---|---|
-| 1 | Memorystore (Valkey and Redis) supports `WAIT` | 6b | Live `WAIT 1 100` on a staging instance. If blocked, strict mode rolls back every commit; redesign before 6b. |
-| 2 | Namespaced CNP with L7 rules on DPv2 | 6f | Apply the three files to a DPv2 dev cluster and probe |
-| 3 | Minimum `google` provider for `google_memorystore_instance` in Cluster Mode Disabled | 6a | GKE and module pins are `~> 5.0` ([gcp_gke_cluster/main.tf:17-19](../infra/modules/gcp_gke_cluster/main.tf#L17-L19)); bump in 6a if needed |
+| 2 | Do the rewritten policies (`NetworkPolicy` + `FQDNNetworkPolicy`) actually enforce on DPv2? | 6f | Apply to a DPv2 dev cluster; probe allowed and denied FQDNs/CIDRs |
+| 3 | Minimum `google` provider for `google_memorystore_instance` in Cluster Mode Disabled, and for the cluster's FQDN-network-policy field | 6a | GKE and module pins are `~> 5.0` ([gcp_gke_cluster/main.tf:17-19](../infra/modules/gcp_gke_cluster/main.tf#L17-L19)); bump in 6a if needed |
 | 4 | Does the advisor need to sign plans? | 6d | It signs in [evaluator_node.py](../src/governed_financial_advisor/graph/nodes/evaluator_node.py) and verifies in its own graph ([explainer_node.py:56](../src/governed_financial_advisor/graph/nodes/explainer_node.py#L56)). If nothing external relies on the signature, drop the key. |
 | 5 | Who holds signer rights on the governance key today | 6d | `gcloud kms keys get-iam-policy`; any grant is out of band (POAM-038) |
-| 6 | Edition and version requirements for `FQDNNetworkPolicy` | 6f | Check against the cluster's GKE version and edition before 6f design |
+
+### Resolved (2026-09-27)
+
+| # | Question | Answer | Effect on the blueprint |
+|---|---|---|---|
+| 1 | Does Memorystore support `WAIT`? | **Memorystore for Redis / Redis Cluster: yes.** `WAIT` is listed as supported in [Supported and blocked commands](https://cloud.google.com/memorystore/docs/redis/supported-commands). **Valkey: inferred** from OSS compatibility, not listed explicitly. With 0 replicas, `WAIT` blocks for the full timeout. | No 6b redesign. The staging replica (§1.1) and dev `WAIT_REPLICAS=0` (§1.2) stand. The 6b live smoke test stays because Valkey support is inferred. |
+| 6 | What does `FQDNNetworkPolicy` require? | GKE Standard or Autopilot; no Enterprise. Needs Dataplane V2, GKE ≥ 1.26.4-gke.500 / 1.27.1-gke.400, and kube-dns or Cloud DNS (no custom CoreDNS). Enabling by CLI needs gcloud ≥ 462.0.0. On Standard, restart `anetd` after an in-place enable. Source: [FQDN network policies](https://cloud.google.com/kubernetes-engine/docs/how-to/fqdn-network-policies). | §5.3 prerequisites; §7 pitfalls |
