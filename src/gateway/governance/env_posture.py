@@ -69,3 +69,30 @@ def resolve_posture() -> DeploymentPosture:
     else:
         # Unknown value defaults to production for fail-secure behavior
         return DeploymentPosture.PRODUCTION
+
+
+DOMAIN_ENV_VAR = "CAGE_DOMAIN"
+
+
+def resolve_domain() -> str:
+    """Return the single active domain named by ``CAGE_DOMAIN``.
+
+    A CAGE process runs exactly one domain plugin. This is the only reader of
+    ``CAGE_DOMAIN``; whether the name matches a registered plugin is checked by
+    ``plugin_loader.load_domain_plugin``.
+
+    Raises:
+        RuntimeError: If the variable is unset/blank or names more than one
+            domain. There is no default: guessing a domain would govern actions
+            under the wrong FTRA registry and tiers.
+    """
+    raw = os.environ.get(DOMAIN_ENV_VAR, "").strip()
+    if not raw:
+        raise RuntimeError(
+            f"{DOMAIN_ENV_VAR} is not set: exactly one domain (e.g. 'finance') is required"
+        )
+    if "," in raw or any(c.isspace() for c in raw):
+        raise RuntimeError(
+            f"{DOMAIN_ENV_VAR}={raw!r} names more than one domain; a CAGE process runs exactly one"
+        )
+    return raw.lower()

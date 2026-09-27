@@ -2,7 +2,7 @@
 
 **System:** Cybernetic Agent Governance Engine (CAGE) — Domain-Agnostic Agentic AI Governance Platform
 
-> **Domain-agnostic by design:** The governance kernel (`src/gateway/`) owns all enforcement *mechanism* and holds no domain knowledge. Domain semantics arrive exclusively through optional `cage.plugins` packages. Two **example domains of equal standing** ship in-tree — finance ([`src/cage_finance/`](../src/cage_finance/)) and healthcare ([`src/cage_healthcare/`](../src/cage_healthcare/)) — and adopters add their own under `src/cage_<domain>/` for manufacturing, logistics, energy, critical infrastructure, or any other vertical. Neither shipped plugin is privileged, and neither is required: `CAGE_ACTIVE_PLUGINS=""` runs the bare substrate.
+> **Domain-agnostic by design:** The governance kernel (`src/gateway/`) owns all enforcement *mechanism* and holds no domain knowledge. Domain semantics arrive exclusively through optional `cage.plugins` packages. Two **example domains of equal standing** ship in-tree — finance ([`src/cage_finance/`](../src/cage_finance/)) and healthcare ([`src/cage_healthcare/`](../src/cage_healthcare/)) — and adopters add their own under `src/cage_<domain>/` for manufacturing, logistics, energy, critical infrastructure, or any other vertical. Neither shipped plugin is privileged; a server process runs exactly one, named by the required `CAGE_DOMAIN` environment variable.
 >
 > Some domain-flavoured identifiers appear in older documents and in the finance reference application (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`). These belong to the **finance example domain**, not to the kernel. See [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md).
 >

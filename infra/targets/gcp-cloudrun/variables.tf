@@ -65,6 +65,17 @@ variable "cage_deployment_region" {
   }
 }
 
+variable "cage_domain" {
+  description = "The single CAGE domain plugin this gateway runs (CAGE_DOMAIN). Exactly one domain per process."
+  type        = string
+  default     = "finance"
+
+  validation {
+    condition     = contains(["finance", "healthcare", "physical_ai"], var.cage_domain)
+    error_message = "cage_domain must be exactly one of: finance, healthcare, physical_ai."
+  }
+}
+
 # ─── Container Images ─────────────────────────────────────────────────────────
 
 variable "gateway_image" {

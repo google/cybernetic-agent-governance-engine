@@ -26,6 +26,7 @@ import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ import src.gateway.core.policy as policy_mod
 from src.gateway.core.policy import (
     CircuitBreaker,
     OPAClient,
+    OPAPolicyMismatchError,
     _opa_cache_key,
 )
 
@@ -355,36 +357,51 @@ class TestOPAClientInit:
                 policy_cfg.OPA_AUTH_TOKEN = auth_token
                 return OPAClient()
 
-    def test_bare_http_url_gets_default_data_path_appended(self) -> None:
-        import os
+    def test_target_url_uses_active_domain_package(self) -> None:
+        client = self._make_client("http://localhost:8181")
+        assert client.package == "trade.governance"
+        assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
 
-        with patch.dict(
-            os.environ, {"CAGE_OPA_DEFAULT_PATH": "/v1/data/trade/governance"}
-        ):
-            with patch("src.gateway.core.policy.Config") as mock_cfg:
-                mock_cfg.OPA_URL = "http://localhost:8181"
-                mock_cfg.OPA_AUTH_TOKEN = ""
-                client = OPAClient()
-            assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
+    def test_trailing_slash_base_url_accepted(self) -> None:
+        client = self._make_client("http://localhost:8181/")
+        assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
 
-    def test_http_url_with_slash_gets_default_data_path(self) -> None:
-        import os
-
-        with patch.dict(
-            os.environ, {"CAGE_OPA_DEFAULT_PATH": "/v1/data/trade/governance"}
-        ):
-            with patch("src.gateway.core.policy.Config") as mock_cfg:
-                mock_cfg.OPA_URL = "http://localhost:8181/"
-                mock_cfg.OPA_AUTH_TOKEN = ""
-                client = OPAClient()
-            assert client.target_url == "http://localhost:8181/v1/data/trade/governance"
-
-    def test_http_url_with_custom_path_preserved(self) -> None:
+    def test_explicit_package_overrides_domain(self) -> None:
         with patch("src.gateway.core.policy.Config") as mock_cfg:
-            mock_cfg.OPA_URL = "http://localhost:8181/v1/data/custom/path"
+            mock_cfg.OPA_URL = "http://localhost:8181"
             mock_cfg.OPA_AUTH_TOKEN = ""
-            client = OPAClient()
-        assert client.target_url == "http://localhost:8181/v1/data/custom/path"
+            client = OPAClient("dosing.governance")
+        assert client.target_url == "http://localhost:8181/v1/data/dosing/governance"
+
+    def test_uds_base_url_resolves_socket(self) -> None:
+        client = self._make_client("http+unix://%2Frun%2Fopa.sock")
+        assert client.target_url == "http://localhost/v1/data/trade/governance"
+        assert client._resolve_endpoint()[1] == "/run/opa.sock"
+
+    @pytest.mark.parametrize(
+        "opa_url",
+        [
+            "http://localhost:8181/v1/data/trade/governance",
+            "http://localhost:8181/v1/data/dosing/governance",
+            "http+unix://%2Frun%2Fopa.sock/v1/data/trade/governance",
+            "http://localhost:8181?x=1",
+            "ftp://localhost:8181",
+            "",
+            None,
+        ],
+    )
+    def test_non_base_or_missing_opa_url_fails_closed(self, opa_url) -> None:
+        """A path in OPA_URL could point the kernel at another domain's policy."""
+        client = self._make_client(opa_url)  # construction never raises (import-time singleton)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
+            _ = client.target_url
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
+            client._get_client()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_denies_when_opa_url_has_path(self) -> None:
+        client = self._make_client("http://localhost:8181/v1/data/trade/governance")
+        assert await client.evaluate_policy({"action": "trade"}) == "DENY"
 
     def test_circuit_breaker_initialised(self) -> None:
         with patch("src.gateway.core.policy.Config") as mock_cfg:
@@ -494,80 +511,117 @@ class TestOPAClientClose:
 # ===========================================================================
 
 
-@pytest.mark.local
-class TestOPAClientCheckPolicyExists:
-    """Tests for OPAClient.check_policy_exists()."""
+def _module(package: str, *rules: str, ref_style: bool = False) -> dict:
+    """Minimal OPA /v1/policies module with a parsed AST."""
+    path = [{"type": "var", "value": "data"}] + [
+        {"type": "string", "value": part} for part in package.split(".")
+    ]
+    heads = [
+        {"ref": [{"type": "var", "value": r}]} if ref_style else {"name": r}
+        for r in rules
+    ]
+    return {"id": f"{package}.rego", "ast": {"package": {"path": path}, "rules": [{"head": h} for h in heads]}}
 
-    def _make_client(self) -> OPAClient:
+
+@pytest.mark.local
+class TestOPAClientVerifyDomainPolicy:
+    """OPAClient.verify_domain_policy() — startup package/rule handshake."""
+
+    def _client_returning(self, payload=None, *, status: int = 200, exc: Exception | None = None, token: str = ""):
         with patch("src.gateway.core.policy.Config") as mock_cfg:
             mock_cfg.OPA_URL = "http://localhost:8181"
+            mock_cfg.OPA_AUTH_TOKEN = token
+            client = OPAClient()
+        response = MagicMock()
+        response.status_code = status
+        response.json = MagicMock(return_value=payload)
+        if status >= 400:
+            response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("err", request=MagicMock(), response=response))
+        else:
+            response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(side_effect=exc) if exc else AsyncMock(return_value=response)
+        return client, mock_http
+
+    @pytest.mark.asyncio
+    async def test_passes_when_package_and_rules_loaded(self) -> None:
+        client, http = self._client_returning({"result": [_module("trade.governance", "allow", "allowed_roles")]})
+        with patch.object(client, "_get_client", return_value=http):
+            await client.verify_domain_policy("trade.governance", ("allow",))
+        assert http.get.call_args[0][0] == "http://localhost:8181/v1/policies"
+
+    @pytest.mark.asyncio
+    async def test_opa_1x_ref_style_heads_recognised(self) -> None:
+        client, http = self._client_returning({"result": [_module("trade.governance", "allow", ref_style=True)]})
+        with patch.object(client, "_get_client", return_value=http):
+            await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.asyncio
+    async def test_rules_unioned_across_modules_of_one_package(self) -> None:
+        payload = {"result": [_module("trade.governance", "allow"), _module("trade.governance", "reasons")]}
+        client, http = self._client_returning(payload)
+        with patch.object(client, "_get_client", return_value=http):
+            await client.verify_domain_policy("trade.governance", ("allow", "reasons"))
+
+    @pytest.mark.asyncio
+    async def test_other_domains_package_only_fails_closed(self) -> None:
+        """Healthcare policy loaded, finance domain active → refuse."""
+        client, http = self._client_returning({"result": [_module("dosing.governance", "allow")]})
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(OPAPolicyMismatchError, match="no module declaring package 'trade.governance'"):
+                await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.asyncio
+    async def test_prefix_package_does_not_match(self) -> None:
+        client, http = self._client_returning({"result": [_module("trade", "allow"), _module("trade.governance.v2", "allow")]})
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(OPAPolicyMismatchError, match="no module declaring package"):
+                await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.asyncio
+    async def test_missing_required_rule_fails_closed(self) -> None:
+        client, http = self._client_returning({"result": [_module("trade.governance", "allowed_roles")]})
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(OPAPolicyMismatchError, match=r"lacks required rules \['allow'\]"):
+                await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.asyncio
+    async def test_unreachable_opa_fails_closed(self) -> None:
+        client, http = self._client_returning(exc=httpx.ConnectError("refused"))
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
+                await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.asyncio
+    async def test_non_2xx_fails_closed(self) -> None:
+        client, http = self._client_returning({"code": "unauthorized"}, status=401)
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
+                await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.parametrize("payload", [{}, {"result": None}, {"result": ["not-a-module"]}, []])
+    @pytest.mark.asyncio
+    async def test_malformed_payload_fails_closed(self, payload) -> None:
+        client, http = self._client_returning(payload)
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
+                await client.verify_domain_policy("trade.governance", ("allow",))
+
+    @pytest.mark.asyncio
+    async def test_misconfigured_opa_url_fails_closed(self) -> None:
+        with patch("src.gateway.core.policy.Config") as mock_cfg:
+            mock_cfg.OPA_URL = "http://localhost:8181/v1/data/trade/governance"
             mock_cfg.OPA_AUTH_TOKEN = ""
-            return OPAClient()
-
-    @pytest.mark.asyncio
-    async def test_returns_true_on_200(self) -> None:
-        client = self._make_client()
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_http = AsyncMock()
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with patch.object(client, "_get_client", return_value=mock_http):
-            result = await client.check_policy_exists("trade/governance")
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_404(self) -> None:
-        client = self._make_client()
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_http = AsyncMock()
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with patch.object(client, "_get_client", return_value=mock_http):
-            result = await client.check_policy_exists("nonexistent/policy")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_connection_error(self) -> None:
-        client = self._make_client()
-        mock_http = AsyncMock()
-        mock_http.get = AsyncMock(side_effect=ConnectionError("refused"))
-
-        with patch.object(client, "_get_client", return_value=mock_http):
-            result = await client.check_policy_exists("trade/governance")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_probe_url_includes_policy_path(self) -> None:
-        client = self._make_client()
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_http = AsyncMock()
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with patch.object(client, "_get_client", return_value=mock_http):
-            await client.check_policy_exists("trade/governance")
-        call_kwargs = mock_http.get.call_args
-        assert "trade/governance" in call_kwargs[0][0]
+            client = OPAClient()
+        with pytest.raises(OPAPolicyMismatchError, match="OPA_URL must be a base URL"):
+            await client.verify_domain_policy("trade.governance", ("allow",))
 
     @pytest.mark.asyncio
     async def test_auth_header_included_when_token_set(self) -> None:
-        with patch("src.gateway.core.policy.Config") as mock_cfg:
-            mock_cfg.OPA_URL = "http://localhost:8181"
-            mock_cfg.OPA_AUTH_TOKEN = "my-secret-token"
-            client = OPAClient()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_http = AsyncMock()
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with patch.object(client, "_get_client", return_value=mock_http):
-            await client.check_policy_exists("trade/governance")
-        call_kwargs = mock_http.get.call_args
-        headers = call_kwargs[1].get("headers", {})
-        assert headers.get("Authorization") == "Bearer my-secret-token"
+        client, http = self._client_returning({"result": [_module("trade.governance", "allow")]}, token="my-secret-token")
+        with patch.object(client, "_get_client", return_value=http):
+            await client.verify_domain_policy("trade.governance", ("allow",))
+        assert http.get.call_args[1]["headers"]["Authorization"] == "Bearer my-secret-token"
 
 
 # ===========================================================================

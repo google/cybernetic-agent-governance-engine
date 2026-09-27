@@ -22,6 +22,7 @@ import hashlib
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Sequence, runtime_checkable
 
 if TYPE_CHECKING:
@@ -324,6 +325,37 @@ class GovernanceTierPlugin(Protocol):
 CAGE_PLUGIN_API_VERSION = "1.0"
 
 
+@dataclass(frozen=True)
+class DomainConfig:
+    """Kernel-consumed configuration owned by the single active domain.
+
+    The kernel reads these files for the active domain instead of hard-coding
+    one domain's paths. Paths must be absolute (plugins build them from
+    ``Path(__file__)``) and must exist; the plugin loader checks both at
+    startup and refuses to run otherwise.
+
+    OPA is an external server, so the kernel never loads Rego itself. The
+    domain instead names the Rego package the kernel queries
+    (``OPA_URL`` + ``/v1/data/<package path>``) and the rules that package
+    must define; startup verifies both against the live OPA server and
+    refuses to run on any mismatch.
+
+    Attributes:
+        ftra_registry_path: FTRA terminal registry JSON for this domain's actions.
+        opa_package: Dotted Rego package holding this domain's decision, e.g.
+            ``"trade.governance"``.
+        opa_required_rules: Rule names the package must define, e.g.
+            ``("allow",)``. Must be non-empty.
+        causal_graph_path: Causal graph YAML for the causal gatekeeper, or
+            ``None`` if the domain has no causal tier.
+    """
+
+    ftra_registry_path: Path
+    opa_package: str
+    opa_required_rules: tuple[str, ...]
+    causal_graph_path: Path | None = None
+
+
 @runtime_checkable
 class CagePlugin(Protocol):
     """A CAGE capability plugin discovered via the ``cage.plugins`` entry point.
@@ -333,6 +365,8 @@ class CagePlugin(Protocol):
     * ``name`` must equal the entry-point name (verified at load time).
     * ``api_version`` must be compatible with ``CAGE_PLUGIN_API_VERSION``;
       incompatible plugins are rejected fail-closed at startup.
+    * ``domain_config`` names the kernel-consumed config for this domain.
+      ``None`` means the domain is not yet runnable; loading it fails closed.
     * ``register()`` must be idempotent and side-effect-free apart from
       registering tiers/tools on the objects it is handed.
     * ``register()`` must never import from ``gateway.*`` internals beyond the
@@ -343,6 +377,7 @@ class CagePlugin(Protocol):
 
     name: str
     api_version: str
+    domain_config: DomainConfig | None
 
     def register(
         self,

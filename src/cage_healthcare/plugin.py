@@ -33,7 +33,7 @@ from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
 from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.contracts import CagePlugin, DomainConfig
 from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
@@ -46,6 +46,8 @@ class HealthcareCagePlugin(CagePlugin):
 
     name = "healthcare"
     api_version = "1.0"
+    # No healthcare FTRA registry yet: the domain refuses to start (POAM-2026-077).
+    domain_config: DomainConfig | None = None
 
     def register(
         self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None

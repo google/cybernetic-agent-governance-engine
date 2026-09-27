@@ -73,6 +73,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
+| POAM-2026-077 | CM-6 / SC-24 | Healthcare and physical-AI plugins declare no `DomainConfig` (no FTRA terminal registry), so `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start (fail closed); only `finance` is runnable | Moderate | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -287,3 +288,19 @@ The CAGE Layered Refactoring (PRs 1-4) restructured governance boundaries, inval
 1. Make the CBF engine invariant-parametric (governor refactor plan §4b.1).
 2. Define domain cost resolvers (action → Δseparation, Δvelocity, Δtorque) from a cell-specific ISO/TS 15066 risk assessment.
 3. Build `KinematicBarrierTier` with a CBF over all three barriers and add tests observing each barrier refuse.
+
+### POAM-2026-077: Healthcare and Physical-AI Domains Cannot Be Activated
+
+**Control:** NIST CM-6, SC-24
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-09-26
+**Target Closure:** 2026-12-31
+
+**Description:**
+A CAGE process now runs exactly one domain, named by the required `CAGE_DOMAIN` environment variable ([`env_posture.py`](../src/gateway/governance/env_posture.py)). The kernel reads its FTRA terminal registry and causal graph only from the active plugin's `DomainConfig` ([`contracts.py`](../src/gateway/governance/contracts.py), [`plugin_loader.py`](../src/gateway/governance/plugin_loader.py)). Previously the FTRA classifier and causal gatekeeper silently read finance's registry and causal graph whatever domain was loaded. [`src/cage_healthcare/plugin.py`](../src/cage_healthcare/plugin.py) and [`src/cage_physical_ai/plugin.py`](../src/cage_physical_ai/plugin.py) ship no FTRA registry, so they declare `domain_config = None` and `domain_config_of()` refuses to start them. This is fail-closed: no domain runs under another domain's reachability model.
+
+**Remediation Plan:**
+1. Author an FTRA terminal registry for each domain (`config/ftra/` equivalent under `src/cage_<domain>/config/`).
+2. Author a causal graph where the domain's tiers need one, or leave `causal_graph_path=None` (the causal check then fails closed).
+3. Declare `DomainConfig` on each plugin, including `opa_package` / `opa_required_rules` (healthcare already ships `dosing.governance` in `src/cage_healthcare/opa/dosing_governance.rego`), and add a startup test per domain; add a per-domain CI matrix (PR 4a).

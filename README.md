@@ -134,7 +134,7 @@ To prove that CAGE is truly agnostic and that its universal governance engine wo
 
 **Neither application is part of the core CAGE platform.** Both are client applications and domain plugins designed to demonstrate the substrate's capabilities and prove that the kernel operates identically regardless of whether an action is `execute_trade` or `dose_order`.
 
-**Deny-by-Default Kernel Property:** The bare Layer 1 kernel with `CAGE_ACTIVE_PLUGINS=""` enforces all universal safety mechanisms (FTRA reachability, pipeline orchestration, consensus, causal checks, evidence sealing) but **denies all domain-specific actions** because no plugin has registered action handlers. This is the intended fail-closed behavior: the kernel cannot govern what it does not understand. Domain semantics arrive exclusively through Layer 2 plugins.
+**Deny-by-Default Kernel Property:** The bare Layer 1 kernel — a `SymbolicGovernor` constructed with no domain plugin installed — enforces all universal safety mechanisms (FTRA reachability, pipeline orchestration, consensus, causal checks, evidence sealing) but **denies all domain-specific actions** because no plugin has registered action handlers. This is the intended fail-closed behavior: the kernel cannot govern what it does not understand. Domain semantics arrive exclusively through Layer 2 plugins. A deployed server always runs exactly one domain, selected by the required `CAGE_DOMAIN` environment variable.
 
 **Domain specificity is added through optional plugins:**
 
@@ -144,17 +144,15 @@ To prove that CAGE is truly agnostic and that its universal governance engine wo
 | **Healthcare** | [`src/cage_healthcare/`](src/cage_healthcare/) | Dosing concentration barriers, clinical decision oversight, `dose_order` tooling | Example demo domain |
 | **Custom** | `src/cage_<domain>/` | Manufacturing, logistics, energy, customer service, critical infrastructure — author your own | Adopter-supplied |
 
-Both shipped plugins are **illustrative example domains of equal standing**. Neither is privileged by the kernel, and neither is required: setting `CAGE_ACTIVE_PLUGINS=""` runs the kernel with zero domain plugins loaded, and the universal safety mechanisms still function.
+Both shipped plugins are **illustrative example domains of equal standing**; neither is privileged by the kernel. A CAGE process runs **exactly one** domain, named by the required `CAGE_DOMAIN` environment variable. Startup aborts if it is unset, lists more than one domain, or names a plugin that declares no `DomainConfig` (its FTRA terminal registry and optional causal graph).
 
 ```bash
-# Load both example domains
-export CAGE_ACTIVE_PLUGINS=finance,healthcare
+# The only domain that ships a DomainConfig today
+export CAGE_DOMAIN=finance
 
-# Load healthcare only
-export CAGE_ACTIVE_PLUGINS=healthcare
-
-# Run the bare domain-neutral kernel (no applications or domain plugins)
-export CAGE_ACTIVE_PLUGINS=""
+# Refuse to start until they ship their own FTRA registry (POAM-2026-077)
+export CAGE_DOMAIN=healthcare
+export CAGE_DOMAIN=physical_ai
 ```
 
 [`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py) provide the standing proof of this claim: they verify that Layer 1 boots cleanly without loading proprietary cloud vendor SDKs and that plugin contracts enforce domain isolation. Companion tests in [`tests/test_healthcare_plugin.py`](tests/test_healthcare_plugin.py) assert the healthcare package contains **zero** Lua files and **zero** KMS imports — it cannot fork the atomicity or signing paths.
@@ -218,7 +216,7 @@ This provides **evidentiary independence** — the system cannot manufacture the
 12. **Externally Reconciled CBF Ground Truth** *(L1)*: Sourced from independently reconciled external custody ledger via [`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py) (GCS WORM ledger + Cloud KMS ECDSA-P256 signing with 300s TTL).
 13. **Mechanized Formal Model** *(L1)*: Exhaustive BFS state-space exploration ([`proof/model.py`](proof/model.py) and [`proof/distributed_cbf_model.py`](proof/distributed_cbf_model.py)) proving the `NoDirectBind` invariant holds across all sequential and concurrent interleavings.
 
-**Layer 2 (L2) — Domain Plugins** contribute domain-specific semantics (optional, loaded via `CAGE_ACTIVE_PLUGINS`):
+**Layer 2 (L2) — Domain Plugins** contribute domain-specific semantics (exactly one per process, selected via `CAGE_DOMAIN`):
 
 14. **Finance Plugin** *(L2)*: Trading controls, `FiscalLimitGuard` (atomic pre-reservation preventing multi-agent "race to the rail"), `CashBarrier` declaration, `execute_trade` tooling, market-abuse critics, LangGraph Saga atomic transaction guarantees with WAL + LIFO rollback ([`src/cage_finance/`](src/cage_finance/)).
 15. **Healthcare Plugin** *(L2)*: Dosing concentration barriers, clinical decision oversight, `dose_order` tooling, `SerumConcentrationBarrier` declaration ([`src/cage_healthcare/`](src/cage_healthcare/)).
@@ -503,7 +501,7 @@ graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governa
 
 ## Key Features
 
-- **Domain-Agnostic Governance Kernel (No Built-In Applications)** — Every enforcement mechanism operates on abstract action primitives. Domain semantics arrive exclusively through optional `cage.plugins` packages ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/), or adopter-authored), gated by `CAGE_ACTIVE_PLUGINS`. Proven by [`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py).
+- **Domain-Agnostic Governance Kernel (No Built-In Applications)** — Every enforcement mechanism operates on abstract action primitives. Domain semantics arrive exclusively through optional `cage.plugins` packages ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/), or adopter-authored), exactly one of which is selected per process by `CAGE_DOMAIN`. Proven by [`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py).
 - **Multi-Jurisdiction Compliance Profiles** — Dynamic loading of regional control profiles (`config/compliance/`) and thresholds (`config/thresholds/`) via `CAGE_DEPLOYMENT_REGION`. Ships `US_FED`, `EU_ECB` (EU AI Act, GDPR Art. 22, DORA, with Step 7 Fundamental Rights Impact Assessment attestation and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles) baselines; adding a jurisdiction is a config-only operation.
 - **Reusable LangGraph Governance Harness** — `OpaNodeConfig` and `NemoNodeConfig` factories allow any agent to inherit enterprise governance (tracing, metrics, fail-closed mechanisms) with pluggable domain-state extractors.
 - **DoWhy Causal Gatekeeper** — Microsoft DoWhy causal inference validates world-model integrity via placebo refutation before allowing high-stakes actions; fail-safe on error (blocks when causal assumptions cannot be verified). The Causal Gatekeeper's Redis fallback is now fail-closed: connection errors raise `RuntimeError` rather than returning a zero sentinel; absent keys return `None` (first-boot safe).
@@ -831,7 +829,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `RECONCILIATION_PROVIDER`                        | Custody provider (`stub`, `gcs`, `s3` / `object-store`, `plaid`, or `anchorage`; default `stub`) |
 | `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `_SECRET_KEY` | Keys for ISO 42001 audit Langfuse project            |
 | `REDIS_URL`                                      | Redis connection URL (e.g. `redis://localhost:6379`) |
-| `OPA_URL`                                        | OPA policy engine URL (e.g. `http://localhost:8181`) |
+| `OPA_URL`                                        | OPA base URL, no path (e.g. `http://localhost:8181`); the decision package comes from the active domain's `DomainConfig.opa_package` |
 | `VLLM_REASONING_API_BASE`                        | vLLM reasoning endpoint (also default for Risk Manager consensus persona) |
 | `VLLM_FAST_API_BASE`                             | vLLM fast-path endpoint (also default for Compliance Officer consensus persona) |
 | `CONSENSUS_RISK_MANAGER_URL`                     | Override vLLM endpoint for Risk Manager critic persona |
@@ -891,7 +889,7 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:
 ## Project Structure
 
 **Layer 1 (L1)** — Domain-neutral kernel, always present
-**Layer 2 (L2)** — Optional domain plugins (`CAGE_ACTIVE_PLUGINS`)
+**Layer 2 (L2)** — Domain plugins, exactly one per process (`CAGE_DOMAIN`)
 **Layer 3 (L3)** — Configuration & operational tooling
 **Layer 3 (L3)** — Integrations & Seam Contracts
 
@@ -976,7 +974,7 @@ cybernetic-agent-governance-engine/
 └── pyproject.toml                    #      Project metadata and dependencies
 ```
 
-**What you get with `CAGE_ACTIVE_PLUGINS=""`:** The full Layer 1 kernel (FTRA reachability, pipeline orchestration, CBF enforcement, consensus, causal checks, evidence chain, KMS routing seals) but **zero domain-specific action handlers** — all domain actions denied (fail-closed). Load one or more Layer 2 plugins to add trade controls, dosing barriers, or custom domain semantics.
+**What you get from the bare kernel (a governor with no domain plugin installed):** The full Layer 1 kernel (FTRA reachability, pipeline orchestration, CBF enforcement, consensus, causal checks, evidence chain, KMS routing seals) but **zero domain-specific action handlers** — all domain actions denied (fail-closed). A server process loads exactly one Layer 2 plugin, named by `CAGE_DOMAIN`, to add trade controls, dosing barriers, or custom domain semantics.
 
 ---
 

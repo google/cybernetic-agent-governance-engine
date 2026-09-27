@@ -24,6 +24,7 @@ from src.gateway.governance.contracts import (
 class ValidPlugin:
     name = "test"
     api_version = "1.0"
+    domain_config = None
 
     def register(self, governor, tool_server=None):
         pass
@@ -32,6 +33,7 @@ class ValidPlugin:
 class WrongNamePlugin:
     name = "wrong"
     api_version = "1.0"
+    domain_config = None
 
     def register(self, governor, tool_server=None):
         pass
@@ -40,6 +42,7 @@ class WrongNamePlugin:
 class IncompatibleVersionPlugin:
     name = "test"
     api_version = "2.0"
+    domain_config = None
 
     def register(self, governor, tool_server=None):
         pass
@@ -48,6 +51,7 @@ class IncompatibleVersionPlugin:
 class MinorVersionOkPlugin:
     name = "test"
     api_version = "1.5"
+    domain_config = None
 
     def register(self, governor, tool_server=None):
         pass

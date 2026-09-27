@@ -124,6 +124,8 @@ spec:
             # DEP-04: CAGE_ENV must not be hardcoded to "dev". For GKE production
             # deployments use gateway.yaml.tpl rendered by deploy_all.sh which
             # substitutes ${CAGE_ENV} from the --env flag (dev → "dev", prod → "production").
+            - name: CAGE_DOMAIN  # exactly one domain per process
+              value: "finance"
             - name: CAGE_ENV
               valueFrom:
                 secretKeyRef:
@@ -158,7 +160,7 @@ spec:
                   key: KMS_GOVERNANCE_KEY
                   optional: true
             - name: OPA_URL
-              value: "http://opa.governance-stack.svc.cluster.local:8181/v1/data/trade/governance"
+              value: "http://opa.governance-stack.svc.cluster.local:8181"
           livenessProbe:
             httpGet:
               path: /health

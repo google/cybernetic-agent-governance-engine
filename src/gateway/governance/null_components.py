@@ -14,7 +14,8 @@
 
 """Fail-closed null objects for bare-kernel and offline mode.
 
-When no domain plugin is loaded (CAGE_ACTIVE_PLUGINS=""), the kernel uses these
+When a kernel slot is not filled by the active domain plugin (or a governor is
+built with no plugin, as the bare-kernel tests do), the kernel uses these
 null implementations. They are NOT no-ops: every method returns an explicit denial verdict.
 A kernel with no plugin denies everything by intent (G2 gate), not by accident.
 

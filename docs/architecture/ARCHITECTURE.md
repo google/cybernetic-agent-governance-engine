@@ -38,7 +38,7 @@ The Cybernetic Governance Engine (CAGE) is a domain-agnostic, fail-closed runtim
 
 ### Trust Boundaries & Layered Separation
 - **Layer 1: Governance Kernel (`src/gateway/`)**: Always present and domain-blind. Owns all safety enforcement mechanisms: finite-time reachability analysis (FTRA), two-phase tier execution, atomic barrier hops, consensus arbitration, causal counterfactual checks, JWS token consumption, cryptographic evidence hashing, and LIFO rollbacks. It operates strictly on abstract action primitives (`claimed_action`, `actor_id`, `resource_delta`). **Caller identity is never accepted from application-layer metadata**: the kernel derives `agent_id` / `caller_principal` exclusively from the SPIFFE URI carried in the verified mTLS peer certificate (see [Transport-Layer Agent Identity](#transport-layer-agent-identity-spiffe) below).
-- **Layer 2: Domain Plugins (`src/cage_<domain>/`)**: Optional, interchangeable packages (e.g., `cage_finance`, `cage_healthcare`). Owns nomenclature, watched invariant scalars, threshold definitions, semantic critics, and domain Rego policies. Plugins hook into the kernel through structural subtyping protocols (`GovernanceTierPlugin`, `InvariantModel`). If `CAGE_ACTIVE_PLUGINS=""`, the engine boots as a pure substrate with every generic safety invariant fully functional.
+- **Layer 2: Domain Plugins (`src/cage_<domain>/`)**: Optional, interchangeable packages (e.g., `cage_finance`, `cage_healthcare`). Owns nomenclature, watched invariant scalars, threshold definitions, semantic critics, and domain Rego policies. Plugins hook into the kernel through structural subtyping protocols (`GovernanceTierPlugin`, `InvariantModel`). A `SymbolicGovernor` constructed with no plugin installed is a pure substrate with every generic safety invariant fully functional; a server process runs exactly one domain, named by `CAGE_DOMAIN`.
 - **Layer 3: Integrations & Rails (`src/integrations/`, `src/compliance_bridge/`)**: External adapters (external banking/clinical ledgers, storage backends, OPA servers, and notification bridges). These are physically decoupled from the kernel by strict zero-kernel-import Seam Contracts.
 - **Configuration Layer (`config/compliance/`, `config/thresholds/`)**: Dynamically loaded at deploy time via `CAGE_DEPLOYMENT_REGION`. Overlays regional regulatory profiles (NIST/SR 26-2, EU AI Act, MAS FEAT) onto the runtime without requiring source changes.
 
@@ -215,7 +215,8 @@ System initialization and regional behavior are driven by environmental flags an
 |---|---|---|---|
 | `CAGE_ENV` | str | `production` | When set to production, disables all memory fallbacks and mandates active evidence streams. |
 | `CAGE_DEPLOYMENT_REGION` | enum | `US_FED` | Selects active compliance profile: `US_FED`, `EU_ECB`, or `APAC_MAS`. |
-| `CAGE_ACTIVE_PLUGINS` | csv | `""` | Comma-separated list of plugins to discover and load (e.g. `cage_finance,cage_healthcare`). |
+| `CAGE_DOMAIN` | str | *(required)* | Names the single domain plugin this process runs (`cage.plugins` entry-point name, e.g. `finance`). Unset, multi-valued, unknown, or `DomainConfig`-less values abort startup. |
+| `OPA_URL` | str | *(required)* | OPA base URL with no path. The decision path is `/v1/data/<DomainConfig.opa_package>`; startup aborts unless OPA has that package and its `opa_required_rules` loaded. |
 | `CAGE_DEFER_ENABLED` | bool | `true` | Enables the 4-state AARM deferral primitive and Redis parking queue. |
 | `CAGE_PAUSE_ENABLED` | bool | `true` | Enables transient execution suspension and resume-token lifecycle. |
 | `REDIS_URL` | str | Required | Connection URI for the primary Redis cluster (db=0 and db=1). |

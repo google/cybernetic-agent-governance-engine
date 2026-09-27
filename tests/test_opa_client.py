@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import patch
+
 import httpx
 import pytest
 import respx
@@ -23,8 +25,12 @@ from src.gateway.core.policy import OPAClient
 
 @pytest.fixture
 def opa_client():
-    # Force URL for testing consistency or just use what's configured
-    return OPAClient()
+    # Pin a base OPA_URL so the test never depends on a developer .env; the
+    # decision path comes from the active domain (finance: trade.governance).
+    with patch("src.gateway.core.policy.Config") as cfg:
+        cfg.OPA_URL = "http://localhost:8181"
+        cfg.OPA_AUTH_TOKEN = ""
+        return OPAClient()
 
 
 @pytest.mark.asyncio

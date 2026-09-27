@@ -37,16 +37,16 @@ from src.gateway.governance.consensus.engine import (
     _background_audit_worker,
 )
 from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.contracts import CagePlugin, DomainConfig
 from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
 )
+from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.singletons import install_domain_components
-from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,13 @@ class FinanceCagePlugin(CagePlugin):
 
     name = "finance"
     api_version = "1.0"
+    domain_config = DomainConfig(
+        ftra_registry_path=Path(__file__).resolve().parents[2] / "config" / "ftra" / "terminal_registry.json",
+        # src/cage_finance/opa/trade_governance.rego
+        opa_package="trade.governance",
+        opa_required_rules=("allow",),
+        causal_graph_path=Path(__file__).resolve().parent / "config" / "causal_graph.yaml",
+    )
 
     def register(
         self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None

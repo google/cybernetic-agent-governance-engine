@@ -183,8 +183,8 @@ class FtraNodeConfig:
             extractor cannot find ``evaluation_result.confidence``.
         evaluation_result_key: State key where evaluation result dict is
             stored.  Used by the default confidence extractor.
-        registry_path: Path to the terminal registry JSON file.  Defaults to
-            ``config/ftra/terminal_registry.json``.
+        registry_path: Path to the terminal registry JSON file.  ``None``
+            (default) uses the active domain's ``DomainConfig.ftra_registry_path``.
         validate_plan_schema: Whether to validate the extracted plan against
             a JSON Schema before analysis.  Defaults to ``True``.
         plan_schema: Optional JSON Schema dict for plan validation.  When
@@ -204,7 +204,7 @@ class FtraNodeConfig:
     evaluation_result_key: str = "evaluation_result"
 
     # Registry path override
-    registry_path: str | Path = "config/ftra/terminal_registry.json"
+    registry_path: str | Path | None = None
 
     # Optional validation
     validate_plan_schema: bool = True

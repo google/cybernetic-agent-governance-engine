@@ -81,6 +81,8 @@ spec:
               echo "--- Reconciliation Summary ---"
               cat /tmp/cage_reconciliation_metrics.txt || true
           env:
+            - name: CAGE_DOMAIN  # exactly one domain per process
+              value: "finance"
             - name: CAGE_ENV
               value: "development"
             - name: CAGE_SEAL_ENFORCEMENT

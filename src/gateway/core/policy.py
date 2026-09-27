@@ -179,17 +179,14 @@ async def _explain_worker() -> None:
             return
 
         try:
-            # Build the explain URL — append ?explain=full to the OPA target URL.
-            # We re-read Config here (not cached) so that test overrides work.
-            opa_url = Config.OPA_URL
-            parsed = urllib.parse.urlparse(opa_url)
-
-            if parsed.scheme == "http+unix":
-                uds_path = urllib.parse.unquote(parsed.netloc)
-                explain_url = f"http://localhost{parsed.path}?explain=full"
+            # Build the explain URL — same decision path as the hot path, plus
+            # ?explain=full. Config is re-read here (not cached) so test
+            # overrides work.
+            base_url, uds_path = _opa_endpoint()
+            explain_url = f"{base_url}{_decision_path(_active_opa_package())}?explain=full"
+            if uds_path:
                 transport = httpx.AsyncHTTPTransport(uds=uds_path)
             else:
-                explain_url = f"{opa_url}?explain=full"
                 transport = httpx.AsyncHTTPTransport(retries=0)
 
             auth_token = Config.OPA_AUTH_TOKEN
@@ -330,61 +327,114 @@ class CircuitBreaker:
         return False
 
 
+class OPAPolicyMismatchError(RuntimeError):
+    """OPA is unreachable or lacks the active domain's package or rules."""
+
+
+def _opa_endpoint() -> tuple[str, str | None]:
+    """Return ``(base_url, uds_socket_path)`` parsed from ``OPA_URL``.
+
+    ``OPA_URL`` must be a base URL (``http(s)://host:port`` or
+    ``http+unix://<quoted socket path>``) with no path: the decision path is
+    owned by the active domain (``DomainConfig.opa_package``), so a path here
+    would let a deployment point the kernel at another domain's policy.
+
+    Raises:
+        RuntimeError: ``OPA_URL`` unset, carrying a path/query, or using an
+            unsupported scheme.
+    """
+    raw = Config.OPA_URL
+    if not raw:
+        raise RuntimeError("FAIL-CLOSED: OPA_URL is not set")
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise RuntimeError(
+            f"FAIL-CLOSED: OPA_URL must be a base URL without a path (got {parsed.path!r}); "
+            "the decision path comes from the active domain's DomainConfig.opa_package"
+        )
+    if parsed.scheme == "http+unix":
+        return "http://localhost", urllib.parse.unquote(parsed.netloc)
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError(f"FAIL-CLOSED: OPA_URL scheme must be http, https or http+unix, got {parsed.scheme!r}")
+    return f"{parsed.scheme}://{parsed.netloc}", None
+
+
+def _decision_path(package: str) -> str:
+    """``trade.governance`` → ``/v1/data/trade/governance``."""
+    return "/v1/data/" + package.replace(".", "/")
+
+
+def _active_opa_package() -> str:
+    from src.gateway.governance.plugin_loader import active_domain_config
+
+    return active_domain_config().opa_package
+
+
+def _rules_in_package(modules: list[dict[str, Any]], package: str) -> set[str] | None:
+    """Rule names defined in ``package`` across OPA ``/v1/policies`` modules.
+
+    Returns ``None`` if no loaded module declares ``package``. A package may
+    span several modules, so rules are unioned.
+    """
+    target = ["data", *package.split(".")]
+    found = False
+    rules: set[str] = set()
+    for module in modules:
+        ast = module.get("ast") or {}
+        path = [term.get("value") for term in (ast.get("package") or {}).get("path", [])]
+        if path != target:
+            continue
+        found = True
+        for rule in ast.get("rules") or []:
+            head = rule.get("head") or {}
+            # OPA < 1.0 sets head.name; OPA >= 1.0 sets head.ref[0].value.
+            name = head.get("name") or ((head.get("ref") or [{}])[0].get("value"))
+            if isinstance(name, str):
+                rules.add(name)
+    return rules if found else None
+
+
 class OPAClient:
     """
     Async OPA Client with Circuit Breaker.
+
+    Queries ``OPA_URL`` + ``/v1/data/<package>``, where ``package`` defaults to
+    the active domain's ``DomainConfig.opa_package``. ``OPA_URL`` is parsed at
+    construction; a malformed value is recorded rather than raised (the
+    client is built at import time) and every later use fails closed.
     """
 
-    # Default OPA data path for the trade governance policy.
-    # OPA's REST API requires POST /v1/data/<package_path> to evaluate a policy.
-    # When OPA_URL is set to a bare host (e.g. http://localhost:8181) without a
-    # path, the client appends this default so the request reaches the correct
-    # policy package (trade.governance → /v1/data/trade/governance).
-    # Override by including the full path in OPA_URL, e.g.:
-    #   OPA_URL=http://localhost:8181/v1/data/trade/governance
-
-    def __init__(self, default_data_path: str | None = None):  # type: ignore[no-untyped-def]
-        self.url = Config.OPA_URL
+    def __init__(self, package: str | None = None):  # type: ignore[no-untyped-def]
+        self.url = Config.OPA_URL  # raw value, for tracing only
         self.auth_token = Config.OPA_AUTH_TOKEN
         self.cb = CircuitBreaker()
-        self._uds_socket_path: str | None = None
+        self._package = package
         # HIGH-7 fix: pooled httpx.AsyncClient — created once, reused across requests.
         self._http_client: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._endpoint: tuple[str, str | None] | None = None
+        self._endpoint_error: RuntimeError | None = None
+        try:
+            self._endpoint = _opa_endpoint()
+        except RuntimeError as exc:
+            self._endpoint_error = exc
+            logger.error("OPAClient misconfigured; every OPA call will fail closed: %s", exc)
 
-        fallback_path = default_data_path or os.getenv("CAGE_OPA_DEFAULT_PATH")
+    def _resolve_endpoint(self) -> tuple[str, str | None]:
+        if self._endpoint is None:
+            raise self._endpoint_error or RuntimeError("FAIL-CLOSED: OPA endpoint unresolved")
+        return self._endpoint
 
-        parsed = urllib.parse.urlparse(self.url)
-        if parsed.scheme == "http+unix":
-            self._uds_socket_path = urllib.parse.unquote(parsed.netloc)
-            uds_path_part = parsed.path
+    @property
+    def package(self) -> str:
+        """Rego package queried: the explicit one, else the active domain's."""
+        return self._package or _active_opa_package()
 
-            if not uds_path_part or not uds_path_part.startswith("/v1/data"):
-                if not fallback_path:
-                    raise RuntimeError(
-                        "FAIL-CLOSED: OPA_URL lacks a policy path and CAGE_OPA_DEFAULT_PATH is unset."
-                    )
-                uds_path_part = fallback_path
-
-            self.target_url = f"http://localhost{uds_path_part}"
-            logger.info(f"🔌 OPAClient configured for UDS: {self._uds_socket_path}")
-        else:
-            if not parsed.path or parsed.path in ("", "/"):
-                if not fallback_path:
-                    raise RuntimeError(
-                        "FAIL-CLOSED: OPA_URL lacks a policy path and CAGE_OPA_DEFAULT_PATH is unset."
-                    )
-                base = f"{parsed.scheme}://{parsed.netloc}"  # type: ignore[str-bytes-safe]
-                self.target_url = f"{base}{fallback_path}"
-                logger.info(
-                    "🌐 OPAClient configured for HTTP: %s "
-                    "(appended default data path %s to bare OPA_URL)",
-                    self.target_url,
-                    fallback_path,
-                )
-            else:
-                self.target_url = self.url  # type: ignore[assignment]
-                logger.info(f"🌐 OPAClient configured for HTTP: {self.target_url}")
+    @property
+    def target_url(self) -> str:
+        """Decision URL. Raises if ``OPA_URL`` is malformed or no domain is active."""
+        base, _ = self._resolve_endpoint()
+        return f"{base}{_decision_path(self.package)}"
 
     def _get_client(self) -> httpx.AsyncClient:
         """Return (or lazily create) the shared pooled httpx.AsyncClient.
@@ -405,8 +455,9 @@ class OPAClient:
             or (self._loop is not None and self._loop.is_closed())
         ):
             self._loop = current_loop
-            if self._uds_socket_path:
-                transport = httpx.AsyncHTTPTransport(uds=self._uds_socket_path)
+            _, uds_socket_path = self._resolve_endpoint()
+            if uds_socket_path:
+                transport = httpx.AsyncHTTPTransport(uds=uds_socket_path)
             else:
                 transport = httpx.AsyncHTTPTransport(retries=0)
             self._http_client = httpx.AsyncClient(
@@ -426,40 +477,34 @@ class OPAClient:
             await self._http_client.aclose()
             self._http_client = None
 
-    async def check_policy_exists(self, policy_path: str) -> bool:
-        """Check whether a named policy is loaded in OPA via the policy management API.
+    async def verify_domain_policy(self, package: str, required_rules: tuple[str, ...]) -> None:
+        """Fail closed unless OPA has ``package`` loaded with every required rule.
 
-        Makes an HTTP GET to ``{opa_base_url}/v1/policies/{policy_path}`` and
-        returns ``True`` if OPA responds with HTTP 200 (policy found), ``False``
-        for any other status code or if OPA is unreachable.
+        Lists ``GET {base}/v1/policies`` and inspects each module's parsed AST,
+        so the check works whether policies were loaded from files or bundles
+        (policy IDs are file paths and are not checked).
 
-        Args:
-            policy_path: The OPA policy ID to probe, e.g. ``"trade/governance"``.
-
-        Returns:
-            ``True`` if the policy is present and OPA is reachable, ``False`` otherwise.
+        Raises:
+            OPAPolicyMismatchError: OPA unreachable, non-2xx, malformed payload,
+                package not loaded, or a required rule missing.
         """
         try:
-            # Derive the OPA base URL (strip any configured policy path suffix)
-            parsed = urllib.parse.urlparse(self.url)
-            if parsed.scheme == "http+unix":
-                base_url = "http://localhost"
-            else:
-                base_url = f"{parsed.scheme}://{parsed.netloc}"  # type: ignore[str-bytes-safe]  # urlparse scheme/netloc are str when input is str
-
-            probe_url = f"{base_url}/v1/policies/{policy_path}"
-
+            base, _ = self._resolve_endpoint()
             headers = {}
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
-
-            client = self._get_client()
-            response = await client.get(probe_url, headers=headers, timeout=5.0)
-
-            return response.status_code == 200
+            response = await self._get_client().get(f"{base}/v1/policies", headers=headers, timeout=5.0)
+            response.raise_for_status()
+            modules = response.json()["result"]
+            defined = _rules_in_package(modules, package)
         except Exception as exc:
-            logger.debug("check_policy_exists(%r) failed: %s", policy_path, exc)
-            return False
+            raise OPAPolicyMismatchError(f"cannot verify OPA package {package!r}: {exc}") from exc
+        if defined is None:
+            raise OPAPolicyMismatchError(f"OPA has no module declaring package {package!r}")
+        missing = sorted(set(required_rules) - defined)
+        if missing:
+            raise OPAPolicyMismatchError(f"OPA package {package!r} lacks required rules {missing}")
+        logger.info("✅ OPA package %s verified (rules: %s)", package, ", ".join(required_rules))
 
     async def evaluate_policy(
         self, input_data: dict[str, Any], current_latency_ms: float = 0.0

@@ -59,8 +59,7 @@ if _env_file.exists() and not os.environ.get("KMS_GOVERNANCE_KEY"):
 
 # Set test environment defaults BEFORE any application imports
 os.environ.setdefault("CAGE_ENV", "test")
-os.environ.setdefault("CAGE_ACTIVE_PLUGINS", "finance")
-os.environ.setdefault("CAGE_OPA_DEFAULT_PATH", "src/cage_finance/opa")
+os.environ.setdefault("CAGE_DOMAIN", "finance")
 
 os.environ.setdefault(
     "CAGE_ROUTING_SEAL_SECRET", "dev-only-insecure-placeholder-not-for-production-use"
@@ -133,7 +132,7 @@ _cluster_internal_replacements = {
     "LANGFUSE_HOST": "http://localhost:3001",
     "LANGFUSE_BASEURL": "http://localhost:3001",
     "COMPLIANCE_BRIDGE_URL": "http://localhost:3002",
-    "OPA_URL": "http://localhost:8181/v1/data/trade/governance",
+    "OPA_URL": "http://localhost:8181",
     "REDIS_URL": "redis://localhost:6379",
     "VLLM_SERVICE_URL": "http://localhost:8001",
     "VLLM_REASONING_API_BASE": "http://localhost:8000/v1",
@@ -228,9 +227,10 @@ def pytest_configure(config: pytest.Config) -> None:
     # compliance-bridge port-forward runs on :3002 (Langfuse occupies :3001)
     _setdefault("COMPLIANCE_BRIDGE_URL", "http://localhost:3002")
     # Integration tests: force OPA_URL to the locally port-forwarded instance.
-    # The .env file may contain the cluster-internal address (http://opa:8181/...)
+    # The .env file may contain the cluster-internal address (http://opa:8181)
     # which is unreachable from the developer workstation — always override to localhost.
-    # OPA data path is region-aware: each deployment region has its own policy namespace.
+    # OPA_URL is a base URL; the decision package comes from the active
+    # domain's DomainConfig.opa_package.
     _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
     _region_locations = {
         "US_FED": "us-central1",
@@ -239,17 +239,9 @@ def pytest_configure(config: pytest.Config) -> None:
     }
     if _region in _region_locations:
         os.environ["GOOGLE_CLOUD_LOCATION"] = _region_locations[_region]
-    _opa_paths = {
-        "US_FED": "http://localhost:8181/v1/data/trade/governance",
-        "EU_ECB": "http://localhost:8181/v1/data/eu_ecb/governance",
-        "APAC_MAS": "http://localhost:8181/v1/data/apac_mas/governance",
-    }
     _setdefault(
         "OPA_URL",
-        os.environ.get(
-            "OPA_URL_TEST_OVERRIDE",
-            _opa_paths.get(_region, _opa_paths["US_FED"]),
-        ),
+        os.environ.get("OPA_URL_TEST_OVERRIDE", "http://localhost:8181"),
     )
     # Disable OPA Redis decision cache in all test runs to prevent cross-test
     # cache pollution (a warm cache from test_opa_allow would cause test_opa_deny
@@ -1271,13 +1263,11 @@ def assert_formal_tier_ordering_matches():
     Session-scoped fixture asserting the registered tier order matches the formal model.
     See Formal Proof Synchronization.
     """
-    from src.gateway.governance.plugin_loader import discover_plugins
+    from src.gateway.governance.plugin_loader import load_domain_plugin
     from src.gateway.governance.singletons import symbolic_governor
 
-    # Ensure plugins are loaded
-    loaded_plugins = discover_plugins()
-    for plugin in loaded_plugins:
-        plugin.register(governor=symbolic_governor, tool_server=None)
+    # Ensure the single CAGE_DOMAIN plugin is loaded
+    load_domain_plugin().register(governor=symbolic_governor, tool_server=None)
 
     tiers = symbolic_governor.registered_tier_names()
     # The formal model mandates the following order for finance package tiers

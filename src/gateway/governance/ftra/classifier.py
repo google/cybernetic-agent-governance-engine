@@ -56,11 +56,14 @@ from src.gateway.governance.ftra.models import TerminalClassification
 logger = logging.getLogger("Gateway.Governance.FTRA.Classifier")
 
 # ---------------------------------------------------------------------------
-# Registry path
+# Registry path: supplied by the active domain's DomainConfig (CAGE_DOMAIN).
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_DEFAULT_REGISTRY_PATH = _REPO_ROOT / "config" / "ftra" / "terminal_registry.json"
+
+def _active_registry_path() -> Path:
+    from src.gateway.governance.plugin_loader import active_domain_config
+
+    return active_domain_config().ftra_registry_path
 
 # ---------------------------------------------------------------------------
 # Module-level cache (loaded once at import time)
@@ -142,7 +145,7 @@ def _get_registry(path: Path | None = None) -> dict[str, str]:
     """
     global _registry_cache, _registry_path_used
 
-    effective_path = path or _DEFAULT_REGISTRY_PATH
+    effective_path = path or _active_registry_path()
     force_reload = os.getenv("FTRA_REGISTRY_RELOAD", "false").lower() == "true"
 
     with _registry_lock:
@@ -225,7 +228,7 @@ def check_registry_staleness(
         live_actions: The canonical set of action names declared by a domain
             plugin (e.g. ``src.cage_finance.REGISTERED_ACTIONS``).
         registry_path: Optional override for the registry JSON path.
-            Defaults to ``config/ftra/terminal_registry.json``.
+            Defaults to the active domain's ``DomainConfig.ftra_registry_path``.
 
     Returns:
         :class:`StalenessReport` with two symmetric difference sets.
@@ -274,7 +277,7 @@ class IrreversibilityClassifier:
 
     Args:
         registry_path: Optional override for the registry JSON path.
-                       Defaults to ``config/ftra/terminal_registry.json``.
+                       Defaults to the active domain's ``DomainConfig.ftra_registry_path``.
     """
 
     def __init__(self, registry_path: Path | None = None) -> None:
