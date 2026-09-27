@@ -29,6 +29,7 @@ Prerequisites:
 
 import os
 import pathlib
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -352,9 +353,18 @@ def test_uncheckpointed_graph_factory_exists() -> None:
     from src.governed_financial_advisor.graph.graph import (
         create_uncheckpointed_graph,
     )
+    from tests.fixtures.governor import make_governor
 
-    # Compile the graph (does not invoke any nodes)
-    graph = create_uncheckpointed_graph()
+    # The SDK entry point is its own composition root: it bootstraps the
+    # governor. Substitute a hermetic one so no live OPA/Redis/KMS is needed.
+    with patch(
+        "src.gateway.governance.governor.bootstrap.bootstrap_governor",
+        return_value=make_governor(),
+    ) as mock_bootstrap:
+        # Compile the graph (does not invoke any nodes)
+        graph = create_uncheckpointed_graph()
+
+    mock_bootstrap.assert_called_once_with()
 
     # Validate graph structure
     assert graph is not None

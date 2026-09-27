@@ -39,7 +39,7 @@ Architecture
     [Envoy proxy / AGW]  ──ext_authz gRPC──▶  [AgentGatewayAdapter :50051]
                                                       │
                                                       ▼
-                                              symbolic_governor.validate_action()
+                                              SymbolicGovernor.validate_action()
                                               (full 8-tier CAGE pipeline: FTRA + 7 in-pipeline tiers)
                                                       │
                                   ┌───────────────────┼──────────────────────┐
@@ -96,6 +96,7 @@ from typing import Any
 from opentelemetry import trace
 
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger("Gateway.AgentGatewayAdapter")
 tracer = trace.get_tracer(__name__)
@@ -580,6 +581,8 @@ def _build_pause_response(
 async def handle_check_request(
     body: str | bytes,
     caller_principal: str = "",
+    *,
+    governor: SymbolicGovernor,
 ) -> dict[str, Any]:
     """Process an ext_authz CheckRequest and return a CheckResponse dict.
 
@@ -607,6 +610,7 @@ async def handle_check_request(
         body:             Raw JSON-RPC 2.0 body from the CheckRequest.
         caller_principal: SPIFFE ID or OIDC sub from the mTLS peer certificate
                           (used for OPA agent catalog lookup).
+        governor:         The assembled governor that evaluates the call.
 
     Returns:
         CheckResponse dict with either ``ok_response`` or ``denied_response``.
@@ -644,9 +648,7 @@ async def handle_check_request(
         span.set_attribute("cage.deployment_region", _DEPLOYMENT_REGION)
 
         try:
-            from src.gateway.governance.singletons import symbolic_governor
-
-            result = await symbolic_governor.validate_action(
+            result = await governor.validate_action(
                 action=tool_name,
                 params=params,
             )
@@ -811,7 +813,7 @@ async def handle_check_request(
 
             # Phase 1.3 Backward Compatibility: When CAGE_NARROW_ENABLED=false,
             # NARROW falls back to DEFER or DENY for gradual rollout safety.
-            # Note: This check is redundant with symbolic_governor's check, but
+            # Note: This check is redundant with the governor's check, but
             # provides defense-in-depth at the HTTP layer.
             if not _NARROW_ENABLED:
                 logger.warning(
@@ -908,7 +910,7 @@ async def handle_check_request(
 
             # Phase 1.4 Backward Compatibility: When CAGE_PAUSE_ENABLED=false,
             # PAUSE falls back to DENY for gradual rollout safety.
-            # Note: This check is redundant with symbolic_governor's check, but
+            # Note: This check is redundant with the governor's check, but
             # provides defense-in-depth at the HTTP layer.
             if not _PAUSE_ENABLED:
                 logger.warning(
@@ -1104,6 +1106,9 @@ class CAGEAuthorizationServicer:
     identical to standard Envoy ext_authz.
     """
 
+    def __init__(self, governor: SymbolicGovernor) -> None:
+        self._governor = governor
+
     async def Check(self, request: Any, context: Any) -> Any:
         """Handle an ext_authz CheckRequest.
 
@@ -1166,7 +1171,7 @@ class CAGEAuthorizationServicer:
             )
             return _dict_to_check_response(response_dict)
 
-        response_dict = await handle_check_request(body, caller_principal)
+        response_dict = await handle_check_request(body, caller_principal, governor=self._governor)
         return _dict_to_check_response(response_dict)
 
 
@@ -1194,7 +1199,7 @@ def _dict_to_check_response(response_dict: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-async def serve_agent_gateway(port: int = _DEFAULT_GRPC_PORT) -> Any:
+async def serve_agent_gateway(governor: SymbolicGovernor, port: int = _DEFAULT_GRPC_PORT) -> Any:
     """Start the async gRPC server for the ext_authz Authorization service.
 
     Called from ``hybrid_server.py`` ``_gateway_lifespan()`` startup block.
@@ -1216,6 +1221,7 @@ async def serve_agent_gateway(port: int = _DEFAULT_GRPC_PORT) -> Any:
     ``infra/`` Terraform modules — not in this file.
 
     Args:
+        governor: The assembled governor the servicer evaluates calls with.
         port: gRPC listen port (default: ``AGENT_GW_GRPC_PORT`` env var or 50051).
 
     Returns:
@@ -1234,7 +1240,7 @@ async def serve_agent_gateway(port: int = _DEFAULT_GRPC_PORT) -> Any:
             "Install it with: pip install grpcio"
         ) from exc
 
-    servicer = CAGEAuthorizationServicer()
+    servicer = CAGEAuthorizationServicer(governor)
 
     server = grpc.aio.server()
 

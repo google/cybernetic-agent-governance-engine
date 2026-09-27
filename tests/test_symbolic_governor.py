@@ -21,7 +21,8 @@ from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
-from src.gateway.governance import GovernanceError, SymbolicGovernor
+from src.gateway.governance import GovernanceError
+from tests.fixtures.governor import make_governor
 
 pytestmark = pytest.mark.unit
 
@@ -95,11 +96,11 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe, classification_
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -121,11 +122,11 @@ async def test_symbolic_governor_confidence_fail(mock_ftra_safe, classification_
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -154,11 +155,11 @@ async def test_symbolic_governor_opa_fail(mock_ftra_safe, classification_engine)
 
     consensus_engine = AsyncMock()
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -187,11 +188,11 @@ async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe, classi
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -219,11 +220,11 @@ async def test_symbolic_governor_opa_governance_violation_non_governed_action(
     safety_filter = AsyncMock()
     consensus_engine = AsyncMock()
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -247,11 +248,11 @@ async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe, cla
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=AsyncMock(),
-        classification_engine=classification_engine,
+        consensus=AsyncMock(),
+        classifier=classification_engine,
         domain_tiers=(CBFTierPlugin(safety_filter),),
     )
 
@@ -278,11 +279,11 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe, classi
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -324,11 +325,11 @@ async def test_symbolic_governor_cbf_fail(mock_ftra_safe, classification_engine)
 
     consensus_engine = AsyncMock()
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -358,11 +359,11 @@ async def test_symbolic_governor_consensus_fail(mock_ftra_safe, classification_e
         "reason": "Too risky",
     }
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -412,11 +413,11 @@ class TestSymbolicGovernorDefer:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -454,11 +455,11 @@ class TestSymbolicGovernorDefer:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -523,11 +524,11 @@ class TestSymbolicGovernorNarrow:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -547,7 +548,7 @@ class TestSymbolicGovernorNarrow:
         }
 
         with patch.object(
-            governor, "validate_action", AsyncMock(return_value=narrow_result)
+            type(governor), "validate_action", AsyncMock(return_value=narrow_result)
         ):
             result = await governor.validate_action("execute_trade", {})
 
@@ -579,11 +580,11 @@ class TestSymbolicGovernorNarrow:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -603,7 +604,7 @@ class TestSymbolicGovernorNarrow:
         }
 
         with patch.object(
-            governor, "validate_action", AsyncMock(return_value=narrow_result)
+            type(governor), "validate_action", AsyncMock(return_value=narrow_result)
         ):
             result = await governor.validate_action("execute_trade", {})
 
@@ -633,11 +634,11 @@ class TestSymbolicGovernorNarrow:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -657,7 +658,7 @@ class TestSymbolicGovernorNarrow:
         }
 
         with patch.object(
-            governor, "validate_action", AsyncMock(return_value=narrow_result)
+            type(governor), "validate_action", AsyncMock(return_value=narrow_result)
         ):
             result = await governor.validate_action("execute_trade", {})
 
@@ -704,11 +705,11 @@ class TestSymbolicGovernorPause:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -729,7 +730,7 @@ class TestSymbolicGovernorPause:
         }
 
         with patch.object(
-            governor, "validate_action", AsyncMock(return_value=pause_result)
+            type(governor), "validate_action", AsyncMock(return_value=pause_result)
         ):
             result = await governor.validate_action("execute_trade", {})
 
@@ -761,11 +762,11 @@ class TestSymbolicGovernorPause:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -787,7 +788,7 @@ class TestSymbolicGovernorPause:
         }
 
         with patch.object(
-            governor, "validate_action", AsyncMock(return_value=pause_result)
+            type(governor), "validate_action", AsyncMock(return_value=pause_result)
         ):
             result = await governor.validate_action("execute_trade", {})
 
@@ -821,11 +822,11 @@ class TestValidateActionDecisionRouting:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -855,11 +856,11 @@ class TestValidateActionDecisionRouting:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -886,11 +887,11 @@ class TestValidateActionDecisionRouting:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -958,11 +959,11 @@ class TestPipelineReorderZeroBudgetLeakage:
             "reason": "Multi-agent disagreement on trade parameters",
         }
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -1014,11 +1015,11 @@ class TestPipelineReorderZeroBudgetLeakage:
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -1059,11 +1060,11 @@ class TestPipelineReorderZeroBudgetLeakage:
 
         consensus_engine = AsyncMock()
 
-        governor = SymbolicGovernor(
-            opa_client=opa_client,
+        governor = make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -1128,11 +1129,11 @@ class TestPipelineReorderZeroBudgetLeakage:
             ttl_seconds=300,
         )
 
-        governor = SymbolicGovernor(
-            opa_client,
-            safety_filter,
-            consensus_engine,
-            classification_engine=classification_engine,
+        governor = make_governor(
+            opa=opa_client,
+            safety_filter=safety_filter,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
@@ -1185,11 +1186,11 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
         )
     ], None)
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=AsyncMock(),
-        classification_engine=classification_engine,
+        consensus=AsyncMock(),
+        classifier=classification_engine,
         domain_tiers=(CBFTierPlugin(safety_filter), fiscal_tier),
     )
 

@@ -19,7 +19,9 @@ Covers:
   - signing_algorithm property (HMAC fallback vs KMS mode)
   - sign() OTel span attributes in both modes
   - _hmac_sign() CRITICAL log emission in degraded state
-  - assert_kms_active_in_production() environment-gated enforcement
+  - startup posture ``kms_signing_mode`` check (governor/posture.py) against a
+    real signer: HMAC fallback refused under enforcing postures, logged under
+    DEV/TEST/CI
   - from_env() fallback paths (no key set, ImportError)
 """
 
@@ -317,131 +319,116 @@ def test_sign_raises_when_kms_inactive_no_fallback():
 
 
 # ---------------------------------------------------------------------------
-# assert_kms_active_in_production()
+# Startup posture: kms_signing_mode (K3) against a real KMSGovernanceSigner
 # ---------------------------------------------------------------------------
 
-
-def test_assert_kms_active_does_not_raise_in_development():
-    """assert_kms_active_in_production() does NOT raise when CAGE_ENV=development, even if KMS is inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
-
-    with (
-        patch.dict(os.environ, {"CAGE_ENV": "development"}, clear=False),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.kms_signer import assert_kms_active_in_production
-
-        # Should not raise
-        assert_kms_active_in_production()
+_KEY_NAME = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
 
 
-def test_assert_kms_active_does_not_raise_in_test_env():
-    """assert_kms_active_in_production() does NOT raise when CAGE_ENV=test, even if KMS is inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
-
-    with (
-        patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.kms_signer import assert_kms_active_in_production
-
-        assert_kms_active_in_production()
+class _HealthyRedis:
+    def ping_ready(self) -> None:
+        return None
 
 
-def test_assert_kms_active_does_not_raise_in_ci_env():
-    """assert_kms_active_in_production() does NOT raise when CAGE_ENV=ci, even if KMS is inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
+@pytest.fixture()
+def posture_probes(monkeypatch):
+    """Every startup probe except the signer healthy; tests choose the signer."""
+    from src.gateway.governance.governor import posture as posture_mod
 
-    with (
-        patch.dict(os.environ, {"CAGE_ENV": "ci"}, clear=False),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.kms_signer import assert_kms_active_in_production
+    monkeypatch.setattr(posture_mod, "_redis", lambda: _HealthyRedis())
+    monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
+    monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
 
-        assert_kms_active_in_production()
+    def use_signer(signer):
+        monkeypatch.setattr(posture_mod, "_signer", lambda: signer)
+
+    return use_signer
 
 
-def test_assert_kms_active_raises_in_production_when_kms_inactive():
-    """assert_kms_active_in_production() raises RuntimeError when CAGE_ENV=production and KMS is inactive."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
+def _components(posture):
+    from tests.fixtures.governor import make_governor
 
-    env_overrides = {"CAGE_ENV": "production"}
-    # Remove ENVIRONMENT to avoid it overriding CAGE_ENV logic
-    env_without_environment = {
-        k: v for k, v in os.environ.items() if k != "ENVIRONMENT"
-    }
-    env_without_environment.update(env_overrides)
-
-    with (
-        patch.dict(os.environ, env_without_environment, clear=True),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.kms_signer import assert_kms_active_in_production
-
-        with pytest.raises(RuntimeError, match="HMAC fallback mode"):
-            assert_kms_active_in_production()
+    return make_governor(posture=posture).components
 
 
-def test_assert_kms_active_does_not_raise_in_production_when_kms_active():
-    """assert_kms_active_in_production() does NOT raise when CAGE_ENV=production and KMS IS active."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = True
+@pytest.mark.parametrize("posture_name", ["DEV", "TEST", "CI"])
+def test_hmac_fallback_signer_is_permitted_but_logged_in_permissive_posture(
+    posture_probes, caplog, posture_name
+):
+    """An HMAC-fallback signer does not abort DEV/TEST/CI startup; it logs CRITICAL."""
+    import logging
 
-    env_overrides = {"CAGE_ENV": "production"}
-    env_without_environment = {
-        k: v for k, v in os.environ.items() if k != "ENVIRONMENT"
-    }
-    env_without_environment.update(env_overrides)
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.posture import assert_production_posture
 
-    with (
-        patch.dict(os.environ, env_without_environment, clear=True),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.kms_signer import assert_kms_active_in_production
+    posture = DeploymentPosture[posture_name]
+    signer = _make_signer(kms_client=None, key_version_name="")
+    assert signer.is_kms_active is False
+    posture_probes(signer)
 
-        # Should not raise
-        assert_kms_active_in_production()
+    with caplog.at_level(logging.CRITICAL):
+        assert_production_posture(posture, components=_components(posture))
+
+    checks = [
+        json.loads(r.getMessage())["check"]
+        for r in caplog.records
+        if r.levelno == logging.CRITICAL and "CAGE_POSTURE_CHECK_FAILED" in r.getMessage()
+    ]
+    assert checks == ["kms_signing_mode"]
 
 
-def test_assert_kms_active_raises_uses_environment_fallback():
-    """assert_kms_active_in_production() uses ENVIRONMENT var when CAGE_ENV is not set."""
-    mock_signer = MagicMock()
-    mock_signer.is_kms_active = False
+@pytest.mark.parametrize("posture_name", ["PRODUCTION", "STAGING", "LOCAL"])
+def test_hmac_fallback_signer_refuses_enforcing_posture(posture_probes, posture_name):
+    """An HMAC-fallback signer aborts startup under every enforcing posture."""
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.posture import (
+        PostureViolation,
+        assert_production_posture,
+    )
 
-    # Clear CAGE_ENV, set ENVIRONMENT=production
+    posture = DeploymentPosture[posture_name]
+    posture_probes(_make_signer(kms_client=None, key_version_name=""))
+
+    with pytest.raises(PostureViolation, match="kms_signing_mode: governance signer is in HMAC fallback mode"):
+        assert_production_posture(posture, components=_components(posture))
+
+
+def test_kms_active_signer_passes_kms_signing_mode_check(posture_probes):
+    """A KMS-backed signer satisfies the kms_signing_mode check in production."""
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor import posture as posture_mod
+
+    signer = _make_signer(kms_client=MagicMock(), key_version_name=_KEY_NAME)
+    assert signer.is_kms_active is True
+    posture_probes(signer)
+
+    kms_signing_mode = dict(posture_mod.CHECKS)["kms_signing_mode"]
+    kms_signing_mode(_components(DeploymentPosture.PRODUCTION))  # must not raise
+
+
+def test_hmac_fallback_refused_when_posture_comes_from_environment_fallback(posture_probes):
+    """With CAGE_ENV unset, ENVIRONMENT=production resolves an enforcing posture
+    and the HMAC-fallback signer is refused."""
+    from src.gateway.governance.env_posture import (
+        DeploymentPosture,
+        is_enforcing,
+        resolve_posture,
+    )
+    from src.gateway.governance.governor.posture import (
+        PostureViolation,
+        assert_production_posture,
+    )
+
+    posture_probes(_make_signer(kms_client=None, key_version_name=""))
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["ENVIRONMENT"] = "production"
 
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-    ):
-        from src.gateway.governance.kms_signer import assert_kms_active_in_production
-
-        with pytest.raises(RuntimeError):
-            assert_kms_active_in_production()
+    with patch.dict(os.environ, env, clear=True):
+        posture = resolve_posture()
+        assert posture is DeploymentPosture.PRODUCTION
+        assert is_enforcing(posture)
+        with pytest.raises(PostureViolation, match="kms_signing_mode"):
+            assert_production_posture(posture, components=_components(posture))
 
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_
 from src.governed_financial_advisor.graph.state import AgentState
 
 # R-11 / POAM-024: In out-of-process PEP/PDP architecture, CageClient delegates
-# policy evaluation to the CAGE Gateway's symbolic_governor PDP.
+# policy evaluation to the CAGE Gateway's SymbolicGovernor PDP.
 logger = logging.getLogger("SafetyNode")
 
 # Policy-probing attack mitigation constant (ADR-008)

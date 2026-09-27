@@ -21,8 +21,8 @@ components to the kernel without hardcoding dependencies:
    mappings without hardcoding paths in the kernel
 2. Background task registry: Plugins contribute long-running coroutines
    without direct imports in hybrid_server.py
-3. Singleton installation: Plugins install safety filters and consensus
-   providers via install_domain_components()
+3. Governor assembly: plugins contribute safety filters and consensus
+   providers as data; assemble_governor() fills the engine slots
 
 Markers: pytest.mark.local, pytest.mark.unit
 """
@@ -30,7 +30,7 @@ Markers: pytest.mark.local, pytest.mark.unit
 import asyncio
 import logging
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -66,19 +66,18 @@ class TestOverlayRegistry:
         # but not increase after the second
         assert count_after_second == count_after_first
 
-    def test_cage_finance_registers_overlay_dir(self):
-        """Verify that cage_finance plugin registers its overlay directory."""
-        from src.gateway.governance.constants import _OVERLAY_DIRS
+    def test_cage_finance_contributes_overlay_dir(self):
+        """cage_finance contributes its overlay directory as data (the server lifespan registers it)."""
+        from src.cage_finance.plugin import FinanceCagePlugin
 
-        # The plugin is already registered during module import in most test runs.
-        # Just verify that the finance overlay directory is in the registry.
-        finance_overlay_found = any(
-            "cage_finance" in str(path) and "compliance" in str(path)
-            for path in _OVERLAY_DIRS
-        )
-        assert finance_overlay_found, (
-            "Finance plugin overlay directory not found in registry"
-        )
+        overlay_dirs = FinanceCagePlugin().contribute().compliance_overlay_dirs
+        finance_overlays = [
+            path
+            for path in overlay_dirs
+            if "cage_finance" in str(path) and "compliance" in str(path)
+        ]
+        assert finance_overlays, "Finance plugin contributes no compliance overlay directory"
+        assert all(path.is_dir() for path in finance_overlays)
 
 
 @pytest.mark.local
@@ -162,72 +161,89 @@ class TestBackgroundTaskRegistry:
         # Verify the log mentions the task name
         assert any("cage.bg.test_failing" in rec.message for rec in critical_logs)
 
-    def test_cage_finance_registers_audit_worker(self):
-        """Verify that cage_finance plugin registers the consensus audit worker."""
-        from src.gateway.governance.background_tasks import _STARTUP_TASKS
+    def test_cage_finance_contributes_audit_worker(self):
+        """cage_finance contributes the consensus audit worker as a named background task."""
+        from src.cage_finance.plugin import FinanceCagePlugin
 
-        # The plugin is already registered during module import in most test runs.
-        # Just verify that the audit worker is in the registry.
-        task_names = [name for name, _ in _STARTUP_TASKS]
-        assert "consensus_audit_worker" in task_names, (
-            "Consensus audit worker not registered"
+        background_tasks = FinanceCagePlugin().contribute().background_tasks
+        assert "consensus_audit_worker" in background_tasks, (
+            "Consensus audit worker not contributed"
         )
+        assert callable(background_tasks["consensus_audit_worker"])
+
+
+class _SlotPlugin:
+    """Minimal plugin contributing only engine slots (no tiers, no actions)."""
+
+    api_version = "1.0"
+    domain_config = None
+
+    def __init__(self, name: str, *, safety_filter=None, consensus=None) -> None:
+        self.name = name
+        self._safety_filter = safety_filter
+        self._consensus = consensus
+
+    def contribute(self):
+        from src.gateway.governance.contracts import PluginContribution
+
+        return PluginContribution(
+            domain=self.name,
+            safety_filter=self._safety_filter,
+            consensus=self._consensus,
+        )
+
+
+def _assemble(plugins):
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.assembly import (
+        DecisionFlags,
+        assemble_governor,
+    )
+    from tests.fixtures.governor import allow_opa, clean_stpa
+
+    return assemble_governor(
+        plugins,
+        posture=DeploymentPosture.DEV,
+        opa=allow_opa(),
+        stpa_validator=clean_stpa(),
+        flags=DecisionFlags(defer=True, narrow=False, pause=False),
+    )
 
 
 @pytest.mark.local
 @pytest.mark.unit
 class TestStartupReadinessAssertions:
-    """Test suite for startup readiness assertions (T-B3)."""
+    """Test suite for engine-slot readiness at governor assembly (T-B3)."""
 
-    @pytest.mark.skip(
-        reason="Test execution order dependent - plugin may already be installed"
-    )
-    def test_has_null_components_detects_null_filter(self):
-        """Verify that _has_null_components correctly identifies null safety filter.
-
-        NOTE: Skipped because in most test runs the finance plugin is already installed,
-        so safety_filter is not null. This test would pass in bare-kernel mode only.
-        """
+    def test_bare_kernel_reports_null_slots(self):
+        """With no plugin contributions, both engine slots stay deny-by-default nulls."""
         from src.gateway.governance.null_components import NullSafetyFilter
-        from src.gateway.governance.singletons import (
-            _has_null_components,
-            safety_filter,
+
+        governor = _assemble([])
+        assert governor.components.unfilled_slots == ("safety_filter", "consensus")
+        assert isinstance(governor.components.safety_filter, NullSafetyFilter)
+
+    def test_contribution_replaces_null_objects(self):
+        """A plugin's safety filter and consensus provider fill the engine slots."""
+        safety_filter = MagicMock(name="safety_filter")
+        consensus = MagicMock(name="consensus")
+
+        governor = _assemble(
+            [_SlotPlugin("slots", safety_filter=safety_filter, consensus=consensus)]
         )
 
-        # If the current safety_filter is a NullSafetyFilter, _has_null_components should return True
-        is_null = isinstance(safety_filter, NullSafetyFilter)
-        detected_null = _has_null_components()
+        assert governor.components.safety_filter is safety_filter
+        assert governor.components.consensus is consensus
+        assert governor.components.unfilled_slots == ()
 
-        # The detection should match the actual type
-        assert detected_null == is_null, "_has_null_components detection mismatch"
+    def test_two_plugins_filling_same_slot_fail_closed(self):
+        """A slot may be filled once; a second contribution is rejected at assembly."""
+        from src.gateway.governance.governor.assembly import GovernorAssemblyError
 
-    def test_install_domain_components_replaces_null_objects(self):
-        """Verify that install_domain_components correctly replaces null objects."""
-        from src.gateway.governance.null_components import NullSafetyFilter
-        from src.gateway.governance.singletons import (
-            _has_null_components,
-            install_domain_components,
-            safety_filter,
-        )
-
-        # Check current state
-        has_nulls_before = _has_null_components()
-
-        if has_nulls_before:
-            # Mock a real safety filter (use null as a stand-in for this test)
-            mock_filter = NullSafetyFilter()
-
-            # Install should succeed
-            install_domain_components(safety_filter_impl=mock_filter)
-
-            # After installation, the filter should be the mock (not the original null)
-            # NOTE: Since we're using NullSafetyFilter as the mock, this is a weak test
-            # but it verifies the mechanism works without importing cage_finance
-            assert safety_filter is mock_filter or isinstance(
-                safety_filter, NullSafetyFilter
+        with pytest.raises(GovernorAssemblyError, match="slot collision"):
+            _assemble(
+                [
+                    _SlotPlugin("first", safety_filter=MagicMock()),
+                    _SlotPlugin("second", safety_filter=MagicMock()),
+                ]
             )
-        else:
-            # Components already installed, verify that we can't install again
-            mock_filter = NullSafetyFilter()
-            with pytest.raises(RuntimeError, match="already installed"):
-                install_domain_components(safety_filter_impl=mock_filter)

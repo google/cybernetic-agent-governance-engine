@@ -28,6 +28,7 @@ import pytest
 
 from src.gateway.governance.contracts import GovernanceTierPlugin
 from src.gateway.governance.governor.governor import SymbolicGovernor
+from tests.fixtures.governor import make_governor
 
 
 class MockTier(GovernanceTierPlugin):
@@ -62,14 +63,11 @@ class MockTier(GovernanceTierPlugin):
 @pytest.fixture
 def mock_governor(classification_engine) -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies and a mock tier."""
-    opa_client = MagicMock()
-    safety_filter = MagicMock()
-    consensus_engine = MagicMock()
-    return SymbolicGovernor(
-        opa_client,
-        safety_filter,
-        consensus_engine,
-        classification_engine=classification_engine,
+    return make_governor(
+        opa=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus=MagicMock(),
+        classifier=classification_engine,
         domain_tiers=(MockTier(),),
     )
 

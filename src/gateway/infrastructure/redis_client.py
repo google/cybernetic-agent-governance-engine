@@ -488,7 +488,7 @@ def get_redis_client() -> "_SyncRedisClient":  # type: ignore[name-defined]
     """Return the module-level synchronous Redis client singleton.
 
     Use this factory for startup readiness probes and any synchronous
-    context (e.g. startup assertions in governor/_legacy_startup.py).
+    context (e.g. ``governor.posture.assert_production_posture``).
     The async ``redis_client`` singleton is preferred for all async paths.
 
     Raises:

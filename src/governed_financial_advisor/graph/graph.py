@@ -58,6 +58,7 @@ LangGraph 1.1 Notes:
 """
 
 import os
+from typing import TYPE_CHECKING
 
 from langgraph.graph import END, StateGraph
 
@@ -66,9 +67,9 @@ from src.gateway.governance.ftra.node_factory import create_ftra_node, route_aft
 from .annotations import SIDE_EFFECT_REGISTRY
 from .checkpointer import get_checkpointer
 from .nodes.agent_nodes import (
+    create_governed_trader_node,
     data_analyst_node,
     execution_analyst_node,
-    governed_trader_node,
 )
 from .nodes.approval_node import approval_node
 from .nodes.defer_node import defer_node
@@ -78,6 +79,9 @@ from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
 from .nodes.safety_node import safety_check_node
 from .nodes.supervisor_node import doer_node, thinker_node
 from .state import AgentState
+
+if TYPE_CHECKING:
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 def get_side_effect_topology() -> dict[str, dict]:
@@ -111,13 +115,17 @@ def get_side_effect_topology() -> dict[str, dict]:
     }
 
 
-def _build_workflow() -> StateGraph:
+def _build_workflow(governor: "SymbolicGovernor") -> StateGraph:
     """Build the pure graph topology without checkpointer or compilation.
 
     This is the extracted workflow construction step used by both
     create_graph() (Redis-checkpointed) and create_uncheckpointed_graph()
     (LangGraph SDK delegated state). It defines the complete node set and
     edge routing logic, returning an uncompiled StateGraph instance.
+
+    Args:
+        governor: The composition-root ``SymbolicGovernor`` used by the
+            governed-trader subgraph's post-HITL re-validation.
 
     Returns:
         StateGraph: Uncompiled workflow topology ready for .compile().
@@ -144,7 +152,7 @@ def _build_workflow() -> StateGraph:
     workflow.add_node("defer_node", defer_node)
     # Phase 2.1: Dynamic approval node with runtime interrupt() — inserted BEFORE governed_trader
     workflow.add_node("approval_node", approval_node)
-    workflow.add_node("governed_trader", governed_trader_node)
+    workflow.add_node("governed_trader", create_governed_trader_node(governor))
     workflow.add_node("explainer", explainer_node)
     # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path
     workflow.add_node("nemo_output_rail", nemo_output_rail_node)
@@ -293,14 +301,16 @@ def _build_workflow() -> StateGraph:
     return workflow
 
 
-def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
+def create_graph(governor: "SymbolicGovernor", redis_url=None):  # type: ignore[no-untyped-def]
     """Create a compiled graph with Redis checkpointer (production/test mode).
 
-    This is the backward-compatible entry point used by existing tests and the
-    standalone server. It calls _build_workflow() to construct the topology,
-    then compiles with a Redis-backed checkpointer (or MemorySaver fallback).
+    Used by the standalone server, whose lifespan builds ``governor`` via
+    ``bootstrap_governor()``. It calls _build_workflow() to construct the
+    topology, then compiles with a Redis-backed checkpointer (or MemorySaver
+    fallback).
 
     Args:
+        governor: The composition-root ``SymbolicGovernor``.
         redis_url: Optional Redis connection URL. Falls back to MemorySaver if None.
 
     Returns:
@@ -308,7 +318,7 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
         ``approval_node`` calls ``interrupt()`` at runtime rather than the
         graph declaring ``interrupt_before`` at compile time.
     """
-    workflow = _build_workflow()
+    workflow = _build_workflow(governor)
 
     # ARCH-04: Use the Redis-backed checkpointer configured via get_checkpointer().
     # Falls back gracefully to MemorySaver when redis_url is None (local dev/test).
@@ -345,7 +355,9 @@ def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
     This entry point is used by the LangGraph SDK local development server
     (langgraph.json). It delegates all state persistence to the LangGraph
     Server's own in-memory or Redis-backed checkpointer, avoiding double
-    checkpointing. The HITL gate at ``approval_node`` still suspends the graph,
+    checkpointing. The LangGraph server calls this factory with no arguments,
+    so it is itself a composition root: it builds the governor via
+    ``bootstrap_governor()``. The HITL gate at ``approval_node`` still suspends the graph,
     because it uses the dynamic ``interrupt()`` primitive rather than a
     compile-time ``interrupt_before`` declaration.
 
@@ -353,7 +365,9 @@ def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
         Compiled graph with no checkpointer.  Dynamic ``interrupt()``
         suspension remains active; resume with ``Command(resume={...})``.
     """
-    workflow = _build_workflow()
+    from src.gateway.governance.governor.bootstrap import bootstrap_governor
+
+    workflow = _build_workflow(bootstrap_governor())
 
     # Phase 2.1: Removed static interrupt_before — approval_node uses dynamic interrupt()
     return workflow.compile()

@@ -86,6 +86,15 @@ class TestIrreversibilityClassifier:
             classifier.classify("execute_trade")
             == TerminalClassification.IRREVERSIBLE_TERMINAL
         )
+
+    def test_removed_write_db_action_fails_closed(self):
+        """write_db was removed from the finance registry; it must now classify
+        through the fail-closed unregistered default, not a registry entry."""
+        from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
+        from src.gateway.governance.ftra.models import TerminalClassification
+
+        classifier = IrreversibilityClassifier()
+        assert "write_db" not in classifier.known_actions()
         assert (
             classifier.classify("write_db")
             == TerminalClassification.IRREVERSIBLE_TERMINAL
@@ -158,7 +167,7 @@ class TestIrreversibilityClassifier:
         classifier = IrreversibilityClassifier()
         known = classifier.known_actions()
         assert "execute_trade" in known
-        assert "write_db" in known
+        assert "write_db" not in known
         assert "prompt_injection_check" in known
 
     def test_custom_registry_path_overrides_default(self, tmp_path):

@@ -42,7 +42,6 @@
 | `src/gateway/governance/oscal_ssp_exporter.py` | 799 | OSCAL filesystem writes |
 | `src/gateway/governance/hitl_escalator.py` | 370 | HITL SLA / citations |
 | `src/gateway/governance/constants.py` | 455 | ControlRegistry JSON load |
-| `src/gateway/governance/singletons.py` | 84 | Redis client init |
 | `src/gateway/governance/safety/cbf_engine.py` | 290 | Redis cash-balance state |
 | `src/gateway/governance/governor/governor.py` | 876 | Governance orchestration |
 | `src/gateway/governance/provenance_chain.py` | 225 | Hash chain (pure computation) |
@@ -302,10 +301,10 @@ No `CAGE_DEPLOYMENT_REGION` check. The Redis stream key `iso_control:audit_trail
 
 ---
 
-### GAP-03 — `redis_client.py` / `singletons.py`: Single Redis Instance for All Regions ⚠️ HIGH
+### GAP-03 — `redis_client.py`: Single Redis Instance for All Regions ⚠️ HIGH
 
-**Files:** `src/gateway/infrastructure/redis_client.py`, `src/gateway/governance/singletons.py`
-**Lines:** `redis_client.py` 59–86; `singletons.py` 38–54
+**File:** `src/gateway/infrastructure/redis_client.py`
+**Lines:** `redis_client.py` 59–86
 **Sink type:** Redis connection (all Redis writes flow through this)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
 **Verdict:** ❌ GAP — HIGH
@@ -316,12 +315,6 @@ No `CAGE_DEPLOYMENT_REGION` check. The Redis stream key `iso_control:audit_trail
 _REDIS_URL: str = os.environ.get("REDIS_URL", "")
 _REDIS_HOST: str = os.environ.get("REDIS_HOST", "localhost")
 _REDIS_PORT: int = int(os.environ.get("REDIS_PORT", "6379"))
-# No CAGE_DEPLOYMENT_REGION check
-```
-
-```python
-# singletons.py lines 38-54
-redis_url = os.environ.get("REDIS_URL", os.environ.get("REDIS_HOST", "localhost"))
 # No CAGE_DEPLOYMENT_REGION check
 ```
 

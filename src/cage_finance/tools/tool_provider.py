@@ -23,13 +23,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.market_service import get_market_data
-from src.gateway.governance.contracts import DomainToolProvider
+from src.gateway.governance.contracts import DomainToolProvider, SafetyFilter
 from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.seams.actuation import ExecutionClearance
-from src.gateway.governance.singletons import symbolic_governor
 from src.gateway.server.governance_middleware import enforce_governance
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,9 @@ async def execute_trade_action(
     trader_id: str = "agent_001",
     trader_role: str = "junior",
     dry_run: bool = False,
+    *,
+    governor: "SymbolicGovernor",
+    safety_filter: SafetyFilter,
 ) -> str:
     """Execute a financial trade under strict governance.
 
@@ -70,6 +74,8 @@ async def execute_trade_action(
         trader_id: Identifier of the requesting agent or user.
         trader_role: RBAC role used for fiscal-limit enforcement.
         dry_run: When True, governance checks run but no broker call is made.
+        governor: The assembled governor that must seal the trade.
+        safety_filter: The CBF whose state is restored if actuation fails.
     """
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -98,7 +104,7 @@ async def execute_trade_action(
 
     # Step 1: Enforce governance and obtain seal
     try:
-        governance_result = await enforce_governance("execute_trade", params)
+        governance_result = await enforce_governance(governor, "execute_trade", params)
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
 
@@ -230,14 +236,14 @@ async def execute_trade_action(
 
         if not receipt.accepted:
             # Actuation rejected — rollback state if possible
-            if hasattr(symbolic_governor.safety_filter, "rollback_state"):
+            if hasattr(safety_filter, "rollback_state"):
                 raw_amt = action_params.get("amount")
                 rollback_amt = (
                     float(raw_amt)
                     if isinstance(raw_amt, (int, float, str))
                     else float(amount)
                 )
-                await symbolic_governor.safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
+                await safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
 
             # Format findings for error message
             findings_str = "; ".join(
@@ -255,21 +261,41 @@ async def execute_trade_action(
         raise
     except Exception as exc:
         logger.error("Actuation error: %s", exc)
-        if hasattr(symbolic_governor.safety_filter, "rollback_state"):
+        if hasattr(safety_filter, "rollback_state"):
             raw_amt = action_params.get("amount")
             rollback_amt = (
                 float(raw_amt)
                 if isinstance(raw_amt, (int, float, str))
                 else float(amount)
             )
-            await symbolic_governor.safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
+            await safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
         return f"ERROR: {exc}"
 
 
 class FinancialToolProvider(DomainToolProvider):
-    def register_tools(self, server: "FastMCP") -> None:
-        # Register execute_trade_action as MCP tool
-        server.tool()(execute_trade_action)
+    def __init__(self, *, safety_filter: SafetyFilter) -> None:
+        self._safety_filter = safety_filter
+
+    def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
+        safety_filter = self._safety_filter
+
+        # The MCP schema must expose only the agent-facing parameters, so the
+        # governor and safety filter are bound here rather than in the signature.
+        @server.tool(name="execute_trade_action", description=execute_trade_action.__doc__)
+        async def _execute_trade_tool(
+            symbol: str,
+            amount: float,
+            currency: str,
+            confidence: float = 0.0,
+            transaction_id: str | None = None,
+            trader_id: str = "agent_001",
+            trader_role: str = "junior",
+            dry_run: bool = False,
+        ) -> str:
+            return await execute_trade_action(
+                symbol, amount, currency, confidence, transaction_id, trader_id, trader_role, dry_run,
+                governor=governor, safety_filter=safety_filter,
+            )
 
         @server.tool()
         async def check_market_status(symbol: str) -> str:

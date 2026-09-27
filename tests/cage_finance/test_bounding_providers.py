@@ -300,7 +300,7 @@ class TestProviderIntegrationScenarios:
         # Contract will check: supported and max_window_seconds >= requested_window
 
     def test_all_stub_providers_can_be_instantiated_together(self):
-        """All stub providers can coexist in the same process (no singletons)."""
+        """All stub providers can coexist in the same process (no shared module state)."""
         market_provider = StubMarketDataProvider()
         rollback_provider = StubRollbackCapabilityProvider()
 

@@ -25,7 +25,8 @@ import pytest
 
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
-from src.gateway.governance import GovernanceError, SymbolicGovernor
+from src.gateway.governance import GovernanceError
+from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -78,11 +79,11 @@ async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe, classifi
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -128,11 +129,11 @@ async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe, classification_engin
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -180,11 +181,11 @@ async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe, classification_engi
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -238,11 +239,11 @@ async def test_h3_confidence_nan_blocks(mock_ftra_safe, classification_engine):
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),

@@ -104,7 +104,8 @@ jobs:
         run: |
           # Ensure core governance modules import cleanly without torch/transformers
           python -c "
-          from src.gateway.governance.symbolic_governor import SymbolicGovernor
+          from src.gateway.governance.governor.governor import SymbolicGovernor
+          from src.gateway.governance.governor.assembly import assemble_governor
           from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
           from src.gateway.governance.routing_seal import generate_seal, verify_seal
           from src.gateway.governance.consequence_gateway import ConsequenceGateway

@@ -67,6 +67,7 @@ import hashlib
 import hmac
 import json
 import os
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -112,10 +113,30 @@ def _json_body(
 # ---------------------------------------------------------------------------
 
 
+def _mock_governor() -> MagicMock:
+    """A governor mock that passes ``governor_of``'s ``SymbolicGovernor`` check."""
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
+    return MagicMock(spec=SymbolicGovernor)
+
+
+@contextmanager
+def _installed_governor(gov: Any):
+    """Temporarily set ``governance_app.state.governor`` to ``gov``."""
+    from src.gateway.server.governance_middleware import governance_app
+
+    previous = getattr(governance_app.state, "governor", None)
+    governance_app.state.governor = gov
+    try:
+        yield gov
+    finally:
+        governance_app.state.governor = previous
+
+
 @pytest.fixture()
 def mock_symbolic_governor():
-    """Patch the symbolic_governor singleton used by governance_middleware."""
-    gov = MagicMock()
+    """Install a mock governor on ``governance_app.state`` (where the lifespan puts it)."""
+    gov = _mock_governor()
     gov.verify = AsyncMock(
         return_value={"violations": [], "opa_results": {"allow": True}}
     )
@@ -127,7 +148,7 @@ def mock_symbolic_governor():
             "latency_ms": 1.0,
         }
     )
-    with patch("src.gateway.server.governance_middleware.symbolic_governor", gov):
+    with _installed_governor(gov):
         yield gov
 
 
@@ -250,7 +271,7 @@ class TestGovernanceCheckEndpoint:
     def test_check_returns_rejected_when_violations_present(
         self, enforce_client, mock_symbolic_governor
     ):
-        """When symbolic_governor.verify() returns violations, status is REJECTED."""
+        """When governor.verify() returns violations, status is REJECTED."""
         from src.gateway.governance.contracts import Violation, ViolationKind
 
         mock_symbolic_governor.verify = AsyncMock(
@@ -929,7 +950,7 @@ class TestStartupValidation:
     def test_missing_secret_raises_in_production_env(self):
         """RuntimeError is raised at import time when secret is absent in production."""
         # We cannot safely re-import the module in the same process (it would
-        # affect the already-imported singleton).  Instead we verify the guard
+        # affect the already-imported module state).  Instead we verify the guard
         # logic directly by calling the equivalent condition.
         #
         # The guard in governance_middleware.py is:
@@ -1003,27 +1024,28 @@ class TestEnforceGovernanceHelper:
         """Read-only exempt tools bypass governance and return an empty seal."""
         from src.gateway.server.governance_middleware import enforce_governance
 
-        seal = await enforce_governance("check_market_status", {"symbol": "AAPL"})
+        gov = _mock_governor()
+        seal = await enforce_governance(gov, "check_market_status", {"symbol": "AAPL"})
         assert seal == ""
+        gov.govern.assert_not_called()
 
     async def test_exempt_tool_verify_content_safety_returns_empty_seal(self):
         """verify_content_safety is also exempt from governance overhead."""
         from src.gateway.server.governance_middleware import enforce_governance
 
-        seal = await enforce_governance("verify_content_safety", {"text": "hello"})
+        gov = _mock_governor()
+        seal = await enforce_governance(gov, "verify_content_safety", {"text": "hello"})
         assert seal == ""
+        gov.govern.assert_not_called()
 
     async def test_non_exempt_tool_calls_governor_and_returns_seal(self):
-        """Non-exempt tools call symbolic_governor.govern() and return the seal."""
+        """Non-exempt tools call governor.govern() and return the seal."""
         from src.gateway.server.governance_middleware import enforce_governance
 
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.govern = AsyncMock(return_value="test-routing-seal-value")
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
-            seal = await enforce_governance("execute_trade", {"amount": 100})
+        seal = await enforce_governance(mock_gov, "execute_trade", {"amount": 100})
 
         assert seal == "test-routing-seal-value"
         mock_gov.govern.assert_awaited_once_with("execute_trade", {"amount": 100})
@@ -1033,16 +1055,13 @@ class TestEnforceGovernanceHelper:
         from src.gateway.governance.governor.governor import GovernanceError
         from src.gateway.server.governance_middleware import enforce_governance
 
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.govern = AsyncMock(side_effect=GovernanceError("policy_denied"))
 
         mock_signer = MagicMock()
         mock_signer.sign = MagicMock(return_value="sig")
 
         with (
-            patch(
-                "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-            ),
             patch(
                 "src.gateway.server.governance_middleware.get_governance_signer",
                 return_value=mock_signer,
@@ -1053,7 +1072,7 @@ class TestEnforceGovernanceHelper:
             ),
         ):
             with pytest.raises(PermissionError, match="Governance Blocked"):
-                await enforce_governance("execute_trade", {"amount": 100})
+                await enforce_governance(mock_gov, "execute_trade", {"amount": 100})
 
 
 # ===========================================================================
@@ -1144,12 +1163,10 @@ class TestFlowSignalHttp202Receipt:
             "seal": "",
             "latency_ms": 5.2,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=flowsignal_result)
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
+        with _installed_governor(mock_gov):
             resp = client_for_flowsignal.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 50000}},
@@ -1169,12 +1186,10 @@ class TestFlowSignalHttp202Receipt:
             "seal": "",
             "latency_ms": 3.1,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=flowsignal_result)
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
+        with _installed_governor(mock_gov):
             resp = client_for_flowsignal.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 50000}},
@@ -1202,12 +1217,10 @@ class TestFlowSignalHttp202Receipt:
             "seal": "",
             "latency_ms": 2.0,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=result_with_marker)
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
+        with _installed_governor(mock_gov):
             resp = client_for_flowsignal.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 25000}},
@@ -1229,12 +1242,10 @@ class TestFlowSignalHttp202Receipt:
             "seal": "",
             "latency_ms": 1.5,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=regular_defer_result)
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
+        with _installed_governor(mock_gov):
             resp = client_for_flowsignal.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 1000}},
@@ -1263,12 +1274,10 @@ class TestFlowSignalHttp202Receipt:
             "seal": "",
             "latency_ms": 3.5,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=external_hold_no_marker)
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
+        with _installed_governor(mock_gov):
             resp = client_for_flowsignal.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 30000}},
@@ -1291,12 +1300,10 @@ class TestFlowSignalHttp202Receipt:
             "seal": "valid-seal",
             "latency_ms": 1.0,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=approved_result)
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ):
+        with _installed_governor(mock_gov):
             resp = client_for_flowsignal.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 100}},

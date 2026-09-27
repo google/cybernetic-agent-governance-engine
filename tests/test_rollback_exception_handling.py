@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.gateway.governance.contracts import Violation
-from src.gateway.governance.governor.governor import SymbolicGovernor
+from tests.fixtures.governor import make_governor
 
 # Hermetic: uses mock governor with mock tiers, no live services.
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -39,15 +39,6 @@ def mock_governor_with_tiers(classification_engine):
     """Create a governor with mock domain tiers for rollback testing."""
     mock_opa = Mock()
     mock_opa.evaluate_policy = AsyncMock(return_value={"allow": True})
-    mock_safety = AsyncMock()
-    mock_consensus = AsyncMock()
-
-    gov = SymbolicGovernor(
-        opa_client=mock_opa,
-        safety_filter=mock_safety,
-        consensus_engine=mock_consensus,
-        classification_engine=classification_engine,
-    )
 
     tier_a = Mock()
     tier_a.tier_name = "tier_a"
@@ -70,8 +61,13 @@ def mock_governor_with_tiers(classification_engine):
     tier_c.commit = AsyncMock()
     tier_c.rollback = AsyncMock()
 
-    gov._domain_tiers = [tier_a, tier_b, tier_c]
-    gov._committed_tiers = []
+    gov = make_governor(
+        opa=mock_opa,
+        safety_filter=AsyncMock(),
+        consensus=AsyncMock(),
+        classifier=classification_engine,
+        domain_tiers=[tier_a, tier_b, tier_c],
+    )
 
     return gov, tier_a, tier_b, tier_c
 

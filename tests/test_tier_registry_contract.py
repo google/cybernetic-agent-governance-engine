@@ -24,8 +24,8 @@ These tests serve as:
 3. **Domain plugin validation**: Verify new domain plugins satisfy kernel contracts
 
 Scope:
-- Tier registration API contracts (SymbolicGovernor.register_tier())
-- Governor initialization contracts (safety_filter, consensus_engine, context)
+- Tier registration API contracts (GovernorComponents.domain_tiers)
+- Governor initialization contracts (GovernorComponents slots, context)
 - Domain plugin architecture compliance (Layer 2 separation)
 - Tier execution order and dependency invariants
 
@@ -53,61 +53,49 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 # ---------------------------------------------------------------------------
 
 
-def test_symbolic_governor_requires_safety_filter_at_initialization() -> None:
-    """SymbolicGovernor __init__ must receive a safety_filter parameter.
+def test_symbolic_governor_accepts_only_assembled_components() -> None:
+    """SymbolicGovernor.__init__ takes exactly one ``components`` argument.
 
-    Contract: The kernel cannot be instantiated without a safety filter
-    (CBF engine or equivalent). This is a mandatory defense-in-depth layer.
+    Contract: engines (safety filter, consensus) are never passed loose; they
+    arrive on the immutable ``GovernorComponents`` built by the composition
+    root, so no caller can construct a governor that silently skips them.
+    """
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
+    params = [p for p in inspect.signature(SymbolicGovernor.__init__).parameters if p != "self"]
+    assert params == ["components"]
+
+
+def test_governor_components_default_safety_filter_denies() -> None:
+    """An unfilled safety_filter slot holds a deny-by-default null, never None.
 
     Rationale: Without a safety filter, irreversible actions could bypass
     quantitative barrier checks, violating OWASP AISVS C9 requirements.
     """
-    # Verify signature requires safety_filter
-    import inspect
+    import asyncio
 
-    from src.gateway.governance.governor.governor import SymbolicGovernor
+    from src.gateway.governance.governor.assembly import GovernorComponents
+    from src.gateway.governance.null_components import NullSafetyFilter
 
-    sig = inspect.signature(SymbolicGovernor.__init__)
-    params = sig.parameters
-
-    assert "safety_filter" in params, (
-        "SymbolicGovernor.__init__ must declare safety_filter parameter"
-    )
-
-    # Verify it's not optional (no default value of None)
-    param = params["safety_filter"]
-    # If default is empty, it's required
-    if param.default is not inspect.Parameter.empty:
-        assert param.default is not None, (
-            "safety_filter must not default to None (required parameter)"
-        )
+    components = GovernorComponents(opa=MagicMock(), core_stages=(), classifier=MagicMock())
+    assert isinstance(components.safety_filter, NullSafetyFilter)
+    assert "safety_filter" in components.unfilled_slots
+    verdict = asyncio.run(components.safety_filter.verify_action("any_action", {}))
+    assert verdict.startswith("UNSAFE")
 
 
-def test_symbolic_governor_requires_consensus_engine_at_initialization() -> None:
-    """SymbolicGovernor __init__ must receive a consensus_engine parameter.
-
-    Contract: The kernel cannot be instantiated without a consensus engine
-    for multi-agent coordination (Tier 5).
+def test_governor_components_default_consensus_rejects() -> None:
+    """An unfilled consensus slot holds a REJECT-always null, never None.
 
     Rationale: Without consensus, the standing assembly cannot verify
     quorum-based decisions, enabling rogue agent capability escalation.
     """
-    import inspect
+    from src.gateway.governance.governor.assembly import GovernorComponents
+    from src.gateway.governance.null_components import NullConsensusProvider
 
-    from src.gateway.governance.governor.governor import SymbolicGovernor
-
-    sig = inspect.signature(SymbolicGovernor.__init__)
-    params = sig.parameters
-
-    assert "consensus_engine" in params, (
-        "SymbolicGovernor.__init__ must declare consensus_engine parameter"
-    )
-
-    param = params["consensus_engine"]
-    if param.default is not inspect.Parameter.empty:
-        assert param.default is not None, (
-            "consensus_engine must not default to None (required parameter)"
-        )
+    components = GovernorComponents(opa=MagicMock(), core_stages=(), classifier=MagicMock())
+    assert isinstance(components.consensus, NullConsensusProvider)
+    assert "consensus" in components.unfilled_slots
 
 
 def test_symbolic_governor_requires_context_at_initialization() -> None:
@@ -147,11 +135,11 @@ def test_domain_plugins_must_not_import_from_kernel() -> None:
 
 
 def test_governor_initialization_creates_empty_tier_registry(classification_engine) -> None:
-    """SymbolicGovernor initializes with an empty tier registry when domain_tiers=[]."""
-    from src.gateway.governance.governor.governor import SymbolicGovernor
+    """A governor built with domain_tiers=() has no domain tiers."""
+    from tests.fixtures.governor import make_governor
 
-    gov = SymbolicGovernor(classification_engine, MagicMock(), MagicMock(), MagicMock(), domain_tiers=[])
-    assert len(gov._domain_tiers) == 0, "Initial domain_tiers list must be empty"
+    gov = make_governor(classifier=classification_engine, domain_tiers=())
+    assert gov.domain_tiers == (), "Initial domain_tiers must be empty"
 
 
 # ---------------------------------------------------------------------------
@@ -321,8 +309,8 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     Enforcement: SymbolicGovernor._run_checks() logic.
     """
     from unittest.mock import MagicMock
-    from src.gateway.governance.governor.governor import SymbolicGovernor
     from src.gateway.governance.contracts import GovernanceTierPlugin
+    from tests.fixtures.governor import make_governor
 
     class BrokenTier(GovernanceTierPlugin):
         @property
@@ -349,11 +337,11 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
         async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
             pass
 
-    gov = SymbolicGovernor(
-        classification_engine=classification_engine,
-        opa_client=MagicMock(),
+    gov = make_governor(
+        classifier=classification_engine,
+        opa=MagicMock(),
         safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
+        consensus=MagicMock(),
         domain_tiers=(BrokenTier(),),
     )
     violations = await _run_tiers(gov, "execute_trade", {}, phase=1)
@@ -376,8 +364,8 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     """
     import asyncio
     from unittest.mock import MagicMock
-    from src.gateway.governance.governor.governor import SymbolicGovernor
     from src.gateway.governance.contracts import GovernanceTierPlugin
+    from tests.fixtures.governor import make_governor
 
     class TimeoutTier(GovernanceTierPlugin):
         @property
@@ -404,11 +392,11 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
         async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
             pass
 
-    gov = SymbolicGovernor(
-        classification_engine=classification_engine,
-        opa_client=MagicMock(),
+    gov = make_governor(
+        classifier=classification_engine,
+        opa=MagicMock(),
         safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
+        consensus=MagicMock(),
         domain_tiers=(TimeoutTier(),),
     )
     violations = await _run_tiers(gov, "execute_trade", {}, phase=1)

@@ -84,7 +84,7 @@ stateDiagram-v2
   7. `Zero Violations` → `ALLOW`
 - **Canonical Decision Vocabulary**: The Gateway strictly enforces a six-state decision vocabulary ([`src/gateway/governance/decisions.py`](../../src/gateway/governance/decisions.py)): `ALLOW`, `DENY`, `DEFER`, `PAUSE`, `NARROW`, and `REQUIRE_APPROVAL`.
 - **Structural Subtyping**: Decoupled from concrete implementations via `Protocol` interfaces in [`src/gateway/governance/contracts.py`](../../src/gateway/governance/contracts.py) (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, `CausalGatekeeper`, `FiscalGuard`).
-- **Fail-Closed Startup Invariants**: Module-level assertions in [`src/gateway/governance/singletons.py`](../../src/gateway/governance/singletons.py) assert that required cryptographic signers, Redis state stores, and causal models are healthy before traffic is served.
+- **Fail-Closed Startup Invariants**: The composition root ([`governor/bootstrap.py`](../../src/gateway/governance/governor/bootstrap.py)) assembles an immutable governor from the domain plugin's contribution, then [`governor/posture.py`](../../src/gateway/governance/governor/posture.py) checks that the KMS signer, Redis, the reconciliation provider, the governance salt and each tier's runtime requirements are healthy before traffic is served. Nothing runs at import time.
 
 ### 2.2 8-Tier STERA Admissibility Pipeline
 
@@ -537,7 +537,6 @@ src/gateway/
 │   ├── execution_actuator.py # ExecutionActuator protocol & ActuatorRegistry
 │   ├── kms_signer.py       # Cloud KMS HSM asymmetric governance signer
 │   ├── routing_seal.py     # Cryptographic routing seal generator & validator
-│   ├── singletons.py       # Module-level singletons & fail-closed assertions
 │   ├── spiffe_extractor.py # SPIFFE SVID extraction from mTLS peer certificates
 │   └── symbolic_governor.py # Neuro-symbolic governance dispatch loop
 ├── infrastructure/         # Telemetry setup & OTel client configuration

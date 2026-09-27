@@ -229,6 +229,8 @@ async def test_execute_trade_action_traverses_actuator():
                         amount=10.0,
                         currency="USD",
                         confidence=0.95,
+                        governor=MagicMock(),
+                        safety_filter=AsyncMock(),
                     )
 
     # Assert the actuate spy was called
@@ -329,7 +331,7 @@ async def test_defer_token_resolution_traverses_replay_evaluate():
 
 
 @pytest.mark.asyncio
-async def test_validate_action_returns_canonical_envelope():
+async def test_validate_action_returns_canonical_envelope(monkeypatch):
     """
     Verify that POST /validate-action returns RFC 8785 canonical envelope.
 
@@ -374,32 +376,33 @@ async def test_validate_action_returns_canonical_envelope():
             seal_secret.encode(), body_bytes, hashlib.sha256
         ).hexdigest()
 
-    # Mock the symbolic_governor to return a simple ALLOW verdict
-    with patch(
-        "src.gateway.server.governance_middleware.symbolic_governor"
-    ) as mock_gov:
-        mock_gov.validate_action = AsyncMock(
-            return_value={
-                "verdict": "APPROVED",
-                "action": "execute_trade",
-                "routing_seal": "test-seal-" + "b" * 56,
-            }
-        )
+    # Store a mock governor on the app (as the lifespan would) returning ALLOW
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
-        # Mock rate limit check to always allow
-        with patch(
-            "src.gateway.server.governance_middleware._check_validate_action_rate_limit",
-            return_value=True,
-        ):
-            transport = ASGITransport(app=governance_app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                response = await client.post(
-                    "/validate-action",
-                    content=body_bytes,
-                    headers=headers,
-                )
+    mock_gov = MagicMock(spec=SymbolicGovernor)
+    mock_gov.validate_action = AsyncMock(
+        return_value={
+            "verdict": "APPROVED",
+            "action": "execute_trade",
+            "routing_seal": "test-seal-" + "b" * 56,
+        }
+    )
+    monkeypatch.setattr(governance_app.state, "governor", mock_gov, raising=False)
+
+    # Mock rate limit check to always allow
+    with patch(
+        "src.gateway.server.governance_middleware._check_validate_action_rate_limit",
+        return_value=True,
+    ):
+        transport = ASGITransport(app=governance_app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/validate-action",
+                content=body_bytes,
+                headers=headers,
+            )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 

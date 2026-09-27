@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, patch
+import contextlib
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 from src.gateway.governance.constants import ControlRegistry
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.server.governance_middleware import governance_app
+from tests.fixtures.governor import make_governor
 
 pytestmark = pytest.mark.unit
 
@@ -54,11 +56,11 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies, c
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-    gov = SymbolicGovernor(
-        opa_client,
-        safety_filter,
-        consensus_engine,
-        classification_engine=classification_engine,
+    gov = make_governor(
+        opa=opa_client,
+        safety_filter=safety_filter,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -74,7 +76,11 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies, c
         violations=[],
         bypassed_ftra_node=False,
     )
-    gov._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+    from src.gateway.governance.governor.stages.ftra import FtraStage
+
+    for stage in gov.stages:
+        if isinstance(stage, FtraStage):
+            stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
 
     ControlRegistry.reconfigure("US_FED")
     active_hash = registry.active_hash
@@ -115,11 +121,11 @@ async def test_symbolic_governor_version_mismatch_raises_governance_error(
     from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-    gov = SymbolicGovernor(
-        opa_client,
-        safety_filter,
-        consensus_engine,
-        classification_engine=classification_engine,
+    gov = make_governor(
+        opa=opa_client,
+        safety_filter=safety_filter,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         domain_tiers=(
             CBFTierPlugin(safety_filter),
             ConsensusTierPlugin(consensus_engine),
@@ -135,6 +141,18 @@ async def test_symbolic_governor_version_mismatch_raises_governance_error(
 
     assert "Substrate Policy Drift Detected" in str(exc_info.value)
     assert "mismatched-stale-hash-value-12345" in str(exc_info.value)
+
+
+@contextlib.contextmanager
+def _installed_governor():
+    """Put a governor with a mocked ``validate_action`` on ``governance_app.state``."""
+    governor = MagicMock(spec=SymbolicGovernor)
+    governor.validate_action = AsyncMock()
+    governance_app.state.governor = governor
+    try:
+        yield governor.validate_action
+    finally:
+        del governance_app.state.governor
 
 
 def test_middleware_validate_action_version_matching(registry):
@@ -158,11 +176,8 @@ def test_middleware_validate_action_version_matching(registry):
             "latency_ms": 12.5,
         }
 
-        # Patch SymbolicGovernor validate_action
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
-            new_callable=AsyncMock,
-        ) as mock_validate:
+        # Install a governor whose validate_action is mocked on the app
+        with _installed_governor() as mock_validate:
             mock_validate.return_value = mock_gov_result
 
             # Request with matching version
@@ -204,11 +219,8 @@ def test_middleware_validate_action_version_mismatch_returns_403(registry):
     try:
         client = TestClient(governance_app, raise_server_exceptions=False)
 
-        # Patch SymbolicGovernor validate_action to raise GovernanceError
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
-            new_callable=AsyncMock,
-        ) as mock_validate:
+        # Install a governor whose validate_action raises GovernanceError
+        with _installed_governor() as mock_validate:
             mock_validate.side_effect = GovernanceError(
                 "Substrate Policy Drift Detected. Session pinned to version..."
             )

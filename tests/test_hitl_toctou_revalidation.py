@@ -51,6 +51,13 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+def _governor(revalidate: AsyncMock | None = None) -> MagicMock:
+    """A governor stand-in whose ``revalidate_post_hitl`` is observable."""
+    governor = MagicMock()
+    governor.revalidate_post_hitl = revalidate if revalidate is not None else AsyncMock()
+    return governor
+
+
 def _make_plan_json(
     symbol: str = "AAPL",
     amount: float = 15000.0,
@@ -225,11 +232,7 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        with patch(
-            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
-            new_callable=AsyncMock,
-        ):
-            result = await post_hitl_revalidate_node(state)
+        result = await post_hitl_revalidate_node(state, governor=_governor())
 
         assert result.get("post_hitl_safety_status") == "APPROVED"
 
@@ -256,9 +259,11 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        result = await post_hitl_revalidate_node(state)
+        governor = _governor()
+        result = await post_hitl_revalidate_node(state, governor=governor)
 
         assert result.get("post_hitl_safety_status") == "BLOCKED"
+        governor.revalidate_post_hitl.assert_not_called()
         block_reason = result.get("rehydration_result", {}).get("block_reason", "")
         assert "4.00%" in block_reason or "slippage" in block_reason.lower()
 
@@ -286,12 +291,10 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        with patch(
-            "src.gateway.governance.singletons.symbolic_governor.govern",
-            new_callable=AsyncMock,
-            side_effect=GovernanceError("CBF Violation: h(next) < 0"),
-        ):
-            result = await post_hitl_revalidate_node(state)
+        governor = _governor(
+            AsyncMock(side_effect=GovernanceError("CBF Violation: h(next) < 0"))
+        )
+        result = await post_hitl_revalidate_node(state, governor=governor)
 
         assert result.get("post_hitl_safety_status") == "BLOCKED"
         block_reason = result.get("rehydration_result", {}).get("block_reason", "")
@@ -320,11 +323,9 @@ class TestPostHitlRevalidateNode:
         )
 
         govern_mock = AsyncMock()
-        with patch(
-            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
-            govern_mock,
-        ):
-            result = await post_hitl_revalidate_node(state)
+        result = await post_hitl_revalidate_node(
+            state, governor=_governor(govern_mock)
+        )
 
         # Governor was called even though drift was unknown
         govern_mock.assert_called_once()
@@ -353,11 +354,7 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        with patch(
-            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
-            new_callable=AsyncMock,
-        ):
-            result = await post_hitl_revalidate_node(state)
+        result = await post_hitl_revalidate_node(state, governor=_governor())
 
         assert result.get("post_hitl_safety_status") == "APPROVED"
 
@@ -385,11 +382,10 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        with patch(
-            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
-            side_effect=GovernanceError("Substrate Policy Drift Detected"),
-        ):
-            result = await post_hitl_revalidate_node(state)
+        governor = _governor(
+            AsyncMock(side_effect=GovernanceError("Substrate Policy Drift Detected"))
+        )
+        result = await post_hitl_revalidate_node(state, governor=governor)
 
         assert result.get("post_hitl_safety_status") == "BLOCKED"
         rehydration = result.get("rehydration_result", {})
@@ -471,33 +467,25 @@ class TestDriftBlockedNode:
 class TestGraphTopology:
     """Structural tests: verify the compiled graph contains the new nodes."""
 
-    def test_graph_contains_rehydrate_node(self):
+    @pytest.fixture
+    def governed_trader_graph(self):
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
-            governed_trader_graph,
+            build_governed_trader_graph,
         )
 
+        return build_governed_trader_graph(_governor())
+
+    def test_graph_contains_rehydrate_node(self, governed_trader_graph):
         assert "post_hitl_rehydrate" in governed_trader_graph.nodes
 
-    def test_graph_contains_revalidate_node(self):
-        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
-            governed_trader_graph,
-        )
-
+    def test_graph_contains_revalidate_node(self, governed_trader_graph):
         assert "post_hitl_revalidate" in governed_trader_graph.nodes
 
-    def test_graph_contains_drift_blocked_node(self):
-        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
-            governed_trader_graph,
-        )
-
+    def test_graph_contains_drift_blocked_node(self, governed_trader_graph):
         assert "drift_blocked" in governed_trader_graph.nodes
 
-    def test_graph_still_contains_executor_and_approval_nodes(self):
+    def test_graph_still_contains_executor_and_approval_nodes(self, governed_trader_graph):
         """Regression: original nodes must still be present."""
-        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
-            governed_trader_graph,
-        )
-
         for node in ("approval", "rejection", "executor", "tools"):
             assert node in governed_trader_graph.nodes, (
                 f"Node '{node}' missing from graph"

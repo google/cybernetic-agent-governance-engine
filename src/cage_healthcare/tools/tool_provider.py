@@ -19,11 +19,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
 
 class ClinicalToolProvider:
     """Provides healthcare domain tools to the MCP tool server."""
 
-    def register_tools(self, server: "FastMCP") -> None:
+    def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         """Register healthcare tools with the MCP server.
 
         Stub implementation — a real provider would register administer_dose,

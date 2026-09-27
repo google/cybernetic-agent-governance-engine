@@ -37,15 +37,16 @@ from src.gateway.governance.classification_engine import (
 )
 from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.env_posture import is_cage_narrow_enabled
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor import verdicts as verdicts_module
-from src.gateway.governance.governor._legacy_startup import is_cage_narrow_enabled
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.pipeline import StageContext
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.verdicts import handle_narrow
 from src.gateway.governance.narrower import NarrowerRegistry, NarrowingResult
+from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -163,14 +164,7 @@ def _governor(
     engine = ClassificationEngine(
         NarrowerRegistry([narrower] if narrower else []), narrow_enabled=narrow_enabled
     )
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        classification_engine=engine,
-    )
-    gov.stages = stages
-    return gov
+    return make_governor(core_stages=stages, classifier=engine)
 
 
 def _params() -> dict[str, Any]:
@@ -347,11 +341,10 @@ async def test_narrow_classification_without_proposal_denies(seal: AsyncMock) ->
     classifier.classify.return_value = ClassificationResult(
         decision=GovernanceDecision.NARROW, metadata={"classification_reason": "narrowable_resolved"}
     )
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(), safety_filter=MagicMock(), consensus_engine=MagicMock(),
-        classification_engine=classifier,
+    gov = make_governor(
+        core_stages=[_Policy(), *order_stages([_Budget("fiscal", 4, log, limit=1000.0)])],
+        classifier=classifier,
     )
-    gov.stages = [_Policy(), *order_stages([_Budget("fiscal", 4, log, limit=1000.0)])]
 
     with pytest.raises(GovernanceError, match=r"\[LIMIT_EXCEEDED\]"):
         await gov.validate_action(ACTION, _params())

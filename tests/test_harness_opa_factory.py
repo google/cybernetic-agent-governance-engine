@@ -24,7 +24,7 @@ Tests verify that create_opa_safety_node() produces a node with correct:
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -33,7 +33,7 @@ from src.gateway.governance.langgraph_harness import (
     create_opa_safety_node,
     create_opa_safety_router,
 )
-from src.gateway.governance.governor.governor import GovernanceError
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 
 pytestmark = pytest.mark.unit
 
@@ -89,16 +89,11 @@ class TestOpaNodeFactory:
     async def test_approved_when_govern_succeeds(self):
         """govern() returning None (no exception) → APPROVED."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(return_value=None)
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(_state_with_plan())
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
 
         assert result["safety_status"] == "APPROVED"
         assert "error" not in result
@@ -108,16 +103,11 @@ class TestOpaNodeFactory:
     async def test_skipped_when_plan_absent(self):
         """Missing plan_state_key → SKIPPED without invoking govern()."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(return_value=None)
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node({"thread_id": "test"})
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node({"thread_id": "test"})
 
         assert result["safety_status"] == "SKIPPED"
         mock_gov.govern.assert_not_awaited()
@@ -126,20 +116,15 @@ class TestOpaNodeFactory:
     async def test_blocked_on_governance_error(self):
         """GovernanceError (DENY) without Manual Review → BLOCKED."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(
             side_effect=GovernanceError(
                 "ISO 42001 Policy Violation: OPA Denied Action."
             )
         )
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(_state_with_plan())
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
 
         assert result["safety_status"] == "BLOCKED"
         assert "error" in result
@@ -148,20 +133,15 @@ class TestOpaNodeFactory:
     async def test_escalated_on_manual_review(self):
         """GovernanceError with 'Manual Review' → ESCALATED."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(
             side_effect=GovernanceError(
                 "ISO 42001 Policy Check: Manual Review Required."
             )
         )
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(_state_with_plan())
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
 
         assert result["safety_status"] == "ESCALATED"
         assert "error" in result
@@ -170,16 +150,11 @@ class TestOpaNodeFactory:
     async def test_fail_closed_on_unexpected_exception(self):
         """Unexpected RuntimeError → BLOCKED (fail-closed)."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(side_effect=RuntimeError("unexpected"))
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(_state_with_plan())
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
 
         assert result["safety_status"] == "BLOCKED"
 
@@ -187,16 +162,11 @@ class TestOpaNodeFactory:
     async def test_fail_closed_on_timeout(self):
         """asyncio.TimeoutError → BLOCKED (fail-closed)."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(side_effect=asyncio.TimeoutError("timeout"))
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(_state_with_plan())
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
 
         assert result["safety_status"] == "BLOCKED"
 
@@ -208,17 +178,12 @@ class TestOpaNodeFactory:
             error_state_key="my_error",
             plan_state_key="my_plan",
         )
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(side_effect=GovernanceError("denied"))
 
         state = {"my_plan": {"action": "foo"}, "thread_id": "t"}
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(state)
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(state)
 
         assert result["my_safety"] == "BLOCKED"
         assert "my_error" in result
@@ -237,17 +202,12 @@ class TestOpaNodeFactory:
             payload_extractor=capture_extractor,
             policy_action_name="custom_policy",
         )
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(return_value=None)
 
         state = {"plan": {"action": "ignored"}, "custom_field": "hello"}
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            await node(state)
+        node = create_opa_safety_node(config, mock_gov)
+        await node(state)
 
         # govern was called with the custom policy name and extracted payload
         mock_gov.govern.assert_awaited_once_with("custom_policy", extracted)
@@ -256,16 +216,11 @@ class TestOpaNodeFactory:
     async def test_status_key_always_present(self):
         """The status state key must always be in the returned dict."""
         config = _make_config()
-        node = create_opa_safety_node(config)
-
-        mock_gov = AsyncMock()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.govern = AsyncMock(return_value=None)
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ):
-            result = await node(_state_with_plan())
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
 
         assert "safety_status" in result
 

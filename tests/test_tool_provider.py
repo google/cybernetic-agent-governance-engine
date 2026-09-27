@@ -19,7 +19,7 @@ Validates fail-closed invariant: execute_trade_action() must reject calls with
 missing, empty, or whitespace-only routing seals from enforce_governance().
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -28,6 +28,11 @@ from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationReceipt
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+
+def _deps() -> dict:
+    """Composition-root dependencies injected into execute_trade_action()."""
+    return {"governor": MagicMock(), "safety_filter": MagicMock()}
 
 
 class TestExecuteTradeActionRoutingSealEnforcement:
@@ -44,6 +49,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
                 await execute_trade_action(
+                    **_deps(),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
@@ -66,6 +72,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
                 await execute_trade_action(
+                    **_deps(),
                     symbol="MSFT",
                     amount=50.0,
                     currency="USD",
@@ -88,6 +95,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
                 await execute_trade_action(
+                    **_deps(),
                     symbol="TSLA",
                     amount=25.0,
                     currency="USD",
@@ -110,6 +118,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
                 await execute_trade_action(
+                    **_deps(),
                     symbol="GOOG",
                     amount=10.0,
                     currency="USD",
@@ -154,6 +163,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             # Should not raise SymbolicGovernorViolation during seal validation
             result = await execute_trade_action(
+                **_deps(),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
@@ -175,6 +185,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
                 await execute_trade_action(
+                    **_deps(),
                     symbol="NVDA",
                     amount=15.0,
                     currency="USD",

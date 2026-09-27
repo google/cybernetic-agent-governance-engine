@@ -42,14 +42,11 @@ jobs:
   compile-policies:
     name: Compile STPA → Governance Artifacts
     runs-on: ubuntu-latest
-    # CAGE_ENV=ci must be set at job level (not just on the "Install
-    # dependencies" step) because src/gateway/governance/symbolic_governor.py
-    # and kms_signer.py both run module-level startup guards (Gap 4: DoWhy
-    # presence; Gap 5: KMS readiness) the moment the governance package is
-    # imported by the stpa_compiler CLI in every later step of this job.
-    # Those guards treat any CAGE_ENV outside development/test/dev/ci as
-    # "production" and hard-fail — env set only on one step does not
-    # propagate to sibling steps.
+    # CAGE_ENV=ci is set at job level so every step runs under the same
+    # permissive posture. Importing the governance package has no startup
+    # guards (they run in governor/posture.py when a governor is
+    # bootstrapped), but the kms_signer HMAC fallback used by later steps is
+    # permitted only in DEV/TEST/CI posture.
     env:
       CAGE_ENV: ci
 
@@ -70,12 +67,9 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        # --all-extras is required so the 'compliance' extra (which now owns
-        # dowhy, the Tier-6 causal gatekeeper) is installed. Without it,
-        # src/gateway/governance/symbolic_governor.py's Gap-4 startup guard
-        # raises RuntimeError as soon as the stpa_compiler CLI imports the
-        # governance package, because it treats any non-development/test/ci
-        # CAGE_ENV as production and hard-fails on missing dowhy.
+        # --all-extras installs the 'compliance' extra (which owns dowhy, the
+        # Tier-6 causal gatekeeper), matching the environment the generated
+        # artifacts are validated against.
         run: uv sync --frozen --all-extras
 
       - name: Validate STPA control structure

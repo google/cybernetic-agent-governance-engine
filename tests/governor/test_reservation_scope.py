@@ -37,6 +37,7 @@ from src.gateway.governance.governor.pipeline import (
 )
 from src.gateway.governance.governor.reservation import ReservationScope
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage, order_stages
+from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -92,14 +93,8 @@ class _Tier:
 
 def _governor(tiers: list[_Tier]) -> SymbolicGovernor:
     """A governor whose only stages are ``tiers`` (so only the scope logic is under test)."""
-    gov = SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        classification_engine=MagicMock(),  # never reached: these runs have no violations
-    )
-    gov.stages = order_stages(tiers)
-    return gov
+    # The classifier is never reached: these runs have no violations.
+    return make_governor(core_stages=(), domain_tiers=tiers, classifier=MagicMock())
 
 
 def _two_tiers(log: list[str], **cbf_kwargs: Any) -> list[_Tier]:

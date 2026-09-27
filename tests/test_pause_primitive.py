@@ -844,7 +844,7 @@ class TestValidateActionPauseHandler:
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.governor.governor import SymbolicGovernor
+        from tests.fixtures.governor import make_governor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -858,7 +858,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
+                "src.gateway.governance.env_posture.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -867,15 +867,15 @@ class TestValidateActionPauseHandler:
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-            governor = SymbolicGovernor(
-                opa_client,
-                safety_filter,
-                consensus_engine,
-                classification_engine=mock_engine,
+            governor = make_governor(
+                opa=opa_client,
+                classifier=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
                 ),
+                safety_filter=safety_filter,
+                consensus=consensus_engine,
             )
 
             # Stub the pipeline to return our mock result
@@ -901,7 +901,7 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.contracts import PauseReceipt
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.governor.governor import SymbolicGovernor
+        from tests.fixtures.governor import make_governor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -924,7 +924,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
+                "src.gateway.governance.env_posture.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -933,15 +933,15 @@ class TestValidateActionPauseHandler:
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-            governor = SymbolicGovernor(
-                opa_client,
-                safety_filter,
-                consensus_engine,
-                classification_engine=mock_engine,
+            governor = make_governor(
+                opa=opa_client,
+                classifier=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
                 ),
+                safety_filter=safety_filter,
+                consensus=consensus_engine,
             )
 
             with _stub_pipeline(mock_result):
@@ -973,10 +973,8 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.governor.governor import (
-            GovernanceError,
-            SymbolicGovernor,
-        )
+        from src.gateway.governance.governor.governor import GovernanceError
+        from tests.fixtures.governor import make_governor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -1003,7 +1001,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
+                "src.gateway.governance.env_posture.is_cage_pause_enabled",
                 return_value=False,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False),
@@ -1012,15 +1010,15 @@ class TestValidateActionPauseHandler:
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-            governor = SymbolicGovernor(
-                opa_client,
-                safety_filter,
-                consensus_engine,
-                classification_engine=mock_engine,
+            governor = make_governor(
+                opa=opa_client,
+                classifier=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
                 ),
+                safety_filter=safety_filter,
+                consensus=consensus_engine,
             )
 
             with _stub_pipeline(mock_result):
@@ -1042,7 +1040,7 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.governor.governor import SymbolicGovernor
+        from tests.fixtures.governor import make_governor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -1069,7 +1067,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
+                "src.gateway.governance.env_posture.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -1078,15 +1076,15 @@ class TestValidateActionPauseHandler:
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-            governor = SymbolicGovernor(
-                opa_client,
-                safety_filter,
-                consensus_engine,
-                classification_engine=mock_engine,
+            governor = make_governor(
+                opa=opa_client,
+                classifier=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
                 ),
+                safety_filter=safety_filter,
+                consensus=consensus_engine,
             )
 
             with _stub_pipeline(mock_result):
@@ -1108,10 +1106,8 @@ class TestValidateActionPauseHandler:
 
         from src.gateway.governance.classification_engine import ClassificationResult
         from src.gateway.governance.decisions import GovernanceDecision
-        from src.gateway.governance.governor.governor import (
-            GovernanceError,
-            SymbolicGovernor,
-        )
+        from src.gateway.governance.governor.governor import GovernanceError
+        from tests.fixtures.governor import make_governor
 
         opa_client, safety_filter, consensus_engine, mock_engine = mock_governor_deps
 
@@ -1142,7 +1138,7 @@ class TestValidateActionPauseHandler:
 
         with (
             patch(
-                "src.gateway.governance.governor._legacy_startup.is_cage_pause_enabled",
+                "src.gateway.governance.env_posture.is_cage_pause_enabled",
                 return_value=True,
             ),
             patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
@@ -1154,15 +1150,15 @@ class TestValidateActionPauseHandler:
             from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
             from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-            governor = SymbolicGovernor(
-                opa_client,
-                safety_filter,
-                consensus_engine,
-                classification_engine=mock_engine,
+            governor = make_governor(
+                opa=opa_client,
+                classifier=mock_engine,
                 domain_tiers=(
                     CBFTierPlugin(safety_filter),
                     ConsensusTierPlugin(consensus_engine),
                 ),
+                safety_filter=safety_filter,
+                consensus=consensus_engine,
             )
 
             with _stub_pipeline(mock_result):

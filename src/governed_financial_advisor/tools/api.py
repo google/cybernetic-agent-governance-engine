@@ -17,19 +17,19 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.gateway.governance.langgraph_harness.nemo_node_factory import get_nemo_rails
-from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
     OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
 )
+from src.gateway.server.app_state import governor_of
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
@@ -58,6 +58,7 @@ class ToolExecutionRequest(BaseModel):
 @side_effect_node(kind="api_call", external_system="gateway_api")
 async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
     request: ToolExecutionRequest,
+    http_request: Request,
     _auth: str = Depends(require_api_key),
 ):
     """
@@ -65,7 +66,7 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
     Matches the checks performed by GatewayClient.
 
     Each governed branch opens an explicit OTel root span (``cage.tool_execute``)
-    so that ``symbolic_governor.govern()`` child spans (``cage.ftra_boundary_gate``,
+    so that ``SymbolicGovernor.govern()`` child spans (``cage.ftra_boundary_gate``,
     ``cage.stpa_check``, ``governance.opa_check``, etc.) are attached to a live
     trace context and exported to Langfuse. Without the parent span, child spans
     are orphaned and silently dropped at the OTLP layer.
@@ -94,7 +95,8 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             target_tool = params.get("target_tool")
             target_params = params.get("target_params") or {}
             # Call Symbolic Governor in sim (dry-run) mode — does NOT enforce
-            result = await symbolic_governor.verify(target_tool, target_params)  # type: ignore[arg-type]
+            governor = governor_of(http_request.app)
+            result = await governor.verify(target_tool, target_params)  # type: ignore[arg-type]
             violations = result.get("violations", [])
             if not violations:
                 output = "APPROVED: No violations detected."
@@ -136,7 +138,8 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     json.dumps(params)[:2000],
                 )
                 t0 = time.perf_counter()
-                decision = await opa_client.evaluate_policy(params)
+                opa = governor_of(http_request.app).components.opa
+                decision = await opa.evaluate_policy(params)
                 latency_ms = (time.perf_counter() - t0) * 1000
                 span.set_attribute("cage.opa_latency_ms", round(latency_ms, 2))
                 span.set_attribute("cage.verdict", decision)

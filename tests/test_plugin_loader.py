@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.gateway.governance.contracts import DomainConfig
+from src.gateway.governance.contracts import DomainConfig, PluginContribution
 from src.gateway.governance.env_posture import resolve_domain
 from src.gateway.governance.plugin_loader import (
     active_domain_config,
@@ -39,8 +39,8 @@ class FakePlugin:
         self.api_version = api_version
         self.domain_config = domain_config
 
-    def register(self, governor, tool_server=None):
-        pass
+    def contribute(self):
+        return PluginContribution(domain=self.name)
 
 
 def make_mock_entry_point(name, plugin_instance=None, raise_exc=None):

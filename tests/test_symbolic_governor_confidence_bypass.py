@@ -46,6 +46,7 @@ from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 os.environ.setdefault("CAGE_ENV", "test")
 
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
+from tests.fixtures.governor import make_governor
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal SymbolicGovernor assembly
@@ -99,11 +100,11 @@ def _make_governor(
     mock_stpa = MagicMock()
     mock_stpa.validate.return_value = []
 
-    governor = SymbolicGovernor(
-        opa_client=mock_opa,
+    governor = make_governor(
+        opa=mock_opa,
         safety_filter=mock_cbf,
-        consensus_engine=mock_consensus,
-        classification_engine=classification_engine,
+        consensus=mock_consensus,
+        classifier=classification_engine,
         stpa_validator=mock_stpa,
         domain_tiers=(
             CBFTierPlugin(mock_cbf),
@@ -126,7 +127,6 @@ def _make_governor(
     for stage in governor.stages:
         if isinstance(stage, FtraStage):
             stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
-    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result) # Keep this for legacy methods
 
     return governor
 

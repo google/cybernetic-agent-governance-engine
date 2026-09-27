@@ -70,11 +70,11 @@ async def validate_output_semantics(*args, **kwargs):
 _NEMO_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
-# Presidio input-side PII scan — module-level singletons (Fix 3 / P1)
+# Presidio input-side PII scan — module-level engine instances (Fix 3 / P1)
 #
 # Uses the same AnalyzerEngine + AnonymizerEngine pattern as manager.py's
 # _build_presidio_action().  Engines are built once at import time and reused
-# across all node invocations.  If Presidio is unavailable the singletons are
+# across all node invocations.  If Presidio is unavailable the engines are
 # None and the scan is skipped (graceful degradation).
 # ---------------------------------------------------------------------------
 

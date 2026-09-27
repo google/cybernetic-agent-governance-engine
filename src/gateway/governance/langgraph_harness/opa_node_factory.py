@@ -16,7 +16,7 @@
 OPA safety-node factory — produces async LangGraph nodes with OPA governance.
 
 The factory encapsulates:
-  - OPA invocation via ``symbolic_governor.govern()``
+  - OPA invocation via the injected governor's ``govern()``
   - OTel span instrumentation with Telemetry attributes
   - ISO 42001 evidence stamping (``stamp_iso_control``)
   - Compliance scoring via OTel span events
@@ -36,8 +36,7 @@ from opentelemetry import trace
 
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
-from src.gateway.governance.singletons import symbolic_governor
-from src.gateway.governance.governor.governor import GovernanceError
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.observability.attributes import (
     OBSERVATION_NAME,
     OBSERVATION_OUTPUT,
@@ -82,11 +81,11 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
 # ---------------------------------------------------------------------------
 
 
-def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
+def create_opa_safety_node(config: OpaNodeConfig, governor: SymbolicGovernor) -> Callable:
     """Return an async LangGraph node function that enforces OPA policy.
 
     The returned function reads domain-specific data from state via
-    ``config.payload_extractor``, invokes ``symbolic_governor.govern()``,
+    ``config.payload_extractor``, invokes ``governor.govern()``,
     and writes the outcome to ``config.status_state_key``.
 
     Governance decisions:
@@ -100,6 +99,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
     Args:
         config: An :class:`OpaNodeConfig` instance defining the policy action,
                 payload extraction, and routing keys.
+        governor: The assembled governor the node governs with.
 
     Returns:
         An ``async def opa_safety_node(state) -> dict`` suitable for
@@ -146,7 +146,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
 
             # ----- 3. Invoke OPA via SymbolicGovernor -----
             try:
-                await symbolic_governor.govern(config.policy_action_name, opa_input)
+                await governor.govern(config.policy_action_name, opa_input)
                 logger.info(
                     "✅ Safety Check PASSED: %s",
                     opa_input.get("action", config.policy_action_name),

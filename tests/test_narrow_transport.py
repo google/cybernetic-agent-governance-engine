@@ -156,6 +156,8 @@ async def test_mcp_server_fetches_and_burns_receipt():
                 mock_verify,
             ):
                 result = await execute_trade_action(
+                    governor=MagicMock(),
+                    safety_filter=AsyncMock(),
                     symbol="AAPL",  # Original params (will be replaced by narrowed)
                     amount=100.0,
                     currency="USD",
@@ -208,6 +210,8 @@ async def test_expired_receipt_rejected():
             # Since that's a race condition, let's verify the behavior is safe.
 
             result = await execute_trade_action(
+                governor=MagicMock(),
+                safety_filter=AsyncMock(),
                 symbol="AAPL",
                 amount=50.0,
                 currency="USD",
@@ -254,6 +258,8 @@ async def test_forged_receipt_rejected():
             "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             result = await execute_trade_action(
+                governor=MagicMock(),
+                safety_filter=AsyncMock(),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
@@ -304,6 +310,8 @@ async def test_narrowed_params_applied_to_trade():
                 mock_verify,
             ):
                 result = await execute_trade_action(
+                    governor=MagicMock(),
+                    safety_filter=AsyncMock(),
                     symbol="AAPL",  # Original
                     amount=500.0,  # Original (should be replaced)
                     currency="USD",
@@ -324,7 +332,7 @@ async def test_narrowed_params_applied_to_trade():
 @pytest.mark.asyncio
 async def test_seal_computed_over_narrowed_params():
     """Test 7: Verify seal is computed over narrowed params, not original."""
-    # This is verified in symbolic_governor.py line 2444-2445
+    # This is verified in SymbolicGovernor._narrow (governor/governor.py)
     # The test here confirms the contract is honored end-to-end
 
     from src.cage_finance.tools.tool_provider import execute_trade_action
@@ -364,6 +372,8 @@ async def test_seal_computed_over_narrowed_params():
                 mock_verify,
             ):
                 await execute_trade_action(
+                    governor=MagicMock(),
+                    safety_filter=AsyncMock(),
                     symbol="AAPL",
                     amount=1000.0,
                     currency="USD",
@@ -382,7 +392,7 @@ async def test_seal_computed_over_narrowed_params():
 @pytest.mark.asyncio
 async def test_narrow_disabled_uses_original_params():
     """Test 8: Verify CAGE_NARROW_ENABLED=false falls back to DENY."""
-    # This is tested at the symbolic_governor level
+    # This is tested at the SymbolicGovernor level
     # When NARROW is disabled, _classify_violation returns DENY instead
     # No receipt is generated in this case
 
@@ -392,6 +402,8 @@ async def test_narrow_disabled_uses_original_params():
 
     with patch("src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce):
         result = await execute_trade_action(
+            governor=MagicMock(),
+            safety_filter=AsyncMock(),
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -445,6 +457,8 @@ async def test_receipt_replay_blocked():
             ):
                 # First execution should succeed
                 result1 = await execute_trade_action(
+                    governor=MagicMock(),
+                    safety_filter=AsyncMock(),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
@@ -455,6 +469,8 @@ async def test_receipt_replay_blocked():
                 # Second execution with same seal should use original params
                 # (no receipt found = ALLOW path, not NARROW)
                 result2 = await execute_trade_action(
+                    governor=MagicMock(),
+                    safety_filter=AsyncMock(),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",

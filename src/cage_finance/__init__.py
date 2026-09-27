@@ -56,7 +56,6 @@ REGISTERED_ACTIONS: frozenset[str] = frozenset(
         "execute_trade",  # IRREVERSIBLE_TERMINAL — classified by all 4 tiers
         "execute_trade_bounded",  # EXTERNALLY_REVERSIBLE — bounding_tier
         "release_wire",  # EXTERNALLY_REVERSIBLE — wire transfer
-        "write_db",  # IRREVERSIBLE_TERMINAL — database write
         "check_balance",  # READ_ONLY — balance query
         "prompt_injection_check",  # READ_ONLY — safety pre-screen
     }

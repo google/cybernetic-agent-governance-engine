@@ -118,24 +118,27 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
         monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "false")
 
-        from src.gateway.governance.governor.governor import (
-            GovernanceError,
-            SymbolicGovernor,
+        from src.gateway.governance.env_posture import DeploymentPosture
+        from src.gateway.governance.governor.assembly import (
+            DecisionFlags,
+            assemble_governor,
         )
+        from src.gateway.governance.governor.governor import GovernanceError
+        from tests.fixtures.governor import clean_stpa
 
-        # Build mock dependencies with OPA returning DENY
+        # Bare kernel: no domain plugins, so every engine slot holds its
+        # deny-by-default null. OPA returns DENY.
         mock_opa = AsyncMock()
         mock_opa.evaluate_policy.return_value = "DENY"
-        mock_safety = AsyncMock()
-        mock_safety.verify_action.return_value = "SAFE"
-        mock_consensus = AsyncMock()
 
-        governor = SymbolicGovernor(
-            opa_client=mock_opa,
-            safety_filter=mock_safety,
-            consensus_engine=mock_consensus,
-            classification_engine=classification_engine,
+        governor = assemble_governor(
+            [],
+            posture=DeploymentPosture.TEST,
+            opa=mock_opa,
+            stpa_validator=clean_stpa(),
+            flags=DecisionFlags(defer=False, narrow=False, pause=False),
         )
+        assert governor.components.unfilled_slots == ("safety_filter", "consensus")
 
         # Governance evaluation must fail closed with GovernanceError (DENY / HITL)
         with pytest.raises(GovernanceError) as exc_info:

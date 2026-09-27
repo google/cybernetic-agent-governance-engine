@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.gateway.governance.governor.governor import SymbolicGovernor
+from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -66,12 +66,12 @@ def mock_governor(classification_engine):
         mock_consensus_engine = MagicMock()
         
         # Create governor with mocked dependencies
-        governor = SymbolicGovernor(
-            classification_engine=classification_engine,
+        governor = make_governor(
+            classifier=classification_engine,
             domain_tiers=(_ClaimAllTier(),),
-            opa_client=mock_opa_client,
+            opa=mock_opa_client,
             safety_filter=mock_safety_filter,
-            consensus_engine=mock_consensus_engine
+            consensus=mock_consensus_engine
         )
         
         yield governor

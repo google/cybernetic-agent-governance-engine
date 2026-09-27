@@ -36,6 +36,12 @@ class CausalTierPlugin(GovernanceTierPlugin):
         return "causal"
 
     @property
+    def runtime_requirements(self) -> tuple[str, ...]:
+        # The DoWhy causal gatekeeper: without it no causal world-model
+        # validation happens, so enforcing postures refuse to start.
+        return ("dowhy",)
+
+    @property
     def phase(self) -> int:
         return 1
 

@@ -39,6 +39,7 @@ from src.gateway.governance.ftra.models import FtraBoundaryResult, TerminalClass
 from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
 from src.gateway.governance.narrower import Narrower, NarrowerRegistry, NarrowingResult
 from src.gateway.governance.governor.governor import SymbolicGovernor
+from tests.fixtures.governor import make_governor
 
 
 @dataclass(frozen=True)
@@ -200,11 +201,11 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
         causal_tier,
     )
 
-    governor = SymbolicGovernor(
-        opa_client=mock_opa,
+    governor = make_governor(
+        opa=mock_opa,
         safety_filter=mock_cbf_backend,
-        consensus_engine=mock_consensus,
-        classification_engine=classification_engine,
+        consensus=mock_consensus,
+        classifier=classification_engine,
         stpa_validator=mock_stpa,
         domain_tiers=domain_tiers,
     )
