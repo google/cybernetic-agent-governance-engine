@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
-from src.gateway.governance.governor import governor as governor_module
+from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.pipeline import (
@@ -118,7 +118,7 @@ async def _call(gov: SymbolicGovernor, entry_point: str) -> Any:
 @pytest.fixture
 def seal(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     mock = AsyncMock(return_value="sealed")
-    monkeypatch.setattr(governor_module, "issue_seal", mock)
+    monkeypatch.setattr(sealing_module, "issue_seal", mock)
     return mock
 
 
@@ -230,7 +230,7 @@ async def test_refused_run_with_outstanding_commits_is_hard_and_rolled_back(
         deny = Violation(tier="opa", code="DENY", message="denied", kind=ViolationKind.HARD)
         return PipelineResult((deny,), (), None, None, (), commits=scope.commits)
 
-    monkeypatch.setattr(governor_module, "run_pipeline", leaky_pipeline)
+    monkeypatch.setattr(sealing_module, "run_pipeline", leaky_pipeline)
     with pytest.raises(GovernanceError, match=r"\[UNROLLED_COMMIT\] .*cbf"):
         await _governor([]).govern("act", {})
 
@@ -243,7 +243,7 @@ async def test_verify_creates_no_scope_and_never_commits(monkeypatch: pytest.Mon
     def no_scope(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("verify() must not create a ReservationScope")
 
-    monkeypatch.setattr(governor_module, "ReservationScope", no_scope)
+    monkeypatch.setattr(sealing_module, "ReservationScope", no_scope)
     log: list[str] = []
     result = await _governor(_two_tiers(log)).verify("act", {})
 

@@ -1269,7 +1269,7 @@ class TestPauseReceipt:
 
 
 def _stub_pipeline(mock_result):
-    """Patch run_pipeline (validate_action's only check path) with a canned result."""
+    """Patch run_pipeline where run_sealed (validate_action's check path) calls it with a canned result."""
     from unittest.mock import AsyncMock, patch
     from src.gateway.governance.contracts import Violation, ViolationKind
     from src.gateway.governance.governor.pipeline import PipelineResult
@@ -1282,6 +1282,6 @@ def _stub_pipeline(mock_result):
         violations=violations, tier_failures=(), opa_verdict=None, ftra=None, committed_stages=(),
     )
     return patch(
-        "src.gateway.governance.governor.governor.run_pipeline",
+        "src.gateway.governance.governor.sealing.run_pipeline",
         new=AsyncMock(return_value=result),
     )

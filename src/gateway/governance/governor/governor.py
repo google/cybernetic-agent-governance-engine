@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 import json
 import logging
@@ -41,7 +42,7 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.invariants import validate_invariant
 from src.gateway.governance.governor.pipeline import PipelineResult, Profile, StageContext, run_pipeline
-from src.gateway.governance.governor.reservation import ReservationScope
+from src.gateway.governance.governor.sealing import run_sealed
 from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.stages.ftra import FtraStage
@@ -53,7 +54,6 @@ from src.gateway.governance.governor.verdicts import (
     handle_narrow,
     handle_pause,
     handle_require_approval,
-    issue_seal,
 )
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
@@ -136,7 +136,7 @@ class SymbolicGovernor:
 
             t0 = time.perf_counter()
             ctx = StageContext(action=action, params=params, profile=Profile.FULL)
-            result, seal = await self._run_sealed(ctx, params, path="validate_action")
+            result, seal = await run_sealed(self.stages, ctx, params, path="validate_action")
             latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
@@ -167,10 +167,39 @@ class SymbolicGovernor:
             span.set_attribute("cage.governance.classification_decision", classification.decision.value)
             span.set_attribute("cage.governance.classification_reason", str(meta.get("classification_reason", ""))[:200])
 
+            if classification.decision == GovernanceDecision.NARROW:
+                return await self._narrow(action, params, result, meta, t0)
+
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
             verdict = handler(action, params, violations, list(result.tier_failures), meta, latency_ms)
             return await verdict if inspect.isawaitable(verdict) else verdict
+
+    async def _narrow(
+        self, action: str, params: dict[str, Any], result: PipelineResult, meta: dict[str, Any], t0: float
+    ) -> dict[str, Any]:
+        """Seal a narrower's proposal only if the FULL profile passes on it.
+
+        proof/model.py NARROW (c): the clamped params are re-verified in a new
+        ReservationScope, so their commits back the seal (or are rolled back).
+        The re-run is never classified, so the narrower runs once per request.
+        """
+        proposal = meta.get("narrowed_params")
+        if not isinstance(proposal, dict):
+            await _deny(action, params, result)
+        verified = copy.deepcopy(proposal)  # the exact params that get sealed
+        ctx = StageContext(action=action, params=copy.deepcopy(verified), profile=Profile.FULL)
+        rerun, seal = await run_sealed(self.stages, ctx, verified, path="narrow")
+        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+        trace.get_current_span().set_attribute("cage.governance.narrow_reverified", seal is not None)
+        if seal is None:
+            deny_meta = {**meta, **_ftra_meta(rerun), "classification_reason": "narrow_reverification_failed"}
+            await handle_deny(action, verified, list(rerun.violations), list(rerun.tier_failures), deny_meta, latency_ms)
+            raise GovernanceError(f"handle_deny returned without raising; refusing {action}")  # fail closed
+        return handle_narrow(
+            action, params, verified,
+            seal=seal, violations=list(result.violations), classification_meta=meta, latency_ms=latency_ms,
+        )
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
@@ -179,7 +208,7 @@ class SymbolicGovernor:
             span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
             
             ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
-            result, seal = await self._run_sealed(ctx, params, path="govern")
+            result, seal = await run_sealed(self.stages, ctx, params, path="govern")
             if seal is None:
                 await _deny(tool_name, params, result)
             span.set_attribute("cage.seal_issued", True)
@@ -196,7 +225,7 @@ class SymbolicGovernor:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
                 
             ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
-            result, seal = await self._run_sealed(ctx, params, path="revalidate_post_hitl")
+            result, seal = await run_sealed(self.stages, ctx, params, path="revalidate_post_hitl")
             if seal is None:
                 await _deny(action, params, result)
             return seal
@@ -225,23 +254,6 @@ class SymbolicGovernor:
                 "ftra_boundary_result": result.ftra,
                 "tier_violations": violations,
             }
-
-    async def _run_sealed(
-        self, ctx: StageContext, params: dict[str, Any], *, path: str
-    ) -> tuple[PipelineResult, str | None]:
-        """Run ``ctx.profile`` and seal a clean run inside one ReservationScope.
-
-        Phase-2 commits stay in force only once the seal is issued.  Any other
-        exit (violations, a failing seal, cancellation) rolls them all back.
-        """
-        async with ReservationScope() as scope:
-            result = await run_pipeline(self.stages, ctx, profile=ctx.profile, scope=scope)
-            if result.violations:
-                _assert_nothing_committed(result)
-                return result, None
-            seal = await issue_seal(ctx.action, params, path=path)
-            scope.seal_issued(seal)
-            return result, seal
 
     async def _run_checks(self, tool_name: str, params: dict[str, Any], sim_mode: bool = False, policy_version_id: str | None = None) -> dict[str, Any]:
         """Legacy test compat."""
@@ -273,20 +285,13 @@ _VERDICT_HANDLERS = {
     GovernanceDecision.REQUIRE_APPROVAL: handle_require_approval,
     GovernanceDecision.DEFER: handle_defer,
     GovernanceDecision.PAUSE: handle_pause,
-    GovernanceDecision.NARROW: handle_narrow,
+    # NARROW is not here: it is sealed only via SymbolicGovernor._narrow().
 }
 
 
 async def _deny(action: str, params: dict[str, Any], result: PipelineResult) -> NoReturn:
     await handle_deny(action, params, list(result.violations), list(result.tier_failures), _ftra_meta(result))
     raise GovernanceError(f"handle_deny returned without raising; refusing {action}")  # fail closed
-
-
-def _assert_nothing_committed(result: PipelineResult) -> None:
-    """A refused run must leave nothing committed; commits are made only when clean."""
-    if result.commits:
-        stages = ", ".join(stage.name for stage, _ in result.commits)
-        raise GovernanceError(f"[UNROLLED_COMMIT] refused run left commits outstanding: {stages}")
 
 
 def _check_policy_pin(policy_version_id: str | None) -> None:

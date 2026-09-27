@@ -150,13 +150,13 @@ def is_cage_defer_enabled() -> bool:
 def is_cage_narrow_enabled() -> bool:
     """Return whether NARROW decision path is enabled.
 
-    Honors explicit environment variable override if present; otherwise
-    falls back to the module-level CAGE_NARROW_ENABLED flag.
+    Opt-in: only an explicit ``CAGE_NARROW_ENABLED=true`` enables it.  Unset
+    means disabled (fail closed), as documented in SYMBOLIC_GOVERNOR_RUNTIME.md.
     """
     env = os.getenv("CAGE_NARROW_ENABLED")
     if env is not None:
         return env.lower() == "true"
-    return True
+    return False
 
 def is_cage_pause_enabled() -> bool:
     """Return whether PAUSE decision path is enabled.
