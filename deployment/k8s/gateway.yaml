@@ -160,6 +160,18 @@ spec:
                   name: advisor-secrets
                   key: KMS_GOVERNANCE_KEY
                   optional: true
+            # G8: the reconciler's snapshot-signing key (verify only; the
+            # gateway needs cloudkms.publicKeyViewer on it). The CBF trusts
+            # ground truth only when signed by this key's kid. The
+            # reconciler_trust_anchor posture check refuses an enforcing
+            # startup if it is unset, equals KMS_GOVERNANCE_KEY, or resolves
+            # to no public key.
+            - name: RECONCILER_KMS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: RECONCILER_KMS_KEY
+                  optional: true
             - name: OPA_URL
               value: "http://opa.governance-stack.svc.cluster.local:8181"
           livenessProbe:

@@ -77,7 +77,7 @@ echo_info "Creating/updating secret '${SECRET_NAME}' in namespace '${NAMESPACE}'
 # Create or update the secret with all required keys
 kubectl create secret generic "${SECRET_NAME}" \
   --namespace="${NAMESPACE}" \
-  --from-literal=kms-governance-key="${KMS_KEY}" \
+  --from-literal=reconciler-kms-key="${KMS_KEY}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo ""
@@ -88,10 +88,10 @@ echo ""
 echo_info "Verifying secret contents..."
 SECRET_KEYS=$(kubectl get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data}' 2>/dev/null | jq -r 'keys[]' 2>/dev/null || echo "")
 
-if echo "${SECRET_KEYS}" | grep -q "kms-governance-key"; then
-  echo_info "✓ kms-governance-key key present"
+if echo "${SECRET_KEYS}" | grep -q "reconciler-kms-key"; then
+  echo_info "✓ reconciler-kms-key key present"
 else
-  echo_error "✗ kms-governance-key key missing"
+  echo_error "✗ reconciler-kms-key key missing"
 fi
 
 echo ""

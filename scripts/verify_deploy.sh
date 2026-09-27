@@ -149,21 +149,21 @@ done
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 2: reconciliation-worker-secrets has kms-governance-key key
+# Check 2: reconciliation-worker-secrets has reconciler-kms-key key
 # ---------------------------------------------------------------------------
 echo "  🔑 Checking reconciliation-worker-secrets..."
 
 kms_key_val=$(kubectl get secret reconciliation-worker-secrets \
   -n "$NAMESPACE" \
-  -o jsonpath='{.data.kms-governance-key}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+  -o jsonpath='{.data.reconciler-kms-key}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
 
 if [[ -z "$kms_key_val" ]]; then
-  record FAIL "Secret: kms-governance-key" \
+  record FAIL "Secret: reconciler-kms-key" \
     "key missing or empty in reconciliation-worker-secrets — reconciler cannot sign snapshots"
 else
   # Mask the value before logging (secret hygiene)
   masked="${kms_key_val:0:4}****"
-  record OK "Secret: kms-governance-key" "key present (value: $masked)"
+  record OK "Secret: reconciler-kms-key" "key present (value: $masked)"
 fi
 
 echo ""
