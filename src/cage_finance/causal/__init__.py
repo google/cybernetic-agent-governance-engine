@@ -11,3 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from src.cage_finance.causal.synthetic_telemetry import generate_mock_telemetry
+
+__all__ = ["generate_mock_telemetry"]

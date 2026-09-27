@@ -222,32 +222,53 @@ class Violation:
     message: str  # human-readable description (never parsed)
     kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
 
+    @property
+    def narrowable(self) -> bool:
+        """Return True when this violation is classified as NARROWABLE."""
+        return self.kind == ViolationKind.NARROWABLE
+
     def to_dict(self) -> dict[str, str]:
         """JSON-safe form for API / MCP / agent-tool boundaries."""
         return {"tier": self.tier, "code": self.code, "message": self.message, "kind": self.kind.value}
 
 
 @dataclass(frozen=True)
-class NarrowProposal:
-    """Proposal from a Narrower to clamp parameters."""
-    clamped_params: dict[str, Any]
-    constraints_applied: list[str]  # Human-readable constraints
+class NarrowingResult:
+    """Result of a narrower evaluation."""
+
+    can_narrow: bool
+    narrowed_params: dict[str, Any]
+    constraints_applied: list[str]
+    narrowing_reason: str
 
 
+@runtime_checkable
 class Narrower(Protocol):
-    """Domain-provided parameter narrowing strategy.
-    
+    """Protocol for parameter narrowing plugins.
+
+    A Narrower evaluates whether a violation can be resolved by
+    clamping/restricting parameters while preserving action semantics.
     Contributed via ``PluginContribution.narrowers``.
-    Classification returns NARROW only if a narrower proposes valid constraints.
     """
-    def propose(
+
+    def can_narrow(
         self,
+        violation: Violation,
         action: str,
         params: dict[str, Any],
-        violations: Sequence[Violation],
-    ) -> NarrowProposal | None:
-        """Return clamped params if violations are NARROWABLE, else None."""
+    ) -> bool:
+        """Return True if this narrower can handle the violation."""
         ...
+
+    def narrow(
+        self,
+        violation: Violation,
+        action: str,
+        params: dict[str, Any],
+    ) -> NarrowingResult | None:
+        """Compute narrowed parameters that resolve the violation."""
+        ...
+
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +505,7 @@ class PluginContribution:
     ground_truth_providers: Mapping[str, Any] = field(default_factory=dict)
     registered_actions: frozenset[str] = frozenset()
     safety_filter: "SafetyFilter | None" = None
-    consensus: "ConsensusProvider | None" = None
+    consensus: "ConsensusProvider | ConsensusContribution | None" = None
     tool_provider: "DomainToolProvider | None" = None
     compliance_overlay_dirs: tuple[Path, ...] = ()
     background_tasks: Mapping[str, Callable[[], Awaitable[None]]] = field(default_factory=dict)
@@ -686,13 +707,42 @@ class SafetyFilter(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class CriticSpec:
+    """Domain-contributed consensus critic specification."""
+
+    role: str
+    prompt: str = ""
+    prompt_template: str = ""
+    weight: float = 1.0
+    provider: str = "google"
+    model: str = "gemini-2.5-pro"
+    temperature: float = 0.0
+    system_instruction: str = "You are a strict {role}."
+
+    def __post_init__(self) -> None:
+        resolved = self.prompt or self.prompt_template
+        object.__setattr__(self, "prompt", resolved)
+        object.__setattr__(self, "prompt_template", resolved)
+
+
+@dataclass(frozen=True)
+class ConsensusContribution:
+    """Domain-contributed configuration for the multi-agent consensus engine."""
+
+    critics: tuple[CriticSpec, ...]
+    threshold: float
+    magnitude_extractor: Callable[[Mapping[str, Any]], float] = field(
+        default=lambda _: 0.0
+    )
+    quorum: int | float = 2
+    high_stakes_actions: frozenset[str] = frozenset()
+
+
 class ConsensusProvider(Protocol):
     """
     Protocol for a Multi-Agent Consensus Engine.
     Enforces ISO 42001 Human Oversight and Adaptive Compute requirements.
-
-    v4.0 signature: domain-agnostic ``context`` dict replaces the financial-
-    coupled ``(amount, symbol)`` positional parameters.
     """
 
     async def check_consensus(
@@ -703,40 +753,9 @@ class ConsensusProvider(Protocol):
     ) -> dict[str, Any]:
         """
         Checks if the action requires consensus and performs it.
-        Returns a dict with "status" (APPROVE, REJECT, ESCALATE) and "reason".
+        Returns a dict with "status" (APPROVE, REJECT, ESCALATE, DENY, SKIPPED) and "reason".
         """
         ...
-
-
-class _LegacyConsensusAdapter:
-    """
-    Adapter that bridges legacy (action, amount, symbol) calls to the new
-    context-based check_consensus(action, context, magnitude) signature.
-
-    This adapter is used in tests to verify backward compatibility during
-    the v4.0 signature migration. Production code should use the new signature
-    directly.
-    """
-
-    def __init__(self, inner: ConsensusProvider):
-        """
-        Args:
-            inner: The ConsensusProvider instance with the new signature.
-        """
-        self._inner = inner
-
-    async def check_consensus(
-        self, action: str, amount: float, symbol: str
-    ) -> dict[str, Any]:
-        """
-        Legacy signature: (action, amount, symbol) → dict.
-
-        Translates to the new signature: check_consensus(action, context, magnitude).
-        """
-        context = {"amount": amount, "symbol": symbol}
-        return await self._inner.check_consensus(
-            action, context=context, magnitude=amount
-        )
 
 
 class PolicyClient(Protocol):
@@ -758,7 +777,7 @@ class PolicyClient(Protocol):
         Evaluate an OPA policy and return the full result dict.
 
         Args:
-            policy_path: OPA policy path / rule reference (e.g. "trade/governance").
+            policy_path: OPA policy path / rule reference (e.g. "domain/governance").
             input_data:  Arbitrary input document forwarded to OPA as ``{"input": ...}``.
 
         Returns:
@@ -787,6 +806,46 @@ class PolicyClient(Protocol):
 # or a subclass that adds the two method names is sufficient for full compatibility.
 
 
+@dataclass(frozen=True)
+class CausalSpec:
+    """Domain-contributed specification for causal world-model validation."""
+
+    dag_gml: str = ""
+    treatment: str = ""
+    outcome: str = ""
+    confounders: tuple[str, ...] = ()
+    context_key: str = "default"
+    treatment_extractor: Callable[[Mapping[str, Any]], float | None] = field(
+        default=lambda _: None
+    )
+    graph_dot: str = ""
+    treatment_col: str = ""
+    outcome_col: str = ""
+    context_extractor: Callable[[Mapping[str, Any]], str] | None = None
+    normalization_scale: float = 10000.0
+    synthetic_telemetry_factory: Callable[[], Any] | None = None
+
+    def __post_init__(self) -> None:
+        resolved_graph = self.dag_gml or self.graph_dot
+        resolved_treatment = self.treatment or self.treatment_col
+        resolved_outcome = self.outcome or self.outcome_col
+        object.__setattr__(self, "dag_gml", resolved_graph)
+        object.__setattr__(self, "graph_dot", resolved_graph)
+        object.__setattr__(self, "treatment", resolved_treatment)
+        object.__setattr__(self, "treatment_col", resolved_treatment)
+        object.__setattr__(self, "outcome", resolved_outcome)
+        object.__setattr__(self, "outcome_col", resolved_outcome)
+        if self.context_extractor is None:
+            ck = self.context_key
+            object.__setattr__(
+                self,
+                "context_extractor",
+                (lambda p, _ck=ck: str(p.get(_ck, "unknown")))
+                if ck
+                else (lambda _p: "default"),
+            )
+
+
 class CausalGatekeeper(Protocol):
     """
     Protocol for the DoWhy causal inference gatekeeper.
@@ -794,10 +853,6 @@ class CausalGatekeeper(Protocol):
     Abstracts the DoWhy causal inference engine for testability — any callable
     object or class implementing ``causal_safety_check`` is a valid
     CausalGatekeeper, regardless of whether it uses DoWhy, a stub, or a mock.
-
-    Structural subtyping note: the module-level function
-    ``causal_safety_check`` in src/gateway/governance/causal_gatekeeper.py
-    is structurally compatible with this Protocol when wrapped in a class.
     """
 
     def causal_safety_check(self, params: dict, current_telemetry: Any = None) -> bool:
@@ -805,12 +860,9 @@ class CausalGatekeeper(Protocol):
         Run the causal safety check for a proposed action.
 
         Args:
-            params:            Action parameters dict.  Must contain at minimum
-                               ``"amount"`` (float), and optionally
-                               ``"action_type"`` and ``"market_regime"`` for
-                               cache key construction.
-            current_telemetry: Optional live telemetry DataFrame.  If None,
-                               synthetic telemetry is generated internally.
+            params:            Action parameters dict evaluated via the domain's
+                               ``CausalSpec.treatment_extractor`` and ``context_key``.
+            current_telemetry: Optional live telemetry DataFrame.
 
         Returns:
             True if the action is causally safe, False if the world-model is
@@ -819,11 +871,6 @@ class CausalGatekeeper(Protocol):
         """
         ...
 
-
-# Structural compatibility note:
-# The module-level ``causal_safety_check`` function in causal_gatekeeper.py
-# matches this Protocol's method signature.  A one-line wrapper class is
-# sufficient to make it a fully compatible CausalGatekeeper instance.
 
 
 @runtime_checkable

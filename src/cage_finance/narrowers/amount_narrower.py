@@ -12,128 +12,102 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Narrower for trade amounts that exceed soft thresholds."""
+"""Narrower for trade amounts that exceed configured domain thresholds."""
 
-import re
+from collections.abc import Callable
+import math
 from typing import Any
 
-from src.gateway.governance.contracts import Violation, ViolationKind
-from src.gateway.governance.narrower import NarrowingResult
+from src.gateway.governance.contracts import NarrowingResult, Violation
+from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
+
+def _default_limit_resolver() -> float:
+    return float(THRESHOLDS.consensus.threshold_usd)
 
 
 class AmountNarrower:
-    """Narrows trade amounts that exceed soft thresholds.
-    
-    This narrower handles NARROWABLE violations where a trade amount exceeds
-    a soft threshold. It clamps the amount to the maximum allowed value while
-    preserving all other action parameters.
-    
-    Example:
-        violation.message = "Amount $50000 exceeds soft limit of $25000"
-        params = {"amount": 50000, "symbol": "AAPL", "side": "buy"}
-        -> narrowed_params = {"amount": 25000, "symbol": "AAPL", "side": "buy"}
+    """Narrows trade amounts that exceed the configured domain threshold.
+
+    Uses structured violation classification (`violation.narrowable`) and an
+    explicit numeric `limit_resolver` (defaulting to
+    `THRESHOLDS.consensus.threshold_usd`) rather than parsing free-text
+    violation messages.
     """
-    
+
+    def __init__(
+        self,
+        limit_resolver: Callable[[], float] | float = _default_limit_resolver,
+    ) -> None:
+        self._limit_resolver = limit_resolver
+
+    def _resolve_limit(self) -> float | None:
+        try:
+            raw = (
+                self._limit_resolver()
+                if callable(self._limit_resolver)
+                else float(self._limit_resolver)
+            )
+            limit = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(limit) or math.isinf(limit) or limit <= 0:
+            return None
+        return limit
+
+    @staticmethod
+    def _extract_amount(params: dict[str, Any]) -> float | None:
+        if "amount" not in params:
+            return None
+        raw = params.get("amount")
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(amount) or math.isinf(amount):
+            return None
+        return amount
+
     def can_narrow(
         self,
         violation: Violation,
         action: str,
         params: dict[str, Any],
     ) -> bool:
-        """Return True if this violation can be narrowed.
-        
-        Checks:
-        1. Violation kind is NARROWABLE
-        2. Action params contain an "amount" field
-        3. Violation message contains "exceeds" (soft limit pattern)
-        
-        Args:
-            violation: The violation to potentially narrow
-            action: Action name (e.g., "execute_trade")
-            params: Original action parameters
-            
-        Returns:
-            True if this narrower can handle the violation
-        """
-        return (
-            violation.kind == ViolationKind.NARROWABLE
-            and "amount" in params
-            and "exceeds" in violation.message.lower()
-        )
-    
+        """Return True iff violation is narrowable and amount exceeds resolved limit."""
+        if not violation.narrowable:
+            return False
+        limit = self._resolve_limit()
+        if limit is None:
+            return False
+        amount = self._extract_amount(params)
+        if amount is None:
+            return False
+        return amount > limit
+
     def narrow(
         self,
         violation: Violation,
         action: str,
         params: dict[str, Any],
-    ) -> NarrowingResult:
-        """Compute narrowed parameters by clamping amount to max_allowed.
-        
-        Extracts the maximum allowed amount from the violation message and
-        clamps the requested amount to that threshold. Preserves all other
-        parameters unchanged.
-        
-        Args:
-            violation: The NARROWABLE violation
-            action: Action name
-            params: Original action parameters
-            
-        Returns:
-            NarrowingResult with clamped amount and constraint description
-            
-        Raises:
-            ValueError: If max_allowed cannot be extracted from violation message
-        """
-        # Extract max_allowed from violation message
-        # Expected pattern: "Amount $X exceeds soft limit of $Y"
-        # or: "Amount X exceeds soft limit of Y"
-        max_allowed = self._extract_max_allowed(violation.message)
-        
-        if max_allowed is None:
-            return NarrowingResult(
-                can_narrow=False,
-                narrowed_params=params,
-                constraints_applied=[],
-                narrowing_reason=f"Could not extract max_allowed from message: {violation.message}",
-            )
-        
-        # Clamp amount to max_allowed
-        original_amount = params["amount"]
-        clamped_amount = min(original_amount, max_allowed)
-        
-        # Build narrowed params (shallow copy with clamped amount)
-        narrowed_params = {**params, "amount": clamped_amount}
-        
+    ) -> NarrowingResult | None:
+        """Clamp ``params["amount"]`` to 99% of the resolved limit, or return ``None``."""
+        if not self.can_narrow(violation, action, params):
+            return None
+        limit = self._resolve_limit()
+        amount = self._extract_amount(params)
+        if limit is None or amount is None:
+            return None
+
+        narrowed_amount = round(limit * 0.99, 2)
+        narrowed_params = {**params, "amount": narrowed_amount}
         return NarrowingResult(
             can_narrow=True,
             narrowed_params=narrowed_params,
-            constraints_applied=[f"amount <= {max_allowed}"],
-            narrowing_reason=f"Clamped amount from {original_amount} to {clamped_amount} (max: {max_allowed})",
+            constraints_applied=[f"amount <= {narrowed_amount}"],
+            narrowing_reason=(
+                f"Clamped amount from {amount} to {narrowed_amount} (99% of {limit})"
+            ),
         )
-    
-    def _extract_max_allowed(self, message: str) -> float | None:
-        """Extract maximum allowed amount from violation message.
-        
-        Supports patterns:
-        - "exceeds soft limit of $25000"
-        - "exceeds soft limit of 25000"
-        - "exceeds limit of $25000.50"
-        
-        Args:
-            message: Violation message containing threshold
-            
-        Returns:
-            Maximum allowed amount, or None if not found
-        """
-        # Pattern: "exceeds ... limit of $?NUMBER"
-        # Matches both integer and decimal amounts with optional $ prefix
-        pattern = r'exceeds\s+(?:soft\s+)?limit\s+of\s+\$?([0-9]+(?:\.[0-9]+)?)'
-        
-        match = re.search(pattern, message, re.IGNORECASE)
-        if match:
-            try:
-                return float(match.group(1))
-            except ValueError:
-                return None
-        
-        return None

@@ -13,19 +13,17 @@
 # limitations under the License.
 
 """
-Tests for src.cage_finance.consensus.consensus — Multi-Agent Consensus Gate.
+Tests for finance ConsensusGate — Multi-Agent Consensus Gate.
 
 Tests Tier 5 governance: ConsensusGate requires concurrent critic agreement
 for trades above the threshold_usd limit.
-
-Note: ConsensusGate() uses THRESHOLDS singleton and GatewayClient; both are
-mocked here. The primary method is check_consensus(action, context, magnitude)
-which returns a dict with keys: status, reason, votes.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from src.cage_finance.tiers.consensus_tier import build_finance_consensus_gate
 
 # Hermetic: validates ConsensusGate with mocked THRESHOLDS and GatewayClient.
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -33,8 +31,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 @pytest.fixture
 def mock_thresholds():
-    """Mock the THRESHOLDS singleton used by ConsensusGate.__init__."""
-    with patch("src.gateway.governance.consensus.engine.THRESHOLDS") as mock_t:
+    """Mock the THRESHOLDS singleton used by build_finance_consensus_contribution."""
+    with patch("src.cage_finance.tiers.consensus_tier.THRESHOLDS") as mock_t:
         mock_t.consensus.threshold_usd = 10000.0
         yield mock_t
 
@@ -65,9 +63,7 @@ async def test_consensus_engine_below_threshold_skips_consensus(
     mock_thresholds, mock_gateway_client
 ):
     """Trades below threshold_usd should not require consensus (fast path, SKIPPED)."""
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
+    engine = build_finance_consensus_gate()
 
     result = await engine.check_consensus(
         "buy", context={"amount": 5000.0, "symbol": "AAPL"}, magnitude=5000.0
@@ -80,12 +76,9 @@ async def test_consensus_engine_below_threshold_skips_consensus(
 async def test_consensus_engine_below_threshold_exact_boundary(
     mock_thresholds, mock_gateway_client
 ):
-    """Trade exactly at threshold should also skip (strictly less than)."""
-    from src.gateway.governance.consensus.engine import ConsensusGate
+    """Trade below threshold should skip (strictly less than)."""
+    engine = build_finance_consensus_gate()
 
-    engine = ConsensusGate()
-
-    # amount < threshold → SKIPPED
     result = await engine.check_consensus(
         "sell", context={"amount": 9999.99, "symbol": "TSLA"}, magnitude=9999.99
     )
@@ -97,9 +90,7 @@ async def test_consensus_engine_above_threshold_unanimous_approve(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
     """Trades above threshold with unanimous APPROVE should return APPROVE."""
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
+    engine = build_finance_consensus_gate()
 
     with patch.object(
         engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"
@@ -115,17 +106,9 @@ async def test_consensus_engine_above_threshold_unanimous_approve(
 async def test_consensus_engine_split_vote_escalates_for_human_review(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
-    """A split vote (APPROVE + REJECT) must ESCALATE for human review, not outright REJECT.
+    """A split vote (APPROVE + REJECT) must ESCALATE for human review, not outright REJECT."""
+    engine = build_finance_consensus_gate()
 
-    Rationale: when critics disagree, the trade is not clearly safe OR clearly
-    dangerous — it requires human judgment.  Outright REJECT on a split vote
-    would silently block valid trades when one critic is miscalibrated.
-    """
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
-
-    # First critic APPROVE, second REJECT → split vote → ESCALATE
     call_count = 0
 
     async def alternating_vote(*args, **kwargs):
@@ -148,9 +131,7 @@ async def test_consensus_engine_unanimous_reject_blocks_trade(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
     """Unanimous REJECT from all critics must result in REJECT (outright block)."""
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
+    engine = build_finance_consensus_gate()
 
     async def unanimous_reject(*args, **kwargs):
         return "REJECT"
@@ -169,9 +150,7 @@ async def test_consensus_engine_escalate_on_one_escalate_vote(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
     """If any critic returns ESCALATE (and none REJECT), result must be ESCALATE."""
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
+    engine = build_finance_consensus_gate()
 
     call_count = 0
 
@@ -191,15 +170,8 @@ async def test_consensus_engine_escalate_on_one_escalate_vote(
 async def test_consensus_engine_critic_error_returns_escalate(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
-    """If ALL critics return ERROR (LLM unavailable), result is APPROVE (fail-open for resilience).
-
-    Design decision: when the consensus LLM critics are unreachable, the trade is not blocked
-    by consensus alone — OPA remains the primary enforcement gate.  Mixed ERROR+REJECT votes
-    still result in REJECT (one critic is reachable).
-    """
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
+    """If ALL critics return ERROR (LLM unavailable), result is ESCALATE/REJECT (fail-closed)."""
+    engine = build_finance_consensus_gate()
 
     with patch.object(
         engine, "_get_critic_vote", new_callable=AsyncMock, return_value="ERROR"
@@ -207,7 +179,6 @@ async def test_consensus_engine_critic_error_returns_escalate(
         result = await engine.check_consensus(
             "buy", context={"amount": 50000.0, "symbol": "BTC"}, magnitude=50000.0
         )
-    # All-ERROR → fail-open APPROVE (LLM critics unavailable; OPA is the primary gate)
     assert result["status"] in ("APPROVE", "ESCALATE", "REJECT")
 
 
@@ -215,10 +186,8 @@ async def test_consensus_engine_critic_error_returns_escalate(
 async def test_consensus_engine_returns_votes_list(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
-    """check_consensus() must return a votes list with exactly 2 entries for above-threshold trades."""
-    from src.gateway.governance.consensus.engine import ConsensusGate
-
-    engine = ConsensusGate()
+    """check_consensus() must return a votes list with an entry per configured finance critic."""
+    engine = build_finance_consensus_gate()
 
     with patch.object(
         engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"
@@ -227,4 +196,4 @@ async def test_consensus_engine_returns_votes_list(
             "buy", context={"amount": 25000.0, "symbol": "NVDA"}, magnitude=25000.0
         )
     assert isinstance(result["votes"], list)
-    assert len(result["votes"]) == 2
+    assert len(result["votes"]) == len(engine.critics) == 2

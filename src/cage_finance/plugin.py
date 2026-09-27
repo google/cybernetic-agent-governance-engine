@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 
 from src.cage_finance import REGISTERED_ACTIONS, create_finance_tiers
+from src.cage_finance.narrowers.amount_narrower import AmountNarrower
 from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
@@ -29,11 +30,13 @@ from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
-from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+from src.cage_finance.tiers.consensus_tier import (
+    ConsensusTierPlugin,
+    build_finance_consensus_gate,
+)
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
 from src.gateway.governance.consensus.engine import (
-    ConsensusGate,
     _background_audit_worker,
 )
 from src.gateway.governance.contracts import (
@@ -85,7 +88,7 @@ class FinanceCagePlugin(CagePlugin):
             cost_resolver=finance_cost_resolver,
             skip_epoch_seed=True,
         )
-        consensus_gate = ConsensusGate()
+        consensus_gate = build_finance_consensus_gate()
 
         # Dev/test bounding providers: permissive allowlists, stub market data
         # and rollback capability (they fail closed in production).
@@ -119,6 +122,7 @@ class FinanceCagePlugin(CagePlugin):
             registered_actions=REGISTERED_ACTIONS,
             safety_filter=cbf,
             consensus=consensus_gate,
+            narrowers=(AmountNarrower(),),
             tool_provider=FinancialToolProvider(safety_filter=cbf),
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},

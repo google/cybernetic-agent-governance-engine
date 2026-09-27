@@ -39,6 +39,9 @@ from src.cage_physical_ai.invariants import (
     SpatialSeparationBarrier,
     TorqueSaturationBarrier,
 )
+from src.cage_physical_ai.tiers.physical_consensus_tier import (
+    build_physical_consensus_contribution,
+)
 from src.cage_physical_ai.tools.tool_provider import PhysicalAIToolProvider
 from src.gateway.governance.contracts import (
     CagePlugin,
@@ -98,6 +101,7 @@ class PhysicalAICagePlugin(CagePlugin):
                 velocity_barrier.invariant_id: velocity_provider,
                 torque_barrier.invariant_id: torque_provider,
             },
+            consensus=build_physical_consensus_contribution(),
             tool_provider=PhysicalAIToolProvider(),
             compliance_overlay_dirs=(overlay_dir,) if overlay_dir.exists() else (),
         )

@@ -12,36 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Consensus config fail-closed tests.
+"""Finance consensus config fail-closed tests."""
 
-Verifies that the ConsensusGate fails closed when:
-- The consensus engine is misconfigured
-- Critics return errors
-- The new context-based signature works correctly
-"""
-
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+
+from src.cage_finance.tiers.consensus_tier import (
+    build_finance_consensus_contribution,
+    build_finance_consensus_gate,
+)
+from src.gateway.governance.consensus.engine import ConsensusGate
 
 pytestmark = [pytest.mark.local, pytest.mark.unit]
 
 
-class TestConsensusContextSignature:
-    """Verify the new (action, context, magnitude) signature works correctly."""
+class TestFinanceConsensusContextSignature:
+    """Verify the finance-configured ConsensusGate works with context and magnitude."""
 
     @pytest.mark.asyncio
     async def test_check_consensus_with_context_dict(self):
-        """check_consensus accepts the new context-based signature."""
-        from src.gateway.governance.consensus.engine import ConsensusGate
-
-        gate = ConsensusGate.__new__(ConsensusGate)
+        """check_consensus accepts the context-based signature."""
+        gate = build_finance_consensus_gate()
         gate.threshold = 1000.0
         gate._registry = MagicMock()
-        gate._default_client = MagicMock()
 
-        # Below threshold — should return SKIPPED without LLM calls
         result = await gate.check_consensus(
             "execute_trade",
             context={"amount": 100.0, "symbol": "AAPL"},
@@ -53,14 +48,10 @@ class TestConsensusContextSignature:
     @pytest.mark.asyncio
     async def test_check_consensus_magnitude_overrides_context_amount(self):
         """When magnitude is provided, it takes precedence for threshold check."""
-        from src.gateway.governance.consensus.engine import ConsensusGate
-
-        gate = ConsensusGate.__new__(ConsensusGate)
+        gate = build_finance_consensus_gate()
         gate.threshold = 1000.0
         gate._registry = MagicMock()
-        gate._default_client = MagicMock()
 
-        # Context has high amount, but magnitude is low → SKIPPED
         result = await gate.check_consensus(
             "execute_trade",
             context={"amount": 50000.0, "symbol": "AAPL"},
@@ -70,63 +61,28 @@ class TestConsensusContextSignature:
 
     @pytest.mark.asyncio
     async def test_check_consensus_falls_back_to_context_amount(self):
-        """When magnitude is None, falls back to context['amount']."""
-        from src.gateway.governance.consensus.engine import ConsensusGate
-
-        gate = ConsensusGate.__new__(ConsensusGate)
+        """When magnitude is None, falls back to finance magnitude_extractor (params['amount'])."""
+        gate = build_finance_consensus_gate()
         gate.threshold = 1000.0
         gate._registry = MagicMock()
-        gate._default_client = MagicMock()
 
-        # No magnitude provided, context amount is below threshold
         result = await gate.check_consensus(
             "execute_trade",
             context={"amount": 100.0, "symbol": "AAPL"},
         )
         assert result["status"] == "SKIPPED"
 
-
-class TestLegacyConsensusAdapter:
-    """Verify the _LegacyConsensusAdapter bridges old (action, amount, symbol) calls."""
-
-    @pytest.mark.asyncio
-    async def test_adapter_translates_positional_to_context(self):
-        """The adapter wraps (action, amount, symbol) into the new signature."""
-        from src.gateway.governance.contracts import _LegacyConsensusAdapter
-
-        inner = AsyncMock()
-        inner.check_consensus.return_value = {
-            "status": "APPROVE",
-            "reason": "test",
-            "votes": [],
-        }
-
-        adapter = _LegacyConsensusAdapter(inner)
-        result = await adapter.check_consensus("buy", 5000.0, "AAPL")
-
-        # Verify the adapter called inner with the new signature
-        inner.check_consensus.assert_called_once_with(
-            "buy",
-            context={"amount": 5000.0, "symbol": "AAPL"},
-            magnitude=5000.0,
-        )
-        assert result["status"] == "APPROVE"
+    def test_finance_critics_loaded_from_yaml(self):
+        """Finance ConsensusContribution loads Risk Manager and Compliance Officer."""
+        contrib = build_finance_consensus_contribution()
+        roles = [c.role for c in contrib.critics]
+        assert roles == ["Risk Manager", "Compliance Officer"]
+        assert "HIGH_VALUE_TRADE" in contrib.high_stakes_actions
 
     @pytest.mark.asyncio
-    async def test_adapter_preserves_return_value(self):
-        """Verify that _LegacyConsensusAdapter returns the exact dict from inner."""
-        from src.gateway.governance.contracts import _LegacyConsensusAdapter
-
-        expected = {
-            "status": "REJECT",
-            "reason": "quorum_not_reached",
-            "votes": [{"agent": "agent1", "vote": "REJECT"}],
-            "extra_metadata": 12345,
-        }
-        inner = AsyncMock()
-        inner.check_consensus.return_value = expected
-
-        adapter = _LegacyConsensusAdapter(inner)
-        result = await adapter.check_consensus("sell", 15000.0, "GOOG")
-        assert result == expected
-
+    async def test_unconfigured_gate_fails_closed_above_threshold(self):
+        """An unconfigured ConsensusGate() fails closed with DENY when triggered."""
+        gate = ConsensusGate(threshold=100.0, magnitude_extractor=lambda p: float(p.get("amount", 0.0)))
+        result = await gate.check_consensus("execute_trade", context={"amount": 500.0})
+        assert result["status"] == "DENY"
+        assert result["decision"] == "DENY"

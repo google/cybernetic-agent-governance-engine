@@ -14,29 +14,52 @@
 
 """Clinical consensus tier — multi-critic agreement (phase 1, order 5)."""
 
+from pathlib import Path
 from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
+from src.gateway.governance.consensus import ConsensusGate, load_critic_specs
 from src.gateway.governance.contracts import (
     CommitReceipt,
+    ConsensusContribution,
+    CriticSpec,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
 )
 
+_CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
+HIGH_STAKES_CLINICAL_ACTIONS: frozenset[str] = frozenset(
+    {"administer_medication", "override_contraindication", "order_controlled_substance"}
+)
+
+
+def load_healthcare_critics(path: Path = _CRITICS_PATH) -> tuple[CriticSpec, ...]:
+    return load_critic_specs(path)
+
+
+def build_healthcare_consensus_contribution() -> ConsensusContribution:
+    return ConsensusContribution(
+        critics=load_healthcare_critics(),
+        threshold=100.0,
+        magnitude_extractor=lambda p: float(p.get("dose_mg", 0.0) or 0.0),
+        quorum=1.0,
+        high_stakes_actions=HIGH_STAKES_CLINICAL_ACTIONS,
+    )
+
+
+def build_healthcare_consensus_gate() -> ConsensusGate:
+    return ConsensusGate.from_contribution(build_healthcare_consensus_contribution())
+
 
 class ClinicalConsensusTier(GovernanceTierPlugin):
-    """Clinical consensus tier (phase 1, order 5).
+    """Clinical consensus tier (phase 1, order 5)."""
 
-    Note what is absent: no consensus algorithm, no audit queue, no timeout
-    budget, no ISO 42001 A.9.2 evidence emission. The kernel's ConsensusGate
-    owns all of that. This tier only supplies the critic prompts (via YAML)
-    and delegates to the engine.
-    """
-
-    def __init__(
-        self, consensus_engine: Any
-    ) -> None:  # consensus_engine: ConsensusGate
+    def __init__(self, consensus_engine: Any = None) -> None:
+        if consensus_engine is None or (
+            isinstance(consensus_engine, ConsensusGate) and not consensus_engine.critics
+        ):
+            consensus_engine = build_healthcare_consensus_gate()
         self.consensus_engine = consensus_engine
 
     @property
@@ -52,15 +75,17 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
         return 5
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action in HEALTHCARE_GOVERNED_ACTIONS
+        return (
+            action in HEALTHCARE_GOVERNED_ACTIONS
+            or action in HIGH_STAKES_CLINICAL_ACTIONS
+        )
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        # Phase 1: multi-critic consensus check
         result = await self.consensus_engine.check_consensus(
             action_type=action,
             params=params,
         )
-        if result.get("status") != "APPROVED":
+        if result.get("status") not in ("APPROVE", "APPROVED", "SKIPPED"):
             return [
                 Violation(
                     tier=self.tier_name,

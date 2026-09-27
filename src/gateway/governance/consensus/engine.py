@@ -15,28 +15,22 @@
 """
 Consensus Engine — Layer 4: Adaptive Compute.
 
-Phase 2.3: Threshold literals replaced with THRESHOLDS singleton.
-Phase 4.4: High-latency LLM critic votes for non-critical trades are pushed
-           to a background ``asyncio.Queue`` for post-execution audit alerting,
-           keeping the primary governance hot-path within the 3-second budget.
+High-latency LLM critic votes for non-critical actions are pushed to a
+background ``asyncio.Queue`` for post-execution audit alerting, keeping the
+primary governance hot-path within the latency budget.
 
 Priority 4 (Evidentiary Independence): Heterogeneous Model Infrastructure.
-  The consensus engine now routes each critic persona to a DISTINCT model
-  backend via the ConsensusModelRegistry.  This eliminates the previous
-  vulnerability where two personas ("Risk Manager" and "Compliance Officer")
-  ran on the same Llama 3.1 instance — which was not independent validation,
-  but the same model validating itself from different prompt angles.
+  The consensus engine routes each domain-injected critic persona to a
+  distinct model backend via ``ConsensusModelRegistry``.
 
   In production, each critic should run on:
     - A different model family (e.g., DeepSeek-R1 vs Llama 3.1)
     - Different GPU hardware (to eliminate correlated hardware faults)
     - Ideally different infrastructure (separate clusters or providers)
 
-  Configure via environment variables:
-    CONSENSUS_RISK_MANAGER_URL       — vLLM base URL for the Risk Manager
-    CONSENSUS_RISK_MANAGER_MODEL     — model name for the Risk Manager
-    CONSENSUS_COMPLIANCE_OFFICER_URL — vLLM base URL for the Compliance Officer
-    CONSENSUS_COMPLIANCE_OFFICER_MODEL — model name for the Compliance Officer
+  Configure via environment variables per role ``{ROLE}`` (upper-snake-case):
+    CONSENSUS_{ROLE}_URL   — vLLM base URL for the critic role
+    CONSENSUS_{ROLE}_MODEL — model name for the critic role
 """
 
 from __future__ import annotations
@@ -45,12 +39,16 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
+from pathlib import Path
 from typing import Any
 
+import yaml
 from opentelemetry import trace
 
 from src.gateway.core.llm import GatewayClient
-from src.gateway.governance.schemas.thresholds import THRESHOLDS
+from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
 from src.gateway.infrastructure.telemetry_client import genai_span
 from src.gateway.observability.attributes import (
     TRACE_METADATA_CONSENSUS_DECISION,
@@ -64,14 +62,58 @@ from src.gateway.observability.attributes import (
 logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")
 
-# Critics configuration (loaded from YAML if available, else fallback to hardcoded prompts)
-_CRITICS_CONFIG: dict[str, Any] = {}
-
 # ---------------------------------------------------------------------------
 # Background audit queue (Phase 4.4)
 # ---------------------------------------------------------------------------
 
 _AUDIT_QUEUE: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+
+
+class _FormatContext(dict[str, Any]):
+    """Safe format_map dictionary that substitutes 'UNKNOWN' for missing keys."""
+
+    def __missing__(self, key: str) -> str:
+        return "UNKNOWN"
+
+
+def load_critic_specs(path: Path) -> tuple[CriticSpec, ...]:
+    """Load domain critic specifications from a YAML file."""
+    with open(path, encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+    raw_critics = raw.get("critics", ())
+    entries: list[tuple[str, Mapping[str, Any]]] = []
+    if isinstance(raw_critics, Mapping):
+        for role_key, entry in raw_critics.items():
+            if isinstance(entry, Mapping):
+                entries.append((str(role_key), entry))
+    elif isinstance(raw_critics, Sequence):
+        for entry in raw_critics:
+            if isinstance(entry, Mapping):
+                role_key = str(entry.get("role") or entry.get("id") or "").strip()
+                entries.append((role_key, entry))
+
+    specs: list[CriticSpec] = []
+    for role_key, entry in entries:
+        role = str(entry.get("role") or role_key or entry.get("id") or "").strip()
+        prompt = str(entry.get("prompt_template") or entry.get("prompt") or "").strip()
+        if not role or not prompt:
+            raise ValueError(
+                f"Invalid critic specification in {path}: 'role' and 'prompt_template' are required"
+            )
+        specs.append(
+            CriticSpec(
+                role=role,
+                prompt=prompt,
+                weight=float(entry.get("weight", 1.0)),
+                provider=str(entry.get("provider", "google")),
+                model=str(entry.get("model", "gemini-2.5-pro")),
+                temperature=float(entry.get("temperature", 0.0)),
+                system_instruction=str(
+                    entry.get("system_instruction", "You are a strict {role}.")
+                ),
+            )
+        )
+    return tuple(specs)
 
 
 async def _background_audit_worker() -> None:
@@ -86,11 +128,10 @@ async def _background_audit_worker() -> None:
         try:
             record = await _AUDIT_QUEUE.get()
             logger.info(
-                "📋 [AUDIT] Post-hoc consensus | action=%s symbol=%s amount=%.2f "
+                "📋 [AUDIT] Post-hoc consensus | action=%s magnitude=%.2f "
                 "decision=%s votes=%s",
                 record.get("action"),
-                record.get("symbol"),
-                record.get("amount", 0),
+                record.get("magnitude", 0.0),
                 record.get("decision"),
                 record.get("votes"),
             )
@@ -172,148 +213,126 @@ class ConsensusModelRegistry:
         return self._has_dedicated.get(role, False)
 
     @classmethod
-    def from_env(cls) -> ConsensusModelRegistry:
-        """Construct from environment variables.
+    def from_env(cls, roles: Sequence[str] = ()) -> ConsensusModelRegistry:
+        """Construct from environment variables for the supplied critic roles.
 
-        Reads CONSENSUS_{ROLE}_URL and CONSENSUS_{ROLE}_MODEL for each
-        persona.  Falls back to default GatewayClient if not set.
-
-        Default configuration uses the existing split-brain architecture:
-          - Risk Manager → vLLM-Brain (VLLM_REASONING_API_BASE / DeepSeek-R1)
-          - Compliance Officer → vLLM-Police (VLLM_FAST_API_BASE / Llama 3.1)
-
-        This provides model family diversity by default without requiring
-        additional infrastructure configuration.
+        Reads ``CONSENSUS_{ROLE}_URL`` and ``CONSENSUS_{ROLE}_MODEL`` for each
+        persona. Falls back to the split-brain reasoning/fast vLLM endpoints
+        and then to ``GatewayClient`` when dedicated URLs are unset.
         """
-        return cls(
-            {
-                "Risk Manager": {
-                    "base_url": os.environ.get(
-                        "CONSENSUS_RISK_MANAGER_URL",
-                        os.environ.get("VLLM_REASONING_API_BASE", ""),
-                    ),
-                    "model": os.environ.get(
-                        "CONSENSUS_RISK_MANAGER_MODEL",
-                        os.environ.get("MODEL_REASONING", ""),
-                    ),
-                },
-                "Compliance Officer": {
-                    "base_url": os.environ.get(
-                        "CONSENSUS_COMPLIANCE_OFFICER_URL",
-                        os.environ.get("VLLM_FAST_API_BASE", ""),
-                    ),
-                    "model": os.environ.get(
-                        "CONSENSUS_COMPLIANCE_OFFICER_MODEL",
-                        os.environ.get("MODEL_FAST", ""),
-                    ),
-                },
-            }
+        default_fallbacks = (
+            ("VLLM_REASONING_API_BASE", "MODEL_REASONING"),
+            ("VLLM_FAST_API_BASE", "MODEL_FAST"),
         )
+        persona_configs: dict[str, dict[str, str]] = {}
+        for idx, role in enumerate(roles):
+            role_key = role.upper().replace(" ", "_").replace("-", "_")
+            fb_url_var, fb_model_var = default_fallbacks[idx % len(default_fallbacks)]
+            persona_configs[role] = {
+                "base_url": os.environ.get(
+                    f"CONSENSUS_{role_key}_URL",
+                    os.environ.get(fb_url_var, ""),
+                ),
+                "model": os.environ.get(
+                    f"CONSENSUS_{role_key}_MODEL",
+                    os.environ.get(fb_model_var, ""),
+                ),
+            }
+        return cls(persona_configs)
 
 
 class ConsensusGate:
     """
-    Implements a 'Critic' check for high-stakes decisions using separate LLM calls.
+    Domain-agnostic multi-critic consensus gate for high-stakes actions.
 
-    Trades above ``THRESHOLDS.consensus.threshold_usd`` trigger a synchronous
-    consensus check (on the hot path).  All consensus results are also pushed
-    to ``_AUDIT_QUEUE`` for post-execution background logging.
-
-    For non-critical trades (below threshold) the check is skipped and the
-    background queue is NOT burdened — the caller receives SKIPPED immediately.
-
-    Priority 4: Each critic persona now runs on a DISTINCT model backend via
-    the ConsensusModelRegistry.  This provides genuine algorithmic diversity.
+    Actions whose magnitude meets or exceeds ``self.threshold`` (or that appear
+    in ``self.high_stakes_actions``) trigger a synchronous consensus check
+    across the domain-contributed ``CriticSpec`` personas.
     """
 
-    def __init__(self, registry: ConsensusModelRegistry | None = None):
-        # Threshold from singleton — no inline literal (Phase 2.3)
-        self.threshold: float = THRESHOLDS.consensus.threshold_usd
-        self._registry = registry or ConsensusModelRegistry.from_env()
-        # Fallback client for backward compatibility
+    def __init__(
+        self,
+        critics: Sequence[CriticSpec] = (),
+        threshold: float = 0.0,
+        magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None,
+        quorum: int | float = 2,
+        high_stakes_actions: AbstractSet[str] = frozenset(),
+        registry: ConsensusModelRegistry | None = None,
+    ) -> None:
+        self.critics: tuple[CriticSpec, ...] = tuple(critics)
+        self.threshold: float = float(threshold)
+        self.magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = (
+            magnitude_extractor
+        )
+        self.quorum: int | float = quorum
+        self.high_stakes_actions: frozenset[str] = frozenset(high_stakes_actions)
+        self._registry = registry or ConsensusModelRegistry.from_env(
+            [c.role for c in self.critics]
+        )
         self._default_client = GatewayClient()
 
+    @classmethod
+    def from_contribution(
+        cls,
+        contribution: ConsensusContribution,
+        registry: ConsensusModelRegistry | None = None,
+    ) -> ConsensusGate:
+        """Build a ``ConsensusGate`` from a domain ``ConsensusContribution``."""
+        return cls(
+            critics=contribution.critics,
+            threshold=contribution.threshold,
+            magnitude_extractor=contribution.magnitude_extractor,
+            quorum=contribution.quorum,
+            high_stakes_actions=contribution.high_stakes_actions,
+            registry=registry,
+        )
+
+    def _resolve_critic_spec(self, critic: CriticSpec | str) -> CriticSpec | None:
+        if isinstance(critic, CriticSpec):
+            return critic
+        for candidate in getattr(self, "critics", ()):
+            if candidate.role == critic:
+                return candidate
+        return None
+
     async def _get_critic_vote(
-        self, role: str, action: str, context: dict[str, Any], magnitude: float | None
+        self,
+        critic: CriticSpec | str,
+        action: str,
+        context: Mapping[str, Any],
+        magnitude: float | None,
     ) -> str:
-        """Consult an LLM critic persona and return a structured decision.
+        """Consult an LLM critic persona and return a structured decision."""
+        spec = self._resolve_critic_spec(critic)
+        role = spec.role if spec is not None else str(critic)
+        if spec is None or not spec.prompt:
+            logger.error(
+                "No CriticSpec prompt configured for role '%s' — failing closed with ERROR",
+                role,
+            )
+            return "ERROR"
 
-        Each role is routed to its dedicated model backend via the
-        ConsensusModelRegistry, ensuring genuine model diversity.
-
-        If the persona has a dedicated AsyncOpenAI client (from the registry),
-        we call it directly.  Otherwise we fall back to the shared
-        GatewayClient with mode-based routing.
-
-        Args:
-            role:      Critic persona name (e.g. "Risk Manager").
-            action:    Action being evaluated.
-            context:   Domain-specific context dict (e.g. {"amount": ..., "symbol": ...}).
-            magnitude: Optional magnitude of the action for threshold comparison.
-        """
         try:
-            # Extract financial context for prompt rendering.
-            amount = context.get("amount", magnitude or 0.0)
-            symbol = context.get("symbol", "UNKNOWN")
+            fmt_ctx = _FormatContext(context)
+            fmt_ctx.setdefault("role", role)
+            fmt_ctx.setdefault("action", action)
+            fmt_ctx.setdefault("action_type", action)
+            fmt_ctx.setdefault("params", dict(context))
+            fmt_ctx.setdefault("magnitude", magnitude if magnitude is not None else 0.0)
 
-            # Load prompt template from critics.yaml (PR C §7.3 T-C2)
-            critic_config = None
-            for critic in _CRITICS_CONFIG.get("critics", []):
-                if critic.get("role") == role:
-                    critic_config = critic
-                    break
-
-            if critic_config:
-                # Use YAML-loaded template
-                prompt_template = critic_config.get("prompt_template", "")
-                prompt = prompt_template.format(
-                    role=role,
-                    action=action,
-                    amount=amount,
-                    symbol=symbol,
-                )
-                system_instruction = critic_config.get("system_instruction", "").format(
-                    role=role
-                )
-            else:
-                # Fallback to hardcoded prompt if YAML loading failed
-                logger.warning(
-                    "No critics.yaml config found for role '%s' — using hardcoded prompt",
-                    role,
-                )
-                prompt = (
-                    f"You are a {role} for a financial institution.\n"
-                    f"Review the following trade proposal:\n"
-                    f"ACTION: {action}\nAMOUNT: {amount}\nSYMBOL: {symbol}\n\n"
-                    "Your job is to identify high-risk or irregular activity.\n"
-                    "If the trade looks reasonable for a standard portfolio, say 'APPROVE'.\n"
-                    "If it looks suspicious, reckless, or undefined, say 'REJECT'.\n"
-                    "If the trade is legitimate but requires human verification "
-                    "(e.g., large withdrawals, complex life events), say 'ESCALATE'.\n\n"
-                    "Format: [DECISION] - [Reason]\n"
-                    "Example: APPROVE - Standard equity purchase."
-                )
-                system_instruction = f"You are a strict {role}."
+            prompt = spec.prompt.format_map(fmt_ctx)
+            system_instruction = (
+                spec.system_instruction or "You are a strict {role}."
+            ).format_map(fmt_ctx)
 
             dedicated_client = self._registry.get_client(role)
-            model = self._registry.get_model(role)
+            model = self._registry.get_model(role) or spec.model
 
-            # Consensus critic timeout — 10 s hard limit.
-            # Rationale: the governance hot-path budget is 3 s; critics run in
-            # parallel (asyncio.gather) so the combined cost is max(t1, t2).
-            # 30 s was too long under GPU load / unreachable vLLM sidecars,
-            # causing the test to time out before the consensus gate resolved.
-            # 10 s is sufficient for a healthy vLLM instance and still allows
-            # the test to complete within its 120 s pytest-timeout budget even
-            # when both critics are unreachable (2 x 10 s = 20 s worst case).
             _CRITIC_TIMEOUT_S: float = float(
                 os.getenv("CONSENSUS_CRITIC_TIMEOUT_S", "10.0")
             )
 
             if dedicated_client is not None:
-                # Use the persona-specific AsyncOpenAI client directly.
-                # Wrap in asyncio.wait_for so the 10 s limit is enforced even
-                # when the AsyncOpenAI client's own timeout is not set.
                 try:
                     response = await asyncio.wait_for(
                         dedicated_client.chat.completions.create(
@@ -340,8 +359,6 @@ class ConsensusGate:
                     return "ERROR"
                 content = response.choices[0].message.content.strip()
             else:
-                # Fall back to shared GatewayClient — enforce hard limit.
-                # (HIGH-07: GatewayClient has no built-in timeout; default is 600s)
                 try:
                     content = await asyncio.wait_for(
                         self._default_client.generate(
@@ -375,80 +392,91 @@ class ConsensusGate:
             return "ERROR"
 
     async def check_consensus(
-        self, action: str, context: dict[str, Any], magnitude: float | None = None
+        self,
+        action: str = "",
+        context: dict[str, Any] | None = None,
+        magnitude: float | None = None,
+        *,
+        action_type: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run a consensus check if the action exceeds the magnitude threshold.
+        """Run a consensus check if the action exceeds the magnitude threshold."""
+        resolved_action = action or action_type or ""
+        resolved_context: dict[str, Any] = (
+            dict(context)
+            if context is not None
+            else (dict(params) if params is not None else {})
+        )
+        extractor = getattr(self, "magnitude_extractor", None)
+        if magnitude is not None:
+            resolved_magnitude = float(magnitude)
+        elif extractor is not None:
+            try:
+                resolved_magnitude = float(extractor(resolved_context))
+            except (TypeError, ValueError):
+                resolved_magnitude = 0.0
+        else:
+            resolved_magnitude = 0.0
 
-        Hot-path guarantee (Phase 4.4):
-          - Below threshold → immediate SKIPPED return (no LLM calls).
-          - Above threshold → two concurrent critic votes gathered via
-            ``asyncio.gather`` (parallel, not sequential), then result pushed
-            to ``_AUDIT_QUEUE`` for the background worker.
+        threshold = float(getattr(self, "threshold", 0.0))
+        high_stakes = getattr(self, "high_stakes_actions", frozenset())
 
-        Priority 4: Each critic now runs on a distinct model backend,
-        providing genuine algorithmic diversity rather than the illusion
-        of consensus from a single model with different prompts.
+        if resolved_magnitude < threshold and resolved_action not in high_stakes:
+            return {
+                "status": "SKIPPED",
+                "decision": "SKIPPED",
+                "reason": "Below threshold",
+                "votes": [],
+            }
 
-        Args:
-            action:    Action being evaluated.
-            context:   Domain-specific context dict (e.g. ``{"amount": ..., "symbol": ...}``).
-            magnitude: Optional explicit magnitude for threshold comparison.
-                       Falls back to ``context["amount"]`` if not provided.
-
-        Returns:
-            dict with keys: status, reason, votes.
-        """
-        # Extract amount and symbol from context for backward compatibility.
-        amount = magnitude if magnitude is not None else context.get("amount", 0.0)
-        symbol = context.get("symbol", "UNKNOWN")
-
-        if amount < self.threshold:
-            return {"status": "SKIPPED", "reason": "Below threshold", "votes": []}
+        critics: tuple[CriticSpec, ...] = tuple(getattr(self, "critics", ()))
+        if not critics:
+            logger.error(
+                "ConsensusGate triggered for action=%s magnitude=%.2f with no critics configured — failing closed (DENY)",
+                resolved_action,
+                resolved_magnitude,
+            )
+            return {
+                "status": "DENY",
+                "decision": "DENY",
+                "reason": "no_critics_configured",
+                "votes": [],
+            }
 
         logger.info(
-            "⚖️ Consensus Engine Triggered for %s %.2f %s", action, amount, symbol
+            "⚖️ Consensus Engine Triggered for action=%s magnitude=%.2f",
+            resolved_action,
+            resolved_magnitude,
         )
+        action = resolved_action
+        context = resolved_context
 
         with genai_span(
-            "consensus.check", prompt=f"Review trade: {action} {amount} {symbol}"
+            "consensus.check",
+            prompt=f"Review action: {action} magnitude={resolved_magnitude}",
         ) as span:
             span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.8.4")
 
-            # Parallel critic calls — each on a distinct model backend (Priority 4)
-            vote1, vote2 = await asyncio.gather(
-                self._get_critic_vote("Risk Manager", action, context, magnitude),
-                self._get_critic_vote("Compliance Officer", action, context, magnitude),
+            votes = list(
+                await asyncio.gather(
+                    *(
+                        self._get_critic_vote(
+                            critic, action, context, resolved_magnitude
+                        )
+                        for critic in critics
+                    )
+                )
             )
-            votes = [vote1, vote2]
 
-            # Consensus rule (updated for split-vote and degraded-quorum handling):
-            #   ALL ERROR                    → ESCALATE (fail-closed: unanimous error must escalate)
-            #   ALL REJECT (no ERRORs)       → REJECT   (genuine unanimous denial)
-            #   Some ERROR + remaining REJECT → ESCALATE (degraded quorum — not a full unanimous
-            #                                             rejection; human review required)
-            #   Mixed APPROVE+REJECT (split) → ESCALATE for human review
-            #   Any ESCALATE                 → ESCALATE
-            #   ALL APPROVE                  → APPROVE
-            #
-            # Rationale: outright REJECT requires ALL critics to have voted and ALL
-            # to have rejected.  When one or more critics error (e.g. vLLM timeout),
-            # the remaining REJECT votes do not constitute a quorum — the trade must
-            # be escalated for human review rather than silently blocked.  This
-            # prevents a single critic's REJECT from becoming a de-facto veto when
-            # the other critic is unreachable (e.g. GPU load, network partition).
             non_error_votes = [v for v in votes if v != "ERROR"]
             error_votes = [v for v in votes if v == "ERROR"]
             if all(v == "ERROR" for v in votes):
-                # Unanimous ERROR must escalate, not approve — a DoS attack causing
-                # both backends to error would otherwise bypass the consensus gate
-                # entirely, allowing any trade to pass through unchecked.
                 logger.warning(
                     "🔴 All consensus critics returned ERROR — escalating for human review "
-                    "(action=%s amount=%.2f symbol=%s). "
+                    "(action=%s magnitude=%.2f). "
                     "Fail-open APPROVE would allow a DoS bypass of the consensus gate.",
                     action,
-                    amount,
-                    symbol,
+                    resolved_magnitude,
                 )
                 decision = "ESCALATE"
                 reason = "consensus_unanimous_error"
@@ -457,8 +485,6 @@ class ConsensusGate:
                 and all(v == "REJECT" for v in non_error_votes)
                 and not error_votes
             ):
-                # Genuine unanimous rejection: ALL critics voted and ALL rejected.
-                # No ERRORs present — this is a full quorum denial.
                 decision = "REJECT"
                 reason = f"Unanimous rejection by all critics. Votes: {votes}"
             elif (
@@ -466,43 +492,32 @@ class ConsensusGate:
                 and all(v == "REJECT" for v in non_error_votes)
                 and error_votes
             ):
-                # Degraded quorum: some critics errored, remaining non-error votes are
-                # all REJECT.  This is NOT a unanimous rejection — the errored critics
-                # could not participate.  Escalate for human review.
                 logger.warning(
                     "⚠️ Degraded consensus quorum: %d critic(s) errored, %d rejected "
-                    "(action=%s amount=%.2f symbol=%s). Escalating for human review — "
+                    "(action=%s magnitude=%.2f). Escalating for human review — "
                     "a partial REJECT quorum is not a full unanimous denial.",
                     len(error_votes),
                     len(non_error_votes),
                     action,
-                    amount,
-                    symbol,
+                    resolved_magnitude,
                 )
                 decision = "ESCALATE"
                 reason = (
                     f"Degraded quorum: {len(error_votes)} critic(s) unavailable, "
                     f"remaining votes all REJECT — escalating for human review. Votes: {votes}"
                 )
-            # Reviewer note H54: degraded quorum (ERROR + APPROVE) → ESCALATE to HITL.
             elif set(votes) == {"ERROR", "APPROVE"}:
-                # Degraded quorum: one critic errored, one approved.  The single
-                # APPROVE does not constitute a genuine unanimous quorum — escalate
-                # for human review rather than letting a lone APPROVE pass through
-                # when its counterpart critic is unreachable.
                 logger.warning(
                     "⚠️ Degraded consensus quorum: ERROR + APPROVE — escalating for human review "
-                    "(action=%s amount=%.2f symbol=%s).",
+                    "(action=%s magnitude=%.2f).",
                     action,
-                    amount,
-                    symbol,
+                    resolved_magnitude,
                 )
                 decision = "ESCALATE"
                 reason = f"Degraded quorum (ERROR + APPROVE) — escalating for human review. Votes: {votes}"
             elif any(v == "REJECT" for v in non_error_votes) and any(
                 v == "APPROVE" for v in non_error_votes
             ):
-                # Split vote: at least one APPROVE and one REJECT → escalate for human review
                 decision = "ESCALATE"
                 reason = f"Split consensus vote — escalating for human review. Votes: {votes}"
             elif any("ESCALATE" in v for v in votes):
@@ -510,7 +525,7 @@ class ConsensusGate:
                 reason = f"Escalated for human review. Votes: {votes}"
             elif all(v == "APPROVE" for v in votes):
                 decision = "APPROVE"
-                reason = "Unanimous approval from Risk and Compliance."
+                reason = "Unanimous approval from all configured critics."
             else:
                 decision = "ESCALATE"
                 reason = f"Consensus unclear. Votes: {votes}"
@@ -528,13 +543,16 @@ class ConsensusGate:
                     "Risk Management",
                 )
 
-            result = {"status": decision, "reason": reason, "votes": votes}
+            result = {
+                "status": decision,
+                "decision": decision,
+                "reason": reason,
+                "votes": votes,
+            }
 
-            # Push to background audit queue (Phase 4.4) — non-blocking
             audit_record = {
                 "action": action,
-                "symbol": symbol,
-                "amount": amount,
+                "magnitude": resolved_magnitude,
                 "decision": decision,
                 "reason": reason,
                 "votes": votes,
@@ -542,10 +560,6 @@ class ConsensusGate:
             try:
                 _AUDIT_QUEUE.put_nowait(audit_record)
             except asyncio.QueueFull:
-                # LOW-3 fix: dropped audit records are a compliance gap — log at
-                # CRITICAL so SIEM/alerting picks them up.  Also: ensure
-                # _background_audit_worker() is started at application startup
-                # so the queue is drained and records are not dropped at all.
                 logger.critical(
                     json.dumps(
                         {
@@ -564,7 +578,6 @@ class ConsensusGate:
             return result
 
 
-consensus_engine = ConsensusGate()
-
 # Backward-compatibility alias for external consumers
 ConsensusEngine = ConsensusGate
+
