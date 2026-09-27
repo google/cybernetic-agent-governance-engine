@@ -63,6 +63,12 @@ MIN_SAMPLES: int = get_causal_min_samples()
 # ---------------------------------------------------------------------------
 
 
+_PREV_CONFIGURATION_ERROR = globals().get("ConfigurationError")
+_PREV_BASE_TELEMETRY_PROVIDER = globals().get("BaseTelemetryProvider")
+_PREV_NULL_TELEMETRY_PROVIDER = globals().get("NullTelemetryProvider")
+_PREV_MOCK_TELEMETRY_PROVIDER = globals().get("MockTelemetryProvider")
+
+
 class ConfigurationError(ValueError):
     """Raised when telemetry provider configuration or credentials are invalid."""
 
@@ -72,21 +78,37 @@ class ConfigurationError(ValueError):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_telemetry_columns() -> tuple[str, str, str]:
+    """Resolve (confounder, treatment, outcome) column names from the active domain's causal graph."""
+    try:
+        from src.gateway.governance.causal.gatekeeper import _causal_config
+
+        cfg = _causal_config()
+        common_causes = cfg.get("common_causes") or []
+        confounder = str(common_causes[0]) if common_causes else "confounder"
+        treatment = str(cfg.get("treatment") or "treatment")
+        outcome = str(cfg.get("outcome") or "outcome")
+        return (confounder, treatment, outcome)
+    except Exception:
+        return ("confounder", "treatment", "outcome")
+
+
 class BaseTelemetryProvider(ABC):
     """Abstract interface for telemetry data consumed by the causal gatekeeper.
 
-    Concrete providers must return a DataFrame with exactly three columns:
-        market_volatility  float  [0, 1]
-        trade_amount       float  [0, ∞)
-        risk_score         float  [0, 1]
+    Concrete providers must return a DataFrame with the three columns declared
+    by the active domain's causal graph configuration:
+        <confounder>   float  [0, 1]
+        <treatment>    float  [0, ∞)
+        <outcome>      float  [0, 1]
     """
 
     @abstractmethod
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
         """Return the most recent n_samples telemetry records.
 
-        The returned DataFrame MUST contain these columns:
-            market_volatility, trade_amount, risk_score
+        The returned DataFrame MUST contain the confounder, treatment, and
+        outcome columns declared by the active domain's causal graph.
 
         Raises:
             NotImplementedError if the concrete class does not implement this.
@@ -107,10 +129,8 @@ class NullTelemetryProvider(BaseTelemetryProvider):
       - Running in offline, bare-kernel, or test environments without telemetry
       - Telemetry is explicitly disabled
 
-    Returns an empty DataFrame with the required schema:
-        market_volatility: float64
-        trade_amount:      float64
-        risk_score:        float64
+    Returns an empty DataFrame with ``float64`` columns matching the active
+    domain's causal graph ``(confounder, treatment, outcome)`` schema.
 
     This allows the causal gatekeeper to cleanly take its documented
     insufficient-samples fail-closed path without fabricating synthetic data.
@@ -118,11 +138,12 @@ class NullTelemetryProvider(BaseTelemetryProvider):
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
         """Return an empty typed DataFrame."""
+        confounder_col, treatment_col, outcome_col = _resolve_telemetry_columns()
         return pd.DataFrame(
             {
-                "market_volatility": pd.Series(dtype="float64"),
-                "trade_amount": pd.Series(dtype="float64"),
-                "risk_score": pd.Series(dtype="float64"),
+                confounder_col: pd.Series(dtype="float64"),
+                treatment_col: pd.Series(dtype="float64"),
+                outcome_col: pd.Series(dtype="float64"),
             }
         )
 
@@ -144,25 +165,36 @@ class MockTelemetryProvider(BaseTelemetryProvider):
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
         """Generate deterministic synthetic telemetry."""
+        confounder_col, treatment_col, outcome_col = _resolve_telemetry_columns()
         np.random.seed(self._seed)
-        market_volatility = np.random.uniform(0.1, 0.9, n_samples)
-        trade_amount = np.random.normal(5000, 1000, n_samples) - (
-            market_volatility * 2000
+        confounder = np.random.uniform(0.1, 0.9, n_samples)
+        treatment = np.random.normal(5000, 1000, n_samples) - (
+            confounder * 2000
         )
-        trade_amount = np.clip(trade_amount, 100, 10_000)
-        risk_score = (
-            (market_volatility * 0.5)
-            + (trade_amount / 10_000 * 0.5)
+        treatment = np.clip(treatment, 100, 10_000)
+        outcome = (
+            (confounder * 0.5)
+            + (treatment / 10_000 * 0.5)
             + np.random.normal(0, 0.05, n_samples)
         )
-        risk_score = np.clip(risk_score, 0.0, 1.0)
+        outcome = np.clip(outcome, 0.0, 1.0)
         return pd.DataFrame(
             {
-                "market_volatility": market_volatility,
-                "trade_amount": trade_amount,
-                "risk_score": risk_score,
+                confounder_col: confounder,
+                treatment_col: treatment,
+                outcome_col: outcome,
             }
         )
+
+
+if _PREV_CONFIGURATION_ERROR is not None:
+    ConfigurationError = _PREV_CONFIGURATION_ERROR  # type: ignore[misc]
+if _PREV_BASE_TELEMETRY_PROVIDER is not None:
+    BaseTelemetryProvider = _PREV_BASE_TELEMETRY_PROVIDER  # type: ignore[misc]
+if _PREV_NULL_TELEMETRY_PROVIDER is not None:
+    NullTelemetryProvider = _PREV_NULL_TELEMETRY_PROVIDER  # type: ignore[misc]
+if _PREV_MOCK_TELEMETRY_PROVIDER is not None:
+    MockTelemetryProvider = _PREV_MOCK_TELEMETRY_PROVIDER  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

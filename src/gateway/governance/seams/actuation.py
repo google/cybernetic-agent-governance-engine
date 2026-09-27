@@ -93,7 +93,7 @@ class ExecutionClearance:
 
     # v3.0 Routing and Consequence Boundary (Archytan Vector 3 Integration)
     executor_id: str = "actuator_01"
-    """Downstream actuator identifier (e.g., 'actuator_01', 'cage_finance_broker')."""
+    """Downstream actuator identifier (e.g., 'actuator_01', 'domain_actuator')."""
 
     target_route: str = "local://default"
     """Execution target route URI (e.g., 'local://default', 'mtls://broker.example.com')."""

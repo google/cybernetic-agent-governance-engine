@@ -86,7 +86,7 @@ def mint_consequence_token_finding(
         ...     actor_id="user-123",
         ...     thread_id="thread-abc",
         ...     authority_record_id="rec-xyz",
-        ...     action_payload={"action": "execute_trade", ...},
+        ...     action_payload={"action": "execute_action", ...},
         ... )
         >>> finding["code"]
         'CONSEQUENCE_TOKEN'

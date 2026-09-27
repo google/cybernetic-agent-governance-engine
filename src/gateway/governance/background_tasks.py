@@ -18,7 +18,7 @@ Allows domain plugins to register long-running background coroutines (e.g.
 audit workers, polling daemons) that are started during application lifespan.
 
 PR B, T-B6: Moves audit worker startup behind the plugin seam so the kernel
-does not directly import from cage_finance.consensus.
+does not directly import from domain plugin modules.
 """
 
 import asyncio

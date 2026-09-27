@@ -334,11 +334,12 @@ async def _evaluate_policy_internal(
     amount: float = 0.0,
     symbol: str = "UNKNOWN",
     currency: str = "USD",
-    trader_role: str = "junior",
+    subject_role: str = "junior",
     user_id: str = "anonymous",
     risk_profile: str = "neutral",
     description: str | None = None,
     dry_run: bool = True,
+    **extra_params: Any,
 ) -> str:
     """Internal OPA policy evaluation helper (no longer an MCP-exposed tool).
 
@@ -355,15 +356,15 @@ async def _evaluate_policy_internal(
     with tracer.start_as_current_span("governance.opa_policy_evaluation") as span:
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "opa_policy_eval_internal")
-        span.set_attribute(SPAN_ATTR_OPA_POLICY_PATH, "trade_governance")
+        span.set_attribute(SPAN_ATTR_OPA_POLICY_PATH, "domain_governance")
         span.set_attribute("governance.action", action)
-        span.set_attribute("governance.trader_role", trader_role)
+        span.set_attribute("governance.subject_role", subject_role)
         span.set_attribute("governance.amount", amount)
 
         logger.info(
-            "Tool Call: evaluate_policy(action=%s, trader_role=%s, amount=%s)",
+            "Tool Call: evaluate_policy(action=%s, subject_role=%s, amount=%s)",
             action,
-            trader_role,
+            subject_role,
             amount,
         )
         params = {
@@ -371,11 +372,12 @@ async def _evaluate_policy_internal(
             "amount": amount,
             "symbol": symbol,
             "currency": currency,
-            "trader_role": trader_role,
+            "subject_role": subject_role,
             "user_id": user_id,
             "risk_profile": risk_profile,
             "description": description,
             "dry_run": dry_run,
+            **extra_params,
         }
         try:
             result = await governor_of(app).components.opa.evaluate_policy(params)
@@ -384,13 +386,13 @@ async def _evaluate_policy_internal(
             span.set_attribute("opa.decision", result_str)
             if result_str == "ALLOW":
                 span.set_attribute("opa.allowed", True)
-                return "APPROVED: trade permitted by OPA policy"
+                return "APPROVED: action permitted by OPA policy"
             elif result_str == "MANUAL_REVIEW":
                 span.set_attribute("opa.allowed", False)
-                return "MANUAL_REVIEW: trade requires human approval"
+                return "MANUAL_REVIEW: action requires human approval"
             else:
                 span.set_attribute("opa.allowed", False)
-                return f"DENIED: trade blocked by OPA policy (decision={result_str})"
+                return f"DENIED: action blocked by OPA policy (decision={result_str})"
         except Exception as exc:
             logger.error("Policy Check Error: %s", exc)
             span.record_exception(exc)

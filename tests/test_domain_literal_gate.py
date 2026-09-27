@@ -138,3 +138,43 @@ class TestDomainLiteralGate:
         # Should mention the forbidden literals in the script or output
         # (The script itself contains the forbidden literals list)
         assert result.returncode == 0  # Gate should pass on clean kernel
+
+    def test_stpa_generated_files_removed_from_excluded_files(self) -> None:
+        """Verify generated_stpa_validator.py and generated_saga_nodes.py are no longer excluded."""
+        from scripts.check_domain_literals import EXCLUDED_FILES
+
+        assert "generated_stpa_validator.py" not in EXCLUDED_FILES
+        assert "generated_saga_nodes.py" not in EXCLUDED_FILES
+
+    @pytest.mark.parametrize(
+        "bad_literal",
+        [
+            "execute_trade",
+            "reverse_trade",
+            "wire_transfer",
+            "place_order",
+            "trade_amount",
+            "market_regime",
+            "min_cash_balance",
+            "portfolio_drawdown",
+            "portfolio_drawdown_pct",
+            "threshold_usd",
+            "min_trade_confidence",
+            "HIGH_VALUE_TRADE",
+            "Risk Manager",
+            "Execution Quant",
+            "administer_medication",
+            "move_effector",
+        ],
+    )
+    def test_gate_detects_all_forbidden_domain_literals(
+        self, tmp_path: Path, bad_literal: str
+    ) -> None:
+        """G6 gate detects every literal in the expanded FORBIDDEN_LITERALS set."""
+        test_file = tmp_path / "sample.py"
+        test_file.write_text(f'VAL = "{bad_literal}"\n', encoding="utf-8")
+
+        violations = check_file(test_file)
+        assert len(violations) == 1
+        assert violations[0][1] == bad_literal
+

@@ -38,7 +38,7 @@ class TerminalClassification(str, Enum):
     """
 
     IRREVERSIBLE_TERMINAL = "IRREVERSIBLE_TERMINAL"
-    """Action commits an external, unalterable state change (e.g. execute_trade,
+    """Action commits an external, unalterable state change (e.g. execute_action,
     write_db).  Any plan that can reach this action inherits worst-case
     classification from T₀."""
 
@@ -451,7 +451,7 @@ class FtraBoundaryResult:
 class PlanStep(BaseModel):
     id: str = Field(default="", description="Unique identifier for the step")
     action: str = Field(
-        description="Action to perform (e.g., execute_trade, check_price)"
+        description="Action to perform (e.g., execute_action, check_state)"
     )
     description: str = Field(description="Description of what this step does")
     parameters: dict[str, Any] = Field(

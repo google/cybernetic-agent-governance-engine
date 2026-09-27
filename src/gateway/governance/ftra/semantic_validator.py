@@ -99,7 +99,7 @@ class ActionSchema:
     """Schema definition for a specific action."""
 
     action_name: str
-    """Action name (e.g., 'execute_trade')."""
+    """Action name (e.g., 'execute_action')."""
 
     parameters: tuple[ParameterConstraint, ...]
     """Tuple of parameter constraints."""
@@ -157,7 +157,7 @@ _FORBIDDEN_PATTERNS = frozenset(
 #
 # For backward compatibility and testing, a minimal schema registry is
 # initialized here, but production deployments should register schemas
-# from domain plugins (src/cage_finance/, src/cage_healthcare/, etc.).
+# from domain plugins during initialization.
 
 ACTION_SCHEMAS: dict[str, ActionSchema] = {}
 """Global registry of action schemas. Populated by domain plugins at initialization."""
@@ -340,7 +340,7 @@ def validate_tool_input(
     - Extra parameters: allowed structurally BUT must not contain forbidden patterns
 
     Args:
-        tool_name: The action name (e.g., "execute_trade").
+        tool_name: The action name (e.g., "execute_action").
         tool_input: The action parameters dict.
 
     Returns:

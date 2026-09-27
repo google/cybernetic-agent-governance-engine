@@ -292,25 +292,23 @@ class GroundTruthReconciler:
         if isinstance(source_floor, (int, float)) and math.isfinite(source_floor):
             return float(source_floor)
         try:
+            from src.gateway.governance.plugin_loader import load_domain_plugin
             from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
-            path_mapping = {
-                "finance.cash_balance": "domains.finance.cbf.min_cash_balance",
-                "healthcare.serum_concentration": (
-                    "domains.healthcare.min_therapeutic_concentration"
-                ),
-                "physical_ai.spatial_separation": (
-                    "domains.physical_ai.min_separation_distance_mm"
-                ),
-                "physical_ai.kinematic_velocity": (
-                    "domains.physical_ai.max_velocity_mm_s"
-                ),
-                "physical_ai.torque_saturation": (
-                    "domains.physical_ai.max_joint_torque_nm"
-                ),
-            }
-            if invariant_id in path_mapping:
-                return float(THRESHOLDS.resolve(path_mapping[invariant_id]))
+            threshold_key = getattr(
+                source_obj,
+                "threshold_key",
+                getattr(provider, "threshold_key", None),
+            )
+            if not threshold_key and "." in invariant_id:
+                domain_name = invariant_id.partition(".")[0]
+                plugin = load_domain_plugin(domain_name)
+                for inv in plugin.contribute().invariants:
+                    if getattr(inv, "invariant_id", None) == invariant_id:
+                        threshold_key = getattr(inv, "threshold_key", None)
+                        break
+            if threshold_key:
+                return float(THRESHOLDS.resolve(threshold_key))
         except Exception:
             pass
         return None

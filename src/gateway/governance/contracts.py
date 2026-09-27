@@ -306,7 +306,7 @@ class CommitReceipt:
 class GovernanceTierPlugin(Protocol):
     """Protocol for a domain-specific governance evaluation tier.
 
-    Domain plugins (e.g. ``cage_finance``) implement this protocol for each
+    Domain plugins implement this protocol for each
     governance tier they contribute to the kernel.  Tiers are handed over in
     ``PluginContribution.tiers`` and fixed when ``assemble_governor()`` builds
     the (immutable) governor.  They are executed in ``(phase, order,
@@ -613,7 +613,7 @@ class InvariantModel(Protocol):
         """THRESHOLDS lookup path for the floor value.
 
         Resolved from config/thresholds/{REGION}_BASELINE.json at runtime.
-        Example: 'cbf.min_cash_balance', 'healthcare.min_therapeutic_concentration'
+        Example: 'domains.example.min_resource_floor', 'domains.healthcare.min_therapeutic_concentration'
         """
         ...
 
@@ -634,8 +634,8 @@ class InvariantModel(Protocol):
 class DomainToolProvider(Protocol):
     """Registers domain-specific MCP tools with the tool server.
 
-    Domain plugins implement this to contribute tools (e.g. ``execute_trade``,
-    ``check_market_status``) to the MCP tool server.  The server lifespan
+    Domain plugins implement this to contribute tools (e.g. ``execute_action``,
+    ``check_state``) to the MCP tool server.  The server lifespan
     calls ``register_tools()`` once, after the governor is assembled, so a
     tool that must be sealed receives the governor that seals it.
     """

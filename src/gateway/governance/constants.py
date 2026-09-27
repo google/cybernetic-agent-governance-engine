@@ -101,7 +101,7 @@ def register_overlay_dir(path: Path) -> None:
 
     Args:
         path: Path to the plugin's compliance overlay directory
-              (e.g. src/cage_finance/config/compliance/)
+              (e.g. a domain plugin's config/compliance/ directory)
     """
     resolved = path.resolve()
     if resolved not in _OVERLAY_DIRS:
@@ -521,7 +521,7 @@ class ControlRegistry:
 
 # HITL SLA citations — jurisdiction-specific escalation authority
 # PR B T-B5: These are now loaded from regional baseline JSONs (_hitl section)
-# instead of being imported from cage_finance.constants.
+# instead of being imported from domain plugin constants.
 HITL_CITATIONS: dict[str, str] = {}
 HITL_CITATION_DEFAULT: str = "ISO 42001 A.8.4 (AI system operation controls)"
 
@@ -548,7 +548,7 @@ def _load_hitl_constants_from_baselines() -> None:
     of each regional baseline JSON file.
 
     These are regulatory constants (not domain-specific), so they belong in
-    the regional baselines rather than in cage_finance (PR B, T-B5).
+    the regional baselines rather than in a domain plugin (PR B, T-B5).
     """
     global HITL_CITATIONS, HITL_SLA_HOURS, PII_RETENTION_AUTHORITY, INJECTION_CITATION
 
