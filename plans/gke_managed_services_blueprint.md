@@ -49,6 +49,7 @@ There is no live production instance (AGENTS.md), so there's no dual-write or cu
 | G9 | `CAGE_RECONCILIATION_REPLAY_DEFENSE` defaults to `false` | [cbf_engine.py:51-53](../src/gateway/governance/safety/cbf_engine.py#L51-L53) | §1.2 (flag), PR 5 (text) |
 | NEW | Cluster is **zonal in every env**, prod included | [gcp_gke_cluster/main.tf:28](../infra/modules/gcp_gke_cluster/main.tf#L28) | 6f |
 | NEW | `KMS_GOVERNANCE_KEY` has a **fourth** consumer: the compliance bridge's evidence batch signer | [gcp-gke/main.tf:568-573](../infra/targets/gcp-gke/main.tf#L568-L573) | 6d |
+| NEW | **Every workload shares one identity.** Gateway, advisor, bridge, vLLM (and in manifests the reconciler and Langfuse) run as `financial-advisor-sa`, whose GSA is created and granted out of band. The per-service GSAs in `iam.tf` are bound to KSAs no pod uses. | §5.1 | 6d |
 
 ### 0.3 Decisions (settled; don't reopen here)
 
@@ -264,13 +265,25 @@ P99 2,000 ms end to end (THR-LAT-003/004 in the [threshold matrix](../compliance
 
 ### 5.1 Workload identity
 
-| KSA | GSA | Replaces | Grants |
-|---|---|---|---|
-| `cage-gateway` | `gateway` | exists ([iam.tf:29](../infra/targets/gcp-gke/iam.tf#L29)) | `cloudkms.signer` on the seal key; `publicKeyViewer` on the reconciler key; IAM auth on `governance` |
-| `cage-reconciler` | `reconciler` (**new**) | `financial-advisor-sa` on the CronJob | `cloudkms.signer` on the reconciler key only; IAM auth on `governance` |
-| `cage-advisor` | `advisor` (**new**) | `financial-advisor-sa` | `publicKeyViewer` on the seal key; IAM auth on `app`. Plan-signing key only if §8 item 4 keeps it. |
-| `cage-compliance-bridge` | `compliance_bridge` | exists ([iam.tf:36](../infra/targets/gcp-gke/iam.tf#L36)) | `cloudkms.signer` on the evidence key; WORM bucket `objectCreator` |
-| `langfuse` | `langfuse` (**new**) | K8s Secret credentials | Cloud SQL IAM user; IAM auth on `app` |
+**Current state (the core 6d problem).** One KSA, `financial-advisor-sa`, runs every workload:
+
+- Terraform uses it for the gateway ([gateway/main.tf:50](../infra/modules/gateway/main.tf#L50)), the advisor ([governed_advisor/main.tf:55](../infra/modules/governed_advisor/main.tf#L55)), the compliance bridge ([compliance_bridge/main.tf:52](../infra/modules/compliance_bridge/main.tf#L52)) and both vLLM releases ([gcp-gke/main.tf:383](../infra/targets/gcp-gke/main.tf#L383), [:452](../infra/targets/gcp-gke/main.tf#L452)).
+- The raw manifests also use it for the reconciler, Langfuse and the frontend: 20 files under `deployment/k8s/`.
+- It is annotated to the GSA `financial-advisor-sa@<project>` ([gcp-gke/main.tf:362-372](../infra/targets/gcp-gke/main.tf#L362-L372)). **No Terraform creates that GSA or grants it anything**, so its roles are entirely out of band.
+- The `cage-gateway` and `cage-compliance-bridge` GSAs and their Workload Identity bindings ([iam.tf:168-184](../infra/targets/gcp-gke/iam.tf#L168-L184)) bind KSAs that no pod uses, so every grant in `iam.tf` for them is dead.
+
+**Consequence:** any KMS right the gateway needs to sign routing seals is held equally by the advisor, the vLLM pods and Langfuse. With it, an untrusted workload could mint a v3 JWT seal (`iss: cage-gateway`, [routing_seal.py:404-429](../src/gateway/governance/routing_seal.py#L404-L429)) that the actuator accepts.
+
+**Target.** One KSA per workload, each bound to its own Terraform-managed GSA. `financial-advisor-sa` is deleted.
+
+| KSA | GSA | Grants |
+|---|---|---|
+| `cage-gateway` | `gateway` (exists, [iam.tf:29](../infra/targets/gcp-gke/iam.tf#L29), binding unused today) | `cloudkms.signer` on the seal key; `publicKeyViewer` on the reconciler key; IAM auth on `governance` |
+| `cage-reconciler` | `reconciler` (**new**) | `cloudkms.signer` on the reconciler key only; IAM auth on `governance` |
+| `cage-advisor` | `advisor` (**new**) | **No signer role on any key.** `publicKeyViewer` on the seal key only (actuator-side seal verification, [api.py:236-238](../src/governed_financial_advisor/tools/api.py#L236-L238)); IAM auth on `app` |
+| `cage-compliance-bridge` | `compliance_bridge` (exists, [iam.tf:36](../infra/targets/gcp-gke/iam.tf#L36), binding unused today) | `cloudkms.signer` on the evidence key; WORM bucket `objectCreator` |
+| `cage-vllm` | `vllm` (exists) | Model bucket read only; no KMS |
+| `langfuse` | `langfuse` (**new**) | Cloud SQL IAM user; IAM auth on `app` |
 
 Secrets move from Kubernetes Secrets to Secret Manager through the Secret Manager CSI driver. Each secret is granted to exactly one GSA.
 
@@ -281,15 +294,24 @@ One `EC_SIGN_P256_SHA256` key per signer. P-256 is supported at both SOFTWARE an
 
 | Key | Signer | Verifiers | Env var |
 |---|---|---|---|
-| `cage-gateway-seal-signer` | gateway | advisor, gateway | `KMS_GOVERNANCE_KEY` |
+| `cage-gateway-seal-signer` | gateway | advisor (actuator), gateway | `KMS_GOVERNANCE_KEY` |
 | `cage-reconciler-snapshot-signer` | reconciler | gateway (CBF), **by `kid` only** | `RECONCILER_KMS_KEY` |
 | `cage-evidence-batch-signer` | compliance bridge | auditors (offline) | `KMS_GOVERNANCE_KEY` on the bridge today, renamed in 6d |
-| `cage-advisor-plan-signer` | advisor | advisor | conditional on §8 item 4 |
+
+**No advisor plan-signing key** (§8, item 4). The advisor's evaluator signature is removed in 6d:
+
+- Drop signing in [evaluator_node.py](../src/governed_financial_advisor/graph/nodes/evaluator_node.py) and verification in [explainer_node.py](../src/governed_financial_advisor/graph/nodes/explainer_node.py). The explainer reports the gateway envelope signature instead ([safety_node.py:138](../src/governed_financial_advisor/graph/nodes/safety_node.py#L138)).
+- The `check_safety_signature` edge ([graph.py:213-216](../src/governed_financial_advisor/graph/graph.py#L213-L216)) routes on the verdict alone. Actuation stays gated by the gateway seal (`verify_and_consume_seal`).
+- Delete the unused gateway helper [`_verify_governance_signature`](../src/gateway/server/governance_middleware.py#L481) and its tests. It has no production caller, and it would accept any holder of the gateway key as an approver.
+- In [`verify_seal`](../src/gateway/governance/routing_seal.py#L620), remove the fallback to the verifier's own signer key when the JWKS `kid` lookup fails ([:642-649](../src/gateway/governance/routing_seal.py#L642-L649)): unknown `kid` → reject, as in G8.
+- The advisor loads a verify-only signer (public key, no signing path), so an enforcing startup doesn't require signer rights.
+
+Other rules:
 
 - Never grant `signerVerifier` on a shared key. The Cloud Run pattern at [gcp-cloudrun/main.tf:696-697](../infra/targets/gcp-cloudrun/main.tf#L696-L697) is not copied.
 - The hand-made POAM-038 `governance/balance-signer` key is either imported into Terraform or retired in 6d.
 - Symmetric CMEK stays a separate module key (`infra/modules/kms`).
-- OSCAL SC-12/SC-13 are updated within 2 business days of the 6d merge.
+- OSCAL SC-12/SC-13 (and AC-6 for the identity split) are updated within 2 business days of the 6d merge.
 
 ### 5.3 Network policy (G6, 6f)
 
@@ -343,7 +365,7 @@ flowchart LR
 | 6b.0 | `fix/cbf-atomic-debit` | §2.3 items 1–5 (Layer 1) | Each item has a test that observes the failure; `make test-fast` green |
 | 6b | `feat/gke-memorystore` | §2.1, §2.2, §2.4, §1.2 flags; delete Sentinel stub and `redis-*.yaml` | Live `WAIT 1 100` smoke test succeeds on the staging `governance` instance (Valkey caveat, §8 item 1); fault matrix passes; static gate covers Memorystore |
 | 6c | `feat/gke-cloudsql` | §2.5 | Langfuse up with no static DB password |
-| 6d | `feat/kms-signing-keys` | §5.1, §5.2 | Enforcing posture starts ([`reconciler_trust_anchor`](../src/gateway/governance/governor/posture.py#L130)); forged-`kid` snapshot → BLOCK on live KMS; OSCAL updated |
+| 6d | `feat/kms-signing-keys` | §5.1, §5.2: per-workload KSA/GSA, per-signer keys, remove advisor signing | Enforcing posture starts ([`reconciler_trust_anchor`](../src/gateway/governance/governor/posture.py#L130)); forged-`kid` snapshot → BLOCK on live KMS; no pod or module references `financial-advisor-sa`; advisor GSA holds no `cloudkms.signer*` role (live `get-iam-policy`); advisor-minted seal → rejected; OSCAL updated |
 | 6e | `feat/clickhouse-operator` | §2.6 | Evidence reaches the locked bucket; ClickHouse node loss causes no evidence loss |
 | 6f | `refactor/gke-sole-target` | §3, §5.3, §5.4; regional prod; delete `infra/targets/gcp-cloudrun/` and its `deploy_all.sh` branch | `rg gcp-cloudrun` finds only CHANGELOG; policies enforced on DPv2 dev |
 
@@ -367,6 +389,7 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 | Staging rolls back every commit (strict + `WAIT 1`, no replica) | §1.1 replica + §1.2 precondition |
 | Gateway handed the read-replica endpoint | Module exports only the primary endpoint |
 | A shared signing key sneaks back in | Test: each `google_kms_crypto_key` of purpose `ASYMMETRIC_SIGN` has exactly one `signer` member |
+| Workloads share an identity again | Static test: every `service_account_name`/`serviceAccountName` in `infra/` and `deployment/k8s/` is unique per workload, and each KSA annotation points at a GSA Terraform creates |
 | `RECONCILER_KMS_KEY` points at the gateway key | Already rejected at startup ([trust.py](../src/gateway/governance/reconciliation/trust.py)); Terraform keeps them as distinct resources |
 | DPv2 toggled on an existing cluster | Create-time only: recreate dev in 6f; never plan it as an in-place change |
 | L7 CNP rules silently unenforced on GKE | Rewrite as FQDN policy (§5.3); verify on a DPv2 dev cluster (§8 item 2) |
@@ -389,13 +412,14 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 
 | # | Question | Blocks | How |
 |---|---|---|---|
-| 4 | Does the advisor need to sign plans? | 6d | It signs in [evaluator_node.py](../src/governed_financial_advisor/graph/nodes/evaluator_node.py) and verifies in its own graph ([explainer_node.py:56](../src/governed_financial_advisor/graph/nodes/explainer_node.py#L56)). If nothing external relies on the signature, drop the key. |
-| 5 | Who holds signer rights on the governance key today | 6d | `gcloud kms keys get-iam-policy`; any grant is out of band (POAM-038) |
+| 5′ | What roles does the out-of-band GSA `financial-advisor-sa@<project>` hold on `KMS_GOVERNANCE_KEY` (and project-wide)? | 6d | Terraform grants it nothing (§5.1), so only live IAM can answer. Run `gcloud kms keys get-iam-policy <key> --keyring <ring> --location <region>` and `gcloud projects get-iam-policy <project> --flatten=bindings --filter='bindings.members:financial-advisor-sa@'`. Any `cloudkms.signer*` there means the advisor and vLLM can mint gateway seals today; record it as a POAM finding. |
 
 ### Resolved (2026-09-27)
 
 | # | Question | Answer | Effect on the blueprint |
 |---|---|---|---|
+| 4 | Does the advisor need to sign plans? | **No.** It signs with the *gateway's* key (`KMS_GOVERNANCE_KEY` via `get_governance_signer().sign`, [evaluator_node.py:76-77](../src/governed_financial_advisor/graph/nodes/evaluator_node.py#L76-L77)). Consumers: its own explainer (a display string, [explainer_node.py:55-56](../src/governed_financial_advisor/graph/nodes/explainer_node.py#L55-L56)); a truthiness-only routing check ([graph.py:213-216](../src/governed_financial_advisor/graph/graph.py#L213-L216)); an opaque field in the provider_02 evidence record ([adapter.py:238](../src/integrations/provider_02/adapter.py#L238)). The gateway helper [`_verify_governance_signature`](../src/gateway/server/governance_middleware.py#L481) that would verify it has **no production caller** (tests only). No authorization decision depends on the signature. | Advisor key dropped; advisor becomes verify-only (§5.2) |
+| 5 | Who holds KMS rights in the GKE Terraform? | `git grep` finds one KMS role in `infra/targets/gcp-gke/`: `cryptoKeyEncrypterDecrypter` for the gateway GSA, gated on CMEK ([iam.tf:86-91](../infra/targets/gcp-gke/iam.tf#L86-L91)), and that GSA is bound to a KSA no pod uses. There are no `google_kms_crypto_key_iam_*` resources and no signer grants. | The live question moves to 5′ |
 | 3′ | Lowest `hashicorp/google` 6.x version that supports this blueprint | **6.43.0.** From the [provider CHANGELOG](https://github.com/hashicorp/terraform-provider-google/blob/main/CHANGELOG.md), GA releases: 6.11.0 `google_memorystore_instance`; **6.14.0** `enable_fqdn_network_policy`; **6.20.0** `CLUSTER_DISABLED` for `mode` (D5); **6.42.0** `replica_count = 0` (dev instances, staging `app`, §1.1) and `kms_key` (CMEK, staging/prod); **6.43.0** `managed_server_ca` (CA to pin, §2.1). 6.14.0 covers FQDN policy only. | 6a sets `version = "~> 6.43"` (≥ 6.43, < 7.0) in all three files. Moving to 7.x (current upstream) is a separate decision, with its own breaking changes. |
 | 1 | Does Memorystore support `WAIT`? | **Memorystore for Redis / Redis Cluster: yes.** `WAIT` is listed as supported in [Supported and blocked commands](https://cloud.google.com/memorystore/docs/redis/supported-commands). **Valkey: inferred** from OSS compatibility, not listed explicitly. With 0 replicas, `WAIT` blocks for the full timeout. | No 6b redesign. The staging replica (§1.1) and dev `WAIT_REPLICAS=0` (§1.2) stand. The 6b live smoke test stays because Valkey support is inferred. |
 | 2 | How do FQDN policies enforce on DPv2? | Implicit egress deny for selected pods. DNS for any name still resolves; the connection is dropped at L3/L4 when the IP doesn't back an allowlisted FQDN. Existing connections survive until closed. | §5.3 consequences (DNS only to kube-dns / Cloud DNS, rollout after changes, probe asserts connection failure). This is documented behaviour, not yet observed on our cluster: dev runs without DPv2 today, so the 6f live probe stays an exit criterion. |
