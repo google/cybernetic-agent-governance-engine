@@ -70,6 +70,7 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/governance/attestation_aggregator.py",  # lazy-loads provider_02/provider_05
         "src/gateway/governance/execution_actuator.py",  # lazy-loads actuator_01
         "src/gateway/governance/outbound_credential_factory.py",  # lazy-loads gcp/aws/azure credential providers
+        "src/gateway/governance/signer_factory.py",  # lazy-loads gcp/aws/azure KMS providers
         "src/gateway/governance/telemetry_provider.py",  # lazy-loads telemetry_langfuse
         "src/gateway/server/inference_proxy.py",
         "src/gateway/server/hybrid_server.py",
@@ -299,8 +300,11 @@ def check_file_boundaries(
             if verbose:
                 print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
 
-        # Check evidence kernel vendor neutrality
-        if is_evidence_kernel:
+        # Check evidence kernel & KMS signer vendor neutrality
+        is_kms_signer = filepath.name == "kms_signer.py" or filepath_str.endswith(
+            "src/gateway/governance/kms_signer.py"
+        )
+        if is_evidence_kernel or is_kms_signer:
             for vendor_sdk in FORBIDDEN_VENDOR_SDKS:
                 if imp == vendor_sdk or imp.startswith(f"{vendor_sdk}."):
                     v = BoundaryViolation(
