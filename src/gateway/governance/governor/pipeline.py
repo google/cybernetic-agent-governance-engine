@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import dataclasses
 import logging
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from src.gateway.governance.contracts import (
     Violation,
     ViolationKind,
 )
+from src.gateway.governance.governor.reservation import ReservationScope
 
 from opentelemetry import trace
 
@@ -64,7 +64,7 @@ class Stage(Protocol):
     Read-only stages implement ``run()``.  Mutating stages implement
     ``preview()`` (side-effect-free, used under DRY_RUN), ``commit()`` and
     ``rollback()``.  A stage must never keep per-request state such as a
-    ``CommitReceipt`` on itself; ``run_pipeline`` holds receipts locally.
+    ``CommitReceipt`` on itself; the request's ``ReservationScope`` holds them.
     """
 
     name: str
@@ -90,7 +90,7 @@ class PipelineResult:
     ftra: FtraBoundaryResult | None
     committed_stages: tuple[str, ...]
     # Receipts still outstanding when the pipeline returns (empty after a
-    # rollback).  The caller owns undoing these if it later refuses the action.
+    # rollback).  The caller's ReservationScope undoes them unless it is sealed.
     commits: tuple[tuple[Stage, CommitReceipt], ...] = ()
 
 
@@ -106,63 +106,6 @@ PROFILE_RUNS_ALL_DOMAIN_TIERS: frozenset[Profile] = frozenset({Profile.FULL, Pro
 
 
 
-async def rollback_lifo(
-    committed: Sequence[tuple[Stage, CommitReceipt]], ctx: StageContext
-) -> list[Violation]:
-    """Undo each ``(stage, receipt)`` commit in reverse order.  Fails closed.
-
-    D6: every rollback is attempted even if an earlier one fails, so one faulty
-    stage cannot strand reservations held by the others.  Each failure yields a
-    HARD ``ROLLBACK_FAILED`` violation so the action is denied, never retried.
-
-    Cancellation-safe: the rollbacks run in a shielded task.  If the caller is
-    cancelled meanwhile, every rollback still runs to completion before the
-    ``CancelledError`` is re-raised.  The only other exception this raises is a
-    non-``Exception`` ``BaseException`` escaping a rollback, re-raised only
-    after all the other rollbacks have been attempted.
-    """
-    task = asyncio.ensure_future(_rollback_each(tuple(committed), ctx))
-    interrupted: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as exc:
-            if task.cancelled():
-                raise  # the rollback task itself was cancelled (e.g. loop shutdown)
-            interrupted = exc  # our caller was cancelled: finish rolling back first
-    failures, escaped = task.result()
-    if escaped is not None:
-        raise escaped
-    if interrupted is not None:
-        raise interrupted
-    return failures
-
-
-async def _rollback_each(
-    committed: tuple[tuple[Stage, CommitReceipt], ...], ctx: StageContext
-) -> tuple[list[Violation], BaseException | None]:
-    """Attempt every rollback (LIFO), catching ``BaseException`` per rollback."""
-    failures: list[Violation] = []
-    escaped: BaseException | None = None
-    for stage, receipt in reversed(committed):
-        try:
-            await stage.rollback(ctx, receipt)
-        except BaseException as exc:
-            logger.exception("stage %s rollback FAILED", stage.name)
-            failures.append(Violation(
-                tier=stage.name,
-                code="ROLLBACK_FAILED",
-                message=(
-                    f"rollback of {stage.name} failed: {type(exc).__name__} — "
-                    "resource state may be inconsistent; manual reconciliation required"
-                ),
-                kind=ViolationKind.HARD,
-            ))
-            if escaped is None and not isinstance(exc, Exception):
-                escaped = exc
-    return failures, escaped
-
-
 def _claims_failure(stage: Stage, exc: Exception) -> Violation:
     return Violation(
         tier=stage.name,
@@ -172,7 +115,29 @@ def _claims_failure(stage: Stage, exc: Exception) -> Violation:
     )
 
 
-async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: Profile) -> PipelineResult:
+def _check_scope(profile: Profile, scope: ReservationScope | None) -> None:
+    """Mutating profiles need a scope to own their commits; DRY_RUN never gets one."""
+    if profile == Profile.DRY_RUN:
+        if scope is not None:
+            raise ValueError("DRY_RUN never commits; it must not receive a ReservationScope")
+    elif scope is None:
+        raise ValueError(f"profile {profile} commits phase-2 stages and requires a ReservationScope")
+
+
+async def run_pipeline(
+    stages: Sequence[Stage],
+    ctx: StageContext,
+    *,
+    profile: Profile,
+    scope: ReservationScope | None = None,
+) -> PipelineResult:
+    """Run ``profile``'s stages over ``ctx``.
+
+    Mutating commits go through ``scope``, which the caller owns: the commits
+    stay in force only if the caller issues a seal inside the scope.  On the
+    first mutating violation the scope is rolled back here.
+    """
+    _check_scope(profile, scope)
     span = trace.get_current_span()
     
     # a. Select stages whose name in PROFILE_STAGES[profile]
@@ -232,8 +197,6 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
     violations: list[Violation] = []
     tier_failures: list[GovernanceTierFailure] = []
     committed_stages: list[str] = []
-    # Per-request receipts.  Kept local: stages are shared across requests.
-    commits: list[tuple[Stage, CommitReceipt]] = []
     current_ctx = ctx
     
     ftra_result: FtraBoundaryResult | None = None
@@ -244,12 +207,10 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
             return [claim_failures[id(stage)]]
         return await stage.run(stage_ctx)
 
-    async def commit_stage(
-        stage: Stage, stage_ctx: StageContext
-    ) -> tuple[list[Violation], CommitReceipt | None]:
+    async def commit_stage(scope: ReservationScope, stage: Stage, stage_ctx: StageContext) -> list[Violation]:
         if id(stage) in claim_failures:
-            return [claim_failures[id(stage)]], None
-        return await stage.commit(stage_ctx)
+            return [claim_failures[id(stage)]]
+        return await scope.commit(stage, stage_ctx)
     
     # b. Read-only stages
     for stage in read_only:
@@ -306,20 +267,13 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
                     ))
                     break
         else:
-            # commit mutating stages in order
+            # Commit mutating stages in order.  The scope records every receipt
+            # (even one returned alongside violations) and, if this coroutine
+            # is cancelled, undoes them on exit.
+            if scope is None:  # unreachable after _check_scope; never commit unowned
+                raise ValueError(f"profile {profile} requires a ReservationScope")
             for stage in mutating:
-                try:
-                    stage_violations, receipt = await commit_stage(stage, current_ctx)
-                except BaseException:
-                    # Cancellation (or any escape) mid-commit: undo every commit
-                    # already made, then propagate.  By contract the raising
-                    # commit itself mutated nothing.
-                    await rollback_lifo(commits, current_ctx)
-                    raise
-                if receipt is not None:
-                    # Recorded even alongside violations: a commit that mutated
-                    # state and then refused must still be undone.
-                    commits.append((stage, receipt))
+                stage_violations = await commit_stage(scope, stage, current_ctx)
                 if stage_violations:
                     violations.extend(stage_violations)
                     # e. A CBF/domain commit is a violation whenever it reports not committed
@@ -328,8 +282,7 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
                         control_id=stage_violations[0].code,
                         rule_description=stage_violations[0].message
                     ))
-                    violations.extend(await rollback_lifo(commits, current_ctx))
-                    commits = []
+                    violations.extend(await scope.rollback())
                     break
                 committed_stages.append(stage.name)
 
@@ -339,5 +292,5 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
         opa_verdict=opa_verdict,
         ftra=ftra_result,
         committed_stages=tuple(committed_stages),
-        commits=tuple(commits),
+        commits=scope.commits if scope is not None else (),
     )

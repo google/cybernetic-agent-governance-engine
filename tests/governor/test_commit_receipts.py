@@ -35,11 +35,10 @@ from src.gateway.governance.contracts import CommitReceipt, Violation, Violation
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
-    rollback_lifo,
-    run_pipeline,
 )
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage, order_stages
 from src.gateway.governance.safety.resource_guard import ReservationToken
+from tests.governor.scope_helpers import rollback_pairs, run_scoped
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -233,13 +232,13 @@ async def test_fiscal_confirm_failure_releases_before_raising() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kinematic_rollback_lifo_has_no_rollback_failed() -> None:
+async def test_kinematic_rollback_has_no_rollback_failed() -> None:
     engine = _engine(applied=3.5)
     stage = DomainTierStage(KinematicBarrierTier(engine))
     ctx = StageContext(action="move_arm", params={"velocity": 3.5}, profile=Profile.FULL)
 
     _, receipt = await stage.commit(ctx)
-    failures = await rollback_lifo([(stage, receipt)], ctx)
+    failures = await rollback_pairs([(stage, receipt)], ctx)
 
     assert failures == []
     engine.rollback_state.assert_awaited_once_with(magnitude=3.5)
@@ -254,7 +253,7 @@ async def test_commit_with_violations_and_receipt_is_rolled_back() -> None:
         _Tier("m2", 2, ([_deny("m2")], CommitReceipt(tier="m2", magnitude=2.0)), log),
         _Tier("m3", 3, ([], CommitReceipt(tier="m3", magnitude=3.0)), log),
     ])
-    result = await run_pipeline(stages, StageContext("act", {}, Profile.FULL), profile=Profile.FULL)
+    result = await run_scoped(stages, StageContext("act", {}, Profile.FULL))
 
     assert log == ["commit:m1", "commit:m2", "rollback:m2:2.0", "rollback:m1:1.0"]
     assert [v.code for v in result.violations] == ["DENY"]
@@ -269,7 +268,7 @@ async def test_receiptless_commit_is_not_rolled_back() -> None:
         _Tier("noop", 1, ([], None), log),
         _Tier("deny", 2, ([_deny("deny")], None), log),
     ])
-    await run_pipeline(stages, StageContext("act", {}, Profile.FULL), profile=Profile.FULL)
+    await run_scoped(stages, StageContext("act", {}, Profile.FULL))
     assert log == ["commit:noop", "commit:deny"]
 
 
@@ -281,7 +280,7 @@ async def test_successful_pipeline_returns_outstanding_commits() -> None:
         _Tier("a", 1, ([], r1), log),
         _Tier("b", 2, ([], r2), log),
     ])
-    result = await run_pipeline(stages, StageContext("act", {}, Profile.FULL), profile=Profile.FULL)
+    result = await run_scoped(stages, StageContext("act", {}, Profile.FULL))
 
     assert result.violations == ()
     assert [(s.name, r) for s, r in result.commits] == [("a", r1), ("b", r2)]

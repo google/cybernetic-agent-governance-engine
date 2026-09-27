@@ -33,6 +33,7 @@ from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTi
 from src.gateway.governance.contracts import GovernanceTierPlugin, Violation, ViolationKind
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
+from src.gateway.governance.governor.reservation import ReservationScope
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
 from src.integrations.nemo import action_registry
 
@@ -116,7 +117,8 @@ async def test_tier_added_after_construction_blocks() -> None:
     governor.add_domain_tiers((_StubTier("stub_deny", deny=True),))
     domain_stages = [s for s in governor.stages if isinstance(s, DomainTierStage)]
 
-    result = await run_pipeline(domain_stages, _ctx("stub_action"), profile=Profile.FULL)
+    async with ReservationScope() as scope:
+        result = await run_pipeline(domain_stages, _ctx("stub_action"), profile=Profile.FULL, scope=scope)
 
     assert [v.code for v in result.violations] == ["STUB_DENY"]
 
@@ -196,6 +198,7 @@ async def test_physical_ai_plugin_denies_governed_action_end_to_end() -> None:
     physical_ai_plugin.PhysicalAICagePlugin().register(governor)
     kinematic = [s for s in governor.stages if isinstance(s, DomainTierStage) and s.name == "kinematic_barrier"]
 
-    result = await run_pipeline(kinematic, _ctx("dispatch_trajectory"), profile=Profile.FULL)
+    async with ReservationScope() as scope:
+        result = await run_pipeline(kinematic, _ctx("dispatch_trajectory"), profile=Profile.FULL, scope=scope)
 
     assert "KINEMATIC_BARRIER_UNCONFIGURED" in {v.code for v in result.violations}

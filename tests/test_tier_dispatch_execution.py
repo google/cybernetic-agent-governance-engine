@@ -255,8 +255,9 @@ class TestTierDispatchPhaseIsolation:
 
 async def _run_tiers(gov, action, params, *, phase):
     """Run one phase of gov's domain tiers through the real pipeline."""
-    from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
+    from src.gateway.governance.governor.pipeline import Profile, StageContext
+    from tests.governor.scope_helpers import run_scoped
     stages = [s for s in gov.stages if hasattr(s, "claims") and s.tier.phase == phase]
     ctx = StageContext(action=action, params=params, profile=Profile.FULL)
-    result = await run_pipeline(stages, ctx, profile=Profile.FULL)
+    result = await run_scoped(stages, ctx)
     return list(result.violations)
