@@ -30,7 +30,7 @@ pytestmark = pytest.mark.unit
 
 def test_trading_knowledge_graph_initializes():
     """TradingKnowledgeGraph should initialize without errors."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     assert graph is not None
@@ -38,7 +38,7 @@ def test_trading_knowledge_graph_initializes():
 
 def test_trading_knowledge_graph_ucas_populated():
     """TradingKnowledgeGraph should populate UCAs on init (UCA-1 through UCA-6 at minimum)."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     assert len(graph.ucas) >= 4
@@ -50,7 +50,7 @@ def test_trading_knowledge_graph_ucas_populated():
 
 def test_trading_knowledge_graph_constraints_populated():
     """TradingKnowledgeGraph should populate safety constraints on init."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     assert len(graph.constraints) >= 2
@@ -60,7 +60,7 @@ def test_trading_knowledge_graph_constraints_populated():
 
 def test_get_rubric_returns_all_ucas():
     """get_rubric() should return a list containing all registered UCAs."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     rubric = graph.get_rubric()
@@ -73,7 +73,7 @@ def test_get_rubric_returns_all_ucas():
 
 def test_get_constraints_for_action_execute_sell():
     """get_constraints_for_action('execute_sell') should return FIN-1 constraint."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     constraints = graph.get_constraints_for_action("execute_sell")
@@ -84,7 +84,7 @@ def test_get_constraints_for_action_execute_sell():
 
 def test_get_constraints_for_action_write_db():
     """get_constraints_for_action('write_db') should return SC-1 constraint."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     constraints = graph.get_constraints_for_action("write_db")
@@ -94,7 +94,7 @@ def test_get_constraints_for_action_write_db():
 
 def test_get_constraints_for_action_unknown_action():
     """get_constraints_for_action() with an unknown action should return an empty list."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     result = graph.get_constraints_for_action("nonexistent_action")
@@ -103,7 +103,7 @@ def test_get_constraints_for_action_unknown_action():
 
 def test_iso_control_map_has_required_keys():
     """get_control_map('LOCAL') must contain the four documented governance control categories."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     # Use region-aware accessor for universal controls
     control_map = TradingKnowledgeGraph.get_control_map("LOCAL")
@@ -115,7 +115,7 @@ def test_iso_control_map_has_required_keys():
 
 def test_add_uca_registers_new_uca():
     """add_uca() should register a new UCA in the graph."""
-    from src.gateway.governance.ontology import STAMP_UCA, TradingKnowledgeGraph
+    from src.cage_finance.ontology import STAMP_UCA, TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     new_uca = STAMP_UCA(
@@ -132,7 +132,7 @@ def test_add_uca_registers_new_uca():
 
 def test_add_constraint_registers_new_constraint():
     """add_constraint() should register a new Constraint in the graph."""
-    from src.gateway.governance.ontology import Constraint, TradingKnowledgeGraph
+    from src.cage_finance.ontology import Constraint, TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     new_constraint = Constraint(
@@ -149,7 +149,7 @@ def test_add_constraint_registers_new_constraint():
 
 def test_uca_1_governs_write_operations():
     """UCA-1 should be categorized as 'Unsafe Action' regarding DB writes."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     uca1 = graph.ucas["UCA-1"]
@@ -162,7 +162,7 @@ def test_uca_1_governs_write_operations():
 
 def test_uca_2_governs_latency():
     """UCA-2 should be categorized as 'Wrong Timing' regarding latency."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph
+    from src.cage_finance.ontology import TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     uca2 = graph.ucas["UCA-2"]

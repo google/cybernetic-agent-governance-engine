@@ -48,7 +48,7 @@ from src.cage_finance.safety.bounding.providers import (
     MarketDataProvider,
     RollbackCapabilityProvider,
 )
-from src.gateway.governance.ftra.bounding_contract import BoundingContractEnforcer
+from src.cage_finance.safety.bounding.contract import BoundingContractEnforcer
 
 logger = logging.getLogger(__name__)
 

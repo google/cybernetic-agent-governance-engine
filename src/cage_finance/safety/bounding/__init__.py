@@ -19,6 +19,8 @@ Phase 5 implementation per plans/phase_5_autonomous_trading_plan.md.
 
 __all__ = [
     "BoundedTradeRequest",
+    "BoundingContractConfig",
+    "BoundingContractEnforcer",
     "BoundingContractRegistry",
     "ContractResult",
     "ContractSeverity",
@@ -28,6 +30,10 @@ __all__ = [
     "StubRollbackCapabilityProvider",
 ]
 
+from src.cage_finance.safety.bounding.contract import (
+    BoundingContractConfig,
+    BoundingContractEnforcer,
+)
 from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,
     ContractResult,

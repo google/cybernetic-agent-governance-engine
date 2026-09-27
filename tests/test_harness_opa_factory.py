@@ -234,19 +234,27 @@ class TestOpaRouterFactory:
     """Tests for the deterministic routing function factory."""
 
     def test_approved_routes_to_approved_target(self):
-        router = create_opa_safety_router(approved_target="trader")
+        router = create_opa_safety_router(
+            approved_target="trader", blocked_target="planner"
+        )
         assert router({"safety_status": "APPROVED"}) == "trader"
 
     def test_skipped_routes_to_approved_target(self):
-        router = create_opa_safety_router(approved_target="trader")
+        router = create_opa_safety_router(
+            approved_target="trader", blocked_target="planner"
+        )
         assert router({"safety_status": "SKIPPED"}) == "trader"
 
     def test_blocked_routes_to_blocked_target(self):
-        router = create_opa_safety_router(blocked_target="planner")
+        router = create_opa_safety_router(
+            approved_target="trader", blocked_target="planner"
+        )
         assert router({"safety_status": "BLOCKED"}) == "planner"
 
     def test_escalated_routes_to_blocked_target(self):
-        router = create_opa_safety_router(blocked_target="planner")
+        router = create_opa_safety_router(
+            approved_target="trader", blocked_target="planner"
+        )
         assert router({"safety_status": "ESCALATED"}) == "planner"
 
     def test_custom_state_key(self):
@@ -257,3 +265,9 @@ class TestOpaRouterFactory:
         )
         assert router({"my_status": "APPROVED"}) == "next"
         assert router({"my_status": "BLOCKED"}) == "fallback"
+
+    def test_missing_targets_raises_type_error(self):
+        with pytest.raises(TypeError):
+            create_opa_safety_router(approved_target="trader")
+        with pytest.raises(TypeError):
+            create_opa_safety_router(blocked_target="planner")

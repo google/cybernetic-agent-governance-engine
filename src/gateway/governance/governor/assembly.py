@@ -34,8 +34,9 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.contracts import (
@@ -62,6 +63,7 @@ from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.ftra import FtraStage
 from src.gateway.governance.governor.stages.opa import OpaStage
 from src.gateway.governance.governor.stages.stpa import StpaStage
+from src.gateway.governance.governor.verdicts import default_standing_projector
 from src.gateway.governance.narrower import NarrowerRegistry
 from src.gateway.governance.null_components import (
     NullConsensusProvider,
@@ -90,6 +92,8 @@ class GovernorComponents:
     ground_truth_providers: Mapping[str, object] = field(default_factory=dict)
     safety_filter: SafetyFilter = field(default_factory=NullSafetyFilter)
     consensus: ConsensusProvider = field(default_factory=NullConsensusProvider)
+    standing_projector: Callable[[dict[str, Any]], dict[str, Any]] = default_standing_projector
+    execution_verbs: frozenset[str] = field(default_factory=frozenset)
     contributions: tuple[PluginContribution, ...] = ()
     posture: DeploymentPosture = DeploymentPosture.PRODUCTION
 
@@ -107,6 +111,7 @@ class GovernorComponents:
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(self, "ground_truth_providers", dict(self.ground_truth_providers))
+        object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
 
     @property
     def unfilled_slots(self) -> tuple[str, ...]:
@@ -191,6 +196,9 @@ def assemble_governor(
         stpa_validator = STPAValidator(rules=uca_rules)
     from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
 
+    standing_projector = _single_slot("standing_projector", contributions) or default_standing_projector
+    execution_verbs = frozenset(v for c in contributions for v in c.execution_verbs)
+
     components = GovernorComponents(
         opa=opa,
         core_stages=kernel_stages(opa, stpa_validator, metrics=metrics),
@@ -209,6 +217,8 @@ def assemble_governor(
         ground_truth_providers=ground_truth_providers,
         safety_filter=_single_slot("safety_filter", contributions) or NullSafetyFilter(),
         consensus=_single_slot("consensus", contributions) or NullConsensusProvider(),
+        standing_projector=standing_projector,  # type: ignore[arg-type]
+        execution_verbs=execution_verbs,
         contributions=contributions,
         posture=posture,
     )

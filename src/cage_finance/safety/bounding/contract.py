@@ -13,11 +13,10 @@
 # limitations under the License.
 
 """
-FTRA Bounding Contract Configuration and Enforcement.
+Bounding Contract Configuration and Enforcement for Finance Actions.
 
 The bounding contract defines allowed instruments, venues, and counterparties
-for financial transactions. This acts as a whitelist-based boundary control
-for the Forward-Looking Trajectory Reachability Analyzer.
+for financial transactions. This acts as a whitelist-based boundary control.
 
 Security Note:
     Empty configuration (no whitelists populated) is rejected as a fail-safe
@@ -32,7 +31,7 @@ from dataclasses import dataclass, field
 @dataclass
 class BoundingContractConfig:
     """
-    Configuration for FTRA boundary controls.
+    Configuration for finance boundary controls.
 
     At least one of the whitelist fields must be non-empty to prevent
     accidental misconfiguration that would allow unrestricted trading.
@@ -50,7 +49,7 @@ class BoundingContractConfig:
 
 class BoundingContractEnforcer:
     """
-    Enforces FTRA bounding contract boundary controls.
+    Enforces bounding contract boundary controls.
 
     Validates that configuration is non-empty (at least one whitelist populated)
     and provides enforcement primitives for checking actions against the contract.
@@ -69,7 +68,6 @@ class BoundingContractEnforcer:
         Raises:
             ValueError: If config has all empty whitelists (fail-safe validation).
         """
-        # Issue #3 fix: reject empty configuration
         if (
             not config.allowed_instruments
             and not config.allowed_venues
@@ -124,3 +122,9 @@ class BoundingContractEnforcer:
         if not self.config.allowed_counterparties:
             return True  # No counterparty restriction
         return counterparty in self.config.allowed_counterparties
+
+
+__all__ = [
+    "BoundingContractConfig",
+    "BoundingContractEnforcer",
+]

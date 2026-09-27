@@ -41,7 +41,7 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-001",
             reason=EscalationReason.CONSENSUS_THRESHOLD,
-            amount_usd=15000.0,
+            magnitude=15000.0,
             confidence=None,
             reviewer_queue="compliance-review",
         )
@@ -53,7 +53,7 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-xyz-789",
             reason=EscalationReason.CONFIDENCE_LOW,
-            amount_usd=None,
+            magnitude=None,
             confidence=0.80,
             reviewer_queue="compliance-review",
         )
@@ -65,7 +65,7 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-002",
             reason=EscalationReason.CONSENSUS_THRESHOLD,
-            amount_usd=20000.0,
+            magnitude=20000.0,
             confidence=None,
             reviewer_queue="compliance-review",
         )
@@ -77,31 +77,31 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-003",
             reason=EscalationReason.MANUAL_REVIEW,
-            amount_usd=None,
+            magnitude=None,
             confidence=None,
             reviewer_queue="security-review",
         )
         record = escalate_to_human(request)
         assert record["status"] == "pending_review"
 
-    def test_amount_usd_in_record(self):
-        """escalate_to_human includes amount_usd in the record."""
+    def test_magnitude_in_record(self):
+        """escalate_to_human includes magnitude in the record."""
         request = EscalationRequest(
             trace_id="trace-004",
             reason=EscalationReason.CONSENSUS_THRESHOLD,
-            amount_usd=15000.0,
+            magnitude=15000.0,
             confidence=None,
             reviewer_queue="compliance-review",
         )
         record = escalate_to_human(request)
-        assert record["amount_usd"] == 15000.0
+        assert record["magnitude"] == 15000.0
 
     def test_confidence_in_record(self):
         """escalate_to_human includes confidence in the record."""
         request = EscalationRequest(
             trace_id="trace-005",
             reason=EscalationReason.CONFIDENCE_LOW,
-            amount_usd=None,
+            magnitude=None,
             confidence=0.75,
             reviewer_queue="compliance-review",
         )
@@ -113,7 +113,7 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-006",
             reason=EscalationReason.CAUSAL_BLOCK,
-            amount_usd=None,
+            magnitude=None,
             confidence=None,
             reviewer_queue="security-review",
         )
@@ -125,7 +125,7 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-007",
             reason=EscalationReason.CONSENSUS_THRESHOLD,
-            amount_usd=12000.0,
+            magnitude=12000.0,
             confidence=None,
             reviewer_queue="compliance-review",
         )
@@ -140,7 +140,7 @@ class TestEscalateToHuman:
         request = EscalationRequest(
             trace_id="trace-008",
             reason=EscalationReason.GOVERNANCE_CONFIDENCE_LOW,
-            amount_usd=None,
+            magnitude=None,
             confidence=0.88,
             reviewer_queue="compliance-review",
         )
@@ -149,7 +149,7 @@ class TestEscalateToHuman:
             "event",
             "trace_id",
             "reason",
-            "amount_usd",
+            "magnitude",
             "confidence",
             "reviewer_queue",
             "status",
@@ -159,28 +159,28 @@ class TestEscalateToHuman:
 
 
 class TestShouldEscalateForConsensus:
-    """should_escalate_for_consensus must correctly apply the USD threshold."""
+    """should_escalate_for_consensus must correctly apply the caller-supplied threshold."""
 
     def test_escalates_above_threshold(self):
-        """Escalation fires when amount > threshold."""
-        assert should_escalate_for_consensus(15000.0, threshold_usd=10000.0) is True
+        """Escalation fires when magnitude > threshold."""
+        assert should_escalate_for_consensus(15000.0, threshold=10000.0) is True
 
     def test_does_not_escalate_at_threshold(self):
-        """Escalation does NOT fire when amount == threshold."""
-        assert should_escalate_for_consensus(10000.0, threshold_usd=10000.0) is False
+        """Escalation does NOT fire when magnitude == threshold."""
+        assert should_escalate_for_consensus(10000.0, threshold=10000.0) is False
 
     def test_does_not_escalate_below_threshold(self):
-        """Escalation does NOT fire when amount < threshold."""
-        assert should_escalate_for_consensus(9999.99, threshold_usd=10000.0) is False
+        """Escalation does NOT fire when magnitude < threshold."""
+        assert should_escalate_for_consensus(9999.99, threshold=10000.0) is False
 
     def test_escalates_for_large_amount(self):
-        """Escalation fires for very large amounts."""
-        assert should_escalate_for_consensus(1_000_000.0, threshold_usd=10000.0) is True
+        """Escalation fires for very large magnitudes."""
+        assert should_escalate_for_consensus(1_000_000.0, threshold=10000.0) is True
 
-    def test_default_threshold_is_10000(self):
-        """Default threshold is USD 10,000 (US_FED baseline)."""
-        assert should_escalate_for_consensus(10001.0) is True
-        assert should_escalate_for_consensus(9999.0) is False
+    def test_requires_explicit_threshold(self):
+        """threshold is required — calling without it raises TypeError."""
+        with pytest.raises(TypeError):
+            should_escalate_for_consensus(10001.0)  # type: ignore[call-arg]
 
 
 class TestShouldEscalateForConfidence:

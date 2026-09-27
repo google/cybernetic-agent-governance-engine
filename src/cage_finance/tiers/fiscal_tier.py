@@ -20,7 +20,7 @@ from src.gateway.governance.contracts import (
     Violation,
     ViolationKind,
 )
-from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
+from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 
 
 class FiscalTierPlugin(GovernanceTierPlugin):

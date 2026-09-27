@@ -63,7 +63,7 @@ class OpaNodeConfig:
     Args:
         policy_action_name: The OPA action name passed to
             ``symbolic_governor.govern(action, payload)``, e.g.
-            ``"execute_trade"`` or ``"approve_request"``.
+            ``"execute_action"`` or ``"approve_request"``.
         payload_extractor: Callable that receives the full agent state dict
             and returns a flat dict of fields for the OPA policy input.
         plan_state_key: State key that holds the plan/action to validate.
@@ -79,6 +79,8 @@ class OpaNodeConfig:
             for compliance scoring.  Defaults to ``state.get("thread_id", "")``.
         span_attributes: Extra OTel span attributes to set on every invocation.
             Keys and values must be strings.
+        span_keys: Payload keys to propagate to the OTel span as
+            ``governance.<key>`` metadata attributes. Defaults to ``()``.
     """
 
     policy_action_name: str
@@ -90,6 +92,7 @@ class OpaNodeConfig:
     iso_tier: int = 2
     thread_id_extractor: ThreadIdExtractor | None = None
     span_attributes: dict[str, str] = dataclasses.field(default_factory=dict)
+    span_keys: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ Routes governance decisions that exceed the consensus threshold or fall below
 the confidence threshold to a human reviewer via the DeferQueue.
 
 POAM: AI600-004
-Controls: ConsensusGate (threshold USD 10,000), HITL escalation path
+Controls: ConsensusGate, HITL escalation path
 SR 26-2 §3.2: HITL SLA — escalations must be resolved within 4 hours (US_FED
 only). EU_ECB and APAC_MAS deployments apply their own regional SLA — see
 get_hitl_sla_hours() below and docs/governance/HUMAN_OVERSIGHT_SCOPE.md.
@@ -32,7 +32,7 @@ Usage::
     request = EscalationRequest(
         trace_id="trace-123",
         reason=EscalationReason.CONSENSUS_THRESHOLD,
-        amount_usd=15000.0,
+        magnitude=15000.0,
         confidence=None,
         reviewer_queue="compliance-review",
     )
@@ -123,7 +123,7 @@ class EscalationReason(Enum):
     """
 
     CONSENSUS_THRESHOLD = "consensus_threshold_exceeded"
-    """ConsensusGate: amount_usd > CONSENSUS_THRESHOLD_USD (default USD 10,000)."""
+    """ConsensusGate: action magnitude exceeds the configured consensus threshold."""
 
     CONFIDENCE_LOW = "confidence_below_threshold"
     """Confabulation scorer: confidence < CONFIDENCE_MIN_SCORE (default 0.95)."""
@@ -150,7 +150,7 @@ class EscalationRequest:
     Attributes:
         trace_id:       Telemetry trace ID for the governed request.
         reason:         Why the request is being escalated (EscalationReason).
-        amount_usd:     Trade amount in USD, if applicable.
+        magnitude:      Action magnitude (domain-specific quantity), if applicable.
         confidence:     Model confidence score, if applicable.
         reviewer_queue: Target queue for the human reviewer
                         (e.g. "compliance-review" or "security-review").
@@ -158,7 +158,7 @@ class EscalationRequest:
 
     trace_id: str
     reason: EscalationReason
-    amount_usd: float | None = None
+    magnitude: float | None = None
     confidence: float | None = None
     reviewer_queue: str = "compliance-review"
 
@@ -176,7 +176,7 @@ class EscalationRecord:
         event:          Always "hitl_escalation".
         trace_id:       Telemetry trace ID.
         reason:         Escalation reason string (from EscalationReason.value).
-        amount_usd:     Trade amount in USD, or None.
+        magnitude:      Action magnitude, or None.
         confidence:     Model confidence score, or None.
         reviewer_queue: Target reviewer queue.
         status:         Always "pending_review" at creation time.
@@ -186,7 +186,7 @@ class EscalationRecord:
     event: str
     trace_id: str
     reason: str
-    amount_usd: float | None
+    magnitude: float | None
     confidence: float | None
     reviewer_queue: str
     status: str
@@ -220,7 +220,7 @@ def escalate_to_human(request: EscalationRequest) -> dict:
             "event": "hitl_escalation",
             "trace_id": str,
             "reason": str,
-            "amount_usd": float | None,
+            "magnitude": float | None,
             "confidence": float | None,
             "reviewer_queue": str,
             "status": "pending_review",
@@ -232,7 +232,7 @@ def escalate_to_human(request: EscalationRequest) -> dict:
         "event": "hitl_escalation",
         "trace_id": request.trace_id,
         "reason": request.reason.value,
-        "amount_usd": request.amount_usd,
+        "magnitude": request.magnitude,
         "confidence": request.confidence,
         "reviewer_queue": request.reviewer_queue,
         "status": "pending_review",
@@ -241,10 +241,10 @@ def escalate_to_human(request: EscalationRequest) -> dict:
     }
 
     logger.warning(
-        "🔔 HITL escalation: trace_id=%s reason=%s amount_usd=%s confidence=%s queue=%s",
+        "🔔 HITL escalation: trace_id=%s reason=%s magnitude=%s confidence=%s queue=%s",
         request.trace_id,
         request.reason.value,
-        f"${request.amount_usd:,.2f}" if request.amount_usd is not None else "N/A",
+        f"{request.magnitude:,.2f}" if request.magnitude is not None else "N/A",
         f"{request.confidence:.3f}" if request.confidence is not None else "N/A",
         request.reviewer_queue,
     )
@@ -252,19 +252,17 @@ def escalate_to_human(request: EscalationRequest) -> dict:
     return record
 
 
-def should_escalate_for_consensus(
-    amount_usd: float, threshold_usd: float = 10000.0
-) -> bool:
-    """Return True if the amount exceeds the consensus threshold.
+def should_escalate_for_consensus(magnitude: float, threshold: float) -> bool:
+    """Return True if the action magnitude exceeds the consensus threshold.
 
     Args:
-        amount_usd:    Trade amount in USD.
-        threshold_usd: Consensus threshold (default USD 10,000 per US_FED baseline).
+        magnitude: Action magnitude to evaluate.
+        threshold: Consensus escalation threshold supplied by the caller/plugin.
 
     Returns:
-        True if ``amount_usd > threshold_usd``, False otherwise.
+        True if ``magnitude > threshold``, False otherwise.
     """
-    return amount_usd > threshold_usd
+    return magnitude > threshold
 
 
 def should_escalate_for_confidence(confidence: float, threshold: float = 0.95) -> bool:
