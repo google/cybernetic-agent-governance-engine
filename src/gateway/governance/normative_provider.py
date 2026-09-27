@@ -337,7 +337,7 @@ async def enforce_fria_boundary(
     Maps the blocking semantic directly to CAGE's existing 4-State DEFER
     Router Engine thresholds:
 
-      Score ≥ 0.95 (THRESHOLDS.confidence.min_trade_confidence)
+      Score ≥ 0.95 (THRESHOLDS.confidence.agent_threshold)
         → ALLOW → async attestation (fire-and-forget)
         Hot-path latency: 0ms (task dispatched off-thread)
 
@@ -368,9 +368,11 @@ async def enforce_fria_boundary(
         DeferReason,
         DeferToken,
     )
-    from src.gateway.governance.schemas.thresholds import THRESHOLDS
+    from src.gateway.governance.schemas.thresholds import (
+        get_agent_confidence_threshold,
+    )
 
-    allow_threshold = THRESHOLDS.confidence.min_trade_confidence  # 0.95
+    allow_threshold = get_agent_confidence_threshold()  # 0.95
     defer_threshold = DEFER_CONFIDENCE_THRESHOLD  # 0.70
 
     # --- HIGH CONFIDENCE: Non-blocking attestation path ---

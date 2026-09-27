@@ -294,23 +294,23 @@ class GroundTruthReconciler:
         try:
             from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
-            mapping = {
-                "finance.cash_balance": THRESHOLDS.cbf.min_cash_balance,
+            path_mapping = {
+                "finance.cash_balance": "domains.finance.cbf.min_cash_balance",
                 "healthcare.serum_concentration": (
-                    THRESHOLDS.healthcare.min_therapeutic_concentration
+                    "domains.healthcare.min_therapeutic_concentration"
                 ),
                 "physical_ai.spatial_separation": (
-                    THRESHOLDS.physical_ai.min_separation_distance_mm
+                    "domains.physical_ai.min_separation_distance_mm"
                 ),
                 "physical_ai.kinematic_velocity": (
-                    THRESHOLDS.physical_ai.max_velocity_mm_s
+                    "domains.physical_ai.max_velocity_mm_s"
                 ),
                 "physical_ai.torque_saturation": (
-                    THRESHOLDS.physical_ai.max_joint_torque_nm
+                    "domains.physical_ai.max_joint_torque_nm"
                 ),
             }
-            if invariant_id in mapping:
-                return float(mapping[invariant_id])
+            if invariant_id in path_mapping:
+                return float(THRESHOLDS.resolve(path_mapping[invariant_id]))
         except Exception:
             pass
         return None

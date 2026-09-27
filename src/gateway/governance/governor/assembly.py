@@ -163,6 +163,7 @@ def assemble_governor(
     contributions = tuple(_contribution_of(plugin) for plugin in plugins)
     _reject_duplicates("domain", (c.domain for c in contributions))
     _reject_duplicates("threshold section", (s for c in contributions for s in c.threshold_sections))
+    _validate_threshold_sections(contributions)
     tiers = tuple(t for c in contributions for t in c.tiers)
     _reject_slot_collisions(tiers, _known_actions(plugins, contributions))
     _reject_ungoverned_irreversible(plugins, tiers)
@@ -258,6 +259,28 @@ def _reject_duplicates(what: str, names: Iterable[str]) -> None:
         if name in seen:
             raise GovernorAssemblyError(f"duplicate {what}: {name!r} is contributed twice")
         seen.add(name)
+
+
+def _validate_threshold_sections(contributions: Sequence[PluginContribution]) -> None:
+    from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
+
+    domains = load_and_validate_thresholds().domains
+    for c in contributions:
+        for section_name, schema_cls in c.threshold_sections.items():
+            if section_name not in domains:
+                raise GovernorAssemblyError(
+                    f"domain {c.domain!r}: threshold section 'domains.{section_name}' is missing from governance_thresholds.json"
+                )
+            raw_section = domains[section_name]
+            try:
+                if hasattr(schema_cls, "model_validate"):
+                    schema_cls.model_validate(raw_section)
+                elif callable(schema_cls):
+                    schema_cls(**raw_section)
+            except Exception as exc:
+                raise GovernorAssemblyError(
+                    f"domain {c.domain!r}: threshold section 'domains.{section_name}' failed validation: {exc}"
+                ) from exc
 
 
 def _single_slot(slot: str, contributions: Sequence[PluginContribution]) -> object | None:

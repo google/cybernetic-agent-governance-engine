@@ -36,7 +36,7 @@ class SerumConcentrationBarrier:
 
     invariant_id = "healthcare.serum_concentration"
     state_key = "safety:serum_concentration"
-    threshold_key = "healthcare.min_therapeutic_concentration"
+    threshold_key = "domains.healthcare.min_therapeutic_concentration"
     gamma = 0.4
     initial_state = 15.0
     requires_external_ground_truth = True

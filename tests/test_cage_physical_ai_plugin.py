@@ -67,7 +67,7 @@ class TestPhysicalAIPlugin:
         barrier = SpatialSeparationBarrier()
         assert barrier.invariant_id == "physical_ai.spatial_separation"
         assert barrier.state_key == "safety:separation_distance_mm"
-        assert barrier.threshold_key == "physical_ai.min_separation_distance_mm"
+        assert barrier.threshold_key == "domains.physical_ai.min_separation_distance_mm"
         assert barrier.gamma == 0.5
 
     def test_kinematic_velocity_barrier_declarative(self):
@@ -75,7 +75,7 @@ class TestPhysicalAIPlugin:
         barrier = KinematicVelocityBarrier()
         assert barrier.invariant_id == "physical_ai.kinematic_velocity"
         assert barrier.state_key == "safety:end_effector_velocity_mm_s"
-        assert barrier.threshold_key == "physical_ai.max_velocity_mm_s"
+        assert barrier.threshold_key == "domains.physical_ai.max_velocity_mm_s"
         assert barrier.gamma == 0.4
 
     def test_torque_saturation_barrier_declarative(self):
@@ -83,7 +83,7 @@ class TestPhysicalAIPlugin:
         barrier = TorqueSaturationBarrier()
         assert barrier.invariant_id == "physical_ai.torque_saturation"
         assert barrier.state_key == "safety:joint_torque_nm"
-        assert barrier.threshold_key == "physical_ai.max_joint_torque_nm"
+        assert barrier.threshold_key == "domains.physical_ai.max_joint_torque_nm"
         assert barrier.gamma == 0.3
 
     def test_physical_cost_resolver(self):

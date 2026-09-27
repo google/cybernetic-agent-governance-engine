@@ -39,6 +39,7 @@ from src.cage_physical_ai.invariants import (
     SpatialSeparationBarrier,
     TorqueSaturationBarrier,
 )
+from src.cage_physical_ai.thresholds import PhysicalAIThresholds
 from src.cage_physical_ai.tiers.physical_consensus_tier import (
     build_physical_consensus_contribution,
 )
@@ -103,6 +104,7 @@ class PhysicalAICagePlugin(CagePlugin):
             },
             consensus=build_physical_consensus_contribution(),
             tool_provider=PhysicalAIToolProvider(),
+            threshold_sections={"physical_ai": PhysicalAIThresholds},
             compliance_overlay_dirs=(overlay_dir,) if overlay_dir.exists() else (),
         )
 

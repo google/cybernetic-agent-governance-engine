@@ -31,6 +31,7 @@ from pydantic import ValidationError
 from src.cage_finance.plugin import FinanceCagePlugin
 from src.cage_healthcare.plugin import HealthcareCagePlugin
 from src.cage_physical_ai.plugin import PhysicalAICagePlugin
+from src.cage_physical_ai.thresholds import PhysicalAIThresholds
 from src.gateway.governance.contracts import PluginContribution
 from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.governance.governor.assembly import (
@@ -39,7 +40,6 @@ from src.gateway.governance.governor.assembly import (
     assemble_governor,
 )
 from src.gateway.governance.governor.governor import SymbolicGovernor
-from src.gateway.governance.schemas.thresholds import PhysicalAIThresholds
 from tests.fixtures.governor import allow_opa, clean_stpa
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -51,7 +51,7 @@ _FLAGS = DecisionFlags(defer=False, narrow=False, pause=False)
 class _Barrier:
     invariant_id: str = "test.serum"
     state_key: str = "safety:test_serum"
-    threshold_key: str = "healthcare.min_therapeutic_concentration"
+    threshold_key: str = "domains.healthcare.min_therapeutic_concentration"
     gamma: float = 0.5
 
 
@@ -92,9 +92,10 @@ def test_v2_unnamespaced_state_key_is_rejected(state_key: str) -> None:
 @pytest.mark.parametrize(
     "threshold_key",
     [
-        "healthcare.no_such_threshold",  # KeyError at leaf
-        "no_such_domain.value",  # KeyError at root
-        "healthcare.min_therapeutic_concentration.deeper",  # TypeError: scalar indexed
+        "domains.healthcare.no_such_threshold",  # KeyError at leaf
+        "domains.no_such_domain.value",  # KeyError at domain
+        "no_such_root.value",  # KeyError at root
+        "domains.healthcare.min_therapeutic_concentration.deeper",  # KeyError: scalar indexed
         "",
     ],
 )

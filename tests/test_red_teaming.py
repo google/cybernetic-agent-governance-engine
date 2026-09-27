@@ -20,12 +20,8 @@ import pytest
 pytestmark = pytest.mark.unit
 
 from src.gateway.governance.schemas.thresholds import (
-    CbfThresholds,
     ConfidenceThresholds,
-    ConsensusThresholds,
-    DrawdownThresholds,
     GovernanceThresholds,
-    StpaThresholds,
 )
 from src.governed_financial_advisor.governance import nemo_actions
 from src.governed_financial_advisor.governance.nemo_actions import check_drawdown_limit
@@ -63,16 +59,20 @@ def mock_thresholds(monkeypatch: pytest.MonkeyPatch):
 def _get_mock_thresholds(drawdown_limit: float) -> GovernanceThresholds:
     """Helper to create a GovernanceThresholds object with a specific drawdown limit."""
     return GovernanceThresholds(
-        cbf=CbfThresholds(min_cash_balance=1000.0, gamma=0.9),
-        drawdown=DrawdownThresholds(limit=drawdown_limit),
-        stpa=StpaThresholds(
-            uca5_drawdown_threshold_pct=4.5,
-            uca6_max_order_volume_fraction=0.1,
-            max_sell_portfolio_fraction=0.05,
-            max_latency_ms=200.0,
-        ),
-        confidence=ConfidenceThresholds(min_trade_confidence=0.7),
-        consensus=ConsensusThresholds(threshold_usd=10000.0),
+        confidence=ConfidenceThresholds(agent_threshold=0.7),
+        domains={
+            "finance": {
+                "cbf": {"min_cash_balance": 1000.0, "gamma": 0.9},
+                "drawdown": {"limit": drawdown_limit},
+                "stpa": {
+                    "uca5_drawdown_threshold_pct": 4.5,
+                    "uca6_max_order_volume_fraction": 0.1,
+                    "max_sell_portfolio_fraction": 0.05,
+                    "max_latency_ms": 200.0,
+                },
+                "consensus": {"threshold_usd": 10000.0},
+            }
+        },
         tier1_keywords=["AAPL", "GOOGL"],
     )
 

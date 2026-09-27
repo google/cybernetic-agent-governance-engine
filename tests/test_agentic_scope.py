@@ -118,7 +118,7 @@ class TestConsensusGateThreshold:
         """ConsensusGate threshold matches governance_thresholds.json."""
         from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
-        assert THRESHOLDS.consensus.threshold_usd == 10000.0
+        assert THRESHOLDS.resolve("domains.finance.consensus.threshold_usd") == 10000.0
 
     def test_hitl_escalator_fires_above_threshold(self):
         """should_escalate_for_consensus returns True when amount > threshold."""

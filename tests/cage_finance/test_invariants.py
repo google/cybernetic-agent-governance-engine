@@ -41,7 +41,7 @@ class TestCashBarrierDeclaration:
 
     def test_threshold_key_points_to_governance_config(self):
         """The threshold_key must match config/governance_thresholds.json path."""
-        assert CashBarrier.threshold_key == "cbf.min_cash_balance"
+        assert CashBarrier.threshold_key == "domains.finance.cbf.min_cash_balance"
 
     def test_gamma_default_is_0_5(self):
         """The gamma parameter (CBF time step coefficient) must match THRESHOLDS."""

@@ -80,6 +80,7 @@ class FinanceCagePlugin(CagePlugin):
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.cage_finance.stpa import SAGA_COMPENSATORS, UCA_RULES
+        from src.cage_finance.thresholds import FinanceThresholds
 
         cash_barrier = CashBarrier()
         cash_provider = SimulatedCashLedgerProvider(invariant_id=cash_barrier.invariant_id)
@@ -93,7 +94,10 @@ class FinanceCagePlugin(CagePlugin):
         # Dev/test bounding providers: permissive allowlists, stub market data
         # and rollback capability (they fail closed in production).
         bounding_registry = BoundingContractRegistry(
-            thresholds=THRESHOLDS.model_dump(),
+            thresholds={
+                **THRESHOLDS.model_dump(),
+                **THRESHOLDS.domains.get("finance", {}),
+            },
             market_data_provider=StubMarketDataProvider(),
             rollback_provider=StubRollbackCapabilityProvider(),
             enforcer=BoundingContractEnforcer(
@@ -124,6 +128,7 @@ class FinanceCagePlugin(CagePlugin):
             consensus=consensus_gate,
             narrowers=(AmountNarrower(),),
             tool_provider=FinancialToolProvider(safety_filter=cbf),
+            threshold_sections={"finance": FinanceThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},
         )

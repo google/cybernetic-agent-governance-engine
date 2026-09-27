@@ -822,6 +822,13 @@ _COMPOSITE_SCALED_THRESHOLD_RE = re.compile(
 )
 
 
+def _qualify_threshold_ref(ref: str, domain: str) -> str:
+    """Prefix domain-scoped threshold_ref with 'domains.<domain>.' when applicable."""
+    if not ref or ref.startswith("domains.") or not domain or domain == "core":
+        return ref
+    return f"domains.{domain}.{ref}"
+
+
 def generate_python(cs: ControlStructureModel) -> str:
     """Generate a Python UcaRule module and STPAValidator subclass from the control structure."""
     py_ucas = [
@@ -905,12 +912,12 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                )",
             ]
         elif param and op == "greater_than" and cond.threshold_ref:
-            attr_path = cond.threshold_ref
+            attr_path = _qualify_threshold_ref(cond.threshold_ref, cs.system.domain)
             all_keys = [param, *cond.param_aliases]
             norm_keys = set(cond.normalize_fraction_aliases)
             if len(all_keys) == 1 and not norm_keys:
                 body_lines += [
-                    f"            threshold = THRESHOLDS.{attr_path}",
+                    f'            threshold = _resolve_threshold("{attr_path}")',
                     f'            val = params.get("{param}")',
                     "            if val is None:",
                     f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
@@ -944,7 +951,7 @@ def generate_python(cs: ControlStructureModel) -> str:
                     else "()"
                 )
                 body_lines += [
-                    f"            threshold = THRESHOLDS.{attr_path}",
+                    f'            threshold = _resolve_threshold("{attr_path}")',
                     f"            candidates = [(k, params.get(k)) for k in {keys_tuple_str} if params.get(k) is not None]",
                     "            if not candidates:",
                     f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
@@ -991,9 +998,9 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                )",
             ]
         elif param and op == "less_than" and cond.threshold_ref:
-            attr_path = cond.threshold_ref
+            attr_path = _qualify_threshold_ref(cond.threshold_ref, cs.system.domain)
             body_lines += [
-                f"            threshold = THRESHOLDS.{attr_path}",
+                f'            threshold = _resolve_threshold("{attr_path}")',
                 f'            val = params.get("{param}")',
                 "            if val is None:",
                 f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
@@ -1042,7 +1049,8 @@ def generate_python(cs: ControlStructureModel) -> str:
         elif cond.composite:
             m = _COMPOSITE_SCALED_THRESHOLD_RE.match(cond.composite.strip())
             if m:
-                lhs_param, thresh_ref, rhs_param = m.group(1), m.group(2), m.group(3)
+                lhs_param, raw_thresh_ref, rhs_param = m.group(1), m.group(2), m.group(3)
+                thresh_ref = _qualify_threshold_ref(raw_thresh_ref, cs.system.domain)
                 body_lines += [
                     f"            # Composite condition: {cond.composite}",
                     f'            lhs_val = params.get("{lhs_param}")',
@@ -1050,7 +1058,7 @@ def generate_python(cs: ControlStructureModel) -> str:
                     "            if lhs_val is not None and rhs_val is not None:",
                     "                f_lhs = float(lhs_val)",
                     "                f_rhs = float(rhs_val)",
-                    f"                if f_rhs > 0 and f_lhs > THRESHOLDS.{thresh_ref} * f_rhs:",
+                    f'                if f_rhs > 0 and f_lhs > _resolve_threshold("{thresh_ref}") * f_rhs:',
                     "                    return Violation(",
                     '                        tier="stpa",',
                     f'                        code="{uca_code}",',
@@ -1103,6 +1111,21 @@ from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.stpa_validator import STPAValidator, UcaRule
 
 logger = logging.getLogger("Gateway.Governance.GeneratedSTPAValidator")
+
+
+def _resolve_threshold(path: str) -> float:
+    """Resolve a dot-separated threshold path via THRESHOLDS.resolve(path)."""
+    try:
+        resolved = THRESHOLDS.resolve(path)
+        if isinstance(resolved, (int, float)):
+            return float(resolved)
+    except Exception:
+        pass
+    obj: Any = THRESHOLDS
+    parts = path.split(".")[2:] if path.startswith("domains.") else path.split(".")
+    for part in parts:
+        obj = getattr(obj, part)
+    return float(obj)
 
 
 class GeneratedSTPAValidator(STPAValidator):
@@ -1590,13 +1613,13 @@ def generate_agp(cs: ControlStructureModel) -> str:
             try:
                 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
-                attr_path = cond.threshold_ref.split(".")
-                obj: Any = THRESHOLDS
-                for attr in attr_path:
-                    obj = getattr(obj, attr, None)
-                    if obj is None:
-                        break
-                threshold = obj
+                qualified_ref = _qualify_threshold_ref(
+                    cond.threshold_ref, cs.system.domain
+                )
+                try:
+                    threshold = THRESHOLDS.resolve(qualified_ref)
+                except KeyError:
+                    threshold = THRESHOLDS.resolve(cond.threshold_ref)
             except Exception:
                 threshold = f"<{cond.threshold_ref}>"
 

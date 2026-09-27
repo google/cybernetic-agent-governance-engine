@@ -26,7 +26,6 @@ threshold_key, gamma) compiles into the KEYS/ARGV of the atomic Redis Lua hop
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from src.gateway.governance.contracts import InvariantModel
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
@@ -58,10 +57,8 @@ def validate_invariant(
 
     # V3: Threshold key must resolve in the active thresholds tree, so the
     # barrier never falls back to a silent None at runtime.
-    current: Any = load_and_validate_thresholds().model_dump()
     try:
-        for part in invariant.threshold_key.split("."):
-            current = current[part]
+        load_and_validate_thresholds().resolve(invariant.threshold_key)
     except (KeyError, TypeError) as exc:
         raise ValueError(
             f"invariant {invariant.invariant_id}: threshold_key "

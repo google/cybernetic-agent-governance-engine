@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
@@ -84,64 +85,7 @@ def _resolve_pii_retention() -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 
-class CbfThresholds(BaseModel):
-    min_cash_balance: float = Field(
-        ..., gt=0, description="Minimum cash balance floor (USD)."
-    )
-    gamma: float = Field(..., gt=0, lt=1, description="CBF decay factor g in (0,1).")
-
-
-class DrawdownThresholds(BaseModel):
-    # KEY AUDIT FINDING (2026-06-03): `drawdown.limit` and
-    # `stpa.uca5_drawdown_threshold_pct` are NOT aliases — they are distinct
-    # thresholds with different semantics and units:
-    #
-    #   drawdown.limit                  — fraction in [0,1), e.g. 0.05 (5%)
-    #     Used by: cbf.py ControlBarrierFunction.verify_action()
-    #     Payload key: "drawdown_pct" (raw value divided by 100 before compare)
-    #     Purpose: CBF Redis-backed cash-barrier drawdown ceiling
-    #
-    #   stpa.uca5_drawdown_threshold_pct — percentage, e.g. 4.5 (4.5%)
-    #     Used by: stpa_validator.py _check_uca5() and
-    #              generated_stpa_validator.py _check_uca_5()
-    #     Payload key: "drawdown" (raw percentage value, compared directly)
-    #     Purpose: STPA UCA-5 unsafe-control-action drawdown trigger
-    #
-    # No consolidation is required. The canonical key for the CBF barrier is
-    # `drawdown.limit`; the canonical key for the STPA UCA-5 trigger is
-    # `stpa.uca5_drawdown_threshold_pct`. Both are single-occurrence keys with
-    # no duplicate aliases in governance_thresholds.json.
-    limit: float = Field(
-        ..., gt=0.0, lt=1.0, description="Max portfolio drawdown fraction [0,1)."
-    )
-
-
-class StpaThresholds(BaseModel):
-    uca5_drawdown_threshold_pct: float = Field(
-        ..., gt=0, description="UCA-5 drawdown % trigger (e.g. 4.5)."
-    )
-    uca6_max_order_volume_fraction: float = Field(
-        ..., gt=0, lt=1, description="UCA-6 max order/daily-vol fraction."
-    )
-    max_sell_portfolio_fraction: float = Field(
-        ..., gt=0, lt=1, description="FIN-1: max fraction of portfolio sold per order."
-    )
-    max_latency_ms: float = Field(
-        ..., gt=0, description="FIN-2: max trade round-trip ms."
-    )
-
-
 class ConfidenceThresholds(BaseModel):
-    # DEPRECATED: confidence threshold is now enforced exclusively by OPA (system_authz.rego)
-    min_trade_confidence: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "[CTRL_AGT_001] Minimum agentic model confidence score for trade execution. "
-            "See config/control_mappings.json for the active regulatory framework mapping."
-        ),
-    )
     # EV-2: Consolidated from AGENT_CONFIDENCE_THRESHOLD env var
     agent_threshold: float = Field(
         default=0.95,
@@ -161,12 +105,6 @@ class ConfidenceThresholds(BaseModel):
             "[EV-5] Minimum confabulation score floor. Production deployments "
             "should set via secretKeyRef. Env override: CONFIDENCE_MIN_SCORE"
         ),
-    )
-
-
-class ConsensusThresholds(BaseModel):
-    threshold_usd: float = Field(
-        ..., gt=0, description="USD amount above which consensus check is triggered."
     )
 
 
@@ -320,53 +258,16 @@ class TelemetryThresholds(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class HealthcareThresholds(BaseModel):
-    """Healthcare domain threshold configuration."""
-
-    min_therapeutic_concentration: float = Field(
-        default=5.0,
-        description="Minimum therapeutic serum concentration (mg/L) for dose barrier CBF validation",
-    )
-
-
-class PhysicalAIThresholds(BaseModel):
-    """Physical-AI domain threshold configuration.
-
-    REFERENCE-ONLY values. Real limits must come from a cell-specific
-    ISO/TS 15066 risk assessment; these exist so the declarative barriers in
-    src/cage_physical_ai/invariants.py resolve at registration (V3).
-    """
-
-    min_separation_distance_mm: float = Field(
-        default=500.0,
-        gt=0,
-        description="Minimum human-robot separation distance (mm) for the spatial separation barrier",
-    )
-    max_velocity_mm_s: float = Field(
-        default=250.0,
-        gt=0,
-        description="Maximum end-effector velocity (mm/s) for the kinematic velocity barrier",
-    )
-    max_joint_torque_nm: float = Field(
-        default=50.0,
-        gt=0,
-        description="Maximum joint torque (N·m) for the torque saturation barrier",
-    )
-
-
 class GovernanceThresholds(BaseModel):
     """Root schema for config/governance_thresholds.json.
 
-    Schema Version 2.1.0: Adds telemetry threshold section (EV-6) to consolidate
-    TELEMETRY_MAX_STALENESS_SECONDS and CAUSAL_CACHE_TTL_SECONDS into
-    configuration-driven defaults with optional env var overrides.
+    Schema Version 3.0.0: Domain-specific threshold blocks live under
+    ``domains.<domain>`` and are validated by each domain's
+    ``GovernanceDomainPlugin.contribute().threshold_sections`` during
+    governor assembly.
     """
 
-    cbf: CbfThresholds
-    drawdown: DrawdownThresholds
-    stpa: StpaThresholds
-    confidence: ConfidenceThresholds
-    consensus: ConsensusThresholds
+    confidence: ConfidenceThresholds = Field(default_factory=ConfidenceThresholds)
 
     # EV-1: FRIA thresholds (zone_allow, zone_defer)
     fria: FriaThresholds = Field(default_factory=FriaThresholds)
@@ -380,11 +281,9 @@ class GovernanceThresholds(BaseModel):
     # EV-6: Telemetry thresholds (max_staleness_seconds, cache_ttl_seconds)
     telemetry: TelemetryThresholds = Field(default_factory=TelemetryThresholds)
 
-    # Healthcare domain thresholds
-    healthcare: HealthcareThresholds = Field(default_factory=HealthcareThresholds)
-
-    # Physical-AI domain thresholds (reference-only; see PhysicalAIThresholds)
-    physical_ai: PhysicalAIThresholds = Field(default_factory=PhysicalAIThresholds)
+    # Open domain threshold namespaces (e.g. domains.finance, domains.healthcare,
+    # domains.physical_ai), validated at assembly time by domain plugins.
+    domains: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     tier1_keywords: list[str] = Field(default_factory=list)
 
@@ -419,6 +318,38 @@ class GovernanceThresholds(BaseModel):
     def cbrn_keywords_uppercase(cls, v: list[str]) -> list[str]:
         """Normalise CBRN keywords to uppercase for case-insensitive matching."""
         return [kw.upper() for kw in v if kw.strip()]
+
+    def resolve(self, dot_path: str) -> Any:
+        """Resolve a dot-separated threshold path across models and domain dicts.
+
+        Walks nested ``BaseModel`` attributes and ``Mapping`` keys by ``.``-separated
+        segments (e.g. ``"domains.finance.cbf.min_cash_balance"`` or
+        ``"fria.zone_allow"``), raising ``KeyError`` if any segment does not exist.
+        """
+        if not dot_path or not isinstance(dot_path, str):
+            raise KeyError(f"Invalid threshold dot_path: {dot_path!r}")
+        parts = dot_path.split(".")
+        if any(not part for part in parts):
+            raise KeyError(f"Invalid threshold dot_path: {dot_path!r}")
+        current: Any = self
+        for part in parts:
+            if isinstance(current, BaseModel):
+                if part not in type(current).model_fields:
+                    raise KeyError(
+                        f"Threshold segment '{part}' not found while resolving '{dot_path}'"
+                    )
+                current = getattr(current, part)
+            elif isinstance(current, Mapping):
+                if part not in current:
+                    raise KeyError(
+                        f"Threshold segment '{part}' not found while resolving '{dot_path}'"
+                    )
+                current = current[part]
+            else:
+                raise KeyError(
+                    f"Threshold segment '{part}' cannot traverse non-mapping while resolving '{dot_path}'"
+                )
+        return current
 
 
 # ---------------------------------------------------------------------------
@@ -553,13 +484,12 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         sys.exit(1)
 
     logger.info(
-        "✅ Governance thresholds validated: drawdown=%.0f%%, confidence=%.2f, "
-        "consensus_usd=%.0f, fria_allow=%.2f, causal_min_samples=%d",
-        thresholds.drawdown.limit * 100,
-        thresholds.confidence.min_trade_confidence,
-        thresholds.consensus.threshold_usd,
+        "✅ Governance thresholds validated: confidence=%.2f, "
+        "fria_allow=%.2f, causal_min_samples=%d, domains=%s",
+        thresholds.confidence.agent_threshold,
         thresholds.fria.zone_allow,
         thresholds.causal.min_samples,
+        sorted(thresholds.domains.keys()),
     )
     return thresholds
 

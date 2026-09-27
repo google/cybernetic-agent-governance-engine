@@ -244,15 +244,12 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
     def _resolve_threshold(self) -> float:
         if self._threshold_override is not None:
             return self._threshold_override
-        threshold_parts = self._invariant.threshold_key.split(".")
-        threshold_value: Any = THRESHOLDS
-        for part in threshold_parts:
-            if not hasattr(threshold_value, part):
-                raise ValueError(
-                    f"Unknown threshold_key {self._invariant.threshold_key!r} on InvariantModel"
-                )
-            threshold_value = getattr(threshold_value, part)
-        return float(threshold_value)
+        try:
+            return float(THRESHOLDS.resolve(self._invariant.threshold_key))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Unknown threshold_key {self._invariant.threshold_key!r} on InvariantModel"
+            ) from exc
 
     @property
     def threshold_value(self) -> float:

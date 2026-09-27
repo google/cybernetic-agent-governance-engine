@@ -38,6 +38,16 @@ def load_finance_critics() -> tuple[CriticSpec, ...]:
     return load_critic_specs(_CRITICS_YAML_PATH)
 
 
+def _resolve_default_consensus_threshold() -> float:
+    try:
+        val = THRESHOLDS.resolve("domains.finance.consensus.threshold_usd")
+        if isinstance(val, (int, float)):
+            return float(val)
+    except Exception:
+        pass
+    return float(THRESHOLDS.consensus.threshold_usd)
+
+
 def build_finance_consensus_contribution(
     threshold: float | None = None,
 ) -> ConsensusContribution:
@@ -45,7 +55,7 @@ def build_finance_consensus_contribution(
     resolved_threshold = (
         float(threshold)
         if threshold is not None
-        else float(THRESHOLDS.consensus.threshold_usd)
+        else _resolve_default_consensus_threshold()
     )
     return ConsensusContribution(
         critics=load_finance_critics(),

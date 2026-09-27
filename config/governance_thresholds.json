@@ -1,34 +1,14 @@
 {
   "_comment": "CAGE Governance Thresholds — single source of truth. Loaded and Pydantic-validated at gateway startup. All modules MUST reference the loaded singleton; never inline literals.",
-  "_schema_version": "2.0.0",
+  "_schema_version": "3.0.0",
   "_env_override_comment": "All thresholds support env var overrides for runtime tuning. Env var names follow the pattern: uppercase path with underscores (e.g., fria.zone_allow -> FRIA_ZONE_ALLOW).",
-  "cbf": {
-    "min_cash_balance": 1000.0,
-    "gamma": 0.5
-  },
-  "drawdown": {
-    "limit": 0.05,
-    "_comment": "Maximum allowable portfolio drawdown as a fraction (0.0–1.0). Maps to safety_params.json drawdown_limit."
-  },
-  "stpa": {
-    "uca5_drawdown_threshold_pct": 4.5,
-    "_comment": "UCA-5: drawdown > this value triggers Unsafe Control Action block.",
-    "uca6_max_order_volume_fraction": 0.01,
-    "_comment": "UCA-6: order_size > daily_vol * this fraction triggers slippage violation.",
-    "max_sell_portfolio_fraction": 0.1,
-    "_comment": "FIN-1: maximum fraction of portfolio_total that can be sold in one order.",
-    "max_latency_ms": 200.0,
-    "_comment": "FIN-2: maximum permissible round-trip latency for a trade action."
-  },
   "fria": {
     "zone_allow": 0.95,
     "_comment": "FRIA (Frontier Risk Impact Assessment) confidence threshold for automatic approval.",
     "zone_defer": 0.70,
-    "_comment": "FRIA confidence threshold below which action is deferred to HITL."
+    "_comment_defer": "FRIA confidence threshold below which action is deferred to HITL."
   },
   "confidence": {
-    "min_trade_confidence": 0.95,
-    "_comment": "[CTRL_AGT_001] Minimum agentic model confidence required to execute a trade. See config/control_mappings.json for the active regulatory framework mapping (primary: ISO 42001 §A.5.2; legacy citation: SR 26-2 §IV.B).",
     "agent_threshold": 0.95,
     "_comment_agent": "[EV-2] Agent confidence threshold — consolidated from AGENT_CONFIDENCE_THRESHOLD env var.",
     "min_score": 0.95,
@@ -56,19 +36,57 @@
     "enabled": false,
     "_comment_enabled": "[EV-5] KMS batch signing disabled by default for safety. Enable explicitly in production. Env override: KMS_BATCH_ENABLED."
   },
-  "consensus": {
-    "threshold_usd": 10000.0,
-    "_comment": "Trades above this USD amount trigger the multi-agent consensus check."
-  },
-  "healthcare": {
-    "min_therapeutic_concentration": 5.0,
-    "_comment": "Minimum therapeutic serum concentration (mg/L) for dose barrier CBF validation."
-  },
-  "physical_ai": {
-    "min_separation_distance_mm": 500.0,
-    "max_velocity_mm_s": 250.0,
-    "max_joint_torque_nm": 50.0,
-    "_comment": "REFERENCE-ONLY placeholders for the physical-AI CBF barriers. 500 mm echoes the ISO 13855 minimum-distance floor; 250 mm/s is the ISO 10218-1 reduced-speed limit; 50 N·m is illustrative. Adopters must derive real limits from a cell-specific ISO/TS 15066 risk assessment."
+  "domains": {
+    "finance": {
+      "cbf": {
+        "min_cash_balance": 1000.0,
+        "gamma": 0.5
+      },
+      "drawdown": {
+        "limit": 0.05,
+        "_comment": "Maximum allowable portfolio drawdown as a fraction (0.0–1.0). Maps to safety_params.json drawdown_limit."
+      },
+      "stpa": {
+        "uca5_drawdown_threshold_pct": 4.5,
+        "_comment": "UCA-5: drawdown > this value triggers Unsafe Control Action block.",
+        "uca6_max_order_volume_fraction": 0.01,
+        "_comment_uca6": "UCA-6: order_size > daily_vol * this fraction triggers slippage violation.",
+        "max_sell_portfolio_fraction": 0.1,
+        "_comment_fin1": "FIN-1: maximum fraction of portfolio_total that can be sold in one order.",
+        "max_latency_ms": 200.0,
+        "_comment_fin2": "FIN-2: maximum permissible round-trip latency for a trade action."
+      },
+      "consensus": {
+        "threshold_usd": 10000.0,
+        "_comment": "Trades above this USD amount trigger the multi-agent consensus check."
+      },
+      "bounding": {
+        "_comment": "Phase 5: Bounding contracts B1–B10 for execute_trade_bounded verb. All contracts enabled by default for reference architecture demonstration. Production deployments should tune thresholds per risk appetite.",
+        "enabled_contracts": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10"],
+        "max_single_order_usd": 50000.0,
+        "_comment_b1": "B1 — Maximum single-order notional value (USD). HARD_BLOCK severity.",
+        "min_liquidity_depth_ratio": 10.0,
+        "_comment_b3": "B3 — Minimum liquidity depth ratio (order_book_depth_usd / trade_amount). HITL_ESCALATE severity. Larger ratio = deeper liquidity.",
+        "max_volatility_percentile": 75.0,
+        "volatility_window_days": 30,
+        "_comment_b5": "B5 — Maximum volatility percentile (0–100). HITL_ESCALATE severity. Lower value = stricter sizing in volatile markets. Window defaults to 30 days.",
+        "max_twap_slippage_bps": 50.0,
+        "twap_window_seconds": 300,
+        "_comment_b8": "B8 — Maximum TWAP slippage in basis points (1 bps = 0.01%). HITL_ESCALATE severity. 50 bps = 0.5% max slippage. Window defaults to 300 seconds.",
+        "b10_min_rollback_window_seconds": 60,
+        "_comment_b10": "B10 — Minimum rollback window (seconds). HARD_BLOCK severity. Must be >= 60s to justify EXTERNALLY_REVERSIBLE classification. If B10 fails, action is re-classified to IRREVERSIBLE_TERMINAL."
+      }
+    },
+    "healthcare": {
+      "min_therapeutic_concentration": 5.0,
+      "_comment": "Minimum therapeutic serum concentration (mg/L) for dose barrier CBF validation."
+    },
+    "physical_ai": {
+      "min_separation_distance_mm": 500.0,
+      "max_velocity_mm_s": 250.0,
+      "max_joint_torque_nm": 50.0,
+      "_comment": "REFERENCE-ONLY placeholders for the physical-AI CBF barriers. 500 mm echoes the ISO 13855 minimum-distance floor; 250 mm/s is the ISO 10218-1 reduced-speed limit; 50 N·m is illustrative. Adopters must derive real limits from a cell-specific ISO/TS 15066 risk assessment."
+    }
   },
   "tier1_keywords": [
     "SYSTEM OVERRIDE",
@@ -104,21 +122,5 @@
     "improvised explosive device",
     "CBRN attack"
   ],
-  "tier1_keywords_cbrn_enabled": true,
-  "bounding": {
-    "_comment": "Phase 5: Bounding contracts B1–B10 for execute_trade_bounded verb. All contracts enabled by default for reference architecture demonstration. Production deployments should tune thresholds per risk appetite.",
-    "enabled_contracts": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10"],
-    "max_single_order_usd": 50000.0,
-    "_comment_b1": "B1 — Maximum single-order notional value (USD). HARD_BLOCK severity.",
-    "min_liquidity_depth_ratio": 10.0,
-    "_comment_b3": "B3 — Minimum liquidity depth ratio (order_book_depth_usd / trade_amount). HITL_ESCALATE severity. Larger ratio = deeper liquidity.",
-    "max_volatility_percentile": 75.0,
-    "volatility_window_days": 30,
-    "_comment_b5": "B5 — Maximum volatility percentile (0–100). HITL_ESCALATE severity. Lower value = stricter sizing in volatile markets. Window defaults to 30 days.",
-    "max_twap_slippage_bps": 50.0,
-    "twap_window_seconds": 300,
-    "_comment_b8": "B8 — Maximum TWAP slippage in basis points (1 bps = 0.01%). HITL_ESCALATE severity. 50 bps = 0.5% max slippage. Window defaults to 300 seconds.",
-    "b10_min_rollback_window_seconds": 60,
-    "_comment_b10": "B10 — Minimum rollback window (seconds). HARD_BLOCK severity. Must be >= 60s to justify EXTERNALLY_REVERSIBLE classification. If B10 fails, action is re-classified to IRREVERSIBLE_TERMINAL."
-  }
+  "tier1_keywords_cbrn_enabled": true
 }
