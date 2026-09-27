@@ -281,8 +281,8 @@ resource "kubernetes_deployment" "governed_advisor" {
           }
 
           # Cloud KMS asymmetric governance signing (CTRL_KMS_001).
-          # Empty kms_governance_key falls back to legacy HMAC-SHA256 signing
-          # via GOVERNANCE_SALT above — acceptable only in dev/CI.
+          # Empty kms_governance_key selects a non-evidentiary software Ed25519
+          # signer in dev/CI; enforcing postures refuse to start without it.
           env {
             name  = "CAGE_KMS_PROVIDER"
             value = var.cage_kms_provider

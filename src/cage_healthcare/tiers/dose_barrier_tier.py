@@ -37,7 +37,7 @@ class DoseBarrierTier(GovernanceTierPlugin):
     all of that. This tier only names the action and delegates to the engine.
     """
 
-    def __init__(self, cbf: Any) -> None:  # cbf: ControlBarrierFunction
+    def __init__(self, cbf: Any = None) -> None:  # cbf: ControlBarrierFunction
         self.cbf = cbf
 
     @property
@@ -53,10 +53,25 @@ class DoseBarrierTier(GovernanceTierPlugin):
         return 3
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action in HEALTHCARE_GOVERNED_ACTIONS
+        return action in HEALTHCARE_GOVERNED_ACTIONS or action in (
+            "administer_medication",
+            "dose_order",
+        )
+
+    def _unconfigured(self) -> Violation:
+        from src.gateway.governance.contracts import ViolationKind
+
+        return Violation(
+            tier=self.tier_name,
+            code="DOSE_BARRIER_UNCONFIGURED",
+            message="no control barrier function configured; refusing governed clinical action",
+            kind=ViolationKind.HARD,
+        )
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); no state mutation."""
+        if self.cbf is None:
+            return [self._unconfigured()]
         return await preview_barrier(
             self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
         )
@@ -64,6 +79,8 @@ class DoseBarrierTier(GovernanceTierPlugin):
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
+        if self.cbf is None:
+            return [self._unconfigured()], None
         return await commit_barrier(
             self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
         )
@@ -71,4 +88,5 @@ class DoseBarrierTier(GovernanceTierPlugin):
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        await rollback_barrier(self.cbf, receipt)
+        if self.cbf is not None:
+            await rollback_barrier(self.cbf, receipt)

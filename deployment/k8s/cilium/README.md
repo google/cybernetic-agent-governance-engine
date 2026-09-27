@@ -41,7 +41,7 @@ kubectl apply -f deployment/k8s/cilium/
 |---|---|---|
 | `egress-lockdown.yaml` | `CiliumNetworkPolicy` | FQDN allowlist for Gateway (external LLM APIs: OpenAI, Anthropic, Gemini); internal-only lockdown for `governed-financial-advisor` and `sovereign-agent` pods; explicit cluster-wide external egress default-deny. |
 | `trivy-egress-fqdn.yaml` | `CiliumNetworkPolicy` | FQDN egress allowlist for Trivy vulnerability scanner (`ghcr.io`, `pkg.dev`) via DNS proxy interception. |
-| `reconciliation-worker-egress.yaml` | `CiliumNetworkPolicy` | Egress isolation for the external ledger reconciliation CronJob (Cloud KMS, GCS/S3, Redis, and internal DNS). |
+| `reconciliation-worker-egress.yaml` | `CiliumNetworkPolicy` | Egress isolation for the ground-truth reconciler CronJob (Cloud KMS, Redis, Langfuse OTLP, and internal DNS). |
 
 ---
 

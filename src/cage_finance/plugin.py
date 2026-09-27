@@ -61,10 +61,16 @@ class FinanceCagePlugin(CagePlugin):
     )
 
     def contribute(self) -> PluginContribution:
+        from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
         cash_barrier = CashBarrier()
-        cbf = ControlBarrierFunction(invariant=cash_barrier, cost_resolver=finance_cost_resolver)
+        cash_provider = SimulatedCashLedgerProvider(invariant_id=cash_barrier.invariant_id)
+        cbf = ControlBarrierFunction(
+            invariant=cash_barrier,
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
         consensus_gate = ConsensusGate()
 
         # Dev/test bounding providers: permissive allowlists, stub market data
@@ -91,6 +97,7 @@ class FinanceCagePlugin(CagePlugin):
             domain=self.name,
             tiers=tiers,
             invariants=(cash_barrier,),
+            ground_truth_providers={cash_barrier.invariant_id: cash_provider},
             registered_actions=REGISTERED_ACTIONS,
             safety_filter=cbf,
             consensus=consensus_gate,

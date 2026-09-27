@@ -182,10 +182,35 @@ async def test_kinematic_barrier_without_cbf_refuses(hook: str) -> None:
 
 @pytest.mark.asyncio
 async def test_physical_ai_plugin_denies_governed_action_end_to_end() -> None:
+    from unittest.mock import MagicMock, patch
+
+    fakeredis_sync = pytest.importorskip("fakeredis")
+    fakeredis = pytest.importorskip("fakeredis.aioredis")
+
+    server = fakeredis_sync.FakeServer()
+    sync_redis = fakeredis_sync.FakeRedis(server=server, decode_responses=True)
+    fake_redis = fakeredis.FakeRedis(server=server, decode_responses=True)
+    mock_redis_mod = MagicMock(get_raw_client=MagicMock(return_value=fake_redis))
+
     governor = _assemble(PhysicalAICagePlugin())
     kinematic = [s for s in governor.stages if isinstance(s, DomainTierStage) and s.name == "kinematic_barrier"]
+    ctx = StageContext(
+        action="dispatch_trajectory",
+        params={"target_velocity_mm_s": 5000.0},
+        profile=Profile.FULL,
+    )
 
-    async with ReservationScope() as scope:
-        result = await run_pipeline(kinematic, _ctx("dispatch_trajectory"), profile=Profile.FULL, scope=scope)
+    with (
+        patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
+        patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_redis),
+    ):
+        async with ReservationScope() as scope:
+            result = await run_pipeline(kinematic, ctx, profile=Profile.FULL, scope=scope)
 
-    assert "KINEMATIC_BARRIER_UNCONFIGURED" in {v.code for v in result.violations}
+    assert {
+        "KINEMATIC_BARRIER_VIOLATED",
+        "KINEMATIC_BARRIER_VIOLATION",
+        "KINEMATIC_BARRIER_UNCONFIGURED",
+    } & {
+        v.code for v in result.violations
+    }

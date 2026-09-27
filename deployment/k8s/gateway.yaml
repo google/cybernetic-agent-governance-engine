@@ -145,11 +145,12 @@ spec:
                   key: secret
             - name: EVIDENCE_STREAM_ENABLED
               value: "true"
-            # BLOCKER-06: RECONCILIATION_PROVIDER must not be "stub" in production.
-            # The stub provider fabricates a static $100k balance; CBF would evaluate
-            # against fake data. "gcs" routes to the GCS-backed WORM ledger.
+            # BLOCKER-06: the startup posture check refuses production when
+            # RECONCILIATION_PROVIDER is unset or "stub". The reconciler runs the
+            # simulated Tier 2 provider (the ledger providers were removed), so the
+            # value names that provider; it is a label, not a selector.
             - name: RECONCILIATION_PROVIDER
-              value: "gcs"
+              value: "simulated"
             # CTRL_KMS_001: KMS asymmetric governance signer (H-05).
             # assert_kms_active_in_production() raises RuntimeError at startup
             # if this env var is absent when CAGE_ENV=production.

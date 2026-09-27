@@ -395,13 +395,13 @@ async def test_verify_action_non_trade_action_is_always_safe():
 
 
 # ---------------------------------------------------------------------------
-# verify_action — drawdown violation
+# verify_action — barrier decay rate violation
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_verify_action_drawdown_violation_returns_unsafe():
-    """A drawdown_pct exceeding the threshold returns an UNSAFE message."""
+    """An action exceeding the invariant's gamma decay rate returns an UNSAFE message."""
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     await _seed_balance(fake_redis, _SAFE_BALANCE)
 
@@ -410,25 +410,21 @@ async def test_verify_action_drawdown_violation_returns_unsafe():
     from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    # Create CBF with gamma=0.9 immutably
-    invariant = replace(CashBarrier(), gamma=0.9)
+    # Create CBF with gamma=0.1 so at most 10% of barrier margin h_t may be consumed
+    invariant = replace(CashBarrier(), gamma=0.1)
     cbf = ControlBarrierFunction(
         invariant=invariant,
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
+    cbf.threshold_value = _MIN_CASH
     cbf.tracer = None
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
 
-    # Patch THRESHOLDS so drawdown limit is 5%
-    mock_thresholds = MagicMock()
-    mock_thresholds.drawdown.limit = 0.05
-
     with (
         patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
-        patch("src.gateway.governance.safety.cbf_engine.THRESHOLDS", mock_thresholds),
         patch(
             "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
             AsyncMock(return_value=None),
@@ -436,11 +432,10 @@ async def test_verify_action_drawdown_violation_returns_unsafe():
     ):
         result = await cbf.verify_action(
             "execute_trade",
-            {"amount": 100.0, "drawdown_pct": 10.0},  # 10% > 5% limit
+            {"amount": 25_000.0},  # Exceeds 10% of h_t = 49_000.0
         )
 
-    assert "UNSAFE" in result
-    assert "Drawdown" in result
+    assert "Violation" in result and result != "SAFE"
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +464,7 @@ async def test_verify_action_trade_at_exact_floor_is_safe():
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
+    cbf.threshold_value = _MIN_CASH
     cbf.tracer = None
 
     mock_redis_mod = MagicMock()
@@ -509,6 +505,7 @@ async def test_verify_action_trade_below_floor_returns_unsafe():
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
+    cbf.threshold_value = _MIN_CASH
     cbf.tracer = None
 
     mock_redis_mod = MagicMock()
@@ -874,7 +871,7 @@ def test_reset_local_debits_clears_accumulator():
 
 
 # ---------------------------------------------------------------------------
-# get_h — barrier certificate value
+# evaluate_barrier — barrier certificate value
 # ---------------------------------------------------------------------------
 
 
@@ -887,23 +884,18 @@ def test_reset_local_debits_clears_accumulator():
     ],
 )
 def test_get_h_returns_correct_barrier_value(balance, min_cash, expected_h):
-    """get_h(x) = x - min_cash_balance."""
+    """evaluate_barrier(x) = x - threshold_value."""
     from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-    # Note: This test validates the get_h() formula itself
-    # The formula is get_h(x) = x - min_cash_balance
-    # CBF is now immutable so we can't set min_cash_balance post-init
-    # However, get_h() doesn't depend on the invariant's config, it just does the math
     cbf = ControlBarrierFunction(
         invariant=CashBarrier(),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
+    cbf.threshold_value = min_cash
 
-    # get_h(balance) with the CBF's current min_cash_balance (default 10000.0)
-    # This test expects: get_h(balance) = balance - min_cash
-    assert cbf.get_h(balance) == pytest.approx(balance - min_cash)
+    assert cbf.evaluate_barrier(balance) == pytest.approx(expected_h)
 
 
 # ---------------------------------------------------------------------------

@@ -63,7 +63,7 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
-    cbf.min_cash_balance = _MIN_CASH
+    cbf.threshold_value = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
 
@@ -376,7 +376,7 @@ def test_cbf_atomic_guarantee_under_concurrent_write():
     async def _commit(cbf, cost):
         cbf.tracer = None
         cbf._lua_sha = None
-        cbf.min_cash_balance = _MIN_CASH
+        cbf.threshold_value = _MIN_CASH
         cbf.gamma = _GAMMA
         try:
             result = await cbf.atomic_verify_and_commit(
