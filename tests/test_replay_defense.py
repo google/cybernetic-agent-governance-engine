@@ -105,7 +105,7 @@ class TestSequenceInSignedPayload:
     """Tests verifying sequence is included in KMS signature payload."""
 
     def test_sequence_included_in_kms_signature(self) -> None:
-        """Verify sequence is part of the payload passed to KMS signer.sign()."""
+        """Verify sequence is part of the payload passed to KMS signer.sign_decision()."""
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
@@ -120,7 +120,7 @@ class TestSequenceInSignedPayload:
         # Mock KMS signer
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
-        mock_signer.sign.return_value = "test_signature"
+        mock_signer.sign_decision.return_value = MagicMock(signature="test_signature", kid="reconciler-kid", algorithm="gcp_kms")
 
         reconciler = ExternalLedgerReconciler(
             provider=SimulatedCashLedgerProvider(),
@@ -134,15 +134,15 @@ class TestSequenceInSignedPayload:
                 True,
             ),
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer",
+                "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
                 return_value=mock_signer,
             ),
         ):
             reconciler.reconcile()
 
         # Verify signer.sign was called with sequence in payload
-        assert mock_signer.sign.called
-        signed_payload = mock_signer.sign.call_args[0][0]
+        assert mock_signer.sign_decision.called
+        signed_payload = mock_signer.sign_decision.call_args[0][0]
         assert "sequence" in signed_payload
         assert signed_payload["sequence"] == 5
 

@@ -75,12 +75,15 @@ spec:
                 - name: RECONCILIATION_PROVIDER
                   value: "simulated"
 
-                # --- KMS signing ---
-                - name: KMS_GOVERNANCE_KEY
+                # --- KMS signing (G8) ---
+                # The reconciler signs ground-truth snapshots with its own key,
+                # separate from the gateway's KMS_GOVERNANCE_KEY. The gateway
+                # trusts only this key (by kid) for ground truth.
+                - name: RECONCILER_KMS_KEY
                   valueFrom:
                     secretKeyRef:
                       name: reconciliation-worker-secrets
-                      key: kms-governance-key
+                      key: reconciler-kms-key
 
                 # --- Redis ---
                 - name: REDIS_URL
@@ -146,7 +149,7 @@ spec:
 #
 #   kubectl create secret generic reconciliation-worker-secrets \
 #     --namespace=governance-stack \
-#     --from-literal=kms-governance-key=projects/<PROJECT>/locations/<REGION>/keyRings/<RING>/cryptoKeys/<KEY>/cryptoKeyVersions/<N>
+#     --from-literal=reconciler-kms-key=projects/<PROJECT>/locations/<REGION>/keyRings/<RING>/cryptoKeys/<KEY>/cryptoKeyVersions/<N>
 apiVersion: v1
 kind: Secret
 metadata:
@@ -158,7 +161,7 @@ metadata:
 type: Opaque
 # stringData is intentionally absent — all values must be populated out-of-band.
 # stringData:
-#   kms-governance-key: ""              # REQUIRED
+#   reconciler-kms-key: ""              # REQUIRED
 
 # L7 FQDN overlay for this worker lives in deployment/k8s/cilium/reconciliation-worker-egress.yaml
 # Apply that file separately on GKE Dataplane V2 clusters.

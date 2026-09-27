@@ -131,8 +131,14 @@ def healthy_probes(monkeypatch):
         def ping_ready(self):
             return None
 
+    class _Verifier:
+        trust_anchor_kids = ("reconciler-kid",)
+
     monkeypatch.setattr(posture_mod, "_signer", lambda: _Signer())
     monkeypatch.setattr(posture_mod, "_redis", lambda: _Redis())
+    monkeypatch.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier())
+    monkeypatch.setenv("KMS_GOVERNANCE_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/gateway")
+    monkeypatch.setenv("RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler")
     monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
     monkeypatch.delenv("CBF_FAIL_OPEN", raising=False)
     return monkeypatch

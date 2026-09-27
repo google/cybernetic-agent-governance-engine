@@ -335,7 +335,12 @@ def posture_probes(monkeypatch):
     """Every startup probe except the signer healthy; tests choose the signer."""
     from src.gateway.governance.governor import posture as posture_mod
 
+    class _Verifier:
+        trust_anchor_kids = ("reconciler-kid",)
+
     monkeypatch.setattr(posture_mod, "_redis", lambda: _HealthyRedis())
+    monkeypatch.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier())
+    monkeypatch.setenv("RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler")
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
     monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
 

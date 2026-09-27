@@ -97,6 +97,7 @@ class ReconciliationResult:
     sequence: int = 0
     invariant_id: str = "finance.cash_balance"
     kms_key_id: str = ""
+    signing_algorithm: str = ""
     discrepancy_detected: bool = False
     discrepancy_delta: float = 0.0
 
@@ -134,6 +135,7 @@ class ReconciliationResult:
             "signature": self.signature,
             "sequence": self.sequence,
             "kms_key_id": self.kms_key_id,
+            "signing_algorithm": self.signing_algorithm,
         }
         return jcs_canonicalize_plan(payload_dict).decode("utf-8")
 
@@ -152,6 +154,7 @@ class ReconciliationResult:
             signature=data.get("signature", ""),
             sequence=int(data.get("sequence", 0)),
             kms_key_id=data.get("kms_key_id", ""),
+            signing_algorithm=data.get("signing_algorithm", ""),
         )
 
 
@@ -365,10 +368,12 @@ class GroundTruthReconciler:
             if self._signer is not None:
                 signer = self._signer
             else:
-                from src.gateway.governance.kms_signer import get_governance_signer
+                from src.gateway.governance.reconciliation.trust import (
+                    get_reconciler_signer,
+                )
 
                 try:
-                    signer = get_governance_signer()
+                    signer = get_reconciler_signer()
                 except Exception:
                     unconfigured_dev_signer = True
                     raise
@@ -376,35 +381,20 @@ class GroundTruthReconciler:
                     unconfigured_dev_signer = True
                     raise RuntimeError("KMS signer inactive in dev/test posture")
 
-            payload_dict = {
-                "source": result.source,
-                "state_scalar": result.state_scalar,
-                "verified_at": result.verified_at,
-                "sequence": result.sequence,
-            }
-            if hasattr(signer, "sign"):
-                raw_sig = signer.sign(payload_dict)
-            elif hasattr(signer, "sign_decision"):
-                raw_sig = signer.sign_decision(payload_dict)
-            else:
-                raise RuntimeError("Configured governance signer has no sign method")
-
-            if hasattr(raw_sig, "signature"):
-                sig_str = str(raw_sig.signature)
-                result.kms_key_id = str(getattr(raw_sig, "kid", ""))
-            elif isinstance(raw_sig, dict):
-                sig_str = str(raw_sig.get("signature", ""))
-                result.kms_key_id = str(raw_sig.get("kid", ""))
-            else:
-                sig_str = str(raw_sig or "")
-
-            sig_alg = getattr(
-                raw_sig,
-                "algorithm",
-                getattr(signer, "signing_algorithm", "KMS_ASYMMETRIC"),
+            from src.gateway.governance.reconciliation.trust import (
+                snapshot_signing_payload,
             )
+
+            # sign_decision() records the signing kid and algorithm so the
+            # CBF can resolve the reconciler's public key by kid (G8).
+            record = signer.sign_decision(snapshot_signing_payload(result))
+            sig_str = str(getattr(record, "signature", "") or "")
+            sig_kid = str(getattr(record, "kid", "") or "")
+            sig_alg = str(getattr(record, "algorithm", "") or "")
             if not sig_str or sig_str.startswith("HMAC_FALLBACK"):
                 raise RuntimeError("KMS signer returned empty or fallback signature")
+            if not sig_kid or not sig_alg:
+                raise RuntimeError("KMS signer returned a record without kid/algorithm")
             if enforcing and (
                 sig_alg in ("HMAC_SHA256_FALLBACK", "HS256", "SOFTWARE_ED25519")
                 or not getattr(signer, "is_kms_active", True)
@@ -414,7 +404,9 @@ class GroundTruthReconciler:
                 )
 
             result.signature = sig_str
-            logger.info("Reconciled state signed via KMS.")
+            result.kms_key_id = sig_kid
+            result.signing_algorithm = sig_alg
+            logger.info("Reconciled state signed via KMS (kid=%s).", sig_kid)
         except Exception as sign_exc:
             kms_sign_ms = (time.monotonic() - t_sign_start) * 1000.0
             _attr("reconciliation.kms_sign_ms", round(kms_sign_ms, 1))
@@ -868,24 +860,12 @@ def read_verified_balance(
             return None
 
         if signer is not None:
-            if not result.signature:
+            from src.gateway.governance.reconciliation.trust import (
+                verify_snapshot_signature,
+            )
+
+            if not verify_snapshot_signature(result, signer):
                 return None
-            payload_dict = {
-                "source": result.source,
-                "state_scalar": result.state_scalar,
-                "verified_at": result.verified_at,
-                "sequence": result.sequence,
-            }
-            if hasattr(signer, "verify"):
-                if not signer.verify(payload_dict, result.signature):
-                    return None
-            elif hasattr(signer, "verify_decision"):
-                if not signer.verify_decision(
-                    payload_dict,
-                    result.signature,
-                    kid=result.kms_key_id or getattr(signer, "key_id", None),
-                ):
-                    return None
 
         return result
     except Exception as exc:
@@ -954,16 +934,39 @@ __all__ = [
     "ReconciliationResult",
     "SimulatedSource",
     "TTL_SECONDS",
+    "main",
     "read_verified_balance",
     "read_verified_snapshot",
     "read_verified_state",
     "reconciled_state_key",
 ]
 
-if __name__ == "__main__":
+
+def _single_shot_enabled() -> bool:
+    return os.environ.get("RECONCILIATION_SINGLE_SHOT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def main() -> int:
+    """Entry point: one reconciliation pass (CronJob) or the polling loop."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
     )
     reconciler = GroundTruthReconciler.from_env()
+    if _single_shot_enabled():
+        results = reconciler.reconcile_all()
+        failed = sorted(k for k, r in results.items() if not r.is_valid)
+        if failed or not results:
+            logger.error("Single-shot reconciliation failed for: %s", failed)
+            return 1
+        return 0
     reconciler.run_loop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -428,6 +428,7 @@ CAGE_DEPLOYMENT_REGION=US_FED terraform apply -var-file=prod.tfvars
 - The `agentsight` namespace requires PSA `privileged` for eBPF (host PID + network).
 - `CAGE_ROUTING_SEAL_SECRET` must be ≥ 32 characters; the gateway raises `RuntimeError` at startup if absent and `CAGE_ENV=production`.
 - `KMS_GOVERNANCE_KEY` activates Cloud KMS asymmetric signing (CTRL_KMS_001); HMAC fallback is dev/CI only.
+- `RECONCILER_KMS_KEY` is the reconciler's separate snapshot-signing key. The reconciliation worker signs with it; the gateway verifies ground-truth snapshots against it by `kid` and refuses an enforcing startup without it (G8).
 
 ---
 
