@@ -156,18 +156,19 @@ GOVERNANCE_BUDGET_MS: float = 200.0
 
 # Span names emitted while the governor runs its pipeline — used to harvest
 # per-tier durations from the InMemorySpanExporter.
+#   * Kernel stages emit fixed names (governor/stages/*.py, gateway/core/policy.py).
+#   * Domain tiers run through DomainTierStage (governor/stages/domain_tiers.py),
+#     which emits one generic span per hook call: f"cage.tier.{tier_name}".
 # Maps paper table row label → OTel span name.  Totals are measured directly
 # (see measure_governor_latency), not harvested from spans.
 TIER_SPAN_MAP: dict[str, str] = {
     "STPA (Tier 1)": "cage.stpa_check",
     "Confidence (Tier 2)": "cage.confidence_check",
-    "CBF (Tier 3a)": "cage.cbf_check",
+    "CBF (Tier 3a)": "cage.tier.cbf",
     "OPA (Tier 3b)": "governance.opa_check",
-    "Fiscal (Tier 4)": "cage.fiscal_limit_reserve",
-    "Consensus (Tier 5)": "cage.consensus_gate",
-    # Causal (Tier 6) runs in asyncio.to_thread — no dedicated span yet;
-    # its cost is captured in the Total row.
-    "FRIA (Tier 7)": "cage.fria_check",
+    "Fiscal (Tier 4)": "cage.tier.fiscal",
+    "Consensus (Tier 5)": "cage.tier.consensus",
+    "Causal (Tier 6)": "cage.tier.causal",
 }
 
 # ---------------------------------------------------------------------------
@@ -575,7 +576,7 @@ async def _measure_approval_latency(
                 f"  {label:<25} n={len(samples):3d}  P50={results[label]['p50']:.3f}ms  P95={results[label]['p95']:.3f}ms  P99={results[label]['p99']:.3f}ms"
             )
         else:
-            # Span not emitted in this run (e.g. FRIA gated on CAGE_NORMATIVE_PROVIDER)
+            # Span not emitted in this run (e.g. the tier does not claim the action)
             results[label] = {
                 "p50": 0.0,
                 "p95": 0.0,

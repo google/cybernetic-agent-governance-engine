@@ -13,7 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from typing import Any
+
+from opentelemetry import trace
 
 from src.gateway.governance.contracts import (
     CommitReceipt,
@@ -23,12 +26,23 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.governor.pipeline import Stage, StageContext
 
+tracer = trace.get_tracer(__name__)
+
+# Span attribute keys. The span name itself is f"cage.tier.{tier_name}", so
+# per-tier latency is observable without naming any tier in the kernel.
+ATTR_PHASE = "cage.tier.phase"
+ATTR_HOOK = "cage.tier.hook"
+ATTR_VIOLATION_COUNT = "cage.tier.violation_count"
+ATTR_EXCEPTION = "cage.tier.exception"
+
 
 class DomainTierStage(Stage):
     """Wraps a GovernanceTierPlugin as a Stage.
 
     ``run()`` and ``preview()`` call the tier's read-only ``evaluate()``.
     Phase-2 tiers are driven through ``commit()`` / ``rollback(receipt)``.
+    Every tier hook invocation (evaluate / commit / preview / rollback) runs
+    inside exactly one OTel span named ``cage.tier.<tier_name>``.
 
     Holds no per-request state: receipts go back to the pipeline, and a
     ``claims()`` exception propagates to the pipeline, which fails the stage
@@ -44,23 +58,46 @@ class DomainTierStage(Stage):
         """Delegate to the tier.  Exceptions propagate; ``run_pipeline`` fails closed."""
         return self.tier.claims_action(ctx.action, ctx.params)
 
+    def _span(self, hook: str) -> AbstractContextManager[trace.Span]:
+        return tracer.start_as_current_span(
+            f"cage.tier.{self.name}",
+            attributes={ATTR_PHASE: self.tier.phase, ATTR_HOOK: hook},
+        )
+
     async def run(self, ctx: StageContext) -> list[Violation]:
-        return await self._guarded(self.tier.evaluate, ctx)
+        return await self._guarded(self.tier.evaluate, ctx, "evaluate")
 
     async def preview(self, ctx: StageContext) -> list[Violation]:
         """DRY_RUN stand-in for commit(): the tier's side-effect-free evaluate()."""
-        return await self._guarded(self.tier.evaluate, ctx)
+        return await self._guarded(self.tier.evaluate, ctx, "preview")
 
     async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
         """Phase 2: commit the tier.  Fail-closed: a raise mutates nothing by contract."""
-        try:
-            result = await self.tier.commit(ctx.action, ctx.params)
-        except Exception as exc:
-            return [self._exception_violation("tier execution", exc)], None
-        return self._checked_commit_result(result)
+        with self._span("commit") as span:
+            try:
+                result = await self.tier.commit(ctx.action, ctx.params)
+            except Exception as exc:
+                span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
+                span.set_attribute(ATTR_VIOLATION_COUNT, 1)
+                return [self._exception_violation("tier execution", exc)], None
+            except BaseException as exc:
+                span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
+                raise
+            violations, receipt = self._checked_commit_result(result)
+            span.set_attribute(ATTR_VIOLATION_COUNT, len(violations))
+            return violations, receipt
 
     async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None:
-        await self.tier.rollback(ctx.action, ctx.params, receipt)
+        # Phase-1 tiers are read-only: there is nothing to undo.
+        if not self.mutating:
+            return
+        with self._span("rollback") as span:
+            try:
+                await self.tier.rollback(ctx.action, ctx.params, receipt)
+            except BaseException as exc:
+                span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
+                raise
+            span.set_attribute(ATTR_VIOLATION_COUNT, 0)
 
     def _checked_commit_result(self, result: Any) -> tuple[list[Violation], CommitReceipt | None]:
         """Enforce the ``(list[Violation], CommitReceipt | None)`` commit contract.
@@ -85,12 +122,20 @@ class DomainTierStage(Stage):
             )
         ], (receipt if isinstance(receipt, CommitReceipt) else None)
 
-    async def _guarded(self, call, ctx: StageContext) -> list[Violation]:
+    async def _guarded(self, call, ctx: StageContext, hook: str) -> list[Violation]:
         """Invoke a read-only tier hook; any exception becomes a HARD violation (fail-closed)."""
-        try:
-            return await call(ctx.action, ctx.params)
-        except Exception as exc:
-            return [self._exception_violation("tier execution", exc)]
+        with self._span(hook) as span:
+            try:
+                violations = await call(ctx.action, ctx.params)
+            except Exception as exc:
+                span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
+                violations = [self._exception_violation("tier execution", exc)]
+            except BaseException as exc:
+                # Cancellation etc. propagates unchanged; the span still ends.
+                span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
+                raise
+            span.set_attribute(ATTR_VIOLATION_COUNT, len(violations))
+            return violations
 
     def _exception_violation(self, where: str, exc: BaseException) -> Violation:
         return Violation(
@@ -99,6 +144,7 @@ class DomainTierStage(Stage):
             message=f"Exception in {where}: {type(exc).__name__}: {exc}",
             kind=ViolationKind.HARD,
         )
+
 
 def order_stages(tiers: Sequence[GovernanceTierPlugin]) -> tuple[DomainTierStage, ...]:
     """Validate, sort by (phase, order, tier_name) and wrap tiers as DomainTierStages.
