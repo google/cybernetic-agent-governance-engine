@@ -169,10 +169,11 @@ async def test_rollback_failed_violation_structure(governor, classification_engi
 
 
 async def _rollback(committed):
-    from src.gateway.governance.governor.pipeline import Profile, StageContext, rollback_lifo
+    from src.gateway.governance.governor.pipeline import Profile, StageContext
     from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
+    from tests.governor.scope_helpers import rollback_pairs
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
-    return await rollback_lifo(
+    return await rollback_pairs(
         [(DomainTierStage(t), _receipt(t)) for t in committed], ctx
     )
 

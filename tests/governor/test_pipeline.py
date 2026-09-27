@@ -25,13 +25,13 @@ from src.gateway.governance.contracts import CommitReceipt, Violation, Violation
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
-    rollback_lifo,
     run_pipeline,
 )
 from src.gateway.governance.governor.stages.domain_tiers import (
     DomainTierStage,
     order_stages,
 )
+from tests.governor.scope_helpers import rollback_pairs, run_scoped
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -105,7 +105,7 @@ def _ctx(profile: Profile = Profile.FULL) -> StageContext:
 async def test_domain_tier_with_plugin_name_is_not_filtered_out() -> None:
     """A tier named outside PROFILE_STAGES (e.g. healthcare) must still deny."""
     stages = order_stages([_Tier("dose_barrier", deny=True)])
-    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    result = await run_scoped(stages, _ctx())
     assert [v.tier for v in result.violations] == ["dose_barrier"]
 
 
@@ -114,7 +114,7 @@ async def test_post_hitl_keeps_its_narrow_scope() -> None:
     """POST_HITL re-checks only its named stages, not every domain tier."""
     log: list[str] = []
     stages = order_stages([_Tier("dose_barrier", deny=True, log=log)])
-    result = await run_pipeline(stages, _ctx(Profile.POST_HITL), profile=Profile.POST_HITL)
+    result = await run_scoped(stages, _ctx(Profile.POST_HITL), profile=Profile.POST_HITL)
     assert result.violations == ()
     assert log == []
 
@@ -127,7 +127,7 @@ async def test_phase1_tiers_run_in_phase_order_then_name() -> None:
         _Tier("B", order=1, log=log),
         _Tier("A", order=2, log=log),
     ])
-    await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    await run_scoped(stages, _ctx())
     assert log == ["evaluate:B", "evaluate:A", "evaluate:C"]
 
 
@@ -145,7 +145,7 @@ async def test_failed_commit_rolls_back_lifo_and_records_rollback_failure() -> N
         _Tier("m2", phase=2, order=2, rollback_raises=True, log=log),
         _Tier("m3", phase=2, order=3, deny=True, log=log),
     ])
-    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    result = await run_scoped(stages, _ctx())
 
     assert log == ["commit:m1", "commit:m2", "commit:m3", "rollback:m2", "rollback:m1"]
     codes = [v.code for v in result.violations]
@@ -154,9 +154,9 @@ async def test_failed_commit_rolls_back_lifo_and_records_rollback_failure() -> N
 
 
 @pytest.mark.asyncio
-async def test_rollback_lifo_never_raises() -> None:
+async def test_scope_rollback_never_raises() -> None:
     stage = DomainTierStage(_Tier("a", phase=2, rollback_raises=True))
-    failures = await rollback_lifo([(stage, CommitReceipt(tier="a"))], _ctx())
+    failures = await rollback_pairs([(stage, CommitReceipt(tier="a"))], _ctx())
     assert [(v.tier, v.code) for v in failures] == [("a", "ROLLBACK_FAILED")]
 
 
@@ -172,7 +172,7 @@ async def test_dry_run_never_commits() -> None:
 async def test_read_only_violation_blocks_mutating_stages() -> None:
     log: list[str] = []
     stages = order_stages([_Tier("gate", deny=True, log=log), _Tier("m", phase=2, log=log)])
-    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    result = await run_scoped(stages, _ctx())
     assert "commit:m" not in log
     assert [v.tier for v in result.violations] == ["gate"]
 
@@ -184,7 +184,7 @@ async def test_read_only_violation_blocks_mutating_stages() -> None:
 async def test_phase1_claims_exception_is_hard_tier_exception() -> None:
     log: list[str] = []
     stages = order_stages([_Tier("gate", claims_raises=True, log=log)])
-    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    result = await run_scoped(stages, _ctx())
 
     assert [(v.tier, v.code, v.kind) for v in result.violations] == [
         ("gate", "TIER_EXCEPTION", ViolationKind.HARD)
@@ -200,7 +200,7 @@ async def test_phase2_claims_exception_never_commits_and_rolls_back_earlier() ->
         _Tier("m1", phase=2, order=1, log=log),
         _Tier("m2", phase=2, order=2, claims_raises=True, log=log),
     ])
-    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    result = await run_scoped(stages, _ctx())
 
     assert log == ["commit:m1", "rollback:m1"]
     assert [v.code for v in result.violations] == ["TIER_EXCEPTION"]
@@ -224,9 +224,9 @@ async def test_claims_failure_does_not_latch_across_requests() -> None:
     stages = order_stages([tier])
 
     tier.claims_raises = True
-    denied = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    denied = await run_scoped(stages, _ctx())
     tier.claims_raises = False
-    allowed = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    allowed = await run_scoped(stages, _ctx())
 
     assert [v.code for v in denied.violations] == ["TIER_EXCEPTION"]
     assert allowed.violations == ()

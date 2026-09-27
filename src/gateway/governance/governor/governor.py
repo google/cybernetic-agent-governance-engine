@@ -18,7 +18,7 @@ import logging
 import math
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -40,7 +40,8 @@ from src.gateway.governance.contracts import (
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.invariants import validate_invariant
-from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
+from src.gateway.governance.governor.pipeline import PipelineResult, Profile, StageContext, run_pipeline
+from src.gateway.governance.governor.reservation import ReservationScope
 from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.stages.ftra import FtraStage
@@ -135,12 +136,11 @@ class SymbolicGovernor:
 
             t0 = time.perf_counter()
             ctx = StageContext(action=action, params=params, profile=Profile.FULL)
-            result = await run_pipeline(self.stages, ctx, profile=Profile.FULL)
+            result, seal = await self._run_sealed(ctx, params, path="validate_action")
             latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
-            if not result.violations:
-                seal = await issue_seal(action, params, path="validate_action")
+            if seal is not None:
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
@@ -179,20 +179,9 @@ class SymbolicGovernor:
             span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
             
             ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
-            result = await run_pipeline(self.stages, ctx, profile=Profile.FULL)
-            
-            if result.violations:
-                classification_meta = {}
-                if result.ftra:
-                    classification_meta = {
-                        "terminal_classification": result.ftra.classification,
-                        "requires_hitl": result.ftra.requires_hitl,
-                        "bypassed_ftra_node": result.ftra.bypassed_ftra_node,
-                        "in_registry": result.ftra.terminal_match is not None,
-                    }
-                await handle_deny(tool_name, params, list(result.violations), list(result.tier_failures), classification_meta)
-                
-            seal = await issue_seal(tool_name, params, path="govern")
+            result, seal = await self._run_sealed(ctx, params, path="govern")
+            if seal is None:
+                await _deny(tool_name, params, result)
             span.set_attribute("cage.seal_issued", True)
             span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
             return seal
@@ -207,20 +196,9 @@ class SymbolicGovernor:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
                 
             ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
-            result = await run_pipeline(self.stages, ctx, profile=Profile.POST_HITL)
-            
-            if result.violations:
-                classification_meta = {}
-                if result.ftra:
-                    classification_meta = {
-                        "terminal_classification": result.ftra.classification,
-                        "requires_hitl": result.ftra.requires_hitl,
-                        "bypassed_ftra_node": result.ftra.bypassed_ftra_node,
-                        "in_registry": result.ftra.terminal_match is not None,
-                    }
-                await handle_deny(action, params, list(result.violations), list(result.tier_failures), classification_meta)
-                
-            seal = await issue_seal(action, params, path="revalidate_post_hitl")
+            result, seal = await self._run_sealed(ctx, params, path="revalidate_post_hitl")
+            if seal is None:
+                await _deny(action, params, result)
             return seal
             
     async def verify(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -229,6 +207,7 @@ class SymbolicGovernor:
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")
             span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
             
+            # DRY_RUN never commits, so no ReservationScope: run_pipeline refuses one.
             ctx = StageContext(action=tool_name, params=params, profile=Profile.DRY_RUN)
             result = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
             
@@ -246,6 +225,23 @@ class SymbolicGovernor:
                 "ftra_boundary_result": result.ftra,
                 "tier_violations": violations,
             }
+
+    async def _run_sealed(
+        self, ctx: StageContext, params: dict[str, Any], *, path: str
+    ) -> tuple[PipelineResult, str | None]:
+        """Run ``ctx.profile`` and seal a clean run inside one ReservationScope.
+
+        Phase-2 commits stay in force only once the seal is issued.  Any other
+        exit (violations, a failing seal, cancellation) rolls them all back.
+        """
+        async with ReservationScope() as scope:
+            result = await run_pipeline(self.stages, ctx, profile=ctx.profile, scope=scope)
+            if result.violations:
+                _assert_nothing_committed(result)
+                return result, None
+            seal = await issue_seal(ctx.action, params, path=path)
+            scope.seal_issued(seal)
+            return result, seal
 
     async def _run_checks(self, tool_name: str, params: dict[str, Any], sim_mode: bool = False, policy_version_id: str | None = None) -> dict[str, Any]:
         """Legacy test compat."""
@@ -279,6 +275,18 @@ _VERDICT_HANDLERS = {
     GovernanceDecision.PAUSE: handle_pause,
     GovernanceDecision.NARROW: handle_narrow,
 }
+
+
+async def _deny(action: str, params: dict[str, Any], result: PipelineResult) -> NoReturn:
+    await handle_deny(action, params, list(result.violations), list(result.tier_failures), _ftra_meta(result))
+    raise GovernanceError(f"handle_deny returned without raising; refusing {action}")  # fail closed
+
+
+def _assert_nothing_committed(result: PipelineResult) -> None:
+    """A refused run must leave nothing committed; commits are made only when clean."""
+    if result.commits:
+        stages = ", ".join(stage.name for stage, _ in result.commits)
+        raise GovernanceError(f"[UNROLLED_COMMIT] refused run left commits outstanding: {stages}")
 
 
 def _check_policy_pin(policy_version_id: str | None) -> None:
