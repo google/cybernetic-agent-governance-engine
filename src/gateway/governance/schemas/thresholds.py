@@ -329,6 +329,31 @@ class HealthcareThresholds(BaseModel):
     )
 
 
+class PhysicalAIThresholds(BaseModel):
+    """Physical-AI domain threshold configuration.
+
+    REFERENCE-ONLY values. Real limits must come from a cell-specific
+    ISO/TS 15066 risk assessment; these exist so the declarative barriers in
+    src/cage_physical_ai/invariants.py resolve at registration (V3).
+    """
+
+    min_separation_distance_mm: float = Field(
+        default=500.0,
+        gt=0,
+        description="Minimum human-robot separation distance (mm) for the spatial separation barrier",
+    )
+    max_velocity_mm_s: float = Field(
+        default=250.0,
+        gt=0,
+        description="Maximum end-effector velocity (mm/s) for the kinematic velocity barrier",
+    )
+    max_joint_torque_nm: float = Field(
+        default=50.0,
+        gt=0,
+        description="Maximum joint torque (N·m) for the torque saturation barrier",
+    )
+
+
 class GovernanceThresholds(BaseModel):
     """Root schema for config/governance_thresholds.json.
 
@@ -357,6 +382,9 @@ class GovernanceThresholds(BaseModel):
 
     # Healthcare domain thresholds
     healthcare: HealthcareThresholds = Field(default_factory=HealthcareThresholds)
+
+    # Physical-AI domain thresholds (reference-only; see PhysicalAIThresholds)
+    physical_ai: PhysicalAIThresholds = Field(default_factory=PhysicalAIThresholds)
 
     tier1_keywords: list[str] = Field(default_factory=list)
 
