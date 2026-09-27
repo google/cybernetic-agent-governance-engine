@@ -19,7 +19,8 @@ Implements the five-way decision tree:
   REQUIRE_APPROVAL ← ViolationKind.HITL or OPA MANUAL_REVIEW
   DEFER ← ViolationKind.DEFERRABLE + confidence below threshold
   PAUSE ← ViolationKind.TRANSIENT (feature-gated)
-  NARROW ← ViolationKind.NARROWABLE + registered narrower available
+  NARROW ← every violation NARROWABLE + a narrower proposal (candidate only:
+           SymbolicGovernor re-verifies the clamped params before sealing)
 """
 
 from __future__ import annotations
@@ -84,7 +85,8 @@ class ClassificationEngine:
           2. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
           3. HITL violations → REQUIRE_APPROVAL
           4. TRANSIENT violations → PAUSE (if enabled, else DENY)
-          5. NARROWABLE violations → NARROW (if narrower available, else DENY)
+          5. Every violation NARROWABLE + narrower proposal → NARROW candidate
+             (the governor re-runs FULL on the clamped params; else DENY)
           6. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
           7. Default → DENY
         """
@@ -147,13 +149,17 @@ class ClassificationEngine:
                     },
                 )
         
-        # Step 5: NARROWABLE violations → NARROW (if narrower available)
-        narrowable_violations = [
-            v for v in normalized_violations if v.kind == ViolationKind.NARROWABLE
-        ]
-        if narrowable_violations and self._narrow_enabled:
-            # Attempt to narrow for the first NARROWABLE violation
-            violation = narrowable_violations[0]
+        # Step 5: NARROW only if EVERY violation is NARROWABLE and a narrower
+        # proposes clamped params (proof/model.py NARROW conditions (a), (b)).
+        # A mixed set falls through (fail closed).  The proposal is NOT an
+        # authorisation: the governor re-runs the FULL profile on it (c).
+        # The narrower is consulted once, for the first violation; any other
+        # violation the proposal leaves unresolved fails that re-run.
+        all_narrowable = all(
+            v.kind == ViolationKind.NARROWABLE for v in normalized_violations
+        )
+        if all_narrowable and self._narrow_enabled:
+            violation = normalized_violations[0]
             narrower = self._narrower_registry.find_narrower(
                 violation, action, context.params
             )

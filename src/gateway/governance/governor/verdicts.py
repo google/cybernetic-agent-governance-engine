@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
 import re
@@ -363,25 +364,31 @@ async def handle_pause(
     }
 
 
-async def handle_narrow(
+def handle_narrow(
     action: str,
-    params: dict[str, Any],
+    original_params: dict[str, Any],
+    narrowed_params: dict[str, Any],
+    *,
+    seal: str,
     violations: list[Violation],
-    tier_failures: list[GovernanceTierFailure],
     classification_meta: dict[str, Any],
     latency_ms: float = 0.0,
 ) -> dict[str, Any]:
+    """Build the NARROW response for params that were already re-verified.
+
+    Issues no seal: ``SymbolicGovernor`` seals ``narrowed_params`` only after
+    re-running the FULL profile on them.  ``narrowed_params`` is echoed back
+    as given (never re-read from ``classification_meta``) so the response
+    names exactly the params the seal covers.
+    """
+    if not isinstance(seal, str) or not seal:
+        raise GovernanceError(f"NARROW for {action} has no seal; refusing")  # fail closed
     span = trace.get_current_span()
-    original_params = classification_meta.get("original_params", params)
-    narrowed_params = classification_meta.get("narrowed_params", params)
     narrowing_reason = classification_meta.get("narrowing_reason", "Constraints applied")
     constraints_applied = classification_meta.get("constraints_applied", {})
 
-    seal = await issue_seal(action, narrowed_params, path="narrow")
-
     span.set_attribute("cage.verdict", GovernanceDecision.NARROW)
     span.set_attribute("cage.governance.narrowed", True)
-    import json
     span.set_attribute("cage.governance.constraints_applied", json.dumps(constraints_applied)[:500])
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.NARROW)
     span.set_status(Status(StatusCode.OK))
@@ -389,7 +396,7 @@ async def handle_narrow(
         "📐 handle_narrow NARROW: action=%s reason=%s constraints=%s (%.1fms)",
         action, narrowing_reason, constraints_applied, latency_ms,
     )
-    agent_id = params.get("_caller_principal", "")
+    agent_id = original_params.get("_caller_principal", "")
 
     return {
         "verdict": GovernanceDecision.NARROW,
@@ -397,7 +404,7 @@ async def handle_narrow(
         "seal": seal,
         "latency_ms": latency_ms,
         "agent_id": agent_id,
-        "classification_meta": classification_meta,
+        "classification_meta": {**classification_meta, "narrowed_params": narrowed_params},
         "original_params": original_params,
         "narrowed_params": narrowed_params,
         "narrowing_reason": narrowing_reason,

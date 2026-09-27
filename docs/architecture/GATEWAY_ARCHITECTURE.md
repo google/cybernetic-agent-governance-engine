@@ -69,7 +69,8 @@ stateDiagram-v2
     DEFER --> [*]: Route to DeferQueue
     REQUIRE_APPROVAL --> [*]: Route to HITL Escalation
     DENY --> [*]: Abort Workflow
-    NARROW --> ALLOW: Apply Payload Constraints
+    NARROW --> ALLOW: FULL re-run on clamped params passes, seal issued
+    NARROW --> DENY: Re-run has violations
     ALLOW --> [*]: Proceed to ConsequenceGateway
 ```
 
@@ -109,7 +110,7 @@ After all tiers execute, violations are aggregated and classified by [`Classific
 **ViolationKind Precedence Hierarchy** (highest to lowest):
 1. **`HARD`** → `DENY` — Non-negotiable safety gates (STPA violations, CBF barrier breaches, explicit OPA DENY). Cannot be narrowed, deferred, or paused.
 2. **`HITL`** → `REQUIRE_APPROVAL` — Requires explicit human sign-off (OPA `MANUAL_REVIEW`, FTRA boundary hits).
-3. **`NARROWABLE`** → `NARROW` — Threshold violations that can be clamped to allowed values (e.g., `amount: 15000 → 10000`). Requires a registered [`Narrower`](../../src/gateway/governance/contracts.py) to propose valid constraints. If no narrower is available or re-run fails, falls back to `DENY`.
+3. **`NARROWABLE`** → `NARROW` — Threshold violations that can be clamped to allowed values (e.g., `amount: 15000 → 10000`). Requires every violation to be `NARROWABLE`, a registered [`Narrower`](../../src/gateway/governance/narrower.py) proposal, and a clean FULL re-run on the clamped params (see *NARROW re-run requirement* below). Otherwise falls back to `DENY`.
 4. **`TRANSIENT`** → `PAUSE` — Temporary conditions that will resolve without intervention (rate limits, circuit breakers). Feature flag: `CAGE_PAUSE_ENABLED` (default: `false`). When disabled, falls back to `DENY`.
 5. **`DEFERRABLE`** → `DEFER` — Soft violations indicating data starvation or ambiguity (low confidence `< FRIA_ZONE_DEFER`, missing context). Routes to `DeferQueue` for automated data-hydration.
 
@@ -117,11 +118,12 @@ After all tiers execute, violations are aggregated and classified by [`Classific
 - **Fail-closed by construction**: Every `Violation` requires an explicit `kind` field (no default). Construction without `kind` raises `TypeError`.
 - **Precedence enforcement**: When multiple violation kinds are present, the highest-precedence kind wins. Example: `HARD` + `NARROWABLE` → `DENY`, not `NARROW`.
 - **No free-text inspection**: Classification operates exclusively on the `kind` field, never on message string patterns. A `HARD` violation with message `"amount exceeds max"` returns `DENY`, not `NARROW`.
-- **NARROW re-run requirement**: `NARROWABLE` violations can return `NARROW` only if:
-  1. A registered `Narrower` proposes clamped parameters, AND
-  2. Re-running the FULL profile with clamped params yields zero violations.
-  
-  If either condition fails, classification falls back to `DENY`.
+- **NARROW re-run requirement** ([`proof/model.py`](../../proof/model.py) NARROW definition): a request returns `NARROW` only if:
+  1. **Every** violation is `NARROWABLE` (a mix such as `NARROWABLE` + `DEFERRABLE` is never `NARROW`), AND
+  2. A registered `Narrower` proposes clamped parameters (consulted at most once per request), AND
+  3. Re-running the FULL profile on the clamped params yields zero violations.
+
+  `ClassificationEngine` checks (1) and (2) and returns only a *candidate*. `SymbolicGovernor.validate_action` checks (3): it re-runs the FULL profile on a snapshot of the clamped params inside a new `ReservationScope` ([`governor/sealing.py`](../../src/gateway/governance/governor/sealing.py)), so the re-run's phase-2 commits (e.g. the fiscal reservation for the clamped amount) back the seal. The seal covers exactly the re-verified params. Any re-run violation → `DENY` with the re-run's violations; a failing seal rolls the re-run's commits back. The re-run is never classified, so it can never narrow again. `handle_narrow` issues no seal; it only builds the response. NARROW is opt-in: `CAGE_NARROW_ENABLED` unset means disabled.
 
 **Deprecated Legacy Fields** (removed as of v3.0.1):
 - `recoverable: bool` — Replaced by `ViolationKind.DEFERRABLE` and `ViolationKind.TRANSIENT`.
