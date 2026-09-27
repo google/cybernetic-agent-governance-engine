@@ -210,7 +210,7 @@ class TestExternalLedgerReconcilerHappyPath:
         reconciler = self._make_reconciler(r)
 
         with patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
             side_effect=Exception("KMS unavailable in test"),
         ):
             result = reconciler.reconcile()
@@ -229,7 +229,7 @@ class TestExternalLedgerReconcilerHappyPath:
         reconciler = self._make_reconciler(r, ttl=120)
 
         with patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
             side_effect=Exception("KMS unavailable in test"),
         ):
             reconciler.reconcile()
@@ -244,7 +244,7 @@ class TestExternalLedgerReconcilerHappyPath:
         reconciler = self._make_reconciler(r)
 
         with patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
             side_effect=Exception("KMS unavailable in test"),
         ):
             reconciler.reconcile()
@@ -259,16 +259,16 @@ class TestExternalLedgerReconcilerHappyPath:
         reconciler = self._make_reconciler(r)
 
         mock_signer = MagicMock()
-        mock_signer.sign.return_value = "hex-signature-0xdeadbeef"
+        mock_signer.sign_decision.return_value = MagicMock(signature="hex-signature-0xdeadbeef", kid="reconciler-kid", algorithm="gcp_kms")
         mock_signer.is_kms_active = True
 
         with patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
             return_value=mock_signer,
         ):
             result = reconciler.reconcile()
 
-        mock_signer.sign.assert_called_once()
+        mock_signer.sign_decision.assert_called_once()
         assert result.signature == "hex-signature-0xdeadbeef"
         assert r.get("reconciliation:signature") == "hex-signature-0xdeadbeef"
 
@@ -313,7 +313,7 @@ class TestExternalLedgerReconcilerFailurePaths:
         )
 
         with patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
             side_effect=Exception("KMS unavailable"),
         ):
             result = reconciler.reconcile()
@@ -339,7 +339,7 @@ class TestExternalLedgerReconcilerFailurePaths:
         )
 
         with patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_signer",
             side_effect=Exception("KMS unavailable"),
         ):
             result = reconciler.reconcile()

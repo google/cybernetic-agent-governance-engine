@@ -570,18 +570,14 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                 scalar_val = float(verified.state_scalar)
                 if verified.signature:
                     try:
-                        from src.gateway.governance.kms_signer import (
-                            get_governance_signer,
+                        from src.gateway.governance.reconciliation.trust import (
+                            verify_snapshot_signature,
                         )
 
-                        signer = get_governance_signer()
-                        payload_dict = {
-                            "source": verified.source,
-                            "state_scalar": scalar_val,
-                            "verified_at": verified.verified_at,
-                            "sequence": verified.sequence,
-                        }
-                        sig_valid = signer.verify(payload_dict, verified.signature)
+                        # G8: verify against reconciler-only trust anchors,
+                        # resolved by the snapshot's kid. Gateway-signed or
+                        # unknown-kid snapshots fail closed.
+                        sig_valid = verify_snapshot_signature(verified)
                         if sig_valid:
                             seq_num = getattr(verified, "sequence", 0)
                             if (

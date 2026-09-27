@@ -115,12 +115,15 @@ async def test_read_cbf_state_uses_reconciled_balance_when_kms_valid(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = "sig-abc"
+    verified.kms_key_id = "reconciler-kid"
+    verified.signing_algorithm = "gcp_kms"
+    verified.sequence = 0
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
 
     mock_signer = MagicMock()
-    mock_signer.verify = MagicMock(return_value=True)
+    mock_signer.verify_decision = MagicMock(return_value=True)
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
@@ -132,7 +135,7 @@ async def test_read_cbf_state_uses_reconciled_balance_when_kms_valid(make_cbf):
             AsyncMock(return_value=verified),
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):
@@ -159,12 +162,15 @@ async def test_read_cbf_state_falls_back_when_kms_sig_invalid(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = "bad-sig"
+    verified.kms_key_id = "reconciler-kid"
+    verified.signing_algorithm = "gcp_kms"
+    verified.sequence = 0
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
 
     mock_signer = MagicMock()
-    mock_signer.verify = MagicMock(return_value=False)  # signature invalid
+    mock_signer.verify_decision = MagicMock(return_value=False)  # signature invalid
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
@@ -176,7 +182,7 @@ async def test_read_cbf_state_falls_back_when_kms_sig_invalid(make_cbf):
             AsyncMock(return_value=verified),
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):
@@ -203,12 +209,15 @@ async def test_read_cbf_state_falls_back_when_kms_verify_raises(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = "some-sig"
+    verified.kms_key_id = "reconciler-kid"
+    verified.signing_algorithm = "gcp_kms"
+    verified.sequence = 0
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
 
     mock_signer = MagicMock()
-    mock_signer.verify = MagicMock(side_effect=RuntimeError("KMS network error"))
+    mock_signer.verify_decision = MagicMock(side_effect=RuntimeError("KMS network error"))
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
@@ -220,7 +229,7 @@ async def test_read_cbf_state_falls_back_when_kms_verify_raises(make_cbf):
             AsyncMock(return_value=verified),
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):

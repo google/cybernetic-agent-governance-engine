@@ -71,6 +71,8 @@ def test_reconciliation_result_is_valid() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time(),  # fresh
         signature="deadbeef",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
     )
     assert result.is_valid is True, (
@@ -94,6 +96,8 @@ def test_reconciliation_result_is_stale() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time() - (TTL_SECONDS + 60),  # older than TTL
         signature="deadbeef",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
     )
     assert result.is_stale is True, "Expected is_stale=True for result older than TTL"
@@ -131,6 +135,8 @@ def test_read_verified_balance_returns_none_when_stale() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time() - (TTL_SECONDS + 120),  # well past TTL
         signature="deadbeef",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
     )
     fake_redis.set(_REDIS_KEY_VERIFIED_BALANCE, stale_result.to_redis_payload())
@@ -160,6 +166,8 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
     )
 
@@ -178,7 +186,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
 
     mock_signer = MagicMock()
-    mock_signer.verify.return_value = True
+    mock_signer.verify_decision.return_value = True
 
     with (
         patch(
@@ -190,7 +198,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
             return_value=fresh_result,
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):
@@ -271,6 +279,8 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
         sequence=1,
     )
@@ -290,7 +300,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
 
     mock_signer = MagicMock()
-    mock_signer.verify.return_value = True
+    mock_signer.verify_decision.return_value = True
 
     async def mock_lrange(*args):
         return []
@@ -316,7 +326,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
             return_value=fresh_result,
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):
@@ -398,6 +408,8 @@ def test_fence_epoch_regression_rejected() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
         sequence=1,
     )
@@ -418,7 +430,7 @@ def test_fence_epoch_regression_rejected() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "5"))  # Regressed!
 
     mock_signer = MagicMock()
-    mock_signer.verify.return_value = True
+    mock_signer.verify_decision.return_value = True
 
     async def mock_lrange(*args):
         return []
@@ -436,7 +448,7 @@ def test_fence_epoch_regression_rejected() -> None:
             return_value=fresh_result,
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):
@@ -466,6 +478,8 @@ def test_local_debits_accumulated_within_cycle() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
         sequence=1,
     )
@@ -484,7 +498,7 @@ def test_local_debits_accumulated_within_cycle() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
 
     mock_signer = MagicMock()
-    mock_signer.verify.return_value = True
+    mock_signer.verify_decision.return_value = True
 
     async def mock_lrange(*args):
         return []
@@ -506,7 +520,7 @@ def test_local_debits_accumulated_within_cycle() -> None:
             return_value=fresh_result,
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
     ):
@@ -554,6 +568,8 @@ def test_kms_signature_verified_before_commit() -> None:
         state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="invalid_sig",
+        kms_key_id="reconciler-kid",
+        signing_algorithm="gcp_kms",
         ttl_seconds=TTL_SECONDS,
         sequence=1,
     )
@@ -572,7 +588,7 @@ def test_kms_signature_verified_before_commit() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
 
     mock_signer = MagicMock()
-    mock_signer.verify.return_value = False  # Signature verification fails
+    mock_signer.verify_decision.return_value = False  # Signature verification fails
 
     async def mock_get(key):
         return await fake_redis_async.get(key)
@@ -590,7 +606,7 @@ def test_kms_signature_verified_before_commit() -> None:
             return_value=fresh_result,
         ),
         patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
             return_value=mock_signer,
         ),
         patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", False),

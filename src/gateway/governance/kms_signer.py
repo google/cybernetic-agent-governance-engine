@@ -992,9 +992,19 @@ class KMSGovernanceSigner:
                 public_key.verify(signature_bytes, plan_bytes)
                 return True
 
-            hash_alg_name = (
-                self._provider.digest_algorithm.upper() if self._provider else "SHA256"
-            )
+            if isinstance(public_key, ec.EllipticCurvePublicKey):
+                # The digest is bound to the curve of the kid-resolved key,
+                # not to this instance's provider: a verify-only instance has
+                # no provider, and a foreign kid may use a different curve.
+                hash_alg_name = {384: "SHA384", 521: "SHA512"}.get(
+                    public_key.curve.key_size, "SHA256"
+                )
+            else:
+                hash_alg_name = (
+                    self._provider.digest_algorithm.upper()
+                    if self._provider
+                    else "SHA256"
+                )
             hash_alg = getattr(hashes, hash_alg_name)()
             digest = hashlib.new(hash_alg_name.lower(), plan_bytes).digest()
 
