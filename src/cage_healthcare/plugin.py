@@ -30,6 +30,7 @@ from src.cage_healthcare.ground_truth import (
 )
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
+from src.cage_healthcare.thresholds import HealthcareThresholds
 from src.cage_healthcare.tiers.clinical_consensus_tier import (
     ClinicalConsensusTier,
     build_healthcare_consensus_contribution,
@@ -78,6 +79,7 @@ class HealthcareCagePlugin(CagePlugin):
             safety_filter=cbf,
             consensus=build_healthcare_consensus_contribution(),
             tool_provider=ClinicalToolProvider(),
+            threshold_sections={"healthcare": HealthcareThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction
         )

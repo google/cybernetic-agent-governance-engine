@@ -156,11 +156,11 @@ class TestAmountNarrower:
         assert result.narrowed_params["limit_price"] == 150.50
 
     def test_narrow_uses_default_thresholds_resolver(self):
-        """Default AmountNarrower() resolves limit from THRESHOLDS.consensus.threshold_usd."""
+        """Default AmountNarrower() resolves limit from THRESHOLDS.resolve('domains.finance.consensus.threshold_usd')."""
         from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
         narrower = AmountNarrower()
-        limit = float(THRESHOLDS.consensus.threshold_usd)
+        limit = float(THRESHOLDS.resolve("domains.finance.consensus.threshold_usd"))
         violation = Violation(
             tier="consensus",
             code="CONSENSUS_ESCALATED",

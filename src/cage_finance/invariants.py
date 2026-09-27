@@ -42,10 +42,10 @@ class CashBarrier:
 
     invariant_id: str = "finance.cash_balance"
     state_key: str = "safety:current_cash"
-    threshold_key: str = "cbf.min_cash_balance"
+    threshold_key: str = "domains.finance.cbf.min_cash_balance"
     gamma: float = 0.5
     initial_state: float = 100_000.0
-    requires_external_ground_truth: bool = True  # Must match THRESHOLDS.cbf.gamma — asserted at registration
+    requires_external_ground_truth: bool = True  # Must match domains.finance.cbf.gamma — asserted at registration
 
 
 def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:

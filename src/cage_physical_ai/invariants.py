@@ -37,7 +37,7 @@ class SpatialSeparationBarrier:
 
     invariant_id: str = "physical_ai.spatial_separation"
     state_key: str = "safety:separation_distance_mm"
-    threshold_key: str = "physical_ai.min_separation_distance_mm"
+    threshold_key: str = "domains.physical_ai.min_separation_distance_mm"
     gamma: float = 0.5
     initial_state: float = 500.0
     requires_external_ground_truth: bool = True
@@ -52,7 +52,7 @@ class KinematicVelocityBarrier:
 
     invariant_id: str = "physical_ai.kinematic_velocity"
     state_key: str = "safety:end_effector_velocity_mm_s"
-    threshold_key: str = "physical_ai.max_velocity_mm_s"
+    threshold_key: str = "domains.physical_ai.max_velocity_mm_s"
     gamma: float = 0.4
     initial_state: float = 700.0
     requires_external_ground_truth: bool = True
@@ -67,7 +67,7 @@ class TorqueSaturationBarrier:
 
     invariant_id: str = "physical_ai.torque_saturation"
     state_key: str = "safety:joint_torque_nm"
-    threshold_key: str = "physical_ai.max_joint_torque_nm"
+    threshold_key: str = "domains.physical_ai.max_joint_torque_nm"
     gamma: float = 0.3
     initial_state: float = 150.0
     requires_external_ground_truth: bool = True

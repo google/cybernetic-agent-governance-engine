@@ -23,7 +23,7 @@ from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 
 def _default_limit_resolver() -> float:
-    return float(THRESHOLDS.consensus.threshold_usd)
+    return float(THRESHOLDS.resolve("domains.finance.consensus.threshold_usd"))
 
 
 class AmountNarrower:
@@ -31,8 +31,8 @@ class AmountNarrower:
 
     Uses structured violation classification (`violation.narrowable`) and an
     explicit numeric `limit_resolver` (defaulting to
-    `THRESHOLDS.consensus.threshold_usd`) rather than parsing free-text
-    violation messages.
+    `THRESHOLDS.resolve("domains.finance.consensus.threshold_usd")`) rather than
+    parsing free-text violation messages.
     """
 
     def __init__(

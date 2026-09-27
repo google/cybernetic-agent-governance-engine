@@ -101,7 +101,10 @@ def create_finance_tiers(
         market_data_provider = StubMarketDataProvider()
         rollback_provider = StubRollbackCapabilityProvider()
         bounding_registry = BoundingContractRegistry(
-            thresholds=THRESHOLDS.model_dump(),
+            thresholds={
+                **THRESHOLDS.model_dump(),
+                **THRESHOLDS.domains.get("finance", {}),
+            },
             market_data_provider=market_data_provider,
             rollback_provider=rollback_provider,
             enforcer=bounding_enforcer,

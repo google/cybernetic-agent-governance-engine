@@ -45,7 +45,7 @@ class TestHealthcarePlugin:
         # Verify all declarative fields
         assert barrier.invariant_id == "healthcare.serum_concentration"
         assert barrier.state_key == "safety:serum_concentration"
-        assert barrier.threshold_key == "healthcare.min_therapeutic_concentration"
+        assert barrier.threshold_key == "domains.healthcare.min_therapeutic_concentration"
         assert barrier.gamma == 0.4
 
         # Verify it's data-only (no methods beyond properties)

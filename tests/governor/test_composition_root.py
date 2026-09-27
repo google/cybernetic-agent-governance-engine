@@ -98,7 +98,7 @@ class _Barrier:
 
     invariant_id: str
     state_key: str = "safety:test_cash"
-    threshold_key: str = "cbf.min_cash_balance"
+    threshold_key: str = "domains.finance.cbf.min_cash_balance"
     gamma: float = 0.5
 
 
@@ -157,6 +157,21 @@ def test_rejects_duplicate_threshold_section() -> None:
             _Plugin("alpha", threshold_sections={"limits": object}),
             _Plugin("beta", threshold_sections={"limits": object}),
         )
+
+
+def test_rejects_missing_threshold_section() -> None:
+    with pytest.raises(GovernorAssemblyError, match="missing from governance_thresholds.json"):
+        _assemble(_Plugin("alpha", threshold_sections={"no_such_section": object}))
+
+
+def test_rejects_invalid_threshold_section_schema() -> None:
+    from pydantic import BaseModel, Field
+
+    class _InvalidFinanceSchema(BaseModel):
+        required_missing_field: float = Field(..., gt=0)
+
+    with pytest.raises(GovernorAssemblyError, match="failed validation"):
+        _assemble(_Plugin("alpha", threshold_sections={"finance": _InvalidFinanceSchema}))
 
 
 def test_rejects_ungoverned_irreversible_action(tmp_path: Any) -> None:

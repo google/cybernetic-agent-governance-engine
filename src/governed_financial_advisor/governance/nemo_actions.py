@@ -64,7 +64,9 @@ def _load_safety_params() -> dict[str, Any]:
 
     try:
         thresholds = load_and_validate_thresholds()
-        _safety_params_cache = {"drawdown_limit": thresholds.drawdown.limit}
+        _safety_params_cache = {
+            "drawdown_limit": thresholds.resolve("domains.finance.drawdown.limit")
+        }
     except Exception as exc:
         logger.warning(
             "Failed to load governance thresholds (%s) — using defaults", exc

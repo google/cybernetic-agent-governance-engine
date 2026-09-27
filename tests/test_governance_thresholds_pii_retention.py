@@ -75,16 +75,20 @@ class TestGovernanceThresholdsPiiFieldsRegionAware:
     def _build_minimal_kwargs(self) -> dict:
         """Minimal kwargs to satisfy required sub-models (no pii_* overrides)."""
         return {
-            "cbf": {"min_cash_balance": 1000.0, "gamma": 0.5},
-            "drawdown": {"limit": 0.05},
-            "stpa": {
-                "uca5_drawdown_threshold_pct": 4.5,
-                "uca6_max_order_volume_fraction": 0.01,
-                "max_sell_portfolio_fraction": 0.1,
-                "max_latency_ms": 200.0,
+            "confidence": {"agent_threshold": 0.95},
+            "domains": {
+                "finance": {
+                    "cbf": {"min_cash_balance": 1000.0, "gamma": 0.5},
+                    "drawdown": {"limit": 0.05},
+                    "stpa": {
+                        "uca5_drawdown_threshold_pct": 4.5,
+                        "uca6_max_order_volume_fraction": 0.01,
+                        "max_sell_portfolio_fraction": 0.1,
+                        "max_latency_ms": 200.0,
+                    },
+                    "consensus": {"threshold_usd": 10000.0},
+                }
             },
-            "confidence": {"min_trade_confidence": 0.95},
-            "consensus": {"threshold_usd": 10000.0},
             "tier1_keywords": ["SYSTEM OVERRIDE"],
         }
 
@@ -114,6 +118,17 @@ class TestGovernanceThresholdsPiiFieldsRegionAware:
         thresholds = GovernanceThresholds(**kwargs)
         assert thresholds.pii_audit_retention_days == 365
         assert thresholds.pii_audit_retention_authority == "Custom Override Citation"
+
+    def test_resolve_walks_models_and_domains_and_fails_closed(self):
+        thresholds = GovernanceThresholds(**self._build_minimal_kwargs())
+        assert thresholds.resolve("confidence.agent_threshold") == 0.95
+        assert thresholds.resolve("domains.finance.cbf.min_cash_balance") == 1000.0
+        with pytest.raises(KeyError):
+            thresholds.resolve("")
+        with pytest.raises(KeyError):
+            thresholds.resolve("domains.no_such_domain.value")
+        with pytest.raises(KeyError):
+            thresholds.resolve("domains.finance.cbf.min_cash_balance.deeper")
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
