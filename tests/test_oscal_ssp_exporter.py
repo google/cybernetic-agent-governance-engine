@@ -56,6 +56,7 @@ from src.gateway.governance.oscal_ssp_exporter import (
 from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
     load_control_structure,
+    load_control_structures,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,22 @@ from src.gateway.governance.stpa_compiler import (
 _FULL_YAML_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
 )
+_FINANCE_YAML_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "cage_finance"
+    / "config"
+    / "stpa"
+    / "trade_hazards.yaml"
+)
+
+
+def _load_full_cs() -> ControlStructureModel:
+    paths = [_FULL_YAML_PATH]
+    if _FINANCE_YAML_PATH.exists():
+        paths.append(_FINANCE_YAML_PATH)
+    return load_control_structures(paths)
+
 
 _MINIMAL_YAML = """\
 system:
@@ -171,7 +188,7 @@ def minimal_cs() -> ControlStructureModel:
 def full_cs() -> ControlStructureModel:
     if not _FULL_YAML_PATH.exists():
         pytest.skip("Production YAML not found.")
-    return load_control_structure(_FULL_YAML_PATH)
+    return _load_full_cs()
 
 
 # ---------------------------------------------------------------------------
@@ -769,7 +786,7 @@ class TestUcaMappings:
     def test_all_production_ucas_have_nist_mapping(self) -> None:
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         nist_mappings = FrameworkRouter.get("NIST").uca_mappings
         for uca in cs.unsafe_control_actions:
             assert uca.id in nist_mappings, (
@@ -779,7 +796,7 @@ class TestUcaMappings:
     def test_all_production_ucas_have_iso_mapping(self) -> None:
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         iso_mappings = FrameworkRouter.get("ISO42001").uca_mappings
         for uca in cs.unsafe_control_actions:
             assert uca.id in iso_mappings, (

@@ -27,7 +27,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` |
-| **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` |
+| **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` |
 | **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** · **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** · **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` |
@@ -53,7 +53,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
 | **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/governor/governor.py` |
-| **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` |
+| **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` |
 | **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 
 ### 1.4 APAC_MAS Only Controls (MAS FEAT / MAS Notice 655 / MAS TRM)
@@ -72,7 +72,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` | *All Regions* |
-| **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` | *All Regions* |
+| **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` | *All Regions* |
 | **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** <br> **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` | *All Regions* |
 | **Autonomous Engine** | Step 7 Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/governor/governor.py` | `EU_ECB` only |
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** <br> **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` | *All Regions* |

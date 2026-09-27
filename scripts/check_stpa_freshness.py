@@ -50,23 +50,27 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Multi-source directory — all *.yaml files under config/stpa/ are the authoritative
-# STPA sources after the PR 2 split. The legacy config/stpa_control_structure.yaml is
-# retained as the Gate 1 drift oracle but is no longer the primary freshness reference.
+# Multi-source directories — core_system.yaml + domain STPA YAML files.
 _SOURCE_DIR = _REPO_ROOT / "config" / "stpa"
+_DOMAIN_STPA_DIRS: list[Path] = [
+    _REPO_ROOT / "src" / "cage_finance" / "config" / "stpa",
+]
 # Fallback single-file path for environments that have not yet migrated.
 _SOURCE_LEGACY = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 
 _GENERATED_ARTIFACTS: list[Path] = [
-    _REPO_ROOT / "src" / "gateway" / "governance" / "generated_stpa_validator.py",
+    _REPO_ROOT / "src" / "cage_finance" / "stpa" / "uca_rules.py",
+    _REPO_ROOT / "src" / "cage_finance" / "stpa" / "saga_nodes.py",
+    _REPO_ROOT / "src" / "cage_finance" / "stpa" / "terminal_registry.json",
+    _REPO_ROOT / "src" / "gateway" / "governance" / "terminal_action_registry.json",
     _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego",
     _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co",
-    _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt",  # PR 2: added
+    _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt",
 ]
 
-# Regex that matches the "Generated: <ISO-8601>" comment embedded by the compiler.
+# Regex that matches the "Generated: <ISO-8601>" comment or "generated_at": "<ISO-8601>" JSON field.
 _GENERATED_TS_RE = re.compile(
-    r"Generated:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*)"
+    r'(?:Generated:\s*|"generated_at":\s*")(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s"]*)'
 )
 
 
@@ -120,11 +124,14 @@ def check_freshness(verbose: bool = False) -> list[str]:
     """Return a list of staleness error messages (empty = all fresh)."""
     errors: list[str] = []
 
-    # Determine source files — prefer the new multi-source directory, fall back
+    # Determine source files — prefer the multi-source directories, fall back
     # to the legacy single file for environments that haven't migrated yet.
     if _SOURCE_DIR.exists():
         source_files = sorted(_SOURCE_DIR.rglob("*.yaml"))
-        source_label = f"directory {_SOURCE_DIR.relative_to(_REPO_ROOT)}"
+        for d_dir in _DOMAIN_STPA_DIRS:
+            if d_dir.exists():
+                source_files.extend(sorted(d_dir.rglob("*.yaml")))
+        source_label = f"directory {_SOURCE_DIR.relative_to(_REPO_ROOT)} + domain STPA dirs"
     elif _SOURCE_LEGACY.exists():
         source_files = [_SOURCE_LEGACY]
         source_label = str(_SOURCE_LEGACY.relative_to(_REPO_ROOT))

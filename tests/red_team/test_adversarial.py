@@ -24,7 +24,7 @@ sys.path.append(os.getcwd())
 pytestmark = [pytest.mark.red_team, pytest.mark.unit, pytest.mark.local]
 from unittest.mock import AsyncMock, MagicMock
 
-from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
+from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
 from src.gateway.governance.governor.governor import GovernanceError
 from src.governed_financial_advisor.agents.evaluator.red_agent import (
     RedAgent,  # Updated import

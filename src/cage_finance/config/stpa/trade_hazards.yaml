@@ -15,6 +15,7 @@
 system:
   name: "CAGE Financial Advisor"
   version: "1.1.0"
+  domain: "finance"
   description: >
     AI-powered financial advisor operating in regulated capital markets.
     The controller is the LangGraph multi-agent pipeline; the controlled
@@ -27,9 +28,6 @@ system:
     - "DoWhy Causal Gatekeeper"
 
 hazards:
-  - id: H-1
-    description: "Unauthorized financial transaction executed."
-    severity: critical
   - id: H-2
     description: "Trade executed on stale or invalid market data."
     severity: high
@@ -121,6 +119,16 @@ control_actions:
         type: string
         required: false
 
+  - name: market_analysis
+    description: "Read-only query for market intelligence."
+    params:
+      - name: symbol
+        type: string
+        required: true
+      - name: timeframe
+        type: string
+        required: false
+
 unsafe_control_actions:
   - id: UCA-2
     action: execute_trade
@@ -196,6 +204,8 @@ unsafe_control_actions:
     terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       param: drawdown
+      param_aliases: [portfolio_drawdown_pct, current_drawdown]
+      normalize_fraction_aliases: [portfolio_drawdown_pct, current_drawdown]
       operator: greater_than
       threshold_ref: stpa.uca5_drawdown_threshold_pct
     enforcement: [opa, python]
@@ -282,13 +292,7 @@ unsafe_control_actions:
     condition:
       semantic_pattern: "bounding_contract_violation_detected"
     enforcement: [python, opa]
-    python_tier:
-      tier_name: BoundingContractTierPlugin
-      phase: 1
-      order: 2
-      contracts: [B1, B2, B3, B4, B5, B6, B7, B8, B9, B10]
     opa_rule:
-      policy_file: bounding_contracts.rego
       decision: DENY
       message: "UCA-12: Bounding contract violation — trade blocked."
 
@@ -308,18 +312,26 @@ rbac_rules:
   roles:
     - name: junior
       allowed_actions: [execute_trade, market_analysis]
-      trade_limits:
+      action: execute_trade
+      subject_field: trader_role
+      magnitude_field: amount
+      denylist_field: currency
+      limits:
         allow_below: 5000
         manual_review_below: 10000
         deny_above: 10000
       restrictions:
-        - currency_denylist: [BTC]
+        - denylist: [BTC]
 
     - name: senior
       allowed_actions: [execute_trade, market_analysis, write_db]
-      trade_limits:
+      action: execute_trade
+      subject_field: trader_role
+      magnitude_field: amount
+      denylist_field: currency
+      limits:
         allow_below: 500000
         manual_review_below: 1000000
         deny_above: 1000000
       restrictions:
-        - currency_denylist: [BTC]
+        - denylist: [BTC]
