@@ -59,11 +59,18 @@ class TestHealthcarePlugin:
 
     def test_dose_barrier_tier_properties(self):
         """DoseBarrierTier has correct phase, order, tier_name."""
-        from src.cage_healthcare.invariants import SerumConcentrationBarrier
+        from src.cage_healthcare.invariants import (
+            SerumConcentrationBarrier,
+            healthcare_cost_resolver,
+        )
         from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-        cbf = ControlBarrierFunction(SerumConcentrationBarrier())
+        cbf = ControlBarrierFunction(
+            SerumConcentrationBarrier(),
+            cost_resolver=healthcare_cost_resolver,
+            skip_epoch_seed=True,
+        )
         tier = DoseBarrierTier(cbf)
 
         assert tier.tier_name == "dose_barrier"
@@ -234,7 +241,103 @@ class TestHealthcarePlugin:
             total_line = lines[-1]
             total_count = int(total_line.strip().split()[0])
 
-            # Should be around 495 lines (plan says ~300, we have 495 with headers/config)
-            assert total_count < 600, (
-                f"Healthcare plugin should be <600 lines, got {total_count}"
+            # Should be under 750 lines (including ground_truth.py, headers, config)
+            assert total_count < 750, (
+                f"Healthcare plugin should be <750 lines, got {total_count}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_healthcare_dose_barrier_end_to_end_via_governor(self):
+        """DoseCeilingBarrier enforces serum concentration headroom through assemble_governor -> SymbolicGovernor."""
+        from unittest.mock import AsyncMock, patch
+
+        fakeredis_sync = pytest.importorskip("fakeredis")
+        fakeredis = pytest.importorskip("fakeredis.aioredis")
+
+        from src.cage_healthcare.invariants import DoseCeilingBarrier
+        from src.cage_healthcare.plugin import HealthcareCagePlugin
+        from src.gateway.governance.env_posture import DeploymentPosture
+        from src.gateway.governance.governor.assembly import (
+            DecisionFlags,
+            assemble_governor,
+        )
+        from src.gateway.governance.governor.pipeline import (
+            Profile,
+            StageContext,
+            run_pipeline,
+        )
+        from src.gateway.governance.governor.reservation import ReservationScope
+        from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
+        from tests.fixtures.governor import allow_opa, clean_stpa
+
+        barrier = DoseCeilingBarrier()
+        assert barrier.invariant_id == "healthcare.serum_concentration"
+
+        server = fakeredis_sync.FakeServer()
+        sync_redis = fakeredis_sync.FakeRedis(server=server, decode_responses=True)
+        fake_redis = fakeredis.FakeRedis(server=server, decode_responses=True)
+        # Seed initial serum concentration headroom = 15.0 mg/L (threshold = 5.0 mg/L, h = 10.0, gamma = 0.4 -> max delta = 4.0)
+        await fake_redis.set(barrier.state_key, "15.0")
+        await fake_redis.set("safety:fence_epoch", "0")
+
+        mock_redis_mod = MagicMock()
+        mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
+
+        with (
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.sync_redis_client",
+                sync_redis,
+            ),
+            patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", False),
+            patch(
+                "src.gateway.governance.governor.sealing.issue_seal",
+                AsyncMock(return_value="sealed-token"),
+            ),
+        ):
+            governor = assemble_governor(
+                [HealthcareCagePlugin()],
+                posture=DeploymentPosture.DEV,
+                opa=allow_opa(),
+                stpa_validator=clean_stpa(),
+                flags=DecisionFlags(defer=False, narrow=False, pause=False),
+            )
+            assert len(governor._components.ground_truth_providers) == 1
+            for stage in governor.stages:
+                if stage.name == "ftra":
+                    stage.run = AsyncMock(return_value=[])  # type: ignore[method-assign]
+            for tier in governor.domain_tiers:
+                if tier.tier_name == "clinical_consensus":
+                    tier.consensus_engine = MagicMock(
+                        check_consensus=AsyncMock(return_value={"status": "APPROVED"})
+                    )
+
+            # Safe dose: 2.0 mg <= 4.0 mg max single-step depletion -> ALLOW via governor.validate_action
+            safe_res = await governor.validate_action(
+                "administer_dose",
+                {
+                    "patient_id": "P001",
+                    "medication": "vancomycin",
+                    "dose_mg": 2.0,
+                    "confidence": 0.95,
+                },
+            )
+            assert safe_res["verdict"] == "ALLOW"
+            assert safe_res["violations"] == []
+
+            # Unsafe dose: 12.0 mg breaches the therapeutic barrier -> DOSE_BARRIER_VIOLATED via governor.verify
+            unsafe_verify = await governor.verify(
+                "administer_dose",
+                {
+                    "patient_id": "P001",
+                    "medication": "vancomycin",
+                    "dose_mg": 12.0,
+                    "confidence": 0.95,
+                },
+            )
+            assert any(
+                "DOSE_BARRIER_VIOLAT" in v.code
+                for v in unsafe_verify["violations"]
             )

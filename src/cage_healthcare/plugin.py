@@ -24,15 +24,22 @@ T-D5: The complete healthcare plugin — a list of declarations.
 
 from pathlib import Path
 
-from src.cage_healthcare import create_healthcare_tiers
+from src.cage_healthcare.ground_truth import (
+    SimulatedSerumAssayProvider,
+    healthcare_cost_resolver,
+)
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
+from src.cage_healthcare.tiers.clinical_consensus_tier import ClinicalConsensusTier
+from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
+from src.gateway.governance.consensus.engine import ConsensusGate
 from src.gateway.governance.contracts import (
     CagePlugin,
     DomainConfig,
     PluginContribution,
 )
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
 class HealthcareCagePlugin(CagePlugin):
@@ -48,10 +55,25 @@ class HealthcareCagePlugin(CagePlugin):
     domain_config: DomainConfig | None = None
 
     def contribute(self) -> PluginContribution:
+        barrier = SerumConcentrationBarrier()
+        cbf = ControlBarrierFunction(
+            invariant=barrier,
+            cost_resolver=healthcare_cost_resolver,
+            skip_epoch_seed=True,
+        )
+        assay_provider = SimulatedSerumAssayProvider(
+            invariant_id=barrier.invariant_id,
+            state_key=barrier.state_key,
+        )
         return PluginContribution(
             domain=self.name,
-            tiers=create_healthcare_tiers(),
-            invariants=(SerumConcentrationBarrier(),),  # declarative, no logic
+            tiers=(
+                DoseBarrierTier(cbf),
+                ClinicalConsensusTier(ConsensusGate()),
+            ),
+            invariants=(barrier,),  # declarative, no logic
+            ground_truth_providers={barrier.invariant_id: assay_provider},
+            safety_filter=cbf,
             tool_provider=ClinicalToolProvider(),
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction

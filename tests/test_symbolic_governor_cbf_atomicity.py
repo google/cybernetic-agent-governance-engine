@@ -85,8 +85,8 @@ def _make_cbf_with_fakeredis(
         skip_epoch_seed=True,
     )
     # Override thresholds to make the test deterministic regardless of env config.
-    # min_cash_balance=0 means the only constraint is h_next >= 0, i.e. balance > 0.
-    cbf.min_cash_balance = 0.0
+    # threshold_value=0 means the only constraint is h_next >= 0, i.e. balance > 0.
+    cbf.threshold_value = 0.0
     cbf.gamma = 1.0  # No decay threshold: required_h_next = (1-1.0)*h_t = 0,
     # so constraint is h_next >= 0 only.
     # With balance=1000 and trade=900:
@@ -268,8 +268,8 @@ async def test_balance_at_minimum_blocks_any_trade() -> None:
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
 
     cbf = _make_cbf_with_fakeredis(fake_redis)
-    # Set balance exactly at min_cash_balance (0.0 in our override)
-    await _seed_balance(fake_redis, cbf.min_cash_balance)
+    # Set balance exactly at threshold_value (0.0 in our override)
+    await _seed_balance(fake_redis, cbf.threshold_value)
 
     mock_redis_module = MagicMock()
     mock_redis_module.get_raw_client.return_value = fake_redis

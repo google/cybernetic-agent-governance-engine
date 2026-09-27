@@ -162,7 +162,7 @@ async def test_engine_reports_the_magnitude_it_deducted() -> None:
     fake = fakeredis.FakeRedis(decode_responses=False)
     await fake.set("safety:current_cash", "1000.0")
     cbf = ControlBarrierFunction(invariant=CashBarrier(), cost_resolver=finance_cost_resolver, skip_epoch_seed=True)
-    cbf.min_cash_balance, cbf.gamma, cbf.tracer = 0.0, 1.0, None
+    cbf.threshold_value, cbf.gamma, cbf.tracer = 0.0, 1.0, None
     redis_module = MagicMock()
     redis_module.get_raw_client.return_value = fake
 

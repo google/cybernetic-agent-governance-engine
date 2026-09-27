@@ -14,6 +14,9 @@
 
 """Healthcare domain capability plugin."""
 
+from typing import Any
+
+from src.cage_healthcare.ground_truth import healthcare_cost_resolver
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.tiers.clinical_consensus_tier import ClinicalConsensusTier
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
@@ -22,22 +25,22 @@ from src.gateway.governance.contracts import GovernanceTierPlugin
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
-def create_healthcare_tiers() -> tuple[GovernanceTierPlugin, ...]:
-    """Create healthcare domain governance tiers for construction-time registration.
-
-    Task 2.1 (ARCH-2): Tier registration is now immutable at construction time.
-    This factory returns a tuple of tiers that must be passed to
-    SymbolicGovernor.__init__() via the domain_tiers parameter.
-
-    Returns:
-        Tuple of healthcare domain tiers in (phase, order, tier_name) order.
-        The tiers are:
-        - DoseBarrierTier (phase=2, order=3) — Serum concentration CBF validation
-        - ClinicalConsensusTier (phase=1, order=5) — Multi-model clinical consensus
-    """
+def create_healthcare_tiers(
+    cbf: Any = None,
+) -> tuple[GovernanceTierPlugin, ...]:
+    """Create healthcare domain governance tiers for construction-time registration."""
     barrier = SerumConcentrationBarrier()
+    engine = (
+        cbf
+        if cbf is not None
+        else ControlBarrierFunction(
+            invariant=barrier,
+            cost_resolver=healthcare_cost_resolver,
+            skip_epoch_seed=True,
+        )
+    )
 
     return (
-        DoseBarrierTier(ControlBarrierFunction(barrier)),
+        DoseBarrierTier(engine),
         ClinicalConsensusTier(ConsensusGate()),
     )

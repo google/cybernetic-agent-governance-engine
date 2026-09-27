@@ -39,6 +39,8 @@ class SpatialSeparationBarrier:
     state_key: str = "safety:separation_distance_mm"
     threshold_key: str = "physical_ai.min_separation_distance_mm"
     gamma: float = 0.5
+    initial_state: float = 500.0
+    requires_external_ground_truth: bool = True
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,8 @@ class KinematicVelocityBarrier:
     state_key: str = "safety:end_effector_velocity_mm_s"
     threshold_key: str = "physical_ai.max_velocity_mm_s"
     gamma: float = 0.4
+    initial_state: float = 700.0
+    requires_external_ground_truth: bool = True
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,68 @@ class TorqueSaturationBarrier:
     state_key: str = "safety:joint_torque_nm"
     threshold_key: str = "physical_ai.max_joint_torque_nm"
     gamma: float = 0.3
+    initial_state: float = 150.0
+    requires_external_ground_truth: bool = True
+
+
+_PHYSICAL_ACTIONS = frozenset(
+    {"dispatch_trajectory", "actuate_joint", "move_arm", "move_effector"}
+)
+
+
+def _extract_non_negative_float(
+    payload: dict[str, Any], keys: tuple[str, ...], label: str
+) -> float:
+    raw: Any = 0.0
+    for key in keys:
+        if key in payload and payload[key] is not None:
+            raw = payload[key]
+            break
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid {label} {raw!r} — must be numeric") from exc
+    else:
+        value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(
+            f"invalid {label} {raw!r} — must be a finite, non-negative number"
+        )
+    return value
+
+
+def spatial_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+    """Resolve separation distance consumption (mm) for a physical-AI action."""
+    if action_name not in _PHYSICAL_ACTIONS:
+        return 0.0
+    return _extract_non_negative_float(
+        payload,
+        ("approach_distance_mm", "approach_delta_mm", "displacement_mm", "step_mm"),
+        "spatial approach delta",
+    )
+
+
+def velocity_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+    """Resolve velocity margin consumption (mm/s) for a physical-AI action."""
+    if action_name not in _PHYSICAL_ACTIONS:
+        return 0.0
+    return _extract_non_negative_float(
+        payload,
+        ("velocity_delta_mm_s", "target_velocity_mm_s", "velocity_mm_s", "velocity"),
+        "target velocity",
+    )
+
+
+def torque_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+    """Resolve joint torque margin consumption (Nm) for a physical-AI action."""
+    if action_name not in _PHYSICAL_ACTIONS:
+        return 0.0
+    return _extract_non_negative_float(
+        payload,
+        ("torque_delta_nm", "target_torque_nm", "torque_nm"),
+        "joint torque",
+    )
 
 
 def physical_cost_resolver(

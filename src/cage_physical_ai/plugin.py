@@ -26,6 +26,14 @@ names things.
 from pathlib import Path
 
 from src.cage_physical_ai import create_physical_ai_tiers
+from src.cage_physical_ai.ground_truth import (
+    SimulatedSpatialSensorProvider,
+    SimulatedTorqueSensorProvider,
+    SimulatedVelocitySensorProvider,
+    spatial_cost_resolver,
+    torque_cost_resolver,
+    velocity_cost_resolver,
+)
 from src.cage_physical_ai.invariants import (
     KinematicVelocityBarrier,
     SpatialSeparationBarrier,
@@ -37,6 +45,7 @@ from src.gateway.governance.contracts import (
     DomainConfig,
     PluginContribution,
 )
+from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
 class PhysicalAICagePlugin(CagePlugin):
@@ -53,10 +62,42 @@ class PhysicalAICagePlugin(CagePlugin):
 
     def contribute(self) -> PluginContribution:
         overlay_dir = Path(__file__).parent / "config" / "compliance"
+        spatial_barrier = SpatialSeparationBarrier()
+        velocity_barrier = KinematicVelocityBarrier()
+        torque_barrier = TorqueSaturationBarrier()
+
+        spatial_cbf = ControlBarrierFunction(
+            cost_resolver=spatial_cost_resolver,
+            invariant=spatial_barrier,
+            skip_epoch_seed=True,
+        )
+        velocity_cbf = ControlBarrierFunction(
+            cost_resolver=velocity_cost_resolver,
+            invariant=velocity_barrier,
+            skip_epoch_seed=True,
+        )
+        torque_cbf = ControlBarrierFunction(
+            cost_resolver=torque_cost_resolver,
+            invariant=torque_barrier,
+            skip_epoch_seed=True,
+        )
+
+        spatial_provider = SimulatedSpatialSensorProvider()
+        velocity_provider = SimulatedVelocitySensorProvider()
+        torque_provider = SimulatedTorqueSensorProvider()
+
         return PluginContribution(
             domain=self.name,
-            tiers=create_physical_ai_tiers(),
-            invariants=(SpatialSeparationBarrier(), KinematicVelocityBarrier(), TorqueSaturationBarrier()),
+            tiers=create_physical_ai_tiers(
+                cbf=(spatial_cbf, velocity_cbf, torque_cbf),
+            ),
+            invariants=(spatial_barrier, velocity_barrier, torque_barrier),
+            safety_filter=spatial_cbf,
+            ground_truth_providers={
+                spatial_barrier.invariant_id: spatial_provider,
+                velocity_barrier.invariant_id: velocity_provider,
+                torque_barrier.invariant_id: torque_provider,
+            },
             tool_provider=PhysicalAIToolProvider(),
             compliance_overlay_dirs=(overlay_dir,) if overlay_dir.exists() else (),
         )

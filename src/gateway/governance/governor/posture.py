@@ -105,6 +105,17 @@ def _check_reconciliation_provider(components: GovernorComponents) -> None:
             "RECONCILIATION_PROVIDER=stub: the CBF evaluates against self-reported "
             "balances with no external ground truth (POAM-023)"
         )
+    gt_providers = getattr(components, "ground_truth_providers", {}) or {}
+    missing = [
+        inv.invariant_id
+        for inv in getattr(components, "invariants", ())
+        if getattr(inv, "requires_external_ground_truth", True)
+        and inv.invariant_id not in gt_providers
+    ]
+    if missing:
+        raise RuntimeError(
+            f"invariants missing GroundTruthProvider registration: {missing}"
+        )
 
 
 def _check_governance_salt(components: GovernorComponents) -> None:

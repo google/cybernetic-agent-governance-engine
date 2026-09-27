@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from src.gateway.governance.classification_engine import ClassificationEngine
@@ -77,11 +77,7 @@ class GovernorAssemblyError(ValueError):
 
 @dataclass(frozen=True)
 class GovernorComponents:
-    """Everything a :class:`SymbolicGovernor` runs on. Immutable.
-
-    ``invariants`` are validated (V1-V4) at assembly but not yet enforced:
-    the CBF engine becomes invariant-parametric in PR 4b (POAM-2026-078).
-    """
+    """Everything a :class:`SymbolicGovernor` runs on. Immutable."""
 
     opa: PolicyClient
     core_stages: tuple[Stage, ...]
@@ -89,6 +85,7 @@ class GovernorComponents:
     domain_tiers: tuple[GovernanceTierPlugin, ...] = ()
     narrowers: tuple[Narrower, ...] = ()
     invariants: tuple[InvariantModel, ...] = ()
+    ground_truth_providers: Mapping[str, object] = field(default_factory=dict)
     safety_filter: SafetyFilter = field(default_factory=NullSafetyFilter)
     consensus: ConsensusProvider = field(default_factory=NullConsensusProvider)
     contributions: tuple[PluginContribution, ...] = ()
@@ -99,6 +96,7 @@ class GovernorComponents:
             raise TypeError("GovernorComponents requires a classifier")  # fail closed
         for name in ("core_stages", "domain_tiers", "narrowers", "invariants", "contributions"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
+        object.__setattr__(self, "ground_truth_providers", dict(self.ground_truth_providers))
 
     @property
     def unfilled_slots(self) -> tuple[str, ...]:
@@ -158,6 +156,15 @@ def assemble_governor(
         validate_invariant(invariant, invariants)  # V1 spans every domain
         invariants.append(invariant)
 
+    ground_truth_providers: dict[str, object] = {}
+    for c in contributions:
+        for inv_id, prov in c.ground_truth_providers.items():
+            if inv_id in ground_truth_providers:
+                raise GovernorAssemblyError(
+                    f"duplicate ground_truth_provider: {inv_id!r} is contributed twice"
+                )
+            ground_truth_providers[inv_id] = prov
+
     narrowers = tuple(n for c in contributions for n in c.narrowers)
     flags = flags or DecisionFlags.from_env()
     if opa is None:
@@ -185,6 +192,7 @@ def assemble_governor(
         domain_tiers=tiers,
         narrowers=narrowers,
         invariants=tuple(invariants),
+        ground_truth_providers=ground_truth_providers,
         safety_filter=_single_slot("safety_filter", contributions) or NullSafetyFilter(),
         consensus=_single_slot("consensus", contributions) or NullConsensusProvider(),
         contributions=contributions,

@@ -106,9 +106,9 @@ class TestSequenceInSignedPayload:
 
     def test_sequence_included_in_kms_signature(self) -> None:
         """Verify sequence is part of the payload passed to KMS signer.sign()."""
+        from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
-            StubLedgerProvider,
         )
 
         # Mock Redis client
@@ -123,7 +123,7 @@ class TestSequenceInSignedPayload:
         mock_signer.sign.return_value = "test_signature"
 
         reconciler = ExternalLedgerReconciler(
-            provider=StubLedgerProvider(),
+            provider=SimulatedCashLedgerProvider(),
             redis_client=mock_redis,
             account_id="test_account",
         )
@@ -160,9 +160,14 @@ class TestCBFSequenceValidation:
         self,
     ) -> None:
         """R-04: Verify CBF rejects payloads with non-advancing sequence numbers."""
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-        cbf = ControlBarrierFunction()
+        cbf = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
 
         # Mock sync Redis client
         mock_sync_redis = MagicMock()
@@ -184,9 +189,14 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_accepts_advancing_sequence(self) -> None:
         """Verify CBF accepts payloads with advancing sequence numbers."""
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-        cbf = ControlBarrierFunction()
+        cbf = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
 
         # Mock sync Redis client
         mock_sync_redis = MagicMock()
@@ -208,9 +218,14 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_first_sequence_accepted(self) -> None:
         """Verify first sequence (when last_accepted is 0) is accepted."""
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-        cbf = ControlBarrierFunction()
+        cbf = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
 
         # Mock sync Redis client (no previous sequence)
         mock_sync_redis = MagicMock()
@@ -229,9 +244,14 @@ class TestCBFSequenceValidation:
     @pytest.mark.asyncio
     async def test_sequence_validation_rejects_equal_sequence(self) -> None:
         """Verify CBF rejects payloads with sequence equal to last_accepted."""
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-        cbf = ControlBarrierFunction()
+        cbf = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
 
         # Mock sync Redis client
         mock_sync_redis = MagicMock()
@@ -256,6 +276,7 @@ class TestCBFSequenceValidation:
         - The _validate_sequence method should not even be called
         - This ensures backward compatibility during staged rollout
         """
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.reconciliation.daemon import ReconciliationResult
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
@@ -270,15 +291,11 @@ class TestCBFSequenceValidation:
 
         # When replay defense is disabled, the CBF should accept the payload
         # without calling _validate_sequence
-        ControlBarrierFunction()
-
-        # The key test: with replay defense disabled or sequence=0,
-        # we should not reject the payload
-        # This is tested by the CBF logic branch:
-        # if _REPLAY_DEFENSE_ENABLED and verified.sequence > 0:
-        #     ... validate ...
-        # else:
-        #     ... accept without validation ...
+        ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
 
         # Verify the ReconciliationResult has sequence=0
         assert verified.sequence == 0
@@ -299,9 +316,9 @@ class TestReconciliationSequenceIntegration:
 
     def test_reconcile_stamps_sequence_when_enabled(self) -> None:
         """Verify reconcile() stamps sequence on payload when feature flag is enabled."""
+        from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
-            StubLedgerProvider,
         )
 
         # Mock Redis
@@ -311,7 +328,7 @@ class TestReconciliationSequenceIntegration:
         mock_redis.pipeline.return_value = mock_pipe
 
         reconciler = ExternalLedgerReconciler(
-            provider=StubLedgerProvider(),
+            provider=SimulatedCashLedgerProvider(),
             redis_client=mock_redis,
             account_id="test",
         )
@@ -326,9 +343,9 @@ class TestReconciliationSequenceIntegration:
 
     def test_reconcile_skips_sequence_when_disabled(self) -> None:
         """Verify reconcile() does not stamp sequence when feature flag is disabled."""
+        from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
-            StubLedgerProvider,
         )
 
         # Mock Redis
@@ -337,7 +354,7 @@ class TestReconciliationSequenceIntegration:
         mock_redis.pipeline.return_value = mock_pipe
 
         reconciler = ExternalLedgerReconciler(
-            provider=StubLedgerProvider(),
+            provider=SimulatedCashLedgerProvider(),
             redis_client=mock_redis,
             account_id="test",
         )
@@ -362,6 +379,7 @@ class TestReplayDefenseTelemetry:
     @pytest.mark.asyncio
     async def test_prometheus_counter_incremented_on_replay_rejection(self) -> None:
         """Verify Prometheus counter is incremented when replay is rejected."""
+        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.safety import cbf_engine as cbf_module
 
         # Create a mock counter
@@ -374,7 +392,11 @@ class TestReplayDefenseTelemetry:
         try:
             cbf_module._REPLAY_REJECTED_COUNTER = mock_counter
 
-            cbf = cbf_module.ControlBarrierFunction()
+            cbf = cbf_module.ControlBarrierFunction(
+                invariant=CashBarrier(),
+                cost_resolver=finance_cost_resolver,
+                skip_epoch_seed=True,
+            )
 
             # Mock sync Redis - last_accepted=10, incoming=5 (replay)
             mock_sync_redis = MagicMock()
@@ -399,9 +421,9 @@ class TestReplayDefenseTelemetry:
         the reconcile() method stamps sequence on the result, which
         is then recorded as an OTel span attribute.
         """
+        from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
-            StubLedgerProvider,
         )
 
         mock_redis = MagicMock()
@@ -410,7 +432,7 @@ class TestReplayDefenseTelemetry:
         mock_redis.pipeline.return_value = mock_pipe
 
         reconciler = ExternalLedgerReconciler(
-            provider=StubLedgerProvider(),
+            provider=SimulatedCashLedgerProvider(),
             redis_client=mock_redis,
             account_id="test",
         )

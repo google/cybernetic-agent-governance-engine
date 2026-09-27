@@ -14,6 +14,7 @@
 
 """Kinematic barrier tier — physical AI / robotics CBF (phase 2, order 3)."""
 
+from collections.abc import Sequence
 from typing import Any
 
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
@@ -29,16 +30,26 @@ from src.gateway.governance.safety.barrier_tier import (
     rollback_barrier,
 )
 
+_CLAIMED_PHYSICAL_ACTIONS = PHYSICAL_AI_GOVERNED_ACTIONS | frozenset(
+    {"move_arm", "move_effector"}
+)
+
 
 class KinematicBarrierTier(GovernanceTierPlugin):
     """Kinematic barrier tier for physical AI (phase 2, order 3).
 
     Delegates state-space evaluation to the kernel's ControlBarrierFunction engine.
-    Ensures that commanded actions cannot deplete spatial or velocity margins.
+    Ensures that commanded actions cannot deplete spatial, velocity, or torque margins.
     """
 
     def __init__(self, cbf: Any = None) -> None:
         self.cbf = cbf
+        if cbf is None:
+            self._cbfs: tuple[Any, ...] = ()
+        elif isinstance(cbf, Sequence) and not isinstance(cbf, (str, bytes)):
+            self._cbfs = tuple(cbf)
+        else:
+            self._cbfs = (cbf,)
 
     @property
     def tier_name(self) -> str:
@@ -53,11 +64,9 @@ class KinematicBarrierTier(GovernanceTierPlugin):
         return 3
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action in PHYSICAL_AI_GOVERNED_ACTIONS
+        return action in _CLAIMED_PHYSICAL_ACTIONS
 
     def _unconfigured(self) -> Violation:
-        # Fail closed: no CBF means no barrier was checked, which must refuse,
-        # never allow. Physical-AI barriers have no cost resolver yet (POAM).
         return Violation(
             tier=self.tier_name,
             code="KINEMATIC_BARRIER_UNCONFIGURED",
@@ -67,22 +76,73 @@ class KinematicBarrierTier(GovernanceTierPlugin):
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); mirrors commit()'s no-CBF case."""
-        if self.cbf is None:
+        if not self._cbfs:
             return [self._unconfigured()]
-        return await preview_barrier(
-            self.cbf, tier=self.tier_name, code="KINEMATIC_BARRIER_VIOLATED", action=action, params=params
-        )
+        violations: list[Violation] = []
+        for engine in self._cbfs:
+            violations.extend(
+                await preview_barrier(
+                    engine,
+                    tier=self.tier_name,
+                    code="KINEMATIC_BARRIER_VIOLATED",
+                    action=action,
+                    params=params,
+                )
+            )
+        return violations
 
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        if self.cbf is None:
+        if not self._cbfs:
             return [self._unconfigured()], None  # fail closed; nothing mutated
-        return await commit_barrier(
-            self.cbf, tier=self.tier_name, code="KINEMATIC_BARRIER_VIOLATED", action=action, params=params
+        if len(self._cbfs) == 1:
+            return await commit_barrier(
+                self._cbfs[0],
+                tier=self.tier_name,
+                code="KINEMATIC_BARRIER_VIOLATED",
+                action=action,
+                params=params,
+            )
+
+        committed_steps: list[tuple[Any, CommitReceipt]] = []
+        try:
+            for engine in self._cbfs:
+                violations, receipt = await commit_barrier(
+                    engine,
+                    tier=self.tier_name,
+                    code="KINEMATIC_BARRIER_VIOLATED",
+                    action=action,
+                    params=params,
+                )
+                if violations:
+                    for prev_engine, prev_receipt in reversed(committed_steps):
+                        await rollback_barrier(prev_engine, prev_receipt)
+                    return violations, None
+                if receipt is not None:
+                    committed_steps.append((engine, receipt))
+        except Exception:
+            for prev_engine, prev_receipt in reversed(committed_steps):
+                await rollback_barrier(prev_engine, prev_receipt)
+            raise
+
+        first_mag = committed_steps[0][1].magnitude if committed_steps else 0.0
+        return [], CommitReceipt(
+            tier=self.tier_name,
+            magnitude=first_mag,
+            token=tuple(
+                (eng, rec.magnitude) for eng, rec in committed_steps
+            ),
         )
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        await rollback_barrier(self.cbf, receipt)
+        if isinstance(receipt.token, tuple):
+            for engine, magnitude in reversed(receipt.token):
+                await rollback_barrier(
+                    engine, CommitReceipt(tier=self.tier_name, magnitude=magnitude)
+                )
+            return
+        if self._cbfs:
+            await rollback_barrier(self._cbfs[0], receipt)

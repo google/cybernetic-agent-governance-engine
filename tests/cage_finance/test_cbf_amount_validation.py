@@ -34,6 +34,7 @@ pytest.importorskip("fakeredis", reason="fakeredis required for CBF state tests"
 
 import fakeredis.aioredis  # type: ignore[import]
 
+from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 # Hermetic: tests CBF amount validation using fakeredis, no live services.
@@ -47,13 +48,17 @@ _INVALID_AMOUNTS = [-1_000_000.0, float("nan"), float("inf"), float("-inf")]
 async def test_do_verify_action_rejects_invalid_amount() -> None:
     """The read-only barrier returns a non-SAFE result for negative / NaN / inf
     amounts, and still returns SAFE for a valid positive trade."""
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
 
     for amount in _INVALID_AMOUNTS:
         result = await cbf._do_verify_action(
             "execute_trade",
             {"amount": amount},
-            current_cash=100_000.0,
+            current_state=100_000.0,
             balance_source="self_reported",
             span=None,
         )
@@ -65,7 +70,7 @@ async def test_do_verify_action_rejects_invalid_amount() -> None:
     ok = await cbf._do_verify_action(
         "execute_trade",
         {"amount": 1_000.0},
-        current_cash=100_000.0,
+        current_state=100_000.0,
         balance_source="self_reported",
         span=None,
     )
@@ -80,7 +85,11 @@ async def test_atomic_verify_rejects_invalid_amount_without_mutating_balance() -
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
     await fake_redis.set("safety:current_cash", "100000.0")
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.tracer = None
 
     mock_redis_module = MagicMock()

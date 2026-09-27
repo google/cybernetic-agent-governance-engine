@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -54,7 +55,11 @@ def cbf_instance(mock_redis_client, mock_raw_client):
     """CBF instance with mocked Redis for testing."""
     with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
         with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
-            cbf = ControlBarrierFunction(skip_epoch_seed=True)
+            cbf = ControlBarrierFunction(
+                invariant=CashBarrier(),
+                cost_resolver=finance_cost_resolver,
+                skip_epoch_seed=True,
+            )
             cbf._lua_sha = "mock_sha"
             return cbf
 
@@ -330,7 +335,11 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
         mock_raw_client.script_load = AsyncMock(return_value="sha_cas")
 
         with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
-            cbf = ControlBarrierFunction(skip_epoch_seed=True)
+            cbf = ControlBarrierFunction(
+                invariant=CashBarrier(),
+                cost_resolver=finance_cost_resolver,
+                skip_epoch_seed=True,
+            )
             cbf._lua_sha = "sha_cas"
 
             # Both requests read fence=1 from reconciliation

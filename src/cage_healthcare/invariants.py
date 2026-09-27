@@ -20,6 +20,12 @@ into the atomic Redis Lua hop.
 """
 
 
+import math
+from typing import Any
+
+from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
+
+
 class SerumConcentrationBarrier:
     """Serum concentration barrier: h(x) = concentration - min_therapeutic.
 
@@ -32,3 +38,30 @@ class SerumConcentrationBarrier:
     state_key = "safety:serum_concentration"
     threshold_key = "healthcare.min_therapeutic_concentration"
     gamma = 0.4
+    initial_state = 15.0
+    requires_external_ground_truth = True
+
+
+DoseCeilingBarrier = SerumConcentrationBarrier
+
+_HEALTHCARE_DOSE_ACTIONS: frozenset[str] = HEALTHCARE_GOVERNED_ACTIONS | frozenset(
+    {"administer_medication", "dose_order"}
+)
+
+
+def healthcare_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
+    """Resolve serum concentration headroom cost for clinical dosing actions."""
+    if action_name not in _HEALTHCARE_DOSE_ACTIONS:
+        return 0.0
+    raw = payload.get(
+        "concentration_delta",
+        payload.get("dose_mg", payload.get("dose", payload.get("amount", 0.0))),
+    )
+    if isinstance(raw, bool):
+        raise ValueError(f"Invalid clinical dose {raw!r}: bool is not a valid numeric dose")
+    value = float(raw)
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError(
+            f"Invalid clinical dose {raw!r}: must be a finite non-negative number"
+        )
+    return value

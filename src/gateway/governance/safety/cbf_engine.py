@@ -12,151 +12,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Stateful Redis-backed financial invariant enforcer.
+"""Stateful Redis-backed invariant-parametric Control Barrier Function (CBF) engine.
 
-Implements a discrete-time Control Barrier Function (CBF) enforcing
+Implements a discrete-time Control Barrier Function enforcing
 h(S(t+1)) >= (1 - gamma) * h(S(t)) >= 0 for all t >= 0, gamma in (0, 1).
-Uses Redis for state persistence so that distributed gateway instances share a
-consistent cash-balance view within a single-primary epoch.
-
-Theoretical Foundation:
-    Implements the 'Bounded Composite Authority' invariant defined in Tallam (2026),
-    "A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents"
-    (arXiv:2606.12320).
-
-Architectural Hardening & Failover Safety:
-    Following architectural code review by Krti Tallam, this module guards against
-    Time-of-Check to Time-of-Use (TOCTOU) headroom exhaustion during managed Redis
-    primary failovers:
-
-    1. Synchronous Replication Quorum: Mutations enforce `WAIT` acknowledgments across
-       replicas (`CAGE_REDIS_WAIT_REPLICAS >= 1`) before returning evaluation success.
-    2. Monotonic Fence-Epoch Validation: Reads and debits verify `safety:fence_epoch`
-       to reject stale balance reads from promoted out-of-sync replicas.
-
-    See `proof/distributed_cbf_model.py` for formal verification of no-double-spend
-    under N concurrent agents during primary failover.
-
-Phase 1 fix: imports now resolve against the canonical gateway-internal
-infrastructure package (``src.gateway.infrastructure.*``) instead of the
-cross-package ``src.governed_financial_advisor.*`` path.
-
-In CAGE v3.0.0, ``atomic_verify_and_commit()`` executes the CBF condition
-evaluation and state deduction in a single Redis Lua script, eliminating
-TOCTOU windows between check and commit.
+Parameterized by a domain-contributed ``InvariantModel`` and ``cost_resolver``.
 """
+
+from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping, Sequence
 import inspect
 import json
 import logging
 import math
-
-# ---------------------------------------------------------------------------
-# Canonical gateway-internal imports (Phase 1.1)
-# ---------------------------------------------------------------------------
 import os
 import time
-from dataclasses import dataclass
 from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import InvariantModel
-
-# ---------------------------------------------------------------------------
-# Threshold singleton (Phase 2.3)
-# ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.infrastructure.redis_client import redis_client, sync_redis_client
 from src.gateway.infrastructure.telemetry import get_tracer
 
 logger = logging.getLogger("SafetyLayer")
 
-# ---------------------------------------------------------------------------
-# Environment detection (module-level so tests can patch it)
-# ---------------------------------------------------------------------------
 _cage_env_cbf = (
     os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
 ).lower()
 _IS_PRODUCTION: bool = _cage_env_cbf not in ("development", "test", "dev", "ci")
 
-# ---------------------------------------------------------------------------
-# Feature flag: CBF strict mode - fail-closed on ground truth unavailability
-# ---------------------------------------------------------------------------
-# When CAGE_CBF_STRICT_MODE=true (default), the CBF rejects transactions when
-# KMS verification of reconciled balance fails. This prevents fail-open behavior
-# where an attacker could exhaust KMS quota to force unverified balance usage.
-# Set to "false" only in isolated development/test environments.
 _CBF_STRICT_MODE: bool = os.environ.get(
     "CAGE_CBF_STRICT_MODE", "true" if _IS_PRODUCTION else "false"
 ).lower() in ("true", "1", "yes")
 
-# ---------------------------------------------------------------------------
-# Feature flag: Replay defense (R-04 mitigation, §2.10)
-# ---------------------------------------------------------------------------
-# Stage 1 (read-side): When enabled, CBF enforces sequence validation.
 _REPLAY_DEFENSE_ENABLED: bool = os.environ.get(
     "CAGE_RECONCILIATION_REPLAY_DEFENSE", "false"
 ).lower() in ("true", "1", "yes")
 
-# Redis key for tracking last accepted sequence (never TTL'd)
 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
 
-# ---------------------------------------------------------------------------
-# Feature flag: Fence epoch validation (R-05 mitigation, §2.6)
-# ---------------------------------------------------------------------------
-# When enabled, CBF validates fence epoch hasn't regressed after failover.
-# This detects stale reads from replicas that haven't caught up to primary.
-# DEFAULT CHANGED (peer review Fix A2): Enabled by default to provide failover
-# protection out-of-box. Operators can disable with CAGE_REDIS_SYNCHRONOUS_REPLICATION=false.
-# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from failover safety.
 _FENCE_EPOCH_ENABLED: bool = os.environ.get(
     "CAGE_REDIS_SYNCHRONOUS_REPLICATION", "true"
 ).lower() in ("true", "1", "yes")
 
-# Redis key for fence epoch counter (never TTL'd)
 _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
-
-# ---------------------------------------------------------------------------
-# Local debits tracking (POAM-023 remediation)
-# ---------------------------------------------------------------------------
-# Redis key for tracking debits within a reconciliation cycle to prevent
-# double-spend when using reconciled balance with TTL window.
 _REDIS_KEY_LOCAL_DEBITS = "cbf:local_debits"
 
-# ---------------------------------------------------------------------------
-# Feature flag: WAIT command replication (Phase 4.3)
-# ---------------------------------------------------------------------------
-# When CAGE_REDIS_WAIT_REPLICAS > 0, CBF will call Redis WAIT after fence
-# epoch increment to ensure the epoch is replicated before returning.
-# https://redis.io/commands/wait/
-# DEFAULT CHANGED (peer review Fix A1): Enabled by default (1 replica) to ensure
-# durability before returning success to caller. Set CAGE_REDIS_WAIT_REPLICAS=0 to disable.
-# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from replication guarantee.
 _WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "1"))
 _WAIT_TIMEOUT_MS: int = int(os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS", "1000"))
 
-# ---------------------------------------------------------------------------
-# Feature flag: Strict replication mode (P0 security hardening)
-# ---------------------------------------------------------------------------
-# When CAGE_STRICT_REPLICATION=true (default in production), a WAIT timeout
-# triggers a fail-closed rollback rather than logging-only. This prevents
-# financial actions from succeeding when async replication cannot confirm
-# the mutation reached replicas — if the primary crashes before replication
-# and Sentinel promotes a replica, that replica would be missing the mutation.
-# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from fail-closed safety.
 _STRICT_REPLICATION: bool = os.environ.get(
     "CAGE_STRICT_REPLICATION", "true" if _IS_PRODUCTION else "false"
 ).lower() in ("true", "1", "yes")
 
-# Sentinel awareness (Phase 4.3 stretch goal)
-# When set, connection should be Sentinel-aware for automatic failover handling.
 _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_NAME")
 
-# ---------------------------------------------------------------------------
-# Prometheus telemetry for replay defense (§2.10) and WAIT replication (§4.3)
-# ---------------------------------------------------------------------------
 _REPLAY_REJECTED_COUNTER: Any = None
 _EPOCH_REGRESSION_COUNTER: Any = None
 _CURRENT_FENCE_EPOCH_GAUGE: Any = None
@@ -170,28 +83,6 @@ try:
     def _get_or_create_metric(
         metric_cls: Any, name: str, *args: Any, **kwargs: Any
     ) -> Any:
-        """Thread-safe metric registry lookup with fallback to singleton.
-
-        Race-safe: If metric creation fails due to duplicate registration
-        (ValueError from Prometheus), falls back to the shared singleton
-        from REGISTRY._names_to_collectors. Concurrent calls will all
-        return the same collector instance (intended behavior).
-
-        The broad exception handler catches both:
-        - ValueError: Raised by Prometheus for duplicate metric names
-        - Exception: Any unexpected Prometheus internal errors
-
-        Args:
-            metric_cls: Prometheus metric class (Counter, Gauge, Histogram)
-            name: Metric name
-            *args, **kwargs: Arguments passed to metric constructor
-
-        Returns:
-            Prometheus collector instance (new or existing singleton)
-
-        Raises:
-            Exception: If metric creation fails and no existing collector found
-        """
         try:
             return metric_cls(name, *args, **kwargs)
         except (ValueError, Exception):
@@ -206,7 +97,6 @@ try:
         "Number of reconciliation payloads rejected due to non-advancing sequence (R-04 replay defense)",
         ["source"],
     )
-    # R-05 fence epoch telemetry
     _EPOCH_REGRESSION_COUNTER = _get_or_create_metric(
         Counter,
         "cage_cbf_epoch_regression_detected_total",
@@ -217,7 +107,6 @@ try:
         "cage_cbf_current_fence_epoch",
         "Current value of the CBF fence epoch counter",
     )
-    # Phase 4.3: WAIT command telemetry
     _WAIT_LATENCY_HISTOGRAM = _get_or_create_metric(
         Histogram,
         "cage_cbf_wait_latency_seconds",
@@ -229,7 +118,6 @@ try:
         "cage_cbf_wait_timeout_total",
         "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
     )
-    # P0 hardening: Strict replication rollback counter
     _STRICT_REPLICATION_ROLLBACK_COUNTER = _get_or_create_metric(
         Counter,
         "cage_cbf_strict_replication_rollback_total",
@@ -239,24 +127,8 @@ except ImportError:
     pass
 
 
-# ---------------------------------------------------------------------------
-# CBFInitializationError — Fail-closed exception for epoch seeding (B3a)
-# ---------------------------------------------------------------------------
-
-
 class GroundTruthUnavailableError(RuntimeError):
-    """Raised when CBF cannot verify ground truth balance (fail-closed behavior).
-
-    This exception is raised when:
-    - KMS signature verification fails on the reconciled balance
-    - Reconciled balance read fails entirely
-    - Production environment receives unsigned balance
-
-    In strict mode (CAGE_CBF_STRICT_MODE=true, default), this error is raised
-    to prevent transactions from proceeding with unverified self-reported balance.
-    This is a security control to prevent attackers from exhausting KMS quota
-    to force unverified balance usage.
-    """
+    """Raised when CBF cannot verify ground-truth state (fail-closed behavior)."""
 
     def __init__(self, message: str, cause: Exception | None = None):
         super().__init__(message)
@@ -264,22 +136,11 @@ class GroundTruthUnavailableError(RuntimeError):
 
 
 class CBFInitializationError(RuntimeError):
-    """Raised when CBF cannot seed its initial fence epoch from Redis.
-
-    §B3a: A newly spawned gateway instance (after restart, redeploy, or
-    autoscale) must seed its fence epoch from Redis before accepting
-    requests. If Redis is unavailable at initialization time, the CBF
-    MUST fail-closed rather than starting with epoch=0, which would
-    create a window for stale-read attacks.
-
-    This exception should propagate to the pod readiness probe, preventing
-    the instance from joining the load-balancer pool until Redis is
-    reachable and the epoch is successfully seeded.
-    """
+    """Raised when CBF cannot seed its initial fence epoch from Redis."""
 
 
 async def _get_raw_redis(r: Any) -> Any:
-    """Helper to extract raw redis client from wrapper or mock."""
+    """Extract raw redis client from wrapper or mock."""
     if r is None:
         return None
     getter = getattr(r, "get_raw_client", None)
@@ -291,56 +152,26 @@ async def _get_raw_redis(r: Any) -> Any:
     return r
 
 
-# ---------------------------------------------------------------------------
-# ControlBarrierFunction
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _DefaultKernelBarrier:
-    """Kernel fallback barrier for backward compatibility and test isolation.
-
-    Implements the InvariantModel protocol without importing domain plugins.
-    """
-
-    invariant_id: str = "default.cash_balance"
-    state_key: str = "safety:current_cash"
-    threshold_key: str = "cbf.min_cash_balance"
-    gamma: float = 0.5
-
-
 class ControlBarrierFunction:
-    """Discrete-time Control Barrier Function (CBF).
-
-    Uses Redis for state persistence so that stateless Cloud Run instances
-    share a consistent cash-balance view.
-
-    Phase 4.1: ``update_state()`` and ``rollback_state()`` wrap all
-    read-modify-write operations in a Redis WATCH / MULTI / EXEC optimistic-
-    locking pipeline.  If another process mutates the key between the WATCH
-    and the EXEC, the transaction is aborted and retried up to
-    ``_MAX_RETRIES`` times before raising ``RuntimeError``.
-    """
+    """Discrete-time invariant-parametric Control Barrier Function (CBF)."""
 
     _MAX_RETRIES: int = 5
 
     LUA_ATOMIC_CBF: str = """
--- PR C (Stage 2): Parameterized affine barrier script.
+-- Parameterized affine barrier script.
 -- Driven by InvariantModel: h(x) = state[state_key] - thresholds[threshold_key]
 --
--- KEYS[1]: <InvariantModel.state_key> — barrier state variable (e.g., "safety:current_cash")
+-- KEYS[1]: <InvariantModel.state_key> — barrier state variable
 -- KEYS[2]: audit:state_ledger
 -- KEYS[3]: safety:fence_epoch (R-05)
--- ARGV[1]: magnitude (float string) — deduction amount (domain-neutral; was "cost")
+-- ARGV[1]: magnitude (float string) — deduction amount
 -- ARGV[2]: threshold (float string) — <InvariantModel.threshold_key> resolved floor
 -- ARGV[3]: gamma (float string) — <InvariantModel.gamma>
 -- ARGV[4]: governance_signature (string, may be empty)
--- ARGV[5]: ground_truth_balance (float string) -- POAM-023: KMS-verified balance from Python
--- ARGV[6]: expected_fence (int string) -- C4: Expected fence epoch for CAS validation
--- Returns: array {status_code, message, new_balance_str, new_epoch}
+-- ARGV[5]: ground_truth_state (float string) -- KMS-verified state from Python
+-- ARGV[6]: expected_fence (int string) -- Expected fence epoch for CAS validation
+-- Returns: array {status_code, message, new_state_str, new_epoch}
 --   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation)
---
--- C4 Security Fix: Atomic CAS validation at the START to eliminate TOCTOU race
 local expected_fence = tonumber(ARGV[6])
 local current_fence_raw = redis.call('GET', KEYS[3])
 local current_fence = current_fence_raw and tonumber(current_fence_raw) or 0
@@ -348,93 +179,95 @@ if current_fence ~= expected_fence then
     return {0, "Fence epoch regression: expected " .. tostring(expected_fence) .. ", got " .. tostring(current_fence), "0", current_fence}
 end
 
--- POAM-023: Ground truth balance passed from Python after KMS verification
 local current = tonumber(ARGV[5])
 if not current then
     return {0, "Ground truth balance unavailable", "0", current_fence}
 end
 local cost = tonumber(ARGV[1]) or 0.0
-local min_cash = tonumber(ARGV[2])
+local threshold = tonumber(ARGV[2])
 local gamma = tonumber(ARGV[3])
 local sig = ARGV[4]
 
-local next_cash = current - cost
-local h_t = current - min_cash
-local h_next = next_cash - min_cash
+local next_state = current - cost
+local h_t = current - threshold
+local h_next = next_state - threshold
 local required_h_next = (1.0 - gamma) * h_t
 
 if h_next < required_h_next or h_next < 0 then
     return {0, "UNSAFE: h_next=" .. tostring(h_next) .. " < required=" .. tostring(required_h_next), tostring(current), current_fence}
 end
 
-redis.call('SET', KEYS[1], tostring(next_cash))
--- R-05: Increment fence epoch on every mutating write
+redis.call('SET', KEYS[1], tostring(next_state))
 local new_epoch = redis.call('INCR', KEYS[3])
 if sig ~= "" then
-    redis.call('RPUSH', KEYS[2], sig .. ":" .. tostring(next_cash))
+    redis.call('RPUSH', KEYS[2], sig .. ":" .. tostring(next_state))
 end
-return {1, "COMMITTED", tostring(next_cash), new_epoch}
+return {1, "COMMITTED", tostring(next_state), new_epoch}
 """
 
     def __init__(
         self,
-        invariant: "InvariantModel | None" = None,
+        invariant: InvariantModel | None = None,
         cost_resolver: Any = None,
         skip_epoch_seed: bool = False,
     ) -> None:
-        """Initialize the ControlBarrierFunction.
-
-        PR C (Stage 2): One engine instance enforces exactly one affine barrier.
-        Multi-barrier domains construct multiple engines and register multiple
-        CBF tiers. A single engine multiplexing barriers would require a multi-key
-        Lua script, which is a distinct proof obligation (cross-key atomicity) not
-        covered by DistributedCBF.tla.
-
-        Args:
-            invariant: InvariantModel instance defining the barrier (state_key,
-                      threshold_key, gamma). If None, defaults to kernel
-                      fallback barrier with legacy cost resolver.
-            cost_resolver: Callable[[str, dict], float] that computes the cost
-                          for a given (action_name, payload). Domain plugins must
-                          inject their resolver at registration. Default is zero
-                          cost for all actions (domain-agnostic kernel).
-            skip_epoch_seed: If True, skip Redis epoch seeding at init time.
-                             Used only for testing; production instances must
-                             seed from Redis.
-
-        Raises:
-            CBFInitializationError: If Redis is unavailable and skip_epoch_seed
-                                    is False. This prevents the instance from
-                                    accepting requests with an unseeded epoch.
-        """
-        # W1 (Post-v3): Mandatory value object — single source of truth.
-        # Domain plugins provide both invariant and cost_resolver at registration.
         if invariant is None:
-            invariant = _DefaultKernelBarrier()
-            if cost_resolver is None:
-                cost_resolver = self._legacy_finance_cost_resolver
+            raise ValueError(
+                "ControlBarrierFunction requires an explicit InvariantModel instance"
+            )
         self._invariant = invariant
         self._cost_resolver = cost_resolver or self._default_cost_resolver
         self._gamma_override: float | None = None
+        self._threshold_override: float | None = None
 
-        # Backward-compatibility attributes (deprecated; use _invariant)
-        self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
+        # Validate threshold_key resolves at construction time
+        _ = self._resolve_threshold()
+
         self.tracer: Any = get_tracer("src.gateway.governance.safety")
         self._lua_sha: str | None = None
-        # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
         self._local_debits: float = 0.0
-        # R-05 fence epoch: track last seen epoch to detect regression after failover
-        # B3a: Seed from Redis on startup — fail-closed if unavailable
         self._last_seen_epoch: int = self._fetch_initial_fence_epoch_sync(
             skip_epoch_seed
         )
-        # POAM-023: Track last verified fence epoch to detect regression on commit path
         self._last_verified_fence_epoch: int | None = None
+
+    @property
+    def invariant(self) -> InvariantModel:
+        """Return the declarative InvariantModel enforced by this engine."""
+        return self._invariant
 
     @property
     def threshold_key(self) -> str:
         """Threshold key derived from invariant model."""
         return self._invariant.threshold_key
+
+    def _resolve_threshold(self) -> float:
+        if self._threshold_override is not None:
+            return self._threshold_override
+        threshold_parts = self._invariant.threshold_key.split(".")
+        threshold_value: Any = THRESHOLDS
+        for part in threshold_parts:
+            if not hasattr(threshold_value, part):
+                raise ValueError(
+                    f"Unknown threshold_key {self._invariant.threshold_key!r} on InvariantModel"
+                )
+            threshold_value = getattr(threshold_value, part)
+        return float(threshold_value)
+
+    @property
+    def threshold_value(self) -> float:
+        """Resolved numeric barrier floor for this invariant."""
+        return self._resolve_threshold()
+
+    @threshold_value.setter
+    def threshold_value(self, value: float) -> None:
+        self._threshold_override = float(value)
+
+    def _initial_state_scalar(self) -> float:
+        init_val = getattr(self._invariant, "initial_state", None)
+        if isinstance(init_val, (int, float)) and math.isfinite(init_val):
+            return float(init_val)
+        return self._resolve_threshold() * 2.0
 
     @property
     def gamma(self) -> float:
@@ -445,12 +278,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
     @gamma.setter
     def gamma(self, value: float) -> None:
-        """Allow test harness and configuration override of gamma.
-
-        Warning: This setter is NOT thread-safe and is intended for test
-        harnesses and single-threaded configuration only. Do not call
-        during concurrent request processing in production.
-        """
         cage_env = os.getenv("CAGE_ENV", "dev").lower()
         if cage_env in ("production", "prod"):
             logger.warning(
@@ -464,56 +291,81 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         """State key derived from invariant model."""
         return self._invariant.state_key
 
-    def _fetch_initial_fence_epoch_sync(self, skip_epoch_seed: bool) -> int:
-        """Fetch the current fence epoch from Redis at construction time.
+    def evaluate_barrier(self, state_scalar: float) -> float:
+        """Evaluate affine barrier function h(x) = state_scalar - threshold."""
+        return float(state_scalar) - self._resolve_threshold()
 
-        §B3a: A newly spawned gateway instance must have an external anchor
-        for its fence epoch. Without this, a fresh instance would accept
-        whatever epoch it first observes as baseline, creating a window
-        for stale-read attacks after a Redis failover.
+    def verify_trajectory(
+        self,
+        trajectory: Sequence[Mapping[str, Any]],
+        initial_state: float | None = None,
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        """Verify a multi-step action trajectory against this barrier.
 
-        This method uses the synchronous Redis client because __init__ is
-        synchronous. The sync client is safe to call from module-load time.
-
-        Args:
-            skip_epoch_seed: If True, return 0 without contacting Redis.
-                             Used for testing only.
-
-        Returns:
-            The current fence epoch from Redis, or 0 if this is the first-ever
-            startup (no epoch key exists — we initialize it to 0 and write it).
-
-        Raises:
-            CBFInitializationError: If Redis is unavailable and skip_epoch_seed
-                                    is False.
+        Derives the action name from ``step.get("action", "unknown")`` for each
+        step and resolves cost via the domain ``cost_resolver``.
         """
+        current_state = (
+            float(initial_state)
+            if initial_state is not None
+            else self._initial_state_scalar()
+        )
+        records: list[dict[str, Any]] = []
+        all_safe = True
+        for idx, step in enumerate(trajectory):
+            action_name = str(step.get("action", "unknown"))
+            raw_params = step.get("params", step.get("payload", step))
+            payload = dict(raw_params) if isinstance(raw_params, Mapping) else {}
+            cost = self._resolve_action_cost(action_name, payload)
+            h_t = self.evaluate_barrier(current_state)
+            next_state = current_state - cost
+            h_next = self.evaluate_barrier(next_state)
+            required_h_next = (1.0 - self.gamma) * h_t
+            step_safe = not (
+                cost > 0 and (h_next < required_h_next or h_next < 0)
+            )
+            records.append(
+                {
+                    "step": idx,
+                    "action": action_name,
+                    "cost": cost,
+                    "state_before": current_state,
+                    "state_after": next_state if step_safe else current_state,
+                    "h_t": h_t,
+                    "h_next": h_next,
+                    "required_h_next": required_h_next,
+                    "safe": step_safe,
+                }
+            )
+            if step_safe:
+                current_state = next_state
+            else:
+                all_safe = False
+                break
+        return all_safe, records
+
+    def _fetch_initial_fence_epoch_sync(self, skip_epoch_seed: bool) -> int:
         if skip_epoch_seed:
             logger.debug("B3a: Skipping epoch seed (skip_epoch_seed=True)")
             return 0
 
         if sync_redis_client is None:
-            # Behavior depends on environment:
-            # - Production: fail-closed (raise CBFInitializationError)
-            # - Dev/test: warn but proceed with epoch=0 (backward compatibility)
             if _IS_PRODUCTION:
                 raise CBFInitializationError(
                     "Cannot initialize CBF: sync Redis client unavailable. "
                     "Fence epoch cannot be seeded from external anchor. "
                     "Failing closed to prevent stale-read attack window."
                 )
-            else:
-                logger.warning(
-                    "B3a: sync Redis client unavailable in dev/test mode — "
-                    "proceeding with epoch=0. Set CAGE_ENV=prod to enforce "
-                    "fail-closed behavior."
-                )
-                return 0
+            logger.warning(
+                "B3a: sync Redis client unavailable in dev/test mode — "
+                "proceeding with epoch=0. Set CAGE_ENV=prod to enforce "
+                "fail-closed behavior."
+            )
+            return 0
 
         try:
             epoch_raw = sync_redis_client.get(_REDIS_KEY_FENCE_EPOCH)
             if epoch_raw is None:
-                # First-ever startup — initialize epoch to 0 and write it.
-                # This is the only case where epoch=0 is acceptable.
                 sync_redis_client._get().set(_REDIS_KEY_FENCE_EPOCH, "0")
                 logger.info(
                     "B3a: First-ever startup — initialized fence epoch to 0 in Redis"
@@ -525,22 +377,18 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 _CURRENT_FENCE_EPOCH_GAUGE.set(epoch)
             return epoch
         except Exception as exc:
-            # Behavior depends on environment:
-            # - Production: fail-closed (raise CBFInitializationError)
-            # - Dev/test: warn but proceed with epoch=0 (backward compatibility)
             if _IS_PRODUCTION:
                 raise CBFInitializationError(
                     f"Cannot initialize CBF: fence epoch unavailable from Redis. "
                     f"Error: {exc}. Failing closed to prevent stale-read attack window."
                 ) from exc
-            else:
-                logger.warning(
-                    "B3a: Redis unavailable in dev/test mode — proceeding with "
-                    "epoch=0. Set CAGE_ENV=prod to enforce fail-closed behavior. "
-                    "Error: %s",
-                    exc,
-                )
-                return 0
+            logger.warning(
+                "B3a: Redis unavailable in dev/test mode — proceeding with "
+                "epoch=0. Set CAGE_ENV=prod to enforce fail-closed behavior. "
+                "Error: %s",
+                exc,
+            )
+            return 0
 
     async def setup(self) -> None:
         """Bootstrap Redis state if the key is absent (first run)."""
@@ -548,8 +396,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             logger.error("Redis client unavailable — cannot bootstrap CBF state.")
             return
         if await redis_client.get(self.redis_key) is None:
-            await redis_client.set(self.redis_key, "100000.0")
-        # Initialize fence epoch if absent (R-05)
+            await redis_client.set(
+                self.redis_key, str(self._initial_state_scalar())
+            )
         client = await _get_raw_redis(redis_client)
         if client is not None:
             epoch_raw = await client.get(_REDIS_KEY_FENCE_EPOCH)
@@ -560,43 +409,15 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
     async def _get_current_cash(self) -> float:
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
-        return await redis_client.get_float(self.redis_key, 100000.0)
-
-    # ------------------------------------------------------------------
-    # R-05 Fence Epoch: Double-spend detection across Redis failover
-    # ------------------------------------------------------------------
+        return await redis_client.get_float(
+            self.redis_key, self._initial_state_scalar()
+        )
 
     async def _increment_fence_epoch(self, pipeline: Any) -> int:
-        """Increment the fence epoch atomically within the pipeline.
-
-        §2.6 R-05 mitigation: The fence epoch is a monotonically increasing
-        counter that increments on every CBF-mutating write. After a Redis
-        failover, if a replica hasn't replicated the latest epoch, reads
-        from that replica will return a regressed epoch, which we detect
-        and reject (fail-closed).
-
-        Args:
-            pipeline: Redis pipeline object to queue the INCR command.
-
-        Returns:
-            The new epoch value after increment.
-
-        Note:
-            The INCR command is atomic and creates the key with value 1 if
-            it doesn't exist. The epoch is never TTL'd.
-        """
-        # Queue INCR in the pipeline — returns new value after increment
         pipeline.incr(_REDIS_KEY_FENCE_EPOCH)
-        # The actual value is returned when pipeline.execute() is called
-        # Caller must extract from execute() results
-        return 0  # Placeholder; actual value comes from pipeline results
+        return 0
 
     async def _get_fence_epoch(self) -> int:
-        """Read the current fence epoch from Redis.
-
-        Returns:
-            The current epoch value, or 0 if the key doesn't exist.
-        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
         client = await _get_raw_redis(redis_client)
@@ -606,24 +427,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         return int(raw)
 
     async def _check_fence_epoch(self, current_epoch: int) -> tuple[bool, str]:
-        """Validate that current fence epoch hasn't regressed.
-
-        §2.6 R-05 mitigation: After a Redis primary-to-replica failover,
-        the replica may not have replicated the latest fence epoch. If the
-        epoch we read is less than the last epoch we saw, we've likely
-        switched to a stale replica. This is a double-spend vulnerability.
-
-        Args:
-            current_epoch: The epoch value just read from Redis.
-
-        Returns:
-            (True, "OK") if epoch is valid (>= last seen).
-            (False, reason) if epoch has regressed (< last seen).
-
-        Side effects:
-            - On regression: logs CRITICAL, increments Prometheus counter
-            - On valid: updates _last_seen_epoch, updates Prometheus gauge
-        """
         if current_epoch < self._last_seen_epoch:
             reason = (
                 f"epoch={current_epoch} < last_seen={self._last_seen_epoch} "
@@ -649,53 +452,20 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 _EPOCH_REGRESSION_COUNTER.inc()
             return (False, reason)
 
-        # Epoch is valid — update tracking state
         self._last_seen_epoch = current_epoch
         if _CURRENT_FENCE_EPOCH_GAUGE is not None:
             _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
 
         return (True, "OK")
 
-    # ------------------------------------------------------------------
-    # Phase 4.3: WAIT command for synchronous replication
-    # ------------------------------------------------------------------
-
     async def _sync_to_replicas(
         self,
         num_replicas: int | None = None,
         timeout_ms: int | None = None,
     ) -> bool:
-        """Block until fence epoch is replicated to at least num_replicas.
-
-        Phase 4.3: Uses Redis WAIT command to ensure the fence epoch increment
-        (and any preceding writes) is replicated to the specified number of
-        replicas before returning. This provides stronger durability guarantees
-        for deployments using Redis replication.
-
-        See: https://redis.io/commands/wait/
-
-        Args:
-            num_replicas: Number of replicas to wait for. Defaults to
-                          CAGE_REDIS_WAIT_REPLICAS env var (default 0 = disabled).
-            timeout_ms: Timeout in milliseconds to wait for replication.
-                        Defaults to CAGE_REDIS_WAIT_TIMEOUT_MS env var (default 1000).
-
-        Returns:
-            True if replication confirmed to num_replicas within timeout.
-            False if timeout elapsed before replication confirmed.
-            True (no-op) if num_replicas == 0 (WAIT disabled).
-
-        Note:
-            - WAIT returns the number of replicas that acknowledged the write.
-            - A return value < num_replicas means some replicas are lagging.
-            - Timeout is not an error condition for WAIT; it simply means we
-              waited the full duration without reaching the replica count.
-        """
-        # Use provided values or fall back to module-level config
         replicas = num_replicas if num_replicas is not None else _WAIT_REPLICAS
         timeout = timeout_ms if timeout_ms is not None else _WAIT_TIMEOUT_MS
 
-        # No-op if WAIT is disabled (replicas=0 is the default)
         if replicas <= 0:
             return True
 
@@ -713,8 +483,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         start_time = time.time()
 
         try:
-            # WAIT numreplicas timeout
-            # Returns: number of replicas that acknowledged the write
             cmd = client.execute_command("WAIT", replicas, timeout)
             if inspect.isawaitable(cmd):
                 acks = await cmd
@@ -723,40 +491,27 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
             elapsed = time.time() - start_time
 
-            # Record latency in Prometheus histogram
             if _WAIT_LATENCY_HISTOGRAM is not None:
                 _WAIT_LATENCY_HISTOGRAM.observe(elapsed)
 
             if acks >= replicas:
-                logger.debug(
-                    "Phase 4.3: WAIT confirmed replication to %d/%d replicas in %.3fs",
-                    acks,
-                    replicas,
-                    elapsed,
-                )
                 return True
-            else:
-                # Timeout elapsed before reaching replica count
-                logger.warning(
-                    json.dumps(
-                        {
-                            "event": "CBF_WAIT_TIMEOUT",
-                            "severity": "WARNING",
-                            "requested_replicas": replicas,
-                            "acknowledged_replicas": acks,
-                            "timeout_ms": timeout,
-                            "elapsed_seconds": round(elapsed, 3),
-                            "audit_note": (
-                                "Phase 4.3: Redis WAIT timed out before reaching "
-                                f"requested replica count. {acks}/{replicas} replicas "
-                                "acknowledged. Proceeding with degraded replication."
-                            ),
-                        }
-                    )
+
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "CBF_WAIT_TIMEOUT",
+                        "severity": "WARNING",
+                        "requested_replicas": replicas,
+                        "acknowledged_replicas": acks,
+                        "timeout_ms": timeout,
+                        "elapsed_seconds": round(elapsed, 3),
+                    }
                 )
-                if _WAIT_TIMEOUT_COUNTER is not None:
-                    _WAIT_TIMEOUT_COUNTER.inc()
-                return False
+            )
+            if _WAIT_TIMEOUT_COUNTER is not None:
+                _WAIT_TIMEOUT_COUNTER.inc()
+            return False
 
         except Exception as exc:
             elapsed = time.time() - start_time
@@ -765,7 +520,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 elapsed,
                 exc,
             )
-            # Record the latency even on error
             if _WAIT_LATENCY_HISTOGRAM is not None:
                 _WAIT_LATENCY_HISTOGRAM.observe(elapsed)
             return False
@@ -773,23 +527,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
     async def _validate_sequence(
         self, incoming_sequence: int, source: str, sync_redis: Any
     ) -> tuple[bool, str]:
-        """Validate incoming sequence is strictly greater than last accepted.
-
-        §2.10 R-04 Replay defense: monotonic sequence number validation.
-        Prevents replay of stale balance data by rejecting payloads with
-        non-advancing sequence numbers.
-
-        Args:
-            incoming_sequence: The sequence number in the incoming payload.
-            source: Provider source name (for logging).
-            sync_redis: Synchronous Redis client for reading/writing sequence.
-
-        Returns:
-            (True, "OK") if sequence is advancing.
-            (False, reason) if sequence is non-advancing (replay detected).
-        """
         try:
-            # Read last accepted sequence
             last_accepted_raw = await asyncio.to_thread(
                 sync_redis.get,
                 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
@@ -802,70 +540,41 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 )
                 return (False, reason)
 
-            # Update last_accepted atomically
             await asyncio.to_thread(
                 sync_redis.set,
                 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
                 str(incoming_sequence),
             )
-            logger.debug(
-                "[R-04] Sequence validated: incoming=%d > last_accepted=%d, updated",
-                incoming_sequence,
-                last_accepted,
-            )
             return (True, "OK")
-
         except Exception as exc:
-            # On error, fail-open to allow balance through (conservative)
-            # but log a warning so the issue is visible
             logger.warning(
                 "[R-04] Sequence validation error: %s — allowing payload (fail-open)",
                 exc,
             )
             return (True, f"validation error (fail-open): {exc}")
 
-    async def _read_cbf_state_atomic(self) -> dict[str, float | str]:
-        """Read the CBF cash balance, preferring externally reconciled ground truth.
-
-        Priority order (POAM-023):
-          1. ``reconciliation:verified_balance`` — written by the isolated
-             reconciliation-worker daemon, KMS-signed, TTL-gated.  When present
-             and signature-valid, this is the authoritative balance.
-          2. ``safety:current_cash`` — self-reported by the execution system.
-             Used only when the reconciled balance is absent or invalid.
-             A CRITICAL audit log is emitted so the fallback is always visible
-             in Telemetry and SIEM.
-
-        Returns:
-            dict with keys:
-                ``current_cash`` (float)  — the balance to use in the CBF formula
-                ``source``       (str)    — ``"reconciled"`` | ``"reconciled_unsigned"``
-                                           | ``"self_reported"``
-        """
+    async def _read_cbf_state_atomic(self) -> dict[str, Any]:
+        """Read the CBF state scalar, preferring externally reconciled ground truth."""
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
 
-        # ── Attempt 1: externally reconciled balance (POAM-023) ──────────────
         try:
-            # LOW-6 fix: removed inline `import asyncio as _asyncio` — asyncio is
-            # already imported at module level.
             from src.gateway.governance.reconciliation.daemon import (
-                read_verified_balance,
+                read_verified_snapshot,
             )
 
-            # read_verified_balance is synchronous (redis-py sync client).
-            # Use sync_redis_client (blocking redis.Redis) — NOT redis_client._get()
-            # which returns an aioredis.Redis (async) client whose .get() returns a
-            # coroutine instead of a value, causing the JSON parse to fail with:
-            #   "the JSON object must be str, bytes or bytearray, not coroutine"
-            # (CBF_USING_SELF_REPORTED_BALANCE log sentinel — POAM-023 async bug).
-            from src.gateway.infrastructure.redis_client import sync_redis_client
-
-            verified = await asyncio.to_thread(read_verified_balance, sync_redis_client)
+            verified = await asyncio.to_thread(
+                read_verified_snapshot,
+                sync_redis_client,
+                self._invariant.invariant_id,
+            )
 
             if verified is not None and verified.is_valid:
+                scalar_raw = getattr(verified, "state_scalar", None)
+                if not isinstance(scalar_raw, (int, float)):
+                    scalar_raw = verified.balance_usd
+                scalar_val = float(scalar_raw)
                 if verified.signature:
-                    # Verify KMS signature before trusting the balance.
                     try:
                         from src.gateway.governance.kms_signer import (
                             get_governance_signer,
@@ -876,78 +585,55 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             "source": verified.source,
                             "balance_usd": verified.balance_usd,
                             "verified_at": verified.verified_at,
-                            "sequence": verified.sequence,  # §2.10: in signed payload
+                            "sequence": verified.sequence,
                         }
                         sig_valid = signer.verify(payload_dict, verified.signature)
                         if sig_valid:
-                            # ── §2.10 R-04 Replay defense: sequence validation ────
-                            if _REPLAY_DEFENSE_ENABLED and verified.sequence > 0:
+                            seq_num = getattr(verified, "sequence", 0)
+                            if (
+                                _REPLAY_DEFENSE_ENABLED
+                                and isinstance(seq_num, int)
+                                and seq_num > 0
+                            ):
                                 (
                                     sequence_valid,
                                     seq_reason,
                                 ) = await self._validate_sequence(
-                                    verified.sequence,
+                                    seq_num,
                                     verified.source,
                                     sync_redis_client,
                                 )
                                 if not sequence_valid:
-                                    # Replay detected — fall through to self-reported
                                     logger.critical(
                                         json.dumps(
                                             {
                                                 "event": "CBF_RECONCILED_BALANCE_SEQUENCE_REPLAY_DETECTED",
                                                 "severity": "CRITICAL",
                                                 "source": verified.source,
-                                                "balance_usd": verified.balance_usd,
+                                                "balance_usd": scalar_val,
                                                 "sequence": verified.sequence,
                                                 "reason": seq_reason,
-                                                "audit_note": (
-                                                    "R-04 Replay defense: monotonic sequence "
-                                                    "validation FAILED. Payload sequence is "
-                                                    "non-advancing. Falling back to self-reported "
-                                                    "balance. Possible TTL reset attack or stale replay."
-                                                ),
                                             }
                                         )
                                     )
-                                    # Increment Prometheus counter for replay rejection
                                     if _REPLAY_REJECTED_COUNTER is not None:
                                         _REPLAY_REJECTED_COUNTER.labels(
                                             source=verified.source
                                         ).inc()
-                                    # Fall through to self-reported balance below
                                 else:
-                                    # Sequence valid — update last_accepted and proceed
-                                    # C4 fix: Always read fence epoch from Redis for CAS validation
                                     fence_epoch = await self._get_fence_epoch()
-                                    logger.info(
-                                        "CBF: using externally reconciled balance=%.2f "
-                                        "source=%s verified_at=%.0f sequence=%d (KMS signature valid, sequence advancing)",
-                                        verified.balance_usd,
-                                        verified.source,
-                                        verified.verified_at,
-                                        verified.sequence,
-                                    )
                                     return {
-                                        "current_cash": verified.balance_usd,
+                                        "state_scalar": scalar_val,
+                                        "current_cash": scalar_val,
                                         "source": "reconciled",
                                         "sequence": verified.sequence,
                                         "fence_epoch": fence_epoch,
                                     }
                             else:
-                                # Replay defense disabled or sequence=0 (backward compat)
-                                # C4 fix: Always read fence epoch from Redis for CAS validation
                                 fence_epoch = await self._get_fence_epoch()
-                                logger.info(
-                                    "CBF: using externally reconciled balance=%.2f "
-                                    "source=%s verified_at=%.0f sequence=%d (KMS signature valid)",
-                                    verified.balance_usd,
-                                    verified.source,
-                                    verified.verified_at,
-                                    verified.sequence,
-                                )
                                 return {
-                                    "current_cash": verified.balance_usd,
+                                    "state_scalar": scalar_val,
+                                    "current_cash": scalar_val,
                                     "source": "reconciled",
                                     "sequence": verified.sequence,
                                     "fence_epoch": fence_epoch,
@@ -959,12 +645,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                         "event": "CBF_RECONCILED_BALANCE_SIGNATURE_INVALID",
                                         "severity": "CRITICAL",
                                         "source": verified.source,
-                                        "balance_usd": verified.balance_usd,
-                                        "audit_note": (
-                                            "KMS signature on reconciled balance is INVALID. "
-                                            "Falling back to self-reported balance. "
-                                            "POAM-023: CBF ground truth unverified."
-                                        ),
+                                        "balance_usd": scalar_val,
                                     }
                                 )
                             )
@@ -976,45 +657,16 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     "severity": "CRITICAL",
                                     "error": str(sig_exc),
                                     "strict_mode": _CBF_STRICT_MODE,
-                                    "audit_note": (
-                                        "KMS signature verification raised an exception. "
-                                        + (
-                                            "FAIL-CLOSED: Transaction rejected (strict mode). "
-                                            if _CBF_STRICT_MODE
-                                            else "Falling back to self-reported balance. "
-                                        )
-                                        + "POAM-023: CBF ground truth unverified."
-                                    ),
                                 }
                             )
                         )
-                        # SECURITY FIX: Fail-closed in strict mode to prevent attackers
-                        # from exhausting KMS quota to force unverified balance usage
                         if _CBF_STRICT_MODE:
-                            logger.error(
-                                "[SECURITY] CBF ground truth unavailable — rejecting transaction "
-                                "(strict mode enabled). error_type=%s error=%s source=%s",
-                                type(sig_exc).__name__,
-                                str(sig_exc)[:100],
-                                verified.source if verified else "unknown",
-                            )
                             raise GroundTruthUnavailableError(
                                 f"Cannot verify balance — transaction rejected. "
                                 f"KMS verification failed: {type(sig_exc).__name__}",
                                 cause=sig_exc,
                             ) from sig_exc
-                        # Non-strict mode: fall through to self-reported balance (legacy behavior)
-                        logger.warning(
-                            "[DIAG-FAILOPEN] cbf_kms_verify_failed decision=continue_with_fallback "
-                            "error_type=%s error=%s source=%s balance_usd=%.2f "
-                            "poam_ref=POAM-023 security_impact=HIGH strict_mode=false",
-                            type(sig_exc).__name__,
-                            str(sig_exc)[:100],
-                            verified.source if verified else "unknown",
-                            verified.balance_usd if verified else 0.0,
-                        )
                 else:
-                    # Unsigned reconciled balance — accept only in dev/test.
                     if _IS_PRODUCTION:
                         logger.critical(
                             json.dumps(
@@ -1022,59 +674,26 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     "event": "CBF_RECONCILED_BALANCE_UNSIGNED_IN_PRODUCTION",
                                     "severity": "CRITICAL",
                                     "source": verified.source,
-                                    "balance_usd": verified.balance_usd,
-                                    "audit_note": (
-                                        "Reconciled balance has no KMS signature in production. "
-                                        "Falling back to self-reported balance. "
-                                        "POAM-023: CBF ground truth unverified."
-                                    ),
+                                    "balance_usd": scalar_val,
                                 }
                             )
                         )
                     else:
-                        logger.debug(
-                            "CBF: using unsigned reconciled balance=%.2f source=%s "
-                            "(dev/test mode — KMS signing not required)",
-                            verified.balance_usd,
-                            verified.source,
-                        )
                         return {
-                            "current_cash": verified.balance_usd,
+                            "state_scalar": scalar_val,
+                            "current_cash": scalar_val,
                             "source": "reconciled_unsigned",
                         }
         except GroundTruthUnavailableError:
-            # Re-raise security exceptions — do not fall back
             raise
         except Exception as recon_exc:
-            # SECURITY FIX: Fail-closed in strict mode when reconciliation fails
             if _CBF_STRICT_MODE:
-                logger.error(
-                    "[SECURITY] CBF reconciled balance read failed — rejecting transaction "
-                    "(strict mode enabled). error_type=%s error=%s",
-                    type(recon_exc).__name__,
-                    str(recon_exc)[:100],
-                )
                 raise GroundTruthUnavailableError(
                     f"Cannot verify balance — transaction rejected. "
                     f"Reconciliation read failed: {type(recon_exc).__name__}",
                     cause=recon_exc,
                 ) from recon_exc
-            # Non-strict mode: fall through to self-reported balance (legacy behavior)
-            logger.warning(
-                "CBF: reconciled balance read failed (%s) — falling back to "
-                "self-reported balance (strict mode disabled).",
-                recon_exc,
-            )
-            # DIAG-FAILOPEN: Track fail-open events for CBF ground truth
-            logger.warning(
-                "[DIAG-FAILOPEN] cbf_reconciliation_failed decision=continue_with_self_reported "
-                "error_type=%s error=%s poam_ref=POAM-023 security_impact=HIGH strict_mode=false",
-                type(recon_exc).__name__,
-                str(recon_exc)[:100],
-            )
 
-        # ── Fallback: self-reported balance (POAM-023 open) ──────────────────
-        # DIAG-FAILOPEN: Track whenever CBF falls back to self-reported balance
         logger.warning(
             "[DIAG-FAILOPEN] cbf_using_self_reported_balance decision=allow_with_unverified_ground_truth "
             "redis_key=%s poam_ref=POAM-023 security_impact=HIGH",
@@ -1086,85 +705,57 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     "event": "CBF_USING_SELF_REPORTED_BALANCE",
                     "severity": "CRITICAL",
                     "redis_key": self.redis_key,
-                    "audit_note": (
-                        "No verified external balance available. "
-                        "CBF is evaluating against self-reported safety:current_cash. "
-                        "POAM-023 open: CBF ground truth is unverified. "
-                        "Set RECONCILIATION_PROVIDER=plaid or =anchorage to close."
-                    ),
                 }
             )
         )
-        # CRIT-4 fix: use public get_raw_client() instead of private _get().
         client = await _get_raw_redis(redis_client)
         pipe_ctx = client.pipeline(transaction=False)
         if inspect.isawaitable(pipe_ctx):
             pipe_ctx = await pipe_ctx
         async with pipe_ctx as pipe:
             pipe.get(self.redis_key)
-            pipe.get(_REDIS_KEY_FENCE_EPOCH)  # R-05: read epoch atomically
+            pipe.get(_REDIS_KEY_FENCE_EPOCH)
             results = await pipe.execute()
             if inspect.isawaitable(results):
                 results = await results
-        raw_cash = results[0]
+        raw_state = results[0]
         raw_epoch = results[1]
-        current_cash = float(raw_cash) if raw_cash is not None else 100000.0
+        current_state = (
+            float(raw_state)
+            if raw_state is not None
+            else self._initial_state_scalar()
+        )
         current_epoch = int(raw_epoch) if raw_epoch is not None else 0
 
-        # ── §2.6 R-05 Fence epoch validation ──────────────────────────────────
-        # When CAGE_REDIS_SYNCHRONOUS_REPLICATION is enabled, validate that
-        # the fence epoch hasn't regressed (indicating failover to stale replica).
         if _FENCE_EPOCH_ENABLED:
             epoch_valid, epoch_reason = await self._check_fence_epoch(current_epoch)
             if not epoch_valid:
-                # Epoch regression detected — fail-closed, return None balance
-                # to force caller to reject the action.
                 return {
+                    "state_scalar": None,
                     "current_cash": None,
                     "source": "epoch_regression",
                     "fence_epoch": current_epoch,
                     "epoch_reason": epoch_reason,
                 }
         else:
-            # Epoch tracking without validation (default mode)
-            # Still update the gauge for observability
             self._last_seen_epoch = current_epoch
             if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                 _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
 
         return {
-            "current_cash": current_cash,
+            "state_scalar": current_state,
+            "current_cash": current_state,
             "source": "self_reported",
             "fence_epoch": current_epoch,
         }
 
     async def _resolve_ground_truth_balance(self) -> tuple[float, dict[str, Any]]:
-        """
-        Resolve authoritative cash balance from external reconciliation with KMS verification.
-
-        POAM-023 remediation: This method is called by atomic_verify_and_commit() to ensure
-        the atomic commit path uses KMS-verified ground truth balance, closing the bypass gap
-        where LUA_ATOMIC_CBF previously read safety:current_cash directly without verification.
-
-        Returns:
-            (balance_usd, metadata) where metadata contains:
-                - source: "reconciliation" | "self_reported"
-                - sequence: reconciliation sequence number (if reconciliation source)
-                - fence_epoch: current fence epoch
-                - strict_mode: whether CBF_STRICT_MODE is active
-                - reconciliation_age_ms: staleness (if reconciliation source)
-
-        Raises:
-            GovernanceError: If _CBF_STRICT_MODE=true and reconciliation unavailable
-        """
         state = await self._read_cbf_state_atomic()
 
         if (
             state.get("current_cash") is not None
             and state.get("source") == "reconciled"
         ):
-            # Reconciliation available and verified (KMS sig, replay seq, TTL checked)
-            # Note: sequence might be in state dict if replay defense is enabled
             sequence = state.get("sequence", 0)
             return (
                 float(state["current_cash"]),
@@ -1173,14 +764,13 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     "sequence": sequence,
                     "fence_epoch": state.get("fence_epoch", 0),
                     "strict_mode": _CBF_STRICT_MODE,
-                    "reconciliation_age_ms": 0,  # Age computed in _read_cbf_state_atomic
+                    "reconciliation_age_ms": 0,
                 },
             )
-        elif _CBF_STRICT_MODE and state.get("source") in (
+        if _CBF_STRICT_MODE and state.get("source") in (
             "epoch_regression",
             "self_reported",
         ):
-            # Strict mode: fail closed when reconciliation unavailable
             fallback_reason = (
                 state.get("epoch_reason")
                 if state.get("source") == "epoch_regression"
@@ -1192,103 +782,30 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 f"CBF strict mode: {fallback_reason}",
                 payload={"audit_code": "CBF_STRICT_RECONCILIATION_UNAVAILABLE"},
             )
-        else:
-            # Fallback to self-reported (already logged as CRITICAL by _read_cbf_state_atomic)
-            current_cash = state.get("current_cash")
-            balance = float(current_cash) if current_cash is not None else 100000.0
-            fence_epoch = int(state.get("fence_epoch", 0))
 
-            return (
-                balance,
-                {
-                    "source": "self_reported",
-                    "fence_epoch": fence_epoch,
-                    "strict_mode": False,
-                    "reconciliation_age_ms": None,
-                },
-            )
+        current_cash = state.get("current_cash")
+        balance = (
+            float(current_cash)
+            if current_cash is not None
+            else self._initial_state_scalar()
+        )
+        fence_epoch = int(state.get("fence_epoch", 0))
 
-    def get_h(self, cash_balance: float) -> float:
-        """Safety function h(x).  Safe when h(x) >= 0."""
-        return cash_balance - self.min_cash_balance
+        return (
+            balance,
+            {
+                "source": "self_reported",
+                "fence_epoch": fence_epoch,
+                "strict_mode": False,
+                "reconciliation_age_ms": None,
+            },
+        )
 
     @staticmethod
     def _default_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
-        """Domain-agnostic default cost resolver.
-
-        Returns 0.0 for all actions, making the CBF kernel operate in a
-        domain-agnostic mode where no actions carry costs. Domain plugins
-        provide their own cost resolvers at registration time.
-
-        Args:
-            action_name: Name of the action being evaluated (unused in default).
-            payload: Action parameters dict (unused in default).
-
-        Returns:
-            0.0 for all actions (no cost).
-        """
         return 0.0
 
-    @staticmethod
-    def _legacy_finance_cost_resolver(
-        action_name: str, payload: dict[str, Any]
-    ) -> float:
-        """Legacy finance cost resolver for backward compatibility.
-
-        This resolver extracts costs from payloads with financial semantics
-        (amount/amount_minor fields). It exists only for backward compatibility
-        with tests and the global singleton before explicit plugin injection.
-
-        Production code should use explicit cost_resolver injection via the
-        finance plugin's register() method.
-
-        Args:
-            action_name: Name of the action being evaluated (unused).
-            payload: Action parameters dict.
-
-        Returns:
-            The cash cost extracted from the payload, or 0.0 if no financial fields.
-
-        Raises:
-            ValueError: If financial fields contain non-finite or negative values.
-        """
-        # Extract cost from financial payload fields if present
-        if "amount_minor" in payload and payload["amount_minor"] is not None:
-            cost = float(payload["amount_minor"]) / 100.0
-        elif "amount" in payload:
-            cost = float(payload.get("amount", 0.0))
-        else:
-            return 0.0
-
-        if not math.isfinite(cost) or cost < 0:
-            raise ValueError(
-                f"invalid amount {cost!r} — must be a finite, non-negative number"
-            )
-        return cost
-
     def _resolve_action_cost(self, action_name: str, payload: dict[str, Any]) -> float:
-        """Return the validated cost for action_name using the configured cost resolver.
-
-        Delegates to the domain-specific cost_resolver (injected at init), then
-        validates the result. A non-finite (NaN/inf) or negative cost is rejected
-        here so it can never reach the barrier certificate or the Redis cash-state
-        write. A negative cost makes ``next_cash = current - cost`` larger than the
-        current balance, so the ``h_next >= (1-gamma)*h_t`` envelope check passes
-        and the atomic commit inflates ``safety:current_cash``; a NaN cost makes
-        every comparison false, so the barrier also passes and the balance is
-        poisoned. This mirrors the finiteness/positive guard that
-        ``FiscalLimitGuard.reserve`` already applies to reservations.
-
-        Args:
-            action_name: Name of the action being evaluated.
-            payload: Action parameters dict.
-
-        Returns:
-            The validated cost as a float.
-
-        Raises:
-            ValueError: If the cost resolver returns a non-finite or negative value.
-        """
         cost = self._cost_resolver(action_name, payload)
 
         if not math.isfinite(cost) or cost < 0:
@@ -1297,22 +814,10 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             )
         return cost
 
-    # ------------------------------------------------------------------
-    # verify_action
-    # ------------------------------------------------------------------
-
     async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
-        """Verify an action is safe relative to shared Redis cash state.
-
-        Uses ``_read_cbf_state_atomic()`` to snapshot all state keys in a single
-        pipeline round-trip, preventing the race condition where interleaved writes
-        between individual GETs cause the barrier certificate to be evaluated
-        against an inconsistent state snapshot (H-07).
-        """
         state = await self._read_cbf_state_atomic()
         balance_source: str = str(state.get("source", "unknown"))
 
-        # R-05: Handle epoch regression (fail-closed)
         if state.get("current_cash") is None or balance_source == "epoch_regression":
             epoch_reason = state.get("epoch_reason", "unknown")
             fence_epoch = state.get("fence_epoch", 0)
@@ -1325,44 +830,36 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 f"R-05 Fence epoch regression detected (epoch={fence_epoch}). "
                 f"Reason: {epoch_reason}. Fail-closed."
             )
-            logger.warning("⛔ CBF check rejected: epoch regression — %s", epoch_reason)
+            logger.warning("CBF check rejected: epoch regression — %s", epoch_reason)
             return result
 
-        current_cash = float(state["current_cash"])
+        current_state = float(state["current_cash"])
         fence_epoch = int(state.get("fence_epoch", 0))
 
         if self.tracer:
             with self.tracer.start_as_current_span("safety.cbf_check") as span:
-                # R-05: Add fence epoch to span attributes
                 span.set_attribute("cage.cbf.fence_epoch", fence_epoch)
                 return await self._do_verify_action(
-                    action_name, payload, current_cash, balance_source, span
+                    action_name, payload, current_state, balance_source, span
                 )
-        else:
-            return await self._do_verify_action(
-                action_name, payload, current_cash, balance_source, None
-            )
+        return await self._do_verify_action(
+            action_name, payload, current_state, balance_source, None
+        )
 
     async def _do_verify_action(
         self,
         action_name: str,
         payload: dict[str, Any],
-        current_cash: float,
+        current_state: float,
         balance_source: str,
         span: Any,
     ) -> str:
         if span:
-            span.set_attribute("safety.cash.current", current_cash)
-            # POAM-023: stamp the balance provenance so every CBF decision is
-            # auditable — "reconciled" means KMS-signed external ground truth;
-            # "self_reported" means the execution system wrote its own balance.
+            span.set_attribute("safety.cash.current", current_state)
             span.set_attribute("safety.balance.source", balance_source)
             span.set_attribute(
                 "safety.balance.reconciled", balance_source == "reconciled"
             )
-            # CTRL_MRM_004: CBF is a traditional, deterministic quantitative formula
-            # (h(x) = cash_balance - min_cash_balance with static decay g).
-            # It falls under SR 26-2 Model Risk Management scope, not agentic ISO 42001.
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
             )
@@ -1383,24 +880,16 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
                 f"{_mrm_meta['primary_framework']} Violation: {exc}"
             )
-            logger.warning("⛔ CBF check rejected trade: %s", exc)
+            logger.warning("CBF check rejected action: %s", exc)
             if span:
                 span.set_attribute("safety.result", result)
             return result
 
-        # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
-        effective_balance = current_cash - self._local_debits
-        next_cash = effective_balance - cost
-        h_t = self.get_h(effective_balance)
-        h_next = self.get_h(next_cash)
+        effective_state = current_state - self._local_debits
+        next_state = effective_state - cost
+        h_t = self.evaluate_barrier(effective_state)
+        h_next = self.evaluate_barrier(next_state)
         required_h_next = (1.0 - self.gamma) * h_t
-
-        logger.info(
-            "🛡️ CBF Check | Cash: %.2f (effective=%.2f) → %.2f",
-            current_cash,
-            effective_balance,
-            next_cash,
-        )
 
         result = "SAFE"
         if cost > 0 and (h_next < required_h_next or h_next < 0):
@@ -1417,61 +906,19 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 span.set_attribute("safety.bankruptcy", True)
                 span.set_attribute("safety.bankruptcy_deficit", abs(h_next))
 
-        # H53: accumulate local debit when any action with non-zero cost is approved,
-        # so subsequent intra-TTL calls see the already-committed debit against the snapshot.
-        # The cost resolver (domain-specific) determines which actions carry costs.
         if result == "SAFE" and cost > 0:
             self._local_debits += cost
 
-        # Drawdown check — read limit from threshold singleton
-        if "drawdown_pct" in payload:
-            limit = THRESHOLDS.drawdown.limit
-            raw_drawdown = float(payload.get("drawdown_pct", 0.0))
-            current_drawdown = raw_drawdown / 100.0
-            if current_drawdown > limit:
-                msg = f"UNSAFE: Drawdown Violation. {current_drawdown:.2%} > Limit {limit:.2%}"
-                logger.warning("⛔ %s", msg)
-                result = msg if result == "SAFE" else f"{result}; {msg}"
-
         if span:
-            span.set_attribute("safety.cash.next", next_cash)
+            span.set_attribute("safety.cash.next", next_state)
             span.set_attribute("safety.barrier.h_next", h_next)
             span.set_attribute("safety.result", result)
 
         return result
 
-    # ------------------------------------------------------------------
-    # _update_state_unsafe — WATCH/MULTI/EXEC atomic transaction (internal)
-    # ------------------------------------------------------------------
-
     async def _update_state_unsafe(
         self, cost: float, governance_signature: str | None = None
     ) -> None:
-        """Atomically deduct *cost* from the Redis cash balance.
-
-        .. warning::
-            **v3.0.0 Breaking Change:** Renamed from ``update_state()`` to
-            ``_update_state_unsafe()`` to signal that this method does NOT
-            re-verify the CBF safety condition before committing.
-
-            External callers MUST use ``atomic_verify_and_commit()`` instead,
-            which collapses the check and commit into a single atomic Redis
-            Lua hop, eliminating the TOCTOU window (MED-5 finding).
-
-            This method is retained for internal use by ``rollback_state()``
-            where re-verification is not applicable.
-
-        Uses WATCH / MULTI / EXEC optimistic locking.  Retries up to
-        ``_MAX_RETRIES`` times if a concurrent writer modified the key.
-
-        Args:
-            cost:                 Amount to deduct from the cash balance.
-            governance_signature: Optional KMS governance signature to persist
-                                  in the ``audit:state_ledger`` RPUSH log.
-
-        Raises:
-            RuntimeError: If all retries are exhausted or Redis is unavailable.
-        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot update CBF state.")
 
@@ -1483,11 +930,14 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 async with pipe_ctx as pipe:
                     await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
-                    current = float(raw) if raw is not None else 100000.0
+                    current = (
+                        float(raw)
+                        if raw is not None
+                        else self._initial_state_scalar()
+                    )
                     new_balance = current - cost
                     pipe.multi()
                     pipe.set(self.redis_key, str(new_balance))
-                    # R-05: Increment fence epoch on every mutating write
                     pipe.incr(_REDIS_KEY_FENCE_EPOCH)
                     if governance_signature:
                         ledger_entry = json.dumps(
@@ -1500,34 +950,17 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                         )
                         pipe.rpush("audit:state_ledger", ledger_entry)
                     results = await pipe.execute()
-                    # R-05: Extract new epoch from pipeline results (index depends on signature)
                     new_epoch = results[1] if results and len(results) > 1 else 0
                     self._last_seen_epoch = new_epoch
                     if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                         _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
 
-                    # Phase 4.3: WAIT for replication if configured
-                    wait_result = await self._sync_to_replicas()
-                    wait_suffix = (
-                        " (WAIT OK)" if _WAIT_REPLICAS > 0 and wait_result else ""
-                    )
-                    if _WAIT_REPLICAS > 0 and not wait_result:
-                        wait_suffix = " (WAIT timeout)"
-
-                    logger.info(
-                        "✅ CBF state updated atomically: %.2f → %.2f (epoch=%d, attempt %d)%s",
-                        current,
-                        new_balance,
-                        new_epoch,
-                        attempt + 1,
-                        wait_suffix,
-                    )
+                    await self._sync_to_replicas()
                     return
             except Exception as exc:
-                # WatchError or transient failure — retry
                 if "WatchError" in type(exc).__name__:
                     logger.warning(
-                        "⚡ CBF WATCH conflict on attempt %d/%d — retrying.",
+                        "CBF WATCH conflict on attempt %d/%d — retrying.",
                         attempt + 1,
                         self._MAX_RETRIES,
                     )
@@ -1538,41 +971,13 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             f"CBF _update_state_unsafe failed after {self._MAX_RETRIES} retries due to concurrent writes."
         )
 
-    # ------------------------------------------------------------------
-    # rollback_state — WATCH/MULTI/EXEC atomic transaction (Phase 4.1)
-    # ------------------------------------------------------------------
-
     def reset_local_debits(self) -> None:
-        """Reset the local intra-window debit accumulator to zero.
-
-        Called by the reconciliation daemon on each successful snapshot refresh
-        cycle so that the next CBF check starts from the fresh external balance
-        rather than accumulating debits across TTL windows indefinitely.
-
-        The daemon should call this immediately after writing a new
-        ``reconciliation:verified_balance`` key so that ``verify_action()``
-        picks up the refreshed snapshot on the next call.
-        """
+        """Reset the local intra-window debit accumulator to zero."""
         self._local_debits = 0.0
 
     async def rollback_state(
         self, magnitude: float, governance_signature: str | None = None
     ) -> None:
-        """Atomically restore *magnitude* to the Redis cash balance.
-
-        Mirrors ``_update_state_unsafe`` but adds rather than deducts.  Call this
-        when a trade was approved by the CBF but failed downstream (e.g.
-        broker API error).
-
-        Args:
-            magnitude:            Amount to restore to the cash balance (formerly
-                                  ``cost`` — renamed for domain-agnostic semantics).
-            governance_signature: Optional KMS governance signature to persist
-                                  in the ``audit:state_ledger`` RPUSH log.
-
-        Raises:
-            RuntimeError: If all retries are exhausted or Redis is unavailable.
-        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot rollback CBF state.")
 
@@ -1584,17 +989,20 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 async with pipe_ctx as pipe:
                     await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
-                    current = float(raw) if raw is not None else 100000.0
+                    current = (
+                        float(raw)
+                        if raw is not None
+                        else self._initial_state_scalar()
+                    )
                     restored = current + magnitude
                     pipe.multi()
                     pipe.set(self.redis_key, str(restored))
-                    # R-05: Increment fence epoch on every mutating write (including rollback)
                     pipe.incr(_REDIS_KEY_FENCE_EPOCH)
                     if governance_signature:
                         ledger_entry = json.dumps(
                             {
                                 "ts": time.time(),
-                                "cost": magnitude,  # audit field name retained for log compat
+                                "cost": magnitude,
                                 "new_balance": restored,
                                 "governance_signature": governance_signature,
                                 "rollback": True,
@@ -1602,33 +1010,17 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                         )
                         pipe.rpush("audit:state_ledger", ledger_entry)
                     results = await pipe.execute()
-                    # R-05: Extract new epoch from pipeline results
                     new_epoch = results[1] if results and len(results) > 1 else 0
                     self._last_seen_epoch = new_epoch
                     if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                         _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
 
-                    # Phase 4.3: WAIT for replication if configured
-                    wait_result = await self._sync_to_replicas()
-                    wait_suffix = (
-                        " (WAIT OK)" if _WAIT_REPLICAS > 0 and wait_result else ""
-                    )
-                    if _WAIT_REPLICAS > 0 and not wait_result:
-                        wait_suffix = " (WAIT timeout)"
-
-                    logger.info(
-                        "🔄 CBF state rolled back atomically: %.2f → %.2f (epoch=%d, attempt %d)%s",
-                        current,
-                        restored,
-                        new_epoch,
-                        attempt + 1,
-                        wait_suffix,
-                    )
+                    await self._sync_to_replicas()
                     return
             except Exception as exc:
                 if "WatchError" in type(exc).__name__:
                     logger.warning(
-                        "⚡ CBF WATCH conflict on rollback attempt %d/%d — retrying.",
+                        "CBF WATCH conflict on rollback attempt %d/%d — retrying.",
                         attempt + 1,
                         self._MAX_RETRIES,
                     )
@@ -1639,44 +1031,12 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             f"CBF rollback_state failed after {self._MAX_RETRIES} retries due to concurrent writes."
         )
 
-    # ------------------------------------------------------------------
-    # atomic_verify_and_commit — Lua-atomic CBF check+commit (CAGE-SEC-002)
-    # ------------------------------------------------------------------
-
     async def atomic_verify_and_commit(
         self,
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
     ) -> tuple[bool, str, float]:
-        """Collapse CBF check and state commit into one atomic Redis Lua hop.
-
-        Eliminates the TOCTOU window between ``verify_action()`` (read-only,
-        governance check phase) and ``update_state()`` (write, MCP tool handler
-        phase) by executing both as a single Lua script inside Redis.
-
-        The Lua script replicates the exact CBF formula:
-            h(S(t+1)) >= (1 - g) * h(S(t))   AND   h(S(t+1)) >= 0
-
-        KMS signature verification (proof of compliance) must occur in Python
-        before calling this method — Redis Lua has no cryptographic FFI.
-
-        Args:
-            action_name:          Name of the action being evaluated.
-            payload:              Action parameters dict; the cost resolver
-                                  determines how to extract cost from payload.
-            governance_signature: Optional KMS governance signature string.
-                                  Persisted to ``audit:state_ledger`` on commit.
-
-        Returns:
-            ``(True, "COMMITTED", magnitude)`` on success. ``magnitude`` is the
-            exact cost the Lua hop deducted (from ``_resolve_action_cost``);
-            callers pass it to ``rollback_state()`` to undo this commit.
-            ``(False, reason_string, 0.0)`` when nothing was committed.
-
-        Raises:
-            RuntimeError: If Redis is unavailable.
-        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot run atomic CBF.")
 
@@ -1684,25 +1044,21 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             cost = self._resolve_action_cost(action_name, payload)
         except (TypeError, ValueError) as exc:
             reason = f"UNSAFE: {exc}"
-            logger.warning("⛔ CBF atomic check rejected trade: %s", exc)
+            logger.warning("CBF atomic check rejected action: %s", exc)
             return (False, reason, 0.0)
 
-        # POAM-023: Resolve ground truth balance with KMS verification before commit
         try:
             (
                 ground_truth_balance,
                 balance_metadata,
             ) = await self._resolve_ground_truth_balance()
         except Exception as exc:
-            # GroundTruthUnavailableError or GovernanceError in strict mode
             reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
-            logger.error("⛔ CBF atomic check rejected: %s", reason)
+            logger.error("CBF atomic check rejected: %s", reason)
             return (False, reason, 0.0)
 
-        # Handle local debits to prevent double-spend within reconciliation window
         local_debit_total = 0.0
         if balance_metadata["source"] == "reconciliation" and redis_client is not None:
-            # Accumulate debits since last reconciliation
             client = await _get_raw_redis(redis_client)
             if hasattr(client, "lrange"):
                 local_debits_res = client.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
@@ -1726,14 +1082,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         effective_balance = ground_truth_balance - local_debit_total
 
-        # Fence-epoch validation (R-05) - POAM-023: now enforced on commit path
-        # C4 Security Fix: Two-phase validation for complete protection:
-        # 1. Python-side regression detection (failover to stale replica)
-        # 2. Lua-side CAS validation (TOCTOU race prevention)
         current_fence_epoch = balance_metadata["fence_epoch"]
         if self._last_verified_fence_epoch is not None:
             if current_fence_epoch < self._last_verified_fence_epoch:
-                # Fence regression detected (failover scenario)
                 logger.critical(
                     json.dumps(
                         {
@@ -1741,10 +1092,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             "severity": "CRITICAL",
                             "current_epoch": current_fence_epoch,
                             "last_verified_epoch": self._last_verified_fence_epoch,
-                            "audit_note": (
-                                "R-05: Fence epoch regression detected on commit path. "
-                                "Rejecting transaction to prevent double-spend. Fail-closed."
-                            ),
                         }
                     )
                 )
@@ -1754,34 +1101,18 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     0.0,
                 )
 
-        # PR C (Stage 2): Compile barrier parameters from InvariantModel
-        # R-05: Include fence epoch key for atomic increment in Lua script
         keys = [self._invariant.state_key, "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
-
-        # Resolve threshold from THRESHOLDS tree at runtime
-        threshold_parts = self._invariant.threshold_key.split(".")
-        threshold_value = THRESHOLDS
-        for part in threshold_parts:
-            threshold_value = getattr(threshold_value, part)
-
-        resolved_threshold = (
-            self.min_cash_balance
-            if hasattr(self, "min_cash_balance") and self.min_cash_balance is not None
-            else threshold_value
-        )
+        resolved_threshold = self._resolve_threshold()
 
         argv = [
-            str(cost),  # ARGV[1]: magnitude (domain-neutral; was "cost")
-            str(
-                resolved_threshold
-            ),  # ARGV[2]: resolved threshold from InvariantModel or override
-            str(self.gamma),  # ARGV[3]: gamma from InvariantModel or override
-            governance_signature,  # ARGV[4]: governance signature
-            str(effective_balance),  # ARGV[5]: ground truth balance (POAM-023)
-            str(current_fence_epoch),  # ARGV[6]: expected fence epoch for CAS (C4)
+            str(cost),
+            str(resolved_threshold),
+            str(self.gamma),
+            governance_signature,
+            str(effective_balance),
+            str(current_fence_epoch),
         ]
 
-        # CRIT-4 fix: use public get_raw_client() instead of private _get().
         client = await _get_raw_redis(redis_client)
 
         async def _run_evalsha() -> list:
@@ -1809,14 +1140,12 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                     "governance.legacy_citation", _mrm_meta["legacy_citation"]
                 )
                 span.set_attribute("governance.scope", _mrm_meta["scope"])
-                # Phase 4.3: Add WAIT replicas to span attributes
                 span.set_attribute("cage.cbf.wait_replicas", _WAIT_REPLICAS)
                 result_list = await self._evalsha_with_noscript_retry(
                     client, keys, argv, _run_evalsha, _load_and_run
                 )
                 committed, message = self._parse_lua_result(result_list, span)
 
-                # POAM-023: Record local debit after successful commit (reconciliation source only)
                 if (
                     committed
                     and balance_metadata["source"] == "reconciliation"
@@ -1841,7 +1170,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             if inspect.isawaitable(ltrim_res):
                                 await ltrim_res
 
-                # Phase 4.3: WAIT for replication if configured and committed
                 if committed and _WAIT_REPLICAS > 0:
                     wait_result = await self._sync_to_replicas()
                     span.set_attribute("cage.cbf.wait_success", wait_result)
@@ -1849,14 +1177,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                         "cage.cbf.strict_replication", _STRICT_REPLICATION
                     )
                     if not wait_result:
-                        # P0 hardening: Fail-closed for financial actions in production
                         if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
-                            # Rollback local commit to maintain cross-replica invariance
-                            logger.error(
-                                "⛔ [STRICT_REPLICATION] WAIT timed out — rolling back commit "
-                                "to maintain cross-replica invariance: cost=%.2f",
-                                cost,
-                            )
                             await self.rollback_state(cost)
                             span.set_attribute(
                                 "cage.cbf.strict_replication_rollback", True
@@ -1868,71 +1189,50 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                 "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
                                 0.0,
                             )
-                        else:
-                            # Legacy behavior: Log but don't fail
-                            logger.warning(
-                                "Phase 4.3: atomic_verify_and_commit completed but WAIT timed out "
-                                "(strict_replication=False, not rolling back)"
-                            )
 
                 return (committed, message, cost if committed else 0.0)
-        else:
-            result_list = await self._evalsha_with_noscript_retry(
-                client, keys, argv, _run_evalsha, _load_and_run
-            )
-            committed, message = self._parse_lua_result(result_list, None)
 
-            # POAM-023: Record local debit after successful commit (reconciliation source only)
-            if (
-                committed
-                and balance_metadata["source"] == "reconciliation"
-                and redis_client is not None
-            ):
-                if hasattr(client, "rpush"):
-                    debit_entry = json.dumps(
-                        {
-                            "amount": cost,
-                            "reconciliation_sequence": balance_metadata.get("sequence"),
-                            "timestamp": time.time(),
-                            "action_signature": governance_signature,
-                        }
+        result_list = await self._evalsha_with_noscript_retry(
+            client, keys, argv, _run_evalsha, _load_and_run
+        )
+        committed, message = self._parse_lua_result(result_list, None)
+
+        if (
+            committed
+            and balance_metadata["source"] == "reconciliation"
+            and redis_client is not None
+        ):
+            if hasattr(client, "rpush"):
+                debit_entry = json.dumps(
+                    {
+                        "amount": cost,
+                        "reconciliation_sequence": balance_metadata.get("sequence"),
+                        "timestamp": time.time(),
+                        "action_signature": governance_signature,
+                    }
+                )
+                rpush_res = client.rpush(_REDIS_KEY_LOCAL_DEBITS, debit_entry)
+                if inspect.isawaitable(rpush_res):
+                    await rpush_res
+                if hasattr(client, "ltrim"):
+                    ltrim_res = client.ltrim(_REDIS_KEY_LOCAL_DEBITS, -1000, -1)
+                    if inspect.isawaitable(ltrim_res):
+                        await ltrim_res
+
+        if committed and _WAIT_REPLICAS > 0:
+            wait_result = await self._sync_to_replicas()
+            if not wait_result:
+                if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
+                    await self.rollback_state(cost)
+                    if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
+                        _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
+                    return (
+                        False,
+                        "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                        0.0,
                     )
-                    rpush_res = client.rpush(_REDIS_KEY_LOCAL_DEBITS, debit_entry)
-                    if inspect.isawaitable(rpush_res):
-                        await rpush_res
-                    if hasattr(client, "ltrim"):
-                        ltrim_res = client.ltrim(_REDIS_KEY_LOCAL_DEBITS, -1000, -1)
-                        if inspect.isawaitable(ltrim_res):
-                            await ltrim_res
 
-            # Phase 4.3: WAIT for replication if configured and committed
-            if committed and _WAIT_REPLICAS > 0:
-                wait_result = await self._sync_to_replicas()
-                if not wait_result:
-                    # P0 hardening: Fail-closed for financial actions in production
-                    if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
-                        # Rollback local commit to maintain cross-replica invariance
-                        logger.error(
-                            "⛔ [STRICT_REPLICATION] WAIT timed out — rolling back commit "
-                            "to maintain cross-replica invariance: cost=%.2f",
-                            cost,
-                        )
-                        await self.rollback_state(cost)
-                        if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
-                            _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
-                        return (
-                            False,
-                            "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
-                            0.0,
-                        )
-                    else:
-                        # Legacy behavior: Log but don't fail
-                        logger.warning(
-                            "Phase 4.3: atomic_verify_and_commit completed but WAIT timed out "
-                            "(strict_replication=False, not rolling back)"
-                        )
-
-            return (committed, message, cost if committed else 0.0)
+        return (committed, message, cost if committed else 0.0)
 
     async def _evalsha_with_noscript_retry(
         self,
@@ -1942,7 +1242,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         run_evalsha_fn: Any,
         load_and_run_fn: Any,
     ) -> list:
-        """Load the Lua SHA on first call; retry once on NOSCRIPT error."""
         if self._lua_sha is None:
             self._lua_sha = await client.script_load(self.LUA_ATOMIC_CBF)
 
@@ -1950,7 +1249,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             return await run_evalsha_fn()
         except Exception as exc:
             if "NOSCRIPT" in str(exc):
-                logger.warning("⚡ Lua SHA evicted from Redis — reloading script.")
+                logger.warning("Lua SHA evicted from Redis — reloading script.")
                 return await load_and_run_fn()
             raise
 
@@ -1959,7 +1258,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         result_list: list,
         span: Any,
     ) -> tuple[bool, str]:
-        """Parse the Lua script return array into a Python (bool, str) tuple."""
         status_code = int(result_list[0])
         message = (
             result_list[1].decode()
@@ -1971,7 +1269,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             if isinstance(result_list[2], bytes)
             else str(result_list[2])
         )
-        # R-05: Extract epoch from Lua result (4th element)
         new_epoch = 0
         if len(result_list) > 3:
             epoch_raw = result_list[3]
@@ -1981,32 +1278,14 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         if span:
             span.set_attribute("safety.result", "COMMITTED" if committed else "UNSAFE")
             span.set_attribute("safety.cash.next", float(new_balance_str))
-            # R-05: Add fence epoch to span attributes
             span.set_attribute("cage.cbf.fence_epoch", new_epoch)
 
-        # R-05: Update epoch tracking and telemetry
         if committed and new_epoch > 0:
             self._last_seen_epoch = new_epoch
-            # C4: Update last verified fence epoch after successful atomic commit
             self._last_verified_fence_epoch = new_epoch
             if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                 _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
 
         if committed:
-            logger.info(
-                "✅ CBF atomic check+commit: COMMITTED — new_balance=%s epoch=%d",
-                new_balance_str,
-                new_epoch,
-            )
             return (True, "COMMITTED")
-        else:
-            logger.info(
-                "⛔ CBF atomic check+commit: UNSAFE — %s (epoch=%d)", message, new_epoch
-            )
-            return (False, message)
-
-
-# W1 (Post-v3): Module-level singleton removed.
-# Domain plugins construct their own CBF instances and contribute their
-# invariants via PluginContribution.invariants (validated at assembly).
-# The kernel does not instantiate CBF; it only provides the engine class.
+        return (False, message)
