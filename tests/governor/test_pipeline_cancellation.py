@@ -28,7 +28,10 @@ import pytest
 
 from src.gateway.governance.contracts import CommitReceipt, Violation
 from src.gateway.governance.governor.pipeline import Profile, StageContext
-from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage, order_stages
+from src.gateway.governance.governor.stages.domain_tiers import (
+    DomainTierStage,
+    order_stages,
+)
 from tests.governor.scope_helpers import rollback_pairs, run_scoped
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

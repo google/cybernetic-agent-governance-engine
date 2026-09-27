@@ -36,7 +36,10 @@ from src.gateway.governance.governor.pipeline import (
     run_pipeline,
 )
 from src.gateway.governance.governor.reservation import ReservationScope
-from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage, order_stages
+from src.gateway.governance.governor.stages.domain_tiers import (
+    DomainTierStage,
+    order_stages,
+)
 from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

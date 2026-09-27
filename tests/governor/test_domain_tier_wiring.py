@@ -31,9 +31,17 @@ from src.cage_finance.plugin import FinanceCagePlugin
 from src.cage_healthcare.plugin import HealthcareCagePlugin
 from src.cage_physical_ai.plugin import PhysicalAICagePlugin
 from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTier
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.env_posture import DeploymentPosture
-from src.gateway.governance.governor.assembly import DecisionFlags, GovernorComponents, assemble_governor
+from src.gateway.governance.governor.assembly import (
+    DecisionFlags,
+    GovernorComponents,
+    assemble_governor,
+)
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.reservation import ReservationScope
