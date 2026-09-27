@@ -131,13 +131,13 @@ class TestPhysicalAIPlugin:
         """Plugin registers invariants and tiers with governor."""
         plugin = PhysicalAICagePlugin()
         mock_governor = MagicMock()
-        mock_governor._domain_tiers = None
         mock_server = MagicMock()
 
         plugin.register(mock_governor, tool_server=mock_server)
 
         # Invariants registered
         assert mock_governor.register_invariant.call_count == 3
-        # Tiers assigned
-        assert mock_governor._domain_tiers is not None
-        assert len(mock_governor._domain_tiers) == 2
+        # Tiers installed through the stage-rebuilding path
+        mock_governor.add_domain_tiers.assert_called_once()
+        (tiers,) = mock_governor.add_domain_tiers.call_args.args
+        assert len(tiers) == 2

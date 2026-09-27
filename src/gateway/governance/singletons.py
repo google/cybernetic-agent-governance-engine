@@ -17,7 +17,6 @@ from typing import Any
 
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.classification_engine import ClassificationEngine
-from src.gateway.governance.contracts import GovernanceTierPlugin
 from src.gateway.governance.generated_stpa_validator import (
     GeneratedSTPAValidator as STPAValidator,
 )
@@ -78,7 +77,6 @@ def install_domain_components(
     safety_filter_impl: Any = None,
     consensus_engine_impl: Any = None,
     resource_guard: Any = None,
-    domain_tiers: tuple[GovernanceTierPlugin, ...] | None = None,
     narrowers: list[Any] | None = None,
 ) -> None:
     """Called by CagePlugin.register() to supply domain implementations.
@@ -87,11 +85,14 @@ def install_domain_components(
     already-installed component raises, because two domains contending for
     one component slot is a configuration error, not a merge.
 
+    Domain tiers are NOT installed here: plugins call
+    ``governor.add_domain_tiers(tiers)`` on the governor they are given, which
+    also rebuilds the pipeline stages so the tiers actually run.
+
     Args:
         safety_filter_impl: SafetyFilter implementation (e.g. ControlBarrierFunction)
         consensus_engine_impl: ConsensusProvider implementation (e.g. ConsensusGate)
         resource_guard: ResourceGuard implementation (e.g. FiscalLimitGuard)
-        domain_tiers: Domain governance tiers for construction-time registration
         narrowers: List of Narrower implementations for parameter narrowing
 
     Raises:
@@ -118,24 +119,6 @@ def install_domain_components(
         # Note: resource_guard is not currently a SymbolicGovernor dependency,
         # but plugins may register one for future use
         logger.info(f"✅ Registered resource_guard: {type(resource_guard).__name__}")
-
-    # Domain tiers installation (Task 2.1 / ARCH-2)
-    if domain_tiers is not None:
-        if symbolic_governor._domain_tiers:
-            raise RuntimeError("domain_tiers already installed by another plugin")
-        _seen_names: set[str] = set()
-        for tier in domain_tiers:
-            if tier.tier_name in _seen_names:
-                raise ValueError(
-                    f"duplicate tier registration at construction: {tier.tier_name}"
-                )
-            _seen_names.add(tier.tier_name)
-        symbolic_governor._domain_tiers = tuple(
-            sorted(domain_tiers, key=lambda t: (t.phase, t.order, t.tier_name))
-        )
-        logger.info(
-            f"✅ Installed {len(domain_tiers)} domain tiers onto symbolic_governor"
-        )
 
     # Narrower registration (AGENTS.md compliance refactoring)
     if narrowers is not None:

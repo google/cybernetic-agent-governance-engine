@@ -45,10 +45,7 @@ from src.gateway.governance.ftra.bounding_contract import (
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-from src.gateway.governance.singletons import (
-    install_domain_components,
-    symbolic_governor,
-)
+from src.gateway.governance.singletons import install_domain_components
 from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
@@ -108,17 +105,16 @@ class FinanceCagePlugin(CagePlugin):
             bounding_registry=bounding_registry,
         )
 
-        # Install domain components and tiers into kernel singletons (PR B, T-B2)
+        # Install domain components into kernel singletons (PR B, T-B2)
         install_domain_components(
             safety_filter_impl=cbf,
             consensus_engine_impl=consensus_gate,
             resource_guard=fiscal_guard,
-            domain_tiers=tiers,
         )
 
-        # For non-singleton governors passed directly to register (e.g. in unit tests)
-        if governor is not symbolic_governor and not governor._domain_tiers:
-            governor._domain_tiers = tiers
+        # Tiers go onto the governor we were given; add_domain_tiers() also
+        # rebuilds its pipeline stages so the tiers actually run.
+        governor.add_domain_tiers(tiers)
 
         # Register tools
         if tool_server:
