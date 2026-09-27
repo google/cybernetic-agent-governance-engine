@@ -55,9 +55,7 @@ class HealthcareCagePlugin(CagePlugin):
         governor.register_invariant(barrier)
 
         # Task 2.1 (ARCH-2): Create domain tiers via factory for immutable registration
-        tiers = create_healthcare_tiers()
-        if not governor._domain_tiers:
-            governor._domain_tiers = tiers
+        governor.add_domain_tiers(create_healthcare_tiers())
 
         # Register rail provider (contributes CheckContraindicationAction)
         from src.integrations.nemo.action_registry import register_rail_provider

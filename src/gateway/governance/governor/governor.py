@@ -80,21 +80,34 @@ class SymbolicGovernor:
         if classification_engine is None:
             raise TypeError("SymbolicGovernor requires a classification_engine")
         self._classifier = classification_engine
-        
-        self.stages = [
-            FtraStage(),
-            StpaStage(stpa_validator),
-            OpaStage(opa_client),
-            ConfidenceStage(),
-            *order_stages(domain_tiers)
-        ]
-        
-        self.domain_tiers = list(domain_tiers)
-        self._domain_tiers = self.domain_tiers
+        self._kernel_stages = (FtraStage(), StpaStage(stpa_validator), OpaStage(opa_client), ConfidenceStage())
+        self._domain_tiers: tuple[GovernanceTierPlugin, ...] = ()
+        self.stages = list(self._kernel_stages)
+        if domain_tiers:
+            self.add_domain_tiers(domain_tiers)
         self.safety_filter = safety_filter
         self.opa_client = opa_client
         self.consensus_engine = consensus_engine
         self._invariants: list[InvariantModel] = []
+
+    @property
+    def domain_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+        return self._domain_tiers
+
+    def add_domain_tiers(self, tiers: Sequence[GovernanceTierPlugin]) -> None:
+        """Add a domain's tiers and rebuild the pipeline stages from them.
+
+        The ONLY supported way to install tiers after construction: the tier
+        tuple and ``self.stages`` are updated together, so an installed tier
+        always runs. Tiers from several domains accumulate; a duplicate
+        ``tier_name`` (including one already installed) raises ``ValueError``.
+        """
+        if not tiers:
+            raise ValueError("add_domain_tiers() requires at least one tier")
+        combined = (*self._domain_tiers, *tiers)
+        domain_stages = order_stages(combined)  # validates duplicates, sorts
+        self._domain_tiers = tuple(sorted(combined, key=lambda t: (t.phase, t.order, t.tier_name)))
+        self.stages = [*self._kernel_stages, *domain_stages]
 
     def registered_tier_names(self) -> list[str]:
         return [t.tier_name for t in sorted(self._domain_tiers, key=lambda x: (x.phase, x.order, x.tier_name))]

@@ -72,6 +72,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-016 | RA-5 / SI-2 | `torch` dev-only dependency carries PYSEC-2026-139; no upstream fix available; dev-only scope, not in production images | Low | 2026-12-31 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
+| POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -270,3 +271,19 @@ The CAGE Layered Refactoring (PRs 1-4) restructured governance boundaries, inval
 1. Re-run Lula validation for all affected controls in the GKE staging environment.
 2. Verify formal proof assertions still align with the loaded plugin sequence.
 3. Attach updated `lula-validation` execution logs proving the newly decoupled pipeline preserves all gating criteria.
+
+### POAM-2026-076: Physical-AI Safety Barriers Declared but Not Enforced
+
+**Control:** NIST SI-10, ISO 42001 A.6.2.6
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-09-26
+**Target Closure:** 2026-12-31
+
+**Description:**
+`src/cage_physical_ai/invariants.py` declares `SpatialSeparationBarrier`, `KinematicVelocityBarrier` and `TorqueSaturationBarrier`, but no cost resolver maps a physical action to its effect on those state variables, and `ControlBarrierFunction` accepts a single invariant. `create_physical_ai_tiers()` therefore builds `KinematicBarrierTier(cbf=None)`. That tier now fails closed: `evaluate()` and `commit()` return a HARD `KINEMATIC_BARRIER_UNCONFIGURED` violation, so every action in `PHYSICAL_AI_GOVERNED_ACTIONS` is denied. Before this change the tier returned no violations and allowed the action.
+
+**Remediation Plan:**
+1. Make the CBF engine invariant-parametric (governor refactor plan §4b.1).
+2. Define domain cost resolvers (action → Δseparation, Δvelocity, Δtorque) from a cell-specific ISO/TS 15066 risk assessment.
+3. Build `KinematicBarrierTier` with a CBF over all three barriers and add tests observing each barrier refuse.

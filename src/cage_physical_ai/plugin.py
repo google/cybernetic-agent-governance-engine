@@ -60,9 +60,7 @@ class PhysicalAICagePlugin(CagePlugin):
         governor.register_invariant(KinematicVelocityBarrier())
         governor.register_invariant(TorqueSaturationBarrier())
 
-        tiers = create_physical_ai_tiers()
-        if not governor._domain_tiers:
-            governor._domain_tiers = tiers
+        governor.add_domain_tiers(create_physical_ai_tiers())
 
         overlay_dir = Path(__file__).parent / "config" / "compliance"
         if overlay_dir.exists():
