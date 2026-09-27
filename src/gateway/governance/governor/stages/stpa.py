@@ -20,7 +20,7 @@ from opentelemetry import trace
 
 from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import Stage, StageContext, Profile
-from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator as STPAValidator
+from src.gateway.governance.stpa_validator import STPAValidator
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

@@ -63,6 +63,7 @@ class FinanceCagePlugin(CagePlugin):
     def contribute(self) -> PluginContribution:
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
+        from src.cage_finance.stpa import SAGA_COMPENSATORS, UCA_RULES
 
         cash_barrier = CashBarrier()
         cash_provider = SimulatedCashLedgerProvider(invariant_id=cash_barrier.invariant_id)
@@ -97,6 +98,8 @@ class FinanceCagePlugin(CagePlugin):
             domain=self.name,
             tiers=tiers,
             invariants=(cash_barrier,),
+            uca_rules=UCA_RULES,
+            saga_compensators=SAGA_COMPENSATORS,
             ground_truth_providers={cash_barrier.invariant_id: cash_provider},
             registered_actions=REGISTERED_ACTIONS,
             safety_filter=cbf,

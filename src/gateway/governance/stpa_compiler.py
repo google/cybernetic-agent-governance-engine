@@ -72,14 +72,12 @@ _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 _DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_OPA_OUT = _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego"
 _DEFAULT_NEMO_OUT = _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co"
-_DEFAULT_PY_OUT = (
-    _REPO_ROOT / "src" / "gateway" / "governance" / "generated_stpa_validator.py"
-)
-_DEFAULT_LG_OUT = (
-    _REPO_ROOT / "src" / "gateway" / "governance" / "generated_saga_nodes.py"
-)
+_DEFAULT_PY_OUT = _REPO_ROOT / "src" / "cage_finance" / "stpa" / "uca_rules.py"
+_DEFAULT_LG_OUT = _REPO_ROOT / "src" / "cage_finance" / "stpa" / "saga_nodes.py"
 _DEFAULT_AGP_OUT = _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt"
-_DEFAULT_FTRA_OUT = _REPO_ROOT / "config" / "ftra" / "terminal_registry.json"
+_DEFAULT_FTRA_OUT = (
+    _REPO_ROOT / "src" / "gateway" / "governance" / "terminal_action_registry.json"
+)
 _DEFAULT_REGISTRY_OUT = (
     _REPO_ROOT / "config" / "registry" / "generated_tool_authorizations.json"
 )
@@ -100,8 +98,8 @@ OpaDecision = Literal["DENY", "GOVERNANCE_VIOLATION", "MANUAL_REVIEW", "ALLOW"]
 #
 # generate_python() and generate_langgraph() interpolate control-structure
 # string fields directly into Python source that write_artifacts() writes to
-# generated_stpa_validator.py / generated_saga_nodes.py, which governor/assembly.py,
-# governor/stages/stpa.py and auditor.py import at process start; generate_opa()
+# domain uca_rules.py / saga_nodes.py modules, which domain plugins import at
+# process start; generate_opa()
 # and generate_nemo() do the same for Rego / Colang.  A field that carries a
 # quote, brace, or newline can break out of a generated string literal,
 # f-string, or comment and inject executable code into the compiled artifact.
@@ -153,6 +151,8 @@ class HazardModel(BaseModel):
 
 class ConditionModel(BaseModel):
     param: str | None = None
+    param_aliases: list[str] = Field(default_factory=list)
+    normalize_fraction_aliases: list[str] = Field(default_factory=list)
     operator: (
         Literal["is_null", "is_false", "is_true", "greater_than", "less_than", "equals"]
         | None
@@ -166,6 +166,11 @@ class ConditionModel(BaseModel):
     @classmethod
     def _v_param(cls, v: str | None) -> str | None:
         return v if v is None else _require_pattern(v, _IDENT_RE, "condition.param")
+
+    @field_validator("param_aliases", "normalize_fraction_aliases")
+    @classmethod
+    def _v_param_aliases(cls, v: list[str], info: ValidationInfo) -> list[str]:
+        return [_require_pattern(p, _IDENT_RE, f"condition.{info.field_name}") for p in v]
 
     @field_validator("threshold_ref")
     @classmethod
@@ -250,12 +255,12 @@ class SagaModel(BaseModel):
     Defined in YAML as::
 
         langgraph_saga:
-          forward_action: execute_trade
-          compensating_action: reverse_trade
+          forward_action: execute_action
+          compensating_action: compensate_action
           # [CTRL_WAL_002] declare execution backend so the compiler emits a
           # real MCP call instead of a hollow stub in the WAL forward node.
           execution_type: mcp_tool          # 'mcp_tool' | 'local'
-          mcp_tool_name: execute_trade_action  # required when execution_type=mcp_tool
+          mcp_tool_name: execute_action_tool  # required when execution_type=mcp_tool
           parameter_mapping:
             forward.transaction_id: compensating.target_tx_id
             forward.amount: compensating.refund_amount
@@ -361,7 +366,11 @@ class ConstraintModel(BaseModel):
 class RbacRoleModel(BaseModel):
     name: str
     allowed_actions: list[str]
-    trade_limits: dict[str, Any] | None = None
+    action: str | None = None
+    subject_field: str = "trader_role"
+    magnitude_field: str = "amount"
+    denylist_field: str = "currency"
+    limits: dict[str, Any] | None = None
     restrictions: list[dict[str, Any]] | None = None
 
 
@@ -375,9 +384,10 @@ class SystemModel(BaseModel):
     description: str
     controller: str
     controlled_process: str
+    domain: str = "core"
     sensors: list[str] = Field(default_factory=list)
 
-    @field_validator("name", "version")
+    @field_validator("name", "version", "domain")
     @classmethod
     def _v_banner_field(cls, v: str) -> str:
         # name and version are interpolated into the `# System: ...` header
@@ -663,33 +673,39 @@ def generate_opa(cs: ControlStructureModel) -> str:
         ]
         for role in cs.rbac_rules.roles:
             lines.append(f"# Role: {role.name}")
-            if role.trade_limits:
-                tl = role.trade_limits
+            if role.limits:
+                tl = role.limits
                 allow_below = tl.get("allow_below")
                 review_below = tl.get("manual_review_below")
+                role_action = role.action or (
+                    role.allowed_actions[0] if role.allowed_actions else "action"
+                )
+                subj_field = role.subject_field
+                mag_field = role.magnitude_field
+                deny_field = role.denylist_field
                 denylist = []
                 if role.restrictions:
                     for r in role.restrictions:
-                        denylist.extend(r.get("currency_denylist", []))
+                        denylist.extend(r.get("denylist", []))
 
                 if allow_below:
                     lines.append(f"rbac_allow_{role.name}_trade if {{")
-                    lines.append('    input.action == "execute_trade"')
-                    lines.append(f'    lower(input.trader_role) == "{role.name}"')
-                    lines.append(f"    input.amount <= {allow_below}")
+                    lines.append(f'    input.action == "{role_action}"')
+                    lines.append(f'    lower(input.{subj_field}) == "{role.name}"')
+                    lines.append(f"    input.{mag_field} <= {allow_below}")
                     for c in denylist:
-                        lines.append(f'    input.currency != "{c}"')
+                        lines.append(f'    input.{deny_field} != "{c}"')
                     lines.append("}")
                     lines.append("")
 
                 if review_below and allow_below:
                     lines.append(f"rbac_review_{role.name}_trade if {{")
-                    lines.append('    input.action == "execute_trade"')
-                    lines.append(f'    lower(input.trader_role) == "{role.name}"')
-                    lines.append(f"    input.amount > {allow_below}")
-                    lines.append(f"    input.amount <= {review_below}")
+                    lines.append(f'    input.action == "{role_action}"')
+                    lines.append(f'    lower(input.{subj_field}) == "{role.name}"')
+                    lines.append(f"    input.{mag_field} > {allow_below}")
+                    lines.append(f"    input.{mag_field} <= {review_below}")
                     for c in denylist:
-                        lines.append(f'    input.currency != "{c}"')
+                        lines.append(f'    input.{deny_field} != "{c}"')
                     lines.append("}")
                     lines.append("")
 
@@ -769,11 +785,13 @@ def generate_nemo(cs: ControlStructureModel) -> str:
         "",
         "flow stpa_output_guardrail",
     ]
+    has_output_checks = False
     for uca in nemo_ucas:
         assert uca.nemo_rail is not None
         cond = uca.condition
         flow = uca.nemo_rail.flow_name
         if cond.semantic_pattern:
+            has_output_checks = True
             lines.append(f"  # Pattern: {cond.semantic_pattern}")
             lines.append(
                 f"  await {_pascal(flow)}CheckAction as $check_{uca.id.lower().replace('-', '_')}"
@@ -783,6 +801,8 @@ def generate_nemo(cs: ControlStructureModel) -> str:
             )
             lines.append(f"    await {flow}")
             lines.append("")
+    if not has_output_checks:
+        lines.append("  return")
     lines.append("")
 
     return "\n".join(lines)
@@ -797,9 +817,13 @@ def _pascal(snake: str) -> str:
 # Python validator generator
 # ---------------------------------------------------------------------------
 
+_COMPOSITE_SCALED_THRESHOLD_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\s*>\s*threshold_ref\(([A-Za-z0-9_.]+)\)\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)$"
+)
+
 
 def generate_python(cs: ControlStructureModel) -> str:
-    """Generate a Python STPAValidator subclass from the control structure."""
+    """Generate a Python UcaRule module and STPAValidator subclass from the control structure."""
     py_ucas = [
         u
         for u in cs.unsafe_control_actions
@@ -808,17 +832,37 @@ def generate_python(cs: ControlStructureModel) -> str:
 
     method_bodies: list[str] = []
     dispatch_lines: list[str] = []
+    eval_functions: list[str] = []
+    uca_rule_entries: list[str] = []
+
+    if not py_ucas:
+        dispatch_lines.append("        pass")
 
     for uca in py_ucas:
         cond = uca.condition
-        method_name = f"_check_{uca.id.lower().replace('-', '_')}"
+        slug = uca.id.lower().replace("-", "_")
+        method_name = f"_check_{slug}"
+        eval_fn_name = f"_eval_{slug}"
+        uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
         dispatch_lines.append(
             f"        _v = self.{method_name}(action_name, params)\n"
             f"        if _v: violations.append(_v)"
         )
+        eval_functions.append(
+            f"def {eval_fn_name}(params: dict[str, Any]) -> Violation | None:\n"
+            f'    return _DEFAULT_VALIDATOR.{method_name}("{uca.action}", params)\n'
+        )
+        uca_rule_entries.append(
+            "    UcaRule(\n"
+            f'        uca_id="{uca.id}",\n'
+            f'        action_name="{uca.action}",\n'
+            f'        description="{uca.description}",\n'
+            f"        predicate={eval_fn_name},\n"
+            "    ),"
+        )
 
         body_lines: list[str] = [
-            f"    def {method_name}(self, action_name: str, params: dict) -> Violation | None:",
+            f"    def {method_name}(self, action_name: str, params: dict[str, Any]) -> Violation | None:",
             f'        """{uca.id}: {uca.description}"""',
             "        try:",
         ]
@@ -831,7 +875,6 @@ def generate_python(cs: ControlStructureModel) -> str:
         op = cond.operator
 
         if param and op == "is_null":
-            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            if params.get("{param}") is None:',
                 "                return Violation(",
@@ -842,7 +885,6 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                )",
             ]
         elif param and op == "is_false":
-            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            if params.get("{param}") is False:',
                 "                return Violation(",
@@ -852,31 +894,92 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
-        elif param and op == "greater_than" and cond.threshold_ref:
-            # Map dot-path to THRESHOLDS singleton access
-            attr_path = cond.threshold_ref.replace(".", ".")
-            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
+        elif param and op == "is_true":
             body_lines += [
-                f"            threshold = THRESHOLDS.{attr_path}",
-                f'            val = params.get("{param}")',
-                "            if val is None:",
-                f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                f'            if params.get("{param}") is True:',
                 "                return Violation(",
                 '                    tier="stpa",',
                 f'                    code="{uca_code}",',
-                f'                    message="Missing required param `{param}`.",',
-                "                    kind=ViolationKind.HARD,",
-                "                )",
-                "            if float(val) > threshold:",
-                "                return Violation(",
-                '                    tier="stpa",',
-                f'                    code="{uca_code}",',
-                f'                    message=f"{uca.description} ({{float(val):.4f}} > {{threshold}})",',
+                f'                    message="{uca.description}",',
                 "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
+        elif param and op == "greater_than" and cond.threshold_ref:
+            attr_path = cond.threshold_ref
+            all_keys = [param, *cond.param_aliases]
+            norm_keys = set(cond.normalize_fraction_aliases)
+            if len(all_keys) == 1 and not norm_keys:
+                body_lines += [
+                    f"            threshold = THRESHOLDS.{attr_path}",
+                    f'            val = params.get("{param}")',
+                    "            if val is None:",
+                    f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message="Missing required param `{param}`.",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
+                    "            f_val = float(val)",
+                    "            if not math.isfinite(f_val):",
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message="Non-finite param `{param}`.",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
+                    "            if f_val > threshold:",
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message=f"{uca.description} ({{f_val:.4f}} > {{threshold}})",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
+                ]
+            else:
+                keys_tuple_str = "(" + ", ".join(f'"{k}"' for k in all_keys) + ")"
+                norm_tuple_str = (
+                    "(" + ", ".join(f'"{k}"' for k in cond.normalize_fraction_aliases) + ",)"
+                    if cond.normalize_fraction_aliases
+                    else "()"
+                )
+                body_lines += [
+                    f"            threshold = THRESHOLDS.{attr_path}",
+                    f"            candidates = [(k, params.get(k)) for k in {keys_tuple_str} if params.get(k) is not None]",
+                    "            if not candidates:",
+                    f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message="Missing required param `{param}`.",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
+                    "            for key_name, raw_val in candidates:",
+                    "                if isinstance(raw_val, bool) or not isinstance(raw_val, (int, float, str)):",
+                    "                    return Violation(",
+                    '                        tier="stpa",',
+                    f'                        code="{uca_code}",',
+                    '                        message=f"Invalid non-numeric param `{key_name}`.",',
+                    "                        kind=ViolationKind.HARD,",
+                    "                    )",
+                    "                f_val = float(raw_val)",
+                    "                if not math.isfinite(f_val):",
+                    "                    return Violation(",
+                    '                        tier="stpa",',
+                    f'                        code="{uca_code}",',
+                    '                        message=f"Non-finite param `{key_name}`.",',
+                    "                        kind=ViolationKind.HARD,",
+                    "                    )",
+                    f"                eff_val = f_val * 100.0 if (key_name in {norm_tuple_str} and 0.0 < f_val <= 1.0) else f_val",
+                    "                if eff_val > threshold:",
+                    "                    return Violation(",
+                    '                        tier="stpa",',
+                    f'                        code="{uca_code}",',
+                    f'                        message=f"{uca.description} ({{eff_val:.4f}} > {{threshold}})",',
+                    "                        kind=ViolationKind.HARD,",
+                    "                    )",
+                ]
         elif param and op == "greater_than" and cond.threshold is not None:
-            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            val = params.get("{param}")',
                 f"            if val is not None and float(val) > {cond.threshold}:",
@@ -888,9 +991,7 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                )",
             ]
         elif param and op == "less_than" and cond.threshold_ref:
-            # Map dot-path to THRESHOLDS singleton access
-            attr_path = cond.threshold_ref.replace(".", ".")
-            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
+            attr_path = cond.threshold_ref
             body_lines += [
                 f"            threshold = THRESHOLDS.{attr_path}",
                 f'            val = params.get("{param}")',
@@ -919,7 +1020,6 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                )",
             ]
         elif param and op == "less_than" and cond.threshold is not None:
-            uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
             body_lines += [
                 f'            val = params.get("{param}")',
                 "            if val is not None:",
@@ -940,13 +1040,30 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                    )",
             ]
         elif cond.composite:
-            body_lines += [
-                f"            # Composite condition: {cond.composite}",
-                "            # Implement custom logic here.",
-                "            pass",
-            ]
+            m = _COMPOSITE_SCALED_THRESHOLD_RE.match(cond.composite.strip())
+            if m:
+                lhs_param, thresh_ref, rhs_param = m.group(1), m.group(2), m.group(3)
+                body_lines += [
+                    f"            # Composite condition: {cond.composite}",
+                    f'            lhs_val = params.get("{lhs_param}")',
+                    f'            rhs_val = params.get("{rhs_param}")',
+                    "            if lhs_val is not None and rhs_val is not None:",
+                    "                f_lhs = float(lhs_val)",
+                    "                f_rhs = float(rhs_val)",
+                    f"                if f_rhs > 0 and f_lhs > THRESHOLDS.{thresh_ref} * f_rhs:",
+                    "                    return Violation(",
+                    '                        tier="stpa",',
+                    f'                        code="{uca_code}",',
+                    f'                        message="{uca.description}",',
+                    "                        kind=ViolationKind.HARD,",
+                    "                    )",
+                ]
+            else:
+                body_lines += [
+                    f"            # Composite condition: {cond.composite}",
+                    "            pass",
+                ]
 
-        uca_code = f"STPA_UCA_{uca.id.replace('-', '_')}"
         body_lines += [
             "            return None",
             "        except Exception as exc:",
@@ -954,7 +1071,7 @@ def generate_python(cs: ControlStructureModel) -> str:
             "            return Violation(",
             '                tier="stpa",',
             f'                code="{uca_code}",',
-            f'                message=f"Evaluation error — failing closed ({{exc}}).",',
+            '                message=f"Evaluation error — failing closed ({exc}).",',
             "                kind=ViolationKind.HARD,",
             "            )",
             "",
@@ -963,12 +1080,14 @@ def generate_python(cs: ControlStructureModel) -> str:
 
     dispatch_str = "\n".join(dispatch_lines)
     methods_str = "\n".join(method_bodies)
+    eval_fns_str = "\n\n".join(eval_functions)
+    uca_rules_str = "\n".join(uca_rule_entries)
+    domain_alias = f"{cs.system.domain.capitalize()}STPAValidator"
 
     return f'''\
 {_banner()}# System: {cs.system.name} v{cs.system.version}
 #
-# Generated Python validator.  Extend GeneratedSTPAValidator in your
-# STPAValidator subclass or use it directly as a drop-in replacement.
+# Generated Python STPA UCA rules and validator.
 #
 # All threshold references are resolved from the THRESHOLDS singleton
 # (config/governance_thresholds.json).
@@ -981,29 +1100,27 @@ from typing import Any
 
 from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
+from src.gateway.governance.stpa_validator import STPAValidator, UcaRule
 
 logger = logging.getLogger("Gateway.Governance.GeneratedSTPAValidator")
 
 
-class GeneratedSTPAValidator:
+class GeneratedSTPAValidator(STPAValidator):
     """
-    Auto-generated STPA validator.
-
-    Checks all UCAs with enforcement=[python] or enforcement=[all] that were
-    defined in config/stpa_control_structure.yaml.
+    Auto-generated STPA validator for {cs.system.name}.
 
     Do NOT edit this file; re-run the compiler instead:
         python -m src.gateway.governance.stpa_compiler compile
     """
 
     def validate(self, action_name: str, params: dict[str, Any]) -> list[Violation]:
-        """Public entry-point — delegates to validate_generated().
-
-        Call-sites that previously used STPAValidator.validate() can use this
-        method directly on GeneratedSTPAValidator without going through the
-        deprecated shim in stpa_validator.py.
-        """
-        return self.validate_generated(action_name, params)
+        """Public entry-point — evaluates core STPA rules and generated UCA checks."""
+        violations = list(super().validate(action_name, params))
+        seen_codes = {{v.code for v in violations}}
+        for v in self.validate_generated(action_name, params):
+            if v.code not in seen_codes:
+                violations.append(v)
+        return violations
 
     def validate_generated(self, action_name: str, params: dict[str, Any]) -> list[Violation]:
         """Run all generated UCA checks. Returns list of Violation objects."""
@@ -1012,6 +1129,18 @@ class GeneratedSTPAValidator:
         return violations
 
 {methods_str}
+
+_DEFAULT_VALIDATOR = GeneratedSTPAValidator()
+
+
+{eval_fns_str}
+
+
+UCA_RULES: tuple[UcaRule, ...] = (
+{uca_rules_str}
+)
+
+{domain_alias} = GeneratedSTPAValidator
 '''
 
 
@@ -1058,14 +1187,21 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
     # Build the third-party import block.  isort requires both third-party
     # imports to be in the same block (no blank line between them).
     thirdparty_import_lines: list[str] = [
-        "AgentState = Any",
-        "LedgerEntry = dict[str, Any]",
+        "from src.gateway.governance.saga_compensator import FunctionSagaCompensator",
     ]
-    mcp_singleton_lines: list[str] = []
     if needs_mcp_imports:
         thirdparty_import_lines.append(
             "from src.gateway.infrastructure.mcp_client import GatewayMCPClient"
         )
+    thirdparty_import_lines.extend(
+        [
+            "",
+            "AgentState = Any",
+            "LedgerEntry = dict[str, Any]",
+        ]
+    )
+    mcp_singleton_lines: list[str] = []
+    if needs_mcp_imports:
         mcp_singleton_lines = [
             "",
             "# [CTRL_WAL_002] module-level MCP client singleton for WAL forward nodes.",
@@ -1156,6 +1292,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
     # Forward nodes (WAL pattern) + Compensating nodes (idempotent)
     # -----------------------------------------------------------------------
     router_cases: list[tuple[str, str, str]] = []
+    compensator_vars: list[str] = []
 
     for uca in saga_ucas:
         assert uca.langgraph_saga is not None  # validated by Pydantic
@@ -1164,6 +1301,8 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         uca_slug = uca_id.lower().replace("-", "_")
         fwd_fn = f"forward_{saga.forward_action}_node_{uca_slug}"
         comp_fn = f"compensate_{saga.compensating_action}_node_{uca_slug}"
+        comp_var = f"{saga.compensating_action}_compensator"
+        compensator_vars.append(comp_var)
 
         # Build context extraction lines from parameter_mapping.
         # Variables are prefixed with "_" so ruff F841 does not flag them as
@@ -1315,6 +1454,14 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "        }",
             "",
             "",
+            f"{comp_var} = FunctionSagaCompensator(",
+            f'    action_name="{saga.forward_action}",',
+            f'    uca_id="{uca_id}",',
+            f'    compensating_action="{saga.compensating_action}",',
+            f"    compensate_fn={comp_fn},",
+            ")",
+            "",
+            "",
         ]
 
         router_cases.append((uca_id, saga.forward_action, comp_fn))
@@ -1387,6 +1534,11 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         '        "next_step": "human_review",',
         '        "governance_summary": f"Saga Router: unhandled uca_ref={uca_ref} action={action}.",',
         "    }",
+        "",
+        "",
+        "SAGA_COMPENSATORS: tuple[FunctionSagaCompensator, ...] = (",
+        *[f"    {var}," for var in compensator_vars],
+        ")",
         "",
     ]
 
@@ -1488,25 +1640,30 @@ def generate_agp(cs: ControlStructureModel) -> str:
     # RBAC rules → human approval / deny sentences
     if cs.rbac_rules:
         for role in cs.rbac_rules.roles:
-            if role.trade_limits:
-                tl = role.trade_limits
+            if role.limits:
+                tl = role.limits
                 review_below = tl.get("manual_review_below")
                 allow_below = tl.get("allow_below")
+                role_action = role.action or (
+                    role.allowed_actions[0] if role.allowed_actions else "action"
+                )
+                mag_field = role.magnitude_field
+                deny_field = role.denylist_field
                 denylist: list[str] = []
                 if role.restrictions:
                     for r in role.restrictions:
-                        denylist.extend(r.get("currency_denylist", []))
+                        denylist.extend(r.get("denylist", []))
 
                 if review_below and allow_below:
                     lines.append(
-                        f'Require human approval for "execute_trade" where '
-                        f'"amount" exceeds {allow_below} for "{role.name}" role users.'
+                        f'Require human approval for "{role_action}" where '
+                        f'"{mag_field}" exceeds {allow_below} for "{role.name}" role users.'
                     )
                     lines.append("")
 
-                for currency in denylist:
+                for item in denylist:
                     lines.append(
-                        f'Deny "execute_trade" where "currency" is "{currency}" '
+                        f'Deny "{role_action}" where "{deny_field}" is "{item}" '
                         f'for "{role.name}" role users.'
                     )
                     lines.append("")
@@ -1597,7 +1754,7 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     now = _dt.datetime.now(_dt.timezone.utc)
     registry = {
         "version": "3.0",
-        "domain": "finance",
+        "domain": cs.system.domain,
         "serial": 2,
         "generated_at": now.isoformat(),
         "issued_at": now.isoformat(),
@@ -1640,7 +1797,7 @@ def generate_registry_manifest(cs: ControlStructureModel) -> str:
           "_schema_version": "1.0.0",
           "tool_authorizations": [
             {
-              "tool_name": "execute_trade",
+              "tool_name": "execute_action",
               "allowed_roles": ["trader", "senior"],
               "denied_roles": ["junior"],
               "uca_refs": ["UCA-1", "UCA-2"],
@@ -1656,7 +1813,7 @@ def generate_registry_manifest(cs: ControlStructureModel) -> str:
     - ``hazard_refs``: union of all ``hazard_refs`` across UCAs for this action.
     - ``allowed_roles``: from ``cs.rbac_rules.roles`` where the action is in ``allowed_actions``.
     - ``denied_roles``: roles where the action is NOT in ``allowed_actions``.
-    - ``requires_approval_above_usd``: from ``rbac_rules.roles[].trade_limits.manual_review_below``
+    - ``requires_approval_above_usd``: from ``rbac_rules.roles[].limits.manual_review_below``
       if present (minimum across all roles that have this limit for the action).
 
     Args:
@@ -1697,8 +1854,8 @@ def generate_registry_manifest(cs: ControlStructureModel) -> str:
                 if action in role.allowed_actions:
                     allowed.append(role.name)
                     # Collect manual_review_below threshold if present
-                    if role.trade_limits:
-                        review_below = role.trade_limits.get("manual_review_below")
+                    if role.limits:
+                        review_below = role.limits.get("manual_review_below")
                         if review_below is not None:
                             thresholds.append(float(review_below))
                 else:
@@ -1976,6 +2133,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Path to control structure YAML (default: {_DEFAULT_INPUT})",
     )
     compile_p.add_argument(
+        "--domain-yaml",
+        type=Path,
+        default=None,
+        metavar="YAML",
+        help="Path to a per-domain STPA YAML file (mutually exclusive with --input-dir).",
+    )
+    compile_p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Output directory for per-domain compilation (uca_rules.py, saga_nodes.py, terminal_registry.json).",
+    )
+    compile_p.add_argument(
         "--input-dir",
         type=Path,
         default=None,
@@ -2078,6 +2249,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Path to control structure YAML (default: {_DEFAULT_INPUT})",
     )
     val_p.add_argument(
+        "--domain-yaml",
+        type=Path,
+        default=None,
+        metavar="YAML",
+        help="Path to a per-domain STPA YAML file to validate.",
+    )
+    val_p.add_argument(
         "--input-dir",
         type=Path,
         default=None,
@@ -2092,7 +2270,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     try:
-        if args.input_dir is not None:
+        if getattr(args, "domain_yaml", None) is not None:
+            cs = load_control_structure(args.domain_yaml)
+        elif args.input_dir is not None:
             yaml_files = sorted(args.input_dir.rglob("*.yaml"))
             if not yaml_files:
                 print(f"❌ No YAML files found under {args.input_dir}", file=sys.stderr)
@@ -2112,7 +2292,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_compile(args: argparse.Namespace) -> int:
     try:
-        if args.input_dir is not None:
+        if getattr(args, "domain_yaml", None) is not None:
+            cs = load_control_structure(args.domain_yaml)
+        elif args.input_dir is not None:
             yaml_files = sorted(args.input_dir.rglob("*.yaml"))
             if not yaml_files:
                 print(
@@ -2132,7 +2314,11 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
 
-    result = compile_control_structure(cs, args.targets)
+    effective_targets = args.targets
+    if getattr(args, "out_dir", None) is not None and args.targets == ["all"]:
+        effective_targets = ["python", "langgraph", "ftra"]
+
+    result = compile_control_structure(cs, effective_targets)
 
     if result.errors:
         for err in result.errors:
@@ -2173,14 +2359,22 @@ def cmd_compile(args: argparse.Namespace) -> int:
             )
         return 0
 
+    python_out = args.python_out
+    langgraph_out = args.langgraph_out
+    ftra_out = args.ftra_out
+    if getattr(args, "out_dir", None) is not None:
+        python_out = args.out_dir / "uca_rules.py"
+        langgraph_out = args.out_dir / "saga_nodes.py"
+        ftra_out = args.out_dir / "terminal_registry.json"
+
     write_artifacts(
         result,
         args.opa_out,
         args.nemo_out,
-        args.python_out,
-        args.langgraph_out,
+        python_out,
+        langgraph_out,
         agp_out=args.agp_out,
-        ftra_out=args.ftra_out,
+        ftra_out=ftra_out,
         registry_out=args.registry_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
@@ -2189,13 +2383,13 @@ def cmd_compile(args: argparse.Namespace) -> int:
     if result.nemo_content:
         print(f"   NeMo Colang → {args.nemo_out}")
     if result.python_content:
-        print(f"   Python validator → {args.python_out}")
+        print(f"   Python validator → {python_out}")
     if result.langgraph_content:
-        print(f"   LangGraph Saga → {args.langgraph_out}")
+        print(f"   LangGraph Saga → {langgraph_out}")
     if result.agp_content:
         print(f"   AGP Semantic Policy → {args.agp_out}")
     if result.ftra_content:
-        print(f"   FTRA terminal registry → {args.ftra_out}")
+        print(f"   FTRA terminal registry → {ftra_out}")
     if result.registry_content:
         print(f"   Agent Registry manifest [GCP] → {args.registry_out}")
     return 0

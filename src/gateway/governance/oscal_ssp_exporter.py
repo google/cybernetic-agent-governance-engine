@@ -750,7 +750,7 @@ def generate_ssp_patch(
             Generated artifacts:
               - config/opa/generated_stpa_policy.rego    (OPA Rego — {len([u for u in cs.unsafe_control_actions if "opa" in u.enforcement or "all" in u.enforcement])} UCAs)
               - config/rails/generated_stpa_rails.co     (NeMo Colang — {len([u for u in cs.unsafe_control_actions if "nemo" in u.enforcement or "all" in u.enforcement])} UCAs)
-              - src/gateway/governance/generated_stpa_validator.py (Python — {len([u for u in cs.unsafe_control_actions if "python" in u.enforcement or "all" in u.enforcement])} UCAs)
+              - src/gateway/governance/stpa_validator.py (Python — {len([u for u in cs.unsafe_control_actions if "python" in u.enforcement or "all" in u.enforcement])} UCAs)
 
             Target compliance framework: {framework_label}
             Framework reference: {framework_source}
@@ -774,7 +774,7 @@ def generate_ssp_patch(
             {"name": "artifact-nemo", "value": "config/rails/generated_stpa_rails.co"},
             {
                 "name": "artifact-python",
-                "value": "src/gateway/governance/generated_stpa_validator.py",
+                "value": "src/gateway/governance/stpa_validator.py",
             },
             {
                 "name": "compiler-source",
@@ -1276,6 +1276,9 @@ def cmd_export(args: argparse.Namespace) -> int:
                 args.input_dir,
             )
             cs = load_control_structures(yaml_files)
+        elif args.input.resolve() == _DEFAULT_INPUT.resolve():
+            domain_yamls = sorted((_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml"))
+            cs = load_control_structures([args.input, *domain_yamls])
         else:
             cs = load_control_structure(args.input)
     except Exception as exc:

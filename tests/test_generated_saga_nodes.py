@@ -87,7 +87,7 @@ def _import_module():
         import sys
 
         # Force a fresh import if already loaded (to get our patched version)
-        mod_name = "src.gateway.governance.generated_saga_nodes"
+        mod_name = "src.cage_finance.stpa.saga_nodes"
         if mod_name in sys.modules:
             return sys.modules[mod_name]
         return importlib.import_module(mod_name)
@@ -95,7 +95,7 @@ def _import_module():
 
 # Import once at module level — GatewayMCPClient is already lazily initialised
 # so we can patch _get_mcp_client instead of intercepting the import.
-import src.gateway.governance.generated_saga_nodes as saga  # noqa: E402
+import src.cage_finance.stpa.saga_nodes as saga  # noqa: E402
 
 # ===========================================================================
 # TestDeriveIdempotencyKey

@@ -410,6 +410,33 @@ class DomainConfig:
     causal_graph_path: Path | None = None
 
 
+@runtime_checkable
+class SagaCompensator(Protocol):
+    """Protocol for an STPA-compiled saga compensating handler.
+
+    Contributed by a domain plugin via ``PluginContribution.saga_compensators``.
+    """
+
+    @property
+    def action_name(self) -> str:
+        """Forward action name this compensator reverses."""
+        ...
+
+    @property
+    def uca_id(self) -> str:
+        """STPA UCA identifier associated with this saga."""
+        ...
+
+    @property
+    def compensating_action(self) -> str:
+        """Name of the compensating action invoked on rollback."""
+        ...
+
+    async def compensate(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Execute the compensating rollback for ``params``."""
+        ...
+
+
 @dataclass(frozen=True)
 class PluginContribution:
     """Everything one domain plugin hands to the kernel, as data.
@@ -428,6 +455,7 @@ class PluginContribution:
         tiers: Governance tiers for this domain.
         invariants: Declarative CBF barriers; validated at assembly.
         uca_rules: STPA unsafe-control-action rules (4b.9).
+        saga_compensators: STPA-compiled saga compensators (4b.9).
         narrowers: Parameter narrowing strategies (4b.6).
         threshold_sections: Threshold schema per section name under
             ``domains.<domain>`` (4b.7); keys must be unique across domains.
@@ -447,7 +475,8 @@ class PluginContribution:
     domain: str
     tiers: tuple["GovernanceTierPlugin", ...] = ()
     invariants: tuple["InvariantModel", ...] = ()
-    uca_rules: tuple[Any, ...] = ()
+    uca_rules: tuple["UcaRule", ...] = ()
+    saga_compensators: tuple["SagaCompensator", ...] = ()
     narrowers: tuple["Narrower", ...] = ()
     threshold_sections: Mapping[str, type] = field(default_factory=dict)
     execution_verbs: frozenset[str] = frozenset()
@@ -868,4 +897,5 @@ FiscalGuard = ResourceGuard
 # Import ReservationToken from kernel types module (promoted from Layer 2 in PR B).
 # Fixes Finding A: the old path src.gateway.governance.fiscal_limit_guard never
 # existed, causing get_type_hints(ResourceGuard) to raise NameError.
+from src.gateway.governance.stpa_validator import UcaRule
 from src.gateway.governance.types import ReservationToken

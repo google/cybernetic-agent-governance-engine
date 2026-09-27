@@ -42,8 +42,8 @@ import pytest
 # Paths to generated artifacts
 # ---------------------------------------------------------------------------
 
-_SAGA_MODULE = "src.gateway.governance.generated_saga_nodes"
-_STPA_MODULE = "src.gateway.governance.generated_stpa_validator"
+_SAGA_MODULE = "src.cage_finance.stpa.saga_nodes"
+_STPA_MODULE = "src.cage_finance.stpa.uca_rules"
 _REGO_POLICY = pathlib.Path("config/opa/generated_stpa_policy.rego")
 _SEMANTIC_POLICY = pathlib.Path("config/agp/generated_semantic_policy.txt")
 _STPA_RAILS = pathlib.Path("config/rails/generated_stpa_rails.co")

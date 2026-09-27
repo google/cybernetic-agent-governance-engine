@@ -125,6 +125,23 @@ safety_constraints: []
 _FULL_YAML_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
 )
+_FINANCE_YAML_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "cage_finance"
+    / "config"
+    / "stpa"
+    / "trade_hazards.yaml"
+)
+
+
+def _load_full_cs() -> ControlStructureModel:
+    from src.gateway.governance.stpa_compiler import load_control_structures
+
+    paths = [_FULL_YAML_PATH]
+    if _FINANCE_YAML_PATH.exists():
+        paths.append(_FINANCE_YAML_PATH)
+    return load_control_structures(paths)
 
 
 @pytest.fixture
@@ -182,10 +199,10 @@ class TestSchemaValidation:
             ControlStructureModel(**raw)
 
     def test_full_production_yaml_valid(self) -> None:
-        """The real stpa_control_structure.yaml must pass schema validation."""
+        """The real core + finance STPA YAMLs must pass schema validation."""
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         assert len(cs.unsafe_control_actions) >= 7
         assert cs.system.name == "CAGE Financial Advisor"
 
@@ -314,7 +331,7 @@ class TestOpaGeneration:
         """OPA generation from the real control structure should succeed."""
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         rego = generate_opa(cs)
         # All OPA-enforced UCAs must appear in the output
         opa_ucas = [
@@ -330,7 +347,7 @@ class TestOpaGeneration:
         """RBAC rules from the YAML are included in the OPA output."""
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         rego = generate_opa(cs)
         assert "rbac_allow_junior_trade" in rego
         assert "rbac_allow_senior_trade" in rego
@@ -374,7 +391,7 @@ class TestNemoGeneration:
     def test_full_yaml_nemo_generation(self) -> None:
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         colang = generate_nemo(cs)
         nemo_ucas = [
             u
@@ -415,7 +432,7 @@ class TestPythonGeneration:
     def test_full_yaml_python_generation(self) -> None:
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
-        cs = load_control_structure(_FULL_YAML_PATH)
+        cs = _load_full_cs()
         py = generate_python(cs)
         py_ucas = [
             u
@@ -530,7 +547,27 @@ class TestCLI:
         ret = main(["compile", "--input", str(_FULL_YAML_PATH), "--dry-run"])
         assert ret == 0
         captured = capsys.readouterr()
-        assert "UCA-5" in captured.out or "uca_5" in captured.out
+        assert "UCA-1" in captured.out or "uca_1" in captured.out
+
+    def test_compile_domain_yaml_writes_domain_package(self, tmp_path: Path) -> None:
+        """Per-domain compilation emits uca_rules.py, saga_nodes.py, and terminal_registry.json."""
+        if not _FINANCE_YAML_PATH.exists():
+            pytest.skip("Finance STPA YAML not found.")
+        ret = main(
+            [
+                "compile",
+                "--domain-yaml",
+                str(_FINANCE_YAML_PATH),
+                "--out-dir",
+                str(tmp_path),
+            ]
+        )
+        assert ret == 0
+        assert (tmp_path / "uca_rules.py").exists()
+        assert (tmp_path / "saga_nodes.py").exists()
+        assert (tmp_path / "terminal_registry.json").exists()
+        assert "UCA_RULES" in (tmp_path / "uca_rules.py").read_text()
+        assert "SAGA_COMPENSATORS" in (tmp_path / "saga_nodes.py").read_text()
 
 
 # ---------------------------------------------------------------------------

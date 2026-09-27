@@ -85,6 +85,8 @@ class GovernorComponents:
     domain_tiers: tuple[GovernanceTierPlugin, ...] = ()
     narrowers: tuple[Narrower, ...] = ()
     invariants: tuple[InvariantModel, ...] = ()
+    uca_rules: tuple[object, ...] = ()
+    saga_compensators: tuple[object, ...] = ()
     ground_truth_providers: Mapping[str, object] = field(default_factory=dict)
     safety_filter: SafetyFilter = field(default_factory=NullSafetyFilter)
     consensus: ConsensusProvider = field(default_factory=NullConsensusProvider)
@@ -94,7 +96,15 @@ class GovernorComponents:
     def __post_init__(self) -> None:
         if self.classifier is None:
             raise TypeError("GovernorComponents requires a classifier")  # fail closed
-        for name in ("core_stages", "domain_tiers", "narrowers", "invariants", "contributions"):
+        for name in (
+            "core_stages",
+            "domain_tiers",
+            "narrowers",
+            "invariants",
+            "uca_rules",
+            "saga_compensators",
+            "contributions",
+        ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(self, "ground_truth_providers", dict(self.ground_truth_providers))
 
@@ -156,6 +166,10 @@ def assemble_governor(
         validate_invariant(invariant, invariants)  # V1 spans every domain
         invariants.append(invariant)
 
+    uca_rules = tuple(r for c in contributions for r in c.uca_rules)
+    _reject_duplicates("uca_rule", (getattr(r, "uca_id", str(r)) for r in uca_rules))
+    saga_compensators = tuple(s for c in contributions for s in c.saga_compensators)
+
     ground_truth_providers: dict[str, object] = {}
     for c in contributions:
         for inv_id, prov in c.ground_truth_providers.items():
@@ -172,11 +186,9 @@ def assemble_governor(
 
         opa = OPAClient()
     if stpa_validator is None:
-        from src.gateway.governance.generated_stpa_validator import (
-            GeneratedSTPAValidator,
-        )
+        from src.gateway.governance.stpa_validator import STPAValidator
 
-        stpa_validator = GeneratedSTPAValidator()
+        stpa_validator = STPAValidator(rules=uca_rules)
     from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
 
     components = GovernorComponents(
@@ -192,6 +204,8 @@ def assemble_governor(
         domain_tiers=tiers,
         narrowers=narrowers,
         invariants=tuple(invariants),
+        uca_rules=uca_rules,
+        saga_compensators=saga_compensators,
         ground_truth_providers=ground_truth_providers,
         safety_filter=_single_slot("safety_filter", contributions) or NullSafetyFilter(),
         consensus=_single_slot("consensus", contributions) or NullConsensusProvider(),

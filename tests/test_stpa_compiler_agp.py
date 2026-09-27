@@ -270,7 +270,7 @@ class TestGenerateAGPRBAC:
         role = RbacRoleModel(
             name="junior",
             allowed_actions=["execute_trade"],
-            trade_limits={"allow_below": 5000, "manual_review_below": 500000},
+            limits={"allow_below": 5000, "manual_review_below": 500000},
         )
         rbac = RbacRulesModel(roles=[role])
         cs = _make_cs([], rbac_rules=rbac)
@@ -282,8 +282,8 @@ class TestGenerateAGPRBAC:
         role = RbacRoleModel(
             name="junior",
             allowed_actions=["execute_trade"],
-            trade_limits={"allow_below": 5000, "manual_review_below": 500000},
-            restrictions=[{"currency_denylist": ["XAU", "XBT"]}],
+            limits={"allow_below": 5000, "manual_review_below": 500000},
+            restrictions=[{"denylist": ["XAU", "XBT"]}],
         )
         rbac = RbacRulesModel(roles=[role])
         cs = _make_cs([], rbac_rules=rbac)

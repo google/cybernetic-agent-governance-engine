@@ -46,8 +46,8 @@ The compiler (`python -m src.gateway.governance.stpa_compiler compile --targets 
 | :--- | :--- | :--- |
 | `opa` | `config/opa/generated_stpa_policy.rego` | OPA Rego policy; fail-closed circuit breaker in `src/gateway/core/policy.py` |
 | `nemo` | `config/rails/generated_stpa_rails.co` | NeMo Colang 2.x flow; enforced by `nemo/manager.py` |
-| `python` | `src/gateway/governance/generated_stpa_validator.py` | `GeneratedSTPAValidator` Python class; invoked by `SymbolicGovernor` |
-| `langgraph` | `src/gateway/governance/generated_saga_nodes.py` | LangGraph WAL forward + compensating nodes + centralized router |
+| `python` | `src/cage_finance/stpa/uca_rules.py` | `GeneratedSTPAValidator` & `UCA_RULES`; invoked by `STPAValidator` (`src/gateway/governance/stpa_validator.py`) |
+| `langgraph` | `src/cage_finance/stpa/saga_nodes.py` | LangGraph WAL forward + compensating nodes + centralized router |
 | `all` | `opa` + `nemo` + `python` | Note: `langgraph` is **not** included in `all`; must be explicit |
 
 ---
@@ -183,13 +183,13 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 
 | File | Purpose |
 | :--- | :--- |
-| `config/stpa_control_structure.yaml` | Single source of truth for all UCA definitions, conditions, and enforcement targets |
+| `config/stpa_control_structure.yaml` | Single source of truth for kernel UCA definitions, conditions, and enforcement targets |
 | `src/gateway/governance/stpa_compiler.py` | Compiler CLI; ingests YAML; emits OPA/NeMo/Python/LangGraph artifacts |
-| `src/gateway/governance/generated_stpa_validator.py` | **Primary** auto-generated Python validator — `GeneratedSTPAValidator` with `validate()` entry-point and `_check_uca_*()` per-UCA methods (do not edit; re-run compiler to regenerate) |
-| ~~`src/gateway/governance/generated_stpa_validator.py`~~ | **v3.0.1:** Removed (deprecated shim). Import `GeneratedSTPAValidator` directly from `generated_stpa_validator.py`. |
+| `src/gateway/governance/stpa_validator.py` | Domain-agnostic kernel `STPAValidator` and `UcaRule` engine |
+| `src/cage_finance/stpa/uca_rules.py` | Auto-generated finance STPA UCA rules (`UCA_RULES`, `GeneratedSTPAValidator`) |
 | `config/opa/generated_stpa_policy.rego` | Auto-generated OPA Rego rules (do not edit) |
 | `config/rails/generated_stpa_rails.co` | Auto-generated NeMo Colang rails (do not edit) |
-| `src/gateway/governance/generated_saga_nodes.py` | Auto-generated LangGraph Saga nodes (do not edit) |
+| `src/cage_finance/stpa/saga_nodes.py` | Auto-generated LangGraph Saga nodes (do not edit) |
 | `src/gateway/governance/safety/resource_guard.py` | Multi-agent pre-reservation guard (Redis WATCH/MULTI/EXEC) |
 | `src/governed_financial_advisor/graph/state.py` | `AgentState` with WAL ledger (`completed_transactions`) |
 | `src/governed_financial_advisor/utils/langfuse_utils.py` | `SagaCallbackHandler` OTel interceptor |

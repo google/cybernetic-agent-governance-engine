@@ -36,7 +36,7 @@ from src.gateway.core.policy import OPAClient
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter, Violation, ViolationKind
 from src.gateway.governance.ftra.models import FtraBoundaryResult, TerminalClassification
-from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
+from src.gateway.governance.stpa_validator import STPAValidator
 from src.gateway.governance.narrower import Narrower, NarrowerRegistry, NarrowingResult
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from tests.fixtures.governor import make_governor
@@ -108,7 +108,7 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
     collaborators["opa_client.evaluate_policy"] = mock_opa.evaluate_policy
 
     # 2. STPA Validator (SYNCHRONOUS!)
-    mock_stpa = MagicMock(spec=GeneratedSTPAValidator)
+    mock_stpa = MagicMock(spec=STPAValidator)
     mock_stpa.validate = MagicMock(return_value=list(scenario.stpa_violations))
     collaborators["stpa_validator.validate"] = mock_stpa.validate
 

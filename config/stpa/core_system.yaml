@@ -15,14 +15,14 @@
 system:
   name: "CAGE Financial Advisor"
   version: "1.1.0"
+  domain: "core"
   description: >
-    AI-powered financial advisor operating in regulated capital markets.
-    The controller is the LangGraph multi-agent pipeline; the controlled
-    process is the financial markets / banking ledger.
-  controller: "Financial AI Agent (LangGraph Supervisor)"
-  controlled_process: "Financial Markets / Banking Ledger"
+    Autonomous multi-agent governance system governed by the CAGE
+    Cybernetic Governance Engine. Enforces real-time STPA/CBF/OPA safety
+    constraints across kernel control loops and domain plugins.
+  controller: "SymbolicGovernor (src/gateway/governance/symbolic_governor.py)"
+  controlled_process: "Governed Execution Layer (MCP Tool Server)"
   sensors:
-    - "Market Data Feed"
     - "OPA Policy Engine"
     - "DoWhy Causal Gatekeeper"
 
@@ -30,6 +30,9 @@ system:
 # Hazards — top-level loss scenarios (H-N labels from STPA)
 # ---------------------------------------------------------------------------
 hazards:
+  - id: H-1
+    description: "Unauthorized state mutation or control action executed without approval."
+    severity: critical
   - id: H-3
     description: "Personally identifiable information disclosed to unauthorized party."
     severity: high
@@ -63,16 +66,6 @@ control_actions:
         type: object
         required: true
 
-  - name: market_analysis
-    description: "Read-only query for market intelligence."
-    params:
-      - name: symbol
-        type: string
-        required: true
-      - name: timeframe
-        type: string
-        required: false
-
   - name: prompt_injection_check
     description: "Evaluate user input for adversarial content."
     params:
@@ -82,6 +75,46 @@ control_actions:
       - name: semantic_score
         type: float
         required: false
+
+  - name: modify_governance_policy
+    description: "Modify active OPA Rego policy or governance rules at runtime."
+    params:
+      - name: policy_id
+        type: string
+        required: true
+      - name: approval_token
+        type: string
+        required: true
+
+  - name: update_safety_thresholds
+    description: "Update runtime safety thresholds in governance_thresholds.json."
+    params:
+      - name: threshold_key
+        type: string
+        required: true
+      - name: new_value
+        type: float
+        required: true
+      - name: approval_token
+        type: string
+        required: true
+
+  - name: disable_audit_logging
+    description: "Disable or pause compliance audit logging stream."
+    params:
+      - name: reason
+        type: string
+        required: true
+
+  - name: override_control_barrier
+    description: "Override or bypass a Control Barrier Function safety invariant."
+    params:
+      - name: barrier_id
+        type: string
+        required: true
+      - name: approval_token
+        type: string
+        required: true
 
 # ---------------------------------------------------------------------------
 # Unsafe Control Actions (UCAs)

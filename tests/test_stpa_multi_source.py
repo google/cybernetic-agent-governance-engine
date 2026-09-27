@@ -36,7 +36,7 @@ def _write_yaml(tmp_path, name, content):
 def test_merge_determinism_independent_of_file_order():
     core_path = _REPO_ROOT / "config" / "stpa" / "core_system.yaml"
     trade_path = (
-        _REPO_ROOT / "config" / "stpa" / "domains" / "finance" / "trade_hazards.yaml"
+        _REPO_ROOT / "src" / "cage_finance" / "config" / "stpa" / "trade_hazards.yaml"
     )
 
     cs_forward = load_control_structures([core_path, trade_path])

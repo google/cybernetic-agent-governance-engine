@@ -88,14 +88,19 @@ def _load_stpa_cs():
     """Load the real STPA control structure for compiler tests."""
     from src.gateway.governance.stpa_compiler import (
         ControlStructureModel,
-        load_control_structure,
+        load_control_structures,
     )
 
-    stpa_path = (
-        Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
+    repo_root = Path(__file__).resolve().parents[1]
+    stpa_path = repo_root / "config" / "stpa_control_structure.yaml"
+    finance_path = (
+        repo_root / "src" / "cage_finance" / "config" / "stpa" / "trade_hazards.yaml"
     )
     if stpa_path.exists():
-        return load_control_structure(stpa_path)
+        paths = [stpa_path]
+        if finance_path.exists():
+            paths.append(finance_path)
+        return load_control_structures(paths)
 
     # Minimal synthetic model for environments without the full YAML
     import yaml
@@ -166,12 +171,12 @@ rbac_rules:
   roles:
     - name: trader
       allowed_actions: [execute_trade, get_portfolio]
-      trade_limits:
+      limits:
         allow_below: 5000
         manual_review_below: 50000
     - name: senior
       allowed_actions: [execute_trade, get_portfolio]
-      trade_limits:
+      limits:
         allow_below: 100000
         manual_review_below: 500000
     - name: junior
@@ -763,7 +768,7 @@ class TestGenerateRegistryManifest:
 
         if self.cs.rbac_rules:
             has_limits = any(
-                r.trade_limits and r.trade_limits.get("manual_review_below")
+                r.limits and r.limits.get("manual_review_below")
                 for r in self.cs.rbac_rules.roles
                 if "execute_trade" in r.allowed_actions
             )

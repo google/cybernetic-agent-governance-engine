@@ -131,20 +131,18 @@ class TestHealthcarePlugin:
         from src.cage_healthcare.plugin import HealthcareCagePlugin
         from src.gateway.core.policy import OPAClient
         from src.gateway.governance.env_posture import DeploymentPosture
-        from src.gateway.governance.generated_stpa_validator import (
-            GeneratedSTPAValidator,
-        )
         from src.gateway.governance.governor.assembly import (
             DecisionFlags,
             assemble_governor,
         )
+        from src.gateway.governance.stpa_validator import STPAValidator
 
         # Should not raise
         governor = assemble_governor(
             [HealthcareCagePlugin()],
             posture=DeploymentPosture.DEV,
             opa=OPAClient("dosing.governance"),
-            stpa_validator=GeneratedSTPAValidator(),
+            stpa_validator=STPAValidator(),
             flags=DecisionFlags(defer=True, narrow=False, pause=False),
         )
 
