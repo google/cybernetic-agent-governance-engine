@@ -289,7 +289,6 @@ module "redis" {
   resources_requests_cpu    = "200m"
   resources_requests_memory = "512Mi"
   maxmemory                 = var.environment == "prod" ? "1024mb" : "256mb"
-  maxmemory_policy          = var.environment == "prod" ? "noeviction" : "allkeys-lru"
 
   depends_on = [module.gke]
 }

@@ -220,6 +220,13 @@ resource "google_redis_instance" "redis" {
 
   redis_version = "REDIS_7_0"
 
+  # CAGE invariant: never evict governance state (the Memorystore default
+  # policy is an LRU eviction policy). At the memory ceiling writes fail and
+  # the gateway fails closed.
+  redis_configs = {
+    "maxmemory-policy" = "noeviction"
+  }
+
   # CMEK encryption (Phase C)
   customer_managed_key = var.enable_cmek ? google_kms_crypto_key.cloudrun_cmek[0].id : null
 
