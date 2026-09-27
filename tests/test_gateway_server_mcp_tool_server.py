@@ -18,8 +18,9 @@ Unit tests for src.cage_finance.tools.tool_provider.py.
 Tests the rate-limiting logic (_check_rate_limit) and module-level constants
 without spinning up FastAPI, MCP, NeMo, OPA, or Redis.
 
-Heavy dependencies (FastMCP, governance singletons, etc.) are bypassed by
-patching at the sys.modules level before import.
+Heavy dependencies (FastMCP, NeMo, tracing, etc.) are bypassed by patching at
+the sys.modules level before import. The governor is read from
+``app.state.governor``, so tests install a mock governor there.
 """
 
 from __future__ import annotations
@@ -61,15 +62,6 @@ def _mcp_import_stubs():
         "src.gateway.governance.schemas.thresholds": MagicMock(
             load_and_validate_thresholds=MagicMock()
         ),
-        "src.gateway.governance.singletons": MagicMock(
-            opa_client=MagicMock(close=AsyncMock()),
-            symbolic_governor=MagicMock(
-                verify=AsyncMock(return_value={"violations": []}),
-                safety_filter=MagicMock(
-                    update_state=AsyncMock(), rollback_state=AsyncMock()
-                ),
-            ),
-        ),
         "src.gateway.observability.mcp_tracing": MagicMock(patch_mcp_tools=MagicMock()),
         "src.gateway.server.governance_middleware": MagicMock(
             enforce_governance=AsyncMock(return_value=MagicMock()),
@@ -97,6 +89,17 @@ def _mcp_import_stubs():
             configure_telemetry=MagicMock()
         ),
     }
+
+
+def _mock_governor(*, verify_result: dict | None = None, opa_decision: str = "ALLOW") -> MagicMock:
+    """A ``SymbolicGovernor``-shaped mock for ``app.state.governor``."""
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
+    governor = MagicMock(spec=SymbolicGovernor)
+    governor.verify = AsyncMock(return_value=verify_result or {"violations": []})
+    governor.components = MagicMock()
+    governor.components.opa.evaluate_policy = AsyncMock(return_value=opa_decision)
+    return governor
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +279,7 @@ class TestMCPToolServerFunctions:
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
 
+            mod.app.state.governor = _mock_governor()
             res = await mod.simulate_governance_check("buy", {"amount": 100})
             assert res["status"] == "APPROVED"
             assert res["message"] == "No violations detected."
@@ -292,12 +296,11 @@ class TestMCPToolServerFunctions:
         refusal = Violation(
             tier="cbf", code="CBF_BARRIER_VIOLATED", message="UNSAFE: bankruptcy", kind=ViolationKind.HARD
         )
-        stubs["src.gateway.governance.singletons"].symbolic_governor.verify = AsyncMock(
-            return_value={"violations": [refusal]}
-        )
         with patch.dict("sys.modules", stubs):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.governor = _mock_governor(verify_result={"violations": [refusal]})
 
             res = await mod.simulate_governance_check("execute_trade", {"amount": 100})
             assert res["status"] == "REJECTED"
@@ -309,13 +312,11 @@ class TestMCPToolServerFunctions:
     async def test_evaluate_policy_internal_allow(self):
         import sys
 
-        stubs = _mcp_import_stubs()
-        stubs[
-            "src.gateway.governance.singletons"
-        ].opa_client.evaluate_policy = AsyncMock(return_value="ALLOW")
-        with patch.dict("sys.modules", stubs):
+        with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.governor = _mock_governor(opa_decision="ALLOW")
 
             res = await mod._evaluate_policy_internal("execute_trade", 500)
             assert "APPROVED" in res
@@ -324,13 +325,11 @@ class TestMCPToolServerFunctions:
     async def test_evaluate_policy_internal_manual_review(self):
         import sys
 
-        stubs = _mcp_import_stubs()
-        stubs[
-            "src.gateway.governance.singletons"
-        ].opa_client.evaluate_policy = AsyncMock(return_value="MANUAL_REVIEW")
-        with patch.dict("sys.modules", stubs):
+        with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.governor = _mock_governor(opa_decision="MANUAL_REVIEW")
 
             res = await mod._evaluate_policy_internal("execute_trade", 500)
             assert "MANUAL_REVIEW" in res
@@ -339,13 +338,11 @@ class TestMCPToolServerFunctions:
     async def test_evaluate_policy_internal_denied(self):
         import sys
 
-        stubs = _mcp_import_stubs()
-        stubs[
-            "src.gateway.governance.singletons"
-        ].opa_client.evaluate_policy = AsyncMock(return_value="DENY")
-        with patch.dict("sys.modules", stubs):
+        with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.governor = _mock_governor(opa_decision="DENY")
 
             res = await mod._evaluate_policy_internal("execute_trade", 500)
             assert "DENIED" in res
@@ -394,46 +391,51 @@ class TestMCPToolServerFunctions:
 
 @pytest.mark.local
 class TestActivateDomainOpaHandshake:
-    """Startup refuses to register a domain whose OPA policy is not loaded."""
+    """Startup refuses to install a domain whose OPA policy is not loaded."""
 
     def _run(self, verify):
-        """Run _activate_domain; return (plugin, result-or-exception)."""
+        """Run _activate_domain; return (governor, tool_provider, app, result-or-exception)."""
         import sys
 
-        from src.gateway.governance.contracts import DomainConfig
+        from src.gateway.governance.contracts import DomainConfig, PluginContribution
 
-        plugin = MagicMock()
-        plugin.name = "finance"
         config = DomainConfig(
             ftra_registry_path=MagicMock(), opa_package="trade.governance", opa_required_rules=("allow",)
         )
-        stubs = _mcp_import_stubs()
-        stubs["src.gateway.governance.singletons"]._has_null_components = MagicMock(return_value=False)
-        with patch.dict("sys.modules", stubs):
+        tool_provider = MagicMock()
+        governor = _mock_governor()
+        governor.components.opa.verify_domain_policy = verify
+        governor.components.contributions = (
+            PluginContribution(domain="finance", tool_provider=tool_provider),
+        )
+        governor.registered_tier_names = MagicMock(return_value=["finance"])
+        with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
 
-            mod.opa_client.verify_domain_policy = verify
             with (
-                patch("src.gateway.governance.plugin_loader.load_domain_plugin", return_value=plugin),
-                patch("src.gateway.governance.plugin_loader.domain_config_of", return_value=config),
+                patch("src.gateway.governance.governor.bootstrap.bootstrap_governor", return_value=governor),
+                patch("src.gateway.governance.plugin_loader.active_domain_config", return_value=config),
             ):
                 try:
-                    return plugin, asyncio.run(mod._activate_domain())
+                    outcome = asyncio.run(mod._activate_domain())
                 except Exception as exc:  # noqa: BLE001 — returned for assertion
-                    return plugin, exc
+                    outcome = exc
+            return governor, tool_provider, mod, outcome
 
-    def test_opa_mismatch_aborts_startup_before_register(self):
+    def test_opa_mismatch_aborts_startup_before_install(self):
         from src.gateway.core.policy import OPAPolicyMismatchError
 
         verify = AsyncMock(side_effect=OPAPolicyMismatchError("OPA has no module declaring package"))
-        plugin, outcome = self._run(verify)
+        _governor, tool_provider, mod, outcome = self._run(verify)
         assert isinstance(outcome, OPAPolicyMismatchError)
-        plugin.register.assert_not_called()
+        tool_provider.register_tools.assert_not_called()
+        assert getattr(mod.app.state, "governor", None) is None
 
-    def test_verified_domain_is_registered_with_declared_package(self):
+    def test_verified_domain_is_installed_with_declared_package(self):
         verify = AsyncMock(return_value=None)
-        plugin, outcome = self._run(verify)
+        governor, tool_provider, mod, outcome = self._run(verify)
         verify.assert_awaited_once_with("trade.governance", ("allow",))
-        plugin.register.assert_called_once()
-        assert outcome is plugin
+        tool_provider.register_tools.assert_called_once_with(mod.mcp, governor)
+        assert outcome is governor
+        assert mod.app.state.governor is governor

@@ -23,18 +23,16 @@ T-D5: The complete healthcare plugin — a list of declarations.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
 
 from src.cage_healthcare import create_healthcare_tiers
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
-from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin, DomainConfig
-from src.gateway.governance.governor.governor import SymbolicGovernor
+from src.gateway.governance.contracts import (
+    CagePlugin,
+    DomainConfig,
+    PluginContribution,
+)
 
 
 class HealthcareCagePlugin(CagePlugin):
@@ -49,27 +47,15 @@ class HealthcareCagePlugin(CagePlugin):
     # No healthcare FTRA registry yet: the domain refuses to start (POAM-2026-077).
     domain_config: DomainConfig | None = None
 
-    def register(
-        self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None
-    ) -> None:
-        # Register the serum concentration barrier (declarative, no logic)
-        barrier = SerumConcentrationBarrier()
-        governor.register_invariant(barrier)
-
-        # Task 2.1 (ARCH-2): Create domain tiers via factory for immutable registration
-        governor.add_domain_tiers(create_healthcare_tiers())
-
-        # Register rail provider (contributes CheckContraindicationAction)
-        from src.integrations.nemo.action_registry import register_rail_provider
-
-        register_rail_provider(HealthcareRailProvider())
-
-        # Register compliance overlay directory
-        register_overlay_dir(Path("src/cage_healthcare/config/compliance"))
-
-        # Register tools
-        if tool_server:
-            ClinicalToolProvider().register_tools(tool_server)
+    def contribute(self) -> PluginContribution:
+        return PluginContribution(
+            domain=self.name,
+            tiers=create_healthcare_tiers(),
+            invariants=(SerumConcentrationBarrier(),),  # declarative, no logic
+            tool_provider=ClinicalToolProvider(),
+            compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
+            rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction
+        )
 
 
 def get_plugin() -> CagePlugin:

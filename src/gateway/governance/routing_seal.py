@@ -1193,15 +1193,3 @@ def require_cleared_seal(
             return sync_wrapper  # type: ignore[return-value]
 
     return decorator
-
-
-# ---------------------------------------------------------------------------
-# C-03: Auto-enforce custom HMAC salt at import time in production.
-# This ensures the check runs before any seal is generated or verified.
-# ---------------------------------------------------------------------------
-
-# MED-8 fix: removed the `== "prod"` guard that only triggered for CAGE_ENV=prod
-# exactly.  Deployments with CAGE_ENV=staging, CAGE_ENV=uat, or CAGE_ENV=preprod
-# using the default salt would silently pass.  assert_custom_salt_in_production()
-# already handles all non-dev/test environments correctly — call it unconditionally.
-assert_custom_salt_in_production()

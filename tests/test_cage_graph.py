@@ -23,6 +23,7 @@ from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.graph.nodes.safety_node import (
     safety_check_node,
 )
+from tests.fixtures.governor import make_governor
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -88,7 +89,7 @@ def _route_after_safety(state: dict) -> str:
 def test_graph_compilation():
     """Verifies that the graph compiles successfully with the new CAGE nodes."""
     try:
-        graph = create_graph(redis_url=None)
+        graph = create_graph(make_governor(), redis_url=None)
         assert graph is not None
         print("Graph compiled successfully")
     except Exception as e:
@@ -98,7 +99,7 @@ def test_graph_compilation():
 @patch("src.governed_financial_advisor.graph.nodes.adapters.run_adk_agent")
 def test_cage_flow_structure(mock_run_agent):
     """Verifies structure of the CAGE graph — successful compilation implies nodes exist."""
-    graph = create_graph()
+    graph = create_graph(make_governor())
     assert graph is not None
 
 
@@ -229,14 +230,14 @@ async def test_safety_node_opa_unreachable_routes_to_explainer(minimal_trade_sta
 
 def test_graph_has_safety_check_node():
     """Compiled graph must include the safety_check node (R-11 requirement)."""
-    graph = create_graph(redis_url=None)
+    graph = create_graph(make_governor(), redis_url=None)
     # LangGraph compiled graphs expose their nodes via .nodes dict
     assert "safety_check" in graph.nodes
 
 
 def test_safety_check_node_is_between_evaluator_and_governed_trader():
     """Graph must wire evaluator → safety_check and safety_check → governed_trader/explainer."""
-    graph = create_graph(redis_url=None)
+    graph = create_graph(make_governor(), redis_url=None)
     # Confirm both anchor nodes exist alongside safety_check
     assert "evaluator" in graph.nodes
     assert "governed_trader" in graph.nodes
@@ -246,6 +247,6 @@ def test_safety_check_node_is_between_evaluator_and_governed_trader():
 
 def test_graph_compiles_with_safety_node():
     """create_graph() must succeed and return a non-None object with safety_check wired in."""
-    graph = create_graph(redis_url=None)
+    graph = create_graph(make_governor(), redis_url=None)
     assert graph is not None
     assert "safety_check" in graph.nodes

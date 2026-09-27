@@ -22,6 +22,7 @@ on APPROVED verdicts and complete refusal contracts on DENIED verdicts.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,10 +36,30 @@ os.environ.setdefault("GOVERNANCE_SALT", "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!")
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
+def _mock_governor() -> MagicMock:
+    """A governor mock that passes ``governor_of``'s ``SymbolicGovernor`` check."""
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
+    return MagicMock(spec=SymbolicGovernor)
+
+
+@contextmanager
+def _installed_governor(gov: Any):
+    """Temporarily set ``governance_app.state.governor`` (where the lifespan puts it)."""
+    from src.gateway.server.governance_middleware import governance_app
+
+    previous = getattr(governance_app.state, "governor", None)
+    governance_app.state.governor = gov
+    try:
+        yield gov
+    finally:
+        governance_app.state.governor = previous
+
+
 @pytest.fixture()
 def mock_symbolic_governor():
-    """Patch the symbolic_governor singleton."""
-    gov = MagicMock()
+    """Install a mock governor on ``governance_app.state``."""
+    gov = _mock_governor()
     gov.validate_action = AsyncMock(
         return_value={
             "verdict": "APPROVED",
@@ -51,7 +72,7 @@ def mock_symbolic_governor():
             "agent_id": "advisor-test",
         }
     )
-    with patch("src.gateway.server.governance_middleware.symbolic_governor", gov):
+    with _installed_governor(gov):
         yield gov
 
 
@@ -231,10 +252,10 @@ class TestEnvelopeTransportDenied:
 
     @pytest.fixture()
     def client_for_denial(self, mock_kms_signer):
-        """Client with symbolic_governor configured to deny requests."""
+        """Client whose governor denies requests."""
         from src.gateway.governance.governor.governor import GovernanceError
 
-        gov = MagicMock()
+        gov = _mock_governor()
         gov.validate_action = AsyncMock(
             side_effect=GovernanceError("CBF safety bound exceeded")
         )
@@ -250,7 +271,7 @@ class TestEnvelopeTransportDenied:
         from src.gateway.server.governance_middleware import governance_app
 
         with (
-            patch("src.gateway.server.governance_middleware.symbolic_governor", gov),
+            _installed_governor(gov),
             patch(
                 "src.gateway.server.governance_middleware._emit_refusal_receipt",
                 new=AsyncMock(return_value=None),

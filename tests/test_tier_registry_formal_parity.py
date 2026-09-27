@@ -66,16 +66,16 @@ class _FakeTier:
 
 def _make_governor(classification_engine, **overrides):
     """Create a SymbolicGovernor with mocked dependencies."""
-    from src.gateway.governance.governor.governor import SymbolicGovernor
+    from tests.fixtures.governor import make_governor
 
     kwargs = {
-        "classification_engine": classification_engine,
-        "opa_client": MagicMock(),
+        "classifier": classification_engine,
+        "opa": MagicMock(),
         "safety_filter": MagicMock(),
-        "consensus_engine": MagicMock(),
+        "consensus": MagicMock(),
     }
     kwargs.update(overrides)
-    return SymbolicGovernor(**kwargs)
+    return make_governor(**kwargs)
 
 
 class TestFormalModelParity:

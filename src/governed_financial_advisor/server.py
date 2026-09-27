@@ -76,9 +76,15 @@ if ENABLE_TRACING:
 # --- LIFESPAN (Startup/Shutdown) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-    # Startup: Initialize Graph (and Redis)
+    # Startup: composition root — assemble the governor and check posture
+    # (KMS signing mode, Redis, reconciliation provider) before anything else.
+    from src.gateway.governance.governor.bootstrap import bootstrap_governor
+
+    governor = bootstrap_governor()
+    app.state.governor = governor
+
     logger.info("Initializing Agent Graph...")
-    app.state.graph = create_graph(redis_url=Config.REDIS_URL)
+    app.state.graph = create_graph(governor, redis_url=Config.REDIS_URL)
 
     # Initialize DeferQueue for atomic ticket resolution
     import redis.asyncio as aioredis
@@ -89,45 +95,26 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.defer_queue = DeferQueue(redis_client=redis_client_db1)
     logger.info("✅ DeferQueue initialized (db=1)")
 
-    # ── CTRL_KMS_001: Eagerly initialise the governance signer ────────────
-    # generate_governance_signature() (evaluator_node.py) calls
-    # get_governance_signer() lazily on the first plan approval. If
-    # KMS_GOVERNANCE_KEY is unset/misconfigured or google-cloud-kms isn't
-    # installed, that first call raises RuntimeError deep inside a request,
-    # surfacing as an opaque HTTP 500 on every trade/execution request — the
-    # 2026-08-01 measurement-run defect. Initialise (and validate) it here
-    # instead, so a broken signer fails fast at pod startup with a clear log
-    # line and a non-ready pod, rather than silently 500-ing every request.
-    app.state.kms_active = False
-    try:
-        from src.gateway.governance.kms_signer import (
-            assert_kms_active_in_production,
-            get_governance_signer,
-        )
+    # ── CTRL_KMS_001: governance signer ───────────────────────────────────
+    # bootstrap_governor() above already ran the startup posture check, which
+    # refuses to start an enforcing posture in HMAC fallback (K3). Here we only
+    # record the signer mode so a broken signer fails at pod startup rather
+    # than as an opaque HTTP 500 on the first plan approval.
+    from src.gateway.governance.kms_signer import get_governance_signer
 
-        _signer = get_governance_signer()
-        app.state.kms_active = _signer.is_kms_active
-        if _signer.is_kms_active:
-            logger.info(
-                "✅ CTRL_KMS_001: KMSGovernanceSigner active (%s)",
-                _signer.signing_algorithm,
-            )
-        else:
-            logger.warning(
-                "⚠️  CTRL_KMS_001: KMSGovernanceSigner is in HMAC fallback mode "
-                "(KMS_GOVERNANCE_KEY unset or not applicable). This is only "
-                "acceptable in dev/CI — see CTRL_KMS_001 in control_mappings.json."
-            )
-        # Fail fast in non-dev environments: raises RuntimeError if the
-        # signer is in fallback mode outside development/test/ci.
-        assert_kms_active_in_production()
-    except Exception as _kms_exc:
-        logger.error(
-            "❌ CTRL_KMS_001 STARTUP FAILURE: governance signer did not "
-            "initialise correctly: %s",
-            _kms_exc,
+    _signer = get_governance_signer()
+    app.state.kms_active = _signer.is_kms_active
+    if _signer.is_kms_active:
+        logger.info(
+            "✅ CTRL_KMS_001: KMSGovernanceSigner active (%s)",
+            _signer.signing_algorithm,
         )
-        raise
+    else:
+        logger.warning(
+            "⚠️  CTRL_KMS_001: KMSGovernanceSigner is in HMAC fallback mode. "
+            "This is only acceptable in dev/test/ci — see CTRL_KMS_001 in "
+            "control_mappings.json."
+        )
 
     # ── Connect the GFA AsyncRedisClient singleton ────────────────────────
     # The singleton is created at module import time (redis_client.py) but

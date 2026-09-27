@@ -132,9 +132,9 @@ provides multi-cloud (GCP/AWS/Azure) asymmetric signing with:
   indefinitely, not just for 5 minutes — see §7.1 for how the receipt design
   avoids this staleness gate).
 - Fail-closed guarantee: [`_kms_sign()`](../../src/gateway/governance/kms_signer.py:654)
-  has **no HMAC fallback** in production — `assert_kms_active_in_production()`
-  ([`kms_signer.py:851`](../../src/gateway/governance/kms_signer.py:851))
-  raises at startup if KMS is not active. This is the exact non-repudiation
+  has **no HMAC fallback** in production — the startup posture check
+  `kms_signing_mode` ([`governor/posture.py`](../../src/gateway/governance/governor/posture.py))
+  refuses to start an enforcing posture if KMS is not active. This is the exact non-repudiation
   guarantee Terry's proof element 7 (Evidence/Receipt) requires: a receipt
   signed by CAGE's KMS key cannot have been forged by CAGE's own application
   code, because the private key material never leaves the HSM.

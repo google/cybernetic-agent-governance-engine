@@ -14,6 +14,7 @@
 
 from . import agent_nodes
 from .agent_nodes import (
+    create_governed_trader_node,
     data_analyst_node,
     execution_analyst_node,
     governed_trader_node,
@@ -22,6 +23,7 @@ from .supervisor_node import doer_node, thinker_node
 
 __all__ = [
     "agent_nodes",
+    "create_governed_trader_node",
     "data_analyst_node",
     "doer_node",
     "execution_analyst_node",

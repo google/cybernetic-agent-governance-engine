@@ -109,26 +109,6 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     mcp_app.state.nemo_rails = nemo_rails
     logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
 
-    # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
-    from src.gateway.governance.singletons import opa_client
-
-    logger.info("🔥 Pre-warming OPA policy evaluation...")
-    synthetic_params = {
-        "action": "system_warmup_test",
-        "resource": "test_resource",
-        "amount": 100.0,
-        "user_id": "system_warmup",
-        "dry_run": True,
-    }
-    try:
-        await opa_client.evaluate_policy(synthetic_params)
-        logger.info("✅ OPA policy engine pre-warmed successfully")
-    except Exception as e:
-        logger.warning("⚠️ OPA pre-warm failed (non-blocking): %s", e)
-
-    # The active domain's OPA package/rules are verified fail-closed in
-    # _activate_domain() (mcp_tool_server); no domain-specific probe here.
-
     # ── Pre-warm Token Quota Proxy and UCA Logger (CTRL_TQP_007) ───────────────
     try:
         from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
@@ -140,66 +120,20 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as e:
         logger.warning("⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e)
 
-    # ── Production guard: enforce KMS signer activation (H-05) ────────────────
-    # assert_kms_active_in_production() raises RuntimeError if KMS is not
-    # configured in prod, preventing silent fallback to no-op stub signing.
-    # C-25 fix: standardise on CAGE_ENV throughout — ENVIRONMENT is no longer
-    # consulted here to avoid the split-brain where CAGE_ENV=production but
-    # ENVIRONMENT is unset, silently skipping the KMS and salt guards.
-    cage_env = os.getenv("CAGE_ENV", "production").lower()
-    _is_production = cage_env not in ("development", "test", "dev", "ci")
+    # ── Production guards not owned by the governor posture check ──────────
+    # KMS signing mode (K3), KMS/Redis readiness, the POAM-023 stub
+    # reconciliation guard and the default GOVERNANCE_SALT guard (C-04) run in
+    # assert_production_posture() when the governor is assembled
+    # (_activate_domain below).
+    from src.gateway.governance.env_posture import is_enforcing
 
-    if _is_production:
-        try:
-            from src.gateway.governance.kms_signer import (
-                assert_kms_active_in_production,
-            )
-
-            assert_kms_active_in_production()
-            logger.info("✅ KMS signer activation confirmed at startup")
-        except RuntimeError as kms_err:
-            logger.critical(
-                "🚨 STARTUP FAILURE: KMS signer not active in production: %s", kms_err
-            )
-            raise
-
-        # C-04 fix: assert_custom_salt_in_production() was previously never
-        # called automatically, allowing the well-known default GOVERNANCE_SALT
-        # to be used in production — enabling routing seal forgery.
-        try:
-            from src.gateway.governance.routing_seal import (
-                assert_custom_salt_in_production,
-            )
-
-            assert_custom_salt_in_production()
-            logger.info("✅ GOVERNANCE_SALT custom value confirmed at startup")
-        except RuntimeError as salt_err:
-            logger.critical(
-                "🚨 STARTUP FAILURE: GOVERNANCE_SALT is the default value in "
-                "production — routing seals can be forged. Set a strong random "
-                "secret via the GOVERNANCE_SALT environment variable: %s",
-                salt_err,
-            )
-            raise
-
-    # ── Production guard: prohibit log-mode seal enforcement (BLOCKER-03) ──────
-    # C-25 fix: use CAGE_ENV (not ENVIRONMENT) for consistency.
-    if _is_production:
+    if is_enforcing():
+        # BLOCKER-03: log-mode seal enforcement is prohibited.
         if os.getenv("CAGE_SEAL_ENFORCEMENT") == "log":
             raise RuntimeError(
                 "CAGE_SEAL_ENFORCEMENT=log is prohibited in production — "
                 "set CAGE_SEAL_ENFORCEMENT=enforce or remove the variable."
             )
-
-    # ── Production guard: prohibit stub ledger provider (BLOCKER-06) ───────────
-    # The stub provider fabricates a static $100k balance; the CBF would evaluate
-    # against fake data, making the safety barrier meaningless in production.
-    # C-25 fix: use CAGE_ENV (not ENVIRONMENT) for consistency.
-    if _is_production and os.getenv("RECONCILIATION_PROVIDER", "stub") == "stub":
-        raise RuntimeError(
-            "RECONCILIATION_PROVIDER=stub is not allowed in production. "
-            "Set a real ledger provider (e.g. RECONCILIATION_PROVIDER=anchorage)."
-        )
 
     # External Normative Provider integration (§2.5)
     provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
@@ -264,7 +198,27 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     #    including the OPA package/rule handshake)
     from src.gateway.server.mcp_tool_server import _activate_domain
 
-    await _activate_domain()
+    governor = await _activate_domain()  # also sets mcp_app.state.governor
+    app.state.governor = governor
+    governance_app.state.governor = governor
+
+    # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
+    logger.info("🔥 Pre-warming OPA policy evaluation...")
+    synthetic_params = {
+        "action": "system_warmup_test",
+        "resource": "test_resource",
+        "amount": 100.0,
+        "user_id": "system_warmup",
+        "dry_run": True,
+    }
+    try:
+        await governor.components.opa.evaluate_policy(synthetic_params)
+        logger.info("✅ OPA policy engine pre-warmed successfully")
+    except Exception as e:
+        logger.warning("⚠️ OPA pre-warm failed (non-blocking): %s", e)
+
+    # The active domain's OPA package/rules are verified fail-closed in
+    # _activate_domain() (mcp_tool_server); no domain-specific probe here.
 
     # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
     from src.gateway.governance.background_tasks import (

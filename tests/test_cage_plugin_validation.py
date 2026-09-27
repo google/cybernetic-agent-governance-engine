@@ -17,6 +17,7 @@ import pytest
 from src.gateway.governance.contracts import (
     CAGE_PLUGIN_API_VERSION,
     CagePlugin,
+    PluginContribution,
     validate_plugin,
 )
 
@@ -26,8 +27,8 @@ class ValidPlugin:
     api_version = "1.0"
     domain_config = None
 
-    def register(self, governor, tool_server=None):
-        pass
+    def contribute(self):
+        return PluginContribution(domain=self.name)
 
 
 class WrongNamePlugin:
@@ -35,8 +36,8 @@ class WrongNamePlugin:
     api_version = "1.0"
     domain_config = None
 
-    def register(self, governor, tool_server=None):
-        pass
+    def contribute(self):
+        return PluginContribution(domain=self.name)
 
 
 class IncompatibleVersionPlugin:
@@ -44,8 +45,8 @@ class IncompatibleVersionPlugin:
     api_version = "2.0"
     domain_config = None
 
-    def register(self, governor, tool_server=None):
-        pass
+    def contribute(self):
+        return PluginContribution(domain=self.name)
 
 
 class MinorVersionOkPlugin:
@@ -53,17 +54,29 @@ class MinorVersionOkPlugin:
     api_version = "1.5"
     domain_config = None
 
-    def register(self, governor, tool_server=None):
-        pass
+    def contribute(self):
+        return PluginContribution(domain=self.name)
 
 
 class NotAPlugin:
     pass
 
 
-class MissingRegisterPlugin:
+class MissingContributePlugin:
     name = "test"
     api_version = "1.0"
+    domain_config = None
+
+
+class LegacyRegisterOnlyPlugin:
+    """Implements only the removed mutate-the-governor hook; must be rejected."""
+
+    name = "test"
+    api_version = "1.0"
+    domain_config = None
+
+    def register(self, governor, tool_server=None):
+        pass
 
 
 @pytest.mark.local
@@ -110,8 +123,16 @@ def test_not_a_plugin_raises_type_error():
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_missing_register_raises_type_error():
-    plugin = MissingRegisterPlugin()
+def test_missing_contribute_raises_type_error():
+    plugin = MissingContributePlugin()
+    with pytest.raises(TypeError):
+        validate_plugin(plugin, entry_point_name="test")
+
+
+@pytest.mark.local
+@pytest.mark.unit
+def test_legacy_register_only_plugin_raises_type_error():
+    plugin = LegacyRegisterOnlyPlugin()
     with pytest.raises(TypeError):
         validate_plugin(plugin, entry_point_name="test")
 

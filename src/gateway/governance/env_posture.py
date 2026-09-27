@@ -62,13 +62,51 @@ def resolve_posture() -> DeploymentPosture:
         return DeploymentPosture.DEV
     elif cage_env in ("test", "testing"):
         return DeploymentPosture.TEST
-    elif cage_env in ("local"):
+    elif cage_env == "local":
         return DeploymentPosture.LOCAL
     elif cage_env in ("ci", "continuous-integration"):
         return DeploymentPosture.CI
     else:
         # Unknown value defaults to production for fail-secure behavior
         return DeploymentPosture.PRODUCTION
+
+
+# Postures that may run with software fallbacks (HMAC signer, no KMS/Redis
+# probe). Every other posture, including unknown values (which resolve to
+# PRODUCTION) and LOCAL, enforces the production startup checks.
+_PERMISSIVE_POSTURES = frozenset(
+    {DeploymentPosture.DEV, DeploymentPosture.TEST, DeploymentPosture.CI}
+)
+
+
+def is_enforcing(posture: DeploymentPosture | None = None) -> bool:
+    """Return whether ``posture`` (default: :func:`resolve_posture`) enforces
+    production startup checks. Fail secure: only DEV, TEST and CI relax them."""
+    return (posture or resolve_posture()) not in _PERMISSIVE_POSTURES
+
+
+def env_flag(name: str, default: bool) -> bool:
+    """Parse a boolean environment flag; unset falls back to ``default``."""
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("true", "1", "t", "y", "yes", "on")
+
+
+def is_cage_defer_enabled() -> bool:
+    """DEFER decision path (``CAGE_DEFER_ENABLED``, default on)."""
+    return env_flag("CAGE_DEFER_ENABLED", True)
+
+
+def is_cage_narrow_enabled() -> bool:
+    """NARROW decision path (``CAGE_NARROW_ENABLED``). Opt-in: unset means
+    disabled (fail closed), as documented in SYMBOLIC_GOVERNOR_RUNTIME.md."""
+    return env_flag("CAGE_NARROW_ENABLED", False)
+
+
+def is_cage_pause_enabled() -> bool:
+    """PAUSE decision path (``CAGE_PAUSE_ENABLED``, default on)."""
+    return env_flag("CAGE_PAUSE_ENABLED", True)
 
 
 DOMAIN_ENV_VAR = "CAGE_DOMAIN"

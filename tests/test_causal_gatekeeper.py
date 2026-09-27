@@ -44,6 +44,8 @@ pytest.importorskip(
 import numpy as np
 import pandas as pd
 
+from tests.fixtures.governor import make_governor
+
 pytestmark = pytest.mark.local
 
 # ---------------------------------------------------------------------------
@@ -554,7 +556,6 @@ class TestCausalGatekeeperIntegration:
         """Helper to create a SymbolicGovernor with all checks mocked except causal."""
         from src.gateway.core.policy import OPAClient
         from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
-        from src.gateway.governance.governor.governor import SymbolicGovernor
 
         opa_client = MagicMock(spec=OPAClient)
         opa_client.evaluate_policy = AsyncMock(return_value={"decision": "ALLOW"})
@@ -574,11 +575,11 @@ class TestCausalGatekeeperIntegration:
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
-        return SymbolicGovernor(
-            opa_client=opa_client,
+        return make_governor(
+            opa=opa_client,
             safety_filter=safety_filter,
-            consensus_engine=consensus_engine,
-            classification_engine=classification_engine,
+            consensus=consensus_engine,
+            classifier=classification_engine,
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),

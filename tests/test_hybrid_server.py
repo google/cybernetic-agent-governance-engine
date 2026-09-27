@@ -17,7 +17,8 @@
 Covers:
   - _DebugEndpointGuard middleware (blocks /debug/* in prod, passes in dev)
   - healthz endpoint (KMS active, KMS inactive, exception paths)
-  - _gateway_lifespan production startup guards (seal enforcement, stub ledger)
+  - _gateway_lifespan production startup guards (seal enforcement, governor
+    posture refusals from _activate_domain)
 
 All external dependencies are patched at both import time AND request-time to
 ensure locally-imported modules inside the lifespan/endpoint coroutines use the
@@ -57,19 +58,21 @@ def _make_hybrid_stubs() -> dict:
     mock_kms_mod.get_governance_signer = MagicMock(
         return_value=MagicMock(is_kms_active=True)
     )
-    mock_kms_mod.assert_kms_active_in_production = MagicMock()
 
     mock_seal_mod = MagicMock()
     mock_seal_mod.assert_custom_salt_in_production = MagicMock()
     mock_seal_mod.verify_seal = MagicMock()
     mock_seal_mod.SymbolicGovernorViolation = Exception
 
+    mock_governor = MagicMock()
+    mock_governor.components.opa.evaluate_policy = AsyncMock()
+
     return {
         # Sub-apps
         "src.gateway.server.mcp_tool_server": MagicMock(
             app=mock_mcp_app,
             mcp=MagicMock(),
-            _activate_domain=AsyncMock(),
+            _activate_domain=AsyncMock(return_value=mock_governor),
         ),
         "src.gateway.governance.background_tasks": MagicMock(
             start_all=MagicMock(return_value=[])
@@ -88,18 +91,6 @@ def _make_hybrid_stubs() -> dict:
         "src.integrations.nemo.manager": MagicMock(
             initialize_rails=MagicMock(return_value=MagicMock()),
             validate_with_nemo=AsyncMock(return_value=(True, "SAFE", True)),
-        ),
-        # OPA + Singletons
-        "src.gateway.governance.singletons": MagicMock(
-            opa_client=MagicMock(
-                evaluate_policy=AsyncMock(),
-                close=AsyncMock(),
-            ),
-            symbolic_governor=MagicMock(
-                verify=AsyncMock(return_value={"violations": []}),
-            ),
-            install_domain_components=MagicMock(),
-            _has_null_components=MagicMock(return_value=False),
         ),
         # Consensus
         "src.cage_finance.consensus.consensus": MagicMock(
@@ -410,12 +401,6 @@ async def test_lifespan_raises_when_seal_enforcement_is_log_in_prod(monkeypatch)
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
 
     stubs = _make_hybrid_stubs()
-    stubs[
-        "src.gateway.governance.kms_signer"
-    ].assert_kms_active_in_production = MagicMock()
-    stubs[
-        "src.gateway.governance.routing_seal"
-    ].assert_custom_salt_in_production = MagicMock()
 
     sys.modules.pop("src.gateway.server.hybrid_server", None)
 
@@ -432,51 +417,42 @@ async def test_lifespan_raises_when_seal_enforcement_is_log_in_prod(monkeypatch)
                 pass
 
 
+@pytest.mark.parametrize(
+    ("env", "refusal"),
+    [
+        (
+            {"RECONCILIATION_PROVIDER": "stub"},
+            "reconciliation_provider: RECONCILIATION_PROVIDER=stub",
+        ),
+        (
+            {"RECONCILIATION_PROVIDER": "anchorage"},
+            "kms_signing_mode: governance signer is in HMAC fallback mode",
+        ),
+    ],
+    ids=["stub_ledger", "kms_not_active"],
+)
 @pytest.mark.asyncio
-async def test_lifespan_raises_when_stub_ledger_in_prod(monkeypatch):
-    """_gateway_lifespan raises RuntimeError when RECONCILIATION_PROVIDER=stub in prod."""
+async def test_lifespan_aborts_when_governor_posture_is_refused(monkeypatch, env, refusal):
+    """A PostureViolation from governor assembly aborts startup before serving.
+
+    The stub-ledger (POAM-023) and KMS-signing-mode (K3) guards run in
+    ``assert_production_posture`` inside ``_activate_domain``; the lifespan must
+    propagate the refusal, never yield, and never start background tasks.
+    """
+    from src.gateway.governance.governor.posture import PostureViolation
+
     monkeypatch.setenv("CAGE_ENV", "production")
     monkeypatch.setenv("CAGE_SEAL_ENFORCEMENT", "enforce")
-    monkeypatch.setenv("RECONCILIATION_PROVIDER", "stub")
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
 
     stubs = _make_hybrid_stubs()
-    stubs[
-        "src.gateway.governance.kms_signer"
-    ].assert_kms_active_in_production = MagicMock()
-    stubs[
-        "src.gateway.governance.routing_seal"
-    ].assert_custom_salt_in_production = MagicMock()
-
-    sys.modules.pop("src.gateway.server.hybrid_server", None)
-
-    with patch.dict("sys.modules", stubs):
-        from src.gateway.server.hybrid_server import _gateway_lifespan
-
-        app_mock = MagicMock()
-        app_mock.state = MagicMock()
-
-        with pytest.raises(
-            RuntimeError, match="RECONCILIATION_PROVIDER=stub is not allowed"
-        ):
-            async with _gateway_lifespan(app_mock):
-                pass
-
-
-@pytest.mark.asyncio
-async def test_lifespan_raises_when_kms_not_active_in_prod(monkeypatch):
-    """_gateway_lifespan re-raises RuntimeError from assert_kms_active_in_production."""
-    monkeypatch.setenv("CAGE_ENV", "production")
-    monkeypatch.setenv("CAGE_SEAL_ENFORCEMENT", "enforce")
-    monkeypatch.setenv("RECONCILIATION_PROVIDER", "anchorage")
-    monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
-
-    stubs = _make_hybrid_stubs()
-    stubs[
-        "src.gateway.governance.kms_signer"
-    ].assert_kms_active_in_production = MagicMock(
-        side_effect=RuntimeError("KMS not configured for production")
+    activate = AsyncMock(
+        side_effect=PostureViolation(f"startup posture 'production' refused: {refusal}")
     )
+    stubs["src.gateway.server.mcp_tool_server"]._activate_domain = activate
+    start_all = stubs["src.gateway.governance.background_tasks"].start_all
 
     sys.modules.pop("src.gateway.server.hybrid_server", None)
 
@@ -485,10 +461,15 @@ async def test_lifespan_raises_when_kms_not_active_in_prod(monkeypatch):
 
         app_mock = MagicMock()
         app_mock.state = MagicMock()
+        served = False
 
-        with pytest.raises(RuntimeError, match="KMS not configured for production"):
+        with pytest.raises(PostureViolation, match=refusal):
             async with _gateway_lifespan(app_mock):
-                pass
+                served = True
+
+    activate.assert_awaited_once()
+    assert served is False
+    start_all.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

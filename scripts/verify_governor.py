@@ -12,58 +12,84 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Smoke-check the governor's confidence gate through the composition root.
+
+Assembles a governor with :func:`assemble_governor` over a one-tier stub
+plugin (mock OPA and STPA, no Redis/KMS), runs the same
+:func:`assert_production_posture` every entry point runs, then checks that
+a dry-run ``verify()`` passes a confident request and refuses an
+under-confident one (dry run: no seal, so no Redis evidence chain needed).
+Under an enforcing posture the posture check refuses to start without real
+KMS/Redis, which is the intended behaviour; run with ``CAGE_ENV=dev``.
+
+The probe uses the finance registry's READ_ONLY ``check_balance`` action so
+the FTRA stage does not fail closed on an unregistered action name.
+"""
+
 import asyncio
 import os
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-# Add project root to path (one level up from src)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    PluginContribution,
+    Violation,
+)
+from src.gateway.governance.env_posture import resolve_posture
+from src.gateway.governance.governor.assembly import assemble_governor
+from src.gateway.governance.governor.posture import assert_production_posture
+
+os.environ.setdefault("CAGE_DOMAIN", "finance")
+
+_ACTION = "check_balance"
 
 
-async def test_governor():  # type: ignore[no-untyped-def]
-    # Mock dependencies
+class _PassTier(GovernanceTierPlugin):
+    """Claims the probe action so the full kernel profile (incl. confidence) runs."""
+
+    tier_name = "verify_probe"
+    phase = 1
+    order = 1
+
+    def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+        return action == _ACTION
+
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        return []
+
+
+class _ProbePlugin:
+    name = "verify_probe"
+    api_version = "1.0"
+    domain_config = None
+
+    def contribute(self) -> PluginContribution:
+        return PluginContribution(domain=self.name, tiers=(_PassTier(),))
+
+
+async def main() -> int:
     opa = AsyncMock()
     opa.evaluate_policy.return_value = "ALLOW"
-
-    safety = MagicMock()
-    safety.verify_action.return_value = "SAFE"
-
-    consensus = AsyncMock()
-    consensus.check_consensus.return_value = {"status": "APPROVE"}
-
     stpa = MagicMock()
     stpa.validate.return_value = []
 
-    governor = SymbolicGovernor(opa, safety, consensus, stpa)
+    posture = resolve_posture()
+    governor = assemble_governor([_ProbePlugin()], posture=posture, opa=opa, stpa_validator=stpa)
+    assert_production_posture(posture, components=governor.components)
 
-    # Test 1: Default Confidence (0.95) - Pass (0.96)
-    print("Test 1: Default Threshold (0.95) with Confidence 0.96 -> Expect PASS")
-    await governor.govern(
-        "execute_trade", {"confidence": 0.96, "amount": 100, "symbol": "AAPL"}
-    )
-    print("✅ Passed")
-
-    # Test 2: Default Confidence (0.95) - Fail (0.90)
-    print("Test 2: Default Threshold (0.95) with Confidence 0.90 -> Expect FAIL")
-    try:
-        await governor.govern(
-            "execute_trade", {"confidence": 0.90, "amount": 100, "symbol": "AAPL"}
-        )
-        print("❌ Failed (Should have raised Error)")
-    except GovernanceError as e:
-        print(f"✅ Caught Expected Error: {e}")
-
-    # Test 3: Custom Threshold (0.80) - Pass (0.85)
-    os.environ["GOVERNANCE_MIN_CONFIDENCE"] = "0.80"
-    print("Test 3: Custom Threshold (0.80) with Confidence 0.85 -> Expect PASS")
-    await governor.govern(
-        "execute_trade", {"confidence": 0.85, "amount": 100, "symbol": "AAPL"}
-    )
-    print("✅ Passed")
+    failures = 0
+    for confidence, expect_pass in ((0.99, True), (0.10, False)):
+        result = await governor.verify(_ACTION, {"confidence": confidence})
+        passed = not result["violations"]
+        ok = passed is expect_pass
+        failures += not ok
+        print(f"{'✅' if ok else '❌'} confidence={confidence}: {'admissible' if passed else 'refused'}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    asyncio.run(test_governor())
+    sys.exit(asyncio.run(main()))

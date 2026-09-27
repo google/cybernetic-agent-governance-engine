@@ -24,10 +24,6 @@ names things.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
 
 from src.cage_physical_ai import create_physical_ai_tiers
 from src.cage_physical_ai.invariants import (
@@ -36,9 +32,11 @@ from src.cage_physical_ai.invariants import (
     TorqueSaturationBarrier,
 )
 from src.cage_physical_ai.tools.tool_provider import PhysicalAIToolProvider
-from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin, DomainConfig
-from src.gateway.governance.governor.governor import SymbolicGovernor
+from src.gateway.governance.contracts import (
+    CagePlugin,
+    DomainConfig,
+    PluginContribution,
+)
 
 
 class PhysicalAICagePlugin(CagePlugin):
@@ -53,23 +51,15 @@ class PhysicalAICagePlugin(CagePlugin):
     # No physical-AI FTRA registry yet: the domain refuses to start (POAM-2026-077).
     domain_config: DomainConfig | None = None
 
-    def register(
-        self,
-        governor: SymbolicGovernor,
-        tool_server: "FastMCP | None" = None,
-    ) -> None:
-        governor.register_invariant(SpatialSeparationBarrier())
-        governor.register_invariant(KinematicVelocityBarrier())
-        governor.register_invariant(TorqueSaturationBarrier())
-
-        governor.add_domain_tiers(create_physical_ai_tiers())
-
+    def contribute(self) -> PluginContribution:
         overlay_dir = Path(__file__).parent / "config" / "compliance"
-        if overlay_dir.exists():
-            register_overlay_dir(overlay_dir)
-
-        if tool_server:
-            PhysicalAIToolProvider().register_tools(tool_server)
+        return PluginContribution(
+            domain=self.name,
+            tiers=create_physical_ai_tiers(),
+            invariants=(SpatialSeparationBarrier(), KinematicVelocityBarrier(), TorqueSaturationBarrier()),
+            tool_provider=PhysicalAIToolProvider(),
+            compliance_overlay_dirs=(overlay_dir,) if overlay_dir.exists() else (),
+        )
 
 
 def get_plugin() -> CagePlugin:

@@ -123,9 +123,12 @@ def test_gateway_files_have_no_gfa_imports():
 @pytest.mark.local
 @pytest.mark.layer_isolation
 def test_plugin_seam_imports_are_kernel_only():
-    """Verify that plugin seam modules (singletons, background_tasks, constants) only import from Layer 1."""
+    """Verify that plugin seam modules (composition root, background_tasks, constants) only import from Layer 1."""
     seam_modules = [
-        "src/gateway/governance/singletons.py",
+        "src/gateway/governance/governor/assembly.py",
+        "src/gateway/governance/governor/bootstrap.py",
+        "src/gateway/governance/governor/posture.py",
+        "src/gateway/server/app_state.py",
         "src/gateway/governance/background_tasks.py",
         "src/gateway/governance/constants.py",
         "src/gateway/governance/null_components.py",
@@ -135,11 +138,12 @@ def test_plugin_seam_imports_are_kernel_only():
     repo_root = Path(__file__).parent.parent
     cage_import_pattern = re.compile(r"cage_\w+")
 
+    missing = [m for m in seam_modules if not (repo_root / m).exists()]
+    assert not missing, f"Seam modules listed here no longer exist (update the list): {missing}"
+
     violations = []
     for module_path in seam_modules:
         full_path = repo_root / module_path
-        if not full_path.exists():
-            continue
 
         try:
             with open(full_path, encoding="utf-8") as f:

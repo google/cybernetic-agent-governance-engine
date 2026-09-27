@@ -55,10 +55,11 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
+from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
-from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
+from src.gateway.server.app_state import governor_of
 from src.gateway.server.governance_middleware import (
     enforce_routing_seal,
 )
@@ -141,31 +142,42 @@ async def _check_rate_limit(client_ip: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def _activate_domain() -> Any:
-    """Load, validate and register the single ``CAGE_DOMAIN`` plugin.
+def _install_contributions(governor: SymbolicGovernor) -> None:
+    """Apply the server hooks each domain contributed (tools, tasks, rails).
+
+    Compliance overlays are process-wide and registered by ``bootstrap_governor``.
+    """
+    from src.gateway.governance.background_tasks import register_background_task
+    from src.integrations.nemo.action_registry import register_rail_provider
+
+    for contribution in governor.components.contributions:
+        for name, worker in contribution.background_tasks.items():
+            register_background_task(name, worker)
+        for rail_provider in contribution.rail_providers:
+            register_rail_provider(rail_provider)
+        if contribution.tool_provider is not None:
+            contribution.tool_provider.register_tools(mcp, governor)
+
+
+async def _activate_domain() -> SymbolicGovernor:
+    """Assemble the governor for the single ``CAGE_DOMAIN`` and put it on ``app.state``.
 
     Fail closed at startup: an unset/unknown domain, a domain without a
-    complete ``DomainConfig``, an OPA server that lacks the domain's Rego
-    package or required rules, or null kernel components after registration
-    all raise instead of serving traffic.
+    complete ``DomainConfig``, an unsafe contribution, null kernel slots, a
+    failed production posture check, or an OPA server that lacks the
+    domain's Rego package or required rules all raise instead of serving
+    traffic.
     """
-    from src.gateway.governance.plugin_loader import (
-        domain_config_of,
-        load_domain_plugin,
-    )
-    from src.gateway.governance.singletons import _has_null_components
+    from src.gateway.governance.governor.bootstrap import bootstrap_governor
+    from src.gateway.governance.plugin_loader import active_domain_config
 
-    plugin = load_domain_plugin()
-    config = domain_config_of(plugin)  # before register(): never half-activate a domain
-    await opa_client.verify_domain_policy(config.opa_package, config.opa_required_rules)
-    plugin.register(governor=symbolic_governor, tool_server=mcp)
-    if _has_null_components():
-        raise RuntimeError(
-            f"domain {plugin.name!r} registered but left null kernel components "
-            "— refusing to serve traffic"
-        )
-    logger.info("✅ Domain %s activated (startup readiness check passed)", plugin.name)
-    return plugin
+    governor = bootstrap_governor()
+    config = active_domain_config()
+    await governor.components.opa.verify_domain_policy(config.opa_package, config.opa_required_rules)
+    _install_contributions(governor)  # after the handshake: never half-activate a domain
+    app.state.governor = governor
+    logger.info("✅ Domain activated (startup readiness check passed): %s", governor.registered_tier_names())
+    return governor
 
 
 @asynccontextmanager
@@ -199,9 +211,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
 
-    # 6. Activate the single CAGE_DOMAIN plugin (fail-closed readiness check,
-    #    including the OPA package/rule handshake)
-    await _activate_domain()
+    # 6. Assemble the governor for the single CAGE_DOMAIN plugin (fail-closed
+    #    readiness and posture checks, including the OPA package/rule handshake)
+    governor = await _activate_domain()
 
     yield
 
@@ -212,7 +224,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         await audit_task
     except asyncio.CancelledError:
         pass
-    await opa_client.close()
+    await governor.components.opa.close()
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +305,7 @@ async def simulate_governance_check(
 ) -> dict[str, Any]:
     """Dry-run preview of the governor on a proposed action.
 
-    Calls ``symbolic_governor.verify()``, which runs the pipeline under the
+    Calls ``SymbolicGovernor.verify()``, which runs the pipeline under the
     ``DRY_RUN`` profile: stateless stages run normally and mutating stages
     (CBF, fiscal, dose/kinematic barriers) run only their side-effect-free
     ``evaluate()`` preview, so a refusal live execution would issue is
@@ -305,7 +317,7 @@ async def simulate_governance_check(
         "🔍 Simulating governance check for: %s (Risk: %s)", target_tool, risk_profile
     )
     vp = {**target_params, "risk_profile": risk_profile}
-    result = await symbolic_governor.verify(target_tool, vp)
+    result = await governor_of(app).verify(target_tool, vp)
     violations = [v.to_dict() for v in result.get("violations", [])]
     return {
         "status": "APPROVED" if not violations else "REJECTED",
@@ -331,7 +343,7 @@ async def _evaluate_policy_internal(
     """Internal OPA policy evaluation helper (no longer an MCP-exposed tool).
 
     OPA enforcement for the mandatory safety guardrail path is handled
-    directly by ``symbolic_governor.govern()`` in the ``safety_check`` node.
+    directly by ``SymbolicGovernor.govern()`` in the ``safety_check`` node.
     This function is retained for internal HTTP dispatch use only
     (``/tools/execute`` endpoint).  It is intentionally NOT registered as an
     MCP tool so agents cannot invoke OPA evaluation via the tool surface.
@@ -366,7 +378,7 @@ async def _evaluate_policy_internal(
             "dry_run": dry_run,
         }
         try:
-            result = await opa_client.evaluate_policy(params)
+            result = await governor_of(app).components.opa.evaluate_policy(params)
             result_str = str(result)
             # Translate OPA decisions to the format safety_check_node expects
             span.set_attribute("opa.decision", result_str)

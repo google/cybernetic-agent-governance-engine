@@ -21,21 +21,12 @@ from opentelemetry import trace
 from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.ftra.models import FtraBoundaryResult, TerminalClassification
 from src.gateway.governance.ftra.semantic_validator import validate_tool_input
+from src.gateway.governance.governor.metrics import GovernorMetrics, governor_metrics
 from src.gateway.governance.governor.pipeline import Stage, StageContext
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 OBSERVATION_NAME = "observation.name"
-
-try:
-    from prometheus_client import Counter
-    _ftra_boundary_counter = Counter(
-        "cage_ftra_boundary_checks_total",
-        "Total number of FTRA boundary checks executed",
-        ["result"],
-    )
-except (ImportError, ValueError):
-    _ftra_boundary_counter = None
 
 
 class FtraStage(Stage):
@@ -45,8 +36,9 @@ class FtraStage(Stage):
     name: str = "ftra"
     mutating: bool = False
 
-    def __init__(self) -> None:
+    def __init__(self, metrics: GovernorMetrics | None = None) -> None:
         self._ftra_classifier = None
+        self._metrics = metrics if metrics is not None else governor_metrics()
 
     def _get_ftra_classifier(self) -> Any:
         if self._ftra_classifier is None:
@@ -151,11 +143,7 @@ class FtraStage(Stage):
                     round((time.perf_counter() - _t0) * 1000, 2),
                 )
 
-                if _ftra_boundary_counter is not None:
-                    if result.requires_hitl:
-                        _ftra_boundary_counter.labels(result="hitl_required").inc()
-                    else:
-                        _ftra_boundary_counter.labels(result="passed").inc()
+                self._metrics.ftra_boundary_check("hitl_required" if result.requires_hitl else "passed")
 
                 return result
 
@@ -173,8 +161,7 @@ class FtraStage(Stage):
                     round((time.perf_counter() - _t0) * 1000, 2),
                 )
 
-                if _ftra_boundary_counter is not None:
-                    _ftra_boundary_counter.labels(result="error").inc()
+                self._metrics.ftra_boundary_check("error")
 
                 return FtraBoundaryResult(
                     requires_hitl=True,

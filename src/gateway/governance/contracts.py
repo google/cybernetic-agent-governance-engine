@@ -20,6 +20,7 @@ decoupling the Gateway from the specific application implementations.
 
 import hashlib
 import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -236,7 +237,7 @@ class NarrowProposal:
 class Narrower(Protocol):
     """Domain-provided parameter narrowing strategy.
     
-    Registered via SymbolicGovernor(narrowers=[...]) constructor.
+    Contributed via ``PluginContribution.narrowers``.
     Classification returns NARROW only if a narrower proposes valid constraints.
     """
     def propose(
@@ -285,10 +286,10 @@ class GovernanceTierPlugin(Protocol):
     """Protocol for a domain-specific governance evaluation tier.
 
     Domain plugins (e.g. ``cage_finance``) implement this protocol for each
-    governance tier they contribute to the kernel.  Tiers are provided to
-    ``SymbolicGovernor.__init__()`` via ``core_tiers`` and ``domain_tiers``
-    constructor parameters at instantiation time. They are executed in
-    ``(phase, order, tier_name)`` order during ``_run_checks()``.
+    governance tier they contribute to the kernel.  Tiers are handed over in
+    ``PluginContribution.tiers`` and fixed when ``assemble_governor()`` builds
+    the (immutable) governor.  They are executed in ``(phase, order,
+    tier_name)`` order by the governor pipeline.
 
     Phase semantics:
         - **Phase 1** (``phase == 1``): read-only validation.  ``evaluate()``
@@ -327,6 +328,16 @@ class GovernanceTierPlugin(Protocol):
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         """Return True if this tier has governance authority over the action."""
         ...
+
+    @property
+    def runtime_requirements(self) -> tuple[str, ...]:
+        """Importable modules this tier needs to govern (e.g. ``("dowhy",)``).
+
+        ``assert_production_posture()`` refuses to start an enforcing posture
+        when one is missing, so a check is driven by the tier that needs it
+        rather than hard-coded in the kernel.  Default: none.
+        """
+        return ()
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only evaluation.  Return violations (may be empty).
@@ -399,6 +410,58 @@ class DomainConfig:
     causal_graph_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class PluginContribution:
+    """Everything one domain plugin hands to the kernel, as data.
+
+    ``CagePlugin.contribute()`` returns one of these; ``assemble_governor()``
+    validates all contributions together (slot collisions, duplicate domains
+    and threshold sections, ungoverned irreversible actions, invariant
+    V1-V4) and only then builds an immutable governor.  Plugins never mutate
+    the governor.
+
+    Fields marked with a plan section are semantic slots filled by PR 4b;
+    they exist now so 4b does not change the assembly API.
+
+    Attributes:
+        domain: Unique domain name, e.g. ``"finance"``.
+        tiers: Governance tiers for this domain.
+        invariants: Declarative CBF barriers; validated at assembly.
+        uca_rules: STPA unsafe-control-action rules (4b.9).
+        narrowers: Parameter narrowing strategies (4b.6).
+        threshold_sections: Threshold schema per section name under
+            ``domains.<domain>`` (4b.7); keys must be unique across domains.
+        execution_verbs: Claim-detector execution verbs (4b.13).
+        standing_projector: Standing projection for refusal receipts (4b.16).
+        ground_truth_providers: External ground-truth readers keyed by
+            ``invariant_id`` (4b.2).
+        registered_actions: Every action this domain exposes.
+        safety_filter: Safety filter (CBF) backing this domain's barriers.
+        consensus: Consensus provider backing this domain's consensus tier.
+        tool_provider: Registers this domain's MCP tools.
+        compliance_overlay_dirs: Compliance overlay directories.
+        background_tasks: Named async background workers.
+        rail_providers: NeMo rail providers.
+    """
+
+    domain: str
+    tiers: tuple["GovernanceTierPlugin", ...] = ()
+    invariants: tuple["InvariantModel", ...] = ()
+    uca_rules: tuple[Any, ...] = ()
+    narrowers: tuple["Narrower", ...] = ()
+    threshold_sections: Mapping[str, type] = field(default_factory=dict)
+    execution_verbs: frozenset[str] = frozenset()
+    standing_projector: Any | None = None
+    ground_truth_providers: Mapping[str, Any] = field(default_factory=dict)
+    registered_actions: frozenset[str] = frozenset()
+    safety_filter: "SafetyFilter | None" = None
+    consensus: "ConsensusProvider | None" = None
+    tool_provider: "DomainToolProvider | None" = None
+    compliance_overlay_dirs: tuple[Path, ...] = ()
+    background_tasks: Mapping[str, Callable[[], Awaitable[None]]] = field(default_factory=dict)
+    rail_providers: tuple[Any, ...] = ()
+
+
 @runtime_checkable
 class CagePlugin(Protocol):
     """A CAGE capability plugin discovered via the ``cage.plugins`` entry point.
@@ -410,24 +473,22 @@ class CagePlugin(Protocol):
       incompatible plugins are rejected fail-closed at startup.
     * ``domain_config`` names the kernel-consumed config for this domain.
       ``None`` means the domain is not yet runnable; loading it fails closed.
-    * ``register()`` must be idempotent and side-effect-free apart from
-      registering tiers/tools on the objects it is handed.
-    * ``register()`` must never import from ``gateway.*`` internals beyond the
-      public ``contracts`` module.
-    * A plugin that cannot fully register must raise; partial registration is
-      forbidden (a half-registered governance tier is a fail-open hazard).
+    * ``contribute()`` returns data only. It must not mutate process-global
+      state: the composition root (``assemble_governor``) and the server
+      lifespan apply the contribution.
+    * ``contribute()`` must never import from ``gateway.*`` internals beyond
+      the public ``contracts`` module.
+    * A plugin that cannot build a complete contribution must raise; a
+      partial contribution is forbidden (a half-registered governance tier
+      is a fail-open hazard).
     """
 
     name: str
     api_version: str
     domain_config: DomainConfig | None
 
-    def register(
-        self,
-        governor: "SymbolicGovernor",
-        tool_server: "FastMCP | None" = None,
-    ) -> None:
-        """Register this plugin's governance tiers and tools with the kernel."""
+    def contribute(self) -> PluginContribution:
+        """Return this plugin's tiers, invariants, tools and hooks."""
         ...
 
 
@@ -524,12 +585,12 @@ class DomainToolProvider(Protocol):
     """Registers domain-specific MCP tools with the tool server.
 
     Domain plugins implement this to contribute tools (e.g. ``execute_trade``,
-    ``check_market_status``) to the MCP tool server.  The kernel calls
-    ``register_tools()`` during plugin registration if a tool server is
-    available.
+    ``check_market_status``) to the MCP tool server.  The server lifespan
+    calls ``register_tools()`` once, after the governor is assembled, so a
+    tool that must be sealed receives the governor that seals it.
     """
 
-    def register_tools(self, server: "FastMCP") -> None:
+    def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         """Register this domain's tools with the given MCP server."""
         ...
 

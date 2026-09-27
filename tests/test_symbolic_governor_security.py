@@ -13,13 +13,12 @@
 # limitations under the License.
 
 """
-Security tests for SymbolicGovernor and assert_safe_operational_state().
+Security tests for SymbolicGovernor and the POAM-023 startup posture check.
 
 Covers:
-  1. assert_safe_operational_state() — environment-gated enforcement
-     - Raises RuntimeError in production when RECONCILIATION_PROVIDER=stub (POAM-023)
-     - Logs CRITICAL but does not raise in development / test / ci
-     - Does not raise in production with a non-stub reconciliation provider
+  1. assert_production_posture() — reconciliation_provider check (POAM-023)
+     - Refuses production when RECONCILIATION_PROVIDER is unset (defaults to stub)
+     - Logs CRITICAL but does not raise under DEV / TEST / CI
      - CBF_FAIL_OPEN has no effect (the flag was removed)
 
   2. fiscal_limit_guard.reserve() is awaited
@@ -28,10 +27,12 @@ Covers:
 """
 
 
-import os
+import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.fixtures.governor import make_governor
 
 pytestmark = pytest.mark.unit
 
@@ -46,7 +47,6 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
     from src.gateway.governance.classification_engine import ClassificationEngine
     from src.gateway.governance.ftra.models import FtraBoundaryResult
     from src.gateway.governance.narrower import NarrowerRegistry
-    from src.gateway.governance.governor.governor import SymbolicGovernor
 
     if classification_engine is None:
         classification_engine = ClassificationEngine(NarrowerRegistry())
@@ -76,13 +76,12 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
 
         tiers.append(FiscalTierPlugin(fiscal_limit_guard))
 
-    governor = SymbolicGovernor(
-        opa_client=opa_client,
+    governor = make_governor(
+        opa=opa_client,
         safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+        consensus=consensus_engine,
+        classifier=classification_engine,
         stpa_validator=None,
-        telemetry_provider=None,
         domain_tiers=tuple(tiers),
     )
 
@@ -102,77 +101,83 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
     for stage in governor.stages:
         if isinstance(stage, FtraStage):
             stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
-    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result) # Keep this for legacy methods
 
     return governor
 
 
 
 # ---------------------------------------------------------------------------
-# 1. assert_safe_operational_state()
+# 1. Reconciliation-provider startup posture (POAM-023)
+#
+# The posture table itself (one test per check, stub-in-production refusal,
+# healthy production passes) lives in tests/governor/test_startup_posture.py.
+# These cover the POAM-023 edge cases it does not: the unset-provider
+# default, the permissive postures, and the removed CBF_FAIL_OPEN flag.
 # ---------------------------------------------------------------------------
 
 
-def _clean_env(**overrides: str) -> dict[str, str]:
-    drop = {"CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER", "CBF_FAIL_OPEN"}
-    env = {k: v for k, v in os.environ.items() if k not in drop}
-    env.update(overrides)
-    return env
+@pytest.fixture()
+def healthy_probes(monkeypatch):
+    """Every posture probe healthy except the reconciliation provider under test."""
+    from src.gateway.governance.governor import posture as posture_mod
+
+    class _Signer:
+        is_kms_active = True
+
+        def validate_ready(self):
+            return None
+
+    class _Redis:
+        def ping_ready(self):
+            return None
+
+    monkeypatch.setattr(posture_mod, "_signer", lambda: _Signer())
+    monkeypatch.setattr(posture_mod, "_redis", lambda: _Redis())
+    monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
+    monkeypatch.delenv("CBF_FAIL_OPEN", raising=False)
+    return monkeypatch
 
 
-def test_raises_in_production_with_stub_reconciliation():
-    """Fail-closed path: production posture + stub ground truth must refuse to start."""
-    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
+def _assert_posture(posture):
+    from src.gateway.governance.governor.posture import assert_production_posture
 
-    env = _clean_env(CAGE_ENV="production", RECONCILIATION_PROVIDER="stub")
-    with patch.dict(os.environ, env, clear=True):
-        with pytest.raises(RuntimeError, match="POAM-023"):
-            assert_safe_operational_state()
+    assert_production_posture(posture, components=make_governor(posture=posture).components)
 
 
-def test_raises_in_production_when_reconciliation_provider_unset():
+def test_raises_in_production_when_reconciliation_provider_unset(healthy_probes):
     """An unset provider defaults to stub, so production must still refuse."""
-    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.posture import PostureViolation
 
-    env = _clean_env(CAGE_ENV="production")
-    with patch.dict(os.environ, env, clear=True):
-        with pytest.raises(RuntimeError, match="POAM-023"):
-            assert_safe_operational_state()
-
-
-@pytest.mark.parametrize("cage_env", ["development", "dev", "test", "ci"])
-def test_non_production_stub_logs_critical_without_raising(cage_env, caplog):
-    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
-
-    env = _clean_env(CAGE_ENV=cage_env, RECONCILIATION_PROVIDER="stub")
-    with patch.dict(os.environ, env, clear=True):
-        with caplog.at_level("CRITICAL"):
-            assert_safe_operational_state()
-    assert "POAM_023_STUB_PROVIDER_IN_USE" in caplog.text
+    healthy_probes.delenv("RECONCILIATION_PROVIDER", raising=False)
+    with pytest.raises(PostureViolation, match="reconciliation_provider.*POAM-023"):
+        _assert_posture(DeploymentPosture.PRODUCTION)
 
 
-def test_production_with_real_provider_does_not_raise():
-    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
+@pytest.mark.parametrize("posture_name", ["DEV", "TEST", "CI"])
+def test_non_production_stub_logs_critical_without_raising(healthy_probes, posture_name, caplog):
+    from src.gateway.governance.env_posture import DeploymentPosture
 
-    env = _clean_env(CAGE_ENV="production", RECONCILIATION_PROVIDER="plaid")
-    with patch.dict(os.environ, env, clear=True):
-        assert_safe_operational_state()
+    healthy_probes.setenv("RECONCILIATION_PROVIDER", "stub")
+    with caplog.at_level("CRITICAL"):
+        _assert_posture(DeploymentPosture[posture_name])
+    critical = [json.loads(r.getMessage()) for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert [r["check"] for r in critical] == ["reconciliation_provider"]
+    assert "POAM-023" in critical[0]["detail"]
 
 
-def test_cbf_fail_open_flag_has_no_effect():
+def test_cbf_fail_open_flag_has_no_effect(healthy_probes):
     """CBF_FAIL_OPEN was removed; setting it must neither rescue nor break startup."""
-    from src.gateway.governance.governor._legacy_startup import assert_safe_operational_state
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.posture import PostureViolation
 
     for value in ("true", "false"):
-        env = _clean_env(
-            CAGE_ENV="production", RECONCILIATION_PROVIDER="stub", CBF_FAIL_OPEN=value
-        )
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(RuntimeError, match="POAM-023"):
-                assert_safe_operational_state()
-        env["RECONCILIATION_PROVIDER"] = "plaid"
-        with patch.dict(os.environ, env, clear=True):
-            assert_safe_operational_state()
+        healthy_probes.setenv("CBF_FAIL_OPEN", value)
+        healthy_probes.setenv("RECONCILIATION_PROVIDER", "stub")
+        with pytest.raises(PostureViolation, match="POAM-023"):
+            _assert_posture(DeploymentPosture.PRODUCTION)
+        healthy_probes.setenv("RECONCILIATION_PROVIDER", "plaid")
+        _assert_posture(DeploymentPosture.PRODUCTION)
 
 
 # ---------------------------------------------------------------------------

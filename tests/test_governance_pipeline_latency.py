@@ -249,11 +249,15 @@ def _nemo_output_patches():
     ]
 
 
-def _opa_patches():
-    """Return a list of patch context managers for the OPA safety node."""
+def _mock_governor():
+    """A governor whose ``govern()`` approves, injected into the OPA safety node."""
     mock_gov = AsyncMock()
     mock_gov.govern = AsyncMock(return_value=None)
+    return mock_gov
 
+
+def _opa_patches():
+    """Return a list of patch context managers for the OPA safety node."""
     mock_client = AsyncMock()
     mock_envelope = MagicMock()
     mock_envelope.subject.get.return_value = "mock_hash"
@@ -262,10 +266,6 @@ def _opa_patches():
     mock_get_client = MagicMock(return_value=mock_client)
 
     return [
-        patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
-        ),
         patch(
             "src.gateway.governance.langgraph_harness.opa_node_factory.stamp_iso_control",
             new_callable=MagicMock,
@@ -337,11 +337,11 @@ class TestTier2OpaPolicyCheckLatency:
     async def test_tier2_opa_policy_check_latency(self):
         """Tier 2 node call must complete within TIER2_OPA_BUDGET_MS."""
         config = _make_opa_config()
-        node = create_opa_safety_node(config)
+        node = create_opa_safety_node(config, _mock_governor())
         state = _opa_state()
 
         patches = _opa_patches()
-        with patches[0], patches[1]:
+        with patches[0]:
             t_start = time.perf_counter()
             result = await node(state)
             t_end = time.perf_counter()
@@ -388,7 +388,7 @@ class TestTier3SafetyNodeLatency:
         state = _opa_state()
 
         patches = _opa_patches()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2]:
             t_start = time.perf_counter()
             result = await safety_check_node(state)
             t_end = time.perf_counter()
@@ -481,11 +481,11 @@ class TestPipelineCumulativeLatency:
         t1_ms = _elapsed_ms(t1_start, t1_end)
 
         # --- Tier 2: OPA policy check ---
-        tier2_node = create_opa_safety_node(_make_opa_config())
+        tier2_node = create_opa_safety_node(_make_opa_config(), _mock_governor())
         opa_state = _opa_state()
 
         opa_patches = _opa_patches()
-        with opa_patches[0], opa_patches[1]:
+        with opa_patches[0]:
             t2_start = time.perf_counter()
             await tier2_node(opa_state)
             t2_end = time.perf_counter()
@@ -496,7 +496,7 @@ class TestPipelineCumulativeLatency:
         safety_state = _opa_state()
 
         opa_patches2 = _opa_patches()
-        with opa_patches2[0], opa_patches2[1]:
+        with opa_patches2[0]:
             t3_start = time.perf_counter()
             await safety_check_node(safety_state)
             t3_end = time.perf_counter()
@@ -566,9 +566,9 @@ class TestLatencyReportPrinted:
         t1_ms = _elapsed_ms(t1_start, t1_end)
 
         # --- Tier 2 ---
-        tier2_node = create_opa_safety_node(_make_opa_config())
+        tier2_node = create_opa_safety_node(_make_opa_config(), _mock_governor())
         opa_patches = _opa_patches()
-        with opa_patches[0], opa_patches[1]:
+        with opa_patches[0]:
             t2_start = time.perf_counter()
             await tier2_node(_opa_state())
             t2_end = time.perf_counter()
@@ -576,7 +576,7 @@ class TestLatencyReportPrinted:
 
         # --- Tier 3 ---
         opa_patches2 = _opa_patches()
-        with opa_patches2[0], opa_patches2[1]:
+        with opa_patches2[0]:
             t3_start = time.perf_counter()
             await safety_check_node(_opa_state())
             t3_end = time.perf_counter()

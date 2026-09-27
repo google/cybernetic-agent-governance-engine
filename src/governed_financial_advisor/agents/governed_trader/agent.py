@@ -23,17 +23,20 @@ This module provides the ``create_governed_trader_agent`` factory used by the
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
 
 
-def create_governed_trader_agent(**kwargs: Any) -> Any:
+def create_governed_trader_agent(governor: SymbolicGovernor) -> Any:
     """Return the compiled governed-trader LangGraph subgraph.
 
-    This is a thin factory wrapper around the subgraph defined in
-    ``governed_trader_graph``.  Keyword arguments are forwarded to the
-    subgraph compiler (e.g. ``checkpointer``, ``interrupt_before``).
+    This is a thin factory wrapper around
+    ``governed_trader_graph.build_governed_trader_graph``; ``governor`` is the
+    composition-root ``SymbolicGovernor`` used for post-HITL re-validation.
 
     Returns
     -------
@@ -41,8 +44,8 @@ def create_governed_trader_agent(**kwargs: Any) -> Any:
         A compiled LangGraph state machine ready for ``ainvoke`` / ``astream``.
     """
     from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
-        governed_trader_graph,
+        build_governed_trader_graph,
     )
 
-    logger.debug("create_governed_trader_agent: returning compiled subgraph")
-    return governed_trader_graph
+    logger.debug("create_governed_trader_agent: compiling subgraph")
+    return build_governed_trader_graph(governor)

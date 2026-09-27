@@ -137,6 +137,10 @@ The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) orch
 
 Every tier's decision boundary is parameterized through [`governance_thresholds.json`](../../config/governance_thresholds.json) and the regional compliance profile — not through imperative code branches.
 
+#### Composition root
+
+A governor is built in exactly one place. The active domain plugin (`CAGE_DOMAIN`) returns its seams as data from `CagePlugin.contribute()` — a frozen [`PluginContribution`](../../src/gateway/governance/contracts.py) holding its tiers, CBF invariants, safety filter, consensus provider, tool provider, compliance overlays, rails and background tasks. [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py) validates all contributions together and refuses startup on a slot collision (two tiers claiming one action at the same phase and order), a duplicate domain or threshold section, an IRREVERSIBLE_TERMINAL action in the domain's FTRA registry that no tier claims, two contributions filling one engine slot, or an invariant failing V1-V4. It then builds an immutable `SymbolicGovernor`; engine slots no plugin fills keep deny-by-default null objects. [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py) wraps assembly with the startup posture check ([`posture.py`](../../src/gateway/governance/governor/posture.py)); servers store the result on `app.state.governor` and pass it explicitly to every caller. There is no process-wide governor and nothing runs at import time.
+
 ### 1.5 Fail-Closed Posture
 
 The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This fail-closed enforcement (now unconditional: the former `CBF_FAIL_OPEN` override has been removed) was verified in the v2.0.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).

@@ -126,7 +126,7 @@ def _build_fast_llm():  # type: ignore[no-untyped-def]
     )
 
 
-# Module-level lazy singletons — initialised on first use, not at import time.
+# Module-level lazy LLM clients — initialised on first use, not at import time.
 _reasoner_llm: "ChatOpenAI | None" = None
 _fast_llm: "ChatOpenAI | None" = None
 

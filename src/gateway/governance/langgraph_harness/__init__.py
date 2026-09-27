@@ -30,10 +30,10 @@ Usage::
         NemoNodeConfig,
     )
 
-    safety_node = create_opa_safety_node(OpaNodeConfig(
-        policy_action_name="execute_trade",
-        payload_extractor=my_extractor_fn,
-    ))
+    safety_node = create_opa_safety_node(
+        OpaNodeConfig(policy_action_name="execute_trade", payload_extractor=my_extractor_fn),
+        governor,  # from assemble_governor() / bootstrap_governor()
+    )
 """
 
 from src.gateway.governance.langgraph_harness.nemo_node_factory import (

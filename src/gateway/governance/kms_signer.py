@@ -48,6 +48,7 @@ _PUBLIC_PEM_PATH: str = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
 MAX_KMS_PAYLOAD_AGE_SECONDS: int = 300
 
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 
@@ -582,20 +583,18 @@ class KMSGovernanceSigner:
         kms_client = None
         key_version = _KMS_KEY_VERSION
 
-        # Check if we're in a non-production environment
-        env = (
-            os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-        ).lower()
-        is_non_production = env in ("development", "test", "dev", "ci")
+        # HMAC fallback is decided only by the resolved posture (K3).
+        posture = resolve_posture()
+        is_non_production = not is_enforcing(posture)
 
         if provider_name == "gcp":
             if not key_version:
                 if is_non_production:
                     # Return a fallback signer for test/dev without KMS
                     logger.info(
-                        "[KMSSigner] KMS_GOVERNANCE_KEY not set in %s environment. "
+                        "[KMSSigner] KMS_GOVERNANCE_KEY not set in %s posture. "
                         "Using HMAC fallback mode.",
-                        env,
+                        posture.value,
                     )
                     return cls(
                         kms_client=None,
@@ -1080,19 +1079,3 @@ def reset_governance_signer() -> None:
     """Reset the cached signer singleton (for test isolation)."""
     global _signer
     _signer = None
-
-
-def assert_kms_active_in_production() -> None:
-    env = (
-        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-    ).lower()
-    if env in ("development", "test", "dev", "ci"):
-        return
-    signer = get_governance_signer()
-    if not signer.is_kms_active:
-        raise RuntimeError(
-            "CAGE STARTUP FAILURE: KMSGovernanceSigner is in HMAC fallback mode "
-            "in a non-development environment. Set KMS_GOVERNANCE_KEY to the full "
-            "Cloud KMS key version resource name. "
-            "Evidentiary independence control violation (see CTRL_KMS_001 in control_mappings.json)."
-        )

@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.gateway.governance.governor.governor import SymbolicGovernor
+from tests.fixtures.governor import make_governor as build_governor
 
 
 class MockTier:
@@ -51,11 +52,11 @@ class MockTier:
 
 
 def make_governor(*tiers, classification_engine) -> SymbolicGovernor:
-    return SymbolicGovernor(
-        opa_client=MagicMock(),
+    return build_governor(
+        opa=MagicMock(),
         safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        classification_engine=classification_engine,
+        consensus=MagicMock(),
+        classifier=classification_engine,
         domain_tiers=tiers,
     )
 

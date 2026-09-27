@@ -65,8 +65,9 @@ Environment variables:
                        (default: tests/red_team/adversarial_dataset.json)
     BENIGN_JSON      — path to benign dataset for FPR measurement
                        (default: tests/red_team/benign_dataset.json)
-    CAGE_ENV         — must be "development" or "test" to bypass production
-                       startup guards in symbolic_governor.py
+    CAGE_ENV         — "development" (the default here); the governor is
+                       assembled in DEV posture, so production posture checks
+                       (assert_production_posture) do not apply
 """
 
 from __future__ import annotations
@@ -104,9 +105,9 @@ from src.governed_financial_advisor.governance.structs import (  # noqa: E402
 )
 
 # ---------------------------------------------------------------------------
-# Force CAGE_ENV=development before importing symbolic_governor so the
-# module-level production startup guards (dowhy, RECONCILIATION)
-# do not fire during measurement.
+# Measure in development posture.  The governor has no import-time guards;
+# these defaults keep settings read elsewhere at import (e.g. thresholds,
+# reconciliation provider) on their development values.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("CAGE_ENV", "development")
 os.environ.setdefault("ENVIRONMENT", "development")
@@ -153,9 +154,10 @@ _MAX_RETRIES: int = 1
 # Paper §6 SLA budget (FedNow/SEPA Instant 10 s clearing window)
 GOVERNANCE_BUDGET_MS: float = 200.0
 
-# Span names emitted by SymbolicGovernor._run_checks() — used to harvest
+# Span names emitted while the governor runs its pipeline — used to harvest
 # per-tier durations from the InMemorySpanExporter.
-# Maps paper table row label → OTel span name.
+# Maps paper table row label → OTel span name.  Totals are measured directly
+# (see measure_governor_latency), not harvested from spans.
 TIER_SPAN_MAP: dict[str, str] = {
     "STPA (Tier 1)": "cage.stpa_check",
     "Confidence (Tier 2)": "cage.confidence_check",
@@ -166,7 +168,6 @@ TIER_SPAN_MAP: dict[str, str] = {
     # Causal (Tier 6) runs in asyncio.to_thread — no dedicated span yet;
     # its cost is captured in the Total row.
     "FRIA (Tier 7)": "cage.fria_check",
-    "Total (APPROVED)": "symbolic_governor.govern",
 }
 
 # ---------------------------------------------------------------------------
@@ -181,11 +182,22 @@ def _make_mock_opa_client(decision: str = "ALLOW") -> MagicMock:
     return client
 
 
-def _make_mock_safety_filter(result: str = "SAFE") -> MagicMock:
-    """Return a mock SafetyFilter (CBF) whose verify_action resolves instantly."""
-    sf = MagicMock()
-    sf.verify_action = AsyncMock(return_value=result)
-    return sf
+def _make_mock_cbf(result: str = "SAFE") -> MagicMock:
+    """Return a mock CBF engine (BarrierEngine protocol) that resolves instantly.
+
+    ``atomic_verify_and_commit`` reports the committed magnitude, as the real
+    engine does, so the CBF tier's CommitReceipt is well formed.
+    """
+    safe = result == "SAFE"
+
+    async def _commit(action_name: str, payload: dict[str, Any], governance_signature: str = "") -> tuple[bool, str, float]:
+        return safe, result, float(payload.get("amount", 0.0)) if safe else 0.0
+
+    cbf = MagicMock()
+    cbf.verify_action = AsyncMock(return_value=result)
+    cbf.atomic_verify_and_commit = AsyncMock(side_effect=_commit)
+    cbf.rollback_state = AsyncMock(return_value=None)
+    return cbf
 
 
 def _make_mock_consensus_engine(approved: bool = True) -> MagicMock:
@@ -208,7 +220,10 @@ def _make_mock_fiscal_guard(approved: bool = True) -> MagicMock:
     token.reservation_id = "mock-reservation-001"
     token.running_total_usd = 1950.0
     token.cap_usd = 500000.0
+    token.amount_usd = 1950.0
+    fg.would_accept = AsyncMock(return_value=approved)
     fg.reserve = AsyncMock(return_value=token)
+    fg.confirm = AsyncMock(return_value=None)
     fg.release = AsyncMock(return_value=None)
     fg.check_and_reserve = AsyncMock(return_value=approved)
     return fg
@@ -221,30 +236,63 @@ def _make_mock_stpa_validator(violations: list[str] | None = None) -> MagicMock:
     return sv
 
 
-def _make_mock_telemetry_provider() -> MagicMock:
-    """Return a mock telemetry provider that returns a minimal DataFrame-like object."""
-    try:
-        import pandas as pd  # noqa: PLC0415
+# ---------------------------------------------------------------------------
+# Section 2: SymbolicGovernor builder (via the composition root)
+# ---------------------------------------------------------------------------
 
-        mock_df = pd.DataFrame(
-            {
-                "governance_latency_ms": [45.0, 48.0, 42.0],
-                "confidence_score": [0.97, 0.96, 0.98],
-                "trade_value": [1950.0, 2100.0, 1800.0],
-                "account_balance": [50000.0, 50000.0, 50000.0],
-            }
+
+class _BenchFinancePlugin:
+    """Finance plugin whose tiers wrap zero-latency mocks.
+
+    Keeps finance's real ``DomainConfig`` (FTRA terminal registry), so
+    ``assemble_governor`` applies its production checks (slot collisions,
+    ungoverned irreversible actions) to the benchmark wiring too.
+    """
+
+    name = "finance"
+    api_version = "1.0"
+
+    def __init__(self, *, cbf: Any, fiscal_guard: Any, consensus: Any) -> None:
+        from src.cage_finance.plugin import FinanceCagePlugin  # noqa: PLC0415
+
+        self.domain_config = FinanceCagePlugin.domain_config
+        # Same overlay dir FinanceCagePlugin.contribute() declares; calling that
+        # would construct Redis-backed engines, which the benchmark mocks.
+        self._overlay_dirs = (Path(sys.modules[FinanceCagePlugin.__module__].__file__).parent / "config" / "compliance",)
+        self._cbf, self._fiscal_guard, self._consensus = cbf, fiscal_guard, consensus
+
+    def contribute(self) -> Any:
+        from src.cage_finance import (  # noqa: PLC0415
+            REGISTERED_ACTIONS,
+            create_finance_tiers,
         )
-    except ImportError:
-        mock_df = None
+        from src.cage_finance.tiers.causal_tier import CausalTierPlugin  # noqa: PLC0415
+        from src.gateway.governance.contracts import PluginContribution  # noqa: PLC0415
 
-    tp = MagicMock()
-    tp.get_latest_data = MagicMock(return_value=mock_df)
-    return tp
+        class _MockCausalTier(CausalTierPlugin):
+            """Real causal tier identity (name, phase, order, claims) over a mock DoWhy check.
 
+            The production gatekeeper reads Redis telemetry; like every other
+            backend here it is replaced by a zero-latency stand-in.
+            """
 
-# ---------------------------------------------------------------------------
-# Section 2: SymbolicGovernor builder
-# ---------------------------------------------------------------------------
+            async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
+                return []
+
+        tiers = tuple(
+            _MockCausalTier() if t.tier_name == "causal" else t
+            for t in create_finance_tiers(
+                cbf=self._cbf, fiscal_guard=self._fiscal_guard, consensus_gate=self._consensus
+            )
+        )
+        return PluginContribution(
+            domain=self.name,
+            tiers=tiers,
+            registered_actions=REGISTERED_ACTIONS,
+            safety_filter=self._cbf,
+            consensus=self._consensus,
+            compliance_overlay_dirs=self._overlay_dirs,
+        )
 
 
 def _build_governor(
@@ -255,19 +303,33 @@ def _build_governor(
     fiscal_approved: bool = True,
     stpa_violations: list[str] | None = None,
 ) -> Any:
-    """Construct a SymbolicGovernor wired with zero-latency mocks."""
-    from src.gateway.governance.symbolic_governor import (  # noqa: PLC0415
-        SymbolicGovernor,
+    """Assemble a governor over zero-latency mocks with the production composition root."""
+    from src.gateway.governance.env_posture import DeploymentPosture  # noqa: PLC0415
+    from src.gateway.governance.governor.assembly import (  # noqa: PLC0415
+        DecisionFlags,
+        assemble_governor,
     )
 
-    return SymbolicGovernor(
-        opa_client=_make_mock_opa_client(opa_decision),
-        safety_filter=_make_mock_safety_filter(cbf_result),
-        consensus_engine=_make_mock_consensus_engine(consensus_approved),
-        stpa_validator=_make_mock_stpa_validator(stpa_violations),
-        fiscal_limit_guard=_make_mock_fiscal_guard(fiscal_approved),
-        telemetry_provider=_make_mock_telemetry_provider(),
+    plugin = _BenchFinancePlugin(
+        cbf=_make_mock_cbf(cbf_result),
+        fiscal_guard=_make_mock_fiscal_guard(fiscal_approved),
+        consensus=_make_mock_consensus_engine(consensus_approved),
     )
+    governor = assemble_governor(
+        [plugin],
+        posture=DeploymentPosture.DEV,
+        opa=_make_mock_opa_client(opa_decision),
+        stpa_validator=_make_mock_stpa_validator(stpa_violations),
+        flags=DecisionFlags(defer=False, narrow=False, pause=False),
+    )
+    # Mirror bootstrap_governor(): register the domain's compliance overlays so
+    # ControlRegistry resolves its controls (e.g. the causal tier's CTRL_MRM_004).
+    from src.gateway.governance.constants import register_overlay_dir  # noqa: PLC0415
+
+    for contribution in governor.components.contributions:
+        for overlay_dir in contribution.compliance_overlay_dirs:
+            register_overlay_dir(overlay_dir)
+    return governor
 
 
 # ---------------------------------------------------------------------------
@@ -371,29 +433,39 @@ def _extract_span_durations(
 
 
 async def measure_governor_latency() -> dict[str, dict[str, float]]:
-    """Measure per-tier and total latency via OTel span harvest.
+    """Measure per-tier and total latency of the real approval path via OTel span harvest.
 
     Methodology:
-    - Calls govern() LATENCY_RUNS times with all-pass mocks.
-    - After each call, reads the finished spans from InMemorySpanExporter.
-    - Extracts per-tier durations by matching span names.
-    - Tier latencies and the total come from the same run, so
+    - ``execute_trade`` is IRREVERSIBLE_TERMINAL in the FTRA registry, so it is
+      never sealed by one call. Each iteration runs the production approval path:
+        1. ``validate_action`` (FULL profile) → REQUIRE_APPROVAL; runs FTRA, STPA,
+           OPA, confidence and the phase-1 domain tiers.
+        2. ``revalidate_post_hitl`` (POST_HITL profile) → seal; re-runs OPA and
+           commits the phase-2 barriers (CBF, fiscal).
+    - Policy, barrier, fiscal, consensus and causal backends are all-pass
+      zero-latency mocks. The seal is real: it is committed to the evidence
+      chain, so REDIS_URL (or EVIDENCE_STREAM_REDIS_URL) must point at Redis.
+    - Any other outcome aborts the run (RuntimeError): refusals are never
+      timed as approvals.
+    - Per-tier durations come from the spans of the same iteration, so
       sum(tiers) <= total holds by construction.
-
-    This replaces the previous methodology where _sample_confidence_tier()
-    and _sample_cbf_opa_tier() were identical (both called full _run_checks()),
-    producing independent samples of the whole pipeline rather than per-tier
-    measurements.
     """
+    from src.gateway.governance.decisions import GovernanceDecision  # noqa: PLC0415
+    from src.gateway.governance.governor.errors import GovernanceError  # noqa: PLC0415
+
+    if not (os.environ.get("EVIDENCE_STREAM_REDIS_URL") or os.environ.get("REDIS_URL")):
+        raise RuntimeError(
+            "latency benchmark issues real seals, which are committed to the Redis "
+            "evidence chain; set REDIS_URL (or EVIDENCE_STREAM_REDIS_URL)"
+        )
     print(
         f"\n[latency] Measuring per-tier latency via OTel span harvest ({LATENCY_RUNS} runs)..."
     )
-    print("  Methodology: single govern() call per iteration; per-tier durations")
-    print("  extracted from InMemorySpanExporter child spans.")
-    print("  This ensures sum(tiers) <= total by construction (C6 fix).")
+    print("  Methodology: validate_action (FULL -> REQUIRE_APPROVAL) then")
+    print("  revalidate_post_hitl (POST_HITL -> seal) per iteration; per-tier")
+    print("  durations extracted from InMemorySpanExporter child spans.")
     print()
 
-    # Set up in-memory OTel tracer
     _provider, exporter = _setup_in_memory_tracer()
 
     gov = _build_governor(
@@ -413,41 +485,69 @@ async def measure_governor_latency() -> dict[str, dict[str, float]]:
         "agent_id": "test-agent",
     }
 
-    # Per-tier sample accumulators: span_name → list[float ms]
+    async def _approval_path() -> tuple[float, float]:
+        """Run one approval; return (full_ms, post_hitl_ms). Abort on any other outcome."""
+        t0 = time.perf_counter()
+        verdict = await gov.validate_action("execute_trade", dict(params))
+        t1 = time.perf_counter()
+        if verdict.get("verdict") != GovernanceDecision.REQUIRE_APPROVAL:
+            raise RuntimeError(
+                f"latency benchmark: validate_action returned {verdict.get('verdict')!r}, "
+                f"expected REQUIRE_APPROVAL (violations={verdict.get('violations')!r})"
+            )
+        seal = await gov.revalidate_post_hitl("execute_trade", dict(params))
+        t2 = time.perf_counter()
+        if not seal:
+            raise RuntimeError("latency benchmark: revalidate_post_hitl returned no seal")
+        return (t1 - t0) * 1000, (t2 - t1) * 1000
+
+    # This script is its own entry point, so it owns the evidence sink's
+    # lifecycle: seals commit to the chain before they are issued.
+    from src.gateway.governance.evidence.stream import (
+        get_evidence_sink,  # noqa: PLC0415
+    )
+
+    sink = get_evidence_sink()
+    await sink.start()
+    try:
+        return await _measure_approval_latency(gov, params, exporter, _approval_path, GovernanceError)
+    finally:
+        await sink.stop()
+
+
+async def _measure_approval_latency(
+    gov: Any, params: dict[str, Any], exporter: Any, _approval_path: Any, GovernanceError: type[Exception]
+) -> dict[str, dict[str, float]]:
+    """Timed loops and result assembly for :func:`measure_governor_latency`."""
     tier_samples: dict[str, list[float]] = {name: [] for name in TIER_SPAN_MAP.values()}
+    full_samples: list[float] = []
+    post_hitl_samples: list[float] = []
     total_approved_samples: list[float] = []
 
     # Warm-up: 10 iterations to prime JIT/import caches
     for _ in range(10):
-        try:
-            await gov.govern("execute_trade", params)
-        except Exception:
-            pass
+        await _approval_path()
     exporter.clear()
 
-    # Measurement iterations
     for i in range(LATENCY_RUNS):
         exporter.clear()
-        t0 = time.perf_counter()
-        try:
-            await gov.govern("execute_trade", params)
-        except Exception:
-            pass
-        total_ms = (time.perf_counter() - t0) * 1000
+        full_ms, post_hitl_ms = await _approval_path()
+        total_ms = full_ms + post_hitl_ms
+        full_samples.append(full_ms)
+        post_hitl_samples.append(post_hitl_ms)
         total_approved_samples.append(total_ms)
 
-        # Harvest per-tier durations from finished spans
         finished = list(exporter.get_finished_spans())
         for span_name in TIER_SPAN_MAP.values():
             durations = _extract_span_durations(finished, span_name)
             if durations:
-                # Take the first (and usually only) span of this name per call
-                tier_samples[span_name].append(durations[0])
+                # Sum every span of this name: OPA runs in both profiles.
+                tier_samples[span_name].append(sum(durations))
 
         if (i + 1) % 50 == 0:
             print(f"  [{i + 1:3d}/{LATENCY_RUNS}] total_ms={total_ms:.3f}")
 
-    # Measure rejected path (confidence below threshold → early exit at Tier 2)
+    # Rejected path: confidence below threshold → govern() refuses.
     rejected_params = dict(params)
     rejected_params["confidence"] = 0.50
     total_rejected_samples: list[float] = []
@@ -456,8 +556,10 @@ async def measure_governor_latency() -> dict[str, dict[str, float]]:
         t0 = time.perf_counter()
         try:
             await gov.govern("execute_trade", rejected_params)
-        except Exception:
+        except GovernanceError:
             pass
+        else:
+            raise RuntimeError("latency benchmark: low-confidence govern() was not refused")
         total_rejected_samples.append((time.perf_counter() - t0) * 1000)
 
     # Build results dict
@@ -485,8 +587,14 @@ async def measure_governor_latency() -> dict[str, dict[str, float]]:
                 f"  {label:<25} (span not emitted — tier inactive in this configuration)"
             )
 
+    results["validate_action (FULL)"] = _percentiles(full_samples)
+    results["revalidate_post_hitl"] = _percentiles(post_hitl_samples)
     results["Total (APPROVED)"] = _percentiles(total_approved_samples)
     results["Total (REJECTED)"] = _percentiles(total_rejected_samples)
+    for label, samples in (("validate_action (FULL)", full_samples), ("revalidate_post_hitl", post_hitl_samples)):
+        print(
+            f"  {label:<25} n={len(samples):3d}  P50={results[label]['p50']:.3f}ms  P95={results[label]['p95']:.3f}ms  P99={results[label]['p99']:.3f}ms"
+        )
     print(
         f"  {'Total (APPROVED)':<25} n={len(total_approved_samples):3d}  P50={results['Total (APPROVED)']['p50']:.3f}ms  P95={results['Total (APPROVED)']['p95']:.3f}ms  P99={results['Total (APPROVED)']['p99']:.3f}ms"
     )

@@ -39,7 +39,7 @@ from measure_paper_metrics import (  # noqa: E402
     _wilson_interval,
 )
 
-pytestmark = pytest.mark.local
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 class TestWilsonInterval:
@@ -462,3 +462,133 @@ class TestHITLEscalationCountedAsDeflected:
         assert result == "ESCALATED", (
             f"Expected ESCALATED for 'under review' body, got {result!r}."
         )
+
+
+class TestMeasureGovernorLatency:
+    """Tests for composition-root governor assembly and approval-path latency benchmark."""
+
+    def test_build_governor_uses_composition_root(self) -> None:
+        """_build_governor assembles SymbolicGovernor via assemble_governor without legacy module."""
+        import measure_paper_metrics as _mod  # noqa: PLC0415
+
+        from src.gateway.governance.governor.governor import (  # noqa: PLC0415
+            SymbolicGovernor,
+        )
+
+        gov = _mod._build_governor(opa_decision="ALLOW")
+        assert isinstance(gov, SymbolicGovernor)
+        assert "src.gateway.governance.symbolic_governor" not in sys.modules
+
+    @pytest.mark.asyncio
+    async def test_measure_governor_latency_requires_redis_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """measure_governor_latency fails closed when no Redis URL is configured."""
+        import measure_paper_metrics as _mod  # noqa: PLC0415
+
+        monkeypatch.delenv("REDIS_URL", raising=False)
+        monkeypatch.delenv("EVIDENCE_STREAM_REDIS_URL", raising=False)
+        with pytest.raises(RuntimeError, match="REDIS_URL"):
+            await _mod.measure_governor_latency()
+
+    @pytest.mark.asyncio
+    async def test_measure_governor_latency_records_two_phase_approval_and_rejection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """measure_governor_latency records validate_action (FULL), revalidate_post_hitl, and totals."""
+        import fakeredis.aioredis  # noqa: PLC0415
+        import measure_paper_metrics as _mod  # noqa: PLC0415
+        import redis.asyncio as aioredis  # noqa: PLC0415
+
+        import src.gateway.governance.evidence.stream as _stream_mod  # noqa: PLC0415
+
+        server = fakeredis.FakeServer()
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            aioredis,
+            "from_url",
+            lambda *a, **kw: fakeredis.aioredis.FakeRedis(
+                server=server, decode_responses=True
+            ),
+        )
+        monkeypatch.setattr(_stream_mod, "_evidence_sink", None)
+        monkeypatch.setattr(_mod, "LATENCY_RUNS", 3)
+
+        results = await _mod.measure_governor_latency()
+        for key in (
+            "validate_action (FULL)",
+            "revalidate_post_hitl",
+            "Total (APPROVED)",
+            "Total (REJECTED)",
+        ):
+            assert key in results, f"Missing {key!r} in latency results"
+            assert results[key]["p50"] > 0.0
+            assert results[key]["p95"] >= results[key]["p50"]
+
+    @pytest.mark.asyncio
+    async def test_measure_governor_latency_aborts_on_opa_refusal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """measure_governor_latency raises GovernanceError when FULL phase denies (no silent swallow)."""
+        import fakeredis.aioredis  # noqa: PLC0415
+        import measure_paper_metrics as _mod  # noqa: PLC0415
+        import redis.asyncio as aioredis  # noqa: PLC0415
+
+        import src.gateway.governance.evidence.stream as _stream_mod  # noqa: PLC0415
+        from src.gateway.governance.governor.errors import (  # noqa: PLC0415
+            GovernanceError,
+        )
+
+        server = fakeredis.FakeServer()
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            aioredis,
+            "from_url",
+            lambda *a, **kw: fakeredis.aioredis.FakeRedis(
+                server=server, decode_responses=True
+            ),
+        )
+        monkeypatch.setattr(_stream_mod, "_evidence_sink", None)
+        orig_build = _mod._build_governor
+        monkeypatch.setattr(
+            _mod, "_build_governor", lambda **_kw: orig_build(opa_decision="DENY")
+        )
+
+        with pytest.raises(GovernanceError):
+            await _mod.measure_governor_latency()
+
+    @pytest.mark.asyncio
+    async def test_measure_governor_latency_aborts_on_cbf_commit_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """measure_governor_latency raises GovernanceError when POST_HITL commit fails (no silent swallow)."""
+        import fakeredis.aioredis  # noqa: PLC0415
+        import measure_paper_metrics as _mod  # noqa: PLC0415
+        import redis.asyncio as aioredis  # noqa: PLC0415
+
+        import src.gateway.governance.evidence.stream as _stream_mod  # noqa: PLC0415
+        from src.gateway.governance.governor.errors import (
+            GovernanceError,  # noqa: PLC0415
+        )
+
+        server = fakeredis.FakeServer()
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            aioredis,
+            "from_url",
+            lambda *a, **kw: fakeredis.aioredis.FakeRedis(
+                server=server, decode_responses=True
+            ),
+        )
+        monkeypatch.setattr(_stream_mod, "_evidence_sink", None)
+        orig_build = _mod._build_governor
+        monkeypatch.setattr(
+            _mod,
+            "_build_governor",
+            lambda **_kw: orig_build(cbf_result="UNSAFE: Margin Breach"),
+        )
+
+        with pytest.raises(GovernanceError):
+            await _mod.measure_governor_latency()
+
+

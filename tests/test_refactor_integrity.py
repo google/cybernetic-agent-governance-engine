@@ -17,8 +17,9 @@ OPA Guardrail Refactor Integrity Tests (P2).
 
 Dead-man's switch tests that permanently enforce the architectural invariant:
 
-  OPA invocation in the mandatory safety_check LangGraph node MUST be native/direct
-  (via symbolic_governor.govern()) and MUST NOT go through any MCP client.
+  OPA invocation in the mandatory safety_check LangGraph node MUST go to the
+  gateway's governor PDP (via ``CageClient.validate_action()``) and MUST NOT go
+  through any MCP client.
 
 If any of these tests fail, it means the MCP bypass has been reintroduced and
 the security-critical guardrail is agent-bypassable.  CI must block the merge.
@@ -77,7 +78,7 @@ class TestOPAGuardrailIntegrity:
 
         Any call to `call_tool` in the safety node would be an agent-visible
         MCP dispatch — a bypassable OPA path.  The only permitted OPA invocation
-        pattern is ``symbolic_governor.govern()``.
+        pattern is ``CageClient.validate_action()`` against the gateway PDP.
         """
         safety_node_candidates = list(pathlib.Path("src").rglob("*safety*node*"))
         assert safety_node_candidates, "Could not find safety node file under src/"
@@ -94,26 +95,37 @@ class TestOPAGuardrailIntegrity:
                         "OPA guardrail bypass reintroduced via MCP tool dispatch"
                     )
 
-    def test_safety_node_imports_symbolic_governor(self):
+    def test_safety_node_routes_through_gateway_governor(self):
         """
-        The safety node MUST import from the singletons/symbolic_governor module.
+        The safety node MUST call ``validate_action()`` on the CageClient
+        obtained from ``get_cage_client()``.
 
-        This ensures it is wired to the direct OPA path.
+        This ensures it is wired to the gateway's governor PDP (checked at AST
+        level, so a comment or string mentioning the governor does not count).
         """
-        safety_node_candidates = list(pathlib.Path("src").rglob("*safety*node*"))
+        safety_node_candidates = [
+            p for p in pathlib.Path("src").rglob("*safety*node*") if p.suffix == ".py"
+        ]
         assert safety_node_candidates, "Could not find safety node file under src/"
 
-        found_governor_import = False
+        found_client_import = False
+        found_validate_call = False
         for candidate in safety_node_candidates:
-            if not candidate.suffix == ".py":
-                continue
-            source = candidate.read_text()
-            if "symbolic_governor" in source:
-                found_governor_import = True
-                break
+            tree = ast.parse(candidate.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and any(
+                    alias.name == "get_cage_client" for alias in node.names
+                ):
+                    found_client_import = True
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "validate_action"
+                ):
+                    found_validate_call = True
 
-        assert found_governor_import, (
-            "safety_check_node does not import symbolic_governor — "
+        assert found_client_import and found_validate_call, (
+            "safety_check_node does not call get_cage_client().validate_action() — "
             "the mandatory OPA guardrail path may be missing"
         )
 

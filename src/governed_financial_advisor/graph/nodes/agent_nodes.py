@@ -269,16 +269,26 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
     return updates
 
 
-async def governed_trader_node(state):  # type: ignore[no-untyped-def]
+def create_governed_trader_node(governor):  # type: ignore[no-untyped-def]
+    """Build the governed-trader subgraph once and bind it to a graph node."""
+    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+        build_governed_trader_graph,
+    )
+
+    subgraph = build_governed_trader_graph(governor)
+
+    async def _governed_trader(state):  # type: ignore[no-untyped-def]
+        return await governed_trader_node(state, subgraph=subgraph)
+
+    return _governed_trader
+
+
+async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-def]
     """
     Executes the Governed Trader Subgraph (Native LangGraph).
     Executes requested trades based on plan and evaluation.
     """
     logger.info("--- [Graph] Calling Governed Trader ---")
-
-    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
-        governed_trader_graph,
-    )
 
     # We pass the execution plan and evaluation result down to the subgraph.
     # data_analyst_ticker is forwarded so post_hitl_rehydrate_node can fetch a

@@ -75,7 +75,7 @@ class TestHealthcarePlugin:
         from src.cage_healthcare.tiers.clinical_consensus_tier import (
             ClinicalConsensusTier,
         )
-        from src.gateway.governance.singletons import NullConsensusProvider
+        from src.gateway.governance.null_components import NullConsensusProvider
 
         tier = ClinicalConsensusTier(NullConsensusProvider())
 
@@ -119,31 +119,27 @@ class TestHealthcarePlugin:
         assert actions[0][0] == "CheckContraindicationAction"
         assert callable(actions[0][1])
 
-    def test_plugin_registration_does_not_raise(self, classification_engine):
-        """Healthcare plugin registers without errors."""
+    def test_plugin_registration_does_not_raise(self):
+        """Healthcare plugin's contribution assembles into a governor without errors."""
         from src.cage_healthcare.plugin import HealthcareCagePlugin
         from src.gateway.core.policy import OPAClient
+        from src.gateway.governance.env_posture import DeploymentPosture
         from src.gateway.governance.generated_stpa_validator import (
             GeneratedSTPAValidator,
         )
-        from src.gateway.governance.singletons import (
-            NullConsensusProvider,
-            NullSafetyFilter,
+        from src.gateway.governance.governor.assembly import (
+            DecisionFlags,
+            assemble_governor,
         )
-        from src.gateway.governance.governor.governor import SymbolicGovernor
-
-        governor = SymbolicGovernor(
-            opa_client=OPAClient("dosing.governance"),
-            safety_filter=NullSafetyFilter(),
-            consensus_engine=NullConsensusProvider(),
-            classification_engine=classification_engine,
-            stpa_validator=GeneratedSTPAValidator(),
-        )
-
-        plugin = HealthcareCagePlugin()
 
         # Should not raise
-        plugin.register(governor, None)
+        governor = assemble_governor(
+            [HealthcareCagePlugin()],
+            posture=DeploymentPosture.DEV,
+            opa=OPAClient("dosing.governance"),
+            stpa_validator=GeneratedSTPAValidator(),
+            flags=DecisionFlags(defer=True, narrow=False, pause=False),
+        )
 
         # Verify tiers registered
         tier_names = governor.registered_tier_names()

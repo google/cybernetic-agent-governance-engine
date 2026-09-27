@@ -25,7 +25,12 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.gateway.governance.governor.errors import GovernanceError
-from src.gateway.governance.governor.pipeline import PipelineResult, Stage, StageContext, run_pipeline
+from src.gateway.governance.governor.pipeline import (
+    PipelineResult,
+    Stage,
+    StageContext,
+    run_pipeline,
+)
 from src.gateway.governance.governor.reservation import ReservationScope
 from src.gateway.governance.governor.verdicts import issue_seal
 

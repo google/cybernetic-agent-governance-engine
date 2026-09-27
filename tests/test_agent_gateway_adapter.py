@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.server.agent_gateway_adapter import (
     ParseError,
     _build_denied_response,
@@ -29,6 +30,12 @@ from src.gateway.server.agent_gateway_adapter import (
     handle_check_request,
     parse_jsonrpc_body,
 )
+
+
+def _mock_governor() -> MagicMock:
+    """A governor mock with the ``SymbolicGovernor`` interface."""
+    return MagicMock(spec=SymbolicGovernor)
+
 
 # ---------------------------------------------------------------------------
 # parse_jsonrpc_body tests
@@ -204,7 +211,9 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_parse_error_returns_denied_403(self):
         """Parse error → DeniedHttpResponse(403) fail-closed."""
-        resp = await handle_check_request("not json")
+        gov = _mock_governor()
+        resp = await handle_check_request("not json", governor=gov)
+        gov.validate_action.assert_not_called()
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 403
         body = json.loads(resp["denied_response"]["body"])
@@ -213,7 +222,9 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_empty_body_returns_denied_403(self):
         """Empty body → DeniedHttpResponse(403) fail-closed."""
-        resp = await handle_check_request("")
+        gov = _mock_governor()
+        resp = await handle_check_request("", governor=gov)
+        gov.validate_action.assert_not_called()
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 403
 
@@ -226,7 +237,9 @@ class TestHandleCheckRequest:
                 "params": {"data": "x" * 70000},
             }
         )
-        resp = await handle_check_request(large_body)
+        gov = _mock_governor()
+        resp = await handle_check_request(large_body, governor=gov)
+        gov.validate_action.assert_not_called()
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 403
 
@@ -245,17 +258,12 @@ class TestHandleCheckRequest:
             "seal": "test-seal-abc123",
             "thread_id": "",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        # The adapter does `from src.gateway.governance.singletons import symbolic_governor`
-        # inside handle_check_request(). Patch the singletons module attribute so the
-        # lazy import picks up the mock object.
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(
-                body, caller_principal="spiffe://test/agent"
-            )
+        resp = await handle_check_request(
+            body, caller_principal="spiffe://test/agent", governor=mock_gov
+        )
 
         assert "ok_response" in resp
         headers = resp["ok_response"]["headers"]
@@ -279,12 +287,10 @@ class TestHandleCheckRequest:
             "seal": "",
             "thread_id": "",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 403
@@ -313,12 +319,10 @@ class TestHandleCheckRequest:
             "seal": "",
             "thread_id": "thread-abc-123",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 202
@@ -356,12 +360,10 @@ class TestHandleCheckRequest:
             "defer_token": "defer-xyz-789",
             "classification_reason": "confidence_below_threshold",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 202
@@ -389,12 +391,10 @@ class TestHandleCheckRequest:
                 "params": {},
             }
         )
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(side_effect=RuntimeError("unexpected"))
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 403
@@ -421,12 +421,12 @@ class TestHandleCheckRequest:
                 "thread_id": "",
             }
 
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = _capture_validate
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            await handle_check_request(body, caller_principal="spiffe://trust/agent")
+        await handle_check_request(
+            body, caller_principal="spiffe://trust/agent", governor=mock_gov
+        )
 
         assert captured_params.get("_caller_principal") == "spiffe://trust/agent"
 
@@ -448,7 +448,6 @@ class TestGovernanceDecisionConformance:
         HTTP response body with a ``verdict`` field that matches the canonical
         enum value — not a translated alias.
         """
-        import src.gateway.governance.singletons as _singletons
 
         decision_to_mock = {
             GovernanceDecision.ALLOW: {
@@ -486,11 +485,10 @@ class TestGovernanceDecisionConformance:
         seen_verdicts: set[str] = set()
 
         for decision, mock_result in decision_to_mock.items():
-            mock_gov = MagicMock()
+            mock_gov = _mock_governor()
             mock_gov.validate_action = AsyncMock(return_value=mock_result)
 
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+            resp = await handle_check_request(body, governor=mock_gov)
 
             if decision == GovernanceDecision.ALLOW:
                 assert "ok_response" in resp, (
@@ -548,12 +546,10 @@ class TestDeferHTTPResponse:
                 "classification_reason": "Low confidence triggers DEFER",
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 202
@@ -576,12 +572,10 @@ class TestDeferHTTPResponse:
             "classification_reason": "confidence_below_threshold",
             "deferrable": True,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         body_parsed = json.loads(resp["denied_response"]["body"])
         assert body_parsed.get("defer_token") == "defer-xyz-789"
@@ -615,9 +609,8 @@ class TestDeferHTTPResponse:
             "missing_input_reason": "confidence_below_threshold",
             "deferrable": True,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         # Patch the module-level _DEFER_ENABLED flag
@@ -625,8 +618,7 @@ class TestDeferHTTPResponse:
         adapter_module._DEFER_ENABLED = False
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+            resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._DEFER_ENABLED = original_defer_enabled
 
@@ -655,12 +647,10 @@ class TestDeferHTTPResponse:
             "deferrable": True,
             "retry_after_seconds": 300,
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
 
-        with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body)
+        resp = await handle_check_request(body, governor=mock_gov)
 
         body_parsed = json.loads(resp["denied_response"]["body"])
         assert body_parsed.get("retry_after_seconds") == 300
@@ -703,20 +693,18 @@ class TestNarrowHTTPResponse:
             "constraints_applied": ["amount clamped: 150000 → 100000"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                with patch(
-                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
-                ):
-                    resp = await handle_check_request(body)
+            with patch(
+                "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+            ):
+                resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -749,20 +737,18 @@ class TestNarrowHTTPResponse:
             "constraints_applied": ["amount clamped: 150000 → 100000"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                with patch(
-                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
-                ):
-                    resp = await handle_check_request(body)
+            with patch(
+                "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+            ):
+                resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -796,17 +782,15 @@ class TestNarrowHTTPResponse:
             "constraints_applied": ["amount clamped"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = False
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+            resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -842,20 +826,18 @@ class TestNarrowHTTPResponse:
             "constraints_applied": ["amount clamped: 200000 → 100000"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                with patch(
-                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
-                ):
-                    resp = await handle_check_request(body)
+            with patch(
+                "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+            ):
+                resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
 
@@ -902,9 +884,8 @@ class TestPauseHTTPResponse:
                 "estimated_wait_seconds": 60,
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.governance.pause_primitive import PauseManager
 
@@ -916,16 +897,15 @@ class TestPauseHTTPResponse:
         mock_pause_manager.pause_request = AsyncMock(return_value="pause-token-abc123")
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
+            with patch(
+                "src.gateway.governance.pause_primitive.PauseManager",
+                return_value=mock_pause_manager,
+            ):
                 with patch(
-                    "src.gateway.governance.pause_primitive.PauseManager",
-                    return_value=mock_pause_manager,
+                    "src.gateway.infrastructure.redis_client.redis_client",
+                    MagicMock(),
                 ):
-                    with patch(
-                        "src.gateway.infrastructure.redis_client.redis_client",
-                        MagicMock(),
-                    ):
-                        resp = await handle_check_request(body)
+                    resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
 
@@ -953,9 +933,8 @@ class TestPauseHTTPResponse:
                 "estimated_wait_seconds": 120,
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_pause_enabled = adapter_module._PAUSE_ENABLED
@@ -965,16 +944,15 @@ class TestPauseHTTPResponse:
         mock_pause_manager.pause_request = AsyncMock(return_value="pause-token-xyz")
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
+            with patch(
+                "src.gateway.governance.pause_primitive.PauseManager",
+                return_value=mock_pause_manager,
+            ):
                 with patch(
-                    "src.gateway.governance.pause_primitive.PauseManager",
-                    return_value=mock_pause_manager,
+                    "src.gateway.infrastructure.redis_client.redis_client",
+                    MagicMock(),
                 ):
-                    with patch(
-                        "src.gateway.infrastructure.redis_client.redis_client",
-                        MagicMock(),
-                    ):
-                        resp = await handle_check_request(body)
+                    resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
 
@@ -1012,9 +990,8 @@ class TestPauseHTTPResponse:
                 "estimated_wait_seconds": 30,
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_pause_enabled = adapter_module._PAUSE_ENABLED
@@ -1024,16 +1001,15 @@ class TestPauseHTTPResponse:
         mock_pause_manager.pause_request = AsyncMock(return_value="pause-token-resume")
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
+            with patch(
+                "src.gateway.governance.pause_primitive.PauseManager",
+                return_value=mock_pause_manager,
+            ):
                 with patch(
-                    "src.gateway.governance.pause_primitive.PauseManager",
-                    return_value=mock_pause_manager,
+                    "src.gateway.infrastructure.redis_client.redis_client",
+                    MagicMock(),
                 ):
-                    with patch(
-                        "src.gateway.infrastructure.redis_client.redis_client",
-                        MagicMock(),
-                    ):
-                        resp = await handle_check_request(body)
+                    resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
 
@@ -1063,17 +1039,15 @@ class TestPauseHTTPResponse:
                 "estimated_wait_seconds": 60,
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_pause_enabled = adapter_module._PAUSE_ENABLED
         adapter_module._PAUSE_ENABLED = False
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
-                resp = await handle_check_request(body)
+            resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
 
@@ -1103,9 +1077,8 @@ class TestPauseHTTPResponse:
                 "estimated_wait_seconds": 180,
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_pause_enabled = adapter_module._PAUSE_ENABLED
@@ -1115,16 +1088,15 @@ class TestPauseHTTPResponse:
         mock_pause_manager.pause_request = AsyncMock(return_value="pause-uuid-12345678")
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
+            with patch(
+                "src.gateway.governance.pause_primitive.PauseManager",
+                return_value=mock_pause_manager,
+            ):
                 with patch(
-                    "src.gateway.governance.pause_primitive.PauseManager",
-                    return_value=mock_pause_manager,
+                    "src.gateway.infrastructure.redis_client.redis_client",
+                    MagicMock(),
                 ):
-                    with patch(
-                        "src.gateway.infrastructure.redis_client.redis_client",
-                        MagicMock(),
-                    ):
-                        resp = await handle_check_request(body)
+                    resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
 
@@ -1152,9 +1124,8 @@ class TestPauseHTTPResponse:
                 "estimated_wait_seconds": 60,
             },
         }
-        mock_gov = MagicMock()
+        mock_gov = _mock_governor()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        import src.gateway.governance.singletons as _singletons
         import src.gateway.server.agent_gateway_adapter as adapter_module
 
         original_pause_enabled = adapter_module._PAUSE_ENABLED
@@ -1167,16 +1138,15 @@ class TestPauseHTTPResponse:
         )
 
         try:
-            with patch.object(_singletons, "symbolic_governor", mock_gov):
+            with patch(
+                "src.gateway.governance.pause_primitive.PauseManager",
+                return_value=mock_pause_manager,
+            ):
                 with patch(
-                    "src.gateway.governance.pause_primitive.PauseManager",
-                    return_value=mock_pause_manager,
+                    "src.gateway.infrastructure.redis_client.redis_client",
+                    MagicMock(),
                 ):
-                    with patch(
-                        "src.gateway.infrastructure.redis_client.redis_client",
-                        MagicMock(),
-                    ):
-                        resp = await handle_check_request(body)
+                    resp = await handle_check_request(body, governor=mock_gov)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
 

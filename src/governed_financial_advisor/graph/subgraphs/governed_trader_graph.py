@@ -37,7 +37,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from langchain_core.messages import (
     BaseMessage,
@@ -62,6 +62,9 @@ from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
 )
+
+if TYPE_CHECKING:
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
 
@@ -375,9 +378,9 @@ def should_continue(state: GovernedTraderState) -> str:
 # samples the continuous market environment and re-validates deterministic bounds
 # at the exact moment of execution — not at the moment of human check.
 #
-# Architectural invariant: SymbolicGovernor.govern() is called via the direct
-# singleton path (src.gateway.governance.singletons) — identical to safety_node.py.
-# It is NOT routed through MCP and cannot be bypassed by any LLM agent.
+# Architectural invariant: the SymbolicGovernor is injected by the composition
+# root (bootstrap_governor → build_governed_trader_graph). It is called
+# in-process, NOT routed through MCP, and cannot be bypassed by any LLM agent.
 # ---------------------------------------------------------------------------
 
 
@@ -530,7 +533,9 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
 
 
 @side_effect_node(kind="api_call", external_system="symbolic_governor")
-async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any]:
+async def post_hitl_revalidate_node(
+    state: GovernedTraderState, *, governor: "SymbolicGovernor"
+) -> dict[str, Any]:
     """TOCTOU Remediation — Pre-Actuation Re-Validation Node.
 
     Tests the human-approved intent against fresh market reality using the
@@ -559,7 +564,6 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         toctou.revalidation.drift_pct        — measured drift at execution time
         toctou.revalidation.max_slippage_pct — reviewer's approved tolerance
     """
-    from src.gateway.governance.singletons import symbolic_governor
     from src.gateway.governance.governor.governor import GovernanceError
 
     tracer = get_tracer()
@@ -652,11 +656,11 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         # Post-HITL revalidation: only Tiers 3a (CBF) and 3b (OPA) are re-checked.
         # Tiers 1 (STPA), 2 (confidence), 5 (consensus), and 6 (causal) are
         # deterministic w.r.t. the static approved plan and do not need re-evaluation.
-        # Direct singleton path — identical architectural invariant to safety_node.py.
-        # Cannot be bypassed or intercepted by any LLM agent.
+        # In-process call on the injected governor — cannot be bypassed or
+        # intercepted by any LLM agent.
         span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
         try:
-            await symbolic_governor.revalidate_post_hitl(
+            await governor.revalidate_post_hitl(
                 action="execute_trade", params=fresh_params, trace_id=None
             )
 
@@ -768,46 +772,62 @@ def _create_guarded_tool_executor() -> Any:
     )(tool_executor_node)
 
 
-builder = StateGraph(GovernedTraderState)
+def create_post_hitl_revalidate_node(governor: "SymbolicGovernor") -> Any:
+    """Bind ``post_hitl_revalidate_node`` to the composition-root governor."""
 
-# Nodes
-builder.add_node("approval", approval_node)
-builder.add_node("rejection", rejection_node)
-builder.add_node(
-    "post_hitl_rehydrate", post_hitl_rehydrate_node
-)  # TOCTOU: state re-hydration
-builder.add_node(
-    "post_hitl_revalidate", post_hitl_revalidate_node
-)  # TOCTOU: pre-actuation re-eval
-builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
-builder.add_node("executor", executor_node)
-builder.add_node("tools", _create_guarded_tool_executor())  # CAGE governance enforced
+    async def _post_hitl_revalidate(state: GovernedTraderState) -> dict[str, Any]:
+        return await post_hitl_revalidate_node(state, governor=governor)
 
-# Entry: conditional — approval required or not
-builder.add_conditional_edges(
-    START,
-    route_approval,
-    {"approval": "approval", "executor": "executor"},
-)
+    return _post_hitl_revalidate
 
-# After approval_node (approved path): Command(goto="post_hitl_rehydrate") routes here.
-# TOCTOU remediation chain:
-#   post_hitl_rehydrate → post_hitl_revalidate → executor (APPROVED) | drift_blocked (BLOCKED)
-# After approval_node (rejected path): Command(goto="rejection") routes to rejection_node.
-# LangGraph resolves Command.goto automatically — no explicit edge from approval needed.
-builder.add_edge("post_hitl_rehydrate", "post_hitl_revalidate")
-builder.add_conditional_edges(
-    "post_hitl_revalidate",
-    route_post_revalidation,
-    {"executor": "executor", "drift_blocked": "drift_blocked"},
-)
-builder.add_edge("drift_blocked", END)
 
-# Executor tool-call loop
-builder.add_conditional_edges("executor", should_continue, {"tools": "tools", END: END})
-builder.add_edge("tools", "executor")
+def build_governed_trader_graph(governor: "SymbolicGovernor") -> Any:
+    """Compile the governed-trader subgraph around an injected governor.
 
-# Rejection terminates the subgraph
-builder.add_edge("rejection", END)
+    The governor comes from the composition root
+    (:func:`src.gateway.governance.governor.bootstrap.bootstrap_governor`);
+    there is no module-level compiled graph.
+    """
+    builder = StateGraph(GovernedTraderState)
 
-governed_trader_graph = builder.compile()
+    # Nodes
+    builder.add_node("approval", approval_node)
+    builder.add_node("rejection", rejection_node)
+    builder.add_node(
+        "post_hitl_rehydrate", post_hitl_rehydrate_node
+    )  # TOCTOU: state re-hydration
+    builder.add_node(
+        "post_hitl_revalidate", create_post_hitl_revalidate_node(governor)
+    )  # TOCTOU: pre-actuation re-eval
+    builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
+    builder.add_node("executor", executor_node)
+    builder.add_node("tools", _create_guarded_tool_executor())  # CAGE governance enforced
+
+    # Entry: conditional — approval required or not
+    builder.add_conditional_edges(
+        START,
+        route_approval,
+        {"approval": "approval", "executor": "executor"},
+    )
+
+    # After approval_node (approved path): Command(goto="post_hitl_rehydrate") routes here.
+    # TOCTOU remediation chain:
+    #   post_hitl_rehydrate → post_hitl_revalidate → executor (APPROVED) | drift_blocked (BLOCKED)
+    # After approval_node (rejected path): Command(goto="rejection") routes to rejection_node.
+    # LangGraph resolves Command.goto automatically — no explicit edge from approval needed.
+    builder.add_edge("post_hitl_rehydrate", "post_hitl_revalidate")
+    builder.add_conditional_edges(
+        "post_hitl_revalidate",
+        route_post_revalidation,
+        {"executor": "executor", "drift_blocked": "drift_blocked"},
+    )
+    builder.add_edge("drift_blocked", END)
+
+    # Executor tool-call loop
+    builder.add_conditional_edges("executor", should_continue, {"tools": "tools", END: END})
+    builder.add_edge("tools", "executor")
+
+    # Rejection terminates the subgraph
+    builder.add_edge("rejection", END)
+
+    return builder.compile()

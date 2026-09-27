@@ -18,8 +18,6 @@ Validates that the Physical AI domain plugin adheres to CAGE's Layer 2
 plugin architecture and declarative invariant specification.
 """
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from src.cage_physical_ai import create_physical_ai_tiers
@@ -128,16 +126,32 @@ class TestPhysicalAIPlugin:
         assert consensus_tier.claims_action("actuate_joint", {}) is True
 
     def test_plugin_registration(self):
-        """Plugin registers invariants and tiers with governor."""
+        """Plugin contributes invariants and tiers; assembly installs them on the governor."""
+        from src.gateway.governance.env_posture import DeploymentPosture
+        from src.gateway.governance.governor.assembly import (
+            DecisionFlags,
+            assemble_governor,
+        )
+        from tests.fixtures.governor import allow_opa, clean_stpa
+
         plugin = PhysicalAICagePlugin()
-        mock_governor = MagicMock()
-        mock_server = MagicMock()
+        contribution = plugin.contribute()
 
-        plugin.register(mock_governor, tool_server=mock_server)
+        assert contribution.domain == "physical_ai"
+        # Invariants contributed
+        assert len(contribution.invariants) == 3
+        # Tiers contributed
+        assert len(contribution.tiers) == 2
 
-        # Invariants registered
-        assert mock_governor.register_invariant.call_count == 3
-        # Tiers installed through the stage-rebuilding path
-        mock_governor.add_domain_tiers.assert_called_once()
-        (tiers,) = mock_governor.add_domain_tiers.call_args.args
-        assert len(tiers) == 2
+        # Assembly validates the invariants (V1-V4) and installs the tiers.
+        governor = assemble_governor(
+            [plugin],
+            posture=DeploymentPosture.DEV,
+            opa=allow_opa(),
+            stpa_validator=clean_stpa(),
+            flags=DecisionFlags(defer=True, narrow=False, pause=False),
+        )
+        assert len(governor.components.invariants) == 3
+        assert {"kinematic_barrier", "physical_safety_consensus"} <= set(
+            governor.registered_tier_names()
+        )

@@ -19,9 +19,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+
 
 class PhysicalAIToolProvider:
     """Provides physical AI and robotics domain tools to the FastMCP tool server."""
 
-    def register_tools(self, server: "FastMCP") -> None:
+    def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         pass

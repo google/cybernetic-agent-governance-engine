@@ -285,23 +285,11 @@ For Gaps 3 and 4, the structural invariant is preserved because the seal is stil
 ### 7.1 Gate Completeness at Startup (Gaps 3 & 4)
 
 
-A module-level assertion in [`symbolic_governor.py`](../../src/gateway/governance/governor/_legacy_startup.py) enforces the remaining gap at pod startup, before the first request is served:
+The startup posture check in [`governor/posture.py`](../../src/gateway/governance/governor/posture.py) enforces the remaining gap at pod startup, before the first request is served. It runs once per entry point, after the composition root assembles the governor ([`governor/bootstrap.py`](../../src/gateway/governance/governor/bootstrap.py)), never at import time:
 
-**Gap 4 — DoWhy production import assertion:**
+**Gap 4 — DoWhy runtime requirement:** the causal tier declares `runtime_requirements = ("dowhy",)` ([`causal_tier.py`](../../src/cage_finance/tiers/causal_tier.py)). The `tier_runtime_requirements` check imports every module a tier declares and refuses to start an enforcing posture if one fails to import.
 
-```python
-if _IS_PRODUCTION:
-    try:
-        import dowhy
-    except ImportError:
-        raise RuntimeError(
-            "CAGE STARTUP FAILURE (No-Direct-Bind Gap 4): 'dowhy' is not installed. "
-            "The DoWhy causal gatekeeper (Tier 6) is a mandatory component of the "
-            "No-Direct-Bind governance gate in production."
-        )
-```
-
-Both assertions use the same environment detection logic as the existing `CAGE_ROUTING_SEAL_SECRET` and `CAGE_ENV` checks, ensuring consistent fail-fast behaviour across all production gate components. In `development`, `test`, `dev`, and `ci` environments, the assertions are bypassed and the conditions are logged at `DEBUG` level.
+Posture comes only from `env_posture.resolve_posture()`. Under an enforcing posture (anything but `dev`, `test`, `ci`) every failed check is raised together as a `PostureViolation`; under a permissive posture each failure is logged at `CRITICAL` and startup continues.
 
 Additionally, runtime causal gatekeeper errors (previously silently skipped via `except Exception: logger.warning(...)`) now fail closed: unexpected exceptions during DoWhy refutation are appended to the `violations` list, causing the governance pipeline to return `DENIED` rather than proceeding as if the tier had passed.
 

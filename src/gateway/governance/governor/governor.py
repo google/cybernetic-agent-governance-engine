@@ -12,42 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The governor: runs every entry point through one staged pipeline.
+
+A ``SymbolicGovernor`` is immutable. It is built once, from
+:class:`~src.gateway.governance.governor.assembly.GovernorComponents`, by the
+composition root :func:`~src.gateway.governance.governor.assembly.assemble_governor`.
+Nothing installs tiers, invariants or engines on it after construction.
+"""
+
+from __future__ import annotations
+
 import copy
 import inspect
 import json
 import logging
 import math
 import time
-from collections.abc import Sequence
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from src.gateway.core.policy import OPAClient
-from src.gateway.governance.classification_engine import (
-    ClassificationContext,
-    ClassificationEngine,
-)
+from src.gateway.governance.classification_engine import ClassificationContext
 from src.gateway.governance.constants import ControlRegistry
-from src.gateway.governance.contracts import (
-    ConsensusProvider,
-    GovernanceTierPlugin,
-    InvariantModel,
-    SafetyFilter,
-    Violation,
-    ViolationKind,
-)
+from src.gateway.governance.contracts import GovernanceTierPlugin, Violation, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
-from src.gateway.governance.governor.invariants import validate_invariant
-from src.gateway.governance.governor.pipeline import PipelineResult, Profile, StageContext, run_pipeline
+from src.gateway.governance.governor.pipeline import PipelineResult, Profile, Stage, StageContext, run_pipeline
 from src.gateway.governance.governor.sealing import run_sealed
-from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
-from src.gateway.governance.governor.stages.ftra import FtraStage
-from src.gateway.governance.governor.stages.opa import OpaStage
-from src.gateway.governance.governor.stages.stpa import StpaStage
 from src.gateway.governance.governor.verdicts import (
     handle_defer,
     handle_deny,
@@ -62,64 +55,44 @@ from src.gateway.observability.attributes import (
     OBSERVATION_TYPE,
 )
 
+if TYPE_CHECKING:
+    from src.gateway.governance.governor.assembly import GovernorComponents
+
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+
 class SymbolicGovernor:
-    def __init__(
-        self,
-        opa_client: OPAClient,
-        safety_filter: SafetyFilter,
-        consensus_engine: ConsensusProvider,
-        classification_engine: ClassificationEngine,
-        domain_tiers: Sequence[GovernanceTierPlugin] = (),
-        stpa_validator: Any | None = None,
-        **kwargs,
-    ) -> None:
-        # Mandatory: its narrowers and defer/narrow/pause flags are deployment
-        # posture, so the governor never invents a default (fail closed).
-        if classification_engine is None:
-            raise TypeError("SymbolicGovernor requires a classification_engine")
-        self._classifier = classification_engine
-        self._kernel_stages = (FtraStage(), StpaStage(stpa_validator), OpaStage(opa_client), ConfidenceStage())
-        self._domain_tiers: tuple[GovernanceTierPlugin, ...] = ()
-        self.stages = list(self._kernel_stages)
-        if domain_tiers:
-            self.add_domain_tiers(domain_tiers)
-        self.safety_filter = safety_filter
-        self.opa_client = opa_client
-        self.consensus_engine = consensus_engine
-        self._invariants: list[InvariantModel] = []
+    """Immutable governor over one set of assembled components."""
+
+    __slots__ = ("_components", "_stages")
+
+    def __init__(self, components: GovernorComponents) -> None:
+        # order_stages rejects duplicate tier names and sorts by (phase, order).
+        stages = (*components.core_stages, *order_stages(components.domain_tiers))
+        object.__setattr__(self, "_components", components)
+        object.__setattr__(self, "_stages", stages)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"SymbolicGovernor is immutable; cannot set {name!r}")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"SymbolicGovernor is immutable; cannot delete {name!r}")
+
+    @property
+    def components(self) -> GovernorComponents:
+        return self._components
+
+    @property
+    def stages(self) -> tuple[Stage, ...]:
+        return self._stages
 
     @property
     def domain_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
-        return self._domain_tiers
-
-    def add_domain_tiers(self, tiers: Sequence[GovernanceTierPlugin]) -> None:
-        """Install the single active domain's tiers and rebuild the pipeline stages.
-
-        The ONLY supported way to install tiers after construction: the tier
-        tuple and ``self.stages`` are updated together, so an installed tier
-        always runs. One-shot: a CAGE process runs exactly one domain
-        (``CAGE_DOMAIN``), so a second install raises ``RuntimeError``.
-        Duplicate ``tier_name`` values raise ``ValueError``.
-        """
-        if not tiers:
-            raise ValueError("add_domain_tiers() requires at least one tier")
-        if self._domain_tiers:
-            raise RuntimeError(
-                "domain tiers already installed; a CAGE process runs exactly one domain"
-            )
-        domain_stages = order_stages(tiers)  # validates duplicates, sorts
-        self._domain_tiers = tuple(sorted(tiers, key=lambda t: (t.phase, t.order, t.tier_name)))
-        self.stages = [*self._kernel_stages, *domain_stages]
+        return tuple(sorted(self._components.domain_tiers, key=lambda t: (t.phase, t.order, t.tier_name)))
 
     def registered_tier_names(self) -> list[str]:
-        return [t.tier_name for t in sorted(self._domain_tiers, key=lambda x: (x.phase, x.order, x.tier_name))]
-        
-    def register_invariant(self, invariant: InvariantModel) -> None:
-        validate_invariant(invariant, self._invariants)  # fail closed: ValueError
-        self._invariants.append(invariant)
+        return [t.tier_name for t in self.domain_tiers]
 
     async def validate_action(
         self,
@@ -131,7 +104,7 @@ class SymbolicGovernor:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
             span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": action, "params": params}))
-            
+
             _check_policy_pin(policy_version_id)
 
             t0 = time.perf_counter()
@@ -153,7 +126,7 @@ class SymbolicGovernor:
                 }
 
             violations = list(result.violations)
-            classification = self._classifier.classify(
+            classification = self._components.classifier.classify(
                 ClassificationContext(
                     violations=violations,
                     confidence=_reported_confidence(params),
@@ -206,7 +179,7 @@ class SymbolicGovernor:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
             span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
-            
+
             ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
             result, seal = await run_sealed(self.stages, ctx, params, path="govern")
             if seal is None:
@@ -214,7 +187,7 @@ class SymbolicGovernor:
             span.set_attribute("cage.seal_issued", True)
             span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
             return seal
-            
+
     async def revalidate_post_hitl(self, action: str, params: dict[str, Any], *, trace_id: str | None = None) -> str:
         with tracer.start_as_current_span("symbolic_governor.revalidate_post_hitl") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
@@ -223,23 +196,27 @@ class SymbolicGovernor:
             span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
             if trace_id is not None:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
-                
+            if not self._is_governed_action(action, params):
+                # POST_HITL re-runs only claimed barriers; with none there is
+                # nothing to re-verify, so the approval cannot be honoured.
+                await handle_deny(action, params, [_UNGOVERNED_POST_HITL], [], {})
+                raise GovernanceError(f"no tier governs {action}; post-HITL re-validation refused")
             ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
             result, seal = await run_sealed(self.stages, ctx, params, path="revalidate_post_hitl")
             if seal is None:
                 await _deny(action, params, result)
             return seal
-            
+
     async def verify(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")
             span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
-            
+
             # DRY_RUN never commits, so no ReservationScope: run_pipeline refuses one.
             ctx = StageContext(action=tool_name, params=params, profile=Profile.DRY_RUN)
             result = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
-            
+
             violations = list(result.violations)
             span.set_attribute(
                 OBSERVATION_OUTPUT,
@@ -259,26 +236,15 @@ class SymbolicGovernor:
         """Legacy test compat."""
         return await self.verify(tool_name, params)
 
-    def _build_standing(self, tier_violations: list[Violation]) -> dict[str, Any]:
-        """Legacy helper for tests."""
-        return {"failures": self._violations_to_failures(tier_violations)}
-
-    def _violations_to_failures(self, violations: list[Violation]) -> list[dict[str, Any]]:
-        """Legacy helper for tests."""
-        return [
-            {
-                "tier": v.tier,
-                "code": v.code,
-                "message": v.message,
-                "kind": v.kind.value,
-            }
-            for v in violations
-        ]
-
     def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
-        """Legacy helper for tests."""
+        """True if any domain tier claims ``action``."""
         return any(t.claims_action(action, params) for t in self.domain_tiers)
 
+
+_UNGOVERNED_POST_HITL = Violation(
+    tier="kernel", code="UNGOVERNED_POST_HITL", kind=ViolationKind.HARD,
+    message="post-HITL re-validation requested for an action no domain tier claims",
+)
 
 _VERDICT_HANDLERS = {
     GovernanceDecision.DENY: handle_deny,

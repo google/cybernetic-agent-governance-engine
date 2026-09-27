@@ -12,30 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Domain tiers installed after construction must reach the pipeline.
+"""Domain tiers contributed at assembly must reach the pipeline.
 
-Regression: plugins assigned ``governor._domain_tiers`` after construction,
-but ``self.stages`` was frozen in ``__init__``, so in the server wiring no
-domain tier (CBF, fiscal, consensus, dose/kinematic barrier, ...) ever ran.
+Regression: plugins once assigned ``governor._domain_tiers`` after
+construction while ``self.stages`` was frozen in ``__init__``, so in the
+server wiring no domain tier (CBF, fiscal, consensus, dose/kinematic barrier,
+...) ever ran. The governor is now immutable: tiers arrive only through
+``GovernorComponents`` and every one becomes a pipeline stage.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
-from src.cage_finance import plugin as finance_plugin
-from src.cage_healthcare import plugin as healthcare_plugin
-from src.cage_physical_ai import plugin as physical_ai_plugin
+from src.cage_finance.plugin import FinanceCagePlugin
+from src.cage_healthcare.plugin import HealthcareCagePlugin
+from src.cage_physical_ai.plugin import PhysicalAICagePlugin
 from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTier
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
+from src.gateway.governance.env_posture import DeploymentPosture
+from src.gateway.governance.governor.assembly import (
+    DecisionFlags,
+    GovernorComponents,
+    assemble_governor,
+)
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.reservation import ReservationScope
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
-from src.integrations.nemo import action_registry
+from tests.fixtures.governor import allow_opa, clean_stpa, make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -71,14 +82,13 @@ class _StubTier(GovernanceTierPlugin):
         return None
 
 
-def _governor(**kwargs: Any) -> SymbolicGovernor:
-    return SymbolicGovernor(
-        opa_client=MagicMock(),
-        safety_filter=MagicMock(),
-        consensus_engine=MagicMock(),
-        classification_engine=MagicMock(),
-        stpa_validator=MagicMock(),
-        **kwargs,
+def _assemble(*plugins: Any) -> SymbolicGovernor:
+    return assemble_governor(
+        list(plugins),
+        posture=DeploymentPosture.TEST,
+        opa=allow_opa(),
+        stpa_validator=clean_stpa(),
+        flags=DecisionFlags(defer=False, narrow=False, pause=False),
     )
 
 
@@ -90,31 +100,30 @@ def _ctx(action: str) -> StageContext:
     return StageContext(action=action, params={}, profile=Profile.FULL)
 
 
-# --- classification_engine is required -------------------------------------
+# --- classifier is required -------------------------------------------------
 
 
-def test_missing_classification_engine_fails_at_construction() -> None:
-    with pytest.raises(TypeError, match="classification_engine"):
-        SymbolicGovernor(opa_client=MagicMock(), safety_filter=MagicMock(), consensus_engine=MagicMock())
+def test_missing_classifier_fails_at_construction() -> None:
+    with pytest.raises(TypeError, match="classifier"):
+        GovernorComponents(opa=allow_opa(), core_stages=(), classifier=None)  # type: ignore[arg-type]
 
 
-# --- add_domain_tiers() -----------------------------------------------------
+# --- tiers supplied through GovernorComponents -------------------------------
 
 
-def test_tiers_added_after_construction_reach_the_pipeline() -> None:
-    governor = _governor()
-    assert _domain_stage_names(governor) == []
-
-    governor.add_domain_tiers((_StubTier("stub_b"), _StubTier("stub_a")))
-
+def test_constructed_tiers_reach_the_pipeline_in_order() -> None:
+    governor = make_governor(domain_tiers=(_StubTier("stub_b"), _StubTier("stub_a")))
     assert _domain_stage_names(governor) == ["stub_a", "stub_b"]
     assert [t.tier_name for t in governor.domain_tiers] == ["stub_a", "stub_b"]
 
 
+def test_governor_without_tiers_has_no_domain_stages() -> None:
+    assert _domain_stage_names(make_governor()) == []
+
+
 @pytest.mark.asyncio
-async def test_tier_added_after_construction_blocks() -> None:
-    governor = _governor()
-    governor.add_domain_tiers((_StubTier("stub_deny", deny=True),))
+async def test_constructed_tier_blocks() -> None:
+    governor = make_governor(domain_tiers=(_StubTier("stub_deny", deny=True),))
     domain_stages = [s for s in governor.stages if isinstance(s, DomainTierStage)]
 
     async with ReservationScope() as scope:
@@ -123,59 +132,39 @@ async def test_tier_added_after_construction_blocks() -> None:
     assert [v.code for v in result.violations] == ["STUB_DENY"]
 
 
-def test_second_domain_install_is_rejected() -> None:
-    governor = _governor(domain_tiers=(_StubTier("first"),))
-    with pytest.raises(RuntimeError, match="exactly one domain"):
-        governor.add_domain_tiers((_StubTier("second"),))
+def test_tiers_cannot_be_installed_after_construction() -> None:
+    governor = make_governor(domain_tiers=(_StubTier("first"),))
+    with pytest.raises(AttributeError, match="immutable"):
+        governor._stages = ()  # type: ignore[misc]
     assert _domain_stage_names(governor) == ["first"]  # state unchanged on rejection
 
 
-def test_duplicate_tier_name_within_a_domain_is_rejected() -> None:
-    governor = _governor()
+def test_duplicate_tier_name_is_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="duplicate tier registration"):
-        governor.add_domain_tiers((_StubTier("dup"), _StubTier("dup")))
-    assert _domain_stage_names(governor) == []
+        make_governor(domain_tiers=(_StubTier("dup"), _StubTier("dup")))
 
 
-def test_empty_tier_set_is_rejected() -> None:
-    with pytest.raises(ValueError, match="at least one tier"):
-        _governor().add_domain_tiers(())
+# --- real plugins through the composition root -------------------------------
 
 
-# --- real plugins against a real governor -----------------------------------
-
-
-@pytest.fixture
-def isolated_plugin_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep plugin.register() from mutating process-global registries."""
-    monkeypatch.setattr(action_registry, "register_rail_provider", lambda _p: None)
-    for mod in (finance_plugin, healthcare_plugin, physical_ai_plugin):
-        monkeypatch.setattr(mod, "register_overlay_dir", lambda _p: None)
-    monkeypatch.setattr(finance_plugin, "install_domain_components", lambda **_k: None)
-    monkeypatch.setattr(finance_plugin, "register_background_task", lambda *_a: None)
-
-
-@pytest.mark.usefixtures("isolated_plugin_side_effects")
 @pytest.mark.parametrize(
     ("plugin_cls", "expected"),
     [
-        (finance_plugin.FinanceCagePlugin, {"bounding", "consensus", "causal", "cbf", "fiscal"}),
-        (healthcare_plugin.HealthcareCagePlugin, {"clinical_consensus", "dose_barrier"}),
-        (physical_ai_plugin.PhysicalAICagePlugin, {"kinematic_barrier", "physical_safety_consensus"}),
+        (FinanceCagePlugin, {"bounding", "consensus", "causal", "cbf", "fiscal"}),
+        (HealthcareCagePlugin, {"clinical_consensus", "dose_barrier"}),
+        (PhysicalAICagePlugin, {"kinematic_barrier", "physical_safety_consensus"}),
     ],
 )
-def test_each_plugin_installs_its_tiers_into_the_pipeline(plugin_cls, expected) -> None:
-    governor = _governor()
-    plugin_cls().register(governor)
+def test_each_plugin_contributes_its_tiers_into_the_pipeline(plugin_cls, expected) -> None:
+    governor = _assemble(plugin_cls())
     assert set(_domain_stage_names(governor)) == expected
 
 
-@pytest.mark.usefixtures("isolated_plugin_side_effects")
-def test_second_domain_plugin_on_one_governor_fails_closed() -> None:
-    governor = _governor()
-    finance_plugin.FinanceCagePlugin().register(governor)
-    with pytest.raises(RuntimeError, match="exactly one domain"):
-        healthcare_plugin.HealthcareCagePlugin().register(governor)
+def test_contribution_is_data_and_does_not_mutate_a_governor() -> None:
+    """contribute() hands back tiers; nothing reaches a governor outside assembly."""
+    governor = make_governor()
+    FinanceCagePlugin().contribute()
+    assert _domain_stage_names(governor) == []
 
 
 # --- KinematicBarrierTier without a CBF -------------------------------------
@@ -192,10 +181,8 @@ async def test_kinematic_barrier_without_cbf_refuses(hook: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("isolated_plugin_side_effects")
 async def test_physical_ai_plugin_denies_governed_action_end_to_end() -> None:
-    governor = _governor()
-    physical_ai_plugin.PhysicalAICagePlugin().register(governor)
+    governor = _assemble(PhysicalAICagePlugin())
     kinematic = [s for s in governor.stages if isinstance(s, DomainTierStage) and s.name == "kinematic_barrier"]
 
     async with ReservationScope() as scope:

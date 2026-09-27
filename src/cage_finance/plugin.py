@@ -14,12 +14,8 @@
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
-
-from src.cage_finance import create_finance_tiers
+from src.cage_finance import REGISTERED_ACTIONS, create_finance_tiers
 from src.cage_finance.safety.bounding.providers import (
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
@@ -31,22 +27,22 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
-from src.gateway.governance.background_tasks import register_background_task
 from src.gateway.governance.consensus.engine import (
     ConsensusGate,
     _background_audit_worker,
 )
-from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin, DomainConfig
+from src.gateway.governance.contracts import (
+    CagePlugin,
+    DomainConfig,
+    PluginContribution,
+)
 from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
 )
-from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-from src.gateway.governance.singletons import install_domain_components
 
 logger = logging.getLogger(__name__)
 
@@ -64,69 +60,44 @@ class FinanceCagePlugin(CagePlugin):
         causal_graph_path=Path(__file__).resolve().parent / "config" / "causal_graph.yaml",
     )
 
-    def register(
-        self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None
-    ) -> None:
-        # Import finance-specific invariants and cost resolver
+    def contribute(self) -> PluginContribution:
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
-        # Instantiate CBF with finance domain configuration
-        cbf = ControlBarrierFunction(
-            invariant=CashBarrier(),
-            cost_resolver=finance_cost_resolver,
-        )
-        fiscal_guard = FiscalLimitGuard.from_env()
+        cash_barrier = CashBarrier()
+        cbf = ControlBarrierFunction(invariant=cash_barrier, cost_resolver=finance_cost_resolver)
         consensus_gate = ConsensusGate()
 
-        # Register compliance overlay directory (PR B, T-B4)
-        overlay_dir = Path(__file__).parent / "config" / "compliance"
-        register_overlay_dir(overlay_dir)
-
-        # Register background task (PR B, T-B6)
-        register_background_task("consensus_audit_worker", _background_audit_worker)
-
-        # Instantiate bounding contract registry with providers
-        # Phase 5: Dev/test environment uses stub providers that fail-closed in production
-        # Create dev/test-friendly enforcer config (permissive allowlists for common test cases)
-        bounding_config = BoundingContractConfig(
-            allowed_instruments={"AAPL", "MSFT", "GOOGL", "AMZN"},
-            allowed_venues={"NYSE", "NASDAQ", "CBOE"},
-            allowed_counterparties={"BROKER_A", "BROKER_B", "TEST_COUNTERPARTY"},
-        )
-        bounding_enforcer = BoundingContractEnforcer(bounding_config)
-        market_data_provider = StubMarketDataProvider()
-        rollback_provider = StubRollbackCapabilityProvider()
-
+        # Dev/test bounding providers: permissive allowlists, stub market data
+        # and rollback capability (they fail closed in production).
         bounding_registry = BoundingContractRegistry(
-            thresholds=THRESHOLDS.model_dump(),  # Use global singleton
-            market_data_provider=market_data_provider,
-            rollback_provider=rollback_provider,
-            enforcer=bounding_enforcer,
+            thresholds=THRESHOLDS.model_dump(),
+            market_data_provider=StubMarketDataProvider(),
+            rollback_provider=StubRollbackCapabilityProvider(),
+            enforcer=BoundingContractEnforcer(
+                BoundingContractConfig(
+                    allowed_instruments={"AAPL", "MSFT", "GOOGL", "AMZN"},
+                    allowed_venues={"NYSE", "NASDAQ", "CBOE"},
+                    allowed_counterparties={"BROKER_A", "BROKER_B", "TEST_COUNTERPARTY"},
+                )
+            ),
         )
-
-        # Task 2.1 (ARCH-2): Create domain tiers via factory for immutable registration
         tiers = create_finance_tiers(
             cbf=cbf,
-            fiscal_guard=fiscal_guard,
+            fiscal_guard=FiscalLimitGuard.from_env(),
             consensus_gate=consensus_gate,
             bounding_registry=bounding_registry,
         )
-
-        # Install domain components into kernel singletons (PR B, T-B2)
-        install_domain_components(
-            safety_filter_impl=cbf,
-            consensus_engine_impl=consensus_gate,
-            resource_guard=fiscal_guard,
+        return PluginContribution(
+            domain=self.name,
+            tiers=tiers,
+            invariants=(cash_barrier,),
+            registered_actions=REGISTERED_ACTIONS,
+            safety_filter=cbf,
+            consensus=consensus_gate,
+            tool_provider=FinancialToolProvider(safety_filter=cbf),
+            compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
+            background_tasks={"consensus_audit_worker": _background_audit_worker},
         )
-
-        # Tiers go onto the governor we were given; add_domain_tiers() also
-        # rebuilds its pipeline stages so the tiers actually run.
-        governor.add_domain_tiers(tiers)
-
-        # Register tools
-        if tool_server:
-            provider = FinancialToolProvider()
-            provider.register_tools(tool_server)
 
 
 def get_plugin() -> CagePlugin:

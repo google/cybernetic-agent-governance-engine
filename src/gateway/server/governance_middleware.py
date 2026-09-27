@@ -51,7 +51,8 @@ from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-from src.gateway.governance.singletons import symbolic_governor
+from src.gateway.governance.governor.governor import SymbolicGovernor
+from src.gateway.server.app_state import governor_of
 from src.gateway.governance.governor.governor import GovernanceError
 from src.gateway.governance.text_filter import ac_keyword_scan
 
@@ -218,7 +219,9 @@ def enforce_routing_seal(request: Request, body_bytes: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def enforce_governance(tool_name: str, params: dict[str, Any]) -> str:
+async def enforce_governance(
+    governor: SymbolicGovernor, tool_name: str, params: dict[str, Any]
+) -> str:
     """Run the full Symbolic Governor pipeline for the given tool call.
 
     Gap 2 fix (No-Direct-Bind): ``govern()`` now returns a routing seal on
@@ -236,7 +239,7 @@ async def enforce_governance(tool_name: str, params: dict[str, Any]) -> str:
         return ""  # Exempt read-only tools from governance overhead
 
     try:
-        seal = await symbolic_governor.govern(tool_name, params)
+        seal = await governor.govern(tool_name, params)
         return seal
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
@@ -435,7 +438,7 @@ async def governance_check(request: Request) -> JSONResponse:
     if not tool_name:
         raise HTTPException(status_code=400, detail="'tool_name' is required.")
 
-    result = await symbolic_governor.verify(tool_name, params)
+    result = await governor_of(request.app).verify(tool_name, params)
     violations = [v.to_dict() for v in result.get("violations", [])]
     return JSONResponse(
         content={
@@ -886,15 +889,16 @@ async def validate_action_endpoint(
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
     # here and attaching it as the current context means all spans opened by
-    # symbolic_governor.validate_action() (cage.cbf_action_check,
+    # SymbolicGovernor.validate_action() (cage.cbf_action_check,
     # cage.opa_action_check, cage.routing_seal) are children of the GFA's
     # cage.tool_execute span in Telemetry — not orphaned fragments.
+    governor = governor_of(request.app)  # fail closed before any evaluation
     carrier = dict(request.headers)
     remote_ctx = otel_extract(carrier)
     token = otel_context.attach(remote_ctx)
 
     try:
-        result = await symbolic_governor.validate_action(
+        result = await governor.validate_action(
             action=body.action,
             params=body.params,
             policy_version_id=body.policy_version_id,

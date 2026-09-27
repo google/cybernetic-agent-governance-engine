@@ -27,6 +27,7 @@ Test Requirements:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -41,6 +42,9 @@ from src.gateway.governance.ftra.semantic_validator import (
     ParameterConstraint,
     register_action_schema,
 )
+
+if TYPE_CHECKING:
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 # ---------------------------------------------------------------------------
 # FtraBoundaryResult Unit Tests
@@ -190,15 +194,13 @@ def symbolic_governor(
     classification_engine: Any,
 ) -> SymbolicGovernor:
     """Create a SymbolicGovernor instance with mocked dependencies."""
-    from src.gateway.governance.governor.governor import SymbolicGovernor
+    from tests.fixtures.governor import make_governor
 
-    return SymbolicGovernor(
-        opa_client=mock_opa_client,
+    return make_governor(
+        opa=mock_opa_client,
         safety_filter=mock_safety_filter,
-        consensus_engine=mock_consensus_engine,
-        classification_engine=classification_engine,
-        stpa_validator=None,
-        telemetry_provider=None,
+        consensus=mock_consensus_engine,
+        classifier=classification_engine,
     )
 
 
@@ -434,6 +436,9 @@ class TestClassifierStandaloneInstantiation:
         classifier = IrreversibilityClassifier()
 
         assert classifier.is_irreversible("execute_trade") is True
+        # write_db is not a registered finance action: unregistered actions
+        # fail closed to IRREVERSIBLE_TERMINAL.
+        assert "write_db" not in classifier.known_actions()
         assert classifier.is_irreversible("write_db") is True
         assert classifier.is_irreversible("prompt_injection_check") is False
 

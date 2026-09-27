@@ -33,6 +33,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.governor.governor import SymbolicGovernor
+from tests.fixtures.governor import make_governor as build_governor
 
 
 @pytest.fixture
@@ -43,14 +44,11 @@ def mock_governor(classification_engine) -> SymbolicGovernor:
 
 def make_governor(*tiers: Any, classification_engine) -> SymbolicGovernor:
     """Create a SymbolicGovernor with mock dependencies and specified tiers."""
-    opa_client = MagicMock()
-    safety_filter = MagicMock()
-    consensus_engine = MagicMock()
-    return SymbolicGovernor(
-        opa_client=opa_client,
-        safety_filter=safety_filter,
-        consensus_engine=consensus_engine,
-        classification_engine=classification_engine,
+    return build_governor(
+        opa=MagicMock(),
+        safety_filter=MagicMock(),
+        consensus=MagicMock(),
+        classifier=classification_engine,
         domain_tiers=tiers,
     )
 

@@ -2007,6 +2007,6 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
 
 # W1 (Post-v3): Module-level singleton removed.
-# Domain plugins construct and register their own CBF instances with
-# domain-specific invariants via SymbolicGovernor.register_invariant().
+# Domain plugins construct their own CBF instances and contribute their
+# invariants via PluginContribution.invariants (validated at assembly).
 # The kernel does not instantiate CBF; it only provides the engine class.
