@@ -70,12 +70,16 @@ class SymbolicGovernor:
         opa_client: OPAClient,
         safety_filter: SafetyFilter,
         consensus_engine: ConsensusProvider,
-        classification_engine: ClassificationEngine | None = None,
+        classification_engine: ClassificationEngine,
         domain_tiers: Sequence[GovernanceTierPlugin] = (),
         stpa_validator: Any | None = None,
         **kwargs,
     ) -> None:
-        self._classifier = classification_engine or ClassificationEngine()
+        # Mandatory: its narrowers and defer/narrow/pause flags are deployment
+        # posture, so the governor never invents a default (fail closed).
+        if classification_engine is None:
+            raise TypeError("SymbolicGovernor requires a classification_engine")
+        self._classifier = classification_engine
         
         self.stages = [
             FtraStage(),
