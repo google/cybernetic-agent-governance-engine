@@ -75,7 +75,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
 | POAM-2026-077 | CM-6 / SC-24 | Healthcare and physical-AI plugins declare no `DomainConfig` (no FTRA terminal registry), so `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start (fail closed); only `finance` is runnable | Moderate | 2026-12-31 |
 | POAM-2026-078 | SI-10 / SA-8 | Plugin-contributed CBF invariants (healthcare serum concentration, physical-AI separation/velocity/torque) are validated (V1-V4) at governor assembly and recorded on `GovernorComponents.invariants`, but not enforced until the CBF engine becomes invariant-parametric (PR 4b) | Moderate | 2026-12-31 |
-| POAM-2026-079 | AC-5 / AC-6 / SC-12 | **Monolithic workload identity.** Gateway, governed advisor, compliance bridge and vLLM (plus reconciler and Langfuse in the raw manifests) all run as KSA `financial-advisor-sa`, mapped to an out-of-band GSA; any KMS signing right the gateway needs is shared with untrusted workloads, which could mint routing seals | Critical | 2026-12-31 |
+| POAM-2026-079 | AC-5 / AC-6 / SC-12 | **Monolithic workload identity.** Gateway, governed advisor, compliance bridge and vLLM (plus reconciler and Langfuse in the raw manifests) all run as KSA `financial-advisor-sa`, mapped to an out-of-band GSA; any KMS signing right the gateway needs is shared with untrusted workloads, which could mint routing seals. **Live IAM (2026-09-27) confirms** keyring-wide `signerVerifier` plus `signerVerifier` on the reconciler balance key, with the `vllm-inference` KSA also bound | Critical | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -342,23 +342,45 @@ For the gateway to issue v3 seals in any live posture, the shared GSA must hold 
 
 This also invalidates the closure evidence of POAM-2026-001 (named ServiceAccount pattern) for Terraform-deployed GKE workloads.
 
-**Exploitability status:** the design flaw is confirmed from code at `3e4b428`. The live grant is **not yet verified**: whether `financial-advisor-sa@` holds `roles/cloudkms.signer` or `signerVerifier` on `KMS_GOVERNANCE_KEY` must be read from IAM:
+**Exploitability status: confirmed.** The design flaw is confirmed from code at `3e4b428`. The live grants were read from IAM on 2026-09-27 in the reference dev project (`us-central1`). Commands (read-only):
 
 ```bash
-gcloud kms keys get-iam-policy <key> --keyring <ring> --location <region>
+gcloud iam service-accounts get-iam-policy financial-advisor-sa@<project>.iam.gserviceaccount.com
 gcloud projects get-iam-policy <project> --flatten=bindings \
   --filter='bindings.members:financial-advisor-sa@'
+gcloud kms keyrings get-iam-policy <ring> --location us-central1
+gcloud kms keys get-iam-policy <key> --keyring <ring> --location us-central1
 ```
 
-Attach the output to this entry. If a signer role is present, the finding is exploitable as described.
+| Resource | Type / protection | Grant to `financial-advisor-sa@` |
+|---|---|---|
+| GSA Workload Identity policy | — | `roles/iam.workloadIdentityUser` for KSAs `governance-stack/financial-advisor-sa` **and** `vllm-inference/financial-advisor-sa` |
+| Project | — | `roles/cloudsql.client`, `roles/logging.logWriter`, `roles/monitoring.metricWriter` |
+| Keyring `cybernetics-keyring` | — | `roles/cloudkms.signerVerifier`, `roles/cloudkms.viewer` (inherited by every key in the ring) |
+| Key `cybernetics-keyring/governance-signing-key` | `ASYMMETRIC_SIGN`, `RSA_SIGN_PKCS1_4096_SHA512`, `SOFTWARE` | `roles/cloudkms.signerVerifier`, `roles/cloudkms.viewer` |
+| Key `cybernetics-keyring/cage-bench-ec-key` | `ASYMMETRIC_SIGN`, `EC_SIGN_P256_SHA256`, `SOFTWARE` | inherited from the keyring |
+| Keyring `governance` | — | `roles/cloudkms.viewer` |
+| Key `governance/balance-signer` | `MAC`, `HMAC_SHA256`, `SOFTWARE` | `roles/cloudkms.signerVerifier` |
+
+The evidence widens the finding in four ways:
+
+1. **Keyring-scoped signing.** `signerVerifier` is bound on the whole `cybernetics-keyring`, so every current and future key in that ring is signable by the shared identity. It is not limited to one key.
+2. **Ground-truth forgery.** The shared identity can sign with `governance/balance-signer`, the reconciliation snapshot key (POAM-2026-038, [`setup_reconciliation_secret.sh`](../deployment/scripts/setup_reconciliation_secret.sh)). An advisor or vLLM pod could therefore forge verified-balance snapshots as well as routing seals.
+3. **The neural plane holds the identity directly.** The `vllm-inference` namespace KSA is a Workload Identity principal of the same GSA, so model-serving pods can mint its tokens.
+4. **Out-of-band drift.** None of these bindings, nor the GSA, exist in `infra/`. `terraform plan` will not show or remove them; remediation must revoke them explicitly.
+
+No key uses `HSM` protection.
+
+The IAM read cannot show which key the running gateway's `KMS_GOVERNANCE_KEY` points to. That does not change the conclusion: both asymmetric signing keys found (in `us-central1`, `europe-west1`, `asia-southeast1` and `global`) sit in `cybernetics-keyring`, which the shared identity can sign with.
 
 **Remediation Plan:**
-1. Partition Workload Identity 1:1. Create a Kubernetes service account for each workload (`cage-gateway`, `cage-advisor`, `cage-reconciler`, `cage-compliance-bridge`, `cage-vllm`, `langfuse`). Bind each to its own Terraform-managed GSA. Delete `financial-advisor-sa` from Terraform and manifests, and remove its out-of-band grants.
+1. Partition Workload Identity 1:1. Create a Kubernetes service account for each workload (`cage-gateway`, `cage-advisor`, `cage-reconciler`, `cage-compliance-bridge`, `cage-vllm`, `langfuse`). Bind each to its own Terraform-managed GSA. Delete `financial-advisor-sa` from Terraform and manifests. Revoke its out-of-band grants explicitly (Workload Identity for both namespaces, `signerVerifier`/`viewer` on `cybernetics-keyring`, `signerVerifier` on `governance/balance-signer`, `viewer` on `governance`), then disable and delete the GSA.
 2. Split keys per signer (`EC_SIGN_P256_SHA256`; HSM in prod). Grant `roles/cloudkms.signer` only to each key's owner: gateway → seal key, reconciler → snapshot key, compliance bridge → evidence-batch key. Verifiers get `roles/cloudkms.publicKeyViewer` only. The advisor holds no signing role on any key.
 3. Remove advisor signing. Drop `sign(plan)` in `evaluator_node.py` and `verify` in `explainer_node.py`. Route the evaluator edge on the verdict alone, and delete the unused `_verify_governance_signature` and its tests.
-4. In `verify_seal()`, remove the fallback to the verifier's own signer key when the JWKS `kid` lookup fails: unknown `kid` → reject.
-5. Add a static test that every workload's `service_account_name` / `serviceAccountName` is unique and annotated to a Terraform-created GSA.
-6. Add a live test in which an advisor-minted seal is rejected.
-7. Update OSCAL (AC-5, AC-6, SC-12, SC-13) within 2 business days of the remediation merge.
+4. In `verify_seal()`, remove the fallback to the verifier's own signer key when the JWKS `kid` lookup fails: unknown `kid` → reject. [`_initialize_jwks_from_kms()`](../src/gateway/governance/jwks.py) currently builds the JWKS from the process's own signer. Verifiers therefore need a verify-only key source (public key via `publicKeyViewer`) before the fallback is removed; otherwise every seal is rejected.
+5. Never grant a KMS role at keyring scope. Bind only on individual keys.
+6. Add a static test that every workload's `service_account_name` / `serviceAccountName` is unique and annotated to a Terraform-created GSA.
+7. Add a live test in which an advisor-minted seal is rejected, and re-run the IAM reads above to show no `financial-advisor-sa@` bindings remain.
+8. Update OSCAL (AC-5, AC-6, SC-12, SC-13) within 2 business days of the remediation merge.
 
 **Dev-posture note:** without KMS, seals fall back to HMAC with `ROUTING_SEAL_SECRET`, and the advisor holds that secret to verify seals, so it can also mint them. Enforcing postures refuse the HMAC fallback at startup, so this is accepted for dev and hermetic tests only. It never counts as closure evidence.
