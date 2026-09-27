@@ -149,21 +149,21 @@ done
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 2: reconciliation-worker-secrets has gcs-reconciliation-bucket key
+# Check 2: reconciliation-worker-secrets has kms-governance-key key
 # ---------------------------------------------------------------------------
 echo "  🔑 Checking reconciliation-worker-secrets..."
 
-bucket_val=$(kubectl get secret reconciliation-worker-secrets \
+kms_key_val=$(kubectl get secret reconciliation-worker-secrets \
   -n "$NAMESPACE" \
-  -o jsonpath='{.data.gcs-reconciliation-bucket}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+  -o jsonpath='{.data.kms-governance-key}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
 
-if [[ -z "$bucket_val" ]]; then
-  record FAIL "Secret: gcs-reconciliation-bucket" \
-    "key missing or empty in reconciliation-worker-secrets — reconciliation worker will fail"
+if [[ -z "$kms_key_val" ]]; then
+  record FAIL "Secret: kms-governance-key" \
+    "key missing or empty in reconciliation-worker-secrets — reconciler cannot sign snapshots"
 else
   # Mask the value before logging (secret hygiene)
-  masked="${bucket_val:0:4}****"
-  record OK "Secret: gcs-reconciliation-bucket" "key present (value: $masked)"
+  masked="${kms_key_val:0:4}****"
+  record OK "Secret: kms-governance-key" "key present (value: $masked)"
 fi
 
 echo ""

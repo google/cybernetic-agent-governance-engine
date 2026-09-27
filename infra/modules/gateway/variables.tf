@@ -125,9 +125,9 @@ variable "routing_seal_secret" {
 }
 
 variable "reconciliation_provider" {
-  description = "Reconciliation ledger provider (gcs, anchorage, etc.)"
+  description = "RECONCILIATION_PROVIDER label for the startup posture check (must not be \"stub\" in production). The reconciler always runs the simulated Tier 2 provider."
   type        = string
-  default     = "gcs"
+  default     = "simulated"
 }
 
 variable "kms_governance_key" {

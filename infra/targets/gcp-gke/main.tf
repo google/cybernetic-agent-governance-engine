@@ -568,7 +568,8 @@ module "compliance_bridge" {
 
   # K-3: wire KMS_GOVERNANCE_KEY so KMSBatchSigner loads at startup.
   # Set the actual GCP KMS key resource name in terraform.auto.tfvars (gitignored).
-  # Empty string is acceptable in dev/CI — the bridge will fall back to HMAC-SHA256.
+  # Empty string is acceptable in dev/CI only — the bridge uses a non-evidentiary
+  # software Ed25519 signer; enforcing postures refuse to start without it.
   # See: infra/modules/compliance_bridge/variables.tf kms_governance_key
   kms_governance_key = var.kms_governance_key
 
@@ -622,7 +623,7 @@ module "gateway" {
   otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
   )
-  reconciliation_provider = "gcs"
+  reconciliation_provider = "simulated"
   kms_governance_key      = var.kms_governance_key
   cage_kms_provider       = "gcp"
 
@@ -656,8 +657,9 @@ module "governed_advisor" {
   # Workload Identity: annotate financial-advisor-sa KSA so it can impersonate
   # the GCP SA and access GCS without a key file (fixes vllm-reasoning 403 on GCS).
   gcp_service_account_name = "financial-advisor-sa"
-  # Cloud KMS asymmetric governance signing (CTRL_KMS_001). Empty value falls
-  # back to legacy HMAC-SHA256 via governance_salt above.
+  # Cloud KMS asymmetric governance signing (CTRL_KMS_001). Empty value selects a
+  # non-evidentiary software Ed25519 signer in dev/CI; enforcing postures refuse
+  # to start. governance_salt above only keys the dev-mode v2 routing seal.
   kms_governance_key = var.kms_governance_key
   cage_kms_provider  = var.cage_kms_provider
   cage_env           = var.environment

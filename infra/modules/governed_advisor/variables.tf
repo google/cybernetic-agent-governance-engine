@@ -173,7 +173,7 @@ variable "cage_seal_enforcement" {
 }
 
 variable "kms_governance_key" {
-  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (KMS_GOVERNANCE_KEY). Empty string falls back to legacy HMAC-SHA256 GOVERNANCE_SALT signing — acceptable only in dev/CI."
+  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (KMS_GOVERNANCE_KEY). Empty string selects a non-evidentiary software Ed25519 signer in dev/CI; enforcing postures refuse to start without it."
   type        = string
   default     = ""
 }

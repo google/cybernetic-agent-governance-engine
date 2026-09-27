@@ -560,7 +560,7 @@ variable "governance_salt" {
 }
 
 variable "kms_governance_key" {
-  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (from KMS_GOVERNANCE_KEY). Empty string falls back to legacy HMAC-SHA256 signing via governance_salt — acceptable only in dev/CI postures."
+  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (from KMS_GOVERNANCE_KEY). Empty string selects a non-evidentiary software Ed25519 signer in dev/CI; enforcing postures refuse to start without it."
   type        = string
   default     = ""
 }

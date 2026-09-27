@@ -49,14 +49,14 @@ spec:
               type: RuntimeDefault
           containers:
             - name: reconciliation-worker
-              # Reuse the compliance-bridge image; the reconciliation_worker module
-              # ships inside it.  Override IMAGE_REGISTRY at deploy time.
+              # Reuse the compliance-bridge image; it ships src/gateway on
+              # PYTHONPATH=/app, which contains the GroundTruthReconciler.
               image: ${REGISTRY_URL}/compliance-bridge:latest
               imagePullPolicy: Always
               command:
                 - python
                 - -m
-                - compliance_bridge.reconciliation_worker
+                - src.gateway.governance.reconciliation.daemon
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
@@ -69,65 +69,11 @@ spec:
                   type: RuntimeDefault
               env:
                 # --- Provider ---
-                # Set to "gcs", "s3" / "object-store", "plaid", "anchorage", or "stub".
-                # "s3" works with AWS S3, GCS S3 Interoperability API, MinIO, or Ceph.
-                # BLOCKER-06: must be "gcs" for GKE-on-GCP deployments — matches gateway.yaml.
+                # Label only: GroundTruthReconciler.from_env() always builds the
+                # simulated Tier 2 provider (the ledger providers were removed).
+                # The value tags reconciliation spans and failure records.
                 - name: RECONCILIATION_PROVIDER
-                  value: "gcs"
-
-                # --- GCS ledger snapshot (RECONCILIATION_PROVIDER=gcs) ---
-                - name: GCS_RECONCILIATION_BUCKET
-                  valueFrom:
-                    # Populate this Secret key before deploying: see deployment/scripts/setup_reconciliation_secret.sh
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: gcs-reconciliation-bucket
-                      optional: true  # only required when provider=gcs
-                - name: GCS_RECONCILIATION_OBJECT
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: gcs-reconciliation-object
-                      optional: true  # defaults to "reconciliation/latest.json"
-
-                # --- S3-compatible object store (RECONCILIATION_PROVIDER=s3) ---
-                # Supports AWS S3, GCS S3 Interop, MinIO, Ceph.
-                - name: S3_RECONCILIATION_BUCKET
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: s3-reconciliation-bucket
-                      optional: true  # only required when provider=s3
-                - name: S3_RECONCILIATION_OBJECT
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: s3-reconciliation-object
-                      optional: true  # defaults to "reconciliation/latest.json"
-                - name: S3_ENDPOINT_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: s3-endpoint-url
-                      optional: true  # omit for standard AWS S3
-                - name: S3_REGION_NAME
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: s3-region-name
-                      optional: true  # defaults to "us-east-1"
-                - name: AWS_ACCESS_KEY_ID
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: aws-access-key-id
-                      optional: true  # use IRSA / Workload Identity on managed K8s
-                - name: AWS_SECRET_ACCESS_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: aws-secret-access-key
-                      optional: true  # use IRSA / Workload Identity on managed K8s
+                  value: "simulated"
 
                 # --- KMS signing ---
                 - name: KMS_GOVERNANCE_KEY
@@ -167,9 +113,9 @@ spec:
                       optional: true
 
                 # --- Reconciliation tuning ---
-                - name: RECONCILIATION_INTERVAL_S
+                - name: RECONCILIATION_POLL_INTERVAL_SECONDS
                   value: "60"
-                - name: RECONCILIATION_TTL_S
+                - name: RECONCILIATION_TTL_SECONDS
                   value: "300"
                 # Single-shot mode: exit after one cycle (CronJob invocation)
                 - name: RECONCILIATION_SINGLE_SHOT
@@ -195,36 +141,12 @@ spec:
 ---
 # reconciliation-worker-secrets
 #
-# Secret template — do NOT commit real values.  Populate via kubectl or Terraform.
+# Secret template — do NOT commit real values. Populate with
+# deployment/scripts/setup_reconciliation_secret.sh or directly:
 #
-# For provider=s3 (recommended — cloud-agnostic):
 #   kubectl create secret generic reconciliation-worker-secrets \
 #     --namespace=governance-stack \
-#     --from-literal=s3-reconciliation-bucket=<YOUR_BUCKET> \
-#     --from-literal=s3-reconciliation-object=reconciliation/latest.json \
-#     --from-literal=s3-endpoint-url=https://storage.googleapis.com \  # GCS S3 Interop
-#     --from-literal=s3-region-name=us-east-1 \
-#     --from-literal=aws-access-key-id=<HMAC_OR_IAM_KEY> \
-#     --from-literal=aws-secret-access-key=<HMAC_OR_IAM_SECRET> \
-#     --from-literal=kms-governance-key=projects/<PROJECT>/locations/<REGION>/keyRings/<RING>/cryptoKeys/<KEY>
-#
-# For provider=gcs (GCP-native):
-#   kubectl create secret generic reconciliation-worker-secrets \
-#     --namespace=governance-stack \
-#     --from-literal=gcs-reconciliation-bucket=<YOUR_BUCKET> \
-#     --from-literal=gcs-reconciliation-object=reconciliation/latest.json \
-#     --from-literal=kms-governance-key=projects/<PROJECT>/locations/<REGION>/keyRings/<RING>/cryptoKeys/<KEY>
-#
-# For MinIO hermetic testing:
-#   kubectl create secret generic reconciliation-worker-secrets \
-#     --namespace=governance-stack \
-#     --from-literal=s3-reconciliation-bucket=cage-ledger \
-#     --from-literal=s3-endpoint-url=http://minio:9000 \
-#     --from-literal=aws-access-key-id=minioadmin \
-#     --from-literal=aws-secret-access-key=minioadmin \
-#     --from-literal=kms-governance-key=...
-#
-# Or use Terraform (infra/modules/gateway/main.tf) — never commit secret values.
+#     --from-literal=kms-governance-key=projects/<PROJECT>/locations/<REGION>/keyRings/<RING>/cryptoKeys/<KEY>/cryptoKeyVersions/<N>
 apiVersion: v1
 kind: Secret
 metadata:
@@ -236,17 +158,6 @@ metadata:
 type: Opaque
 # stringData is intentionally absent — all values must be populated out-of-band.
 # stringData:
-#   # S3-compatible (provider=s3):
-#   s3-reconciliation-bucket: ""        # REQUIRED for provider=s3
-#   s3-reconciliation-object: ""        # OPTIONAL (default: reconciliation/latest.json)
-#   s3-endpoint-url: ""                 # OPTIONAL (omit for standard AWS S3)
-#   s3-region-name: ""                  # OPTIONAL (default: us-east-1)
-#   aws-access-key-id: ""               # OPTIONAL (use IRSA/Workload Identity if omitted)
-#   aws-secret-access-key: ""           # OPTIONAL (use IRSA/Workload Identity if omitted)
-#   # GCS-native (provider=gcs):
-#   gcs-reconciliation-bucket: ""       # REQUIRED for provider=gcs
-#   gcs-reconciliation-object: ""       # OPTIONAL (default: reconciliation/latest.json)
-#   # Common:
 #   kms-governance-key: ""              # REQUIRED
 
 # L7 FQDN overlay for this worker lives in deployment/k8s/cilium/reconciliation-worker-egress.yaml
