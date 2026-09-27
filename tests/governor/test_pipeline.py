@@ -47,10 +47,12 @@ class _Tier:
         order: int = 0,
         deny: bool = False,
         rollback_raises: bool = False,
+        claims_raises: bool = False,
         log: list[str] | None = None,
     ) -> None:
         self._name, self._phase, self._order = name, phase, order
         self._deny, self._rollback_raises = deny, rollback_raises
+        self.claims_raises = claims_raises
         self.log = log if log is not None else []
 
     @property
@@ -66,6 +68,8 @@ class _Tier:
         return self._order
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+        if self.claims_raises:
+            raise KeyError("claims exploded")
         return True
 
     def _verdict(self) -> list[Violation]:
@@ -171,3 +175,58 @@ async def test_read_only_violation_blocks_mutating_stages() -> None:
     result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
     assert "commit:m" not in log
     assert [v.tier for v in result.violations] == ["gate"]
+
+
+# ── claims_action exceptions: fail closed, per request, no latching ────────
+
+
+@pytest.mark.asyncio
+async def test_phase1_claims_exception_is_hard_tier_exception() -> None:
+    log: list[str] = []
+    stages = order_stages([_Tier("gate", claims_raises=True, log=log)])
+    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+
+    assert [(v.tier, v.code, v.kind) for v in result.violations] == [
+        ("gate", "TIER_EXCEPTION", ViolationKind.HARD)
+    ]
+    assert "Exception in claims_action: KeyError" in result.violations[0].message
+    assert log == []  # evaluate() never ran
+
+
+@pytest.mark.asyncio
+async def test_phase2_claims_exception_never_commits_and_rolls_back_earlier() -> None:
+    log: list[str] = []
+    stages = order_stages([
+        _Tier("m1", phase=2, order=1, log=log),
+        _Tier("m2", phase=2, order=2, claims_raises=True, log=log),
+    ])
+    result = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+
+    assert log == ["commit:m1", "rollback:m1"]
+    assert [v.code for v in result.violations] == ["TIER_EXCEPTION"]
+    assert result.commits == ()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_claims_exception_is_not_previewed_as_allow() -> None:
+    log: list[str] = []
+    stages = order_stages([_Tier("m", phase=2, claims_raises=True, log=log)])
+    result = await run_pipeline(stages, _ctx(Profile.DRY_RUN), profile=Profile.DRY_RUN)
+
+    assert [v.code for v in result.violations] == ["TIER_EXCEPTION"]
+    assert log == []
+
+
+@pytest.mark.asyncio
+async def test_claims_failure_does_not_latch_across_requests() -> None:
+    """A transient claims failure denies that request only; the shared stage recovers."""
+    tier = _Tier("gate")
+    stages = order_stages([tier])
+
+    tier.claims_raises = True
+    denied = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+    tier.claims_raises = False
+    allowed = await run_pipeline(stages, _ctx(), profile=Profile.FULL)
+
+    assert [v.code for v in denied.violations] == ["TIER_EXCEPTION"]
+    assert allowed.violations == ()

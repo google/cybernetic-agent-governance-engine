@@ -28,8 +28,11 @@ class DomainTierStage(Stage):
     """Wraps a GovernanceTierPlugin as a Stage.
 
     ``run()`` and ``preview()`` call the tier's read-only ``evaluate()``.
-    Phase-2 tiers are driven through ``commit()`` / ``rollback(receipt)``;
-    receipts are returned to the pipeline, never stored on this instance.
+    Phase-2 tiers are driven through ``commit()`` / ``rollback(receipt)``.
+
+    Holds no per-request state: receipts go back to the pipeline, and a
+    ``claims()`` exception propagates to the pipeline, which fails the stage
+    closed for that request only.
     """
 
     def __init__(self, tier: GovernanceTierPlugin) -> None:
@@ -38,16 +41,10 @@ class DomainTierStage(Stage):
         self.mutating = (tier.phase == 2)
 
     def claims(self, ctx: StageContext) -> bool:
-        try:
-            return self.tier.claims_action(ctx.action, ctx.params)
-        except Exception as exc:
-            # An exception in claims_action: treat as claimed so that `run` fails closed
-            self._claims_exception = exc
-            return True
+        """Delegate to the tier.  Exceptions propagate; ``run_pipeline`` fails closed."""
+        return self.tier.claims_action(ctx.action, ctx.params)
 
     async def run(self, ctx: StageContext) -> list[Violation]:
-        if hasattr(self, "_claims_exception"):
-            return self._claims_failure()
         return await self._guarded(self.tier.evaluate, ctx)
 
     async def preview(self, ctx: StageContext) -> list[Violation]:
@@ -56,8 +53,6 @@ class DomainTierStage(Stage):
 
     async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
         """Phase 2: commit the tier.  Fail-closed: a raise mutates nothing by contract."""
-        if hasattr(self, "_claims_exception"):
-            return self._claims_failure(), None
         try:
             result = await self.tier.commit(ctx.action, ctx.params)
         except Exception as exc:
@@ -96,9 +91,6 @@ class DomainTierStage(Stage):
             return await call(ctx.action, ctx.params)
         except Exception as exc:
             return [self._exception_violation("tier execution", exc)]
-
-    def _claims_failure(self) -> list[Violation]:
-        return [self._exception_violation("claims_action", self._claims_exception)]
 
     def _exception_violation(self, where: str, exc: BaseException) -> Violation:
         return Violation(

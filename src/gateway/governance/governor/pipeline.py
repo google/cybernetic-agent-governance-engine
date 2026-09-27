@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import dataclasses
 import logging
 from dataclasses import dataclass
@@ -108,17 +109,45 @@ PROFILE_RUNS_ALL_DOMAIN_TIERS: frozenset[Profile] = frozenset({Profile.FULL, Pro
 async def rollback_lifo(
     committed: Sequence[tuple[Stage, CommitReceipt]], ctx: StageContext
 ) -> list[Violation]:
-    """Undo each ``(stage, receipt)`` commit in reverse order.  Never raises.  Fails closed.
+    """Undo each ``(stage, receipt)`` commit in reverse order.  Fails closed.
 
     D6: every rollback is attempted even if an earlier one fails, so one faulty
     stage cannot strand reservations held by the others.  Each failure yields a
     HARD ``ROLLBACK_FAILED`` violation so the action is denied, never retried.
+
+    Cancellation-safe: the rollbacks run in a shielded task.  If the caller is
+    cancelled meanwhile, every rollback still runs to completion before the
+    ``CancelledError`` is re-raised.  The only other exception this raises is a
+    non-``Exception`` ``BaseException`` escaping a rollback, re-raised only
+    after all the other rollbacks have been attempted.
     """
+    task = asyncio.ensure_future(_rollback_each(tuple(committed), ctx))
+    interrupted: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise  # the rollback task itself was cancelled (e.g. loop shutdown)
+            interrupted = exc  # our caller was cancelled: finish rolling back first
+    failures, escaped = task.result()
+    if escaped is not None:
+        raise escaped
+    if interrupted is not None:
+        raise interrupted
+    return failures
+
+
+async def _rollback_each(
+    committed: tuple[tuple[Stage, CommitReceipt], ...], ctx: StageContext
+) -> tuple[list[Violation], BaseException | None]:
+    """Attempt every rollback (LIFO), catching ``BaseException`` per rollback."""
     failures: list[Violation] = []
+    escaped: BaseException | None = None
     for stage, receipt in reversed(committed):
         try:
             await stage.rollback(ctx, receipt)
-        except Exception as exc:
+        except BaseException as exc:
             logger.exception("stage %s rollback FAILED", stage.name)
             failures.append(Violation(
                 tier=stage.name,
@@ -129,7 +158,18 @@ async def rollback_lifo(
                 ),
                 kind=ViolationKind.HARD,
             ))
-    return failures
+            if escaped is None and not isinstance(exc, Exception):
+                escaped = exc
+    return failures, escaped
+
+
+def _claims_failure(stage: Stage, exc: Exception) -> Violation:
+    return Violation(
+        tier=stage.name,
+        code="TIER_EXCEPTION",
+        message=f"Exception in claims_action: {type(exc).__name__}: {exc}",
+        kind=ViolationKind.HARD,
+    )
 
 
 async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: Profile) -> PipelineResult:
@@ -140,7 +180,11 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
     
     profile_stages = []
     claimed_domains = []
-    
+    # A domain tier whose claims() raised is treated as claiming the action and
+    # fails closed where it would have run.  Kept per request (keyed by stage
+    # identity), never on the stage: stages are shared across requests.
+    claim_failures: dict[int, Violation] = {}
+
     for s in stages:
         is_domain_tier = hasattr(s, "claims")
         # PROFILE_STAGES names kernel stages.  Domain tiers carry plugin-chosen
@@ -153,7 +197,12 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
             continue
 
         if is_domain_tier:
-            if getattr(s, "claims")(ctx):
+            try:
+                claimed = getattr(s, "claims")(ctx)
+            except Exception as exc:
+                claim_failures[id(s)] = _claims_failure(s, exc)
+                claimed = True
+            if claimed:
                 claimed_domains.append(s)
         else:
             profile_stages.append(s)
@@ -189,11 +238,23 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
     
     ftra_result: FtraBoundaryResult | None = None
     opa_verdict: OpaVerdict | None = None
+
+    async def run_stage(stage: Stage, stage_ctx: StageContext) -> list[Violation]:
+        if id(stage) in claim_failures:
+            return [claim_failures[id(stage)]]
+        return await stage.run(stage_ctx)
+
+    async def commit_stage(
+        stage: Stage, stage_ctx: StageContext
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        if id(stage) in claim_failures:
+            return [claim_failures[id(stage)]], None
+        return await stage.commit(stage_ctx)
     
     # b. Read-only stages
     for stage in read_only:
-        stage_violations = await stage.run(current_ctx)
-        
+        stage_violations = await run_stage(stage, current_ctx)
+
         # update ctx context
         if stage.name == "stpa":
             current_ctx = dataclasses.replace(current_ctx, stpa_violation_count=len(stage_violations))
@@ -224,7 +285,9 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
             # commit would produce.  Nothing is committed, so nothing to roll back.
             for stage in mutating:
                 preview = getattr(stage, "preview", None)
-                if preview is None:
+                if id(stage) in claim_failures:
+                    stage_violations = [claim_failures[id(stage)]]
+                elif preview is None:
                     # Can't predict this commit: say so rather than report ALLOW.
                     stage_violations = [Violation(
                         tier=stage.name,
@@ -245,7 +308,14 @@ async def run_pipeline(stages: Sequence[Stage], ctx: StageContext, *, profile: P
         else:
             # commit mutating stages in order
             for stage in mutating:
-                stage_violations, receipt = await stage.commit(current_ctx)
+                try:
+                    stage_violations, receipt = await commit_stage(stage, current_ctx)
+                except BaseException:
+                    # Cancellation (or any escape) mid-commit: undo every commit
+                    # already made, then propagate.  By contract the raising
+                    # commit itself mutated nothing.
+                    await rollback_lifo(commits, current_ctx)
+                    raise
                 if receipt is not None:
                     # Recorded even alongside violations: a commit that mutated
                     # state and then refused must still be undone.

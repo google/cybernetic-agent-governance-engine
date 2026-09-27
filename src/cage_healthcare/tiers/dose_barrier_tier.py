@@ -17,12 +17,15 @@
 from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
-from src.gateway.governance.safety.barrier_preview import preview_barrier
 from src.gateway.governance.contracts import (
     CommitReceipt,
     GovernanceTierPlugin,
     Violation,
-    ViolationKind,
+)
+from src.gateway.governance.safety.barrier_tier import (
+    commit_barrier,
+    preview_barrier,
+    rollback_barrier,
 )
 
 
@@ -61,21 +64,11 @@ class DoseBarrierTier(GovernanceTierPlugin):
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        # Phase 2: atomic verify-and-commit via kernel CBF engine
-        ok, reason, magnitude = await self.cbf.atomic_verify_and_commit(action, params)
-        if not ok:
-            return [
-                Violation(
-                    tier=self.tier_name,
-                    code="DOSE_BARRIER_VIOLATED",
-                    message=reason,
-                    kind=ViolationKind.HARD,
-                )
-            ], None
-        return [], CommitReceipt(tier=self.tier_name, magnitude=magnitude)
+        return await commit_barrier(
+            self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
+        )
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        # LIFO rollback: restore exactly the magnitude the engine applied
-        await self.cbf.rollback_state(magnitude=receipt.magnitude)
+        await rollback_barrier(self.cbf, receipt)

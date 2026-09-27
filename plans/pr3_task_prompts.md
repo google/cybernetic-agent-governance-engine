@@ -237,6 +237,10 @@ Bugs at HEAD (src/gateway/governance/governor/governor.py):
  B2 rollback_lifo (governor/pipeline.py) catches Exception only. asyncio.CancelledError is a
     BaseException. A cancellation during the commit loop or between commit and seal leaks every commit,
     and a cancellation during rollback aborts the remaining rollbacks.
+    NOTE (#280): the pipeline half of B2 is done. rollback_lifo runs rollbacks in a shielded task,
+    catches BaseException per rollback, and run_pipeline rolls back on a cancelled commit
+    (tests/governor/test_pipeline_cancellation.py). What remains is cancellation between the
+    last commit and the seal, which needs ReservationScope. Move that logic into reservation.py.
 
 Do:
 1. New src/gateway/governance/governor/reservation.py:

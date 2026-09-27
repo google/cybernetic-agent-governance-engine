@@ -54,25 +54,19 @@ def test_claims_success(mock_tier, ctx):
     assert stage.claims(ctx) is True
     mock_tier.claims_action.assert_called_once_with("execute_trade", {"amount": 100})
 
-def test_claims_exception_fails_closed(mock_tier, ctx):
-    mock_tier.claims_action.side_effect = Exception("Claims failed")
-    stage = DomainTierStage(mock_tier)
-    
-    # Exception treated as claimed
-    assert stage.claims(ctx) is True
-    assert hasattr(stage, "_claims_exception")
+def test_claims_exception_propagates_and_leaves_no_state(mock_tier, ctx):
+    """The stage is shared across requests: it must not latch a claims failure.
 
-@pytest.mark.asyncio
-async def test_run_claims_exception(mock_tier, ctx):
+    run_pipeline turns the exception into a per-request HARD violation
+    (tests/governor/test_pipeline.py).
+    """
     mock_tier.claims_action.side_effect = Exception("Claims failed")
     stage = DomainTierStage(mock_tier)
-    stage.claims(ctx)
-    
-    violations = await stage.run(ctx)
-    assert len(violations) == 1
-    assert violations[0].code == "TIER_EXCEPTION"
-    assert "Claims failed" in violations[0].message
-    assert violations[0].kind == ViolationKind.HARD
+    before = dict(vars(stage))
+
+    with pytest.raises(Exception, match="Claims failed"):
+        stage.claims(ctx)
+    assert vars(stage) == before
 
 @pytest.mark.asyncio
 async def test_run_phase_1_success(mock_tier, ctx):
@@ -115,18 +109,6 @@ async def test_commit_exception_fails_closed_without_receipt(mock_tier, ctx):
     assert receipt is None
     assert [(v.code, v.kind) for v in violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
     assert "commit failed" in violations[0].message
-
-@pytest.mark.asyncio
-async def test_commit_claims_exception_never_commits(mock_tier, ctx):
-    mock_tier.phase = 2
-    mock_tier.claims_action.side_effect = Exception("Claims failed")
-    stage = DomainTierStage(mock_tier)
-    stage.claims(ctx)
-
-    violations, receipt = await stage.commit(ctx)
-    assert receipt is None
-    assert violations[0].code == "TIER_EXCEPTION"
-    mock_tier.commit.assert_not_called()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [[], None, ([], "not-a-receipt"), ("x", None)])
