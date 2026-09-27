@@ -12,26 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
-from typing import Any
 import inspect
 import json
 import logging
 import math
 import time
+from collections.abc import Sequence
+from typing import Any
+
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.core.policy import OPAClient
-from src.gateway.governance.contracts import ConsensusProvider, GovernanceTierPlugin, SafetyFilter, Violation, ViolationKind
-from src.gateway.governance.classification_engine import ClassificationContext, ClassificationEngine
+from src.gateway.governance.classification_engine import (
+    ClassificationContext,
+    ClassificationEngine,
+)
 from src.gateway.governance.constants import ControlRegistry
-from src.gateway.governance.governor.pipeline import run_pipeline, Profile, StageContext
-from src.gateway.governance.governor.stages.opa import OpaStage
-from src.gateway.governance.governor.stages.stpa import StpaStage
-from src.gateway.governance.governor.stages.ftra import FtraStage
+from src.gateway.governance.contracts import (
+    ConsensusProvider,
+    GovernanceTierPlugin,
+    InvariantModel,
+    SafetyFilter,
+    Violation,
+    ViolationKind,
+)
+from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.invariants import validate_invariant
+from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
+from src.gateway.governance.governor.stages.ftra import FtraStage
+from src.gateway.governance.governor.stages.opa import OpaStage
+from src.gateway.governance.governor.stages.stpa import StpaStage
 from src.gateway.governance.governor.verdicts import (
     handle_defer,
     handle_deny,
@@ -40,11 +54,12 @@ from src.gateway.governance.governor.verdicts import (
     handle_require_approval,
     issue_seal,
 )
-from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.contracts import InvariantModel
-from src.gateway.governance.governor.invariants import validate_invariant
-from src.gateway.observability.attributes import OBSERVATION_INPUT, OBSERVATION_NAME, OBSERVATION_OUTPUT, OBSERVATION_TYPE
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.observability.attributes import (
+    OBSERVATION_INPUT,
+    OBSERVATION_NAME,
+    OBSERVATION_OUTPUT,
+    OBSERVATION_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

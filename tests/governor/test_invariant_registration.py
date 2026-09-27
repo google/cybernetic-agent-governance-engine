@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fail-closed registration checks for declarative safety barriers (V1–V4)."""
+"""Fail-closed registration checks for declarative safety barriers (V1-V4)."""
 
 from __future__ import annotations
 
