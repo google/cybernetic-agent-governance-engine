@@ -25,6 +25,9 @@ from src.gateway.governance.ftra import classifier
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
+_PKG = "trade.governance"
+_RULES = ("allow",)
+
 _KERNEL = Path(__file__).resolve().parents[1] / "src" / "gateway"
 
 
@@ -41,7 +44,7 @@ def test_ftra_registry_path_comes_from_active_domain(monkeypatch, tmp_path):
     registry = tmp_path / "registry.json"
     monkeypatch.setattr(
         "src.gateway.governance.plugin_loader.active_domain_config",
-        lambda: DomainConfig(ftra_registry_path=registry),
+        lambda: DomainConfig(ftra_registry_path=registry, opa_package=_PKG, opa_required_rules=_RULES),
     )
     assert classifier._active_registry_path() == registry
 
@@ -69,7 +72,7 @@ def test_causal_check_fails_closed_when_domain_has_no_causal_graph(monkeypatch, 
     registry = tmp_path / "registry.json"
     monkeypatch.setattr(
         "src.gateway.governance.plugin_loader.active_domain_config",
-        lambda: DomainConfig(ftra_registry_path=registry, causal_graph_path=None),
+        lambda: DomainConfig(ftra_registry_path=registry, opa_package=_PKG, opa_required_rules=_RULES, causal_graph_path=None),
     )
     assert gatekeeper.causal_safety_check({"amount": 100.0}, current_telemetry=causal_ready) is False
 
@@ -87,6 +90,6 @@ def test_causal_config_loads_the_active_domains_graph(monkeypatch, causal_ready,
     graph.write_text("treatment: t\noutcome: o\ngraph: 'digraph { t -> o; }'\n")
     monkeypatch.setattr(
         "src.gateway.governance.plugin_loader.active_domain_config",
-        lambda: DomainConfig(ftra_registry_path=tmp_path / "r.json", causal_graph_path=graph),
+        lambda: DomainConfig(ftra_registry_path=tmp_path / "r.json", opa_package=_PKG, opa_required_rules=_RULES, causal_graph_path=graph),
     )
     assert gatekeeper._causal_config()["treatment"] == "t"

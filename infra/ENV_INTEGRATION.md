@@ -206,7 +206,7 @@ The following `.env` variables are automatically mapped to Terraform variables:
 | `VLLM_REASONING_API_BASE` | `vllm_reasoning_url` | vLLM reasoning endpoint |
 | `VLLM_FAST_API_BASE` | `vllm_fast_url` | vLLM fast endpoint |
 | `VLLM_GATEWAY_URL` | `vllm_gateway_url` | vLLM gateway endpoint |
-| `OPA_URL` | `opa_url` | OPA policy engine URL |
+| `OPA_URL` | `opa_url` | OPA base URL, no path (the gateway derives the decision path from the active domain's `DomainConfig.opa_package`) |
 | `REDIS_URL` | `redis_url` | Redis connection URL |
 | `S3_ENDPOINT_URL` | `minio_endpoint` | MinIO/S3 endpoint (agnostic only) |
 | `S3_BUCKET_NAME` | `minio_bucket` | MinIO/S3 bucket (agnostic only) |

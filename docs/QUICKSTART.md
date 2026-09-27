@@ -112,7 +112,7 @@ export CAGE_DOMAIN=healthcare     # refuses to start: no FTRA registry (POAM-202
 export CAGE_DOMAIN=physical_ai    # refuses to start: no FTRA registry (POAM-2026-077)
 ```
 
-Each plugin must declare a `DomainConfig` (FTRA terminal registry plus an optional causal graph). The kernel reads its FTRA registry and causal graph only from the active domain, so a plugin without one fails closed at startup rather than borrowing another domain's configuration.
+Each plugin must declare a `DomainConfig`: its FTRA terminal registry, an optional causal graph, and the Rego package (plus required rules) the kernel queries on the OPA server. The kernel reads its FTRA registry and causal graph only from the active domain, so a plugin without one fails closed at startup rather than borrowing another domain's configuration. `OPA_URL` is a base URL only (e.g. `http://localhost:8181`); at startup the gateway lists OPA's loaded policies and refuses to start unless the domain's package and every required rule are present (finance: `trade.governance` with `allow`).
 
 ### 8a. Domain Plugin Example: Finance
 

@@ -85,7 +85,7 @@ spec:
               value: "${CAGE_ENV:-development}"
             # OPA Configuration
             - name: OPA_URL
-              value: "http://opa-service:8181/v1/data/trade/governance"
+              value: "http://opa-service:8181"
           resources:
             requests:
               cpu: "1000m"
@@ -95,7 +95,7 @@ spec:
               memory: "4Gi"
 
         # OPA sidecar removed — gateway talks to the standalone opa-service
-        # Deployment (OPA_URL=http://opa-service:8181/v1/data/trade/governance).
+        # Deployment (OPA_URL=http://opa-service:8181).
         # The sidecar listened on localhost:8181 which was unreachable from the
         # main container, caused pod CrashLoopBackOff when its secrets were
         # missing, and duplicated policy evaluation work already done by the

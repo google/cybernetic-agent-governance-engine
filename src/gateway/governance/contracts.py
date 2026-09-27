@@ -334,13 +334,25 @@ class DomainConfig:
     ``Path(__file__)``) and must exist; the plugin loader checks both at
     startup and refuses to run otherwise.
 
+    OPA is an external server, so the kernel never loads Rego itself. The
+    domain instead names the Rego package the kernel queries
+    (``OPA_URL`` + ``/v1/data/<package path>``) and the rules that package
+    must define; startup verifies both against the live OPA server and
+    refuses to run on any mismatch.
+
     Attributes:
         ftra_registry_path: FTRA terminal registry JSON for this domain's actions.
+        opa_package: Dotted Rego package holding this domain's decision, e.g.
+            ``"trade.governance"``.
+        opa_required_rules: Rule names the package must define, e.g.
+            ``("allow",)``. Must be non-empty.
         causal_graph_path: Causal graph YAML for the causal gatekeeper, or
             ``None`` if the domain has no causal tier.
     """
 
     ftra_registry_path: Path
+    opa_package: str
+    opa_required_rules: tuple[str, ...]
     causal_graph_path: Path | None = None
 
 

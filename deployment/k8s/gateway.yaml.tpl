@@ -127,7 +127,7 @@ spec:
                   key: KMS_GOVERNANCE_KEY
                   optional: true
             - name: OPA_URL
-              value: "http://opa.governance-stack.svc.cluster.local:8181/v1/data/trade/governance"
+              value: "http://opa.governance-stack.svc.cluster.local:8181"
           livenessProbe:
             httpGet:
               path: /health

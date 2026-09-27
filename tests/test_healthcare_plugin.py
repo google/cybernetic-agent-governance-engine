@@ -133,7 +133,7 @@ class TestHealthcarePlugin:
         from src.gateway.governance.governor.governor import SymbolicGovernor
 
         governor = SymbolicGovernor(
-            opa_client=OPAClient("http://localhost:8181"),
+            opa_client=OPAClient("dosing.governance"),
             safety_filter=NullSafetyFilter(),
             consensus_engine=NullConsensusProvider(),
             classification_engine=classification_engine,

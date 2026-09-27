@@ -844,10 +844,6 @@ resource "google_cloud_run_v2_service" "gateway" {
         value = "http://localhost:8181"
       }
 
-      env {
-        name  = "CAGE_OPA_DEFAULT_PATH"
-        value = "/v1/data/trade/governance"
-      }
 
       env {
         name  = "EVIDENCE_STREAM_ENABLED"
@@ -987,10 +983,6 @@ resource "google_cloud_run_v2_service" "governed_advisor" {
         value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
       }
 
-      env {
-        name  = "CAGE_OPA_DEFAULT_PATH"
-        value = "/v1/data/trade/governance"
-      }
 
       env {
         name  = "EVIDENCE_STREAM_ENABLED"

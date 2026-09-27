@@ -204,7 +204,7 @@ Copy [`.env.example`](../.env.example) to `.env` and fill in your values.
 
 | Variable          | Default                                       | Description                                        |
 | ----------------- | --------------------------------------------- | -------------------------------------------------- |
-| `OPA_URL`         | `http://localhost:8181/v1/data/trade/governance` | OPA policy engine endpoint                         |
+| `OPA_URL`         | `http://localhost:8181`                       | OPA base URL (no path); the decision package comes from the active domain's `DomainConfig.opa_package` |
 | `REDIS_URL`       | `redis://localhost:6379`                      | Redis for state management                         |
 | `GOVERNANCE_SALT` | _(required)_                                  | HMAC salt for the governance gateway               |
 | `K8S_NAMESPACE`   | `governance-stack`                            | Kubernetes namespace (used by `setup_test_env.sh`) |

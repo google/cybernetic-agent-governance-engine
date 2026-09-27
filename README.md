@@ -829,7 +829,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `RECONCILIATION_PROVIDER`                        | Custody provider (`stub`, `gcs`, `s3` / `object-store`, `plaid`, or `anchorage`; default `stub`) |
 | `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `_SECRET_KEY` | Keys for ISO 42001 audit Langfuse project            |
 | `REDIS_URL`                                      | Redis connection URL (e.g. `redis://localhost:6379`) |
-| `OPA_URL`                                        | OPA policy engine URL (e.g. `http://localhost:8181`) |
+| `OPA_URL`                                        | OPA base URL, no path (e.g. `http://localhost:8181`); the decision package comes from the active domain's `DomainConfig.opa_package` |
 | `VLLM_REASONING_API_BASE`                        | vLLM reasoning endpoint (also default for Risk Manager consensus persona) |
 | `VLLM_FAST_API_BASE`                             | vLLM fast-path endpoint (also default for Compliance Officer consensus persona) |
 | `CONSENSUS_RISK_MANAGER_URL`                     | Override vLLM endpoint for Risk Manager critic persona |

@@ -141,18 +141,23 @@ async def _check_rate_limit(client_ip: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _activate_domain() -> Any:
+async def _activate_domain() -> Any:
     """Load, validate and register the single ``CAGE_DOMAIN`` plugin.
 
     Fail closed at startup: an unset/unknown domain, a domain without a
-    complete ``DomainConfig``, or null kernel components after registration
+    complete ``DomainConfig``, an OPA server that lacks the domain's Rego
+    package or required rules, or null kernel components after registration
     all raise instead of serving traffic.
     """
-    from src.gateway.governance.plugin_loader import domain_config_of, load_domain_plugin
+    from src.gateway.governance.plugin_loader import (
+        domain_config_of,
+        load_domain_plugin,
+    )
     from src.gateway.governance.singletons import _has_null_components
 
     plugin = load_domain_plugin()
-    domain_config_of(plugin)  # before register(): never half-activate a domain
+    config = domain_config_of(plugin)  # before register(): never half-activate a domain
+    await opa_client.verify_domain_policy(config.opa_package, config.opa_required_rules)
     plugin.register(governor=symbolic_governor, tool_server=mcp)
     if _has_null_components():
         raise RuntimeError(
@@ -194,8 +199,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
 
-    # 6. Activate the single CAGE_DOMAIN plugin (fail-closed readiness check)
-    _activate_domain()
+    # 6. Activate the single CAGE_DOMAIN plugin (fail-closed readiness check,
+    #    including the OPA package/rule handshake)
+    await _activate_domain()
 
     yield
 

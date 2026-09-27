@@ -126,27 +126,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as e:
         logger.warning("⚠️ OPA pre-warm failed (non-blocking): %s", e)
 
-    # ── Startup assertion: confirm trade_governance.rego is active ──────────
-    # REC-5: The gateway must not silently start without the RBAC trade-size
-    # policy (junior ≤ $5k, senior ≤ $500k) loaded in OPA.  This check is
-    # non-blocking — a missing or unreachable policy logs a WARNING but does
-    # NOT prevent startup (test environments may not have OPA running).
-    try:
-        trade_policy_active = await opa_client.check_policy_exists("trade/governance")
-        if trade_policy_active:
-            logger.info("✅ OPA trade governance policy confirmed active")
-        else:
-            logger.warning(
-                "⚠️ trade_governance.rego policy not confirmed active — "
-                "OPA_POLICY_PATH may not include trade governance rules. "
-                "Trade size RBAC will not be enforced."
-            )
-    except Exception:
-        logger.warning(
-            "⚠️ trade_governance.rego policy not confirmed active — "
-            "OPA_POLICY_PATH may not include trade governance rules. "
-            "Trade size RBAC will not be enforced."
-        )
+    # The active domain's OPA package/rules are verified fail-closed in
+    # _activate_domain() (mcp_tool_server); no domain-specific probe here.
 
     # ── Pre-warm Token Quota Proxy and UCA Logger (CTRL_TQP_007) ───────────────
     try:
@@ -279,10 +260,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as reg_err:
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
-    # ── Activate the single CAGE_DOMAIN plugin (fail-closed readiness) ────
+    # ── Activate the single CAGE_DOMAIN plugin (fail-closed readiness, ─────
+    #    including the OPA package/rule handshake)
     from src.gateway.server.mcp_tool_server import _activate_domain
 
-    _activate_domain()
+    await _activate_domain()
 
     # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
     from src.gateway.governance.background_tasks import (

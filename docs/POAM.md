@@ -303,4 +303,4 @@ A CAGE process now runs exactly one domain, named by the required `CAGE_DOMAIN` 
 **Remediation Plan:**
 1. Author an FTRA terminal registry for each domain (`config/ftra/` equivalent under `src/cage_<domain>/config/`).
 2. Author a causal graph where the domain's tiers need one, or leave `causal_graph_path=None` (the causal check then fails closed).
-3. Declare `DomainConfig` on each plugin and add a startup test per domain; add a per-domain CI matrix (PR 4a).
+3. Declare `DomainConfig` on each plugin, including `opa_package` / `opa_required_rules` (healthcare already ships `dosing.governance` in `src/cage_healthcare/opa/dosing_governance.rego`), and add a startup test per domain; add a per-domain CI matrix (PR 4a).

@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import importlib.metadata
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from src.gateway.governance.env_posture import DOMAIN_ENV_VAR, resolve_domain
@@ -37,6 +38,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("cage.plugin_loader")
 
 _ENTRY_POINT_GROUP = "cage.plugins"
+
+_REGO_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_REGO_PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
 def load_domain_plugin(domain: str | None = None) -> CagePlugin:
@@ -91,6 +95,15 @@ def domain_config_of(plugin: CagePlugin) -> DomainConfig:
             raise RuntimeError(f"domain {plugin.name!r}: {field_name} must be absolute, got {path}")
         if not path.is_file():
             raise RuntimeError(f"domain {plugin.name!r}: {field_name} does not exist: {path}")
+    if not _REGO_PACKAGE.fullmatch(config.opa_package):
+        raise RuntimeError(
+            f"domain {plugin.name!r}: opa_package must be a dotted Rego package, got {config.opa_package!r}"
+        )
+    rules = config.opa_required_rules
+    if not rules or not all(isinstance(r, str) and _REGO_IDENT.fullmatch(r) for r in rules):
+        raise RuntimeError(
+            f"domain {plugin.name!r}: opa_required_rules must be a non-empty tuple of rule names, got {rules!r}"
+        )
     return config
 
 

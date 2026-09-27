@@ -385,3 +385,55 @@ class TestMCPToolServerFunctions:
             mod.app.state.nemo_rails = MagicMock()
             res = await mod.verify_content_safety("Hello safe world")
             assert res == "SAFE"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _activate_domain — OPA package/rule handshake (fail-closed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.local
+class TestActivateDomainOpaHandshake:
+    """Startup refuses to register a domain whose OPA policy is not loaded."""
+
+    def _run(self, verify):
+        """Run _activate_domain; return (plugin, result-or-exception)."""
+        import sys
+
+        from src.gateway.governance.contracts import DomainConfig
+
+        plugin = MagicMock()
+        plugin.name = "finance"
+        config = DomainConfig(
+            ftra_registry_path=MagicMock(), opa_package="trade.governance", opa_required_rules=("allow",)
+        )
+        stubs = _mcp_import_stubs()
+        stubs["src.gateway.governance.singletons"]._has_null_components = MagicMock(return_value=False)
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            mod.opa_client.verify_domain_policy = verify
+            with (
+                patch("src.gateway.governance.plugin_loader.load_domain_plugin", return_value=plugin),
+                patch("src.gateway.governance.plugin_loader.domain_config_of", return_value=config),
+            ):
+                try:
+                    return plugin, asyncio.run(mod._activate_domain())
+                except Exception as exc:  # noqa: BLE001 — returned for assertion
+                    return plugin, exc
+
+    def test_opa_mismatch_aborts_startup_before_register(self):
+        from src.gateway.core.policy import OPAPolicyMismatchError
+
+        verify = AsyncMock(side_effect=OPAPolicyMismatchError("OPA has no module declaring package"))
+        plugin, outcome = self._run(verify)
+        assert isinstance(outcome, OPAPolicyMismatchError)
+        plugin.register.assert_not_called()
+
+    def test_verified_domain_is_registered_with_declared_package(self):
+        verify = AsyncMock(return_value=None)
+        plugin, outcome = self._run(verify)
+        verify.assert_awaited_once_with("trade.governance", ("allow",))
+        plugin.register.assert_called_once()
+        assert outcome is plugin

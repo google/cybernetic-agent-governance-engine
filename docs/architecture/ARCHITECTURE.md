@@ -216,6 +216,7 @@ System initialization and regional behavior are driven by environmental flags an
 | `CAGE_ENV` | str | `production` | When set to production, disables all memory fallbacks and mandates active evidence streams. |
 | `CAGE_DEPLOYMENT_REGION` | enum | `US_FED` | Selects active compliance profile: `US_FED`, `EU_ECB`, or `APAC_MAS`. |
 | `CAGE_DOMAIN` | str | *(required)* | Names the single domain plugin this process runs (`cage.plugins` entry-point name, e.g. `finance`). Unset, multi-valued, unknown, or `DomainConfig`-less values abort startup. |
+| `OPA_URL` | str | *(required)* | OPA base URL with no path. The decision path is `/v1/data/<DomainConfig.opa_package>`; startup aborts unless OPA has that package and its `opa_required_rules` loaded. |
 | `CAGE_DEFER_ENABLED` | bool | `true` | Enables the 4-state AARM deferral primitive and Redis parking queue. |
 | `CAGE_PAUSE_ENABLED` | bool | `true` | Enables transient execution suspension and resume-token lifecycle. |
 | `REDIS_URL` | str | Required | Connection URI for the primary Redis cluster (db=0 and db=1). |
