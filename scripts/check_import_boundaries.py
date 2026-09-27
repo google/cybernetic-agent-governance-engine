@@ -55,8 +55,56 @@ LAYER_3_BRIDGE_PATTERN = re.compile(r"^(src\.)?compliance_bridge")
 LAYER_3_INTEGRATIONS_PATTERN = re.compile(r"^(src\.)?integrations\b")
 LAYER_4_GFA_PATTERN = re.compile(r"^(src\.)?governed_financial_advisor")
 
-# Forbidden vendor SDKs for Evidence Kernel
+# Forbidden vendor SDKs for Layer 1 Kernel (src/gateway/)
 FORBIDDEN_VENDOR_SDKS = ("google.cloud", "boto3", "botocore", "azure", "langfuse")
+
+# Rule 1: Forbidden path literals inside Layer 1 (src/gateway/)
+PATH_LITERAL_PATTERN = re.compile(
+    r"(?:^|/)(?:src/cage_\w+|config/stpa/domains(?:/|$))|^cage_(?:finance|healthcare|physical_ai)\b"
+)
+
+# Rule 2: Forbidden domain action / field / role literals inside Layer 1 (src/gateway/)
+FORBIDDEN_DOMAIN_LITERALS = frozenset(
+    {
+        "execute_trade",
+        "reverse_trade",
+        "wire_transfer",
+        "place_order",
+        "trade_amount",
+        "trader_role",
+        "market_regime",
+        "balance_usd",
+        "min_cash_balance",
+        "portfolio_drawdown",
+        "portfolio_drawdown_pct",
+        "threshold_usd",
+        "min_trade_confidence",
+        "HIGH_VALUE_TRADE",
+        "Risk Manager",
+        "Execution Quant",
+        "administer_medication",
+        "move_effector",
+    }
+)
+
+# Rule 3: Forbidden class / function definitions inside Layer 1 (src/gateway/)
+FORBIDDEN_KERNEL_DEFINITIONS = frozenset(
+    {
+        "TradingKnowledgeGraph",
+        "FiscalGuard",
+        "FiscalLimitGuard",
+        "AmountNarrower",
+        "GCPKMSProvider",
+        "AWSKMSProvider",
+        "AzureKMSProvider",
+        "PlaidLedgerProvider",
+        "AnchorageLedgerProvider",
+        "GcsLedgerSnapshotProvider",
+        "S3LedgerSnapshotProvider",
+        "StubLedgerProvider",
+        "generate_mock_telemetry",
+    }
+)
 
 # Allowlist for function-scope lazy imports of src.integrations in Layer 1
 # These factory modules may lazy-load vendor adapters at instantiation time.
@@ -98,16 +146,37 @@ class BoundaryViolation:
     rule_violated: str
 
 
-class ImportVisitor(ast.NodeVisitor):
-    """AST visitor to extract all import statements with scope information.
+def _collect_docstring_node_ids(tree: ast.AST) -> set[int]:
+    """Collect AST node IDs of module, class, and function docstrings."""
+    docstring_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                docstring_ids.add(id(node.body[0].value))
+    return docstring_ids
 
-    Emits (module_name, line_number, is_module_scope) triples.
+
+class ImportVisitor(ast.NodeVisitor):
+    """AST visitor to extract all import statements and kernel purity violations.
+
+    Emits (module_name, line_number, is_module_scope) triples for imports,
+    plus string constants (excluding docstrings) and class/function definitions.
     Class-body imports are treated as module-scope for this rule.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, docstring_ids: set[int] | None = None) -> None:
         self.imports: list[tuple[str, int, bool]] = []
+        self.string_literals: list[tuple[str, int]] = []
+        self.definitions: list[tuple[str, int, str]] = []
         self._scope_depth: int = 0
+        self._docstring_ids: set[int] = docstring_ids or set()
 
     def visit_Import(self, node: ast.Import) -> None:
         """Visit `import x` statements."""
@@ -124,48 +193,67 @@ class ImportVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Track entry/exit of function scope."""
+        """Track entry/exit of function scope and record function definitions."""
+        self.definitions.append((node.name, node.lineno, "function"))
         self._scope_depth += 1
         self.generic_visit(node)
         self._scope_depth -= 1
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Track entry/exit of async function scope."""
+        """Track entry/exit of async function scope and record function definitions."""
+        self.definitions.append((node.name, node.lineno, "async function"))
         self._scope_depth += 1
         self.generic_visit(node)
         self._scope_depth -= 1
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Track entry/exit of class scope.
+        """Track entry/exit of class scope and record class definitions.
 
         Note: class-body imports are NOT considered function-scope for this rule.
         """
+        self.definitions.append((node.name, node.lineno, "class"))
         # Do NOT increment scope_depth — class-body imports are module-scope
         self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        """Visit string constants (excluding docstrings)."""
+        if isinstance(node.value, str) and id(node) not in self._docstring_ids:
+            self.string_literals.append((node.value, node.lineno))
+        self.generic_visit(node)
+
+
+def _analyze_ast(filepath: Path) -> ImportVisitor | None:
+    """Parse a Python file and visit its AST with ImportVisitor."""
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=str(filepath))
+        docstring_ids = _collect_docstring_node_ids(tree)
+        visitor = ImportVisitor(docstring_ids=docstring_ids)
+        visitor.visit(tree)
+        return visitor
+    except (SyntaxError, FileNotFoundError):
+        return None
 
 
 def extract_imports(filepath: Path) -> list[tuple[str, int, bool]]:
     """Extract all (import_module_name, line_number, is_module_scope) triples from a Python file."""
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=str(filepath))
-        visitor = ImportVisitor()
-        visitor.visit(tree)
-        return visitor.imports
-    except (SyntaxError, FileNotFoundError):
-        return []
+    visitor = _analyze_ast(filepath)
+    return visitor.imports if visitor is not None else []
 
 
 def check_file_boundaries(
     filepath: Path, verbose: bool = False
 ) -> list[BoundaryViolation]:
-    """Check if a file violates import boundaries.
+    """Check if a file violates import boundaries or kernel AST purity rules.
 
     Returns:
         List of BoundaryViolation instances.
     """
     violations: list[BoundaryViolation] = []
-    imports = extract_imports(filepath)
+    visitor = _analyze_ast(filepath)
+    if visitor is None:
+        return violations
+    imports = visitor.imports
     filepath_str = str(filepath)
 
     is_layer1 = False
@@ -198,22 +286,6 @@ def check_file_boundaries(
         filepath_str.endswith(allowed_path) or allowed_path in filepath_str
         for allowed_path in COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST
     )
-
-    is_evidence_kernel = False
-    try:
-        if filepath.is_relative_to(EVIDENCE_DIR) or filepath.resolve().is_relative_to(
-            EVIDENCE_DIR.resolve()
-        ):
-            is_evidence_kernel = True
-    except (ValueError, FileNotFoundError):
-        pass
-
-    if not is_evidence_kernel:
-        parts = filepath.parts
-        for i in range(len(parts) - 3):
-            if parts[i : i + 4] == ("src", "gateway", "governance", "evidence"):
-                is_evidence_kernel = True
-                break
 
     for imp, lineno, is_module_scope in imports:
         # Check Layer 1 -> Layer 2
@@ -300,25 +372,63 @@ def check_file_boundaries(
             if verbose:
                 print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
 
-        # Check evidence kernel & KMS signer vendor neutrality
-        is_kms_signer = filepath.name == "kms_signer.py" or filepath_str.endswith(
-            "src/gateway/governance/kms_signer.py"
-        )
-        if is_evidence_kernel or is_kms_signer:
-            for vendor_sdk in FORBIDDEN_VENDOR_SDKS:
-                if imp == vendor_sdk or imp.startswith(f"{vendor_sdk}."):
-                    v = BoundaryViolation(
-                        file_path=filepath_str,
-                        line_number=lineno,
-                        imported_module=imp,
-                        rule_violated=f"Evidence kernel vendor neutrality (forbidden vendor SDK: {vendor_sdk})",
+        # Rule 4: Vendor SDK imports forbidden across ALL of Layer 1 (src/gateway/)
+        for vendor_sdk in FORBIDDEN_VENDOR_SDKS:
+            if imp == vendor_sdk or imp.startswith(f"{vendor_sdk}."):
+                v = BoundaryViolation(
+                    file_path=filepath_str,
+                    line_number=lineno,
+                    imported_module=imp,
+                    rule_violated=f"Kernel vendor neutrality / Evidence kernel vendor neutrality (forbidden vendor SDK: {vendor_sdk})",
+                )
+                violations.append(v)
+                if verbose:
+                    print(
+                        f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
                     )
-                    violations.append(v)
-                    if verbose:
-                        print(
-                            f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})"
-                        )
-                    break
+                break
+
+    # Rule 1 & Rule 2: Non-docstring string literals in Layer 1
+    for literal, lineno in visitor.string_literals:
+        if PATH_LITERAL_PATTERN.search(literal):
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=literal,
+                rule_violated="Rule 1: Forbidden domain path literal in Layer 1 kernel",
+            )
+            violations.append(v)
+            if verbose:
+                print(
+                    f"❌ {filepath_str}:{lineno}: literal '{literal}' ({v.rule_violated})"
+                )
+        if literal in FORBIDDEN_DOMAIN_LITERALS:
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=literal,
+                rule_violated=f"Rule 2: Forbidden domain literal '{literal}' in Layer 1 kernel",
+            )
+            violations.append(v)
+            if verbose:
+                print(
+                    f"❌ {filepath_str}:{lineno}: literal '{literal}' ({v.rule_violated})"
+                )
+
+    # Rule 3: Forbidden class / function definitions in Layer 1
+    for def_name, lineno, def_kind in visitor.definitions:
+        if def_name in FORBIDDEN_KERNEL_DEFINITIONS:
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=def_name,
+                rule_violated=f"Rule 3: Forbidden domain/vendor {def_kind} definition '{def_name}' in Layer 1 kernel",
+            )
+            violations.append(v)
+            if verbose:
+                print(
+                    f"❌ {filepath_str}:{lineno}: {def_kind} {def_name} ({v.rule_violated})"
+                )
 
     return violations
 

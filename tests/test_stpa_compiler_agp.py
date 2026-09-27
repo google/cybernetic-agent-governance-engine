@@ -282,6 +282,7 @@ class TestGenerateAGPRBAC:
         role = RbacRoleModel(
             name="junior",
             allowed_actions=["execute_trade"],
+            denylist_field="currency",
             limits={"allow_below": 5000, "manual_review_below": 500000},
             restrictions=[{"denylist": ["XAU", "XBT"]}],
         )

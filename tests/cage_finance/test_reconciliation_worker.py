@@ -77,26 +77,26 @@ class TestReconciliationResult:
     def test_is_valid_true_when_no_error_and_nonnegative_balance(self):
         """is_valid is True when error is None and balance >= 0."""
         mod = _get_module()
-        r = mod.ReconciliationResult(source="stub", balance_usd=100_000.0)
+        r = mod.ReconciliationResult(source="stub", state_scalar=100_000.0)
         assert r.is_valid is True
 
     def test_is_valid_false_when_error_set(self):
         """is_valid is False when error is set."""
         mod = _get_module()
-        r = mod.ReconciliationResult(source="stub", balance_usd=0.0, error="oops")
+        r = mod.ReconciliationResult(source="stub", state_scalar=0.0, error="oops")
         assert r.is_valid is False
 
     def test_is_valid_false_when_balance_negative(self):
         """is_valid is False when balance is negative."""
         mod = _get_module()
-        r = mod.ReconciliationResult(source="stub", balance_usd=-1.0)
+        r = mod.ReconciliationResult(source="stub", state_scalar=-1.0)
         assert r.is_valid is False
 
     def test_is_stale_false_for_fresh_result(self):
         """is_stale is False immediately after construction."""
         mod = _get_module()
         r = mod.ReconciliationResult(
-            source="stub", balance_usd=100.0, verified_at=time.time(), ttl_seconds=300
+            source="stub", state_scalar=100.0, verified_at=time.time(), ttl_seconds=300
         )
         assert r.is_stale is False
 
@@ -106,7 +106,7 @@ class TestReconciliationResult:
         # Use a verified_at 1000 seconds ago with a 300s TTL
         r = mod.ReconciliationResult(
             source="stub",
-            balance_usd=100.0,
+            state_scalar=100.0,
             verified_at=time.time() - 1000,
             ttl_seconds=300,
         )
@@ -117,14 +117,14 @@ class TestReconciliationResult:
         mod = _get_module()
         r = mod.ReconciliationResult(
             source="stub",
-            balance_usd=55_000.0,
+            state_scalar=55_000.0,
             verified_at=1700000000.0,
             signature="abc123",
         )
         payload = r.to_redis_payload()
         data = json.loads(payload)
         assert data["source"] == "stub"
-        assert data["balance_usd"] == 55_000.0
+        assert data["state_scalar"] == 55_000.0
         assert data["verified_at"] == 1700000000.0
         assert data["signature"] == "abc123"
 
@@ -133,14 +133,14 @@ class TestReconciliationResult:
         mod = _get_module()
         original = mod.ReconciliationResult(
             source="plaid",
-            balance_usd=95_000.0,
+            state_scalar=95_000.0,
             verified_at=1700000000.0,
             signature="deadbeef",
         )
         payload = original.to_redis_payload()
         reconstructed = mod.ReconciliationResult.from_redis_payload(payload)
         assert reconstructed.source == original.source
-        assert reconstructed.balance_usd == original.balance_usd
+        assert reconstructed.state_scalar == original.state_scalar
         assert abs(reconstructed.verified_at - original.verified_at) < 0.01
         assert reconstructed.signature == original.signature
 
@@ -190,12 +190,12 @@ class TestSimulatedCashLedgerProvider:
 class TestExternalLedgerReconcilerHappyPath:
     """Tests for GroundTruthReconciler's reconcile() happy paths."""
 
-    def _make_reconciler(self, redis_client, balance_usd=100_000.0, ttl=300):
+    def _make_reconciler(self, redis_client, state_scalar=100_000.0, ttl=300):
         """Create a reconciler with a simulated finance provider and given fakeredis client."""
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
 
         mod = _get_module()
-        provider = SimulatedCashLedgerProvider(initial_scalar=balance_usd)
+        provider = SimulatedCashLedgerProvider(initial_scalar=state_scalar)
         return mod.ExternalLedgerReconciler(
             provider=provider,
             redis_client=redis_client,
@@ -220,7 +220,7 @@ class TestExternalLedgerReconcilerHappyPath:
         assert raw is not None
         data = json.loads(raw)
         assert data["source"] == "simulated:finance_cash_ledger"
-        assert data["balance_usd"] == pytest.approx(100_000.0)
+        assert data["state_scalar"] == pytest.approx(100_000.0)
 
     def test_reconcile_sets_redis_ttl_on_write(self):
         """After reconcile(), the Redis key has a TTL set."""
@@ -370,7 +370,7 @@ class TestReadVerifiedBalance:
 
         fresh_result = mod.ReconciliationResult(
             source="simulated:finance_cash_ledger",
-            balance_usd=75_000.0,
+            state_scalar=75_000.0,
             verified_at=time.time(),
             ttl_seconds=300,
         )
@@ -378,7 +378,7 @@ class TestReadVerifiedBalance:
 
         read = mod.read_verified_balance(r)
         assert read is not None
-        assert read.balance_usd == pytest.approx(75_000.0)
+        assert read.state_scalar == pytest.approx(75_000.0)
         assert read.source == "simulated:finance_cash_ledger"
         assert mod.read_verified_state(r, "finance.cash_balance") == pytest.approx(
             75_000.0
@@ -391,7 +391,7 @@ class TestReadVerifiedBalance:
 
         stale_result = mod.ReconciliationResult(
             source="simulated:finance_cash_ledger",
-            balance_usd=10_000.0,
+            state_scalar=10_000.0,
             verified_at=time.time() - 1000,  # 1000s ago
             ttl_seconds=300,  # 300s TTL → stale
         )

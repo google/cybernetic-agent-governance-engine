@@ -26,7 +26,7 @@ blocks execution and forces safe rollback when:
 
 Security posture: FAIL-CLOSED.
   - Redis unavailable → request BLOCKED (QuotaExceededError raised).
-  - This mirrors the security posture of FiscalLimitGuard.
+  - This mirrors the fail-closed security posture of domain resource guards.
 
 Atomicity:
   All counter mutations use a single Redis Lua script via EVALSHA.
@@ -194,8 +194,8 @@ class QuotaCheckResult:
 class TokenQuotaProxy:
     """Stateful inline circuit breaker enforcing per-session token quotas.
 
-    Mirrors the atomic reservation pattern from FiscalLimitGuard but operates
-    on token counts and step counts rather than USD amounts.
+    Uses an atomic Redis Lua reservation pattern operating
+    on token counts and step counts.
 
     Args:
         redis_client:    An async Redis client (redis.asyncio.Redis or

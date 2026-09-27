@@ -34,7 +34,7 @@ Envelope Structure (RFC 8785 JCS-canonicalized):
             "region": "us-central1"
         },
         "subject": {
-            "action": "execute_trade",
+            "action": "execute_action",
             "action_hash": "sha256:...",
             "record_hash": "sha256:...",  # Evidence chain binding
             "agent_id": "advisor-prod-v3"
@@ -58,7 +58,7 @@ Usage:
 
     builder = GovernanceEnvelopeBuilder()
     envelope = await builder.build(
-        action="execute_trade",
+        action="execute_action",
         params={"symbol": "AAPL", "amount": 1000},
         governance_result=result,
         record_hash="sha256:abc123...",
@@ -264,14 +264,14 @@ class GovernanceEnvelopeBuilder:
 
         # Build with automatic signing
         envelope = await builder.build(
-            action="execute_trade",
+            action="execute_action",
             params={"symbol": "AAPL"},
             governance_result=result,
         )
 
         # Or build unsigned for external signing
         envelope = builder.build_unsigned(
-            action="execute_trade",
+            action="execute_action",
             params={"symbol": "AAPL"},
             governance_result=result,
         )
@@ -325,7 +325,7 @@ class GovernanceEnvelopeBuilder:
         """Build an unsigned envelope for external signing.
 
         Args:
-            action: The action name (e.g., "execute_trade").
+            action: The action name (e.g., "execute_action").
             params: The action parameters.
             governance_result: The governance decision payload.
             record_hash: Optional evidence chain record hash.
@@ -430,7 +430,7 @@ class GovernanceEnvelopeBuilder:
         """Build a signed envelope using the KMS signer.
 
         Args:
-            action: The action name (e.g., "execute_trade").
+            action: The action name (e.g., "execute_action").
             params: The action parameters.
             governance_result: The governance decision payload.
             record_hash: Optional evidence chain record hash.

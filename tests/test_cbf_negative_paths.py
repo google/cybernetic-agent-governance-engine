@@ -115,7 +115,7 @@ async def test_read_cbf_state_uses_reconciled_balance_when_kms_valid(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = "sig-abc"
-    verified.balance_usd = 88_000.0
+    verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
 
@@ -159,7 +159,7 @@ async def test_read_cbf_state_falls_back_when_kms_sig_invalid(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = "bad-sig"
-    verified.balance_usd = 88_000.0
+    verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
 
@@ -203,7 +203,7 @@ async def test_read_cbf_state_falls_back_when_kms_verify_raises(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = "some-sig"
-    verified.balance_usd = 88_000.0
+    verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
 
@@ -246,7 +246,7 @@ async def test_read_cbf_state_accepts_unsigned_balance_in_dev_mode(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = None  # no KMS signature
-    verified.balance_usd = 77_000.0
+    verified.state_scalar = 77_000.0
     verified.source = "stub"
     verified.verified_at = 1_700_000_000.0
 
@@ -286,7 +286,7 @@ async def test_read_cbf_state_rejects_unsigned_balance_in_production(make_cbf):
     verified = MagicMock()
     verified.is_valid = True
     verified.signature = None  # no KMS signature
-    verified.balance_usd = 77_000.0
+    verified.state_scalar = 77_000.0
     verified.source = "stub"
     verified.verified_at = 1_700_000_000.0
 

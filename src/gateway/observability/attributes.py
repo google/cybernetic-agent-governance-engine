@@ -154,7 +154,7 @@ TRACE_METADATA_GOVERNANCE_OPA_URL: Final[str] = (
 TRACE_METADATA_GOVERNANCE_ACTION: Final[str] = (
     f"{NAMESPACE}.trace.metadata.governance.action"
 )
-"""Governance action being evaluated (e.g. 'execute_trade', 'prescribe')"""
+"""Governance action being evaluated (e.g. 'execute_action', 'check_state')"""
 
 TRACE_METADATA_GOVERNANCE_POLICY_INPUT_SIZE: Final[str] = (
     f"{NAMESPACE}.trace.metadata.governance.policy_input_size"

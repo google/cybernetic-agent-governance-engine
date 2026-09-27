@@ -30,13 +30,32 @@ import ast
 import sys
 from pathlib import Path
 
-# Domain action names that must not appear in kernel executable code
-FORBIDDEN_LITERALS = {"execute_trade", "reverse_trade"}
+# Domain action, field, threshold, and role literals that must not appear in kernel executable code
+FORBIDDEN_LITERALS = {
+    "execute_trade",
+    "reverse_trade",
+    "wire_transfer",
+    "place_order",
+    "trade_amount",
+    "market_regime",
+    "min_cash_balance",
+    "portfolio_drawdown",
+    "portfolio_drawdown_pct",
+    "threshold_usd",
+    "min_trade_confidence",
+    "HIGH_VALUE_TRADE",
+    "Risk Manager",
+    "Execution Quant",
+    "administer_medication",
+    "move_effector",
+}
 
-# Files that are allowed to contain domain action names
-EXCLUDED_FILES = {
-    "generated_stpa_validator.py",
-    "generated_saga_nodes.py",
+# Domain action names forbidden in Layer 3 integrations
+INTEGRATIONS_FORBIDDEN_LITERALS = {"execute_trade", "reverse_trade"}
+
+# Files that are allowed to contain domain action names (generated_stpa_validator.py
+# and generated_saga_nodes.py have been relocated to src/cage_finance/stpa/).
+EXCLUDED_FILES: set[str] = {
     "generated_stpa_policy.rego",  # OPA generated policy
 }
 
@@ -47,8 +66,11 @@ EXCLUDED_DIRS = {"protos", "__pycache__", ".pytest_cache", ".mypy_cache"}
 class DomainLiteralChecker(ast.NodeVisitor):
     """AST visitor that collects string literals outside of docstrings."""
 
-    def __init__(self, filepath: Path):
+    def __init__(
+        self, filepath: Path, forbidden_literals: set[str] | frozenset[str] = FORBIDDEN_LITERALS
+    ):
         self.filepath = filepath
+        self.forbidden_literals = forbidden_literals
         self.violations: list[tuple[int, str]] = []
         self._docstring_nodes: set[ast.AST] = set()
 
@@ -83,12 +105,15 @@ class DomainLiteralChecker(ast.NodeVisitor):
     def visit_Constant(self, node: ast.Constant) -> None:
         """Check string constants that are not docstrings."""
         if isinstance(node.value, str) and node not in self._docstring_nodes:
-            if node.value in FORBIDDEN_LITERALS:
+            if node.value in self.forbidden_literals:
                 self.violations.append((node.lineno, node.value))
         self.generic_visit(node)
 
 
-def check_file(filepath: Path) -> list[tuple[int, str]]:
+def check_file(
+    filepath: Path,
+    forbidden_literals: set[str] | frozenset[str] | None = None,
+) -> list[tuple[int, str]]:
     """Parse a Python file and return any domain literal violations.
 
     Args:
@@ -100,7 +125,12 @@ def check_file(filepath: Path) -> list[tuple[int, str]]:
     try:
         source = filepath.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(filepath))
-        checker = DomainLiteralChecker(filepath)
+        checker = DomainLiteralChecker(
+            filepath,
+            forbidden_literals=forbidden_literals
+            if forbidden_literals is not None
+            else FORBIDDEN_LITERALS,
+        )
         checker.visit(tree)
         return checker.violations
     except SyntaxError as exc:
@@ -164,7 +194,7 @@ def main() -> int:
             continue
 
         scanned_count += 1
-        violations = check_file(py_file)
+        violations = check_file(py_file, forbidden_literals=FORBIDDEN_LITERALS)
 
         if violations:
             violations_found = True
@@ -180,7 +210,9 @@ def main() -> int:
                 continue
 
             scanned_count += 1
-            violations = check_file(py_file)
+            violations = check_file(
+                py_file, forbidden_literals=INTEGRATIONS_FORBIDDEN_LITERALS
+            )
 
             if violations:
                 violations_found = True

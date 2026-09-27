@@ -247,7 +247,7 @@ class TelemetryThresholds(BaseModel):
         ge=0,
         description=(
             "[EV-6] TTL for Redis-backed causal result cache keyed on "
-            "(action_type, market_regime). Set to 0 to disable caching. "
+            "(action_type, context_regime). Set to 0 to disable caching. "
             "Default: 60s. Env override: CAUSAL_CACHE_TTL_SECONDS"
         ),
     )
@@ -323,7 +323,7 @@ class GovernanceThresholds(BaseModel):
         """Resolve a dot-separated threshold path across models and domain dicts.
 
         Walks nested ``BaseModel`` attributes and ``Mapping`` keys by ``.``-separated
-        segments (e.g. ``"domains.finance.cbf.min_cash_balance"`` or
+        segments (e.g. ``"domains.example.min_resource_floor"`` or
         ``"fria.zone_allow"``), raising ``KeyError`` if any segment does not exist.
         """
         if not dot_path or not isinstance(dot_path, str):

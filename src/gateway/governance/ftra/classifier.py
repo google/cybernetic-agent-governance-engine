@@ -31,13 +31,13 @@ bust without pod restart — matching the ControlRegistry pattern in constants.p
 Usage::
 
     classifier = IrreversibilityClassifier()
-    classification = classifier.classify("execute_trade")
+    classification = classifier.classify("execute_action")
     # → TerminalClassification.IRREVERSIBLE_TERMINAL
 
-    is_bad = classifier.is_irreversible("execute_trade")
+    is_bad = classifier.is_irreversible("execute_action")
     # → True
 
-    is_bad = classifier.is_irreversible("check_balance")
+    is_bad = classifier.is_irreversible("check_state")
     # → False (READ_ONLY)
 """
 
@@ -226,7 +226,7 @@ def check_registry_staleness(
 
     Args:
         live_actions: The canonical set of action names declared by a domain
-            plugin (e.g. ``src.cage_finance.REGISTERED_ACTIONS``).
+            plugin (e.g. ``PluginContribution.registered_actions``).
         registry_path: Optional override for the registry JSON path.
             Defaults to the active domain's ``DomainConfig.ftra_registry_path``.
 
@@ -294,7 +294,7 @@ class IrreversibilityClassifier:
         in the registry.
 
         Args:
-            action_name: The action name to classify (e.g. ``"execute_trade"``).
+            action_name: The action name to classify (e.g. ``"execute_action"``).
 
         Returns:
             TerminalClassification enum member.

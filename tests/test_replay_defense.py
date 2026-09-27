@@ -40,7 +40,7 @@ class TestReconciliationResultSequence:
 
         result = ReconciliationResult(
             source="test",
-            balance_usd=50000.0,
+            state_scalar=50000.0,
         )
         assert result.sequence == 0
 
@@ -50,7 +50,7 @@ class TestReconciliationResultSequence:
 
         result = ReconciliationResult(
             source="plaid",
-            balance_usd=75000.0,
+            state_scalar=75000.0,
             verified_at=1234567890.0,
             signature="test_sig",
             sequence=42,
@@ -68,7 +68,7 @@ class TestReconciliationResultSequence:
         payload = json.dumps(
             {
                 "source": "anchorage",
-                "balance_usd": 100000.0,
+                "state_scalar": 100000.0,
                 "verified_at": 1234567890.0,
                 "signature": "kms_sig",
                 "sequence": 99,
@@ -86,7 +86,7 @@ class TestReconciliationResultSequence:
         payload = json.dumps(
             {
                 "source": "stub",
-                "balance_usd": 50000.0,
+                "state_scalar": 50000.0,
                 "verified_at": 1234567890.0,
                 "signature": "",
             }
@@ -283,7 +283,7 @@ class TestCBFSequenceValidation:
         # Create a verified result with sequence=0 (default)
         verified = ReconciliationResult(
             source="stub",
-            balance_usd=100000.0,
+            state_scalar=100000.0,
             verified_at=1234567890.0,
             signature="valid_sig",
             sequence=0,  # Default / replay defense not enabled on write side

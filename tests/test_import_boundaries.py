@@ -330,3 +330,147 @@ class TestRepoImportBoundaries:
             assert integrations_violations == [], (
                 f"evidence/factory.py lazy imports should be permitted but got: {integrations_violations}"
             )
+
+
+@pytest.mark.unit
+@pytest.mark.local
+class TestKernelAstPurityRules:
+    """Negative AST tests for Gate G3 Rules 1-4 (§4b.17)."""
+
+    @pytest.mark.parametrize(
+        "bad_path",
+        [
+            "src/cage_finance/config/causal_graph.yaml",
+            "/app/src/cage_healthcare/rules.py",
+            "config/stpa/domains/finance.yaml",
+            "config/stpa/domains",
+            "cage_finance.plugin",
+            "cage_healthcare",
+            "cage_physical_ai.tiers",
+        ],
+    )
+    def test_rule1_rejects_domain_path_literals_in_gateway(
+        self, tmp_path: Path, bad_path: str
+    ) -> None:
+        """Rule 1: Non-docstring path literals referencing domain packages/dirs fail."""
+        fake_gateway = tmp_path / "src" / "gateway" / "governance"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "leaky_path.py"
+        test_file.write_text(f'CONFIG_PATH = "{bad_path}"\n', encoding="utf-8")
+
+        violations = check_file_boundaries(test_file)
+        assert any("Rule 1" in v.rule_violated for v in violations)
+
+    def test_rule1_ignores_docstrings(self, tmp_path: Path) -> None:
+        """Rule 1: Module, class, and function docstrings do not trigger path literal violations."""
+        fake_gateway = tmp_path / "src" / "gateway" / "governance"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "docstring_only.py"
+        test_file.write_text(
+            '"""Module docstring mentioning src/cage_finance/foo.py."""\n'
+            "class Foo:\n"
+            '    """Class docstring mentioning config/stpa/domains/finance.yaml."""\n'
+            "    def bar(self) -> int:\n"
+            '        """Function docstring mentioning cage_healthcare."""\n'
+            "        return 42\n",
+            encoding="utf-8",
+        )
+
+        violations = check_file_boundaries(test_file)
+        assert violations == []
+
+    @pytest.mark.parametrize(
+        "bad_literal",
+        [
+            "execute_trade",
+            "reverse_trade",
+            "wire_transfer",
+            "place_order",
+            "trade_amount",
+            "trader_role",
+            "market_regime",
+            "balance_usd",
+            "min_cash_balance",
+            "portfolio_drawdown",
+            "portfolio_drawdown_pct",
+            "threshold_usd",
+            "min_trade_confidence",
+            "HIGH_VALUE_TRADE",
+            "Risk Manager",
+            "Execution Quant",
+            "administer_medication",
+            "move_effector",
+        ],
+    )
+    def test_rule2_rejects_forbidden_domain_literals_in_gateway(
+        self, tmp_path: Path, bad_literal: str
+    ) -> None:
+        """Rule 2: Non-docstring domain action/field/role literals in src/gateway/ fail."""
+        fake_gateway = tmp_path / "src" / "gateway" / "governance"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "leaky_literal.py"
+        test_file.write_text(f'TOKEN = "{bad_literal}"\n', encoding="utf-8")
+
+        violations = check_file_boundaries(test_file)
+        assert len(violations) == 1
+        assert "Rule 2" in violations[0].rule_violated
+        assert violations[0].imported_module == bad_literal
+
+    @pytest.mark.parametrize(
+        ("code", "expected_symbol"),
+        [
+            ("class TradingKnowledgeGraph:\n    pass\n", "TradingKnowledgeGraph"),
+            ("class FiscalGuard:\n    pass\n", "FiscalGuard"),
+            ("class FiscalLimitGuard:\n    pass\n", "FiscalLimitGuard"),
+            ("class AmountNarrower:\n    pass\n", "AmountNarrower"),
+            ("class GCPKMSProvider:\n    pass\n", "GCPKMSProvider"),
+            ("class AWSKMSProvider:\n    pass\n", "AWSKMSProvider"),
+            ("class AzureKMSProvider:\n    pass\n", "AzureKMSProvider"),
+            ("class PlaidLedgerProvider:\n    pass\n", "PlaidLedgerProvider"),
+            ("class AnchorageLedgerProvider:\n    pass\n", "AnchorageLedgerProvider"),
+            (
+                "class GcsLedgerSnapshotProvider:\n    pass\n",
+                "GcsLedgerSnapshotProvider",
+            ),
+            ("class S3LedgerSnapshotProvider:\n    pass\n", "S3LedgerSnapshotProvider"),
+            ("class StubLedgerProvider:\n    pass\n", "StubLedgerProvider"),
+            ("def generate_mock_telemetry():\n    return []\n", "generate_mock_telemetry"),
+        ],
+    )
+    def test_rule3_rejects_forbidden_kernel_definitions(
+        self, tmp_path: Path, code: str, expected_symbol: str
+    ) -> None:
+        """Rule 3: Forbidden domain/vendor class and function definitions in src/gateway/ fail."""
+        fake_gateway = tmp_path / "src" / "gateway" / "governance"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "leaky_def.py"
+        test_file.write_text(code, encoding="utf-8")
+
+        violations = check_file_boundaries(test_file)
+        assert len(violations) == 1
+        assert "Rule 3" in violations[0].rule_violated
+        assert violations[0].imported_module == expected_symbol
+
+    @pytest.mark.parametrize(
+        ("code", "expected_vendor"),
+        [
+            ("import google.cloud.kms\n", "google.cloud"),
+            ("def f():\n    import boto3\n", "boto3"),
+            ("def f():\n    from botocore.client import BaseClient\n", "botocore"),
+            ("import azure.identity\n", "azure"),
+            ("def f():\n    from langfuse import Langfuse\n", "langfuse"),
+        ],
+    )
+    def test_rule4_rejects_vendor_sdks_anywhere_in_gateway(
+        self, tmp_path: Path, code: str, expected_vendor: str
+    ) -> None:
+        """Rule 4: Vendor SDK imports anywhere in src/gateway/ (module or function scope) fail."""
+        fake_gateway = tmp_path / "src" / "gateway" / "server"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "any_gateway_module.py"
+        test_file.write_text(code, encoding="utf-8")
+
+        violations = check_file_boundaries(test_file)
+        assert len(violations) == 1
+        assert expected_vendor in violations[0].rule_violated
+

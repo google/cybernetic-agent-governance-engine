@@ -88,7 +88,7 @@ class ReconciliationResult:
     """Result of an external ground-truth reconciliation tick."""
 
     source: str
-    balance_usd: float = 0.0
+    state_scalar: float = 0.0
     verified_at: float = field(default_factory=time.time)
     signature: str = ""
     ttl_seconds: int = TTL_SECONDS
@@ -96,16 +96,12 @@ class ReconciliationResult:
     error: str | None = None
     sequence: int = 0
     invariant_id: str = "finance.cash_balance"
-    state_scalar: float | None = None
     kms_key_id: str = ""
     discrepancy_detected: bool = False
     discrepancy_delta: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.state_scalar is None:
-            self.state_scalar = float(self.balance_usd)
-        elif self.balance_usd == 0.0 and math.isfinite(self.state_scalar):
-            self.balance_usd = float(self.state_scalar)
+        self.state_scalar = float(self.state_scalar)
 
     @property
     def kms_signature(self) -> str:
@@ -114,9 +110,7 @@ class ReconciliationResult:
     @property
     def is_valid(self) -> bool:
         """True if reconciliation succeeded and scalar is finite and non-negative."""
-        scalar = (
-            self.state_scalar if self.state_scalar is not None else self.balance_usd
-        )
+        scalar = self.state_scalar
         return (
             self.error is None
             and isinstance(scalar, (int, float))
@@ -132,13 +126,9 @@ class ReconciliationResult:
 
     def to_redis_payload(self) -> str:
         """Serialize to a deterministic RFC 8785 JCS JSON string for Redis storage."""
-        scalar = (
-            self.state_scalar if self.state_scalar is not None else self.balance_usd
-        )
         payload_dict = {
             "source": self.source,
-            "balance_usd": self.balance_usd,
-            "state_scalar": scalar,
+            "state_scalar": self.state_scalar,
             "invariant_id": self.invariant_id,
             "verified_at": self.verified_at,
             "signature": self.signature,
@@ -153,11 +143,9 @@ class ReconciliationResult:
         if isinstance(payload, (bytes, bytearray)):
             payload = payload.decode("utf-8")
         data = json.loads(payload)
-        scalar_raw = data.get("state_scalar", data.get("balance_usd", 0.0))
-        balance_raw = data.get("balance_usd", scalar_raw)
+        scalar_raw = data.get("state_scalar", 0.0)
         return cls(
             source=data["source"],
-            balance_usd=float(balance_raw),
             state_scalar=float(scalar_raw),
             invariant_id=data.get("invariant_id", "finance.cash_balance"),
             verified_at=float(data["verified_at"]),
@@ -292,25 +280,23 @@ class GroundTruthReconciler:
         if isinstance(source_floor, (int, float)) and math.isfinite(source_floor):
             return float(source_floor)
         try:
+            from src.gateway.governance.plugin_loader import load_domain_plugin
             from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
-            path_mapping = {
-                "finance.cash_balance": "domains.finance.cbf.min_cash_balance",
-                "healthcare.serum_concentration": (
-                    "domains.healthcare.min_therapeutic_concentration"
-                ),
-                "physical_ai.spatial_separation": (
-                    "domains.physical_ai.min_separation_distance_mm"
-                ),
-                "physical_ai.kinematic_velocity": (
-                    "domains.physical_ai.max_velocity_mm_s"
-                ),
-                "physical_ai.torque_saturation": (
-                    "domains.physical_ai.max_joint_torque_nm"
-                ),
-            }
-            if invariant_id in path_mapping:
-                return float(THRESHOLDS.resolve(path_mapping[invariant_id]))
+            threshold_key = getattr(
+                source_obj,
+                "threshold_key",
+                getattr(provider, "threshold_key", None),
+            )
+            if not threshold_key and "." in invariant_id:
+                domain_name = invariant_id.partition(".")[0]
+                plugin = load_domain_plugin(domain_name)
+                for inv in plugin.contribute().invariants:
+                    if getattr(inv, "invariant_id", None) == invariant_id:
+                        threshold_key = getattr(inv, "threshold_key", None)
+                        break
+            if threshold_key:
+                return float(THRESHOLDS.resolve(threshold_key))
         except Exception:
             pass
         return None
@@ -392,7 +378,7 @@ class GroundTruthReconciler:
 
             payload_dict = {
                 "source": result.source,
-                "balance_usd": result.balance_usd,
+                "state_scalar": result.state_scalar,
                 "verified_at": result.verified_at,
                 "sequence": result.sequence,
             }
@@ -571,7 +557,6 @@ class GroundTruthReconciler:
         return (
             ReconciliationResult(
                 source=snap.source,
-                balance_usd=snap.state_scalar,
                 state_scalar=snap.state_scalar,
                 invariant_id=snap.invariant_id or default_invariant_id,
                 verified_at=snap.verified_at,
@@ -632,14 +617,13 @@ class GroundTruthReconciler:
                 _set_span_attr("reconciliation.error", str(exc))
                 return ReconciliationResult(
                     source=PROVIDER,
-                    balance_usd=0.0,
                     state_scalar=0.0,
                     invariant_id=inv_id,
                     error=str(exc),
                 )
             finally:
                 fetch_ms = (time.monotonic() - t_fetch_start) * 1000.0
-                _set_span_attr("reconciliation.plaid_fetch_ms", round(fetch_ms, 1))
+                _set_span_attr("reconciliation.fetch_ms", round(fetch_ms, 1))
 
             # 1. Source verification (FaultMode.UNVERIFIED_SOURCE)
             if (
@@ -665,11 +649,7 @@ class GroundTruthReconciler:
                 _set_span_attr("reconciliation.error", result.error)
                 return result
 
-            scalar = float(
-                result.state_scalar
-                if result.state_scalar is not None
-                else result.balance_usd
-            )
+            scalar = float(result.state_scalar)
 
             # 3. Timestamp freshness & future clock skew (STALE_TIMESTAMP, FUTURE_TIMESTAMP)
             if is_snapshot:
@@ -754,7 +734,7 @@ class GroundTruthReconciler:
                         _set_span_attr("reconciliation.error", result.error)
                         return result
 
-            _set_span_attr("reconciliation.balance_usd", result.balance_usd)
+            _set_span_attr("reconciliation.state_scalar", result.state_scalar)
 
             # 5. Monotonic sequence number (§2.10 R-04 replay defense)
             if is_snapshot and result.sequence > 0:
@@ -892,7 +872,7 @@ def read_verified_balance(
                 return None
             payload_dict = {
                 "source": result.source,
-                "balance_usd": result.balance_usd,
+                "state_scalar": result.state_scalar,
                 "verified_at": result.verified_at,
                 "sequence": result.sequence,
             }
@@ -952,9 +932,7 @@ def read_verified_state(
     )
     if snap is None or not snap.is_valid:
         return None
-    return float(
-        snap.state_scalar if snap.state_scalar is not None else snap.balance_usd
-    )
+    return float(snap.state_scalar)
 
 
 ExternalLedgerReconciler = GroundTruthReconciler

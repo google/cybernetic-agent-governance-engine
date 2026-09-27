@@ -45,16 +45,16 @@ Seal format (v3 — asymmetric JWT with evidence binding):
 
 Usage:
     # Gateway (issuance with evidence binding — recommended):
-    seal = await generate_seal_with_evidence("execute_trade", params)
+    seal = await generate_seal_with_evidence("execute_action", params)
 
     # Gateway (issuance without evidence binding — migration only):
-    seal = generate_seal("execute_trade", params, record_hash=None)
+    seal = generate_seal("execute_action", params, record_hash=None)
 
     # Verification — raises SymbolicGovernorViolation on failure:
-    verify_seal(seal, "execute_trade", params)
+    verify_seal(seal, "execute_action", params)
 
     # Decorator pattern:
-    @require_cleared_seal(seal, "execute_trade", params)
+    @require_cleared_seal(seal, "execute_action", params)
     async def _actuate():
         ...
 """
@@ -491,7 +491,7 @@ async def generate_seal_with_evidence(
     evidence-of-execution claims to be overclaimed.
 
     Args:
-        action:  Tool / policy action name (e.g. ``"execute_trade"``).
+        action:  Tool / policy action name (e.g. ``"execute_action"``).
         params:  Execution plan parameters dict.
         ttl_s:   Seal lifetime in seconds (default: ``GOVERNANCE_SEAL_TTL_S``).
         evidence_timeout_s: Timeout for evidence commit in blocking mode (default: 5s).
@@ -966,7 +966,7 @@ async def verify_and_consume_seal(
 
     Args:
         seal: The routing seal string (JWT or HMAC format).
-        action: The action being authorized (e.g., "execute_trade").
+        action: The action being authorized (e.g., "execute_action").
         params: The parameters being authorized.
         redis_client: Optional async Redis client (defaults to global client).
         expected_record_hash: Optional expected evidence record hash.
@@ -1149,7 +1149,7 @@ def require_cleared_seal(
 
     Args:
         seal:    Routing seal string from the governance approval response.
-        action:  Action name that was approved (e.g. ``"execute_trade"``).
+        action:  Action name that was approved (e.g. ``"execute_action"``).
         params:  Parameters dict that was approved — must match the seal.
 
     Returns:
@@ -1161,7 +1161,7 @@ def require_cleared_seal(
 
     Example::
 
-        @require_cleared_seal(seal, "execute_trade", params)
+        @require_cleared_seal(seal, "execute_action", params)
         async def _actuate() -> str:
             return await broker.execute(params)
 

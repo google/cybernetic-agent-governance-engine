@@ -34,7 +34,7 @@ Usage::
     record = build_provenance_record(
         trace_id="trace-123",
         node_id="opa_node",
-        input_data={"action": "execute_trade", "amount": 5000},
+        input_data={"action": "execute_action", "amount": 5000},
         output_data={"decision": "ALLOW"},
         decision="ALLOW",
         parent_hash=None,

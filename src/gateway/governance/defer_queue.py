@@ -1235,7 +1235,7 @@ def create_external_hold_token(
         token = create_external_hold_token(
             thread_id="thread-123",
             confidence_score=0.82,
-            opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
+            opa_input_snapshot={"action": "execute_action", "amount": 50000},
             ttl_seconds=600,
         )
         await queue.park(token)

@@ -208,7 +208,7 @@ class TestReconciliationDaemonFailClosedSigning:
         mock_provider = MagicMock()
         mock_provider.fetch_balance.return_value = ReconciliationResult(
             source="custody_live",
-            balance_usd=250000.0,
+            state_scalar=250000.0,
             verified_at=1700000000.0,
         )
 

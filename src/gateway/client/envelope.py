@@ -54,7 +54,7 @@ class GovernanceEnvelope(BaseModel):
             - 'instance_id': Unique instance identifier
             - 'region': Deployment region (e.g., "us-central1")
         subject: Dictionary identifying the action being governed:
-            - 'action': Action name (e.g., "execute_trade")
+            - 'action': Action name (e.g., "execute_action")
             - 'action_hash': SHA256 hash of the action parameters
             - 'record_hash': SHA256 hash of the audit record
             - 'agent_id': Identifier of the agent requesting the action
