@@ -46,7 +46,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-vllm-sa
       tolerations:
         - key: "nvidia.com/gpu"
           operator: "Equal"

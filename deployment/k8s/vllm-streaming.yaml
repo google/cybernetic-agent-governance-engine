@@ -29,7 +29,7 @@ spec:
       labels:
         app: vllm-inference-streaming
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-vllm-sa
       volumes:
         - name: dshm
           emptyDir:

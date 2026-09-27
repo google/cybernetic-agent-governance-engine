@@ -242,4 +242,4 @@ spec:
           operator: "Equal"
           value: "present"
           effect: "NoSchedule"
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-vllm-sa

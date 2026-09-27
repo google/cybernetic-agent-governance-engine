@@ -356,20 +356,8 @@ module "nemo_guardrails" {
   depends_on = [module.gke, module.vllm]
 }
 
-# ─── financial-advisor-sa ServiceAccount ──────────────────────────────────────
-# Hoisted out of module.governed_advisor so that module.vllm and
-# module.vllm_reasoning can depend on it without creating a circular dependency.
-resource "kubernetes_service_account" "financial_advisor_sa" {
-  metadata {
-    name      = "financial-advisor-sa"
-    namespace = module.namespace.name
-    annotations = {
-      "iam.gke.io/gcp-service-account" = "financial-advisor-sa@${var.project_id}.iam.gserviceaccount.com"
-    }
-  }
-
-  depends_on = [module.namespace]
-}
+# Workload ServiceAccounts are defined per workload in iam.tf
+# (kubernetes_service_account.workload), each bound 1:1 to its own GSA.
 
 # ─── Deploy vLLM Inference Engine ──────────────────────────────────────────────
 
@@ -380,7 +368,7 @@ module "vllm" {
 
   namespace            = module.namespace.name
   deployment_name      = "vllm-inference"
-  service_account_name = "financial-advisor-sa"
+  service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
   # model_path dynamically routes: gs:// to GCS tensor streaming, else HF hub
   model_path     = var.model_fast
@@ -437,7 +425,7 @@ module "vllm" {
     }
   ]
 
-  depends_on = [module.gke, kubernetes_service_account.financial_advisor_sa]
+  depends_on = [module.gke, kubernetes_service_account.workload["vllm"]]
 }
 
 # ─── Deploy vLLM Reasoning Engine ──────────────────────────────────────────────
@@ -449,7 +437,7 @@ module "vllm_reasoning" {
 
   namespace            = module.namespace.name
   deployment_name      = "vllm-reasoning"
-  service_account_name = "financial-advisor-sa"
+  service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   service_name         = "vllm-reasoning"
   image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
   # model_path dynamically routes: gs:// to GCS tensor streaming, else HF hub
@@ -496,7 +484,7 @@ module "vllm_reasoning" {
     }
   ]
 
-  depends_on = [module.gke, kubernetes_service_account.financial_advisor_sa]
+  depends_on = [module.gke, kubernetes_service_account.workload["vllm"]]
 }
 
 # ─── Deploy Langfuse Observability ─────────────────────────────────────────────
@@ -565,12 +553,11 @@ module "compliance_bridge" {
   cage_env               = var.environment
   cage_deployment_region = var.cage_deployment_region
 
-  # K-3: wire KMS_GOVERNANCE_KEY so KMSBatchSigner loads at startup.
-  # Set the actual GCP KMS key resource name in terraform.auto.tfvars (gitignored).
-  # Empty string is acceptable in dev/CI only — the bridge uses a non-evidentiary
-  # software Ed25519 signer; enforcing postures refuse to start without it.
-  # See: infra/modules/compliance_bridge/variables.tf kms_governance_key
-  kms_governance_key = var.kms_governance_key
+  # POAM-2026-079: own identity and own signing key. KMSBatchSigner reads the
+  # key from KMS_GOVERNANCE_KEY; here it is the compliance-evidence key, not
+  # the gateway's seal key.
+  service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
+  kms_governance_key   = local.compliance_evidence_key_version
 
   depends_on = [module.langfuse, module.vllm]
 }
@@ -623,8 +610,13 @@ module "gateway" {
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
   )
   reconciliation_provider = "simulated"
-  kms_governance_key      = var.kms_governance_key
   cage_kms_provider       = "gcp"
+
+  # POAM-2026-079: own identity; signs seals with gateway-seal and trusts
+  # ground truth only from reconciler-snapshot (G8).
+  service_account_name = kubernetes_service_account.workload["gateway"].metadata[0].name
+  kms_governance_key   = local.gateway_seal_key_version
+  reconciler_kms_key   = local.reconciler_snapshot_key_version
 
   depends_on = [module.app_secrets, module.opa, module.vllm, module.redis]
 }
@@ -653,15 +645,14 @@ module "governed_advisor" {
   langfuse_host   = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   governance_salt = var.governance_salt
   gateway_url     = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
-  # Workload Identity: annotate financial-advisor-sa KSA so it can impersonate
-  # the GCP SA and access GCS without a key file (fixes vllm-reasoning 403 on GCS).
-  gcp_service_account_name = "financial-advisor-sa"
-  # Cloud KMS asymmetric governance signing (CTRL_KMS_001). Empty value selects a
-  # non-evidentiary software Ed25519 signer in dev/CI; enforcing postures refuse
-  # to start. governance_salt above only keys the dev-mode v2 routing seal.
-  kms_governance_key = var.kms_governance_key
-  cage_kms_provider  = var.cage_kms_provider
-  cage_env           = var.environment
+  # POAM-2026-079: own identity. The advisor still hosts an in-process governor
+  # that mints routing seals, so it temporarily signs with gateway-seal
+  # (residual risk, removed when that governor moves behind the gateway).
+  service_account_name = kubernetes_service_account.workload["advisor"].metadata[0].name
+  kms_governance_key   = local.gateway_seal_key_version
+  reconciler_kms_key   = local.reconciler_snapshot_key_version
+  cage_kms_provider    = var.cage_kms_provider
+  cage_env             = var.environment
 
   # K-4: wire OTLP auth header so governed-financial-advisor traces reach
   # Langfuse rather than returning 401 Unauthorized.

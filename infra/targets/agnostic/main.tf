@@ -140,15 +140,31 @@ module "langfuse" {
 
 # ─── Deploy Compliance Bridge ──────────────────────────────────────────────────
 
+# Own KSA per workload (POAM-2026-079). No cloud identity annotation: the
+# agnostic target has no Workload Identity provider.
+resource "kubernetes_service_account" "compliance_bridge" {
+  count = var.enable_compliance_bridge ? 1 : 0
+
+  metadata {
+    name      = "cage-compliance-bridge-sa"
+    namespace = module.namespace.name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/account-purpose"      = "compliance-evidence"
+    }
+  }
+}
+
 module "compliance_bridge" {
   count = var.enable_compliance_bridge ? 1 : 0
 
   source = "../../modules/compliance_bridge"
 
-  namespace     = module.namespace.name
-  image         = var.compliance_bridge_image
-  langfuse_host = module.langfuse.web_url
-  replicas      = var.enable_high_availability ? 2 : 1
+  namespace            = module.namespace.name
+  service_account_name = kubernetes_service_account.compliance_bridge[0].metadata[0].name
+  image                = var.compliance_bridge_image
+  langfuse_host        = module.langfuse.web_url
+  replicas             = var.enable_high_availability ? 2 : 1
 
   depends_on = [module.langfuse]
 }

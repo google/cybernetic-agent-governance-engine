@@ -16,7 +16,7 @@ spec:
       labels:
         app: compliance-bridge
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-compliance-bridge-sa
       containers:
         - name: compliance-bridge
           image: ${REGISTRY_URL}/compliance-bridge:latest

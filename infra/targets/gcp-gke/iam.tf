@@ -13,12 +13,31 @@
 # limitations under the License.
 
 locals {
-  # Service account IDs
-  sa_gateway          = "cage-gateway"
+  # Service account IDs (GSAs)
+  sa_gateway           = "cage-gateway"
+  sa_advisor           = "cage-advisor"
+  sa_reconciler        = "cage-reconciler"
   sa_compliance_bridge = "cage-compliance-bridge"
-  sa_lula             = "cage-lula"
-  sa_vllm             = "cage-vllm"
-  sa_agentsight       = "cage-agentsight"
+  sa_lula              = "cage-lula"
+  sa_vllm              = "cage-vllm"
+  sa_agentsight        = "cage-agentsight"
+  sa_benchmark         = "cage-benchmark"
+
+  # Kubernetes ServiceAccount names (KSAs), one per workload (POAM-2026-079).
+  # The "-sa" suffix matches the Linkerd mesh identities in
+  # deployment/k8s/linkerd-mtls-policy.yaml, so one KSA carries both the
+  # Workload Identity and the SPIFFE identity of a workload.
+  ksa_gateway           = "cage-gateway-sa"
+  ksa_advisor           = "cage-advisor-sa"
+  ksa_reconciler        = "cage-reconciler-sa"
+  ksa_compliance_bridge = "cage-compliance-bridge-sa"
+  ksa_vllm              = "cage-vllm-sa"
+  ksa_lula              = "cage-lula-sa"
+  ksa_benchmark         = "cage-benchmark-sa"
+
+  # vLLM runs in var.namespace when deployed by Terraform and in
+  # "vllm-inference" when deployed from deployment/k8s/ manifests.
+  vllm_workload_namespaces = distinct([var.namespace, "vllm-inference"])
 }
 
 # ---------------------------------------------------------------------------
@@ -28,14 +47,28 @@ locals {
 resource "google_service_account" "gateway" {
   account_id   = local.sa_gateway
   display_name = "CAGE Gateway Service Account"
-  description  = "Least-privilege SA for the CAGE gateway. Reads model weights, accesses secrets, signs audit evidence. (POAM-002 / AC-6)"
+  description  = "Least-privilege SA for the CAGE gateway. Reads model weights, accesses secrets, signs routing seals with the gateway-seal key. (POAM-002 / POAM-2026-079 / AC-6)"
+  project      = var.project_id
+}
+
+resource "google_service_account" "advisor" {
+  account_id   = local.sa_advisor
+  display_name = "CAGE Governed Advisor Service Account"
+  description  = "SA for the governed financial advisor. Temporarily holds signer on gateway-seal because the advisor still hosts an in-process governor (POAM-2026-079 residual; removed in the follow-up PR)."
+  project      = var.project_id
+}
+
+resource "google_service_account" "reconciler" {
+  account_id   = local.sa_reconciler
+  display_name = "CAGE Reconciler Service Account"
+  description  = "SA for the ground-truth reconciliation worker. Sole signer on the reconciler-snapshot key (G8 / POAM-2026-079)."
   project      = var.project_id
 }
 
 resource "google_service_account" "compliance_bridge" {
   account_id   = local.sa_compliance_bridge
   display_name = "CAGE Compliance Bridge Service Account"
-  description  = "Least-privilege SA for the compliance bridge. Writes OSCAL artifacts to GCS. (POAM-002 / AC-6)"
+  description  = "Least-privilege SA for the compliance bridge. Writes OSCAL artifacts to GCS and signs evidence batches with the compliance-evidence key. (POAM-002 / POAM-2026-079 / AC-6)"
   project      = var.project_id
 }
 
@@ -49,7 +82,14 @@ resource "google_service_account" "lula" {
 resource "google_service_account" "vllm" {
   account_id   = local.sa_vllm
   display_name = "CAGE vLLM Service Account"
-  description  = "Least-privilege SA for vLLM inference. Reads model weights from GCS. (POAM-002 / AC-6)"
+  description  = "Least-privilege SA for vLLM inference. Reads model weights from GCS. Holds no KMS role (POAM-002 / POAM-2026-079 / AC-6)"
+  project      = var.project_id
+}
+
+resource "google_service_account" "benchmark" {
+  account_id   = local.sa_benchmark
+  display_name = "CAGE Benchmark Service Account"
+  description  = "SA for the paper benchmark job (deployment/k8s/benchmark-job.yaml). Signs only with the benchmark-signing key, which no verifier trusts (POAM-2026-079)."
   project      = var.project_id
 }
 
@@ -160,9 +200,60 @@ resource "google_project_iam_member" "agentsight_metric_writer" {
 }
 
 # ---------------------------------------------------------------------------
+# Kubernetes ServiceAccounts for Terraform-deployed workloads
+# One KSA per workload, annotated to its own GSA (POAM-2026-079 / AC-5 / AC-6).
+# The reconciler runs only from deployment/k8s/reconciliation-worker.yaml, so
+# its KSA is defined in deployment/k8s/service-account.yaml, not here.
+# ---------------------------------------------------------------------------
+
+locals {
+  terraform_workload_ksas = {
+    gateway = {
+      name    = local.ksa_gateway
+      gsa     = google_service_account.gateway.email
+      purpose = "governance-gateway"
+    }
+    advisor = {
+      name    = local.ksa_advisor
+      gsa     = google_service_account.advisor.email
+      purpose = "governed-advisor"
+    }
+    compliance_bridge = {
+      name    = local.ksa_compliance_bridge
+      gsa     = google_service_account.compliance_bridge.email
+      purpose = "compliance-evidence"
+    }
+    vllm = {
+      name    = local.ksa_vllm
+      gsa     = google_service_account.vllm.email
+      purpose = "model-inference"
+    }
+  }
+}
+
+resource "kubernetes_service_account" "workload" {
+  for_each = local.terraform_workload_ksas
+
+  metadata {
+    name      = each.value.name
+    namespace = module.namespace.name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/account-purpose"      = each.value.purpose
+    }
+    annotations = {
+      "iam.gke.io/gcp-service-account" = each.value.gsa
+    }
+  }
+
+  depends_on = [module.namespace]
+}
+
+# ---------------------------------------------------------------------------
 # Workload Identity Federation bindings
-# Bind each K8s ServiceAccount to the corresponding GCP ServiceAccount.
-# This eliminates the need for long-lived service account keys.
+# Bind each K8s ServiceAccount to exactly one GCP ServiceAccount. The bindings
+# are authoritative for roles/iam.workloadIdentityUser, so a KSA added out of
+# band shows up as drift in terraform plan.
 # ---------------------------------------------------------------------------
 
 resource "google_service_account_iam_binding" "gateway_workload_identity" {
@@ -170,7 +261,25 @@ resource "google_service_account_iam_binding" "gateway_workload_identity" {
   role               = "roles/iam.workloadIdentityUser"
 
   members = [
-    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.sa_gateway}]",
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_gateway}]",
+  ]
+}
+
+resource "google_service_account_iam_binding" "advisor_workload_identity" {
+  service_account_id = google_service_account.advisor.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_advisor}]",
+  ]
+}
+
+resource "google_service_account_iam_binding" "reconciler_workload_identity" {
+  service_account_id = google_service_account.reconciler.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_reconciler}]",
   ]
 }
 
@@ -179,7 +288,17 @@ resource "google_service_account_iam_binding" "compliance_bridge_workload_identi
   role               = "roles/iam.workloadIdentityUser"
 
   members = [
-    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.sa_compliance_bridge}]",
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_compliance_bridge}]",
+  ]
+}
+
+resource "google_service_account_iam_binding" "vllm_workload_identity" {
+  service_account_id = google_service_account.vllm.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    for ns in local.vllm_workload_namespaces :
+    "serviceAccount:${var.project_id}.svc.id.goog[${ns}/${local.ksa_vllm}]"
   ]
 }
 
@@ -188,6 +307,15 @@ resource "google_service_account_iam_binding" "lula_workload_identity" {
   role               = "roles/iam.workloadIdentityUser"
 
   members = [
-    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.sa_lula}]",
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_lula}]",
+  ]
+}
+
+resource "google_service_account_iam_binding" "benchmark_workload_identity" {
+  service_account_id = google_service_account.benchmark.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_benchmark}]",
   ]
 }

@@ -158,3 +158,7 @@ langfuse_s3_endpoint = "https://storage.googleapis.com"
 langfuse_s3_bucket   = "" # Auto-generated from GCS bucket resource
 langfuse_s3_access_key = "" # Auto-generated from google_storage_hmac_key
 langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
+
+# ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
+# Dev posture only: SOFTWARE protection. Staging/prod keep the HSM default.
+kms_signing_protection_level = "SOFTWARE"

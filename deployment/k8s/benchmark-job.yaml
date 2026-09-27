@@ -31,7 +31,7 @@ spec:
         cage.io/benchmark-purpose: "paper-evaluation"
     spec:
       restartPolicy: Never
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-benchmark-sa
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -99,8 +99,11 @@ spec:
               value: "200"
             - name: REQUEST_TIMEOUT_S
               value: "180"
+            # Benchmark-only key (terraform output benchmark_signing_key_version).
+            # No verifier trusts it, so benchmark signatures carry no authority
+            # (POAM-2026-079). Keyring name is cage-signing-<environment>.
             - name: KMS_GOVERNANCE_KEY
-              value: "projects/${GOOGLE_CLOUD_PROJECT}/locations/us-central1/keyRings/cybernetics-keyring/cryptoKeys/cage-bench-ec-key/cryptoKeyVersions/1"
+              value: "projects/${GOOGLE_CLOUD_PROJECT}/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/benchmark-signing/cryptoKeyVersions/1"
             - name: ADVERSARIAL_JSON
               value: "/app/tests/red_team/adversarial_dataset.json"
             - name: BENIGN_JSON

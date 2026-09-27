@@ -756,8 +756,10 @@ component-definition:
                 (human identities) accessing GCP Console, Cloud APIs, and GKE cluster.
                 GCP supports MFA enforcement via Organization Policy constraints.
                 GCP Workload Identity provides certificate-based service-to-service
-                authentication, binding Kubernetes service accounts to GCP service accounts
-                (financial-advisor-sa, agentsight-ui-sa per deployment/terraform/iam.tf).
+                authentication, binding each Kubernetes service account 1:1 to its own GCP
+                service account (cage-gateway, cage-advisor, cage-reconciler,
+                cage-compliance-bridge, cage-vllm, cage-benchmark per
+                infra/targets/gcp-gke/iam.tf; POAM-2026-079).
               props:
                 - name: implementation-status
                   value: "shared"

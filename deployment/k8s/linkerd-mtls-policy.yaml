@@ -12,27 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
----
 # -----------------------------------------------------------------------------
-# ServiceAccount: cage-gateway-sa
-# All gateway pods run under this SA for SPIFFE identity derivation.
-# (financial-advisor-sa is the GCP Workload Identity SA; this is the k8s SA
-#  used for Linkerd mTLS identity in the intra-cluster mesh.)
+# Workload ServiceAccounts (cage-gateway-sa, cage-compliance-bridge-sa, ...)
+# are defined once, with their Workload Identity annotations, in
+# deployment/k8s/service-account.yaml (POAM-2026-079). The gateway and the
+# compliance bridge pods run as those KSAs, so the SPIFFE identities below
+# are the identities the pods actually present.
 # -----------------------------------------------------------------------------
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: cage-gateway-sa
-  namespace: governance-stack
-  labels:
-    app.kubernetes.io/managed-by: cage
-    cage.io/component: z3n-identity
-  annotations:
-    compliance.nist.gov/control: "IA-3,SC-8"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-05-17"
-    cage.io/poam: "POAM-007,POAM-011"
-    linkerd.io/inject: "enabled"
 
 ---
 # -----------------------------------------------------------------------------
@@ -62,25 +48,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: cage-nemo-sa
-  namespace: governance-stack
-  labels:
-    app.kubernetes.io/managed-by: cage
-    cage.io/component: z3n-identity
-  annotations:
-    compliance.nist.gov/control: "IA-3,SC-8"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-05-17"
-    cage.io/poam: "POAM-007,POAM-011"
-
----
-# -----------------------------------------------------------------------------
-# ServiceAccount: cage-compliance-bridge-sa
-# Compliance Bridge service.
-# -----------------------------------------------------------------------------
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: cage-compliance-bridge-sa
   namespace: governance-stack
   labels:
     app.kubernetes.io/managed-by: cage

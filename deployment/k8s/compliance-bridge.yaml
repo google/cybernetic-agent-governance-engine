@@ -36,7 +36,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-compliance-bridge-sa
       containers:
         - name: compliance-bridge
           # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)

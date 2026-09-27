@@ -41,7 +41,7 @@ spec:
       annotations:
         gke-gcsfuse/volumes: "true"
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-vllm-sa
       affinity:
         podAntiAffinity:
           # requiredDuringScheduling: enforces that each vllm-inference replica

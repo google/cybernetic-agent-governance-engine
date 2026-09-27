@@ -15,7 +15,7 @@ spec:
       labels:
         app: governed-financial-advisor
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-advisor-sa
       volumes:
         # policy-volume and opa-config-volume removed — OPA sidecar removed.
         # governed-financial-advisor uses OPA_URL env var to reach the shared

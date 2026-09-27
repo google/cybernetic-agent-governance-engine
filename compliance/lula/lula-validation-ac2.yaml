@@ -24,7 +24,7 @@
 # Provider: opa (inline Rego)
 #
 # References:
-#   - deployment/k8s/service-account.yaml — named SA: financial-advisor-sa
+#   - deployment/k8s/service-account.yaml — one named SA per workload (POAM-2026-079)
 #   - deployment/k8s/backend-deployment.yaml — serviceAccountName binding
 #   - deployment/terraform/iam.tf — GCP IAM bindings for workload identity
 #   - docs/POAM.md — POAM-001 (AC-2: no account management procedures)
@@ -40,7 +40,7 @@ component-definition:
     last-modified: '2026-07-01T13:18:54Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-sp800-53.\nNotes: NIST SP 800-53 Rev 5 AC-2: Account Management. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Implements three account management assertions for the CAGE governance namespace:\n  (1) All named ServiceAccounts must carry the cage.io/account-purpose label\n      (enforces documented account purpose per AC-2(a)(1)).\n  (2) The default ServiceAccount must have automountServiceAccountToken: false\n      (prevents credential misuse by unintended workloads).\n  (3) No Pod may use the \"default\" ServiceAccount — all workloads must explicitly\n      bind to a named, purpose-labeled ServiceAccount (enforces AC-2 individual\n      accountability and least privilege).\nReferences: deployment/k8s/service-account.yaml (financial-advisor-sa pattern), deployment/terraform/iam.tf (GCP workload identity bindings). Remediates: POAM-001 — AC-2 account management procedures gap. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-2 monitoring cadence."
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-sp800-53.\nNotes: NIST SP 800-53 Rev 5 AC-2: Account Management. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Implements three account management assertions for the CAGE governance namespace:\n  (1) All named ServiceAccounts must carry the cage.io/account-purpose label\n      (enforces documented account purpose per AC-2(a)(1)).\n  (2) The default ServiceAccount must have automountServiceAccountToken: false\n      (prevents credential misuse by unintended workloads).\n  (3) No Pod may use the \"default\" ServiceAccount — all workloads must explicitly\n      bind to a named, purpose-labeled ServiceAccount (enforces AC-2 individual\n      accountability and least privilege).\nReferences: deployment/k8s/service-account.yaml (one ServiceAccount per workload, POAM-2026-079), infra/targets/gcp-gke/iam.tf (GCP workload identity bindings). Remediates: POAM-001 — AC-2 account management procedures gap. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-2 monitoring cadence."
   components:
   - uuid: afa8aab0-84e1-5b07-8b83-b3fb498629a8
     type: software

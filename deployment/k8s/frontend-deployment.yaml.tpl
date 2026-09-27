@@ -15,7 +15,7 @@ spec:
       labels:
         app: financial-advisor-ui
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-frontend-sa
       containers:
         - name: ui
           image: ${REGISTRY_URL}/financial-advisor-ui:latest

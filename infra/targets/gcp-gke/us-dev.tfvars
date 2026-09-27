@@ -197,3 +197,7 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 # FAIL the plan if they are the same or empty when enable_nist_compliance=true.
 #
 # Keys are NOT hardcoded here — they are injected via TF_VAR_* from .env.
+
+# ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
+# Dev posture only: SOFTWARE protection. Staging/prod keep the HSM default.
+kms_signing_protection_level = "SOFTWARE"

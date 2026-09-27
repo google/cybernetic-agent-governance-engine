@@ -47,7 +47,7 @@ resource "kubernetes_deployment" "gateway" {
       }
 
       spec {
-        service_account_name = "financial-advisor-sa"
+        service_account_name = var.service_account_name
 
         security_context {
           run_as_non_root = true
@@ -223,6 +223,10 @@ resource "kubernetes_deployment" "gateway" {
           env {
             name  = "KMS_GOVERNANCE_KEY"
             value = var.kms_governance_key
+          }
+          env {
+            name  = "RECONCILER_KMS_KEY"
+            value = var.reconciler_kms_key
           }
           env {
             name  = "CAGE_KMS_PROVIDER"

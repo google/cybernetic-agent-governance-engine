@@ -154,12 +154,6 @@ variable "alphavantage_api_key" {
   default = ""
 }
 
-variable "gcp_service_account_name" {
-  description = "Name (not email) of the GCP service account used for Workload Identity binding on the financial-advisor-sa KSA"
-  type        = string
-  default     = "financial-advisor-sa"
-}
-
 variable "cage_env" {
   description = "Runtime environment for the advisor (development, staging, production). Controls dev-mode auth bypass (auth.py) and KMS/salt startup enforcement guards."
   type        = string
@@ -182,4 +176,19 @@ variable "cage_kms_provider" {
   description = "Cloud KMS provider backend for governance signing (CAGE_KMS_PROVIDER): gcp, aws, or azure."
   type        = string
   default     = "gcp"
+}
+
+variable "service_account_name" {
+  description = "Kubernetes ServiceAccount the pods run as. Must be this workload's own KSA, bound 1:1 to its own GSA (POAM-2026-079). No default: a missing identity fails the plan."
+  type        = string
+
+  validation {
+    condition     = var.service_account_name != "" && var.service_account_name != "financial-advisor-sa"
+    error_message = "service_account_name must name the workload's own KSA; the shared financial-advisor-sa is retired (POAM-2026-079)."
+  }
+}
+
+variable "reconciler_kms_key" {
+  description = "Cloud KMS key version of the reconciler-snapshot key (RECONCILER_KMS_KEY). The governor trusts ground-truth snapshots only from this key (G8); the startup posture check refuses an unset value or one equal to KMS_GOVERNANCE_KEY."
+  type        = string
 }

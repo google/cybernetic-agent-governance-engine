@@ -559,10 +559,15 @@ variable "governance_salt" {
   default     = ""
 }
 
-variable "kms_governance_key" {
-  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (from KMS_GOVERNANCE_KEY). Empty string selects a non-evidentiary software Ed25519 signer in dev/CI; enforcing postures refuse to start without it."
+variable "kms_signing_protection_level" {
+  description = "Protection level for the Terraform-provisioned signing keys in kms_signing.tf (gateway-seal, reconciler-snapshot, compliance-evidence). HSM for staging/prod; SOFTWARE only in dev postures (POAM-2026-079 / SC-12)."
   type        = string
-  default     = ""
+  default     = "HSM"
+
+  validation {
+    condition     = contains(["SOFTWARE", "HSM"], var.kms_signing_protection_level)
+    error_message = "kms_signing_protection_level must be SOFTWARE or HSM."
+  }
 }
 
 variable "cage_kms_provider" {
