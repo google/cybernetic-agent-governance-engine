@@ -339,7 +339,7 @@ flowchart LR
 
 | Step | Branch | Scope | Exit criteria |
 |---|---|---|---|
-| 6a | `refactor/infra-shared-modules` | Bump `hashicorp/google` to `~> 6.x` in every GCP target and module (§8, item 3). Extract `vpc_network`, `memorystore_redis`/`memorystore_valkey`, `cloudsql_postgres`, `worm_bucket`, `kms`. Cloud Run consumes them unchanged. | `terraform plan` on 6.x shows no diff for Cloud Run dev and GKE dev |
+| 6a | `refactor/infra-shared-modules` | Bump `hashicorp/google` to `~> 6.43` in every GCP target and module (§8, items 3 and 3′). Extract `vpc_network`, `memorystore_redis`/`memorystore_valkey`, `cloudsql_postgres`, `worm_bucket`, `kms`. Cloud Run consumes them unchanged. | `terraform plan` on 6.x shows no diff for Cloud Run dev and GKE dev |
 | 6b.0 | `fix/cbf-atomic-debit` | §2.3 items 1–5 (Layer 1) | Each item has a test that observes the failure; `make test-fast` green |
 | 6b | `feat/gke-memorystore` | §2.1, §2.2, §2.4, §1.2 flags; delete Sentinel stub and `redis-*.yaml` | Live `WAIT 1 100` smoke test succeeds on the staging `governance` instance (Valkey caveat, §8 item 1); fault matrix passes; static gate covers Memorystore |
 | 6c | `feat/gke-cloudsql` | §2.5 | Langfuse up with no static DB password |
@@ -374,7 +374,7 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 | Custom CoreDNS introduced later | Unsupported by FQDN policy; the module allows only kube-dns or Cloud DNS |
 | Pre-change connections survive a policy tightening | Roll out the selected workloads after every policy change |
 | DNS used as an egress channel (lookups for any name still resolve) | DNS egress allowed only to kube-dns / Cloud DNS |
-| Provider resolves an old version without the new resources | Constraint floor at a verified 6.x version; `~> X.Y` (not `~> X.Y.Z`, which pins the patch series); decide in 6a whether to commit `.terraform.lock.hcl` (gitignored today) |
+| Provider resolves an old version without the new resources | Constraint `~> 6.43` (§8, item 3′), written `~> X.Y` (not `~> X.Y.Z`, which pins the patch series); decide in 6a whether to commit `.terraform.lock.hcl` (gitignored today) |
 | ClickHouse pods land on general nodes | Taint + toleration + node affinity |
 | Spot preemption during CI or measurement | GPU Spot off; `general-spot` has an on-demand fallback; governance pods have anti-Spot affinity |
 | KMS cold start inflates P95 | Anchors fetched out of band and cached (§4.2); a lightweight live-KMS gate runs in dev |
@@ -389,7 +389,6 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 
 | # | Question | Blocks | How |
 |---|---|---|---|
-| 3′ | Exact 6.x floor for the `hashicorp/google` constraint | 6a | Read the provider CHANGELOG for the first GA release with `google_memorystore_instance` (including `mode`) and `enable_fqdn_network_policy`. 6.50.0 is verified to have both (item 3). |
 | 4 | Does the advisor need to sign plans? | 6d | It signs in [evaluator_node.py](../src/governed_financial_advisor/graph/nodes/evaluator_node.py) and verifies in its own graph ([explainer_node.py:56](../src/governed_financial_advisor/graph/nodes/explainer_node.py#L56)). If nothing external relies on the signature, drop the key. |
 | 5 | Who holds signer rights on the governance key today | 6d | `gcloud kms keys get-iam-policy`; any grant is out of band (POAM-038) |
 
@@ -397,6 +396,7 @@ PR 5 (`docs/governor-convergence`) runs in parallel. Its "GKE or Cloud Run" word
 
 | # | Question | Answer | Effect on the blueprint |
 |---|---|---|---|
+| 3′ | Lowest `hashicorp/google` 6.x version that supports this blueprint | **6.43.0.** From the [provider CHANGELOG](https://github.com/hashicorp/terraform-provider-google/blob/main/CHANGELOG.md), GA releases: 6.11.0 `google_memorystore_instance`; **6.14.0** `enable_fqdn_network_policy`; **6.20.0** `CLUSTER_DISABLED` for `mode` (D5); **6.42.0** `replica_count = 0` (dev instances, staging `app`, §1.1) and `kms_key` (CMEK, staging/prod); **6.43.0** `managed_server_ca` (CA to pin, §2.1). 6.14.0 covers FQDN policy only. | 6a sets `version = "~> 6.43"` (≥ 6.43, < 7.0) in all three files. Moving to 7.x (current upstream) is a separate decision, with its own breaking changes. |
 | 1 | Does Memorystore support `WAIT`? | **Memorystore for Redis / Redis Cluster: yes.** `WAIT` is listed as supported in [Supported and blocked commands](https://cloud.google.com/memorystore/docs/redis/supported-commands). **Valkey: inferred** from OSS compatibility, not listed explicitly. With 0 replicas, `WAIT` blocks for the full timeout. | No 6b redesign. The staging replica (§1.1) and dev `WAIT_REPLICAS=0` (§1.2) stand. The 6b live smoke test stays because Valkey support is inferred. |
 | 2 | How do FQDN policies enforce on DPv2? | Implicit egress deny for selected pods. DNS for any name still resolves; the connection is dropped at L3/L4 when the IP doesn't back an allowlisted FQDN. Existing connections survive until closed. | §5.3 consequences (DNS only to kube-dns / Cloud DNS, rollout after changes, probe asserts connection failure). This is documented behaviour, not yet observed on our cluster: dev runs without DPv2 today, so the 6f live probe stays an exit criterion. |
 | 3 | Does the `~> 5.0` provider pin support the Valkey resource and FQDN policy? | **No.** Checked against provider schemas (`terraform providers schema -json`): GA **5.45.2** (what the local lockfile resolves) has neither `google_memorystore_instance` nor `enable_fqdn_network_policy`; **google-beta 5.45.2** has only the FQDN field; GA **6.50.0** has both, including `mode`, `authorization_mode`, `transit_encryption_mode` and `replica_count` on the instance. Bumping to `~> 5.38` wouldn't help. | 6a takes a **major** bump to `~> 6.x` in [gcp-gke/main.tf:20-21](../infra/targets/gcp-gke/main.tf#L20-L21), [gcp_gke_cluster/main.tf:18-19](../infra/modules/gcp_gke_cluster/main.tf#L18-L19) and [gcp-cloudrun/providers.tf:20-21](../infra/targets/gcp-cloudrun/providers.tf#L20-L21), and handles 6.0 breaking changes before any extraction. |
