@@ -47,14 +47,12 @@ from pydantic import BaseModel, field_validator
 
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
-from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-from src.gateway.governance.governor.governor import SymbolicGovernor
-from src.gateway.server.app_state import governor_of
-from src.gateway.governance.governor.governor import GovernanceError
 from src.gateway.governance.text_filter import ac_keyword_scan
+from src.gateway.server.app_state import governor_of
 
 logger = logging.getLogger("Gateway.GovernanceMiddleware")
 
@@ -370,6 +368,19 @@ def _is_trusted_proxy(ip: str) -> bool:
         return False
 
 
+def _client_ip(request: Request) -> str:
+    """Rate-limit key: X-Forwarded-For only when the TCP peer is a trusted proxy.
+
+    HIGH-5 fix: untrusted sources use the direct connection IP so attackers
+    cannot spoof their IP to bypass the per-IP rate limit.
+    """
+    direct_ip = request.client.host if request.client else "unknown"
+    if _is_trusted_proxy(direct_ip):
+        xff = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        return xff if xff else direct_ip
+    return direct_ip
+
+
 def _check_validate_action_rate_limit(client_ip: str) -> bool:
     """Return True if the request is within the rate limit, False if exceeded.
 
@@ -473,68 +484,22 @@ class ValidateActionRequest(BaseModel):
         return v
 
 
-# ---------------------------------------------------------------------------
-# P4 — KMS-verified governance signature check
-# ---------------------------------------------------------------------------
+class RevalidatePostHitlRequest(BaseModel):
+    """Payload for POST /governance/revalidate-post-hitl."""
 
+    action: str
+    params: dict[str, Any]
 
-def _verify_governance_signature(governance_signature: str, payload_plan: dict) -> None:
-    """Verify a KMS-backed governance signature against a plan payload.
-
-    Replaces the previous truthy check (``if governance_signature:``) with a
-    call to the KMS asymmetric verifier.  A missing or invalid signature raises
-    ``SymbolicGovernorViolation`` so the failure cannot be silently ignored.
-
-    Verification algorithm:
-        The ``KMSGovernanceSigner.verify()`` method computes a SHA-256 digest
-        of the canonical JSON plan (``json.dumps(plan, sort_keys=True,
-        separators=(",", ":"))``), then verifies the provided signature against
-        the Cloud KMS public key using EC-DSA (SHA-256 prehashed) or RSA-PSS
-        as appropriate for the configured key type.
-
-    Key reference:
-        ``KMS_GOVERNANCE_KEY`` environment variable — full Cloud KMS key
-        version resource name (e.g.
-        ``projects/my-proj/locations/us-central1/keyRings/cage-governance/
-        cryptoKeys/plan-signer/cryptoKeyVersions/1``).
-
-    Expected digest format:
-        The ``governance_signature`` argument must be a lowercase hex-encoded
-        byte string produced by ``KMSGovernanceSigner.sign(plan_dict)``.
-
-    Args:
-        governance_signature: Hex-encoded KMS signature string.
-        payload_plan:         The governance plan dict that was signed.
-
-    Raises:
-        SymbolicGovernorViolation: If the signature is absent, empty, or fails
-            cryptographic verification.
-    """
-    if not governance_signature:
-        raise SymbolicGovernorViolation(
-            "governance_signature is absent or empty — KMS verification cannot proceed",
-            action="governance_check",
-        )
-
-    try:
-        signer = get_governance_signer()
-        valid = signer.verify(plan=payload_plan, signature_hex=governance_signature)
-    except Exception as exc:
-        raise SymbolicGovernorViolation(
-            f"KMS verifier raised an unexpected error: {exc}",
-            action="governance_check",
-        ) from exc
-
-    if not valid:
-        raise SymbolicGovernorViolation(
-            "KMS signature verification failed — governance plan may be tampered",
-            action="governance_check",
-        )
-
-    logger.debug(
-        "✅ KMS governance signature verified (algorithm=%s)",
-        getattr(get_governance_signer(), "signing_algorithm", "UNKNOWN"),
-    )
+    @field_validator("params")
+    @classmethod
+    def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
+        for key, val in v.items():
+            if isinstance(val, float) and not math.isfinite(val):
+                raise ValueError(
+                    f"params[{key!r}] contains non-finite float {val!r} "
+                    "— NaN and Infinity are not permitted"
+                )
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -868,12 +833,7 @@ async def validate_action_endpoint(
     # comes from a known trusted proxy (load balancer / ingress controller).
     # Untrusted sources use the direct connection IP so attackers cannot spoof
     # their IP to bypass the per-IP rate limit.
-    direct_ip = request.client.host if request.client else "unknown"
-    if _is_trusted_proxy(direct_ip):
-        xff = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        client_ip = xff if xff else direct_ip
-    else:
-        client_ip = direct_ip
+    client_ip = _client_ip(request)
     if not _check_validate_action_rate_limit(client_ip):
         raise HTTPException(
             status_code=429,
@@ -1028,6 +988,77 @@ async def validate_action_endpoint(
         )
     except Exception:
         logger.error("❌ validate_action internal error", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal governance error")
+    finally:
+        otel_context.detach(token)
+
+
+@governance_app.post("/revalidate-post-hitl")
+async def revalidate_post_hitl_endpoint(
+    request: Request,
+    body: RevalidatePostHitlRequest,
+) -> JSONResponse:
+    """Pre-actuation re-validation of a human-approved action (TOCTOU closure).
+
+    Runs ``SymbolicGovernor.revalidate_post_hitl()`` under the ``POST_HITL``
+    profile: only the claimed barriers (CBF, OPA) are re-checked against the
+    fresh parameters the advisor re-hydrated after the approval pause.
+
+    The governor, its signer and its barrier state live only in the gateway
+    (POAM-2026-079): the advisor asks over the network and receives a verdict,
+    never a seal. The seal the pipeline mints stays inside this process and
+    expires unused; the trade itself is sealed again by ``execute_trade_action``.
+
+    Returns 200 ``{"verdict": "APPROVED"}`` or 403 ``{"verdict": "DENIED",
+    "violations": [...]}``. A refusal emits the same signed receipt as
+    ``/validate-action`` — refusals are primary evidence.
+    """
+    body_bytes = await request.body()
+    enforce_routing_seal(request, body_bytes)
+
+    client_ip = _client_ip(request)
+    if not _check_validate_action_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limit_exceeded",
+                "message": (
+                    f"Too many requests to /revalidate-post-hitl from {client_ip}. "
+                    f"Limit: {_RATE_LIMIT_MAX} requests per {_RATE_LIMIT_WINDOW}s."
+                ),
+            },
+        )
+
+    governor = governor_of(request.app)  # fail closed before any evaluation
+    token = otel_context.attach(otel_extract(dict(request.headers)))
+    t0 = time.perf_counter()
+    try:
+        await governor.revalidate_post_hitl(action=body.action, params=body.params)
+        return JSONResponse(
+            content={
+                "schema_version": "1.0.0",
+                "verdict": "APPROVED",
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+            }
+        )
+    except GovernanceError as exc:
+        await _emit_refusal_receipt(
+            action_id=body.action,
+            refusal_reason=str(exc),
+            oscal_control_ref="SC-4",
+            params=body.params,
+            receipt=exc.receipt,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "schema_version": "2.0.0",
+                "verdict": "DENIED",
+                "violations": getattr(exc, "violations", [str(exc)]),
+            },
+        )
+    except Exception:
+        logger.error("❌ revalidate_post_hitl internal error", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal governance error")
     finally:
         otel_context.detach(token)

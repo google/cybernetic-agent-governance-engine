@@ -22,21 +22,20 @@
 # No role is ever granted on the keyring. A keyring-scoped grant is inherited
 # by every key in the ring, including keys added later.
 #
-#   Key                  Signer (cloudkms.signer)      Public-key readers
-#   -------------------  ----------------------------  ---------------------------
-#   gateway-seal         gateway, advisor (temporary)  gateway, advisor
-#   reconciler-snapshot  reconciler                    reconciler, gateway, advisor
-#   compliance-evidence  compliance bridge             compliance bridge
-#   benchmark-signing    benchmark job                 benchmark job
+#   Key                  Signer (cloudkms.signer)  Public-key readers
+#   -------------------  ------------------------  -------------------------
+#   gateway-seal         gateway                   gateway
+#   reconciler-snapshot  reconciler                reconciler, gateway
+#   compliance-evidence  compliance bridge         compliance bridge
+#   benchmark-signing    benchmark job             benchmark job
 #
 # benchmark-signing exists only to measure KMS signing latency. It is not a
 # trust anchor: no verifier loads its public key, so its signatures carry no
 # authority.
 #
-# The advisor's signer grant on gateway-seal is a residual of POAM-2026-079:
-# the advisor still hosts an in-process SymbolicGovernor that mints routing
-# seals (governor/verdicts.py issue_seal). It is removed once that governor
-# moves behind the gateway.
+# The advisor appears nowhere: it hosts no SymbolicGovernor, verifies no
+# seals and has no Google service account (POAM-2026-079). Seals are issued
+# and consumed only inside the gateway.
 #
 # Readers get roles/cloudkms.publicKeyViewer (GetPublicKey) plus
 # roles/cloudkms.viewer on the key only (GetCryptoKeyVersion /
@@ -127,7 +126,6 @@ resource "google_kms_crypto_key" "benchmark_signing" {
 
 locals {
   gateway_member           = "serviceAccount:${google_service_account.gateway.email}"
-  advisor_member           = "serviceAccount:${google_service_account.advisor.email}"
   reconciler_member        = "serviceAccount:${google_service_account.reconciler.email}"
   compliance_bridge_member = "serviceAccount:${google_service_account.compliance_bridge.email}"
   benchmark_member         = "serviceAccount:${google_service_account.benchmark.email}"
@@ -135,13 +133,13 @@ locals {
   signing_key_access = {
     gateway_seal = {
       key     = google_kms_crypto_key.gateway_seal.id
-      signers = [local.gateway_member, local.advisor_member]
-      readers = [local.gateway_member, local.advisor_member]
+      signers = [local.gateway_member]
+      readers = [local.gateway_member]
     }
     reconciler_snapshot = {
       key     = google_kms_crypto_key.reconciler_snapshot.id
       signers = [local.reconciler_member]
-      readers = [local.reconciler_member, local.gateway_member, local.advisor_member]
+      readers = [local.reconciler_member, local.gateway_member]
     }
     compliance_evidence = {
       key     = google_kms_crypto_key.compliance_evidence.id

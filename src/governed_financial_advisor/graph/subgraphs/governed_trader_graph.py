@@ -37,7 +37,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import (
     BaseMessage,
@@ -62,9 +62,6 @@ from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
 )
-
-if TYPE_CHECKING:
-    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 logger = logging.getLogger(__name__)
 
@@ -378,9 +375,9 @@ def should_continue(state: GovernedTraderState) -> str:
 # samples the continuous market environment and re-validates deterministic bounds
 # at the exact moment of execution — not at the moment of human check.
 #
-# Architectural invariant: the SymbolicGovernor is injected by the composition
-# root (bootstrap_governor → build_governed_trader_graph). It is called
-# in-process, NOT routed through MCP, and cannot be bypassed by any LLM agent.
+# Architectural invariant: the SymbolicGovernor runs only in the gateway
+# (POAM-2026-079). Re-validation is a network call whose non-APPROVED outcomes
+# all block; the advisor cannot approve, seal or actuate a trade itself.
 # ---------------------------------------------------------------------------
 
 
@@ -532,10 +529,8 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             return _skipped_result(f"yfinance_error: {exc}")
 
 
-@side_effect_node(kind="api_call", external_system="symbolic_governor")
-async def post_hitl_revalidate_node(
-    state: GovernedTraderState, *, governor: "SymbolicGovernor"
-) -> dict[str, Any]:
+@side_effect_node(kind="api_call", external_system="gateway_api")
+async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any]:
     """TOCTOU Remediation — Pre-Actuation Re-Validation Node.
 
     Tests the human-approved intent against fresh market reality using the
@@ -554,9 +549,9 @@ async def post_hitl_revalidate_node(
         Tier 6: DoWhy causal gatekeeper
         Tier 7: FRIA normative boundary enforcement
 
-    Note: SymbolicGovernor.govern() runs the full pipeline. All tiers are
-    therefore re-evaluated — this is intentionally conservative. Tiers 1/2/4/5/6/7
-    will pass trivially since the plan was already approved at check-time.
+    The re-check runs in the gateway (``POST /governance/revalidate-post-hitl``),
+    the only process that hosts the ``SymbolicGovernor`` (POAM-2026-079). A
+    DENIED verdict, a gateway error or an unreachable gateway all BLOCK.
 
     Emits OTel span attributes:
         toctou.revalidation.result           — APPROVED | BLOCKED
@@ -564,7 +559,9 @@ async def post_hitl_revalidate_node(
         toctou.revalidation.drift_pct        — measured drift at execution time
         toctou.revalidation.max_slippage_pct — reviewer's approved tolerance
     """
-    from src.gateway.governance.governor.governor import GovernanceError
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
 
     tracer = get_tracer()
 
@@ -656,12 +653,12 @@ async def post_hitl_revalidate_node(
         # Post-HITL revalidation: only Tiers 3a (CBF) and 3b (OPA) are re-checked.
         # Tiers 1 (STPA), 2 (confidence), 5 (consensus), and 6 (causal) are
         # deterministic w.r.t. the static approved plan and do not need re-evaluation.
-        # In-process call on the injected governor — cannot be bypassed or
-        # intercepted by any LLM agent.
+        # Network call to the gateway's governor: the advisor holds no kernel,
+        # no signer and no barrier state, so it cannot approve its own trade.
         span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
         try:
-            await governor.revalidate_post_hitl(
-                action="execute_trade", params=fresh_params, trace_id=None
+            await GatewayClient().revalidate_post_hitl(
+                action="execute_trade", params=fresh_params
             )
 
             logger.info(
@@ -671,7 +668,7 @@ async def post_hitl_revalidate_node(
             span.set_attribute("toctou.revalidation.result", "APPROVED")
             return {"post_hitl_safety_status": "APPROVED"}
 
-        except GovernanceError as exc:
+        except Exception as exc:  # DENIED, gateway error or unreachable: fail closed
             block_reason = (
                 f"Governance re-validation failed after human approval: {exc}. "
                 f"Market conditions changed during the review period."
@@ -772,21 +769,12 @@ def _create_guarded_tool_executor() -> Any:
     )(tool_executor_node)
 
 
-def create_post_hitl_revalidate_node(governor: "SymbolicGovernor") -> Any:
-    """Bind ``post_hitl_revalidate_node`` to the composition-root governor."""
+def build_governed_trader_graph() -> Any:
+    """Compile the governed-trader subgraph.
 
-    async def _post_hitl_revalidate(state: GovernedTraderState) -> dict[str, Any]:
-        return await post_hitl_revalidate_node(state, governor=governor)
-
-    return _post_hitl_revalidate
-
-
-def build_governed_trader_graph(governor: "SymbolicGovernor") -> Any:
-    """Compile the governed-trader subgraph around an injected governor.
-
-    The governor comes from the composition root
-    (:func:`src.gateway.governance.governor.bootstrap.bootstrap_governor`);
-    there is no module-level compiled graph.
+    Every governance decision is a network call to the gateway; the advisor
+    hosts no ``SymbolicGovernor`` (POAM-2026-079). There is no module-level
+    compiled graph.
     """
     builder = StateGraph(GovernedTraderState)
 
@@ -797,7 +785,7 @@ def build_governed_trader_graph(governor: "SymbolicGovernor") -> Any:
         "post_hitl_rehydrate", post_hitl_rehydrate_node
     )  # TOCTOU: state re-hydration
     builder.add_node(
-        "post_hitl_revalidate", create_post_hitl_revalidate_node(governor)
+        "post_hitl_revalidate", post_hitl_revalidate_node
     )  # TOCTOU: pre-actuation re-eval
     builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
     builder.add_node("executor", executor_node)

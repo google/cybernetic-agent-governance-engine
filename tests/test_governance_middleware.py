@@ -31,11 +31,11 @@ B. /governance/validate-action endpoint
    - Internal exception → 500 with "Internal governance error" (MED-03 fix)
    - detail field never contains stack trace or internal variable names
 
-C. _verify_governance_signature()
-   - Valid signature passes (signer.verify returns True)
-   - Empty/absent signature raises SymbolicGovernorViolation
-   - signer.verify returns False → raises SymbolicGovernorViolation
-   - signer raises unexpected exception → SymbolicGovernorViolation
+C. /governance/revalidate-post-hitl endpoint (POAM-2026-079)
+   - APPROVED → 200 verdict, no seal in the response
+   - GovernanceError → 403 DENIED + refusal receipt
+   - Internal exception → 500 without leaking details
+   - Missing ingress seal → 403 before evaluation
 
 D. enforce_routing_seal() / _verify_routing_seal()
    - Valid HMAC seal passes
@@ -577,118 +577,95 @@ class TestValidateActionEndpoint:
 
 
 # ===========================================================================
-# C. _verify_governance_signature() unit tests
+# C. /revalidate-post-hitl endpoint tests (POAM-2026-079)
 # ===========================================================================
 
 
-class TestVerifyGovernanceSignature:
-    """Unit tests for the _verify_governance_signature() helper (P4 KMS check)."""
+class TestRevalidatePostHitlEndpoint:
+    """POST /revalidate-post-hitl: the advisor's only path to post-HITL re-checks."""
 
-    def test_valid_signature_passes(self):
-        """When signer.verify() returns True, no exception is raised."""
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
+    @pytest.fixture()
+    def client(self, mock_symbolic_governor, mock_kms_signer):
+        import src.gateway.server.governance_middleware as mw
+
+        original_secret, original_env = mw._CAGE_SEAL_SECRET, mw._ENVIRONMENT
+        mw._CAGE_SEAL_SECRET = None
+        mw._ENVIRONMENT = "test"  # allow bypass
+        from src.gateway.server.governance_middleware import governance_app
+
+        yield TestClient(governance_app, raise_server_exceptions=False)
+        mw._CAGE_SEAL_SECRET, mw._ENVIRONMENT = original_secret, original_env
+
+    def test_approved_returns_verdict_and_no_seal(self, client, mock_symbolic_governor):
+        """APPROVED returns a verdict only; the seal never leaves the gateway."""
+        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        params = {"symbol": "AAPL", "amount": 10.0}
+
+        resp = client.post(
+            "/revalidate-post-hitl", json={"action": "execute_trade", "params": params}
         )
 
-        mock_signer = MagicMock()
-        mock_signer.verify = MagicMock(return_value=True)
-
-        with patch(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            return_value=mock_signer,
-        ):
-            # Should not raise
-            _verify_governance_signature("deadbeef" * 8, {"action": "execute_trade"})
-
-        mock_signer.verify.assert_called_once_with(
-            plan={"action": "execute_trade"},
-            signature_hex="deadbeef" * 8,
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["verdict"] == "APPROVED"
+        assert "seal" not in body and "SEAL" not in resp.text
+        mock_symbolic_governor.revalidate_post_hitl.assert_awaited_once_with(
+            action="execute_trade", params=params
         )
 
-    def test_empty_signature_raises_violation(self):
-        """An empty governance_signature raises SymbolicGovernorViolation immediately."""
-        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
+    def test_governance_denial_returns_403_and_emits_refusal_receipt(
+        self, client, mock_symbolic_governor
+    ):
+        """A POST_HITL refusal is a 403 DENIED and enters the evidence chain."""
+        from src.gateway.governance.governor.governor import GovernanceError
+
+        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(
+            side_effect=GovernanceError("CBF Violation: h(next) < 0")
         )
+        emit = AsyncMock(return_value=None)
+        with patch("src.gateway.server.governance_middleware._emit_refusal_receipt", new=emit):
+            resp = client.post(
+                "/revalidate-post-hitl",
+                json={"action": "execute_trade", "params": {"amount": 10.0}},
+            )
 
-        with pytest.raises(SymbolicGovernorViolation) as exc_info:
-            _verify_governance_signature("", {"action": "execute_trade"})
+        assert resp.status_code == 403
+        assert resp.json()["verdict"] == "DENIED"
+        emit.assert_awaited_once()
+        assert emit.await_args.kwargs["action_id"] == "execute_trade"
 
-        assert "absent or empty" in str(exc_info.value)
-
-    def test_none_signature_raises_violation(self):
-        """A None governance_signature raises SymbolicGovernorViolation."""
-        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
+    def test_internal_error_returns_500_without_leaking(self, client, mock_symbolic_governor):
+        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(
+            side_effect=RuntimeError("secret_internal_detail")
         )
-
-        with pytest.raises(SymbolicGovernorViolation):
-            _verify_governance_signature(None, {"action": "execute_trade"})  # type: ignore[arg-type]
-
-    def test_signer_verify_returns_false_raises_violation(self):
-        """When signer.verify() returns False, SymbolicGovernorViolation is raised."""
-        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
+        resp = client.post(
+            "/revalidate-post-hitl", json={"action": "execute_trade", "params": {}}
         )
+        assert resp.status_code == 500
+        assert "secret_internal_detail" not in resp.text
 
-        mock_signer = MagicMock()
-        mock_signer.verify = MagicMock(return_value=False)
-
-        with patch(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            return_value=mock_signer,
-        ):
-            with pytest.raises(SymbolicGovernorViolation) as exc_info:
-                _verify_governance_signature(
-                    "deadbeef" * 8, {"action": "execute_trade"}
-                )
-
-        assert (
-            "tampered" in str(exc_info.value).lower()
-            or "failed" in str(exc_info.value).lower()
+    def test_non_finite_float_rejected(self, client, mock_symbolic_governor):
+        mock_symbolic_governor.revalidate_post_hitl = AsyncMock()
+        resp = client.post(
+            "/revalidate-post-hitl",
+            content=b'{"action": "execute_trade", "params": {"amount": NaN}}',
+            headers={"Content-Type": "application/json"},
         )
+        # Rejected by request validation (the 422 body cannot echo NaN, so
+        # the framework may surface it as 500); never evaluated either way.
+        assert resp.status_code in (422, 500)
+        mock_symbolic_governor.revalidate_post_hitl.assert_not_awaited()
 
-    def test_signer_raises_unexpected_exception_wraps_as_violation(self):
-        """If get_governance_signer().verify() raises, it is wrapped in SymbolicGovernorViolation."""
-        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
+    def test_missing_ingress_seal_is_rejected_before_evaluation(
+        self, enforce_client, mock_symbolic_governor
+    ):
+        """Same ingress guard as /validate-action: no seal header, no evaluation."""
+        mock_symbolic_governor.revalidate_post_hitl = AsyncMock()
+        resp = enforce_client.post(
+            "/revalidate-post-hitl", json={"action": "execute_trade", "params": {}}
         )
-
-        mock_signer = MagicMock()
-        mock_signer.verify = MagicMock(side_effect=ConnectionError("KMS unreachable"))
-
-        with patch(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            return_value=mock_signer,
-        ):
-            with pytest.raises(SymbolicGovernorViolation) as exc_info:
-                _verify_governance_signature(
-                    "deadbeef" * 8, {"action": "execute_trade"}
-                )
-
-        assert "KMS verifier raised an unexpected error" in str(exc_info.value)
-
-    def test_get_governance_signer_itself_raises_wraps_as_violation(self):
-        """If get_governance_signer() itself raises, it is wrapped in SymbolicGovernorViolation."""
-        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
-        )
-
-        with patch(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            side_effect=RuntimeError("KMS_GOVERNANCE_KEY not set"),
-        ):
-            with pytest.raises(SymbolicGovernorViolation) as exc_info:
-                _verify_governance_signature(
-                    "deadbeef" * 8, {"action": "execute_trade"}
-                )
-
-        assert "KMS verifier raised an unexpected error" in str(exc_info.value)
+        assert resp.status_code == 403
+        mock_symbolic_governor.revalidate_post_hitl.assert_not_awaited()
 
 
 # ===========================================================================
@@ -1002,14 +979,6 @@ class TestStartupValidation:
         from src.gateway.server.governance_middleware import enforce_routing_seal
 
         assert callable(enforce_routing_seal)
-
-    def test_module_exports_verify_governance_signature(self):
-        """_verify_governance_signature() is accessible from the module."""
-        from src.gateway.server.governance_middleware import (
-            _verify_governance_signature,
-        )
-
-        assert callable(_verify_governance_signature)
 
 
 # ===========================================================================

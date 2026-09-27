@@ -142,17 +142,11 @@ spec:
               value: "http/protobuf"
             - name: TRACE_SAMPLING_RATE
               value: "0.01"
-            # CTRL_KMS_001: KMS asymmetric governance signer (H-05).
-            # assert_kms_active_in_production() raises RuntimeError at startup
-            # if this env var is absent when CAGE_ENV=production.
-            # Also present via envFrom: advisor-secrets, but declared explicitly
-            # here for auditability and to match the gateway pattern.
-            - name: KMS_GOVERNANCE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: advisor-secrets
-                  key: KMS_GOVERNANCE_KEY
-                  optional: true
+            # POAM-2026-079: no signing-key variables. The advisor refuses to
+            # start if KMS_GOVERNANCE_KEY or RECONCILER_KMS_KEY is set, so both
+            # keys must also be absent from the advisor-secrets envFrom source.
+            # The gateway reads them from gateway-secrets instead; this pod
+            # must never reference gateway-secrets.
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:
                 secretKeyRef:

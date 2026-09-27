@@ -640,13 +640,15 @@ def verify_seal(
             pem = get_verification_key_for_jwt(seal)
 
             if pem is None:
-                # Fallback to direct signer key (backward compatibility)
-                signer = get_governance_signer()
-                pem = signer.get_public_key_pem()
-                logger.debug(
-                    "🔑 JWKS lookup failed for kid=%s, falling back to signer key",
+                # Trust is decided by kid alone: a kid absent from the JWKS is
+                # rejected, never re-tried against this process's own signer.
+                logger.warning(
+                    "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed "
+                    "action=%s reason=unknown_kid kid=%s",
+                    action,
                     kid,
                 )
+                raise SymbolicGovernorViolation(f"unknown kid: {kid!r}", action)
 
             jwk = pem_to_jwk(pem)
 

@@ -241,6 +241,75 @@ class GatewayClient:
         )
         return result
 
+    @side_effect_node(kind="api_call", external_system="gateway_api")
+    async def revalidate_post_hitl(
+        self,
+        action: str,
+        params: dict[str, Any],
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
+        """Ask the gateway to re-validate a human-approved action (TOCTOU closure).
+
+        Calls ``POST /governance/revalidate-post-hitl``. The governor and its
+        signer run only in the gateway; this returns a verdict, never a seal.
+
+        Raises:
+            PermissionError: On a DENIED verdict (HTTP 403) or any response
+                other than an explicit APPROVED — the caller must block.
+            httpx.HTTPError: On transport failures; callers must also block.
+        """
+        client = await self._ensure_client()
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        otel_inject(headers)
+        response = await client.post(
+            "/governance/revalidate-post-hitl",
+            json={"action": action, "params": params},
+            headers=headers,
+            timeout=timeout,
+        )
+        if response.status_code == 403:
+            violations = response.json().get("violations") or ["governance denied"]
+            raise PermissionError(
+                f"Post-HITL re-validation DENIED '{action}': "
+                + "; ".join(str(v) for v in violations)
+            )
+        response.raise_for_status()
+        result: dict[str, Any] = response.json()
+        if result.get("verdict") != "APPROVED":
+            raise PermissionError(
+                f"Post-HITL re-validation returned no APPROVED verdict for '{action}'"
+            )
+        return result
+
+    @side_effect_node(kind="api_call", external_system="gateway_api")
+    async def execute_tool(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
+        """Run a gateway-hosted tool via ``POST /tools/execute``.
+
+        Governed tools (``simulate_governance_check``, ``evaluate_policy``,
+        ``execute_trade_action``, ...) execute in the gateway process, where the
+        governor, OPA client and ``ActuatorRegistry`` live.
+
+        Returns:
+            The gateway's ``{"status": ..., "output"|"error": ...}`` body.
+        """
+        client = await self._ensure_client()
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        otel_inject(headers)
+        response = await client.post(
+            "/tools/execute",
+            json={"tool_name": tool_name, "params": params},
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+        return body
+
     async def close(self) -> None:
         """Close the underlying HTTP client and release resources."""
         if self._http and not self._http.is_closed:

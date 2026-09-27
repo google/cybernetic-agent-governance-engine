@@ -26,62 +26,14 @@ from src.governed_financial_advisor.graph.state import AgentState
 logger = logging.getLogger("EvaluatorNode")
 tracer = trace.get_tracer("src.governed_financial_advisor.graph.nodes.evaluator_node")
 
-from src.gateway.governance.kms_signer import get_governance_signer
-
-
-@side_effect_node(kind="api_call", external_system="cloud_kms")
-def generate_governance_signature(plan: dict) -> str | None:
-    """Generate a cryptographic governance signature for a plan.
-
-    KMS signing is mandatory (CTRL_KMS_001 — evidentiary independence control).
-    ``KMS_GOVERNANCE_KEY`` must be set to the full Cloud KMS key version
-    resource name:
-      - ``KMSGovernanceSigner.from_env()`` calls ``asymmetricSign`` on the
-        KMS HSM — the private key never leaves the hardware security module.
-      - The signature is non-repudiable: Cloud Audit Logs independently
-        record when and by what workload identity the signing occurred.
-
-    If ``KMS_GOVERNANCE_KEY`` is unset, empty, or the google-cloud-kms client
-    fails to initialise, ``get_governance_signer()`` raises ``RuntimeError``
-    immediately — this node does not catch it, so the whole request fails
-    (surfaces as HTTP 500). Dev/CI environments must provision a real (or
-    emulated) KMS key, or route around this node entirely.
-
-    Zero-step plan exemption: signing is skipped entirely when the plan
-    contains no executable steps.  A zero-step (analysis/conversational) plan
-    has no governed action to attest — calling Cloud KMS asymmetricSign
-    (P50 108ms, P99 9.6s) provides no safety value and wastes HSM capacity.
-    Returns ``None`` on the skipped path; callers must handle ``None`` for
-    ``governance_signature``.
-
-    See: ``src/gateway/governance/kms_signer.py`` for full architecture.
-    """
-    with tracer.start_as_current_span(
-        "evaluator.generate_governance_signature"
-    ) as span:
-        plan_steps = plan.get("steps", [])
-        if not plan_steps:
-            # Zero-step analysis/conversation plan — no governed action to attest.
-            # Signing a no-action plan with Cloud KMS (P50 108ms, P99 9.6s) provides
-            # no safety value and wastes HSM capacity. Skip unconditionally.
-            logger.debug(
-                "Skipping KMS signature for zero-step plan (no governed action)",
-                extra={"plan_type": plan.get("type", "unknown")},
-            )
-            span.set_attribute("kms.signing.skipped", True)
-            span.set_attribute("kms.signing.skip_reason", "zero_step_plan")
-            return None
-
-        span.set_attribute("kms.signing.skipped", False)
-        signer = get_governance_signer()
-        return signer.sign(plan)
-
-
 @side_effect_node(kind="api_call", external_system="opa_engine")
 async def evaluator_node(state: AgentState) -> dict[str, Any]:
     """
     System 3 Control Node: The "Real-Time Monitor".
-    Verifies safety and generates a governance signature upon approval.
+    Previews the plan against the gateway's governor (dry run) and returns an
+    advisory verdict. The advisor signs nothing: it is an untrusted client
+    with no signing identity (POAM-2026-079). Authority to execute comes only
+    from the gateway, which re-runs the full pipeline and seals the trade.
     """
     plan = state.get("execution_plan_output")
     if not plan:
@@ -103,7 +55,6 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
                     "policy_check": "SKIPPED",
                     "semantic_check": "SKIPPED",
                 },
-                "governance_signature": generate_governance_signature(plan),
                 "risk_status": "APPROVED",
             }
 
@@ -153,12 +104,6 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
 
         span.set_attribute("safety_check.passed", is_safe)
 
-    # SECURE SIGNATURE GENERATION
-    sig = None
-    if is_safe:
-        sig = generate_governance_signature(plan)  # type: ignore[arg-type]
-        logger.info(f"✅ Evaluator: Signature Generated: {sig[:8]}...")  # type: ignore[index]  # sig is str when is_safe=True; None only on rejection path
-
     verdict = "APPROVED" if is_safe else "REJECTED"
     risk_status = "REJECTED_REVISE" if not is_safe else "APPROVED"
 
@@ -179,7 +124,6 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
             "reasoning": safety_msg,
             "policy_check": "PASSED" if is_safe else "FAILED",
         },
-        "governance_signature": sig,
         "opa_results": opa_results,  # Pass OPA metadata to Auditor!
         "risk_status": risk_status,
         "risk_feedback": feedback_msg,

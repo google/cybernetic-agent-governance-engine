@@ -142,7 +142,7 @@ The `PlaceboTreatmentRefuter` runs 50 simulations; a refutation is triggered whe
 
 ### 5.5. Routing Seal Integrity
 
-**Source:** [`src/gateway/governance/routing_seal.py`](../../../src/governed_financial_advisor/utils/routing_seal.py)
+**Source:** [`src/gateway/governance/routing_seal.py`](../../../src/gateway/governance/routing_seal.py)
 
 Every request traversing the governance gateway must carry a valid HMAC-SHA256 routing seal. The seal format is:
 

@@ -26,6 +26,9 @@ spec:
         run.googleapis.com/startup-cpu-boost: "true"
         autoscaling.knative.dev/min-scale: "1"
     spec:
+      # Cloud Run always runs as a Google service account. Use a dedicated
+      # account with no IAM roles: the advisor needs no Google Cloud API and
+      # must hold no signing key (POAM-2026-079).
       serviceAccountName: cage-advisor@PROJECT_ID.iam.gserviceaccount.com
       containers:
         # --- CONTAINER 1: The Agent (Ingress) ---
