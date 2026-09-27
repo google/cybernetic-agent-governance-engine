@@ -70,9 +70,10 @@ _IS_CLOUDRUN = (
 
 @pytest.mark.integration
 def test_redis_noeviction_invariant():
-    """Redis db=1 MUST be configured with allkeys-lru maxmemory-policy.
+    """Redis MUST be configured with noeviction in every environment.
 
-    (Updated to reflect the 256MB LRU policy requested by user).
+    Governance state must never be silently evicted; at the memory ceiling
+    Redis refuses writes and the gateway fails closed.
 
     On Cloud Run / Cloud Memorystore, CONFIG GET is not supported — the
     eviction policy is enforced at the managed-service tier and this
@@ -80,8 +81,7 @@ def test_redis_noeviction_invariant():
     tests/infrastructure/test_cloudrun_cmek.py).
     """
     client = _get_redis_client(db=1)
-    env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT") or "dev").lower()
-    expected_policy = "noeviction" if env in ("prod", "production") else "allkeys-lru"
+    expected_policy = "noeviction"
 
     try:
         max_memory_policy = client.config_get("maxmemory-policy")["maxmemory-policy"]
@@ -92,7 +92,7 @@ def test_redis_noeviction_invariant():
 
     assert max_memory_policy == expected_policy, (
         f"CRITICAL: Redis db=1 maxmemory-policy is '{max_memory_policy}', "
-        f"expected '{expected_policy}' for {env} environment."
+        f"expected '{expected_policy}'."
     )
 
 

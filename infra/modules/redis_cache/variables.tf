@@ -130,8 +130,3 @@ variable "maxmemory" {
   default     = "1024mb"
 }
 
-variable "maxmemory_policy" {
-  description = "Eviction policy for Redis"
-  type        = string
-  default     = "noeviction"
-}

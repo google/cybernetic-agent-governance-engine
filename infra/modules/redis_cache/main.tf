@@ -60,11 +60,16 @@ resource "helm_release" "redis" {
     value = var.enable_auth
   }
 
+  # CAGE invariant: maxmemory-policy is hard-coded to noeviction in every
+  # environment. Governance state (cage:ground_truth:*, cbf:local_debits,
+  # safety:fence_epoch, DEFER tokens, evidence stream) must never be
+  # silently evicted; at the memory ceiling Redis refuses writes and the
+  # gateway fails closed. Deliberately not a variable.
   set {
     name  = "commonConfiguration"
     value = <<-EOT
       maxmemory ${var.maxmemory}
-      maxmemory-policy ${var.maxmemory_policy}
+      maxmemory-policy noeviction
       appendonly yes
       appendfsync everysec
       no-appendfsync-on-rewrite yes
