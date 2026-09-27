@@ -75,6 +75,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
 | POAM-2026-077 | CM-6 / SC-24 | Healthcare and physical-AI plugins declare no `DomainConfig` (no FTRA terminal registry), so `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start (fail closed); only `finance` is runnable | Moderate | 2026-12-31 |
 | POAM-2026-078 | SI-10 / SA-8 | Plugin-contributed CBF invariants (healthcare serum concentration, physical-AI separation/velocity/torque) are validated (V1-V4) at governor assembly and recorded on `GovernorComponents.invariants`, but not enforced until the CBF engine becomes invariant-parametric (PR 4b) | Moderate | 2026-12-31 |
+| POAM-2026-079 | AC-5 / AC-6 / SC-12 | **Monolithic workload identity.** Gateway, governed advisor, compliance bridge and vLLM (plus reconciler and Langfuse in the raw manifests) all run as KSA `financial-advisor-sa`, mapped to an out-of-band GSA; any KMS signing right the gateway needs is shared with untrusted workloads, which could mint routing seals | Critical | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -127,7 +128,7 @@ The following findings have been remediated and verified via Lula validation and
 | POAM-2026-043 | SC-4 / IA-5 | `routing_seal.py` and `src/governed_financial_advisor/tools/api.py` lacked atomic single-use nonce consumption — a valid routing seal could be replayed within the 30-second TTL window before expiration (`CAGE-SEC-008`). Remediated by implementing `verify_and_consume_seal()` with atomic Redis `SETNX EX` key burning, enforcing fail-closed replay rejection (commit `88fa9d7`). Covered by `tests/test_routing_seal_security.py`. | 2026-08-11 |
 | POAM-2026-044 | AU-12 / SA-11 | Denial and refusal paths in `symbolic_governor.py` raised string `GovernanceError` without structured audit-grade cryptographic proofs (`CAGE-SEC-009`). Remediated by introducing immutable `RefusalReceipt` dataclass with SHA-256 canonical hashing across `thread_id`, `action`, `violated_tier`, and `violated_rule` (commit `88fa9d7`). | 2026-08-11 |
 | POAM-2026-045 | A.8.4 / ISO 42001 | `governed_financial_advisor` had disconnected the 4-state `DeferQueue` primitive, bypassing the CSA AARM ambiguity/deferral state (`CAGE-REM-004`). Remediated by implementing `defer_node` and routing $[0.70, 0.95)$ confidence bands to `DeferQueue` in Redis `db=1` (commit `88fa9d7`). Covered by `tests/test_hitl_toctou_revalidation.py`. | 2026-08-11 |
-| POAM-2026-046 | SA-9 / External | Provider 03 integration boundary was unspecified at the code level (`CAGE-REM-006`). Remediated by implementing `Provider03NormativeProvider` adapter in `src/integrations/provider_03/` satisfying the 3-endpoint `NormativeProvider` contract and bind receipt ingestion (commit `88fa9d7`). Covered by `tests/test_provider_03_adapter.py`. | 2026-08-11 |
+| POAM-2026-046 | SA-9 / External | Provider 03 integration boundary was unspecified at the code level (`CAGE-REM-006`). Remediated by implementing `Provider03NormativeProvider` adapter in `src/integrations/provider_03/` satisfying the 3-endpoint `NormativeProvider` contract and bind receipt ingestion (commit `88fa9d7`). Covered by `tests/integrations/provider_03/test_provider_03_adapter.py`. | 2026-08-11 |
 | POAM-2026-030-B | SC-7 / AC-4 | `CAGE_FTRA_BOUNDARY_ENABLED` feature flag removed — FTRA boundary check is now **mandatory** and unconditional in `SymbolicGovernor._run_checks()` (line 970–999 of `src/gateway/governance/governor/stages/ftra.py`). Risk R-03 (Trust Boundary Bypass) is now fully mitigated at the controller level; direct HTTP access to `/validate-action` or ext_authz can no longer bypass FTRA classification. The in-graph `ftra_node` remains active as a first-pass gate. See [`docs/operations/FTRA_COMPENSATING_CONTROLS.md`](operations/FTRA_COMPENSATING_CONTROLS.md) for NetworkPolicy defense-in-depth documentation (still in place for R-02 mitigation). | 2026-08-16 |
 | POAM-2026-050 | AC-3 / SI-7 | `NARROW` governance decision primitive added for partial-authority execution with clamped scope — enables constrained action approval when full approval is not warranted but outright denial would be overly restrictive. Implemented in `src/gateway/governance/decisions.py` and integrated into `src/gateway/governance/governor/verdicts.py`. Feature flag: `CAGE_NARROW_ENABLED` (default `false`). | 2026-08-16 |
 | POAM-2026-051 | AC-3 / SI-7 | `PAUSE` governance decision primitive added for resumable execution suspension with cryptographic token-based resume — enables temporal suspension of action execution pending external conditions or time-based release. Implemented in `src/gateway/governance/pause_primitive.py` and integrated into `src/gateway/server/hybrid_server.py`. Feature flag: `CAGE_PAUSE_ENABLED` (default `false`). Endpoints: `POST /v1/pause/{token}/resume`, `GET /v1/pause/{token}`. | 2026-08-16 |
@@ -320,3 +321,44 @@ Domain plugins now hand their CBF barriers to the kernel as data (`PluginContrib
 **Remediation Plan:**
 1. Make the CBF engine invariant-parametric and consume `GovernorComponents.invariants` (governor refactor plan §4b.1).
 2. Add tests observing each contributed barrier refuse an unsafe action.
+
+### POAM-2026-079: Monolithic Workload Identity Compromises the Routing-Seal Handshake
+
+**Control:** NIST AC-5, AC-6, SC-12 (related: IA-9)
+**Risk Level:** Critical
+**Status:** Open (remediation in track 6d; GKE managed-services blueprint §5.1–§5.2, PR #296)
+**Date Opened:** 2026-09-27
+**Target Closure:** 2026-12-31
+**Scope:** every GKE posture and region (`US_FED`, `EU_ECB`, `APAC_MAS`); the identity wiring is shared by all GKE tfvars.
+
+**Description:**
+CAGE's handshake assumes only the deterministic gateway can mint a routing seal (`X-CAGE-Routing-Seal`). In enforcing postures the seal is a v3 JWT signed with `KMS_GOVERNANCE_KEY` (`iss: cage-gateway`, [`generate_seal()`](../src/gateway/governance/routing_seal.py)). The advisor, vLLM and Langfuse are untrusted clients of that boundary. The deployment gives them the gateway's identity:
+
+- **One KSA for every workload.** Terraform runs the gateway ([`infra/modules/gateway/main.tf`](../infra/modules/gateway/main.tf)), the governed advisor ([`infra/modules/governed_advisor/main.tf`](../infra/modules/governed_advisor/main.tf)), the compliance bridge ([`infra/modules/compliance_bridge/main.tf`](../infra/modules/compliance_bridge/main.tf)) and both vLLM releases ([`infra/targets/gcp-gke/main.tf`](../infra/targets/gcp-gke/main.tf)) as `financial-advisor-sa`. The raw manifests in `deployment/k8s/` also use it for the gateway, reconciliation worker, Langfuse web/worker and frontend (20 files).
+- **The GSA is unmanaged.** The KSA is annotated to `financial-advisor-sa@<project>.iam.gserviceaccount.com`. No Terraform creates that GSA or grants it roles, so its permissions are entirely out of band.
+- **The per-service GSAs are dead.** `cage-gateway` and `cage-compliance-bridge` and their Workload Identity bindings ([`infra/targets/gcp-gke/iam.tf`](../infra/targets/gcp-gke/iam.tf)) bind KSAs that no pod uses, so the only KMS grant in the GKE Terraform (`cryptoKeyEncrypterDecrypter`) never takes effect.
+
+For the gateway to issue v3 seals in any live posture, the shared GSA must hold `asymmetricSign` on `KMS_GOVERNANCE_KEY`. The advisor, vLLM and Langfuse pods then hold it too. A compromised neural-plane pod could mint a seal that the actuator accepts ([`verify_and_consume_seal()`](../src/gateway/governance/routing_seal.py) in [`tools/api.py`](../src/governed_financial_advisor/tools/api.py)), bypassing the Symbolic Governor. The advisor code already calls the gateway signer: [`evaluator_node.py`](../src/governed_financial_advisor/graph/nodes/evaluator_node.py) signs plans with `get_governance_signer().sign(plan)`. No authorization decision consumes that signature: the gateway helper `_verify_governance_signature` in [`governance_middleware.py`](../src/gateway/server/governance_middleware.py) has no production caller.
+
+This also invalidates the closure evidence of POAM-2026-001 (named ServiceAccount pattern) for Terraform-deployed GKE workloads.
+
+**Exploitability status:** the design flaw is confirmed from code at `3e4b428`. The live grant is **not yet verified**: whether `financial-advisor-sa@` holds `roles/cloudkms.signer` or `signerVerifier` on `KMS_GOVERNANCE_KEY` must be read from IAM:
+
+```bash
+gcloud kms keys get-iam-policy <key> --keyring <ring> --location <region>
+gcloud projects get-iam-policy <project> --flatten=bindings \
+  --filter='bindings.members:financial-advisor-sa@'
+```
+
+Attach the output to this entry. If a signer role is present, the finding is exploitable as described.
+
+**Remediation Plan:**
+1. Partition Workload Identity 1:1. Create a Kubernetes service account for each workload (`cage-gateway`, `cage-advisor`, `cage-reconciler`, `cage-compliance-bridge`, `cage-vllm`, `langfuse`). Bind each to its own Terraform-managed GSA. Delete `financial-advisor-sa` from Terraform and manifests, and remove its out-of-band grants.
+2. Split keys per signer (`EC_SIGN_P256_SHA256`; HSM in prod). Grant `roles/cloudkms.signer` only to each key's owner: gateway → seal key, reconciler → snapshot key, compliance bridge → evidence-batch key. Verifiers get `roles/cloudkms.publicKeyViewer` only. The advisor holds no signing role on any key.
+3. Remove advisor signing. Drop `sign(plan)` in `evaluator_node.py` and `verify` in `explainer_node.py`. Route the evaluator edge on the verdict alone, and delete the unused `_verify_governance_signature` and its tests.
+4. In `verify_seal()`, remove the fallback to the verifier's own signer key when the JWKS `kid` lookup fails: unknown `kid` → reject.
+5. Add a static test that every workload's `service_account_name` / `serviceAccountName` is unique and annotated to a Terraform-created GSA.
+6. Add a live test in which an advisor-minted seal is rejected.
+7. Update OSCAL (AC-5, AC-6, SC-12, SC-13) within 2 business days of the remediation merge.
+
+**Dev-posture note:** without KMS, seals fall back to HMAC with `ROUTING_SEAL_SECRET`, and the advisor holds that secret to verify seals, so it can also mint them. Enforcing postures refuse the HMAC fallback at startup, so this is accepted for dev and hermetic tests only. It never counts as closure evidence.
