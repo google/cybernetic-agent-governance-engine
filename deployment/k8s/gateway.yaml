@@ -151,13 +151,20 @@ spec:
             # value names that provider; it is a label, not a selector.
             - name: RECONCILIATION_PROVIDER
               value: "simulated"
+            # Signing-key references come from gateway-secrets, never from the
+            # shared advisor-secrets: the advisor loads advisor-secrets via
+            # envFrom and refuses to start if either key is present
+            # (POAM-2026-079, identity_guard.py). Create it out of band:
+            #   kubectl create secret generic gateway-secrets -n governance-stack \
+            #     --from-literal=KMS_GOVERNANCE_KEY=<gateway-seal key version> \
+            #     --from-literal=RECONCILER_KMS_KEY=<reconciler-snapshot key version>
             # CTRL_KMS_001: KMS asymmetric governance signer (H-05).
             # assert_kms_active_in_production() raises RuntimeError at startup
             # if this env var is absent when CAGE_ENV=production.
             - name: KMS_GOVERNANCE_KEY
               valueFrom:
                 secretKeyRef:
-                  name: advisor-secrets
+                  name: gateway-secrets
                   key: KMS_GOVERNANCE_KEY
                   optional: true
             # G8: the reconciler's snapshot-signing key (verify only; the
@@ -169,7 +176,7 @@ spec:
             - name: RECONCILER_KMS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: advisor-secrets
+                  name: gateway-secrets
                   key: RECONCILER_KMS_KEY
                   optional: true
             - name: OPA_URL

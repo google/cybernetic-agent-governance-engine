@@ -104,13 +104,13 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
 
     # 3. Context Injection Logic
     # BUG-FIX: loop_count was reset to 0 on every non-REJECTED_REVISE pass, making
-    # check_safety_signature's loop guard always see 0 and loop forever.
+    # route_after_evaluator's loop guard always see 0 and loop forever.
     # Now we always increment so the evaluator gate can terminate the cycle.
     current_loop = state.get("loop_count", 0) or 0
     if state.get("risk_status") == "REJECTED_REVISE":
         if current_loop >= 3:
             logger.warning(f"🛑 [Circuit Breaker] Max Loops ({current_loop}) reached.")
-            # BUG-FIX: Do NOT reset loop_count to 0 here — check_safety_signature uses
+            # BUG-FIX: Do NOT reset loop_count to 0 here — route_after_evaluator uses
             # loop_count >= 3 to break the cycle. Resetting it to 0 causes the guard to
             # always see 0 and route back to execution_analyst indefinitely.
             return {
@@ -250,7 +250,7 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
 
     # 6. Update State
     # BUG-FIX: loop_count was reset to 0 on non-REJECTED_REVISE paths, so
-    # check_safety_signature always saw 0 and cycled infinitely.
+    # route_after_evaluator always saw 0 and cycled infinitely.
     # Always increment so the evaluator gate can cap at 3 and break to explainer.
     updates = {
         "messages": [("ai", final_response)],
@@ -269,13 +269,13 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
     return updates
 
 
-def create_governed_trader_node(governor):  # type: ignore[no-untyped-def]
+def create_governed_trader_node():  # type: ignore[no-untyped-def]
     """Build the governed-trader subgraph once and bind it to a graph node."""
     from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
         build_governed_trader_graph,
     )
 
-    subgraph = build_governed_trader_graph(governor)
+    subgraph = build_governed_trader_graph()
 
     async def _governed_trader(state):  # type: ignore[no-untyped-def]
         return await governed_trader_node(state, subgraph=subgraph)

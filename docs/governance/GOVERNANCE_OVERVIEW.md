@@ -352,7 +352,7 @@ The canonical agent graph is assembled by `create_graph(redis_url)` in `src/gove
 - **`interrupt_before=["governed_trader"]`** — mandatory HITL pause before any trade execution
 - **`AsyncRedisSaver`** — durable checkpoint persistence; `MemorySaver` fallback emits ERROR log + OTel alert span
 
-All agent transitions are explicitly managed by routing functions (`route_supervisor`, `check_safety_signature`, `route_after_safety`). Agents return structured state fields; the graph decides the next node deterministically based on those fields.
+All agent transitions are explicitly managed by routing functions (`route_supervisor`, `route_after_evaluator`, `route_after_safety`). Agents return structured state fields; the graph decides the next node deterministically based on those fields.
 
 ### Governance Enforcement Path
 

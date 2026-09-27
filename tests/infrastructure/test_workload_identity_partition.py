@@ -24,7 +24,9 @@ POAM-2026-079:
 * the untrusted model-serving plane (vLLM) or telemetry/UI pods holding a KSA
   that maps to a signing identity;
 * a KMS role granted at keyring or project scope;
-* a signing key with more signers than the documented set.
+* a signing key with more signers than the documented set;
+* the advisor (untrusted neural plane) regaining any cloud identity, KMS
+  grant or signing-key variable.
 """
 
 from __future__ import annotations
@@ -47,13 +49,15 @@ _RETIRED_KSA = "financial-advisor-sa"
 _POD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}
 
 # KSAs whose GSA may hold a KMS signer role on some key.
-_SIGNING_KSAS = {"cage-gateway-sa", "cage-advisor-sa", "cage-reconciler-sa",
+_SIGNING_KSAS = {"cage-gateway-sa", "cage-reconciler-sa",
                  "cage-compliance-bridge-sa", "cage-benchmark-sa"}
 
-# Expected signers per key in kms_signing.tf. The advisor entry is the
-# documented POAM-2026-079 residual; removing it must update this table.
+_ADVISOR_KSA = "cage-advisor-sa"
+_SIGNING_KEY_VARS = ("KMS_GOVERNANCE_KEY", "RECONCILER_KMS_KEY", "AWS_KMS_KEY_ID", "AZURE_KMS_KEY_NAME")
+
+# Expected signers per key in kms_signing.tf.
 _EXPECTED_SIGNERS = {
-    "gateway_seal": {"gateway", "advisor"},
+    "gateway_seal": {"gateway"},
     "reconciler_snapshot": {"reconciler"},
     "compliance_evidence": {"compliance_bridge"},
     "benchmark_signing": {"benchmark"},
@@ -260,3 +264,106 @@ def test_software_protection_only_in_dev_tfvars() -> None:
         and "dev" not in p.name
     ]
     assert offenders == [], f"SOFTWARE signing keys outside dev postures: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# Zero-identity advisor (POAM-2026-079)
+# ---------------------------------------------------------------------------
+
+
+def test_advisor_ksa_has_no_cloud_identity() -> None:
+    advisor = [meta for (_, name), meta in _declared_ksas().items() if name == _ADVISOR_KSA]
+    assert advisor, f"{_ADVISOR_KSA} not declared"
+    for meta in advisor:
+        assert "iam.gke.io/gcp-service-account" not in (meta.get("annotations") or {})
+    iam_tf = (_GKE / "iam.tf").read_text()
+    assert 'resource "google_service_account" "advisor"' not in iam_tf
+    assert "advisor_workload_identity" not in iam_tf
+    assert re.search(r"advisor\s*=\s*\{[^}]*gsa\s*=\s*null", iam_tf, re.S), (
+        "Terraform advisor KSA must carry no GSA annotation"
+    )
+
+
+def test_advisor_has_no_kms_grant() -> None:
+    kms_tf = (_GKE / "kms_signing.tf").read_text()
+    assert "advisor_member" not in kms_tf
+    assert "google_service_account.advisor" not in kms_tf
+
+
+def test_advisor_pods_receive_no_signing_key_variable() -> None:
+    """The advisor refuses to boot with these; no manifest or module may set them."""
+    offenders = []
+    for path, _doc, pod in _workloads():
+        if pod.get("serviceAccountName") != _ADVISOR_KSA:
+            continue
+        for c in pod.get("containers", []):
+            for env in c.get("env") or []:
+                if env.get("name") in _SIGNING_KEY_VARS:
+                    offenders.append(f"{path}: {env['name']}")
+    module_tf = (_INFRA / "modules" / "governed_advisor" / "main.tf").read_text()
+    offenders += [f"governed_advisor module: {v}" for v in _SIGNING_KEY_VARS if f'"{v}"' in module_tf]
+    assert offenders == [], f"Advisor receives a signing-key variable: {offenders}"
+
+
+def _secrets_loaded_by(pod: dict) -> set[str]:
+    """Every Secret a pod reads, via envFrom or env secretKeyRef."""
+    names: set[str] = set()
+    for c in [*pod.get("containers", []), *pod.get("initContainers", [])]:
+        for src in c.get("envFrom") or []:
+            if "secretRef" in src:
+                names.add(src["secretRef"]["name"])
+        for env in c.get("env") or []:
+            ref = (env.get("valueFrom") or {}).get("secretKeyRef")
+            if ref:
+                names.add(ref["name"])
+    return names
+
+
+def _signing_key_refs_into(secrets: set[str], workloads) -> list[str]:
+    """Signing-key variables any pod sources from a Secret in ``secrets``."""
+    hits = []
+    for path, _doc, pod in workloads:
+        for c in pod.get("containers", []):
+            for env in c.get("env") or []:
+                ref = (env.get("valueFrom") or {}).get("secretKeyRef") or {}
+                if env.get("name") in _SIGNING_KEY_VARS and ref.get("name") in secrets:
+                    hits.append(f"{path}: {env['name']} from {ref['name']}")
+    return hits
+
+
+def test_signing_keys_never_live_in_a_secret_the_advisor_loads() -> None:
+    """A signing-key reference in a shared Secret would crash-loop the advisor.
+
+    The advisor loads its Secrets wholesale; identity_guard refuses to boot
+    when a signing-key variable is present. So no workload may source a
+    signing key from a Secret the advisor also reads (e.g. advisor-secrets).
+    """
+    workloads = _workloads()
+    advisor_secrets: set[str] = set()
+    for _path, _doc, pod in workloads:
+        if pod.get("serviceAccountName") == _ADVISOR_KSA:
+            advisor_secrets |= _secrets_loaded_by(pod)
+    assert "advisor-secrets" in advisor_secrets
+    assert "gateway-secrets" not in advisor_secrets
+    assert _signing_key_refs_into(advisor_secrets, workloads) == []
+
+
+def test_signing_key_secret_scan_detects_a_shared_secret() -> None:
+    planted = [(
+        "planted.yaml",
+        {},
+        {"containers": [{"env": [{
+            "name": "KMS_GOVERNANCE_KEY",
+            "valueFrom": {"secretKeyRef": {"name": "advisor-secrets", "key": "KMS_GOVERNANCE_KEY"}},
+        }]}]},
+    )]
+    assert _signing_key_refs_into({"advisor-secrets"}, planted) == [
+        "planted.yaml: KMS_GOVERNANCE_KEY from advisor-secrets"
+    ]
+
+
+def test_terraform_advisor_secrets_hold_no_signing_key() -> None:
+    app_secrets = (_INFRA / "modules" / "app_secrets" / "main.tf").read_text()
+    block = app_secrets.split('resource "kubernetes_secret" "advisor_secrets"', 1)[1]
+    block = block.split("\nresource ", 1)[0]
+    assert [v for v in _SIGNING_KEY_VARS if f'"{v}"' in block] == []

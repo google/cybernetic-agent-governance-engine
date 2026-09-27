@@ -22,6 +22,7 @@ from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
+from src.cage_finance.models.trade_order import TradeOrder
 from src.gateway.governance.langgraph_harness.nemo_node_factory import get_nemo_rails
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
@@ -29,22 +30,31 @@ from src.gateway.observability.attributes import (
     OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
 )
-from src.gateway.server.app_state import governor_of
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
-from src.governed_financial_advisor.utils.routing_seal import (
-    SymbolicGovernorViolation,
-    verify_and_consume_seal,
-)
 from src.integrations.nemo.manager import validate_with_nemo
 
 _tracer = otel_trace.get_tracer("gfa.tools")
 _gateway_client = GatewayClient()
 
 logger = logging.getLogger("ToolsRouter")
+
+
+async def _gateway_tool(tool_name: str, params: dict[str, Any]) -> str:
+    """Run a governed tool in the gateway and return its output string.
+
+    Raises:
+        RuntimeError: If the gateway reports a tool error, so the endpoint
+            returns ``status: ERROR`` instead of a fabricated result.
+    """
+    result = await _gateway_client.execute_tool(tool_name, params)
+    if result.get("status") != "SUCCESS":
+        raise RuntimeError(f"gateway tool {tool_name} failed: {result.get('error')}")
+    return str(result.get("output", ""))
+
 
 tools_router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -63,13 +73,13 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
 ):
     """
     Executes a named tool directly via HTTP.
-    Matches the checks performed by GatewayClient.
 
-    Each governed branch opens an explicit OTel root span (``cage.tool_execute``)
-    so that ``SymbolicGovernor.govern()`` child spans (``cage.ftra_boundary_gate``,
-    ``cage.stpa_check``, ``governance.opa_check``, etc.) are attached to a live
-    trace context and exported to Langfuse. Without the parent span, child spans
-    are orphaned and silently dropped at the OTLP layer.
+    Governed tools (``simulate_governance_check``, ``evaluate_policy``,
+    ``execute_trade``) are forwarded to the gateway, which hosts the only
+    ``SymbolicGovernor``, OPA client and ``ActuatorRegistry`` (POAM-2026-079).
+    The ``execute_trade`` branch opens an OTel root span (``cage.tool_execute``)
+    whose W3C context ``GatewayClient`` propagates, so the gateway's governance
+    spans attach to one trace in Langfuse.
     """
     logger.info(f"Tool Execution Request: {request.tool_name}")
 
@@ -92,16 +102,15 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             output = get_market_data(symbol)  # type: ignore[arg-type]  # Fallback to same tool
 
         elif tool == "simulate_governance_check":
-            target_tool = params.get("target_tool")
-            target_params = params.get("target_params") or {}
-            # Call Symbolic Governor in sim (dry-run) mode — does NOT enforce
-            governor = governor_of(http_request.app)
-            result = await governor.verify(target_tool, target_params)  # type: ignore[arg-type]
-            violations = result.get("violations", [])
-            if not violations:
-                output = "APPROVED: No violations detected."
-            else:
-                output = "REJECTED: " + "; ".join(f"[{v.code}] {v.message}" for v in violations)
+            # Dry-run preview runs in the gateway's governor (POAM-2026-079):
+            # the advisor hosts no kernel and holds no signing identity.
+            output = await _gateway_tool(
+                "simulate_governance_check",
+                {
+                    "target_tool": params.get("target_tool"),
+                    "target_params": params.get("target_params") or {},
+                },
+            )
 
         elif tool == "trigger_safety_intervention":
             reason = params.get("reason", "Unknown")
@@ -127,135 +136,54 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     output = "SAFE"
 
         elif tool == "evaluate_policy":
-            # Open a root span to capture OPA child spans in Langfuse.
-            with _tracer.start_as_current_span("cage.tool_execute") as span:
-                span.set_attribute("cage.tool_name", "evaluate_policy")
-                span.set_attribute("cage.governance", True)
-                span.set_attribute(OBSERVATION_TYPE, "span")
-                span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
-                span.set_attribute(
-                    OBSERVATION_INPUT,
-                    json.dumps(params)[:2000],
-                )
-                t0 = time.perf_counter()
-                opa = governor_of(http_request.app).components.opa
-                decision = await opa.evaluate_policy(params)
-                latency_ms = (time.perf_counter() - t0) * 1000
-                span.set_attribute("cage.opa_latency_ms", round(latency_ms, 2))
-                span.set_attribute("cage.verdict", decision)
-                span.set_attribute(OBSERVATION_OUTPUT, decision)
-                if decision == "ALLOW":
-                    output = "APPROVED: Action matches policy."
-                elif decision == "DENY":
-                    output = "DENIED: Policy Violation."
-                elif decision == "MANUAL_REVIEW":
-                    output = "MANUAL_REVIEW: Requires human approval."
-                else:
-                    output = f"UNKNOWN: {decision}"
+            # OPA evaluation runs against the gateway's OPA client.
+            output = await _gateway_tool("evaluate_policy", params)
 
         elif tool == "execute_trade":
-            # ── Option 2: Unified Gateway Governance Routing ──────────────────
-            # All governance decisions (CBF + OPA) are delegated to the Hybrid
-            # Gateway via POST /governance/validate-action.  The GFA no longer
-            # calls OPA or the CBF engine directly — the Gateway is the Single
-            # Choke Point.
-            #
-            # Trace continuity: the cage.tool_execute root span below is opened
-            # FIRST so that when GatewayClient.validate_action() injects the
-            # W3C 'traceparent' header, it carries the trace ID of this root span.
-            # The Gateway extracts that header and attaches its cage.validate_action
-            # + cage.cbf_action_check + cage.opa_action_check + cage.routing_seal
-            # spans as children — producing one unified tree in Langfuse.
-            import uuid
-
-            from src.cage_finance.models.trade_order import TradeOrder
-            from src.cage_finance.tools.trade_executor import (
-                execute_trade as core_execute_trade,
-            )
-
-            if "transaction_id" not in params:
-                params["transaction_id"] = str(uuid.uuid4())
-
+            # Validate the order shape locally, then hand the whole governed
+            # execution to the gateway's execute_trade_action tool: governor
+            # pipeline, seal issue/consume and ActuatorRegistry dispatch all
+            # happen in the gateway process (ADR-008, POAM-2026-079).
             order = TradeOrder(**params)
-
             with _tracer.start_as_current_span("cage.tool_execute") as root_span:
                 root_span.set_attribute("cage.tool_name", "execute_trade")
                 root_span.set_attribute("cage.governance", True)
-                root_span.set_attribute("cage.symbol", params.get("symbol", ""))
-                root_span.set_attribute("cage.amount", float(params.get("amount", 0)))
-                root_span.set_attribute(
-                    "cage.confidence", float(params.get("confidence", 0))
-                )
+                root_span.set_attribute("cage.symbol", order.symbol)
                 root_span.set_attribute(OBSERVATION_TYPE, "span")
                 root_span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
                 root_span.set_attribute(
                     OBSERVATION_INPUT,
                     json.dumps(
                         {
-                            "symbol": params.get("symbol"),
-                            "amount": params.get("amount"),
-                            "confidence": params.get("confidence"),
-                            "currency": params.get("currency"),
+                            "symbol": order.symbol,
+                            "amount": order.amount,
+                            "confidence": order.confidence,
+                            "currency": order.currency,
                         }
                     ),
                 )
-
                 t0 = time.perf_counter()
-
-                # ── Governance via Unified Gateway (W3C traceparent propagated) ──
-                gov_result = await _gateway_client.validate_action(
-                    "execute_trade", params
+                output = await _gateway_tool(
+                    "execute_trade_action",
+                    {
+                        "symbol": order.symbol,
+                        "amount": order.amount,
+                        "currency": order.currency,
+                        "confidence": order.confidence,
+                        "transaction_id": order.transaction_id,
+                        "trader_id": order.trader_id or "agent_001",
+                        "trader_role": order.trader_role or "junior",
+                    },
                 )
-                seal = gov_result.get("seal", "")
-                gov_ms = (time.perf_counter() - t0) * 1000
-                root_span.set_attribute("cage.governance_latency_ms", round(gov_ms, 2))
                 root_span.set_attribute(
-                    "cage.gateway_verdict", gov_result.get("verdict", "")
-                )
-
-                # ── Envelope provenance attribution (v3.0) ─────────────────────
-                if gov_result.get("envelope_id"):
-                    root_span.set_attribute(
-                        "cage.envelope_id", gov_result["envelope_id"]
-                    )
-                if gov_result.get("envelope_version"):
-                    root_span.set_attribute(
-                        "cage.envelope_version", gov_result["envelope_version"]
-                    )
-                if isinstance(gov_result.get("subject"), dict) and gov_result[
-                    "subject"
-                ].get("action_hash"):
-                    root_span.set_attribute(
-                        "cage.action_hash", gov_result["subject"]["action_hash"]
-                    )
-
-                # ── Verify and atomically consume routing seal before actuation ──
-                # verify_and_consume_seal() burns the seal in Redis (CAGE-SEC-008),
-                # preventing replay attacks within the 30-second TTL window.
-                try:
-                    await verify_and_consume_seal(
-                        seal, "execute_trade", params, redis_client=redis_client
-                    )
-                except SymbolicGovernorViolation as exc:
-                    root_span.set_attribute("cage.seal_valid", False)
-                    root_span.set_status(Status(StatusCode.ERROR))
-                    raise PermissionError(
-                        "Routing seal invalid, expired, or already consumed — trade blocked "
-                        f"(defense-in-depth): {exc.reason}"
-                    ) from exc
-
-                root_span.set_attribute("cage.seal_valid", True)
-
-                # ── Actuate ───────────────────────────────────────────────────
-                t1 = time.perf_counter()
-                output = await core_execute_trade(order, routing_seal=seal)
-                exec_ms = (time.perf_counter() - t1) * 1000
-                root_span.set_attribute("cage.execution_latency_ms", round(exec_ms, 2))
-                root_span.set_attribute(
-                    "cage.total_latency_ms", round(gov_ms + exec_ms, 2)
+                    "cage.total_latency_ms",
+                    round((time.perf_counter() - t0) * 1000, 2),
                 )
                 root_span.set_attribute(OBSERVATION_OUTPUT, str(output)[:500])
-                root_span.set_status(Status(StatusCode.OK))
+                if not str(output).startswith("EXECUTED"):
+                    root_span.set_status(Status(StatusCode.ERROR))
+                else:
+                    root_span.set_status(Status(StatusCode.OK))
 
         else:
             raise HTTPException(status_code=404, detail=f"Tool '{tool}' not found")

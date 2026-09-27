@@ -13,8 +13,11 @@
 # limitations under the License.
 
 """
-Graph Definition: CAGE Architecture — Phase 3 (Explicit Lifecycle with Signature Gate)
-Planner -> Evaluator -> [Signature Gate] -> Executor -> Auditor
+Graph Definition: CAGE Architecture — Phase 3 (Explicit Lifecycle)
+Planner -> Evaluator -> [FTRA + Safety Gate] -> Executor -> Auditor
+
+The advisor is an untrusted client of the gateway: it hosts no
+``SymbolicGovernor`` and holds no signing identity (POAM-2026-079).
 
 Graph Topology
 --------------
@@ -58,7 +61,6 @@ LangGraph 1.1 Notes:
 """
 
 import os
-from typing import TYPE_CHECKING
 
 from langgraph.graph import END, StateGraph
 
@@ -79,9 +81,6 @@ from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
 from .nodes.safety_node import safety_check_node
 from .nodes.supervisor_node import doer_node, thinker_node
 from .state import AgentState
-
-if TYPE_CHECKING:
-    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 def get_side_effect_topology() -> dict[str, dict]:
@@ -115,7 +114,38 @@ def get_side_effect_topology() -> dict[str, dict]:
     }
 
 
-def _build_workflow(governor: "SymbolicGovernor") -> StateGraph:
+def route_after_evaluator(state: AgentState):  # type: ignore[no-untyped-def]
+    """
+    LIFECYCLE GATE: routes on the Evaluator's verdict alone.
+
+    The Evaluator's verdict is advisory — it is produced by the untrusted
+    neural plane and carries no signature (POAM-2026-079). Authority comes
+    later: FTRA, the OPA safety gate and the gateway's governor all re-check
+    the plan, and only the gateway can seal and actuate a trade.
+
+    BUG-FIX: Without a loop cap, execution_analyst → evaluator → execution_analyst
+    cycles infinitely on repeated rejection. loop_count (incremented
+    unconditionally in execution_analyst_node) caps the re-plan loop.
+
+    CTRL_FTRA_001: On APPROVED, route to ftra_node (Tier 0.5
+    commencement-time reachability gate) rather than directly to safety_check.
+    The ftra_node then routes to safety_check (CLEAR), explainer (BLOCKED), or
+    parks in DeferQueue (HITL_REQUIRED).
+    """
+    verdict = (state.get("evaluation_result") or {}).get("verdict")  # type: ignore[union-attr]
+
+    if verdict == "APPROVED":
+        return "ftra_node"  # CTRL_FTRA_001: Tier 0.5 gate before OPA
+
+    # Safety breaker: if we've looped too many times, give up gracefully
+    if (state.get("loop_count", 0) or 0) >= 3:
+        return "explainer"
+
+    # Rejected: loop back to Planner with feedback
+    return "execution_analyst"
+
+
+def _build_workflow() -> StateGraph:
     """Build the pure graph topology without checkpointer or compilation.
 
     This is the extracted workflow construction step used by both
@@ -123,9 +153,8 @@ def _build_workflow(governor: "SymbolicGovernor") -> StateGraph:
     (LangGraph SDK delegated state). It defines the complete node set and
     edge routing logic, returning an uncompiled StateGraph instance.
 
-    Args:
-        governor: The composition-root ``SymbolicGovernor`` used by the
-            governed-trader subgraph's post-HITL re-validation.
+    The advisor hosts no ``SymbolicGovernor``: every governance decision is a
+    network call to the gateway (POAM-2026-079).
 
     Returns:
         StateGraph: Uncompiled workflow topology ready for .compile().
@@ -152,7 +181,7 @@ def _build_workflow(governor: "SymbolicGovernor") -> StateGraph:
     workflow.add_node("defer_node", defer_node)
     # Phase 2.1: Dynamic approval node with runtime interrupt() — inserted BEFORE governed_trader
     workflow.add_node("approval_node", approval_node)
-    workflow.add_node("governed_trader", create_governed_trader_node(governor))
+    workflow.add_node("governed_trader", create_governed_trader_node())
     workflow.add_node("explainer", explainer_node)
     # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path
     workflow.add_node("nemo_output_rail", nemo_output_rail_node)
@@ -197,33 +226,7 @@ def _build_workflow(governor: "SymbolicGovernor") -> StateGraph:
     # Lifecycle: Planner -> Evaluator -> [FTRA Tier 0.5] -> [Safety Gate] -> Trader | Re-plan
     workflow.add_edge("execution_analyst", "evaluator")
 
-    def check_safety_signature(state: AgentState):  # type: ignore[no-untyped-def]
-        """
-        STRICT LIFECYCLE GATE: Verifies that the Evaluator has provided a signature.
-
-        BUG-FIX: Without a loop cap, execution_analyst → evaluator → execution_analyst
-        cycles infinitely when governance_signature is never set. Add a hard cap using
-        loop_count (which now increments unconditionally in execution_analyst_node).
-
-        CTRL_FTRA_001: On APPROVED + signature, route to ftra_node (Tier 0.5
-        commencement-time reachability gate) rather than directly to safety_check.
-        The ftra_node then routes to safety_check (CLEAR), explainer (BLOCKED), or
-        parks in DeferQueue (HITL_REQUIRED).
-        """
-        sig = state.get("governance_signature")
-        verdict = state.get("evaluation_result", {}).get("verdict")  # type: ignore[union-attr]
-
-        if verdict == "APPROVED" and sig:
-            return "ftra_node"  # CTRL_FTRA_001: Tier 0.5 gate before OPA
-
-        # Safety breaker: if we've looped too many times, give up gracefully
-        if (state.get("loop_count", 0) or 0) >= 3:
-            return "explainer"
-
-        # If rejected or signature missing, loop back to Planner with feedback
-        return "execution_analyst"
-
-    workflow.add_conditional_edges("evaluator", check_safety_signature)
+    workflow.add_conditional_edges("evaluator", route_after_evaluator)
 
     # CTRL_FTRA_001: FTRA verdict routing
     #   CLEAR         → safety_check (OPA pre-trade gate)
@@ -301,16 +304,14 @@ def _build_workflow(governor: "SymbolicGovernor") -> StateGraph:
     return workflow
 
 
-def create_graph(governor: "SymbolicGovernor", redis_url=None):  # type: ignore[no-untyped-def]
+def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     """Create a compiled graph with Redis checkpointer (production/test mode).
 
-    Used by the standalone server, whose lifespan builds ``governor`` via
-    ``bootstrap_governor()``. It calls _build_workflow() to construct the
+    Used by the standalone server. It calls _build_workflow() to construct the
     topology, then compiles with a Redis-backed checkpointer (or MemorySaver
     fallback).
 
     Args:
-        governor: The composition-root ``SymbolicGovernor``.
         redis_url: Optional Redis connection URL. Falls back to MemorySaver if None.
 
     Returns:
@@ -318,7 +319,7 @@ def create_graph(governor: "SymbolicGovernor", redis_url=None):  # type: ignore[
         ``approval_node`` calls ``interrupt()`` at runtime rather than the
         graph declaring ``interrupt_before`` at compile time.
     """
-    workflow = _build_workflow(governor)
+    workflow = _build_workflow()
 
     # ARCH-04: Use the Redis-backed checkpointer configured via get_checkpointer().
     # Falls back gracefully to MemorySaver when redis_url is None (local dev/test).
@@ -355,9 +356,7 @@ def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
     This entry point is used by the LangGraph SDK local development server
     (langgraph.json). It delegates all state persistence to the LangGraph
     Server's own in-memory or Redis-backed checkpointer, avoiding double
-    checkpointing. The LangGraph server calls this factory with no arguments,
-    so it is itself a composition root: it builds the governor via
-    ``bootstrap_governor()``. The HITL gate at ``approval_node`` still suspends the graph,
+    checkpointing. The HITL gate at ``approval_node`` still suspends the graph,
     because it uses the dynamic ``interrupt()`` primitive rather than a
     compile-time ``interrupt_before`` declaration.
 
@@ -365,9 +364,7 @@ def create_uncheckpointed_graph():  # type: ignore[no-untyped-def]
         Compiled graph with no checkpointer.  Dynamic ``interrupt()``
         suspension remains active; resume with ``Command(resume={...})``.
     """
-    from src.gateway.governance.governor.bootstrap import bootstrap_governor
-
-    workflow = _build_workflow(bootstrap_governor())
+    workflow = _build_workflow()
 
     # Phase 2.1: Removed static interrupt_before — approval_node uses dynamic interrupt()
     return workflow.compile()

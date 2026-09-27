@@ -15,7 +15,6 @@
 locals {
   # Service account IDs (GSAs)
   sa_gateway           = "cage-gateway"
-  sa_advisor           = "cage-advisor"
   sa_reconciler        = "cage-reconciler"
   sa_compliance_bridge = "cage-compliance-bridge"
   sa_lula              = "cage-lula"
@@ -48,13 +47,6 @@ resource "google_service_account" "gateway" {
   account_id   = local.sa_gateway
   display_name = "CAGE Gateway Service Account"
   description  = "Least-privilege SA for the CAGE gateway. Reads model weights, accesses secrets, signs routing seals with the gateway-seal key. (POAM-002 / POAM-2026-079 / AC-6)"
-  project      = var.project_id
-}
-
-resource "google_service_account" "advisor" {
-  account_id   = local.sa_advisor
-  display_name = "CAGE Governed Advisor Service Account"
-  description  = "SA for the governed financial advisor. Temporarily holds signer on gateway-seal because the advisor still hosts an in-process governor (POAM-2026-079 residual; removed in the follow-up PR)."
   project      = var.project_id
 }
 
@@ -202,6 +194,8 @@ resource "google_project_iam_member" "agentsight_metric_writer" {
 # ---------------------------------------------------------------------------
 # Kubernetes ServiceAccounts for Terraform-deployed workloads
 # One KSA per workload, annotated to its own GSA (POAM-2026-079 / AC-5 / AC-6).
+# The advisor is the untrusted neural plane: its KSA has no GSA at all, so the
+# pod cannot authenticate to KMS or any other Google Cloud API.
 # The reconciler runs only from deployment/k8s/reconciliation-worker.yaml, so
 # its KSA is defined in deployment/k8s/service-account.yaml, not here.
 # ---------------------------------------------------------------------------
@@ -215,7 +209,7 @@ locals {
     }
     advisor = {
       name    = local.ksa_advisor
-      gsa     = google_service_account.advisor.email
+      gsa     = null # zero cloud identity (POAM-2026-079)
       purpose = "governed-advisor"
     }
     compliance_bridge = {
@@ -241,7 +235,7 @@ resource "kubernetes_service_account" "workload" {
       "app.kubernetes.io/managed-by" = "terraform"
       "cage.io/account-purpose"      = each.value.purpose
     }
-    annotations = {
+    annotations = each.value.gsa == null ? {} : {
       "iam.gke.io/gcp-service-account" = each.value.gsa
     }
   }
@@ -262,15 +256,6 @@ resource "google_service_account_iam_binding" "gateway_workload_identity" {
 
   members = [
     "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_gateway}]",
-  ]
-}
-
-resource "google_service_account_iam_binding" "advisor_workload_identity" {
-  service_account_id = google_service_account.advisor.name
-  role               = "roles/iam.workloadIdentityUser"
-
-  members = [
-    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_advisor}]",
   ]
 }
 

@@ -155,7 +155,7 @@ variable "alphavantage_api_key" {
 }
 
 variable "cage_env" {
-  description = "Runtime environment for the advisor (development, staging, production). Controls dev-mode auth bypass (auth.py) and KMS/salt startup enforcement guards."
+  description = "Runtime environment for the advisor (development, staging, production). Controls the dev-mode auth bypass (auth.py)."
   type        = string
   default     = "development"
 }
@@ -166,29 +166,12 @@ variable "cage_seal_enforcement" {
   default     = "log"
 }
 
-variable "kms_governance_key" {
-  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (KMS_GOVERNANCE_KEY). Empty string selects a non-evidentiary software Ed25519 signer in dev/CI; enforcing postures refuse to start without it."
-  type        = string
-  default     = ""
-}
-
-variable "cage_kms_provider" {
-  description = "Cloud KMS provider backend for governance signing (CAGE_KMS_PROVIDER): gcp, aws, or azure."
-  type        = string
-  default     = "gcp"
-}
-
 variable "service_account_name" {
-  description = "Kubernetes ServiceAccount the pods run as. Must be this workload's own KSA, bound 1:1 to its own GSA (POAM-2026-079). No default: a missing identity fails the plan."
+  description = "Kubernetes ServiceAccount the pods run as. Must be the advisor's own KSA, which has no Google service account (POAM-2026-079). No default: a missing identity fails the plan."
   type        = string
 
   validation {
     condition     = var.service_account_name != "" && var.service_account_name != "financial-advisor-sa"
     error_message = "service_account_name must name the workload's own KSA; the shared financial-advisor-sa is retired (POAM-2026-079)."
   }
-}
-
-variable "reconciler_kms_key" {
-  description = "Cloud KMS key version of the reconciler-snapshot key (RECONCILER_KMS_KEY). The governor trusts ground-truth snapshots only from this key (G8); the startup posture check refuses an unset value or one equal to KMS_GOVERNANCE_KEY."
-  type        = string
 }

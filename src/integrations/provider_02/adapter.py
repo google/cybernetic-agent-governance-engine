@@ -234,7 +234,7 @@ def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     """
     signals: dict[str, Any] = {}
 
-    # Governance signature (evaluator node)
+    # Governance signature (gateway envelope signature stored by safety_check)
     if sig := state.get("governance_signature"):
         signals["governanceSignature"] = sig
 

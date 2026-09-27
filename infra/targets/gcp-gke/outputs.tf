@@ -139,15 +139,17 @@ output "opa_endpoint" {
 
 # ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
 # Key version resource names for the manifest deployment path
-# (deployment/k8s/): KMS_GOVERNANCE_KEY / RECONCILER_KMS_KEY secrets.
+# (deployment/k8s/): the gateway reads KMS_GOVERNANCE_KEY / RECONCILER_KMS_KEY
+# from gateway-secrets. Never put them in advisor-secrets: the advisor loads it
+# via envFrom and refuses to start with a signing-key variable set.
 
 output "gateway_seal_key_version" {
-  description = "gateway-seal key version (KMS_GOVERNANCE_KEY for the gateway and, temporarily, the advisor)"
+  description = "gateway-seal key version (KMS_GOVERNANCE_KEY for the gateway)"
   value       = local.gateway_seal_key_version
 }
 
 output "reconciler_snapshot_key_version" {
-  description = "reconciler-snapshot key version (RECONCILER_KMS_KEY for the reconciler, gateway and advisor)"
+  description = "reconciler-snapshot key version (RECONCILER_KMS_KEY for the reconciler and gateway)"
   value       = local.reconciler_snapshot_key_version
 }
 

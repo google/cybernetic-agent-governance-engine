@@ -15,9 +15,9 @@
 """
 Security tests for routing_seal modules.
 
-Covers both:
-  - src/gateway/governance/routing_seal.py  (gateway issuer)
-  - src/governed_financial_advisor/utils/routing_seal.py  (GFA verifier mirror)
+Covers src/gateway/governance/routing_seal.py. The advisor's verifier mirror
+was removed (POAM-2026-079): seals are issued and consumed only in the gateway,
+so the former "GFA" cases now exercise the gateway verifier directly.
 
 Test cases:
   1. is_default_salt() — gateway version
@@ -176,7 +176,7 @@ def test_gateway_assert_custom_salt_raises_uses_environment_fallback():
 def test_gateway_generate_and_gfa_verify_round_trip():
     """generate_seal() + GFA verify_seal() round-trip succeeds with the test salt."""
     from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import (
+    from src.gateway.governance.routing_seal import (
         verify_seal as gfa_verify,
     )
 
@@ -426,11 +426,11 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
     """GFA verify_and_consume_seal() burns the seal in Redis and rejects replays."""
     import fakeredis.aioredis as fakeredis
 
-    from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import (
+    from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation as GFASymbolicGovernorViolation,
     )
-    from src.governed_financial_advisor.utils.routing_seal import (
+    from src.gateway.governance.routing_seal import generate_seal
+    from src.gateway.governance.routing_seal import (
         verify_and_consume_seal as gfa_verify_and_consume,
     )
 

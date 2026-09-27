@@ -264,8 +264,7 @@ resource "kubernetes_deployment" "governed_advisor" {
           # Runtime environment posture. Controls the dev-mode auth bypass in
           # src/governed_financial_advisor/infrastructure/auth.py (requires
           # CAGE_ENV in {dev, development} with no CAGE_API_KEY to allow
-          # unauthenticated requests) and the KMS/salt startup enforcement
-          # guards (assert_kms_active_in_production(), assert_custom_salt_in_production()).
+          # unauthenticated requests).
           env {
             name  = "CAGE_ENV"
             value = var.cage_env
@@ -275,21 +274,10 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.cage_seal_enforcement
           }
 
-          # Cloud KMS asymmetric governance signing (CTRL_KMS_001).
-          # Empty kms_governance_key selects a non-evidentiary software Ed25519
-          # signer in dev/CI; enforcing postures refuse to start without it.
-          env {
-            name  = "CAGE_KMS_PROVIDER"
-            value = var.cage_kms_provider
-          }
-          env {
-            name  = "KMS_GOVERNANCE_KEY"
-            value = var.kms_governance_key
-          }
-          env {
-            name  = "RECONCILER_KMS_KEY"
-            value = var.reconciler_kms_key
-          }
+          # No signing-key variables (POAM-2026-079): the advisor holds no
+          # signing identity and refuses to start if KMS_GOVERNANCE_KEY,
+          # RECONCILER_KMS_KEY or another provider's key reference is set
+          # (src/governed_financial_advisor/infrastructure/identity_guard.py).
 
           # MCP Configuration
           env {
