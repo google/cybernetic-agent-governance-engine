@@ -42,6 +42,7 @@ from src.gateway.governance.governor.verdicts import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.contracts import InvariantModel
+from src.gateway.governance.governor.invariants import validate_invariant
 from src.gateway.observability.attributes import OBSERVATION_INPUT, OBSERVATION_NAME, OBSERVATION_OUTPUT, OBSERVATION_TYPE
 from src.gateway.governance.governor.errors import GovernanceError
 
@@ -80,6 +81,7 @@ class SymbolicGovernor:
         return [t.tier_name for t in sorted(self._domain_tiers, key=lambda x: (x.phase, x.order, x.tier_name))]
         
     def register_invariant(self, invariant: InvariantModel) -> None:
+        validate_invariant(invariant, self._invariants)  # fail closed: ValueError
         self._invariants.append(invariant)
 
     async def validate_action(

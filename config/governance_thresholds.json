@@ -64,6 +64,12 @@
     "min_therapeutic_concentration": 5.0,
     "_comment": "Minimum therapeutic serum concentration (mg/L) for dose barrier CBF validation."
   },
+  "physical_ai": {
+    "min_separation_distance_mm": 500.0,
+    "max_velocity_mm_s": 250.0,
+    "max_joint_torque_nm": 50.0,
+    "_comment": "REFERENCE-ONLY placeholders for the physical-AI CBF barriers. 500 mm echoes the ISO 13855 minimum-distance floor; 250 mm/s is the ISO 10218-1 reduced-speed limit; 50 N·m is illustrative. Adopters must derive real limits from a cell-specific ISO/TS 15066 risk assessment."
+  },
   "tier1_keywords": [
     "SYSTEM OVERRIDE",
     "IGNORE PREVIOUS INSTRUCTIONS",
