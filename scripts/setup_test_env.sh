@@ -55,6 +55,7 @@ fi
 #
 # These values are INTENTIONALLY INSECURE and must NEVER be used in production.
 export CAGE_ENV=dev
+export CAGE_DOMAIN="${CAGE_DOMAIN:-finance}"  # exactly one domain per process
 
 # Prevents regional compliance overlays (US_FED / EU_ECB / APAC_MAS) from
 # activating.  Leave unset or set to LOCAL for local development.

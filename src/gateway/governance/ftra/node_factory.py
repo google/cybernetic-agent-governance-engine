@@ -89,7 +89,6 @@ logger = logging.getLogger("Gateway.Governance.FTRA.NodeFactory")
 # ---------------------------------------------------------------------------
 
 _CTRL_FTRA_001 = "CTRL_FTRA_001"
-_DEFAULT_REGISTRY_PATH = "config/ftra/terminal_registry.json"
 
 # Environment variable to control tokenizer artifact sanitization
 _ENV_SANITIZE_TOKENIZER_ARTIFACTS = "FTRA_SANITIZE_TOKENIZER_ARTIFACTS"
@@ -193,7 +192,7 @@ def create_ftra_node(
     else:
         config_source = "default"
         effective_config = FtraNodeConfig(
-            registry_path=_DEFAULT_REGISTRY_PATH,
+            registry_path=None,  # active domain's DomainConfig
             plan_key="execution_plan_output",
         )
 

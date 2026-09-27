@@ -77,6 +77,8 @@ spec:
               value: "hybrid-gateway"
             # Dev-mode bypass: disables CAGE_ROUTING_SEAL_SECRET enforcement (POAM-012)
             # In production, set CAGE_ENV=production and provide a 32+ char secret.
+            - name: CAGE_DOMAIN  # exactly one domain per process
+              value: "${CAGE_DOMAIN:-finance}"
             - name: CAGE_ENV
               value: "${CAGE_ENV:-development}"
             - name: ENVIRONMENT

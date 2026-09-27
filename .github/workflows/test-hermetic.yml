@@ -84,7 +84,7 @@ jobs:
 
       - name: Run hermetic governance pipeline tests
         env:
-          CAGE_ACTIVE_PLUGINS: "finance"
+          CAGE_DOMAIN: "finance"
         run: |
           # Run core governance tests WITHOUT any ML dependencies
           # This proves Stage 2.5 is truly optional

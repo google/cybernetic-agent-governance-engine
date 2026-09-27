@@ -99,6 +99,8 @@ spec:
             # CAGE_ROUTING_SEAL_SECRET is absent or shorter than 32 chars.
             # DEP-04: CAGE_ENV is substituted at deploy time from the --env flag
             # passed to deploy_all.sh (dev → "dev", prod → "production").
+            - name: CAGE_DOMAIN  # exactly one domain per process
+              value: "${CAGE_DOMAIN:-finance}"
             - name: CAGE_ENV
               value: "${CAGE_ENV}"
             - name: ENVIRONMENT

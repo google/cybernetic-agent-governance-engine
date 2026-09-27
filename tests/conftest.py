@@ -59,7 +59,7 @@ if _env_file.exists() and not os.environ.get("KMS_GOVERNANCE_KEY"):
 
 # Set test environment defaults BEFORE any application imports
 os.environ.setdefault("CAGE_ENV", "test")
-os.environ.setdefault("CAGE_ACTIVE_PLUGINS", "finance")
+os.environ.setdefault("CAGE_DOMAIN", "finance")
 os.environ.setdefault("CAGE_OPA_DEFAULT_PATH", "src/cage_finance/opa")
 
 os.environ.setdefault(
@@ -1271,13 +1271,11 @@ def assert_formal_tier_ordering_matches():
     Session-scoped fixture asserting the registered tier order matches the formal model.
     See Formal Proof Synchronization.
     """
-    from src.gateway.governance.plugin_loader import discover_plugins
+    from src.gateway.governance.plugin_loader import load_domain_plugin
     from src.gateway.governance.singletons import symbolic_governor
 
-    # Ensure plugins are loaded
-    loaded_plugins = discover_plugins()
-    for plugin in loaded_plugins:
-        plugin.register(governor=symbolic_governor, tool_server=None)
+    # Ensure the single CAGE_DOMAIN plugin is loaded
+    load_domain_plugin().register(governor=symbolic_governor, tool_server=None)
 
     tiers = symbolic_governor.registered_tier_names()
     # The formal model mandates the following order for finance package tiers

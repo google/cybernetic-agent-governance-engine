@@ -69,12 +69,7 @@ def _make_hybrid_stubs() -> dict:
         "src.gateway.server.mcp_tool_server": MagicMock(
             app=mock_mcp_app,
             mcp=MagicMock(),
-            _assert_required_plugins=MagicMock(),
-        ),
-        "src.gateway.governance.plugin_loader": MagicMock(
-            discover_plugins=MagicMock(
-                return_value=[MagicMock(name="finance", register=MagicMock())]
-            )
+            _activate_domain=MagicMock(),
         ),
         "src.gateway.governance.background_tasks": MagicMock(
             start_all=MagicMock(return_value=[])

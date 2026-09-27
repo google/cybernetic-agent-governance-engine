@@ -37,7 +37,7 @@ from src.gateway.governance.consensus.engine import (
     _background_audit_worker,
 )
 from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.contracts import CagePlugin, DomainConfig
 from src.gateway.governance.ftra.bounding_contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
@@ -56,6 +56,10 @@ class FinanceCagePlugin(CagePlugin):
 
     name = "finance"
     api_version = "1.0"
+    domain_config = DomainConfig(
+        ftra_registry_path=Path(__file__).resolve().parents[2] / "config" / "ftra" / "terminal_registry.json",
+        causal_graph_path=Path(__file__).resolve().parent / "config" / "causal_graph.yaml",
+    )
 
     def register(
         self, governor: SymbolicGovernor, tool_server: "FastMCP | None" = None

@@ -121,18 +121,18 @@ async def test_tier_added_after_construction_blocks() -> None:
     assert [v.code for v in result.violations] == ["STUB_DENY"]
 
 
-def test_tiers_from_several_domains_accumulate() -> None:
+def test_second_domain_install_is_rejected() -> None:
     governor = _governor(domain_tiers=(_StubTier("first"),))
-    governor.add_domain_tiers((_StubTier("second"),))
-    assert _domain_stage_names(governor) == ["first", "second"]
+    with pytest.raises(RuntimeError, match="exactly one domain"):
+        governor.add_domain_tiers((_StubTier("second"),))
+    assert _domain_stage_names(governor) == ["first"]  # state unchanged on rejection
 
 
-def test_duplicate_tier_name_across_calls_is_rejected() -> None:
+def test_duplicate_tier_name_within_a_domain_is_rejected() -> None:
     governor = _governor()
-    governor.add_domain_tiers((_StubTier("dup"),))
     with pytest.raises(ValueError, match="duplicate tier registration"):
-        governor.add_domain_tiers((_StubTier("dup"),))
-    assert _domain_stage_names(governor) == ["dup"]  # state unchanged on rejection
+        governor.add_domain_tiers((_StubTier("dup"), _StubTier("dup")))
+    assert _domain_stage_names(governor) == []
 
 
 def test_empty_tier_set_is_rejected() -> None:
@@ -154,27 +154,25 @@ def isolated_plugin_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("isolated_plugin_side_effects")
-def test_all_default_plugins_install_their_tiers_into_the_pipeline() -> None:
+@pytest.mark.parametrize(
+    ("plugin_cls", "expected"),
+    [
+        (finance_plugin.FinanceCagePlugin, {"bounding", "consensus", "causal", "cbf", "fiscal"}),
+        (healthcare_plugin.HealthcareCagePlugin, {"clinical_consensus", "dose_barrier"}),
+        (physical_ai_plugin.PhysicalAICagePlugin, {"kinematic_barrier", "physical_safety_consensus"}),
+    ],
+)
+def test_each_plugin_installs_its_tiers_into_the_pipeline(plugin_cls, expected) -> None:
     governor = _governor()
-    for plugin in (
-        finance_plugin.FinanceCagePlugin(),
-        healthcare_plugin.HealthcareCagePlugin(),
-        physical_ai_plugin.PhysicalAICagePlugin(),
-    ):
-        plugin.register(governor)
-
-    assert set(_domain_stage_names(governor)) == {
-        "bounding", "consensus", "causal", "cbf", "fiscal",
-        "clinical_consensus", "dose_barrier",
-        "kinematic_barrier", "physical_safety_consensus",
-    }
+    plugin_cls().register(governor)
+    assert set(_domain_stage_names(governor)) == expected
 
 
 @pytest.mark.usefixtures("isolated_plugin_side_effects")
-def test_registering_a_plugin_twice_fails_closed() -> None:
+def test_second_domain_plugin_on_one_governor_fails_closed() -> None:
     governor = _governor()
-    healthcare_plugin.HealthcareCagePlugin().register(governor)
-    with pytest.raises(ValueError, match="duplicate"):
+    finance_plugin.FinanceCagePlugin().register(governor)
+    with pytest.raises(RuntimeError, match="exactly one domain"):
         healthcare_plugin.HealthcareCagePlugin().register(governor)
 
 

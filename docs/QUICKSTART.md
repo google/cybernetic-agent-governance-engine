@@ -26,8 +26,9 @@ Edit `.env` and set at minimum:
 OPENAI_API_KEY=<your-api-key>          # Or your LLM provider key
 CAGE_ROUTING_SEAL_SECRET=<random-32-char-string>
 
-# Domain-neutral defaults — no domain plugin, universal ISO 42001 baseline only
-CAGE_ACTIVE_PLUGINS=""
+# Exactly one domain per process (required). Only `finance` is runnable today;
+# see §8 for why healthcare and physical_ai refuse to start.
+CAGE_DOMAIN=finance
 CAGE_DEPLOYMENT_REGION=LOCAL
 CAGE_ENV=development
 ```
@@ -97,27 +98,28 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:
 uv run pytest tests/test_tier_registry_contract.py -v
 ```
 
-This asserts that both shipped example plugins co-load, that neither required a kernel modification, and that a domain package contains zero Lua scripts and zero KMS imports. If it passes, everything you ran in §1–6 was domain-neutral.
+This asserts that each shipped example plugin contributes its tiers without a kernel modification, that domain plugins live under `src/cage_*`, and that the kernel contains no hard-coded domain verbs. If it passes, everything you ran in §1–6 was domain-neutral.
 
 ---
 
 ## 8. Add a domain (optional)
 
-Domain behaviour is contributed by optional packages discovered through the `cage.plugins` entry-point group and gated by `CAGE_ACTIVE_PLUGINS`. Two example domains ship in-tree. **They are equal-standing illustrations of the same extension contract — pick either, both, or neither.**
+Domain behaviour is contributed by packages registered in the `cage.plugins` entry-point group. A CAGE process runs **exactly one** domain, named by the required `CAGE_DOMAIN` environment variable ([`env_posture.py`](../src/gateway/governance/env_posture.py)). An unset value, a comma-separated list, or a name matching no registered plugin aborts startup. The example domains are equal-standing illustrations of the same extension contract.
 
 ```bash
-export CAGE_ACTIVE_PLUGINS=""                     # no domain (default for this quickstart)
-export CAGE_ACTIVE_PLUGINS=finance                # finance example only
-export CAGE_ACTIVE_PLUGINS=healthcare             # healthcare example only
-export CAGE_ACTIVE_PLUGINS=finance,healthcare     # both, side by side
+export CAGE_DOMAIN=finance        # the only domain that ships a DomainConfig today
+export CAGE_DOMAIN=healthcare     # refuses to start: no FTRA registry (POAM-2026-077)
+export CAGE_DOMAIN=physical_ai    # refuses to start: no FTRA registry (POAM-2026-077)
 ```
+
+Each plugin must declare a `DomainConfig` (FTRA terminal registry plus an optional causal graph). The kernel reads its FTRA registry and causal graph only from the active domain, so a plugin without one fails closed at startup rather than borrowing another domain's configuration.
 
 ### 8a. Domain Plugin Example: Finance
 
 **Package:** [`src/cage_finance/`](../src/cage_finance/) · **Status:** example domain, not a turnkey trading system
 
 ```bash
-export CAGE_ACTIVE_PLUGINS=finance
+export CAGE_DOMAIN=finance
 docker compose restart gateway
 uv run python examples/chaos_agent_playground.py --scenario A
 ```
@@ -134,9 +136,9 @@ uv run python examples/chaos_agent_playground.py --scenario A
 
 **Package:** [`src/cage_healthcare/`](../src/cage_healthcare/) · **Status:** example domain, not a clinical device
 
+The healthcare plugin cannot yet be the active domain: it declares no `DomainConfig` (POAM-2026-077). Its contract is exercised by tests:
+
 ```bash
-export CAGE_ACTIVE_PLUGINS=healthcare
-docker compose restart gateway
 uv run pytest tests/test_healthcare_plugin.py -v
 ```
 

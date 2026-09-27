@@ -67,6 +67,8 @@ spec:
             # CAGE_ENV identifies the deployment tier. "development" enables the
             # auth bypass when CAGE_API_KEY / COMPLIANCE_BRIDGE_INTERNAL_TOKEN are
             # absent (dev cluster only). Must be "production" in prod.
+            - name: CAGE_DOMAIN  # exactly one domain per process
+              value: "finance"
             - name: CAGE_ENV
               value: "development"
             # CAGE_DEPLOYMENT_REGION activates the correct jurisdictional control

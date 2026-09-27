@@ -12,95 +12,93 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CAGE plugin discovery and activation.
+"""CAGE single-domain plugin loading.
 
-Discovers capability plugins via ``importlib.metadata`` entry points in the
-``cage.plugins`` group.  Each discovered plugin is structurally and version-
-validated via :func:`validate_plugin` before activation.
-
-Activation semantics (D1 fix)
------------------------------
-* ``CAGE_ACTIVE_PLUGINS`` **unset** (variable absent from the environment):
-  load all discovered plugins — preserving current behavior for existing
-  deployments.
-* ``CAGE_ACTIVE_PLUGINS=""`` (set but empty): load **no** plugins — the
-  bare-kernel mode exercised by Gate 0.
-* ``CAGE_ACTIVE_PLUGINS="finance,other"``: load only the named plugins.
-
-These two states (unset vs. empty) must be distinguished by presence, not
-truthiness.
+A CAGE process runs **exactly one** domain plugin, named by ``CAGE_DOMAIN``
+(resolved by :func:`env_posture.resolve_domain`). The plugin is found among the
+``cage.plugins`` entry points, structurally and version-validated via
+:func:`validate_plugin`, and must declare a :class:`DomainConfig` whose files
+exist. Every failure raises: a process that cannot identify its one domain
+must not serve traffic.
 """
 
 from __future__ import annotations
 
+import functools
 import importlib.metadata
 import logging
-import os
 from typing import TYPE_CHECKING
 
+from src.gateway.governance.env_posture import DOMAIN_ENV_VAR, resolve_domain
+
 if TYPE_CHECKING:
-    from src.gateway.governance.contracts import CagePlugin
+    from src.gateway.governance.contracts import CagePlugin, DomainConfig
 
 logger = logging.getLogger("cage.plugin_loader")
 
 _ENTRY_POINT_GROUP = "cage.plugins"
 
 
-def _resolve_activation_list(
-    activation_list: list[str] | None,
-) -> list[str] | None:
-    """Return None for 'load all', or an explicit (possibly empty) allowlist.
-
-    Resolution order:
-    1. Explicit ``activation_list`` argument wins (for tests and programmatic use).
-    2. ``CAGE_ACTIVE_PLUGINS`` environment variable.
-    3. ``None`` → load all discovered plugins.
-    """
-    if activation_list is not None:
-        return activation_list
-    raw = os.getenv("CAGE_ACTIVE_PLUGINS")
-    if raw is None:
-        return None  # unset → load all discovered plugins
-    return [p.strip() for p in raw.split(",") if p.strip()]  # "" → [] → load none
-
-
-def discover_plugins(
-    activation_list: list[str] | None = None,
-) -> list[CagePlugin]:
-    """Load CAGE plugins via entry points, filtered by the activation list.
-
-    Args:
-        activation_list: Explicit plugin allowlist.  ``None`` defers to the
-            ``CAGE_ACTIVE_PLUGINS`` environment variable (see module docstring
-            for semantics).
-
-    Returns:
-        List of validated and instantiated :class:`CagePlugin` objects.
+def load_domain_plugin(domain: str | None = None) -> CagePlugin:
+    """Load and validate the plugin for ``domain`` (default: ``CAGE_DOMAIN``).
 
     Raises:
-        Exception: If a plugin fails to load or validate — fail-closed by
-            design.  A plugin that cannot be imported must not be silently
-            downgraded to "absent".
+        RuntimeError: ``CAGE_DOMAIN`` unset/multi-valued, no entry point with
+            that name, or more than one.
+        Exception: Whatever the plugin import raises; a plugin that cannot be
+            imported must not be silently downgraded to "absent".
+        TypeError, ValueError: The plugin fails :func:`validate_plugin`.
     """
     from src.gateway.governance.contracts import validate_plugin
 
-    allowlist = _resolve_activation_list(activation_list)
+    name = domain if domain is not None else resolve_domain()
+    available = importlib.metadata.entry_points(group=_ENTRY_POINT_GROUP)
+    matches = [ep for ep in available if ep.name == name]
+    if not matches:
+        known = sorted({ep.name for ep in available})
+        raise RuntimeError(f"{DOMAIN_ENV_VAR}={name!r} matches no registered plugin; known: {known}")
+    if len(matches) > 1:
+        raise RuntimeError(f"{DOMAIN_ENV_VAR}={name!r} matches {len(matches)} entry points; must be unique")
 
-    plugins: list[CagePlugin] = []
-    for ep in importlib.metadata.entry_points(group=_ENTRY_POINT_GROUP):
-        # D1 FIX: skip when an allowlist exists and this plugin is not in it.
-        if allowlist is not None and ep.name not in allowlist:
-            logger.info("plugin %s skipped (not in activation list)", ep.name)
-            continue
-        try:
-            plugin_cls = ep.load()
-        except Exception:
-            # Fail closed: a plugin that cannot be imported must not be
-            # silently downgraded to "absent" — the caller decides.
-            logger.exception("plugin %s failed to load", ep.name)
-            raise
-        plugin = plugin_cls()
-        validate_plugin(plugin, ep.name)
-        plugins.append(plugin)
-        logger.info("plugin %s loaded", ep.name)
-    return plugins
+    try:
+        plugin_cls = matches[0].load()
+    except Exception:
+        logger.exception("plugin %s failed to load", name)
+        raise
+    plugin = validate_plugin(plugin_cls(), name)
+    logger.info("domain plugin %s loaded", name)
+    return plugin
+
+
+def domain_config_of(plugin: CagePlugin) -> DomainConfig:
+    """Return ``plugin.domain_config`` after checking it is complete.
+
+    Raises:
+        RuntimeError: No ``DomainConfig`` declared, a path is relative, or a
+            declared file is missing. The kernel would otherwise fall back to
+            another domain's config and govern actions it does not describe.
+    """
+    config = plugin.domain_config
+    if config is None:
+        raise RuntimeError(
+            f"domain {plugin.name!r} declares no DomainConfig (FTRA registry required); refusing to start"
+        )
+    paths = {"ftra_registry_path": config.ftra_registry_path}
+    if config.causal_graph_path is not None:
+        paths["causal_graph_path"] = config.causal_graph_path
+    for field_name, path in paths.items():
+        if not path.is_absolute():
+            raise RuntimeError(f"domain {plugin.name!r}: {field_name} must be absolute, got {path}")
+        if not path.is_file():
+            raise RuntimeError(f"domain {plugin.name!r}: {field_name} does not exist: {path}")
+    return config
+
+
+@functools.cache
+def active_domain_config() -> DomainConfig:
+    """``DomainConfig`` of the process's single active domain (cached).
+
+    ``CAGE_DOMAIN`` is a process constant, so the result is cached for the
+    process lifetime. Tests that change the domain call ``cache_clear()``.
+    """
+    return domain_config_of(load_domain_plugin())

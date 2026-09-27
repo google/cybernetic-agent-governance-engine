@@ -37,7 +37,7 @@ from src.cage_physical_ai.invariants import (
 )
 from src.cage_physical_ai.tools.tool_provider import PhysicalAIToolProvider
 from src.gateway.governance.constants import register_overlay_dir
-from src.gateway.governance.contracts import CagePlugin
+from src.gateway.governance.contracts import CagePlugin, DomainConfig
 from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
@@ -50,6 +50,8 @@ class PhysicalAICagePlugin(CagePlugin):
 
     name: str = "physical_ai"
     api_version: str = "1.0"
+    # No physical-AI FTRA registry yet: the domain refuses to start (POAM-2026-077).
+    domain_config: DomainConfig | None = None
 
     def register(
         self,

@@ -825,6 +825,11 @@ resource "google_cloud_run_v2_service" "gateway" {
       }
 
       env {
+        name  = "CAGE_DOMAIN"
+        value = var.cage_domain
+      }
+
+      env {
         name  = "RECONCILIATION_PROVIDER"
         value = "stub"
       }

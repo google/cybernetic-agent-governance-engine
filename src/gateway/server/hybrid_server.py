@@ -279,15 +279,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as reg_err:
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
-    # ── Load domain plugins (D7 / PR B) ───────────────────────────────────
-    from src.gateway.governance.plugin_loader import discover_plugins
-    from src.gateway.governance.singletons import symbolic_governor
-    from src.gateway.server.mcp_tool_server import _assert_required_plugins, mcp
+    # ── Activate the single CAGE_DOMAIN plugin (fail-closed readiness) ────
+    from src.gateway.server.mcp_tool_server import _activate_domain
 
-    loaded_plugins = discover_plugins()
-    for plugin in loaded_plugins:
-        plugin.register(governor=symbolic_governor, tool_server=mcp)
-    _assert_required_plugins(loaded_plugins)
+    _activate_domain()
 
     # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
     from src.gateway.governance.background_tasks import (
@@ -297,19 +292,6 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     bg_tasks = start_background_tasks()
     app.state.background_tasks = bg_tasks
     logger.info("✅ Plugin background tasks started")
-
-    # ── Startup readiness assertion (PR B, T-B3) ──────────────────────────
-    # Verify domain components were installed if plugins were expected.
-    # Crash loudly rather than serve with null objects that deny everything.
-    from src.gateway.governance.singletons import _has_null_components
-
-    if os.getenv("CAGE_ACTIVE_PLUGINS") != "" and _has_null_components():
-        raise RuntimeError(
-            "startup ordering error: plugins were expected but no domain "
-            "components were installed — refusing to serve traffic"
-        )
-
-    logger.info("✅ Domain components verified (startup readiness check passed)")
 
     yield
 

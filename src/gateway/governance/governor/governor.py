@@ -95,18 +95,22 @@ class SymbolicGovernor:
         return self._domain_tiers
 
     def add_domain_tiers(self, tiers: Sequence[GovernanceTierPlugin]) -> None:
-        """Add a domain's tiers and rebuild the pipeline stages from them.
+        """Install the single active domain's tiers and rebuild the pipeline stages.
 
         The ONLY supported way to install tiers after construction: the tier
         tuple and ``self.stages`` are updated together, so an installed tier
-        always runs. Tiers from several domains accumulate; a duplicate
-        ``tier_name`` (including one already installed) raises ``ValueError``.
+        always runs. One-shot: a CAGE process runs exactly one domain
+        (``CAGE_DOMAIN``), so a second install raises ``RuntimeError``.
+        Duplicate ``tier_name`` values raise ``ValueError``.
         """
         if not tiers:
             raise ValueError("add_domain_tiers() requires at least one tier")
-        combined = (*self._domain_tiers, *tiers)
-        domain_stages = order_stages(combined)  # validates duplicates, sorts
-        self._domain_tiers = tuple(sorted(combined, key=lambda t: (t.phase, t.order, t.tier_name)))
+        if self._domain_tiers:
+            raise RuntimeError(
+                "domain tiers already installed; a CAGE process runs exactly one domain"
+            )
+        domain_stages = order_stages(tiers)  # validates duplicates, sorts
+        self._domain_tiers = tuple(sorted(tiers, key=lambda t: (t.phase, t.order, t.tier_name)))
         self.stages = [*self._kernel_stages, *domain_stages]
 
     def registered_tier_names(self) -> list[str]:
