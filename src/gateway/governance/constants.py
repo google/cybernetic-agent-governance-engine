@@ -93,7 +93,8 @@ _OVERLAY_DIRS: list[Path] = []
 def register_overlay_dir(path: Path) -> None:
     """Register a plugin's compliance-overlay directory.
 
-    Called from CagePlugin.register(). Directories are applied in
+    Called by the server lifespan for each ``PluginContribution.compliance_overlay_dirs``
+    entry. Directories are applied in
     registration order, which is deterministic because plugin discovery
     iterates entry points in a stable order. A later plugin overriding an
     earlier plugin's control mapping is logged at WARNING.
@@ -106,6 +107,9 @@ def register_overlay_dir(path: Path) -> None:
     if resolved not in _OVERLAY_DIRS:
         _OVERLAY_DIRS.append(resolved)
         logger.info(f"✅ Registered compliance overlay dir: {resolved}")
+        # A registry loaded before this overlay would miss its controls; drop
+        # it so the next ControlRegistry() reloads with every overlay applied.
+        ControlRegistry._drop_loaded_instance()
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +489,12 @@ class ControlRegistry:
             cls._instance = new_instance
 
         logger.info("ControlRegistry reconfigured to region: %s", normalized_region)
+
+    @classmethod
+    def _drop_loaded_instance(cls) -> None:
+        """Forget the loaded registry so the next access reloads it (same region)."""
+        with cls._lock:
+            cls._instance = None
 
     @classmethod
     def reset_for_testing(cls) -> None:

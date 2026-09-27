@@ -263,7 +263,7 @@ async def handle_pause(
     from src.gateway.governance.contracts import PauseReceipt
     from src.gateway.governance.pause_primitive import PauseManager, build_resume_endpoint
     from src.gateway.infrastructure.redis_client import redis_client
-    from src.gateway.governance.governor._legacy_startup import is_cage_pause_enabled
+    from src.gateway.governance.env_posture import is_cage_pause_enabled
 
     pause_reason: str = classification_meta.get("pause_reason", "RATE_LIMITED")
     estimated_wait: int = classification_meta.get("estimated_wait_seconds", 60)

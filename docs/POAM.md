@@ -74,6 +74,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
 | POAM-2026-077 | CM-6 / SC-24 | Healthcare and physical-AI plugins declare no `DomainConfig` (no FTRA terminal registry), so `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start (fail closed); only `finance` is runnable | Moderate | 2026-12-31 |
+| POAM-2026-078 | SI-10 / SA-8 | Plugin-contributed CBF invariants (healthcare serum concentration, physical-AI separation/velocity/torque) are validated (V1-V4) at governor assembly and recorded on `GovernorComponents.invariants`, but not enforced until the CBF engine becomes invariant-parametric (PR 4b) | Moderate | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -304,3 +305,18 @@ A CAGE process now runs exactly one domain, named by the required `CAGE_DOMAIN` 
 1. Author an FTRA terminal registry for each domain (`config/ftra/` equivalent under `src/cage_<domain>/config/`).
 2. Author a causal graph where the domain's tiers need one, or leave `causal_graph_path=None` (the causal check then fails closed).
 3. Declare `DomainConfig` on each plugin, including `opa_package` / `opa_required_rules` (healthcare already ships `dosing.governance` in `src/cage_healthcare/opa/dosing_governance.rego`), and add a startup test per domain; add a per-domain CI matrix (PR 4a).
+
+### POAM-2026-078: Contributed Invariants Validated but Not Enforced
+
+**Control:** NIST SI-10, SA-8
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-09-26
+**Target Closure:** 2026-12-31
+
+**Description:**
+Domain plugins now hand their CBF barriers to the kernel as data (`PluginContribution.invariants`, [`contracts.py`](../src/gateway/governance/contracts.py)). The composition root [`assemble_governor()`](../src/gateway/governance/governor/assembly.py) validates every contributed invariant against V1-V4 across all domains (`invariants.validate_invariant`) and records them on the immutable `GovernorComponents.invariants`; an invalid or duplicate invariant refuses startup. The CBF engine ([`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py)) still takes a single invariant at construction, so only finance's `CashBarrier` is enforced (it is also passed directly to finance's CBF). The healthcare and physical-AI barriers are validated but not enforced; their barrier tiers are built without a CBF and fail closed (DENY), see POAM-2026-076 and POAM-2026-077.
+
+**Remediation Plan:**
+1. Make the CBF engine invariant-parametric and consume `GovernorComponents.invariants` (governor refactor plan §4b.1).
+2. Add tests observing each contributed barrier refuse an unsafe action.

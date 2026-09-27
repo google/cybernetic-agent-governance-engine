@@ -39,10 +39,11 @@ import logging
 import os
 import pathlib
 
-# ── CRITICAL: Load .env KMS key BEFORE any application imports ───────────────
-# symbolic_governor.py validates KMS readiness at module import time when
-# CAGE_ENV != test. We must load KMS_GOVERNANCE_KEY from .env BEFORE that
-# happens, otherwise worker processes will crash during import.
+# ── Load .env KMS key before any governor is built ───────────────────────────
+# Importing the governor is side-effect free; KMS readiness is checked by the
+# startup posture check (governor/posture.py) when a governor is bootstrapped.
+# Integration runs against staging/production still need KMS_GOVERNANCE_KEY in
+# the environment before that happens, so load it from .env first.
 _env_file = pathlib.Path(__file__).parent.parent / ".env"
 if _env_file.exists() and not os.environ.get("KMS_GOVERNANCE_KEY"):
     try:
@@ -93,8 +94,8 @@ except ImportError:
 
 # ── KMS key requirement for staging/production integration tests ─────────────
 # If CAGE_ENV is staging/production and KMS_GOVERNANCE_KEY is not set, load it
-# from .env or fail with a clear message. This prevents module-import-time
-# failures in symbolic_governor.py when running integration tests.
+# from .env or fail with a clear message, rather than failing later in the
+# startup posture check / KMS signer during integration tests.
 if os.environ.get("CAGE_ENV", "test").lower() not in (
     "development",
     "test",
@@ -117,7 +118,7 @@ if os.environ.get("CAGE_ENV", "test").lower() not in (
         except Exception:
             pass  # Best effort
 
-        # If still not set, provide clear error before symbolic_governor import fails
+        # If still not set, fail now with a clear configuration error
         if not os.environ.get("KMS_GOVERNANCE_KEY"):
             raise RuntimeError(
                 f"[TEST CONFIG] CAGE_ENV={os.environ.get('CAGE_ENV')} requires KMS_GOVERNANCE_KEY. "
@@ -1260,23 +1261,32 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
 @pytest.fixture(scope="session", autouse=True)
 def assert_formal_tier_ordering_matches():
     """
-    Session-scoped fixture asserting the registered tier order matches the formal model.
+    Session-scoped fixture asserting the assembled tier order matches the formal model.
     See Formal Proof Synchronization.
     """
+    from src.gateway.governance.env_posture import resolve_posture
+    from src.gateway.governance.governor.assembly import assemble_governor
     from src.gateway.governance.plugin_loader import load_domain_plugin
-    from src.gateway.governance.singletons import symbolic_governor
+    from tests.fixtures.governor import allow_opa, clean_stpa
 
-    # Ensure the single CAGE_DOMAIN plugin is loaded
-    load_domain_plugin().register(governor=symbolic_governor, tool_server=None)
+    plugin = load_domain_plugin()
+    governor = assemble_governor(
+        [plugin], posture=resolve_posture(), opa=allow_opa(), stpa_validator=clean_stpa()
+    )
+    # Production registers the domain's compliance overlays in bootstrap_governor();
+    # do the same once per session so domain controls (e.g. CTRL_MRM_004) resolve.
+    from src.gateway.governance.constants import register_overlay_dir
 
-    tiers = symbolic_governor.registered_tier_names()
-    # The formal model mandates the following order for finance package tiers
-    expected = ["consensus_tier", "causal_tier", "cbf_tier", "fiscal_tier"]
-    if all(t in tiers for t in expected):
+    for contribution in governor.components.contributions:
+        for overlay_dir in contribution.compliance_overlay_dirs:
+            register_overlay_dir(overlay_dir)
+
+    tiers = governor.registered_tier_names()
+    if plugin.name == "finance":
+        # The formal model mandates this relative order for the finance tiers.
+        expected = ["consensus", "causal", "cbf", "fiscal"]
         actual = [t for t in tiers if t in expected]
-        assert actual == expected, (
-            f"Tier order mismatch! Expected {expected}, got {actual}"
-        )
+        assert actual == expected, f"Tier order mismatch! Expected {expected}, got {actual}"
 
 
 # ── W1/W3 Post-v3 Remediation: Register fixture modules ───────────────────────
@@ -1284,6 +1294,18 @@ def assert_formal_tier_ordering_matches():
 pytest_plugins = [
     "tests.fixtures.cbf",
 ]
+
+
+@pytest.fixture()
+def governor_factory():
+    """Build a ``SymbolicGovernor`` from explicit parts (see ``tests.fixtures.governor``).
+
+    Replaces patching a process-wide governor: tests construct the governor
+    they need and pass it to the code under test.
+    """
+    from tests.fixtures.governor import make_governor
+
+    return make_governor
 
 
 # ── Classification Engine & Narrower Registry Fixtures ───────────────────────
