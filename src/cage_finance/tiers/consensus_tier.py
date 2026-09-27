@@ -16,6 +16,7 @@ from typing import Any
 
 from src.gateway.governance.consensus.engine import ConsensusGate
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -69,8 +70,12 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
             ]
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        return []
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass

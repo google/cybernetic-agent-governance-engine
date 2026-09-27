@@ -814,7 +814,7 @@ class TestValidateActionPauseHandler:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action = MagicMock(return_value="SAFE")
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus = AsyncMock(return_value={"status": "APPROVE"})

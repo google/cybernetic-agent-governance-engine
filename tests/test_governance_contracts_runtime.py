@@ -66,12 +66,12 @@ class _ConcreteSafetyFilter:
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
         amount = float(payload.get("amount", 0))
         if amount > self._balance:
-            return (False, f"CBF_REJECT: balance {self._balance} < cost {amount}")
+            return (False, f"CBF_REJECT: balance {self._balance} < cost {amount}", 0.0)
         self._balance -= amount
-        return (True, "COMMITTED")
+        return (True, "COMMITTED", amount)
 
     def update_state(self, cost: float) -> None:
         self._balance -= cost
@@ -177,13 +177,14 @@ class TestSafetyFilterRuntimeBehavior:
 
     @pytest.mark.asyncio
     async def test_atomic_verify_and_commit_returns_true_within_balance(self) -> None:
-        """atomic_verify_and_commit must return (True, 'COMMITTED') within balance."""
+        """atomic_verify_and_commit must return (True, 'COMMITTED', magnitude) within balance."""
         sf = _ConcreteSafetyFilter(cash_balance=10_000.0)
-        ok, reason = await sf.atomic_verify_and_commit(
+        ok, reason, magnitude = await sf.atomic_verify_and_commit(
             "execute_trade", {"amount": 500.0}
         )
         assert ok is True, f"Expected committed, got ok={ok!r} reason={reason!r}"
         assert reason == "COMMITTED", f"Expected 'COMMITTED', got {reason!r}"
+        assert magnitude == 500.0, f"Expected applied magnitude 500.0, got {magnitude!r}"
 
     @pytest.mark.asyncio
     async def test_atomic_verify_and_commit_deducts_balance(self) -> None:
@@ -198,7 +199,7 @@ class TestSafetyFilterRuntimeBehavior:
     async def test_atomic_verify_and_commit_returns_false_over_balance(self) -> None:
         """atomic_verify_and_commit must return (False, reason) over budget."""
         sf = _ConcreteSafetyFilter(cash_balance=100.0)
-        ok, reason = await sf.atomic_verify_and_commit(
+        ok, reason, _ = await sf.atomic_verify_and_commit(
             "execute_trade", {"amount": 50_000.0}
         )
         assert ok is False, f"Expected rejection, got ok={ok!r}"

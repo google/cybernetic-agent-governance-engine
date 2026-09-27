@@ -18,6 +18,7 @@ from typing import Any
 
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -66,5 +67,12 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
             ]
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        return []
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        return [], None
+
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        pass  # read-only tier: commit() never issues a receipt

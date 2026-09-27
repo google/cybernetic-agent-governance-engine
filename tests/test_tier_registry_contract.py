@@ -343,10 +343,10 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
         async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
             raise RuntimeError("Tier crashed with unexpected exception")
 
-        async def commit(self, action: str, params: dict[str, Any]) -> list[Any]:
-            return []
+        async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Any], Any]:
+            return [], None
 
-        async def rollback(self, action: str, params: dict[str, Any]) -> None:
+        async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
             pass
 
     gov = SymbolicGovernor(
@@ -398,10 +398,10 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
         async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
             raise asyncio.TimeoutError("Tier evaluation exceeded SLA budget")
 
-        async def commit(self, action: str, params: dict[str, Any]) -> list[Any]:
-            return []
+        async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Any], Any]:
+            return [], None
 
-        async def rollback(self, action: str, params: dict[str, Any]) -> None:
+        async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
             pass
 
     gov = SymbolicGovernor(

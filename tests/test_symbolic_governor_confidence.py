@@ -44,9 +44,9 @@ class _ClaimAllTier:
         return []
 
     async def commit(self, action, params):
-        return []
+        return [], None
 
-    async def rollback(self, action, params):
+    async def rollback(self, action, params, receipt):
         return None
 
 

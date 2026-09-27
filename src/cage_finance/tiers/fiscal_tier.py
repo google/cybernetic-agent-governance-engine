@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import uuid
 from typing import Any
 
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -24,11 +24,14 @@ from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 
 
 class FiscalTierPlugin(GovernanceTierPlugin):
-    """Fiscal guard tier (phase 2, order 4)."""
+    """Fiscal guard tier (phase 2, order 4).
+
+    Stateless across requests: the ``ReservationToken`` from ``commit()`` is
+    returned in the ``CommitReceipt`` and handed back to ``rollback()``.
+    """
 
     def __init__(self, guard: FiscalLimitGuard):
         self.guard = guard
-        self._tokens = {}
 
     @property
     def tier_name(self) -> str:
@@ -53,24 +56,29 @@ class FiscalTierPlugin(GovernanceTierPlugin):
             return []
         return [self._limit_violation(agent_id)]
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         amount = float(params.get("amount", 0.0))
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
-        transaction_id = params.get("transaction_id", str(uuid.uuid4()))
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
         if token.rejected:
-            return [self._limit_violation(agent_id)]
+            return [self._limit_violation(agent_id)], None
 
-        self._tokens[transaction_id] = token
-        await self.guard.confirm(token)
-        return []
-
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
-        transaction_id = params.get("transaction_id")
-        token = self._tokens.get(transaction_id)
-        if token:
+        try:
+            await self.guard.confirm(token)
+        except BaseException:
+            # A raising commit must leave nothing reserved: the caller gets no
+            # receipt, so it could never release this token itself.
             await self.guard.release(token)
+            raise
+        return [], CommitReceipt(tier=self.tier_name, magnitude=token.amount_usd, token=token)
+
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        await self.guard.release(receipt.token)
 
     def _limit_violation(self, agent_id: str) -> Violation:
         return Violation(

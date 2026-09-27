@@ -126,11 +126,11 @@ async def test_sequential_atomic_verify_second_blocked() -> None:
             "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module
         )
 
-        committed1, reason1 = await cbf.atomic_verify_and_commit(
+        committed1, reason1, _ = await cbf.atomic_verify_and_commit(
             action_name="execute_trade",
             payload={"amount": _TRADE_AMOUNT},
         )
-        committed2, reason2 = await cbf.atomic_verify_and_commit(
+        committed2, reason2, _ = await cbf.atomic_verify_and_commit(
             action_name="execute_trade",
             payload={"amount": _TRADE_AMOUNT},
         )
@@ -237,7 +237,7 @@ async def test_non_trade_action_not_debited() -> None:
             "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module
         )
 
-        committed, reason = await cbf.atomic_verify_and_commit(
+        committed, reason, _ = await cbf.atomic_verify_and_commit(
             action_name="market_analysis",
             payload={"symbol": "AAPL"},
         )
@@ -279,7 +279,7 @@ async def test_balance_at_minimum_blocks_any_trade() -> None:
             "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_module
         )
 
-        committed, reason = await cbf.atomic_verify_and_commit(
+        committed, reason, _ = await cbf.atomic_verify_and_commit(
             action_name="execute_trade",
             payload={"amount": 1.0},  # any positive trade
         )

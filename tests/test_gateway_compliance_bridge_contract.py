@@ -390,8 +390,8 @@ class TestSafetyFilterProtocol:
                 action_name: str,
                 payload: dict[str, Any],
                 governance_signature: str = "",
-            ) -> tuple[bool, str]:
-                return (True, "COMMITTED")
+            ) -> tuple[bool, str, float]:
+                return (True, "COMMITTED", float(payload.get("amount", 0.0)))
 
             def update_state(self, cost: float) -> None:
                 pass
@@ -427,14 +427,15 @@ class TestSafetyFilterProtocol:
     async def test_atomic_verify_and_commit_returns_tuple(self) -> None:
         sf = self._make_concrete()
         result = await sf.atomic_verify_and_commit("trade", {"amount": 100.0})
-        ok, reason = result
+        ok, reason, magnitude = result
         assert isinstance(ok, bool)
         assert isinstance(reason, str)
+        assert isinstance(magnitude, float)
 
     @pytest.mark.asyncio
     async def test_atomic_verify_and_commit_succeeds(self) -> None:
         sf = self._make_concrete()
-        ok, reason = await sf.atomic_verify_and_commit("trade", {"amount": 100.0})
+        ok, reason, _ = await sf.atomic_verify_and_commit("trade", {"amount": 100.0})
         assert ok is True
         assert reason == "COMMITTED"
 

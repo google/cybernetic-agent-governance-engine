@@ -57,10 +57,10 @@ class _FakeTier:
     async def evaluate(self, action: str, params: dict[str, Any]) -> list:
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list:
-        return []
+    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list, Any]:
+        return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
         pass
 
 

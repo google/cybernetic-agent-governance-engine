@@ -170,7 +170,7 @@ def mock_safety_filter() -> MagicMock:
     """Create a mock safety filter that returns SAFE."""
     sf = MagicMock()
     sf.verify_action = AsyncMock(return_value="SAFE")
-    sf.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    sf.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
     return sf
 
 

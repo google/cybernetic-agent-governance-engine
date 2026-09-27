@@ -172,4 +172,12 @@ async def _rollback(committed):
     from src.gateway.governance.governor.pipeline import Profile, StageContext, rollback_lifo
     from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
-    return await rollback_lifo([DomainTierStage(t) for t in committed], ctx)
+    return await rollback_lifo(
+        [(DomainTierStage(t), _receipt(t)) for t in committed], ctx
+    )
+
+
+def _receipt(tier):
+    """Deterministic per-tier receipt so assertions can name exactly what was undone."""
+    from src.gateway.governance.contracts import CommitReceipt
+    return CommitReceipt(tier=tier.tier_name, magnitude=1.0)

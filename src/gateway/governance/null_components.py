@@ -54,8 +54,8 @@ class NullSafetyFilter:
 
     async def atomic_verify_and_commit(
         self, action_name: str, payload: dict, governance_signature: str = ""
-    ) -> tuple[bool, str]:
-        """Always denies. Returns (False, reason).
+    ) -> tuple[bool, str, float]:
+        """Always denies. Returns (False, reason, 0.0) — nothing is committed.
 
         Critical: This must return (False, ...) NOT raise an exception.
         Returning False ensures the denial travels the normal verdict path
@@ -64,6 +64,7 @@ class NullSafetyFilter:
         return (
             False,
             "UNSAFE: no domain safety filter registered (bare-kernel mode)",
+            0.0,
         )
 
     async def rollback_state(

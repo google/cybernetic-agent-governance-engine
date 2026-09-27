@@ -18,6 +18,7 @@ from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -70,10 +71,14 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
             ]
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         # Phase 2: no mutation (consensus is read-only)
-        return []
+        return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         # Consensus tier has no state to roll back
         pass

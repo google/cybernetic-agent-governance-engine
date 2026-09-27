@@ -250,6 +250,33 @@ class Narrower(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# CommitReceipt — what a phase-2 commit changed, so rollback can undo exactly it
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CommitReceipt:
+    """Record of the state a phase-2 ``commit()`` mutated.
+
+    ``rollback()`` receives this receipt and must undo exactly what it records.
+    It never re-derives the undo from request params, which may have changed
+    or been interpreted differently by the time rollback runs.
+
+    The pipeline holds receipts in a per-request local. They are never stored
+    on a tier or stage instance, which are shared across concurrent requests.
+
+    Attributes:
+        tier:      ``tier_name`` of the tier that issued the receipt.
+        magnitude: Exact quantity the commit consumed, if any.
+        token:     Opaque tier-owned handle (e.g. a reservation token).
+    """
+
+    tier: str
+    magnitude: float | None = None
+    token: Any = None
+
+
+# ---------------------------------------------------------------------------
 # GovernanceTierPlugin — domain-specific governance tier protocol
 # ---------------------------------------------------------------------------
 
@@ -267,8 +294,9 @@ class GovernanceTierPlugin(Protocol):
         - **Phase 1** (``phase == 1``): read-only validation.  ``evaluate()``
           is called; ``commit()`` and ``rollback()`` are never called.
         - **Phase 2** (``phase == 2``): atomic mutation.  ``commit()`` is
-          called if all Phase 1 tiers passed.  On failure, ``rollback()`` is
-          called in LIFO order on all previously committed Phase 2 tiers.
+          called if all Phase 1 tiers passed and returns a ``CommitReceipt``
+          when it mutated state.  On failure, ``rollback(receipt)`` is called
+          in LIFO order for every receipt issued so far.
 
     The ``order`` property (D5 fix) is the explicit integer ordering value
     that corresponds to the paper's tier numbering.  It replaces the v1
@@ -309,12 +337,27 @@ class GovernanceTierPlugin(Protocol):
         """
         ...
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        """Phase 2: atomic state mutation.  Return violations on failure."""
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        """Phase 2: atomic state mutation.
+
+        Returns ``(violations, receipt)``.  ``receipt`` is not None if and only
+        if state was mutated.  A commit that returns violations must either
+        have mutated nothing (receipt None) or return its receipt so the caller
+        can undo it.  A commit that raises must leave no state mutated.
+        Phase-1 tiers return ``([], None)``.
+        """
         ...
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
-        """Phase 2: undo a prior ``commit()`` — called in LIFO order on failure."""
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """Phase 2: undo the commit described by ``receipt`` (LIFO on failure).
+
+        Decides what to undo from ``receipt`` alone; must never re-read
+        ``params`` for a magnitude or a handle.
+        """
         ...
 
 
@@ -519,7 +562,7 @@ class SafetyFilter(Protocol):
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
         """Collapse CBF check and state commit into one atomic Redis Lua hop.
 
         Eliminates the TOCTOU window between ``verify_action()`` (read-only)
@@ -532,8 +575,10 @@ class SafetyFilter(Protocol):
             governance_signature: Optional KMS governance signature string.
 
         Returns:
-            ``(True, "COMMITTED")`` on success.
-            ``(False, reason_string)`` when the CBF envelope is violated.
+            ``(True, "COMMITTED", magnitude)`` on success, where ``magnitude``
+            is exactly what the commit deducted; pass it to
+            ``rollback_state()`` to undo the commit.
+            ``(False, reason_string, 0.0)`` when nothing was committed.
         """
         ...
 

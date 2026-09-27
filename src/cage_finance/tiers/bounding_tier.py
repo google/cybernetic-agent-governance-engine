@@ -28,6 +28,7 @@ from src.cage_finance.safety.bounding.models import (
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.gateway.governance.contracts import (
+    CommitReceipt,
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
@@ -133,11 +134,15 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
 
         return violations
 
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         """No commit phase for bounding tier (evaluation only)."""
-        return []
+        return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         """No rollback state to release (stateless evaluation)."""
         pass
 

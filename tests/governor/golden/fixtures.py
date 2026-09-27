@@ -135,8 +135,9 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
     if scenario.cbf_raises is not None:
         mock_cbf_backend.atomic_verify_and_commit = AsyncMock(side_effect=scenario.cbf_raises)
     else:
+        applied = float(scenario.params.get("amount", 0.0)) if scenario.cbf_allowed else 0.0
         mock_cbf_backend.atomic_verify_and_commit = AsyncMock(
-            return_value=(scenario.cbf_allowed, scenario.cbf_reason)
+            return_value=(scenario.cbf_allowed, scenario.cbf_reason, applied)
         )
     mock_cbf_backend.rollback_state = AsyncMock()
     mock_cbf_backend.verify_action = AsyncMock(return_value=scenario.cbf_reason if not scenario.cbf_allowed else "SAFE")

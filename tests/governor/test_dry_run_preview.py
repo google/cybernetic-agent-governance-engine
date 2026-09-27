@@ -28,7 +28,7 @@ import pytest
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
-from src.gateway.governance.contracts import Violation, ViolationKind
+from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
@@ -41,7 +41,7 @@ TRADE = {"amount": 100.0, "symbol": "AAPL", "agent_id": "agent-1"}
 def _cbf(verdict: str) -> MagicMock:
     cbf = MagicMock()
     cbf.verify_action = AsyncMock(return_value=verdict)
-    cbf.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+    cbf.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
     return cbf
 
 
@@ -167,7 +167,10 @@ class _NoPreviewStage:
     async def run(self, ctx: StageContext) -> list[Violation]:
         raise AssertionError("DRY_RUN must never call run() on a mutating stage")
 
-    async def rollback(self, ctx: StageContext) -> None:
+    async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
+        raise AssertionError("DRY_RUN must never call commit()")
+
+    async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None:
         raise AssertionError("nothing was committed")
 
 

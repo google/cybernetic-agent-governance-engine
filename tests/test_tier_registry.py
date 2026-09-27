@@ -43,10 +43,10 @@ class MockTier:
     async def evaluate(self, action, params) -> list:
         return []
 
-    async def commit(self, action, params) -> list:
-        return []
+    async def commit(self, action, params) -> tuple:
+        return [], None
 
-    async def rollback(self, action, params) -> None:
+    async def rollback(self, action, params, receipt) -> None:
         pass
 
 
