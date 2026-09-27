@@ -983,12 +983,177 @@ class ExternalLedgerReconciler:
         account_id: str,
         poll_interval: int = POLL_INTERVAL_SECONDS,
         ttl: int = TTL_SECONDS,
+        signer: object | None = None,
     ) -> None:
         self._provider = provider
         self._redis = redis_client
         self._account_id = account_id
         self._poll_interval = poll_interval
         self._ttl = ttl
+        self._signer = signer
+        self._failure_count: int = 0
+
+    @property
+    def failure_count(self) -> int:
+        """Total number of failed reconciliation or KMS signing ticks."""
+        return self._failure_count
+
+    def _write_verified_balance(
+        self,
+        result: ReconciliationResult,
+        *,
+        allow_stub_unconfigured_kms: bool = False,
+        fetch_ms: float = 0.0,
+        set_span_attr: object | None = None,
+    ) -> ReconciliationResult:
+        """Sign the reconciled balance payload and write verified state to Redis.
+
+        Fails closed (Defect K2): if KMS signing raises or returns an empty or
+        software-fallback signature in enforcing posture, increments
+        ``failure_count`` and aborts without writing to Redis so stale-state
+        fail-closed semantics engage.
+        """
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        def _attr(key: str, val: object) -> None:
+            if callable(set_span_attr):
+                set_span_attr(key, val)
+
+        enforcing = is_enforcing(resolve_posture())
+        t_sign_start = time.monotonic()
+        signer_lookup_failed_only = False
+        try:
+            if self._signer is not None:
+                signer = self._signer
+            else:
+                from src.gateway.governance.kms_signer import get_governance_signer
+
+                try:
+                    signer = get_governance_signer()
+                except Exception:
+                    signer_lookup_failed_only = True
+                    raise
+
+            payload_dict = {
+                "source": result.source,
+                "balance_usd": result.balance_usd,
+                "verified_at": result.verified_at,
+                "sequence": result.sequence,
+            }
+            if hasattr(signer, "sign"):
+                raw_sig = signer.sign(payload_dict)  # type: ignore[attr-defined]
+            elif hasattr(signer, "sign_decision"):
+                raw_sig = signer.sign_decision(payload_dict)  # type: ignore[attr-defined]
+            else:
+                raise RuntimeError("Configured governance signer has no sign method")
+
+            if hasattr(raw_sig, "signature"):
+                sig_str = str(raw_sig.signature)
+            elif isinstance(raw_sig, dict):
+                sig_str = str(raw_sig.get("signature", ""))
+            else:
+                sig_str = str(raw_sig or "")
+
+            sig_alg = getattr(
+                raw_sig,
+                "algorithm",
+                getattr(signer, "signing_algorithm", "KMS_ASYMMETRIC"),
+            )
+            if not sig_str or sig_str.startswith("HMAC_FALLBACK"):
+                raise RuntimeError("KMS signer returned empty or fallback signature")
+            if enforcing and (
+                sig_alg in ("HMAC_SHA256_FALLBACK", "HS256", "SOFTWARE_ED25519")
+                or not getattr(signer, "is_kms_active", True)
+            ):
+                raise RuntimeError(
+                    f"Unverified/fallback signing algorithm {sig_alg!r} rejected in enforcing posture"
+                )
+
+            result.signature = sig_str
+            logger.info("✅ Reconciled balance signed via Cloud KMS (non-repudiable).")
+        except Exception as sign_exc:
+            kms_sign_ms = (time.monotonic() - t_sign_start) * 1000.0
+            _attr("reconciliation.kms_sign_ms", round(kms_sign_ms, 1))
+            _attr("reconciliation.signed", False)
+            is_legacy_stub = (
+                allow_stub_unconfigured_kms
+                and signer_lookup_failed_only
+                and not enforcing
+                and self._signer is None
+                and type(self._provider).__name__ == "StubLedgerProvider"
+            )
+            if not is_legacy_stub:
+                self._failure_count += 1
+                result.signature = ""
+                result.error = f"KMS signing failed: {sign_exc}"
+                _attr("reconciliation.error", result.error)
+                logger.error(
+                    "Reconciliation KMS signing FAILED (fail-closed, Redis write aborted): %s",
+                    sign_exc,
+                )
+                return result
+            logger.warning(
+                "⚠️ KMS signing unavailable for non-enforcing stub provider: %s",
+                sign_exc,
+            )
+        else:
+            kms_sign_ms = (time.monotonic() - t_sign_start) * 1000.0
+            _attr("reconciliation.kms_sign_ms", round(kms_sign_ms, 1))
+            _attr("reconciliation.signed", bool(result.signature))
+
+        t_redis_start = time.monotonic()
+        try:
+            pipe = self._redis.pipeline()  # type: ignore[attr-defined]
+            pipe.setex(
+                _REDIS_KEY_VERIFIED_BALANCE,
+                self._ttl,
+                result.to_redis_payload(),
+            )
+            pipe.setex(
+                _REDIS_KEY_VERIFIED_AT,
+                self._ttl,
+                str(result.verified_at),
+            )
+            pipe.setex(
+                _REDIS_KEY_PROVIDER,
+                self._ttl,
+                result.source,
+            )
+            if result.signature:
+                pipe.setex(
+                    _REDIS_KEY_SIGNATURE,
+                    self._ttl,
+                    result.signature,
+                )
+            pipe.execute()
+
+            logger.info(
+                "✅ Reconciliation SUCCESS: provider=%s balance=%.2f "
+                "verified_at=%.0f ttl=%ds signed=%s sequence=%d "
+                "fetch_ms=%.1f kms_ms=%.1f",
+                result.source,
+                result.balance_usd,
+                result.verified_at,
+                self._ttl,
+                bool(result.signature),
+                result.sequence,
+                fetch_ms,
+                kms_sign_ms,
+            )
+        except Exception as redis_exc:
+            self._failure_count += 1
+            logger.error(
+                "Reconciliation Redis write FAILED: %s — CBF will fail-closed "
+                "because verified balance is unavailable.",
+                redis_exc,
+            )
+            result.error = f"Redis write failed: {redis_exc}"
+            _attr("reconciliation.redis_error", str(redis_exc))
+        finally:
+            redis_write_ms = (time.monotonic() - t_redis_start) * 1000.0
+            _attr("reconciliation.redis_write_ms", round(redis_write_ms, 1))
+
+        return result
 
     def reconcile(self) -> ReconciliationResult:
         """Execute a single reconciliation cycle.
@@ -1041,6 +1206,7 @@ class ExternalLedgerReconciler:
             try:
                 result = self._provider.fetch_balance(self._account_id)
             except Exception as exc:
+                self._failure_count += 1
                 logger.error(
                     "Reconciliation FAILED: provider=%s account=%s error=%s",
                     PROVIDER,
@@ -1058,6 +1224,7 @@ class ExternalLedgerReconciler:
                 _set_span_attr("reconciliation.plaid_fetch_ms", round(fetch_ms, 1))
 
             if not result.is_valid:
+                self._failure_count += 1
                 logger.error("Reconciliation returned invalid result: %s", result.error)
                 _set_span_attr("reconciliation.error", result.error or "invalid")
                 return result
@@ -1065,9 +1232,6 @@ class ExternalLedgerReconciler:
             _set_span_attr("reconciliation.balance_usd", result.balance_usd)
 
             # ── 2. Monotonic sequence number (§2.10 R-04 replay defense) ───
-            # Read current sequence, increment, and include in signed payload.
-            # The sequence is stored separately and never TTL'd — it must
-            # survive independently of the 300s balance TTL.
             new_sequence: int = 0
             if REPLAY_DEFENSE_ENABLED:
                 try:
@@ -1086,102 +1250,13 @@ class ExternalLedgerReconciler:
 
             _set_span_attr("cage.reconciliation.sequence", new_sequence)
 
-            # ── 3. Cloud KMS signing (Priority 1 integration) ─────────────
-            # Sign the reconciled balance payload so the CBF can verify that
-            # the balance was written by an authorised reconciliation worker,
-            # not by the execution system itself.
-            # §2.10: sequence is included in signed payload — replay cannot
-            # bump sequence without invalidating the signature.
-            t_sign_start = time.monotonic()
-            try:
-                from src.gateway.governance.kms_signer import get_governance_signer
-
-                signer = get_governance_signer()
-                payload_dict = {
-                    "source": result.source,
-                    "balance_usd": result.balance_usd,
-                    "verified_at": result.verified_at,
-                    "sequence": result.sequence,  # §2.10: in signed payload
-                }
-                result.signature = signer.sign(payload_dict)
-
-                if signer.is_kms_active:
-                    logger.info(
-                        "✅ Reconciled balance signed via Cloud KMS (non-repudiable)."
-                    )
-                else:
-                    logger.warning(
-                        "⚠️ Reconciled balance signed via HMAC fallback. "
-                        "Cloud KMS must be configured for production."
-                    )
-            except Exception as sign_exc:
-                logger.warning(
-                    "⚠️ KMS signing failed for reconciled balance: %s — "
-                    "balance will be written unsigned.",
-                    sign_exc,
-                )
-            finally:
-                kms_sign_ms = (time.monotonic() - t_sign_start) * 1000.0
-                _set_span_attr("reconciliation.kms_sign_ms", round(kms_sign_ms, 1))
-                _set_span_attr("reconciliation.signed", bool(result.signature))
-
-            # ── 4. Write to Redis ──────────────────────────────────────────
-            # Note: sequence key (_REDIS_KEY_SEQUENCE_LATEST) is written via
-            # INCR above, NOT in this pipeline, because it must never expire.
-            t_redis_start = time.monotonic()
-            try:
-                pipe = self._redis.pipeline()  # type: ignore[attr-defined]
-                pipe.setex(
-                    _REDIS_KEY_VERIFIED_BALANCE,
-                    self._ttl,
-                    result.to_redis_payload(),
-                )
-                pipe.setex(
-                    _REDIS_KEY_VERIFIED_AT,
-                    self._ttl,
-                    str(result.verified_at),
-                )
-                pipe.setex(
-                    _REDIS_KEY_PROVIDER,
-                    self._ttl,
-                    result.source,
-                )
-                if result.signature:
-                    pipe.setex(
-                        _REDIS_KEY_SIGNATURE,
-                        self._ttl,
-                        result.signature,
-                    )
-                pipe.execute()
-
-                logger.info(
-                    "✅ Reconciliation SUCCESS: provider=%s balance=%.2f "
-                    "verified_at=%.0f ttl=%ds signed=%s sequence=%d "
-                    "fetch_ms=%.1f kms_ms=%.1f",
-                    result.source,
-                    result.balance_usd,
-                    result.verified_at,
-                    self._ttl,
-                    bool(result.signature),
-                    result.sequence,
-                    fetch_ms,
-                    kms_sign_ms,
-                )
-            except Exception as redis_exc:
-                logger.error(
-                    "Reconciliation Redis write FAILED: %s — CBF will fail-closed "
-                    "because verified balance is unavailable.",
-                    redis_exc,
-                )
-                result.error = f"Redis write failed: {redis_exc}"
-                _set_span_attr("reconciliation.redis_error", str(redis_exc))
-            finally:
-                redis_write_ms = (time.monotonic() - t_redis_start) * 1000.0
-                _set_span_attr(
-                    "reconciliation.redis_write_ms", round(redis_write_ms, 1)
-                )
-
-            return result
+            # ── 3 & 4. Cloud KMS signing & Redis write (fail-closed K2) ───
+            return self._write_verified_balance(
+                result,
+                allow_stub_unconfigured_kms=True,
+                fetch_ms=fetch_ms,
+                set_span_attr=_set_span_attr,
+            )
 
     def run_loop(self) -> None:
         """Run the reconciliation daemon in a blocking loop.
@@ -1305,6 +1380,9 @@ def read_verified_balance(redis_client: object) -> ReconciliationResult | None:
             exc,
         )
         return None
+
+
+LedgerReconciliationDaemon = ExternalLedgerReconciler
 
 
 # ---------------------------------------------------------------------------
