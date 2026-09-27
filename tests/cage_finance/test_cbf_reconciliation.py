@@ -68,7 +68,7 @@ def test_reconciliation_result_is_valid() -> None:
     """ReconciliationResult with a fresh timestamp and no error is valid."""
     result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time(),  # fresh
         signature="deadbeef",
         ttl_seconds=TTL_SECONDS,
@@ -91,7 +91,7 @@ def test_reconciliation_result_is_stale() -> None:
     """ReconciliationResult with verified_at older than ttl_seconds is stale."""
     result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time() - (TTL_SECONDS + 60),  # older than TTL
         signature="deadbeef",
         ttl_seconds=TTL_SECONDS,
@@ -128,7 +128,7 @@ def test_read_verified_balance_returns_none_when_stale() -> None:
     # Write a stale payload directly — verified_at is older than ttl_seconds
     stale_result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time() - (TTL_SECONDS + 120),  # well past TTL
         signature="deadbeef",
         ttl_seconds=TTL_SECONDS,
@@ -157,7 +157,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
 
     fresh_result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
         ttl_seconds=TTL_SECONDS,
@@ -268,7 +268,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
 
     fresh_result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
         ttl_seconds=TTL_SECONDS,
@@ -395,7 +395,7 @@ def test_fence_epoch_regression_rejected() -> None:
 
     fresh_result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
         ttl_seconds=TTL_SECONDS,
@@ -463,7 +463,7 @@ def test_local_debits_accumulated_within_cycle() -> None:
 
     fresh_result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="valid_sig",
         ttl_seconds=TTL_SECONDS,
@@ -551,7 +551,7 @@ def test_kms_signature_verified_before_commit() -> None:
 
     fresh_result = ReconciliationResult(
         source="plaid",
-        balance_usd=_RECON_BALANCE,
+        state_scalar=_RECON_BALANCE,
         verified_at=time.time(),
         signature="invalid_sig",
         ttl_seconds=TTL_SECONDS,

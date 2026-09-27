@@ -307,9 +307,8 @@ def test_tampered_redis_payload_fails_signature_verification(
     raw = sync_redis.get(key)
     assert raw is not None
 
-    # Tamper with state_scalar / balance_usd without re-signing
+    # Tamper with state_scalar without re-signing
     tampered = json.loads(raw)
-    tampered["balance_usd"] = 999_999.0
     tampered["state_scalar"] = 999_999.0
     sync_redis.set(key, json.dumps(tampered))
 

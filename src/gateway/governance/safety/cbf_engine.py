@@ -567,10 +567,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
             )
 
             if verified is not None and verified.is_valid:
-                scalar_raw = getattr(verified, "state_scalar", None)
-                if not isinstance(scalar_raw, (int, float)):
-                    scalar_raw = verified.balance_usd
-                scalar_val = float(scalar_raw)
+                scalar_val = float(verified.state_scalar)
                 if verified.signature:
                     try:
                         from src.gateway.governance.kms_signer import (
@@ -580,7 +577,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                         signer = get_governance_signer()
                         payload_dict = {
                             "source": verified.source,
-                            "balance_usd": verified.balance_usd,
+                            "state_scalar": scalar_val,
                             "verified_at": verified.verified_at,
                             "sequence": verified.sequence,
                         }
@@ -607,7 +604,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                                                 "event": "CBF_RECONCILED_BALANCE_SEQUENCE_REPLAY_DETECTED",
                                                 "severity": "CRITICAL",
                                                 "source": verified.source,
-                                                "balance_usd": scalar_val,
+                                                "state_scalar": scalar_val,
                                                 "sequence": verified.sequence,
                                                 "reason": seq_reason,
                                             }
@@ -642,7 +639,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                                         "event": "CBF_RECONCILED_BALANCE_SIGNATURE_INVALID",
                                         "severity": "CRITICAL",
                                         "source": verified.source,
-                                        "balance_usd": scalar_val,
+                                        "state_scalar": scalar_val,
                                     }
                                 )
                             )
@@ -671,7 +668,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                                     "event": "CBF_RECONCILED_BALANCE_UNSIGNED_IN_PRODUCTION",
                                     "severity": "CRITICAL",
                                     "source": verified.source,
-                                    "balance_usd": scalar_val,
+                                    "state_scalar": scalar_val,
                                 }
                             )
                         )

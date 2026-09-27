@@ -367,9 +367,9 @@ class RbacRoleModel(BaseModel):
     name: str
     allowed_actions: list[str]
     action: str | None = None
-    subject_field: str = "trader_role"
-    magnitude_field: str = "amount"
-    denylist_field: str = "currency"
+    subject_field: str = "role"
+    magnitude_field: str = "magnitude"
+    denylist_field: str = "resource"
     limits: dict[str, Any] | None = None
     restrictions: list[dict[str, Any]] | None = None
 
@@ -1348,18 +1348,39 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         # execution_type=local    → retains a clearly-labeled local stub that
         #                           the implementor must wire before promotion.
         if saga.execution_type == "mcp_tool":
+            req_keys = [
+                str(p["name"] if isinstance(p, dict) else p.name)
+                for ca in cs.control_actions
+                if (ca.get("name") if isinstance(ca, dict) else ca.name) == saga.forward_action
+                for p in (ca.get("params", []) if isinstance(ca, dict) else ca.params)
+                if (p.get("required") if isinstance(p, dict) else getattr(p, "required", False))
+            ]
+            map_keys = [
+                pm.forward_key
+                for pm in saga.parameter_mapping
+                if pm.forward_key != "transaction_id" and pm.forward_key not in req_keys
+            ]
+            fwd_keys = (
+                (*req_keys[:-1], *map_keys, req_keys[-1], "approval_token")
+                if req_keys
+                else (*map_keys, "approval_token")
+            )
+            keys_tuple_src = "(" + ", ".join(f'"{k}"' for k in fwd_keys) + ")"
             step2_lines = [
                 "    # Step 2: [CTRL_WAL_002] — real async MCP tool invocation.",
                 "    # GatewayMCPClient traverses the full 7-layer governance pipeline",
                 "    # (Aho-Corasick → NeMo → STPA → OPA → CBF → Consensus → DoWhy)",
-                "    # before executing the trade, ensuring atomicity guarantees are",
+                "    # before executing the action, ensuring atomicity guarantees are",
                 "    # proven in production and not merely declared in policy documents.",
                 "    result: dict[str, Any] = asyncio.get_event_loop().run_until_complete(",
                 "        _get_mcp_client().call_tool(",
                 f'            name="{saga.mcp_tool_name}",',
-                "            arguments={k: v for k, v in state.items()",
-                '                       if k in ("amount", "symbol", "account_id",',
-                '                                "trader_role", "approval_token")},',
+                "            arguments={",
+                "                k: v",
+                "                for k, v in state.items()",
+                "                if k",
+                f"                in {keys_tuple_src}",
+                "            },",
                 "        )",
                 "    )",
             ]
