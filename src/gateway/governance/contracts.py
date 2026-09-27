@@ -826,22 +826,14 @@ class CausalGatekeeper(Protocol):
 # sufficient to make it a fully compatible CausalGatekeeper instance.
 
 
+@runtime_checkable
 class ResourceGuard(Protocol):
     """
-    Protocol for a resource pre-reservation system (e.g. Redis-backed fiscal limits).
+    Protocol for a domain-agnostic resource pre-reservation system.
 
-    v4.0 rename: ``FiscalGuard`` → ``ResourceGuard`` for domain-agnostic
-    semantics.  Parameters generalized from ``(agent_id, amount_usd)`` to
-    ``(principal_id, magnitude, context)``.
-
-    Abstracts the FiscalLimitGuard for testability — any object implementing
-    ``reserve`` and ``release`` is a valid ResourceGuard, regardless of whether
-    it uses a real Redis instance, fakeredis, or an in-memory stub.
-
-    Structural subtyping note: FiscalLimitGuard in
-    src/gateway/governance/fiscal_limit_guard.py implements both ``reserve``
-    and ``release`` with compatible signatures and is therefore structurally
-    compatible with this Protocol without any modification.
+    Any object implementing ``reserve`` and ``release`` is a valid
+    ResourceGuard, regardless of whether it uses a live store or an
+    in-memory stub.
     """
 
     async def reserve(
@@ -881,21 +873,6 @@ class ResourceGuard(Protocol):
         ...
 
 
-# Deprecated alias — retained through PR 3 for backward compatibility.
-# Deleted in PR 4 when the legacy dispatch path is removed.
-FiscalGuard = ResourceGuard
-
-# Structural compatibility note:
-# FiscalLimitGuard (src/gateway/governance/fiscal_limit_guard.py) implements
-# both ``reserve(agent_id, amount_usd) -> ReservationToken`` and
-# ``release(token) -> float`` with compatible signatures.  It is therefore
-# structurally compatible with ResourceGuard under PEP 544 structural subtyping
-# with no modification required.  The parameter rename (agent_id -> principal_id,
-# amount_usd -> magnitude) is source-compatible because Python protocols use
-# structural, not nominal, subtyping.
-
-# Import ReservationToken from kernel types module (promoted from Layer 2 in PR B).
-# Fixes Finding A: the old path src.gateway.governance.fiscal_limit_guard never
-# existed, causing get_type_hints(ResourceGuard) to raise NameError.
 from src.gateway.governance.stpa_validator import UcaRule
 from src.gateway.governance.types import ReservationToken
+

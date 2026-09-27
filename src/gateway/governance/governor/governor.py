@@ -143,6 +143,17 @@ class SymbolicGovernor:
             if classification.decision == GovernanceDecision.NARROW:
                 return await self._narrow(action, params, result, meta, t0)
 
+            if classification.decision == GovernanceDecision.PAUSE:
+                return await handle_pause(
+                    action,
+                    params,
+                    violations,
+                    list(result.tier_failures),
+                    meta,
+                    latency_ms,
+                    standing_projector=self._components.standing_projector,
+                )
+
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
             verdict = handler(action, params, violations, list(result.tier_failures), meta, latency_ms)

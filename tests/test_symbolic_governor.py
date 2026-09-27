@@ -1111,7 +1111,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
         # Create a mock fiscal guard that rejects
-        from src.gateway.governance.safety.resource_guard import ReservationToken
+        from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
 
         mock_fiscal_guard = AsyncMock()
         import time

@@ -31,7 +31,7 @@ from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
-from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
+from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 

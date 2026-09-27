@@ -27,7 +27,7 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.gateway.governance.contracts import GovernanceTierPlugin
-from src.gateway.governance.ftra.bounding_contract import (
+from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
 )

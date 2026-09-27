@@ -31,7 +31,7 @@ Usage::
     )
 
     safety_node = create_opa_safety_node(
-        OpaNodeConfig(policy_action_name="execute_trade", payload_extractor=my_extractor_fn),
+        OpaNodeConfig(policy_action_name="execute_action", payload_extractor=my_extractor_fn),
         governor,  # from assemble_governor() / bootstrap_governor()
     )
 """
@@ -41,6 +41,7 @@ from src.gateway.governance.langgraph_harness.nemo_node_factory import (
     create_nemo_output_rail_node,
 )
 from src.gateway.governance.langgraph_harness.opa_node_factory import (
+    create_opa_router,
     create_opa_safety_node,
     create_opa_safety_router,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "ThreadIdExtractor",
     "create_nemo_guardrail_node",
     "create_nemo_output_rail_node",
+    "create_opa_router",
     "create_opa_safety_node",
     "create_opa_safety_router",
     "default_confidence_extractor",

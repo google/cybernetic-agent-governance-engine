@@ -12,25 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Kernel-owned value types shared across the governance seam.
-
-These types are part of the Layer 1 public contract. They must never
-import from Layer 2 (src/cage_*) or Layer 4.
-"""
+"""Re-export of the domain-neutral LangGraph OPA node factory."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from src.gateway.governance.langgraph_harness.opa_node_factory import (
+    OpaNodeConfig,
+    create_opa_router,
+    create_opa_safety_node,
+    create_opa_safety_router,
+)
 
-
-@dataclass(frozen=True)
-class ReservationToken:
-    """Result of a ResourceGuard.reserve() call."""
-
-    reservation_id: str
-    principal_id: str
-    magnitude: float
-    running_total: float
-    rejected: bool = False
-    reason: str = ""
-    context: dict[str, object] = field(default_factory=dict)
+__all__ = [
+    "OpaNodeConfig",
+    "create_opa_router",
+    "create_opa_safety_node",
+    "create_opa_safety_router",
+]

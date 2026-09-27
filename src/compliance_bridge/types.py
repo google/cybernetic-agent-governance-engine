@@ -53,7 +53,7 @@ resolved fresh on every poll cycle. See FINDING-05 in
 docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md.
 
 src/governed_financial_advisor/utils/langfuse_utils.py uses get_iso_control_map()
-from here (single source of truth). src/gateway/governance/ontology.py provides
+from here (single source of truth). src/cage_finance/ontology.py provides
 its own TradingKnowledgeGraph.get_control_map(region) for short-form event mapping.
 """
 

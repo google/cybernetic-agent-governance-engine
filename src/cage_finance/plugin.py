@@ -16,11 +16,16 @@ import logging
 from pathlib import Path
 
 from src.cage_finance import REGISTERED_ACTIONS, create_finance_tiers
+from src.cage_finance.safety.bounding.contract import (
+    BoundingContractConfig,
+    BoundingContractEnforcer,
+)
 from src.cage_finance.safety.bounding.providers import (
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
+from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
@@ -36,15 +41,23 @@ from src.gateway.governance.contracts import (
     DomainConfig,
     PluginContribution,
 )
-from src.gateway.governance.ftra.bounding_contract import (
-    BoundingContractConfig,
-    BoundingContractEnforcer,
-)
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-from src.gateway.governance.safety.resource_guard import FiscalLimitGuard
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger(__name__)
+
+FINANCE_EXECUTION_VERBS: frozenset[str] = frozenset(
+    {"buy", "sell", "trade", "transfer", "execute_trade"}
+)
+
+
+def finance_standing_projector(params: dict) -> dict:
+    """Project finance standing parameters for refusal/pause receipts."""
+    return {
+        "symbol": params.get("symbol"),
+        "amount": params.get("amount"),
+        "confidence": params.get("confidence"),
+    }
 
 
 class FinanceCagePlugin(CagePlugin):
@@ -101,6 +114,8 @@ class FinanceCagePlugin(CagePlugin):
             uca_rules=UCA_RULES,
             saga_compensators=SAGA_COMPENSATORS,
             ground_truth_providers={cash_barrier.invariant_id: cash_provider},
+            execution_verbs=FINANCE_EXECUTION_VERBS,
+            standing_projector=finance_standing_projector,
             registered_actions=REGISTERED_ACTIONS,
             safety_filter=cbf,
             consensus=consensus_gate,

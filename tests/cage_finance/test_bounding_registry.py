@@ -23,7 +23,7 @@ from src.cage_finance.safety.bounding.models import (
     ContractSeverity,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
-from src.gateway.governance.ftra.bounding_contract import (
+from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
 )

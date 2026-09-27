@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway.governance.ftra.bounding_contract import (
+from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
 )

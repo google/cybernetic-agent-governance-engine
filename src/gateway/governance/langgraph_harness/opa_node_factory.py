@@ -34,9 +34,9 @@ from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
-from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.observability.attributes import (
     OBSERVATION_NAME,
     OBSERVATION_OUTPUT,
@@ -48,18 +48,8 @@ logger = logging.getLogger("gateway.governance.langgraph_harness.opa_node_factor
 tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.opa_node_factory")
 
 
-# ---------------------------------------------------------------------------
-# Compliance scoring helper — optional, imported at call-time to avoid
-# hard-coupling the harness to the governed_financial_advisor package.
-# ---------------------------------------------------------------------------
-
-
 def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) -> None:
-    """Best-effort compliance scoring via OTel span events.
-
-    Falls back silently if the compliance scoring module is unavailable
-    (e.g. the harness is used outside the financial-advisor codebase).
-    """
+    """Best-effort compliance scoring via OTel span events."""
     try:
         from src.gateway.observability.telemetry_utils import (
             score_compliance_event,
@@ -67,8 +57,6 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
 
         score_compliance_event(thread_id, control, passed=passed, comment=comment)
     except ImportError:
-        # Harness is used in a project that doesn't have telemetry_utils —
-        # compliance scoring degrades gracefully to a no-op.
         logger.debug(
             "score_compliance_event not available — skipping compliance score "
             "for control=%s",
@@ -81,7 +69,9 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
 # ---------------------------------------------------------------------------
 
 
-def create_opa_safety_node(config: OpaNodeConfig, governor: SymbolicGovernor) -> Callable:
+def create_opa_safety_node(
+    config: OpaNodeConfig, governor: SymbolicGovernor
+) -> Callable:
     """Return an async LangGraph node function that enforces OPA policy.
 
     The returned function reads domain-specific data from state via
@@ -134,8 +124,8 @@ def create_opa_safety_node(config: OpaNodeConfig, governor: SymbolicGovernor) ->
             # ----- 2. Extract OPA payload via domain extractor -----
             opa_input = config.payload_extractor(state)
 
-            # Propagate extracted payload fields to span for observability
-            for key in ("action", "trader_role", "amount"):
+            # Propagate configured payload fields to span for observability
+            for key in config.span_keys:
                 if key in opa_input:
                     span.set_attribute(
                         metadata(f"governance.{key}"),
@@ -259,32 +249,50 @@ def create_opa_safety_node(config: OpaNodeConfig, governor: SymbolicGovernor) ->
 
 def create_opa_safety_router(
     status_state_key: str = "safety_status",
-    approved_target: str = "governed_trader",
-    blocked_target: str = "execution_analyst",
+    *,
+    approved_target: str | None = None,
+    blocked_target: str | None = None,
+    allow_target: str | None = None,
+    deny_target: str | None = None,
 ) -> Callable:
     """Return a deterministic routing function for OPA safety outcomes.
 
     Maps:
-        - ``APPROVED`` / ``SKIPPED`` → *approved_target*
-        - ``BLOCKED`` / ``ESCALATED`` → *blocked_target*
+        - ``APPROVED`` / ``SKIPPED`` → *approved_target* (or *allow_target*)
+        - ``BLOCKED`` / ``ESCALATED`` → *blocked_target* (or *deny_target*)
 
-    Args:
-        status_state_key: State key holding the OPA decision string.
-        approved_target: Node name to route to on success.
-        blocked_target: Node name to route to on denial.
-
-    Returns:
-        A ``def route(state) -> str`` function suitable for
-        ``workflow.add_conditional_edges()``.
+    Both target node names are required keyword arguments; no domain-specific
+    defaults are provided.
     """
+    resolved_approved = (
+        approved_target if approved_target is not None else allow_target
+    )
+    resolved_blocked = (
+        blocked_target if blocked_target is not None else deny_target
+    )
+    if not resolved_approved or not resolved_blocked:
+        raise TypeError(
+            "create_opa_safety_router() requires both approved_target (or allow_target) "
+            "and blocked_target (or deny_target) keyword arguments"
+        )
 
     def route_safety(state: StateDict) -> str:
         status = state.get(status_state_key)
         if status in ("APPROVED", "SKIPPED"):
-            return approved_target
-        return blocked_target
+            return resolved_approved
+        return resolved_blocked
 
     route_safety.__qualname__ = (
-        f"route_safety[{status_state_key}→{approved_target}/{blocked_target}]"
+        f"route_safety[{status_state_key}→{resolved_approved}/{resolved_blocked}]"
     )
     return route_safety
+
+
+create_opa_router = create_opa_safety_router
+
+__all__ = [
+    "OpaNodeConfig",
+    "create_opa_router",
+    "create_opa_safety_node",
+    "create_opa_safety_router",
+]

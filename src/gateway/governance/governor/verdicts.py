@@ -251,6 +251,11 @@ async def handle_defer(
     }
 
 
+def default_standing_projector(params: dict[str, Any]) -> dict[str, Any]:
+    """Default domain-neutral standing projection for PauseReceipt."""
+    return {"confidence": params.get("confidence")}
+
+
 async def handle_pause(
     action: str,
     params: dict[str, Any],
@@ -258,6 +263,8 @@ async def handle_pause(
     tier_failures: list[GovernanceTierFailure],
     classification_meta: dict[str, Any],
     latency_ms: float = 0.0,
+    *,
+    standing_projector: Any = None,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
     from src.gateway.governance.contracts import PauseReceipt
@@ -318,17 +325,14 @@ async def handle_pause(
             receipt=receipt,
         )
 
+    projector = standing_projector if callable(standing_projector) else default_standing_projector
     pause_receipt = PauseReceipt(
         thread_id=_va_pause_thread_id,
         action=action,
         pause_reason=pause_reason,
         pause_token=pause_token,
         violations=[str(v) for v in violations],
-        standing_at_pause={
-            "symbol": params.get("symbol"),
-            "amount": params.get("amount"),
-            "confidence": params.get("confidence"),
-        },
+        standing_at_pause=dict(projector(params)),
         estimated_wait_seconds=estimated_wait,
         expires_at_utc=expires_at_utc,
     )

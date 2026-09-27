@@ -70,6 +70,7 @@ def make_governor(
     core_stages: Sequence[Any] | None = None,
     safety_filter: Any = None,
     consensus: Any = None,
+    standing_projector: Any = None,
     invariants: Sequence[Any] = (),
     posture: DeploymentPosture = DeploymentPosture.DEV,
 ) -> SymbolicGovernor:
@@ -86,6 +87,8 @@ def make_governor(
         extra["safety_filter"] = safety_filter
     if consensus is not None:
         extra["consensus"] = consensus
+    if standing_projector is not None:
+        extra["standing_projector"] = standing_projector
     components = GovernorComponents(
         opa=opa,
         core_stages=tuple(core_stages) if core_stages is not None else kernel_stages(opa, stpa_validator),
