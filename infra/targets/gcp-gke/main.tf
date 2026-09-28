@@ -292,26 +292,63 @@ module "postgres" {
   depends_on = [module.gke]
 }
 
-# ─── Deploy Redis Cache ────────────────────────────────────────────────────────
+# ─── Deploy Memorystore Instances (Valkey Cluster Mode Disabled) ───────────────
+# D5, D6: Two separate instances for governance state integrity and app isolation.
 
-module "redis" {
-  source = "../../modules/redis_cache"
+module "memorystore_governance" {
+  source = "../../modules/memorystore_valkey"
 
-  namespace     = module.namespace.name
-  storage_size  = var.redis_storage_size
-  storage_class = var.storage_class
-  # DEP-20 + POAM-024: Redis HA now controlled by enable_high_availability (decoupled
-  # from compliance flags). Prod tfvars for all regions (US_FED, EU_ECB, APAC_MAS)
-  # set enable_high_availability=true to satisfy NIST SC-6, DORA Art. 10, and MAS TRM §9.1.
-  architecture              = var.enable_high_availability ? "replication" : "standalone"
-  replica_count             = var.enable_high_availability ? 3 : 1
-  enable_persistence        = var.enable_high_availability
-  enable_sentinel           = var.enable_high_availability
-  resources_limits_memory   = var.enable_high_availability ? "2Gi" : ""
-  resources_limits_cpu      = var.enable_high_availability ? "1000m" : ""
-  resources_requests_cpu    = "200m"
-  resources_requests_memory = "512Mi"
-  maxmemory                 = var.environment == "prod" ? "1024mb" : "256mb"
+  project_id  = var.project_id
+  environment = var.environment
+  region      = var.region
+  instance_id = "cage-valkey-gov-${var.environment}"
+  network_id  = var.network
+
+  # §1.1 Infrastructure Posture:
+  # dev: 0 replicas (saves 1s per commit on WAIT)
+  # staging: 1 replica (enables real WAIT 1 testing)
+  # prod: 2+ replicas across zones
+  replica_count = var.environment == "prod" ? 2 : (var.environment == "staging" ? 1 : 0)
+  shard_count   = 1
+  node_type     = var.environment == "prod" ? "HIGHMEM_MEDIUM" : "SHARED_CORE_NANO"
+  mode          = "CLUSTER_DISABLED"
+
+  authorization_mode      = var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
+  transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+
+  enable_cmek = var.enable_cmek
+  kms_key_id  = var.kms_key_id
+
+  deletion_protection_enabled = var.enable_deletion_protection
+
+  depends_on = [module.gke]
+}
+
+module "memorystore_app" {
+  source = "../../modules/memorystore_valkey"
+
+  project_id  = var.project_id
+  environment = var.environment
+  region      = var.region
+  instance_id = "cage-valkey-app-${var.environment}"
+  network_id  = var.network
+
+  # §1.1 Infrastructure Posture:
+  # dev: 0 replicas
+  # staging: 0 replicas
+  # prod: 1 replica (HA)
+  replica_count = var.environment == "prod" ? 1 : 0
+  shard_count   = 1
+  node_type     = var.environment == "prod" ? "HIGHMEM_MEDIUM" : "SHARED_CORE_NANO"
+  mode          = "CLUSTER_DISABLED"
+
+  authorization_mode      = var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
+  transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+
+  enable_cmek = var.enable_cmek
+  kms_key_id  = var.kms_key_id
+
+  deletion_protection_enabled = var.enable_deletion_protection
 
   depends_on = [module.gke]
 }
@@ -520,10 +557,9 @@ module "langfuse" {
   clickhouse_url           = "http://${module.clickhouse.service_name}:${module.clickhouse.http_port}"
   clickhouse_migration_url = "clickhouse://default:${module.clickhouse.password}@${module.clickhouse.service_name}:${module.clickhouse.tcp_port}"
   clickhouse_user          = "default"
-  clickhouse_password      = module.clickhouse.password
-  redis_connection_string  = "redis://:${module.redis.password}@${module.redis.service_name}:6379"
-  redis_host               = module.redis.service_name
-  redis_port               = "6379"
+  redis_connection_string  = "redis://${module.memorystore_app.primary_endpoint_ip}:${module.memorystore_app.primary_endpoint_port}"
+  redis_host               = module.memorystore_app.primary_endpoint_ip
+  redis_port               = tostring(module.memorystore_app.primary_endpoint_port)
 
   # S3-compatible blob storage via GCS HMAC keys
   s3_endpoint   = var.langfuse_s3_endpoint
@@ -550,7 +586,7 @@ module "langfuse" {
   langfuse_init_org_id        = "CAGE"
   langfuse_init_org_name      = "CAGE"
 
-  depends_on = [module.postgres, module.clickhouse, module.redis, google_storage_hmac_key.langfuse_key, module.gke]
+  depends_on = [module.postgres, module.clickhouse, module.memorystore_app, google_storage_hmac_key.langfuse_key, module.gke]
 }
 
 # ─── Deploy Compliance Bridge ───────────────────────────────────────────────────
@@ -613,8 +649,12 @@ module "gateway" {
   region                  = var.region
   enable_logging          = "true"
   cage_env                = var.environment
-  redis_host              = module.redis.service_name
-  redis_password          = module.redis.password
+  redis_host              = module.memorystore_governance.primary_endpoint_ip
+  redis_port              = tostring(module.memorystore_governance.primary_endpoint_port)
+  redis_password          = ""
+  governance_redis_replica_count = module.memorystore_governance.replica_count
+  enable_redis_tls        = var.enable_memorystore_tls
+  redis_auth_mode         = var.enable_memorystore_iam_auth ? "iam" : "none"
   vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
@@ -643,7 +683,7 @@ module "gateway" {
   kms_governance_key   = local.gateway_seal_key_version
   reconciler_kms_key   = local.reconciler_snapshot_key_version
 
-  depends_on = [module.app_secrets, module.opa, module.vllm, module.redis, module.service_mesh]
+  depends_on = [module.app_secrets, module.opa, module.vllm, module.memorystore_governance, module.service_mesh]
 }
 
 # ─── Deploy Governed Financial Advisor ────────────────────────────────────────
@@ -657,8 +697,9 @@ module "governed_advisor" {
   project_id              = var.project_id
   region                  = var.region
   enable_logging          = "true"
-  redis_host              = module.redis.service_name
-  redis_password          = module.redis.password
+  redis_host              = module.memorystore_app.primary_endpoint_ip
+  redis_port              = tostring(module.memorystore_app.primary_endpoint_port)
+  redis_password          = ""
   model_fast              = var.model_fast
   model_reasoning         = var.model_reasoning
   model_consensus         = var.model_reasoning

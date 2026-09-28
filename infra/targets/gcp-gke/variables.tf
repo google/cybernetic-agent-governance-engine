@@ -670,3 +670,18 @@ variable "cage_deployment_region" {
     error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS. Set this explicitly in your jurisdiction-specific tfvars file."
   }
 }
+
+# ─── Track 6b Memorystore Configuration (§2.1, D5, D6) ────────────────────────
+
+variable "enable_memorystore_iam_auth" {
+  description = "Enable IAM authentication on Memorystore instances (default true per D5)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_memorystore_tls" {
+  description = "Enable in-transit encryption on Memorystore instances (default true per §2.1)"
+  type        = bool
+  default     = true
+}
+

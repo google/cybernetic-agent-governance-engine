@@ -43,3 +43,9 @@ output "managed_server_ca" {
   description = "Managed server Certificate Authority certificates for TLS pinning"
   value       = try(google_memorystore_instance.instance.managed_server_ca[0].ca_certs[0].certificates, [])
 }
+
+output "replica_count" {
+  description = "Number of replica nodes configured on this instance"
+  value       = google_memorystore_instance.instance.replica_count
+}
+

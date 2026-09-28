@@ -70,8 +70,6 @@ _STRICT_REPLICATION: bool = os.environ.get(
     "CAGE_STRICT_REPLICATION", "true" if _IS_PRODUCTION else "false"
 ).lower() in ("true", "1", "yes")
 
-_REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_NAME")
-
 _REPLAY_REJECTED_COUNTER: Any = None
 _EPOCH_REGRESSION_COUNTER: Any = None
 _CURRENT_FENCE_EPOCH_GAUGE: Any = None

@@ -148,7 +148,7 @@ The active Redis cluster is the Bitnami Helm-managed `redis-node` StatefulSet (3
 - `redis-node-1` — pod 1 (Sentinel primary as of 2026-06-15)
 - `redis-node-2` — pod 2 (replica)
 
-> **DEPRECATED:** `deployment/k8s/redis-statefulset.yaml` defines a conflicting single-node `redis` StatefulSet. This file is retained for reference only — do **NOT** apply it to the cluster. The active cluster is `redis-node` (3/3 Running, Sentinel mode).
+> **RETIRED:** Legacy in-cluster Redis manifests have been retired in Track 6b in favor of Google Cloud Memorystore.
 
 ### Dual-use: db 0 and db 1
 
@@ -157,22 +157,15 @@ The active Redis cluster is the Bitnami Helm-managed `redis-node` StatefulSet (3
 | db 0 | LangGraph checkpoint store |
 | db 1 | Evidence stream + deferred gating tokens (`noeviction` policy) |
 
-### `redis-master` ClusterIP — write endpoint
+### Redis write endpoints
 
-**Problem:** The existing `redis` Service selects all `redis-node` pods (primary + replicas) and load-balances across them. When a write command (`SET`, `INCRBY`, `DEL`, …) lands on a replica, it fails with:
+Historically, load-balancing across replicas caused:
 
 ```
 redis.exceptions.ReadOnlyError: You can't write against a read only replica.
 ```
 
-This caused intermittent failures in the fiscal limit guard (`src/gateway/governance/fiscal_limit_guard.py`) and the LangGraph checkpointer.
-
-**Solution:** `deployment/k8s/redis-master-service.yaml` adds a dedicated `redis-master` ClusterIP Service that uses the `statefulset.kubernetes.io/pod-name` label to pin traffic exclusively to the current Sentinel primary pod (`redis-node-1` as of 2026-06-15).
-
-```yaml
-selector:
-  statefulset.kubernetes.io/pod-name: redis-node-1
-```
+Under Track 6b (Memorystore), dedicated primary endpoints (`governance` and `app`) are provided directly without in-cluster Sentinel failover hacks.
 
 ### Connection endpoints
 
@@ -237,9 +230,6 @@ No standalone OpenTelemetry Collector is deployed.
 | [`deployment/k8s/vllm-namespace.yaml`](vllm-namespace.yaml) | `vllm-inference` namespace (PSA: baseline) |
 | [`deployment/k8s/agentsight-daemon.yaml`](agentsight-daemon.yaml) | AgentSight DaemonSet (namespace: `agentsight`) |
 | [`deployment/k8s/opa.yaml`](opa.yaml) | OPA Deployment, ConfigMaps, Service |
-| [`deployment/k8s/redis-master-service.yaml`](redis-master-service.yaml) | `redis-master` write-only ClusterIP |
-| [`deployment/k8s/redis-stack-fresh.yaml`](redis-stack-fresh.yaml) | Active Bitnami Redis Sentinel StatefulSet |
-| [`deployment/k8s/redis-statefulset.yaml`](redis-statefulset.yaml) | **DEPRECATED** — do not apply |
 | [`deployment/k8s/vllm-services.yaml`](vllm-services.yaml) | ExternalName Services proxying vLLM into `governance-stack` |
 | [`deployment/k8s/langfuse-web.yaml`](langfuse-web.yaml) | Langfuse Web Deployment + Service |
 | [`deployment/opa_config.yaml`](../opa_config.yaml) | OPA runtime configuration |

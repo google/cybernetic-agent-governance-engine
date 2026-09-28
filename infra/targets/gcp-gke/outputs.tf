@@ -78,7 +78,9 @@ output "deployment_summary" {
     gpu_node_pool_enabled   = var.enable_gpu_node_pool
     langfuse_bucket         = google_storage_bucket.langfuse_events.name
     postgres_service        = module.postgres.service_name
-    redis_host              = module.redis.redis_host
+    redis_host              = module.memorystore_governance.primary_endpoint_ip
+    memorystore_governance  = module.memorystore_governance.primary_endpoint_ip
+    memorystore_app         = module.memorystore_app.primary_endpoint_ip
     langfuse_url            = module.langfuse.web_url
     opa_endpoint            = module.opa.endpoint_url
   }
@@ -98,14 +100,24 @@ output "postgres_service" {
 }
 
 output "redis_host" {
-  description = "Redis host address"
-  value       = module.redis.redis_host
+  description = "Redis/Valkey governance primary endpoint host"
+  value       = module.memorystore_governance.primary_endpoint_ip
 }
 
 output "redis_url" {
-  description = "Redis connection URL"
-  value       = module.redis.redis_url
-  sensitive   = true
+  description = "Redis/Valkey governance primary connection URL"
+  value       = "redis://${module.memorystore_governance.primary_endpoint_ip}:${module.memorystore_governance.primary_endpoint_port}"
+  sensitive   = false
+}
+
+output "memorystore_governance_host" {
+  description = "Memorystore governance primary endpoint IP"
+  value       = module.memorystore_governance.primary_endpoint_ip
+}
+
+output "memorystore_app_host" {
+  description = "Memorystore app primary endpoint IP"
+  value       = module.memorystore_app.primary_endpoint_ip
 }
 
 # ─── Inference and Observability ──────────────────────────────────────────────
