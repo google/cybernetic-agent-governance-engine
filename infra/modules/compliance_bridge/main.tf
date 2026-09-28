@@ -206,9 +206,58 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "OSCAL_BUCKET_NAME"
+            value = var.evidence_cold_store_bucket != "" ? var.evidence_cold_store_bucket : var.oscal_s3_bucket
+          }
+
+          # §2.6: Retention-locked GCS WORM bucket is the system of record
+          env {
+            name  = "EVIDENCE_COLD_STORE"
+            value = var.evidence_cold_store
+          }
+
+          env {
+            name  = "EVIDENCE_COLD_STORE_BUCKET"
+            value = var.evidence_cold_store_bucket != "" ? var.evidence_cold_store_bucket : var.oscal_s3_bucket
+          }
+
+          env {
+            name  = "CMEK_KEY_RESOURCE_NAME"
+            value = var.cmek_key_resource_name
+          }
+
+          # §2.6: ClickHouse is the analytical query plane fed by clickhouse_sink.py
+          env {
+            name  = "CLICKHOUSE_HOST"
+            value = var.clickhouse_host
+          }
+
+          env {
+            name  = "CLICKHOUSE_PORT"
+            value = var.clickhouse_port
+          }
+
+          env {
+            name  = "CLICKHOUSE_DATABASE"
+            value = var.clickhouse_database
+          }
+
+          env {
+            name = "CLICKHOUSE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name     = "advisor-secrets"
+                key      = "CLICKHOUSE_PASSWORD"
+                optional = true
+              }
+            }
+          }
+
+          env {
             name  = "OSCAL_S3_REGION"
             value = var.oscal_s3_region
           }
+
 
           env {
             name = "OSCAL_S3_ACCESS_KEY"

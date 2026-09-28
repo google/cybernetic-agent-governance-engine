@@ -34,9 +34,10 @@ resource "google_storage_bucket" "bucket" {
   force_destroy = local.force_destroy
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
 
   dynamic "encryption" {
-    for_each = var.enable_cmek && var.kms_key_id != null ? [1] : []
+    for_each = var.enable_cmek && var.kms_key_id != null && var.kms_key_id != "" ? [1] : []
     content {
       default_kms_key_name = var.kms_key_id
     }
@@ -46,7 +47,8 @@ resource "google_storage_bucket" "bucket" {
     enabled = true
   }
 
-  # AU-9: WORM retention — 2555 days (7 years) immutable retention.
+  # AU-9: WORM retention — 2555 days (7 years) immutable retention in prod,
+  # short lock in staging, unlocked in dev (§1.1, §2.6).
   # Prevents deletion before the retention period expires.
   # When is_locked is true, the policy cannot be reduced or removed.
   retention_policy {
@@ -63,4 +65,26 @@ resource "google_storage_bucket" "bucket" {
       storage_class = "ARCHIVE"
     }
   }
+
+  labels = merge(
+    {
+      environment = var.environment
+      component   = "evidence-worm-cold-store"
+      managed-by  = "terraform"
+    },
+    var.labels
+  )
+
+  # Jurisdictional data-residency guard (GDPR Art. 44, MAS TRM §4.2, NIST SC-7)
+  lifecycle {
+    precondition {
+      condition = (
+        (var.cage_deployment_region == "EU_ECB" && can(regex("^europe-", var.region))) ||
+        (var.cage_deployment_region == "APAC_MAS" && can(regex("^asia-", var.region))) ||
+        (var.cage_deployment_region == "US_FED" && can(regex("^us-", var.region)))
+      )
+      error_message = "Data residency violation on WORM bucket: cage_deployment_region=${var.cage_deployment_region} requires a matching regional prefix in var.region (got '${var.region}')."
+    }
+  }
 }
+

@@ -362,3 +362,81 @@ resource "google_container_node_pool" "gpu_nodes" {
   ]
 }
 
+# ─── ClickHouse Node Pool (Local SSD, Tainted — §3, §7) ───────────────────────
+
+resource "google_container_node_pool" "clickhouse_nodes" {
+  count = var.enable_clickhouse_node_pool ? 1 : 0
+
+  name     = "clickhouse-node-pool"
+  cluster  = google_container_cluster.primary.id
+  location = var.zone
+
+  initial_node_count = var.clickhouse_node_pool_initial_count
+
+  autoscaling {
+    min_node_count = var.clickhouse_node_pool_min_count
+    max_node_count = var.clickhouse_node_pool_max_count
+  }
+
+  node_config {
+    machine_type = var.clickhouse_node_pool_machine_type
+    disk_size_gb = 100
+    disk_type    = "pd-ssd"
+    # §7 Pitfalls: ClickHouse must NEVER run on Spot nodes
+    spot = false
+
+    # §1.1, §2.6, §3: Local NVMe SSD for ClickHouse hot parts
+    local_nvme_ssd_block_config {
+      local_ssd_count = var.clickhouse_node_pool_local_ssd_count
+    }
+
+    # §3, §7: Taint pool workload=clickhouse:NoSchedule so general workloads
+    # never land on ClickHouse local-SSD nodes.
+    taint {
+      key    = "workload"
+      value  = "clickhouse"
+      effect = "NO_SCHEDULE"
+    }
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+    ]
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+
+    labels = {
+      workload      = "clickhouse"
+      workload-type = "clickhouse"
+      environment   = var.environment
+    }
+
+    metadata = {
+      disable-legacy-endpoints = "true"
+    }
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  lifecycle {
+    ignore_changes = [
+      initial_node_count,
+    ]
+  }
+
+  depends_on = [
+    google_container_cluster.primary,
+    google_container_node_pool.primary_nodes,
+  ]
+}
+
+

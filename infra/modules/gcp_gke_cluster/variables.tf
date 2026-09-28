@@ -284,3 +284,42 @@ variable "gpu_node_locations" {
 }
 
 variable "master_ipv4_cidr_block" { default = "172.16.0.0/28" }
+
+# ─── ClickHouse Node Pool Configuration (§3, §7) ──────────────────────────────
+
+variable "enable_clickhouse_node_pool" {
+  description = "Enable dedicated ClickHouse node pool with local SSD and workload=clickhouse:NoSchedule taint (§3, §7)"
+  type        = bool
+  default     = true
+}
+
+variable "clickhouse_node_pool_machine_type" {
+  description = "Machine type for ClickHouse node pool"
+  type        = string
+  default     = "n2-standard-4"
+}
+
+variable "clickhouse_node_pool_min_count" {
+  description = "Minimum nodes in ClickHouse pool"
+  type        = number
+  default     = 1
+}
+
+variable "clickhouse_node_pool_max_count" {
+  description = "Maximum nodes in ClickHouse pool"
+  type        = number
+  default     = 3
+}
+
+variable "clickhouse_node_pool_initial_count" {
+  description = "Initial node count for ClickHouse pool"
+  type        = number
+  default     = 1
+}
+
+variable "clickhouse_node_pool_local_ssd_count" {
+  description = "Number of raw-block local NVMe SSDs attached to each ClickHouse node for hot-tier storage"
+  type        = number
+  default     = 1
+}
+

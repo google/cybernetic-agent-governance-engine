@@ -154,3 +154,42 @@ variable "service_account_name" {
     error_message = "service_account_name must name the workload's own KSA; the shared financial-advisor-sa is retired (POAM-2026-079)."
   }
 }
+
+# ─── Evidence WORM Cold Store & ClickHouse Query Plane (§2.6) ─────────────────
+
+variable "evidence_cold_store" {
+  description = "Evidence cold store backend ('gcs', 's3', or 'null'). System of record is the retention-locked GCS WORM bucket ('gcs')."
+  type        = string
+  default     = "gcs"
+}
+
+variable "evidence_cold_store_bucket" {
+  description = "Retention-locked GCS WORM bucket name for durable evidence archival (defaults to oscal_s3_bucket when empty)."
+  type        = string
+  default     = ""
+}
+
+variable "cmek_key_resource_name" {
+  description = "Full Cloud KMS key resource name for CMEK encryption verification on the WORM bucket (POAM-014 / SC-28)."
+  type        = string
+  default     = ""
+}
+
+variable "clickhouse_host" {
+  description = "ClickHouse query-plane service hostname (fed by src/compliance_bridge/clickhouse_sink.py)."
+  type        = string
+  default     = "clickhouse"
+}
+
+variable "clickhouse_port" {
+  description = "ClickHouse query-plane HTTP port."
+  type        = string
+  default     = "8123"
+}
+
+variable "clickhouse_database" {
+  description = "ClickHouse query-plane database name."
+  type        = string
+  default     = "default"
+}
+

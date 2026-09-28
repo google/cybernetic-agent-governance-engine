@@ -223,6 +223,31 @@ resource "google_storage_bucket" "langfuse_events" {
   }
 }
 
+# ─── Evidence WORM Bucket — System of Record (§1.1, §2.6, NIST AU-9) ─────────
+# Durable tamper-evident cold store for hash-chained governance evidence and
+# OSCAL assessment artifacts. ClickHouse is only the query plane (§2.6); losing
+# ClickHouse nodes never loses evidence persisted to this retention-locked bucket.
+#
+# Posture matrix (§1.1):
+#   - dev:     is_locked = false, retention = 220752000s (unlocked for teardown)
+#   - staging: is_locked = true,  retention = 86400s (1 day — locked short)
+#   - prod:    is_locked = true,  retention = 220752000s (2555 days / 7 years)
+module "worm_bucket" {
+  source = "../../modules/worm_bucket"
+
+  project_id               = var.project_id
+  environment              = var.environment
+  region                   = var.region
+  cage_deployment_region   = var.cage_deployment_region
+  bucket_name              = "${var.project_id}-evidence-worm-${var.environment}"
+  enable_cmek              = var.enable_cmek
+  kms_key_id               = local.cmek_key_id
+  retention_period_seconds = var.environment == "staging" ? 86400 : 220752000
+  is_locked                = var.environment == "prod" || var.environment == "staging" || var.enable_nist_compliance
+  force_destroy            = var.environment == "dev" && !var.enable_nist_compliance
+}
+
+
 # ─── GCS S3-compatible HMAC Keys (Langfuse Blob Storage) ─────────────────────
 
 resource "google_service_account" "langfuse_gcs" {
@@ -382,26 +407,32 @@ module "memorystore_app" {
   depends_on = [module.gke]
 }
 
-# ─── Deploy ClickHouse OLAP Database ──────────────────────────────────────────
+# ─── Deploy ClickHouse Operator & Query Plane (§1.1, §2.6, §3, §7) ───────────
+# ClickHouse is strictly the analytical query plane fed by clickhouse_sink.py.
+# The retention-locked GCS WORM bucket (module.worm_bucket) is the system of record.
+#
+# Posture matrix (§1.1, §2.6):
+#   - dev / staging: 1 node on local SSD (MergeTree)
+#   - prod:          Operator, ReplicatedMergeTree + Keeper (3 nodes),
+#                    local SSD for hot parts, GCS disk for the cold tier
+module "clickhouse_operator" {
+  source = "../../modules/clickhouse_operator"
 
-module "clickhouse" {
-  source = "../../modules/clickhouse"
+  namespace                = module.namespace.name
+  environment              = var.environment
+  enable_high_availability = var.environment == "prod" || var.enable_high_availability
+  storage_size             = var.clickhouse_storage_size
+  storage_class            = var.storage_class
+  cold_tier_bucket         = module.worm_bucket.bucket_name
 
-  namespace          = module.namespace.name
-  storage_size       = var.clickhouse_storage_size
-  storage_class      = var.storage_class
-  replicas           = 1
-  enable_persistence = true
-  # DEP-20 + POAM-024: PDB and resource limits now controlled by enable_high_availability.
-  enable_pdb                = var.enable_high_availability
-  enable_nist_compliance    = var.enable_nist_compliance
-  resources_limits_cpu      = var.enable_high_availability ? "3000m" : ""
-  resources_limits_memory   = var.enable_high_availability ? "4Gi" : ""
-  resources_requests_cpu    = "1000m"
-  resources_requests_memory = "2Gi"
+  cpu_request    = "1000m"
+  memory_request = "2Gi"
+  cpu_limit      = var.enable_high_availability ? "3000m" : "2000m"
+  memory_limit   = var.enable_high_availability ? "6Gi" : "4Gi"
 
-  depends_on = [module.gke]
+  depends_on = [module.gke, module.worm_bucket]
 }
+
 
 # ─── Deploy NeMo Guardrails + Microsoft Presidio ───────────────────────────────
 
@@ -587,8 +618,8 @@ module "langfuse" {
   cloudsql_connection_name = module.cloudsql_postgres.connection_name
   cloudsql_iam_user        = module.cloudsql_postgres.iam_user_name
   cloudsql_database_name   = module.cloudsql_postgres.database_name
-  clickhouse_url           = "http://${module.clickhouse.service_name}:${module.clickhouse.http_port}"
-  clickhouse_migration_url = "clickhouse://default:${module.clickhouse.password}@${module.clickhouse.service_name}:${module.clickhouse.tcp_port}"
+  clickhouse_url           = "http://${module.clickhouse_operator.service_name}:${module.clickhouse_operator.http_port}"
+  clickhouse_migration_url = "clickhouse://default:${module.clickhouse_operator.password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}"
   clickhouse_user          = "default"
   redis_connection_string  = "redis://${module.memorystore_app.primary_endpoint_ip}:${module.memorystore_app.primary_endpoint_port}"
   redis_host               = module.memorystore_app.primary_endpoint_ip
@@ -619,7 +650,7 @@ module "langfuse" {
   langfuse_init_org_id        = "CAGE"
   langfuse_init_org_name      = "CAGE"
 
-  depends_on = [module.cloudsql_postgres, module.clickhouse, module.memorystore_app, google_storage_hmac_key.langfuse_key, module.gke]
+  depends_on = [module.cloudsql_postgres, module.clickhouse_operator, module.memorystore_app, google_storage_hmac_key.langfuse_key, module.gke]
 }
 
 # ─── Deploy Compliance Bridge ───────────────────────────────────────────────────
@@ -634,24 +665,30 @@ module "compliance_bridge" {
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   replicas      = var.enable_high_availability ? 2 : 1
 
-  remediation_model      = var.model_fast
-  remediation_max_tokens = "2048"
-  remediation_timeout_ms = "30000"
-  vllm_base_url          = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_api_key           = "EMPTY"
-  alert_channel          = "console"
-  oscal_s3_bucket        = google_storage_bucket.langfuse_events.name
-  oscal_s3_region        = var.region
-  cage_env               = var.environment
-  cage_deployment_region = var.cage_deployment_region
+  remediation_model          = var.model_fast
+  remediation_max_tokens     = "2048"
+  remediation_timeout_ms     = "30000"
+  vllm_base_url              = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_api_key               = "EMPTY"
+  alert_channel              = "console"
+  oscal_s3_bucket            = module.worm_bucket.bucket_name
+  oscal_s3_region            = var.region
+  evidence_cold_store        = "gcs"
+  evidence_cold_store_bucket = module.worm_bucket.bucket_name
+  cmek_key_resource_name     = var.enable_cmek ? local.cmek_key_id : ""
+  clickhouse_host            = module.clickhouse_operator.service_name
+  clickhouse_port            = tostring(module.clickhouse_operator.http_port)
+  cage_env                   = var.environment
+  cage_deployment_region     = var.cage_deployment_region
 
   # POAM-2026-079 / §5.2: own identity and own signing key. KMSBatchSigner reads
   # the key from EVIDENCE_KMS_KEY (never KMS_GOVERNANCE_KEY).
   service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
   evidence_kms_key     = local.compliance_evidence_key_version
 
-  depends_on = [module.langfuse, module.vllm]
+  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.clickhouse_operator]
 }
+
 
 # ─── Deploy OPA Policy Engine ──────────────────────────────────────────────────
 
@@ -787,10 +824,10 @@ module "app_secrets" {
   langfuse_secret_key = var.langfuse_secret_key != "" ? var.langfuse_secret_key : module.langfuse.secret_key
   langfuse_host       = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
 
-  clickhouse_url           = "http://${module.clickhouse.service_name}:${module.clickhouse.http_port}"
-  clickhouse_migration_url = "clickhouse://default:${module.clickhouse.password}@${module.clickhouse.service_name}:${module.clickhouse.tcp_port}"
+  clickhouse_url           = "http://${module.clickhouse_operator.service_name}:${module.clickhouse_operator.http_port}"
+  clickhouse_migration_url = "clickhouse://default:${module.clickhouse_operator.password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}"
   clickhouse_user          = "default"
-  clickhouse_password      = module.clickhouse.password
+  clickhouse_password      = module.clickhouse_operator.password
   database_url             = ""
   nextauth_secret          = module.langfuse.nextauth_secret
   nextauth_url             = var.langfuse_nextauth_url
@@ -818,8 +855,9 @@ module "app_secrets" {
 
   cage_deployment_region = var.cage_deployment_region
 
-  depends_on = [module.langfuse, module.cloudsql_postgres, module.clickhouse]
+  depends_on = [module.langfuse, module.cloudsql_postgres, module.clickhouse_operator]
 }
+
 
 # POAM-019 enforcement: fail the plan if compliance keys are missing when
 # enable_nist_compliance=true.  lifecycle { precondition } is only valid inside
