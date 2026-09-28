@@ -23,20 +23,17 @@ This module provides the ``create_governed_trader_agent`` factory used by the
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from src.gateway.governance.governor.governor import SymbolicGovernor
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def create_governed_trader_agent(governor: SymbolicGovernor) -> Any:
+def create_governed_trader_agent() -> Any:
     """Return the compiled governed-trader LangGraph subgraph.
 
     This is a thin factory wrapper around
-    ``governed_trader_graph.build_governed_trader_graph``; ``governor`` is the
-    composition-root ``SymbolicGovernor`` used for post-HITL re-validation.
+    ``governed_trader_graph.build_governed_trader_graph``. Post-HITL
+    re-validation is a network call to the gateway's governor.
 
     Returns
     -------
@@ -48,4 +45,4 @@ def create_governed_trader_agent(governor: SymbolicGovernor) -> Any:
     )
 
     logger.debug("create_governed_trader_agent: compiling subgraph")
-    return build_governed_trader_graph(governor)
+    return build_governed_trader_graph()

@@ -364,36 +364,6 @@ class TestExplainerNodeHelpers:
             "ALLOW with risk_score=0.6 must not be low risk"
         )
 
-    def test_verify_hmac_signature_unsigned_when_no_plan(self) -> None:
-        """verify_hmac_signature must return UNSIGNED marker when no plan."""
-        from src.governed_financial_advisor.graph.nodes.explainer_node import (
-            verify_hmac_signature,
-        )
-
-        state: dict[str, Any] = {
-            "governance_signature": "sig",
-            "execution_plan_output": None,
-        }
-        result = verify_hmac_signature(state)
-        assert "[HMAC: UNSIGNED]" in result, (
-            f"Expected UNSIGNED when no plan, got {result!r}"
-        )
-
-    def test_verify_hmac_signature_failed_when_no_sig(self) -> None:
-        """verify_hmac_signature must return FAILED marker when signature missing."""
-        from src.governed_financial_advisor.graph.nodes.explainer_node import (
-            verify_hmac_signature,
-        )
-
-        state: dict[str, Any] = {
-            "governance_signature": None,
-            "execution_plan_output": {"steps": [{"action": "buy"}]},
-        }
-        result = verify_hmac_signature(state)
-        assert "[HMAC: FAILED]" in result, (
-            f"Expected FAILED marker when signature is None, got {result!r}"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Tests: data_analyst_graph.py — state schema and graph structure

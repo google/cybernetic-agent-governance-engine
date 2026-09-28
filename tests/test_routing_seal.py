@@ -60,16 +60,14 @@ def disable_seal_strict_mode(monkeypatch):
 
 
 from src.gateway.governance.routing_seal import (
+    SymbolicGovernorViolation,
     extract_record_hash,
     generate_seal,
 )
-from src.governed_financial_advisor.utils.routing_seal import (
-    SymbolicGovernorViolation,
-)
-from src.governed_financial_advisor.utils.routing_seal import (
+from src.gateway.governance.routing_seal import (
     extract_record_hash as gfa_extract_record_hash,
 )
-from src.governed_financial_advisor.utils.routing_seal import (
+from src.gateway.governance.routing_seal import (
     verify_seal as gfa_verify_seal,
 )
 

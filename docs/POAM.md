@@ -75,6 +75,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
 | POAM-2026-077 | CM-6 / SC-24 | Healthcare and physical-AI plugins declare no `DomainConfig` (no FTRA terminal registry), so `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start (fail closed); only `finance` is runnable | Moderate | 2026-12-31 |
 | POAM-2026-078 | SI-10 / SA-8 | Plugin-contributed CBF invariants (healthcare serum concentration, physical-AI separation/velocity/torque) are validated (V1-V4) at governor assembly and recorded on `GovernorComponents.invariants`, but not enforced until the CBF engine becomes invariant-parametric (PR 4b) | Moderate | 2026-12-31 |
+| POAM-2026-080 | IA-9 / AC-3 / SC-8 | Advisor-to-gateway REST calls carry no ingress credential: `GatewayClient` never sends `X-CAGE-Routing-Seal`, so seal-gated gateway endpoints either reject the advisor (403, secret set) or accept any caller (secret unset, dev/test only); ingress auth must move to Linkerd mTLS / SPIFFE workload identity | High | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -320,3 +321,28 @@ Domain plugins now hand their CBF barriers to the kernel as data (`PluginContrib
 **Remediation Plan:**
 1. Make the CBF engine invariant-parametric and consume `GovernorComponents.invariants` (governor refactor plan §4b.1).
 2. Add tests observing each contributed barrier refuse an unsafe action.
+
+### POAM-2026-080: GatewayClient Ingress Authentication Gap
+
+**Control:** NIST IA-9, AC-3, SC-8
+**Risk Level:** High
+**Status:** Open
+**Date Opened:** 2026-09-27
+**Target Closure:** 2026-12-31
+
+**Description:**
+The gateway authenticates inbound calls to its seal-gated REST endpoints with `enforce_routing_seal()` ([`governance_middleware.py`](../src/gateway/server/governance_middleware.py)). The caller must send `X-CAGE-Routing-Seal` = HMAC-SHA256(request body, `CAGE_ROUTING_SEAL_SECRET`). The endpoints gated this way are `POST /governance/check`, `POST /governance/validate-action`, `POST /governance/revalidate-post-hitl` and the MCP tool server's `POST /tools/execute` ([`mcp_tool_server.py`](../src/gateway/server/mcp_tool_server.py)).
+
+The advisor's [`GatewayClient`](../src/governed_financial_advisor/infrastructure/gateway_client.py) calls `validate-action`, `revalidate-post-hitl` and `/tools/execute`, and never sends the header. The outcome depends on the gateway's configuration:
+- **Secret set, `CAGE_SEAL_ENFORCEMENT=enforce`** (required outside development/test): the gateway rejects every such call with 403. The advisor fails closed. `post_hitl_revalidate_node` routes to `BLOCKED`, and the forwarded advisor tools return an error.
+- **Secret unset** (allowed only when `ENVIRONMENT` is development/test): `_verify_routing_seal()` returns `True` for every request. Any in-cluster caller reaches the governor and the tool server unauthenticated.
+
+Giving the advisor `CAGE_ROUTING_SEAL_SECRET` is not an acceptable fix. It would hand the untrusted neural plane a symmetric key that mints the same credential the gateway checks. That is the design flaw POAM-2026-079 removes for the KMS keys.
+
+The advisor-kernel split (the PR that removes the advisor's in-process governor) routes post-HITL revalidation and trade execution to the gateway over the network. That PR does not change the gateway's ingress authentication.
+
+**Remediation Plan:**
+1. Authenticate advisor-to-gateway calls by Linkerd mTLS workload identity (`spiffe://cluster.local/ns/governance-stack/sa/cage-advisor-sa`): a Linkerd `AuthorizationPolicy` / `MeshTLSAuthentication` scoped to the gateway's governance and tool routes, plus an application-level check of the verified client identity.
+2. Remove the application-layer HMAC as an ingress credential for service-to-service calls. Keep it only where a non-mesh caller has no workload identity, or retire it.
+3. Add tests that observe a call without the expected workload identity being refused, and a call from `cage-advisor-sa` being admitted.
+4. Update the OSCAL IA-9 / SC-8 implementation statements in `compliance/oscal/`.

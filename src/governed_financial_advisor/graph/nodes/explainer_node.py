@@ -18,7 +18,6 @@ from typing import Any
 from langchain_core.messages import SystemMessage
 
 from config.settings import Config
-from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.governed_financial_advisor.agents.explainer.agent import (
     create_explainer_agent,
@@ -31,33 +30,6 @@ logger = logging.getLogger("GovernanceAuditor")
 
 # Policy-probing attack mitigation constant (ADR-008)
 MAX_CONSECUTIVE_DENIALS = 2
-
-
-def verify_hmac_signature(state: AgentState) -> str:
-    """Verify the governance signature in the state.
-
-    Uses the KMSGovernanceSigner for verification:
-      - In production: verifies against the Cloud KMS public key
-        (no access to signing key needed — true separation of duties).
-      - In dev/CI: falls back to HMAC comparison using GOVERNANCE_SALT.
-
-    Returns a human-readable status string for the audit report.
-    """
-    sig = state.get("governance_signature")
-    plan = state.get("execution_plan_output")
-
-    if not plan:
-        return "[HMAC: UNSIGNED]"
-
-    if not sig:
-        return "[HMAC: FAILED]"
-
-    signer = get_governance_signer()
-    if signer.verify(plan, sig):  # type: ignore[arg-type]
-        mode = "KMS" if signer.is_kms_active else "HMAC"
-        return f"[{mode}: VERIFIED]"
-    else:
-        return "[SIGNATURE: FAILED]"
 
 
 def map_opa_rules(opa_results: dict) -> list[str]:
@@ -148,7 +120,6 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
 
     with tracer.start_as_current_span("Auditor: GovernanceVerification") as span:
         # 1. Audit Trail Extraction
-        sig_status = verify_hmac_signature(state)
         opa_results = state.get("opa_results")
         rules = map_opa_rules(opa_results)  # type: ignore[arg-type]
         execution_plan = state.get("execution_plan_output", "No plan.")
@@ -238,7 +209,6 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
             # 3a. Format Structured Summary (needed as context for the fast-model call)
             summary = (
                 f"### 🛡️ Governance Audit Report\n"
-                f"- **Integrity Check**: {sig_status}\n"
                 f"- **System Verdict**: {verdict}\n\n"
                 f"#### 📜 Policy Rule Mapping\n"
             )
@@ -263,7 +233,6 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
         # 3/5. Build governance_summary for audit trail (both paths)
         summary = (
             f"### 🛡️ Governance Audit Report\n"
-            f"- **Integrity Check**: {sig_status}\n"
             f"- **System Verdict**: {verdict}\n\n"
             f"#### 📜 Policy Rule Mapping\n"
         )

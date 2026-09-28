@@ -29,7 +29,8 @@ Acceptance criteria (per implementation plan):
   3. yfinance failure degrades gracefully (status=SKIPPED, no exception).
   4. Within-slippage + passing governor → routing to "executor".
   5. Slippage exceeded → BLOCKED + routing to "drift_blocked".
-  6. CBF/OPA violation (GovernanceError) → BLOCKED + routing to "drift_blocked".
+  6. CBF/OPA violation (gateway DENIED verdict) → BLOCKED + routing to "drift_blocked".
+  6a. Gateway unreachable or erroring → BLOCKED (fail closed).
   7. drift_blocked_node writes a human-readable message explaining the block.
   8. Non-HITL path (approval_required=False) bypasses new nodes entirely.
   9. max_slippage_pct from resume payload propagates into approval_decision.
@@ -44,6 +45,7 @@ import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -51,11 +53,28 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _governor(revalidate: AsyncMock | None = None) -> MagicMock:
-    """A governor stand-in whose ``revalidate_post_hitl`` is observable."""
-    governor = MagicMock()
-    governor.revalidate_post_hitl = revalidate if revalidate is not None else AsyncMock()
-    return governor
+def _gateway(revalidate: AsyncMock | None = None) -> MagicMock:
+    """A gateway stand-in whose ``revalidate_post_hitl`` is observable.
+
+    The advisor hosts no governor (POAM-2026-079): post-HITL re-validation is
+    a ``GatewayClient.revalidate_post_hitl`` network call.
+    """
+    gateway = MagicMock()
+    gateway.revalidate_post_hitl = revalidate if revalidate is not None else AsyncMock()
+    return gateway
+
+
+async def _revalidate(state: dict, gateway: MagicMock) -> dict:
+    """Run post_hitl_revalidate_node with GatewayClient replaced by *gateway*."""
+    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+        post_hitl_revalidate_node,
+    )
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
+
+    with patch.object(GatewayClient, "revalidate_post_hitl", gateway.revalidate_post_hitl):
+        return await post_hitl_revalidate_node(state)
 
 
 def _make_plan_json(
@@ -232,7 +251,7 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        result = await post_hitl_revalidate_node(state, governor=_governor())
+        result = await _revalidate(state, _gateway())
 
         assert result.get("post_hitl_safety_status") == "APPROVED"
 
@@ -259,18 +278,17 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        governor = _governor()
-        result = await post_hitl_revalidate_node(state, governor=governor)
+        gateway = _gateway()
+        result = await _revalidate(state, gateway)
 
         assert result.get("post_hitl_safety_status") == "BLOCKED"
-        governor.revalidate_post_hitl.assert_not_called()
+        gateway.revalidate_post_hitl.assert_not_called()
         block_reason = result.get("rehydration_result", {}).get("block_reason", "")
         assert "4.00%" in block_reason or "slippage" in block_reason.lower()
 
     @pytest.mark.asyncio
     async def test_governance_error_blocks_trade(self):
-        """GovernanceError from SymbolicGovernor → BLOCKED."""
-        from src.gateway.governance.governor.governor import GovernanceError
+        """A DENIED verdict from the gateway's governor → BLOCKED."""
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             post_hitl_revalidate_node,
         )
@@ -291,10 +309,10 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        governor = _governor(
-            AsyncMock(side_effect=GovernanceError("CBF Violation: h(next) < 0"))
+        gateway = _gateway(
+            AsyncMock(side_effect=PermissionError("Post-HITL re-validation DENIED 'execute_trade': CBF Violation: h(next) < 0"))
         )
-        result = await post_hitl_revalidate_node(state, governor=governor)
+        result = await _revalidate(state, gateway)
 
         assert result.get("post_hitl_safety_status") == "BLOCKED"
         block_reason = result.get("rehydration_result", {}).get("block_reason", "")
@@ -323,11 +341,10 @@ class TestPostHitlRevalidateNode:
         )
 
         govern_mock = AsyncMock()
-        result = await post_hitl_revalidate_node(
-            state, governor=_governor(govern_mock)
+        result = await _revalidate(state, _gateway(govern_mock)
         )
 
-        # Governor was called even though drift was unknown
+        # The gateway was asked even though drift was unknown
         govern_mock.assert_called_once()
         assert result.get("post_hitl_safety_status") == "APPROVED"
 
@@ -354,14 +371,13 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        result = await post_hitl_revalidate_node(state, governor=_governor())
+        result = await _revalidate(state, _gateway())
 
         assert result.get("post_hitl_safety_status") == "APPROVED"
 
     @pytest.mark.asyncio
     async def test_replay_under_mutated_standing_fails(self):
         """Terry Snyder Seam Protocol: Replay under mutated standing fails-closed with drift/governance error."""
-        from src.gateway.governance.governor.governor import GovernanceError
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             post_hitl_revalidate_node,
         )
@@ -382,15 +398,49 @@ class TestPostHitlRevalidateNode:
             },
         )
 
-        governor = _governor(
-            AsyncMock(side_effect=GovernanceError("Substrate Policy Drift Detected"))
+        gateway = _gateway(
+            AsyncMock(side_effect=PermissionError("Post-HITL re-validation DENIED 'execute_trade': Substrate Policy Drift Detected"))
         )
-        result = await post_hitl_revalidate_node(state, governor=governor)
+        result = await _revalidate(state, gateway)
 
         assert result.get("post_hitl_safety_status") == "BLOCKED"
         rehydration = result.get("rehydration_result", {})
         assert "Policy Drift" in rehydration.get("block_reason", "")
 
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.ConnectError("gateway unreachable"),
+            httpx.ReadTimeout("gateway timed out"),
+            httpx.HTTPStatusError(
+                "500", request=httpx.Request("POST", "http://gw"), response=httpx.Response(500)
+            ),
+        ],
+        ids=["unreachable", "timeout", "server_error"],
+    )
+    async def test_gateway_failure_blocks_trade(self, failure):
+        """No verdict from the gateway is never treated as approval (fail closed)."""
+        state = _base_state(
+            rehydration_result={
+                "status": "OK",
+                "ticker": "AAPL",
+                "fresh_price": 150.0,
+                "stale_price": 150.0,
+                "drift_pct": 0.0,
+            },
+            approval_decision={
+                "approved": True,
+                "reviewer": "t@x.com",
+                "rationale": "ok",
+                "max_slippage_pct": 2.0,
+            },
+        )
+
+        result = await _revalidate(state, _gateway(AsyncMock(side_effect=failure)))
+
+        assert result.get("post_hitl_safety_status") == "BLOCKED"
 
 # ---------------------------------------------------------------------------
 # 3. drift_blocked_node — fail-closed terminal
@@ -473,7 +523,7 @@ class TestGraphTopology:
             build_governed_trader_graph,
         )
 
-        return build_governed_trader_graph(_governor())
+        return build_governed_trader_graph()
 
     def test_graph_contains_rehydrate_node(self, governed_trader_graph):
         assert "post_hitl_rehydrate" in governed_trader_graph.nodes

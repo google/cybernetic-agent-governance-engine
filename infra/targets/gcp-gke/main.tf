@@ -645,13 +645,9 @@ module "governed_advisor" {
   langfuse_host   = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   governance_salt = var.governance_salt
   gateway_url     = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
-  # POAM-2026-079: own identity. The advisor still hosts an in-process governor
-  # that mints routing seals, so it temporarily signs with gateway-seal
-  # (residual risk, removed when that governor moves behind the gateway).
+  # POAM-2026-079: own KSA with no cloud identity and no signing key. The
+  # advisor refuses to start if a signing-key variable is set.
   service_account_name = kubernetes_service_account.workload["advisor"].metadata[0].name
-  kms_governance_key   = local.gateway_seal_key_version
-  reconciler_kms_key   = local.reconciler_snapshot_key_version
-  cage_kms_provider    = var.cage_kms_provider
   cage_env             = var.environment
 
   # K-4: wire OTLP auth header so governed-financial-advisor traces reach

@@ -105,24 +105,12 @@ The GFA injects governance checks as **first-class LangGraph nodes** using the L
 
 ### 3.2 Consequence Token Validation
 
-The `safety_node.py` ([`src/governed_financial_advisor/graph/nodes/safety_node.py`](../../../src/governed_financial_advisor/graph/nodes/safety_node.py)) validates the evaluator's cryptographic signature before allowing trade execution:
+The advisor is an untrusted client of the governance gateway and holds no signing key (POAM-2026-079). The evaluator edge [`route_after_evaluator()`](../../../src/governed_financial_advisor/graph/graph.py) routes on the evaluator's `APPROVED` verdict alone. Authorization is enforced on the gateway side instead:
 
-```python
-def check_safety_signature(state: AgentState) -> dict:
-    """Validate governance_signature against execution_plan_output."""
-    plan_content = state.get("execution_plan_output", "")
-    signature = state.get("governance_signature", "")
-    
-    # Verify KMS signature or HMAC-SHA256 seal
-    is_valid = verify_governance_signature(plan_content, signature)
-    
-    if not is_valid:
-        return {"safety_status": "SIGNATURE_INVALID"}
-    
-    return {"safety_status": "SIGNATURE_VALID"}
-```
+- The trader's `execute_trade_action` MCP tool ([`tool_provider.py`](../../../src/cage_finance/tools/tool_provider.py)) runs the full governor, mints a routing seal, and has the `ActuatorRegistry` verify and consume that seal before dispatch.
+- After a HITL approval, [`post_hitl_revalidate_node()`](../../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) calls the gateway's `POST /governance/revalidate-post-hitl` endpoint. A refusal or transport error routes to `BLOCKED` (see [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../../../docs/security/HITL_TOCTOU_REMEDIATION.md)).
 
-This prevents **state tampering** between the evaluator and trader nodes — a critical TOCTOU mitigation (see [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../../../docs/security/HITL_TOCTOU_REMEDIATION.md)).
+The advisor's startup guard ([`identity_guard.py`](../../../src/governed_financial_advisor/infrastructure/identity_guard.py)) refuses to boot if any signing-key variable is present in its environment.
 
 ### 3.3 LangGraph HITL Interrupt Point
 

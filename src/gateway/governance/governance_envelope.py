@@ -526,11 +526,9 @@ class GovernanceEnvelopeBuilder:
             pem = get_jwks().get_pem(kid)
 
             if pem is None:
-                # Fallback to signer key
-                from src.gateway.governance.kms_signer import get_governance_signer
-
-                signer = get_governance_signer()
-                pem = signer.get_public_key_pem()
+                # Unknown kid fails closed; never fall back to the local signer.
+                logger.warning("⚠️ Envelope signed by unknown kid=%s", kid)
+                return False
 
             # Load the public key
             public_key = serialization.load_pem_public_key(pem)

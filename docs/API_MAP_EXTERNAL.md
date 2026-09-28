@@ -726,7 +726,15 @@ and enforced by
 
 Required on:
 - `POST /governance/check`
+- `POST /governance/revalidate-post-hitl`
 - `POST /tools/execute` (MCP tool server)
+
+`POST /governance/revalidate-post-hitl` re-runs the governor's post-HITL
+check (`SymbolicGovernor.revalidate_post_hitl`) for an approved trade. It
+returns `{"verdict": "APPROVED"}` with no seal on success, and 403
+`{"verdict": "DENIED", "violations": [...]}` with a refusal receipt on
+failure. The advisor's `GatewayClient` does not yet send
+`X-CAGE-Routing-Seal`; see POAM-2026-080.
 
 The seal is also returned in `POST /governance/validate-action` responses and
 must be verified by callers before actuating any trade.
@@ -819,9 +827,13 @@ Mounted at `/tools`. All endpoints require `X-API-Key` header.
 
 #### `POST /tools/execute`
 
-Execute a named tool with governance enforcement. For `execute_trade`, calls
-`GatewayClient.validate_action()`
-and verifies the routing seal before actuation.
+Execute a named tool. The advisor holds no governor, signing key, or
+actuator: `simulate_governance_check`, `evaluate_policy` and `execute_trade`
+are forwarded to the gateway's `POST /tools/execute` through
+`GatewayClient.execute_tool()`. `execute_trade` validates the params as a
+`TradeOrder` and calls the gateway's `execute_trade_action` tool, which runs
+the governor and dispatches through the `ActuatorRegistry`. A gateway tool
+error is returned as an error, never as `SUCCESS`.
 
 **Request body** (`ToolExecutionRequest`):
 ```json
@@ -844,11 +856,11 @@ and verifies the routing seal before actuation.
 |---|---|---|
 | `check_market_status` | Market data lookup | None |
 | `get_market_sentiment` | Sentiment analysis | None |
-| `simulate_governance_check` | Dry-run governance sim | None |
+| `simulate_governance_check` | Dry-run governance sim | Forwarded to gateway |
 | `trigger_safety_intervention` | Lock system | None |
 | `verify_content_safety` | NeMo content check | None |
-| `evaluate_policy` | OPA Rego evaluation | None |
-| `execute_trade` | Governed trade execution | Full 8-tier pipeline (FTRA + 7 in-pipeline tiers) via Gateway |
+| `evaluate_policy` | OPA Rego evaluation | Forwarded to gateway |
+| `execute_trade` | Governed trade execution | Gateway `execute_trade_action`: full governor, seal verify-and-consume, `ActuatorRegistry` dispatch |
 
 **Response 200 OK:**
 ```json

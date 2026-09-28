@@ -480,9 +480,10 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     }
 
     # Also grab tools registered to the MCP server directly by plugins
-    for tool in getattr(mcp, "_tools", []):
+    # (e.g. execute_trade_action). FastMCP keeps them in its tool manager.
+    for tool in mcp._tool_manager.list_tools():
         if tool.name not in tool_map:
-            tool_map[tool.name] = tool.func
+            tool_map[tool.name] = tool.fn
 
     if request_body.tool_name not in tool_map:
         raise HTTPException(

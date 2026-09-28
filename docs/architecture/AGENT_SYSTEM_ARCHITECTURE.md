@@ -161,10 +161,10 @@ flowchart TD
 
 ### Routing Functions
 
-`route_after_guardrail`, `route_supervisor`, `check_safety_signature` and `route_after_safety` are inline closures inside `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`; `route_after_ftra` is imported from `src.gateway.governance.ftra.node_factory`:
+`route_after_guardrail`, `route_supervisor` and `route_after_safety` are inline closures inside `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`; `route_after_evaluator` is a module-level function in the same file; `route_after_ftra` is imported from `src.gateway.governance.ftra.node_factory`:
 - **`route_after_guardrail(state)`**: Reads `state["guardrail_blocked"]`. If True, routes immediately to `END` — no agent processes blocked input. Otherwise proceeds to `thinker_node`.
 - **`route_supervisor(state)`**: Reads `state["next_step"]` to determine early exits. If intent cannot be decomposed into a valid investment instruction, routes through `nemo_output_rail` to `END`.
-- **`check_safety_signature(state)`**: Requires an `APPROVED` verdict in `state["evaluation_result"]` plus a non-empty `state["governance_signature"]` before routing to `ftra_node` (CTRL_FTRA_001, Tier 0.5). A missing verdict or signature routes back to `execution_analyst` for re-planning (capped at `loop_count >= 3` $\to$ `explainer`).
+- **`route_after_evaluator(state)`**: Requires an `APPROVED` verdict in `state["evaluation_result"]` before routing to `ftra_node` (CTRL_FTRA_001, Tier 0.5). The advisor holds no signing key, so the edge routes on the verdict alone; authorization is enforced by the gateway's routing seal at execution time. A missing or non-approved verdict routes back to `execution_analyst` for re-planning (capped at `loop_count >= 3` $\to$ `explainer`).
 - **`route_after_ftra(state)`**: Emitted by the FTRA node factory. `CLEAR` $\to$ `safety_check`; `BLOCKED` and `HITL_REQUIRED` fall back to `explainer`.
 - **`route_after_safety(state)`**: Reads `state["safety_status"]`:
   - `APPROVED` or `SKIPPED` $\to$ `approval_node` when `evaluation_result.risk_score` $> 0.7$ **or** any `execution_plan_output` step `amount` $> \$10{,}000$; otherwise directly to `governed_trader`
