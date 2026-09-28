@@ -129,11 +129,11 @@ module "vllm" {
 | replicas | Number of replicas | number | 1 | no |
 | gpu_count | GPUs per pod | number | 1 | no |
 | gpu_product | GPU type | string | "" | no |
-| memory_limit | Memory limit | string | "64Gi" | no |
-| cpu_limit | CPU limit | string | "16" | no |
-| memory_request | Memory request | string | "10Gi" | no |
-| cpu_request | CPU request | string | "3" | no |
-| shared_memory_size | Shared memory size | string | "16Gi" | no |
+| memory_limit | Memory limit on `g2-standard-8` | string | "24Gi" | no |
+| cpu_limit | CPU limit on `g2-standard-8` | string | "6000m" | no |
+| memory_request | Memory request on `g2-standard-8` | string | "10Gi" | no |
+| cpu_request | CPU request on `g2-standard-8` | string | "3000m" | no |
+| shared_memory_size | Shared memory size (`/dev/shm`) on `g2-standard-8` | string | "2Gi" | no |
 | model_path | Model GCS path or HuggingFace ID | string | "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct" | no |
 | served_model_name | Served model ID (--served-model-name) | string | "" | no |
 | vllm_load_format | Load format | string | "runai_streamer" | no |

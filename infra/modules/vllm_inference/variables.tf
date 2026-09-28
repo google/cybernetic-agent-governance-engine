@@ -66,35 +66,120 @@ variable "gpu_product" {
   default     = ""
 }
 
-# Resource Limits
+# Resource Limits (sized for g2-standard-8: 8 vCPU / 7910m allocatable, 32 GB RAM / ~28.25Gi allocatable)
 variable "memory_limit" {
-  description = "Memory limit"
+  description = "Memory limit on g2-standard-8 (32 GB RAM / 28928Mi GKE allocatable)"
   type        = string
-  default     = "64Gi"
+  default     = "24Gi"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(Mi|Gi)$", var.memory_limit)) &&
+      (
+        endswith(var.memory_limit, "Gi")
+        ? tonumber(trimsuffix(var.memory_limit, "Gi")) * 1024
+        : tonumber(trimsuffix(var.memory_limit, "Mi"))
+      ) > 0 &&
+      (
+        endswith(var.memory_limit, "Gi")
+        ? tonumber(trimsuffix(var.memory_limit, "Gi")) * 1024
+        : tonumber(trimsuffix(var.memory_limit, "Mi"))
+      ) <= 28928
+    )
+    error_message = "memory_limit must be a valid Mi/Gi quantity (e.g. '24Gi') and must not exceed g2-standard-8 GKE allocatable memory (28928Mi / ~28.25Gi)."
+  }
 }
 
 variable "cpu_limit" {
-  description = "CPU limit"
+  description = "CPU limit on g2-standard-8 (8 vCPU / 7910m GKE allocatable)"
   type        = string
-  default     = "16000m"
+  default     = "6000m"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.cpu_limit)) &&
+      (
+        endswith(var.cpu_limit, "m")
+        ? tonumber(trimsuffix(var.cpu_limit, "m"))
+        : tonumber(var.cpu_limit) * 1000
+      ) > 0 &&
+      (
+        endswith(var.cpu_limit, "m")
+        ? tonumber(trimsuffix(var.cpu_limit, "m"))
+        : tonumber(var.cpu_limit) * 1000
+      ) <= 7910
+    )
+    error_message = "cpu_limit must be a valid CPU quantity (e.g. '6000m' or '6') and must not exceed g2-standard-8 GKE allocatable CPU (7910m)."
+  }
 }
 
 variable "memory_request" {
-  description = "Memory request"
+  description = "Memory request on g2-standard-8 (32 GB RAM / 28928Mi GKE allocatable)"
   type        = string
   default     = "10Gi"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(Mi|Gi)$", var.memory_request)) &&
+      (
+        endswith(var.memory_request, "Gi")
+        ? tonumber(trimsuffix(var.memory_request, "Gi")) * 1024
+        : tonumber(trimsuffix(var.memory_request, "Mi"))
+      ) > 0 &&
+      (
+        endswith(var.memory_request, "Gi")
+        ? tonumber(trimsuffix(var.memory_request, "Gi")) * 1024
+        : tonumber(trimsuffix(var.memory_request, "Mi"))
+      ) <= 28928
+    )
+    error_message = "memory_request must be a valid Mi/Gi quantity (e.g. '10Gi') and must not exceed g2-standard-8 GKE allocatable memory (28928Mi / ~28.25Gi)."
+  }
 }
 
 variable "cpu_request" {
-  description = "CPU request"
+  description = "CPU request on g2-standard-8 (8 vCPU / 7910m GKE allocatable)"
   type        = string
   default     = "3000m"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.cpu_request)) &&
+      (
+        endswith(var.cpu_request, "m")
+        ? tonumber(trimsuffix(var.cpu_request, "m"))
+        : tonumber(var.cpu_request) * 1000
+      ) > 0 &&
+      (
+        endswith(var.cpu_request, "m")
+        ? tonumber(trimsuffix(var.cpu_request, "m"))
+        : tonumber(var.cpu_request) * 1000
+      ) <= 7910
+    )
+    error_message = "cpu_request must be a valid CPU quantity (e.g. '3000m' or '3') and must not exceed g2-standard-8 GKE allocatable CPU (7910m)."
+  }
 }
 
 variable "shared_memory_size" {
-  description = "Shared memory size for /dev/shm"
+  description = "Shared memory size for /dev/shm on g2-standard-8 (32 GB RAM / 28928Mi GKE allocatable)"
   type        = string
-  default     = "16Gi"
+  default     = "2Gi"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(Mi|Gi)$", var.shared_memory_size)) &&
+      (
+        endswith(var.shared_memory_size, "Gi")
+        ? tonumber(trimsuffix(var.shared_memory_size, "Gi")) * 1024
+        : tonumber(trimsuffix(var.shared_memory_size, "Mi"))
+      ) > 0 &&
+      (
+        endswith(var.shared_memory_size, "Gi")
+        ? tonumber(trimsuffix(var.shared_memory_size, "Gi")) * 1024
+        : tonumber(trimsuffix(var.shared_memory_size, "Mi"))
+      ) <= 28928
+    )
+    error_message = "shared_memory_size must be a valid Mi/Gi quantity (e.g. '2Gi') and must not exceed g2-standard-8 GKE allocatable memory (28928Mi / ~28.25Gi)."
+  }
 }
 
 # Model Configuration

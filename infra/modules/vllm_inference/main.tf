@@ -84,15 +84,14 @@ resource "kubernetes_deployment" "vllm" {
             }
           }
 
-          # Node Affinity: Prefer Spot instances, fallback to On-Demand
+          # §3, §7 Pitfalls: vLLM GPU workloads must NEVER schedule on Spot nodes.
           node_affinity {
-            preferred_during_scheduling_ignored_during_execution {
-              weight = 100
-              preference {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
                 match_expressions {
-                  key      = "cloud.google.com/gke-provisioning"
-                  operator = "In"
-                  values   = ["spot"]
+                  key      = "cloud.google.com/gke-spot"
+                  operator = "NotIn"
+                  values   = ["true"]
                 }
               }
             }

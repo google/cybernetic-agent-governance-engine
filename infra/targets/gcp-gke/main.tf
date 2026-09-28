@@ -513,16 +513,17 @@ module "vllm" {
   service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
   # model_path loads weights from GCS model bucket via runai_streamer
-  model_path        = var.model_fast
-  served_model_name = var.served_model_name != "" ? var.served_model_name : var.served_model_fast
-  gpu_count         = var.vllm_gpu_count
-  gpu_product       = var.gpu_type
-  replicas          = var.vllm_replicas
-  enable_pdb        = var.enable_high_availability
-  memory_limit      = var.vllm_memory_limit
-  cpu_limit         = var.vllm_cpu_limit
-  memory_request    = var.vllm_memory_request
-  cpu_request       = var.vllm_cpu_request
+  model_path         = var.model_fast
+  served_model_name  = var.served_model_name != "" ? var.served_model_name : var.served_model_fast
+  gpu_count          = var.vllm_gpu_count
+  gpu_product        = var.gpu_type
+  replicas           = var.vllm_replicas
+  enable_pdb         = var.enable_high_availability
+  memory_limit       = var.vllm_memory_limit
+  cpu_limit          = var.vllm_cpu_limit
+  memory_request     = var.vllm_memory_request
+  cpu_request        = var.vllm_cpu_request
+  shared_memory_size = var.vllm_shared_memory_size
 
   # Stream weights from GCS via Run:ai model streamer when gs:// is provided
   vllm_load_format = can(regex("^gs://", var.model_fast)) ? "runai_streamer" : "auto"
@@ -562,12 +563,6 @@ module "vllm" {
       operator = "Equal"
       value    = "present"
       effect   = "NoSchedule"
-    },
-    {
-      key      = "cloud.google.com/gke-spot"
-      operator = "Equal"
-      value    = "true"
-      effect   = "NoSchedule"
     }
   ]
 
@@ -587,16 +582,17 @@ module "vllm_reasoning" {
   service_name         = "vllm-reasoning"
   image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
   # model_path loads weights from GCS model bucket via runai_streamer
-  model_path        = var.model_reasoning
-  served_model_name = var.served_model_name != "" ? var.served_model_name : var.served_model_reasoning
-  gpu_count         = var.vllm_gpu_count
-  gpu_product       = var.gpu_type
-  replicas          = var.vllm_replicas
-  enable_pdb        = var.enable_high_availability
-  memory_limit      = var.vllm_memory_limit
-  cpu_limit         = var.vllm_cpu_limit
-  memory_request    = var.vllm_memory_request
-  cpu_request       = var.vllm_cpu_request
+  model_path         = var.model_reasoning
+  served_model_name  = var.served_model_name != "" ? var.served_model_name : var.served_model_reasoning
+  gpu_count          = var.vllm_gpu_count
+  gpu_product        = var.gpu_type
+  replicas           = var.vllm_replicas
+  enable_pdb         = var.enable_high_availability
+  memory_limit       = var.vllm_memory_limit
+  cpu_limit          = var.vllm_cpu_limit
+  memory_request     = var.vllm_memory_request
+  cpu_request        = var.vllm_cpu_request
+  shared_memory_size = var.vllm_shared_memory_size
 
   # Stream weights from GCS via Run:ai model streamer when gs:// is provided
   vllm_load_format = can(regex("^gs://", var.model_reasoning)) ? "runai_streamer" : "auto"
@@ -624,12 +620,6 @@ module "vllm_reasoning" {
       key      = "nvidia.com/gpu"
       operator = "Equal"
       value    = "present"
-      effect   = "NoSchedule"
-    },
-    {
-      key      = "cloud.google.com/gke-spot"
-      operator = "Equal"
-      value    = "true"
       effect   = "NoSchedule"
     }
   ]
