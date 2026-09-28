@@ -242,7 +242,7 @@ async def test_e2e_accumulator_with_batch_signer():
     mock_kms = _mock_signer()
 
     with patch(
-        "src.gateway.governance.kms_signer.get_governance_signer",
+        "src.compliance_bridge.kms_batch_signer.build_evidence_signer",
         return_value=mock_kms,
     ):
         # Reset the module-level singleton for test isolation
@@ -299,6 +299,91 @@ def test_pending_record_defaults():
     )
     assert record.callback is None
     assert record.enqueued_at > 0
+
+
+# ---------------------------------------------------------------------------
+# Test 8: EVIDENCE_KMS_KEY isolation & foreign-kid rejection (§5.2)
+# ---------------------------------------------------------------------------
+
+
+def test_is_foreign_signing_kid_detects_gateway_and_reconciler_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is_foreign_signing_kid rejects KMS_GOVERNANCE_KEY and RECONCILER_KMS_KEY."""
+    from src.compliance_bridge.kms_batch_signer import is_foreign_signing_kid
+
+    gw_key = "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/gateway-seal/cryptoKeyVersions/1"
+    rec_key = "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/reconciler-snapshot/cryptoKeyVersions/1"
+    ev_key = "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/compliance-evidence/cryptoKeyVersions/1"
+
+    monkeypatch.setenv("KMS_GOVERNANCE_KEY", gw_key)
+    monkeypatch.setenv("RECONCILER_KMS_KEY", rec_key)
+
+    assert is_foreign_signing_kid(gw_key) is True
+    assert is_foreign_signing_kid(
+        "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/gateway-seal/cryptoKeyVersions/2"
+    ) is True
+    assert is_foreign_signing_kid(rec_key) is True
+    assert is_foreign_signing_kid(ev_key) is False
+
+
+def test_build_evidence_signer_rejects_foreign_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """build_evidence_signer fails closed if EVIDENCE_KMS_KEY matches KMS_GOVERNANCE_KEY."""
+    from src.compliance_bridge.kms_batch_signer import build_evidence_signer
+
+    gw_key = "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/gateway-seal/cryptoKeyVersions/1"
+    monkeypatch.setenv("KMS_GOVERNANCE_KEY", gw_key)
+    monkeypatch.setenv("EVIDENCE_KMS_KEY", gw_key)
+
+    with pytest.raises(RuntimeError, match="must not reference the gateway"):
+        build_evidence_signer()
+
+
+def test_build_evidence_signer_fails_closed_when_unset_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """build_evidence_signer raises RuntimeError in production when EVIDENCE_KMS_KEY is unset."""
+    from src.compliance_bridge.kms_batch_signer import build_evidence_signer
+
+    monkeypatch.setenv("CAGE_ENV", "production")
+    monkeypatch.delenv("EVIDENCE_KMS_KEY", raising=False)
+    monkeypatch.setenv(
+        "KMS_GOVERNANCE_KEY",
+        "projects/p/locations/us-central1/keyRings/cage-signing-prod/cryptoKeys/gateway-seal/cryptoKeyVersions/1",
+    )
+
+    with pytest.raises(RuntimeError, match="EVIDENCE_KMS_KEY is not set"):
+        build_evidence_signer()
+
+
+def test_build_evidence_signer_ignores_kms_governance_key_in_dev(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When EVIDENCE_KMS_KEY is unset in dev, build_evidence_signer does not fall back to KMS_GOVERNANCE_KEY."""
+    from src.compliance_bridge.kms_batch_signer import build_evidence_signer
+
+    monkeypatch.setenv("CAGE_ENV", "dev")
+    monkeypatch.delenv("EVIDENCE_KMS_KEY", raising=False)
+    monkeypatch.setenv(
+        "KMS_GOVERNANCE_KEY",
+        "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/gateway-seal/cryptoKeyVersions/1",
+    )
+
+    signer = build_evidence_signer()
+    assert signer.is_kms_active is False
+
+
+def test_assert_kms_active_in_production_checks_evidence_kms_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AsyncBatchSigner.assert_kms_active_in_production requires EVIDENCE_KMS_KEY in production."""
+    monkeypatch.setenv("CAGE_ENV", "production")
+    monkeypatch.delenv("EVIDENCE_KMS_KEY", raising=False)
+    signer = AsyncBatchSigner()
+    with pytest.raises(RuntimeError, match="Set EVIDENCE_KMS_KEY"):
+        signer.assert_kms_active_in_production()
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

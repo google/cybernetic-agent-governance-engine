@@ -53,7 +53,13 @@ _SIGNING_KSAS = {"cage-gateway-sa", "cage-reconciler-sa",
                  "cage-compliance-bridge-sa", "cage-benchmark-sa"}
 
 _ADVISOR_KSA = "cage-advisor-sa"
-_SIGNING_KEY_VARS = ("KMS_GOVERNANCE_KEY", "RECONCILER_KMS_KEY", "AWS_KMS_KEY_ID", "AZURE_KMS_KEY_NAME")
+_SIGNING_KEY_VARS = (
+    "KMS_GOVERNANCE_KEY",
+    "RECONCILER_KMS_KEY",
+    "EVIDENCE_KMS_KEY",
+    "AWS_KMS_KEY_ID",
+    "AZURE_KMS_KEY_NAME",
+)
 
 # Expected signers per key in kms_signing.tf.
 _EXPECTED_SIGNERS = {
@@ -226,9 +232,40 @@ def test_no_kms_role_granted_at_keyring_or_project_scope() -> None:
         if re.search(r'resource\s+"google_kms_key_ring_iam_', text):
             offenders.append(f"{p.relative_to(_REPO)}: keyring-scoped IAM resource")
         for block in re.findall(r'resource\s+"google_project_iam_[a-z_]+"[^{]*\{[^}]*\}', text, re.S):
-            if re.search(r'role\s*=\s*"roles/cloudkms\.(signer|signerVerifier|admin)"', block):
-                offenders.append(f"{p.relative_to(_REPO)}: project-scoped KMS signing role")
+            if re.search(
+                r'role\s*=\s*"roles/cloudkms\.(signer|signerVerifier|admin|publicKeyViewer|cryptoKeyEncrypterDecrypter)"',
+                block,
+            ):
+                offenders.append(f"{p.relative_to(_REPO)}: project-scoped KMS role")
     assert offenders == [], f"KMS roles must be granted per key: {offenders}"
+
+
+def test_compliance_bridge_uses_dedicated_evidence_kms_key_var() -> None:
+    """§5.2: Compliance bridge reads EVIDENCE_KMS_KEY, never KMS_GOVERNANCE_KEY."""
+    cb_tf = (_INFRA / "modules" / "compliance_bridge" / "main.tf").read_text()
+    assert '"EVIDENCE_KMS_KEY"' in cb_tf
+    assert '"KMS_GOVERNANCE_KEY"' not in cb_tf
+    main_tf = (_GKE / "main.tf").read_text()
+    assert "evidence_kms_key     = local.compliance_evidence_key_version" in main_tf
+
+
+def test_symmetric_cmek_and_signing_keyrings_are_separate() -> None:
+    """§5.2 / D2: Symmetric CMEK keyring (module.kms) is separate from signing keyring."""
+    main_tf = (_GKE / "main.tf").read_text()
+    assert 'module "kms"' in main_tf
+    assert 'source = "../../modules/kms"' in main_tf
+    kms_mod_tf = (_INFRA / "modules" / "kms" / "main.tf").read_text()
+    signing_tf = (_GKE / "kms_signing.tf").read_text()
+    assert "cage-keyring-${var.environment}" in kms_mod_tf
+    assert "cage-signing-${var.environment}" in signing_tf
+
+
+def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
+    """§5.1: Gateway, reconciler, and langfuse GSAs hold roles/memorystore.dbConnectionUser when IAM auth is enabled."""
+    iam_tf = (_GKE / "iam.tf").read_text()
+    for gsa in ("gateway", "reconciler", "langfuse"):
+        assert f'resource "google_project_iam_member" "{gsa}_memorystore_user"' in iam_tf
+    assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 3
 
 
 def test_signing_key_policies_are_authoritative() -> None:

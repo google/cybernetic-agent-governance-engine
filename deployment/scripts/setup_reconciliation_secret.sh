@@ -28,7 +28,7 @@ echo_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Validate required environment variables
 NAMESPACE="${NAMESPACE:-governance-stack}"
 SECRET_NAME="reconciliation-worker-secrets"
-KMS_KEY="${KMS_KEY:?ERROR: KMS_KEY env var is required. Example: KMS_KEY=projects/my-project/locations/us-central1/keyRings/governance/cryptoKeys/balance-signer/cryptoKeyVersions/1}"
+KMS_KEY="${KMS_KEY:?ERROR: KMS_KEY env var is required. Example: KMS_KEY=projects/my-project/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/reconciler-snapshot/cryptoKeyVersions/1}"
 
 echo_info "Reconciliation Worker Secret Setup (POAM-2026-038 Activation)"
 echo_info "============================================================"
@@ -65,7 +65,7 @@ if command -v gcloud &>/dev/null; then
       --keyring="${KMS_KEYRING}" &>/dev/null; then
     echo_info "✓ KMS key exists and is accessible"
   else
-    echo_warn "⚠ Cannot verify KMS key - ensure it exists and service account has signerVerifier role"
+    echo_warn "⚠ Cannot verify KMS key - ensure it exists and service account has roles/cloudkms.signer role"
   fi
 else
   echo_warn "⚠ gcloud not found - skipping KMS key verification"

@@ -47,6 +47,7 @@ outside the balance-fetch critical path.
 
 Environment variables
 ---------------------
+  EVIDENCE_KMS_KEY             — Cloud KMS key version resource name for compliance evidence batch signing
   KMS_BATCH_FLUSH_INTERVAL_MS  — flush interval in ms (default: 500)
   KMS_BATCH_MAX_SIZE           — max records per batch (default: 10, via centralized config)
   KMS_BATCH_ENABLED            — "true" to enable batch signing (default: "false", via centralized config)
@@ -68,6 +69,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+from src.gateway.governance.kms_signer import KMSGovernanceSigner
 from src.gateway.governance.schemas.thresholds import (
     get_kms_batch_max_size,
 )
@@ -78,7 +81,92 @@ logger = logging.getLogger("cage.kms_batch_signer")
 # Configuration
 # ---------------------------------------------------------------------------
 
+EVIDENCE_KMS_KEY_ENV = "EVIDENCE_KMS_KEY"
+GATEWAY_KMS_KEY_ENV = "KMS_GOVERNANCE_KEY"
+RECONCILER_KMS_KEY_ENV = "RECONCILER_KMS_KEY"
+_VERSION_SEPARATOR = "/cryptoKeyVersions/"
+
 _FLUSH_INTERVAL_MS: int = int(os.environ.get("KMS_BATCH_FLUSH_INTERVAL_MS", "500"))
+
+
+def _crypto_key_of(name: str) -> str:
+    """Return the key identity of ``name`` with any version suffix removed."""
+    return name.split(_VERSION_SEPARATOR, 1)[0].strip()
+
+
+def _evidence_key_name() -> str:
+    return os.environ.get(EVIDENCE_KMS_KEY_ENV, "").strip()
+
+
+def is_foreign_signing_kid(kid: str) -> bool:
+    """True if ``kid`` belongs to the gateway seal key or reconciler snapshot key."""
+    if not kid:
+        return False
+    target = _crypto_key_of(kid)
+    for env_var in (GATEWAY_KMS_KEY_ENV, RECONCILER_KMS_KEY_ENV):
+        other = os.environ.get(env_var, "").strip()
+        if other and _crypto_key_of(other) == target:
+            return True
+    return False
+
+
+def build_evidence_signer() -> KMSGovernanceSigner:
+    """Build the dedicated KMS signer for compliance evidence batches (`EVIDENCE_KMS_KEY`).
+
+    The compliance bridge signs evidence batches with its own key (`compliance-evidence`),
+    strictly isolated from the gateway's routing-seal key (`KMS_GOVERNANCE_KEY`) and the
+    reconciler's ground-truth snapshot key (`RECONCILER_KMS_KEY`).
+    """
+    key_name = _evidence_key_name()
+    if key_name and is_foreign_signing_kid(key_name):
+        raise RuntimeError(
+            f"{EVIDENCE_KMS_KEY_ENV} must not reference the gateway ({GATEWAY_KMS_KEY_ENV}) "
+            f"or reconciler ({RECONCILER_KMS_KEY_ENV}) signing key; compliance evidence "
+            "requires a dedicated signing key."
+        )
+
+    explicit_provider = os.environ.get("KMS_PROVIDER", "").strip().lower()
+    provider_name = (
+        explicit_provider or os.environ.get("CAGE_KMS_PROVIDER", "gcp")
+    ).lower()
+
+    posture = resolve_posture()
+    enforcing = is_enforcing(posture)
+
+    if provider_name == "gcp" and not key_name and not explicit_provider:
+        if not enforcing:
+            logger.info(
+                "[KMSBatchSigner] %s not set in %s posture. Using HMAC fallback mode.",
+                EVIDENCE_KMS_KEY_ENV,
+                posture.value,
+            )
+            return KMSGovernanceSigner(
+                kms_client=None,
+                key_version_name="",
+                public_key_pem=b"",
+                provider=None,
+            )
+        raise RuntimeError(
+            f"[KMSBatchSigner] {EVIDENCE_KMS_KEY_ENV} is not set. "
+            "Set it to the compliance-evidence Cloud KMS key version resource name."
+        )
+
+    from src.gateway.governance.signer_factory import build_kms_provider
+
+    kwargs: dict[str, Any] = {}
+    if provider_name == "gcp":
+        kwargs["key_version_name"] = key_name
+    elif provider_name == "aws" and key_name:
+        kwargs["key_id"] = key_name
+    provider = build_kms_provider(provider_name, **kwargs)
+    kms_client = getattr(provider, "_kms_client", None)
+    public_key_pem = provider.get_public_key_pem() if provider else b""
+    return KMSGovernanceSigner(
+        kms_client=kms_client,
+        key_version_name=key_name or provider.key_id,
+        public_key_pem=public_key_pem,
+        provider=provider,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +254,7 @@ class AsyncBatchSigner:
         # Eagerly load the signer so we can check its mode at startup
         if self._signer is None:
             try:
-                from src.gateway.governance.kms_signer import get_governance_signer
-
-                self._signer = get_governance_signer()  # type: ignore[assignment]
+                self._signer = build_evidence_signer()  # type: ignore[assignment]
             except Exception as _exc:
                 logger.error(
                     "[KMSBatchSigner] Failed to load signer at startup: %s", _exc
@@ -303,9 +389,7 @@ class AsyncBatchSigner:
 
         # Lazy-load the signer
         if self._signer is None:
-            from src.gateway.governance.kms_signer import get_governance_signer
-
-            self._signer = get_governance_signer()  # type: ignore[assignment]
+            self._signer = build_evidence_signer()  # type: ignore[assignment]
 
         signed = 0
         for record in batch:
@@ -378,7 +462,7 @@ class AsyncBatchSigner:
             raise RuntimeError(
                 "CAGE STARTUP FAILURE: AsyncBatchSigner is in HMAC fallback mode "
                 "in a non-development environment. Evidence stream records will not "
-                "have non-repudiable KMS signatures. Set KMS_GOVERNANCE_KEY."
+                "have non-repudiable KMS signatures. Set EVIDENCE_KMS_KEY."
             )
 
 

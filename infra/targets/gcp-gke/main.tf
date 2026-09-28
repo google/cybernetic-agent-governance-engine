@@ -57,6 +57,25 @@ data "google_project" "current" {
   project_id = var.project_id
 }
 
+# ─── Provision Symmetric CMEK Key Ring & Key ──────────────────────────────────
+# §5.2 / D2: Symmetric encryption-at-rest CMEK key ring (cage-keyring-${var.environment})
+# kept strictly separate from the asymmetric signing key ring in kms_signing.tf.
+
+module "kms" {
+  count  = var.enable_cmek && var.kms_key_id == "" ? 1 : 0
+  source = "../../modules/kms"
+
+  project_id             = var.project_id
+  environment            = var.environment
+  region                 = var.region
+  cage_deployment_region = var.cage_deployment_region
+  protection_level       = var.environment == "dev" ? "SOFTWARE" : "HSM"
+}
+
+locals {
+  cmek_key_id = var.kms_key_id != "" ? var.kms_key_id : (var.enable_cmek ? module.kms[0].crypto_key_id : "")
+}
+
 # ─── Provision GKE Cluster ────────────────────────────────────────────────────
 
 module "gke" {
@@ -80,7 +99,7 @@ module "gke" {
 
   # NIST-specific configuration
   authorized_networks = var.authorized_networks
-  kms_key_id          = var.kms_key_id
+  kms_key_id          = local.cmek_key_id
 
   # Node pools
   primary_node_pool_machine_type  = var.primary_node_pool_machine_type
@@ -290,7 +309,7 @@ module "cloudsql_postgres" {
   disk_size                     = var.postgres_disk_size
 
   enable_cmek = var.enable_cmek
-  kms_key_id  = var.kms_key_id
+  kms_key_id  = local.cmek_key_id
 
   deletion_protection = var.enable_deletion_protection
 
@@ -327,7 +346,7 @@ module "memorystore_governance" {
   transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
 
   enable_cmek = var.enable_cmek
-  kms_key_id  = var.kms_key_id
+  kms_key_id  = local.cmek_key_id
 
   deletion_protection_enabled = var.enable_deletion_protection
 
@@ -356,7 +375,7 @@ module "memorystore_app" {
   transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
 
   enable_cmek = var.enable_cmek
-  kms_key_id  = var.kms_key_id
+  kms_key_id  = local.cmek_key_id
 
   deletion_protection_enabled = var.enable_deletion_protection
 
@@ -626,11 +645,10 @@ module "compliance_bridge" {
   cage_env               = var.environment
   cage_deployment_region = var.cage_deployment_region
 
-  # POAM-2026-079: own identity and own signing key. KMSBatchSigner reads the
-  # key from KMS_GOVERNANCE_KEY; here it is the compliance-evidence key, not
-  # the gateway's seal key.
+  # POAM-2026-079 / §5.2: own identity and own signing key. KMSBatchSigner reads
+  # the key from EVIDENCE_KMS_KEY (never KMS_GOVERNANCE_KEY).
   service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
-  kms_governance_key   = local.compliance_evidence_key_version
+  evidence_kms_key     = local.compliance_evidence_key_version
 
   depends_on = [module.langfuse, module.vllm]
 }

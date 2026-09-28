@@ -85,13 +85,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
             value = var.cage_env
           }
 
-          # K-3: KMS_GOVERNANCE_KEY for asymmetric compliance evidence signing.
-          # Without this the KMSBatchSigner fails at startup and the service
-          # runs degraded (HMAC-SHA256 only, no non-repudiable KMS signatures).
-          # Set the actual key resource name in terraform.auto.tfvars (gitignored).
+          # K-3 / Track 6d (§5.2): EVIDENCE_KMS_KEY for asymmetric compliance evidence signing.
+          # Separate from the gateway's KMS_GOVERNANCE_KEY and the reconciler's RECONCILER_KMS_KEY.
           env {
-            name  = "KMS_GOVERNANCE_KEY"
-            value = var.kms_governance_key
+            name  = "EVIDENCE_KMS_KEY"
+            value = var.evidence_kms_key
           }
 
           env {

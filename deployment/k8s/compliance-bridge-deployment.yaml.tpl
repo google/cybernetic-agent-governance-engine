@@ -92,6 +92,13 @@ spec:
                   name: cold-store-secrets
                   key: hmac-secret-key
                   optional: true
+            # POAM-2026-079 / §5.2: Dedicated compliance-evidence KMS signing key.
+            - name: EVIDENCE_KMS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: compliance-bridge-secrets
+                  key: EVIDENCE_KMS_KEY
+                  optional: true
           livenessProbe:
             httpGet:
               path: /health

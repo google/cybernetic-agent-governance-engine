@@ -674,10 +674,11 @@ component-definition:
                 validated HSM-backed key management infrastructure. Manages GCP default
                 encryption keys. Provides key rotation automation and key destruction.
 
-                CAGE RESPONSIBILITY: (1) Create and manage CMEK keys for Cloud SQL and GCS
-                via Terraform (deployment/terraform/cloudsql.tf, storage.tf).
-                (2) Implement annual minimum key rotation schedule.
-                (3) Control IAM bindings on CMEK keys to limit access.
+                CAGE RESPONSIBILITY: (1) Create and manage symmetric CMEK keys for Cloud SQL,
+                Memorystore, and GKE via Terraform (infra/modules/kms/main.tf) and asymmetric
+                per-purpose signing keys on a dedicated keyring (infra/targets/gcp-gke/kms_signing.tf).
+                (2) Implement annual minimum key rotation schedule for symmetric CMEK keys.
+                (3) Control key-level IAM bindings on CMEK and signing keys to enforce least privilege.
                 (4) Document key lifecycle procedures in the SSP.
                 (5) Test key rotation without service disruption annually.
 

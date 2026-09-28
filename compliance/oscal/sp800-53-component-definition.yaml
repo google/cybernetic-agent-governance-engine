@@ -306,14 +306,16 @@ component-definition:
               control-id: sc-12
               description: |
                 Signing keys are established in Cloud KMS by Terraform
-                (infra/targets/gcp-gke/kms_signing.tf): one asymmetric
-                EC_SIGN_P256_SHA256 key per signer (gateway-seal, reconciler-snapshot,
-                compliance-evidence, benchmark-signing), HSM-protected outside dev
-                postures. Private keys never leave KMS. Each key has an authoritative
-                key-level IAM policy granting roles/cloudkms.signer to its owning
-                workload's GCP service account only; verifiers receive
-                roles/cloudkms.publicKeyViewer. No KMS role is granted at keyring or
-                project scope, and a static guard
+                (infra/targets/gcp-gke/kms_signing.tf) on a dedicated signing keyring
+                separate from the symmetric CMEK keyring (infra/modules/kms/main.tf): one
+                asymmetric EC_SIGN_P256_SHA256 key per signer (gateway-seal via
+                KMS_GOVERNANCE_KEY, reconciler-snapshot via RECONCILER_KMS_KEY,
+                compliance-evidence via EVIDENCE_KMS_KEY, benchmark-signing),
+                HSM-protected outside dev postures. Private keys never leave KMS. Each
+                key has an authoritative key-level IAM policy granting
+                roles/cloudkms.signer to its owning workload's GCP service account only;
+                verifiers receive roles/cloudkms.publicKeyViewer. No KMS role is granted
+                at keyring or project scope, and a static guard
                 (tests/infrastructure/test_workload_identity_partition.py) fails the
                 build if one is added.
 
