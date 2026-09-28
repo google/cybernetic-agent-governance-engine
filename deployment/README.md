@@ -230,7 +230,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 
 - `gcloud` CLI authenticated (`gcloud auth application-default login`)
 - GCP project with billing enabled
-- APIs enabled: `container.googleapis.com`, `compute.googleapis.com`, `storage.googleapis.com`, `cloudbuild.googleapis.com`
+- APIs enabled: `container.googleapis.com`, `compute.googleapis.com`, `storage.googleapis.com`, `artifactregistry.googleapis.com`, `containerfilesystem.googleapis.com`, `cloudbuild.googleapis.com`
 - IAM: Kubernetes Engine Admin, Cloud Build Editor, Storage Admin
 
 ### For any Kubernetes target

@@ -131,6 +131,8 @@ gcloud services enable \
   container.googleapis.com \
   compute.googleapis.com \
   storage.googleapis.com \
+  artifactregistry.googleapis.com \
+  containerfilesystem.googleapis.com \
   cloudbuild.googleapis.com \
   cloudkms.googleapis.com \
   --project=<YOUR_GCP_PROJECT_ID>

@@ -131,6 +131,7 @@ resource "google_access_context_manager_service_perimeter" "cage_perimeter" {
       "sqladmin.googleapis.com",
       "redis.googleapis.com",
       "artifactregistry.googleapis.com",
+      "containerfilesystem.googleapis.com",
       "binaryauthorization.googleapis.com",
     ]
 

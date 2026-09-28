@@ -218,6 +218,24 @@ class TestNodePoolsAndAntiSpotAffinity:
         )
         assert "local_ssd_count" in ch_block
 
+    def test_gpu_node_pool_enables_gcfs_image_streaming(self) -> None:
+        main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        gpu_start = main_tf.index('resource "google_container_node_pool" "gpu_nodes"')
+        ch_start = main_tf.index('resource "google_container_node_pool" "clickhouse_nodes"')
+        gpu_block = main_tf[gpu_start:ch_start]
+
+        assert re.search(r"gcfs_config\s*\{\s*enabled\s*=\s*true\s*\}", gpu_block), (
+            "gpu-l4 node pool must enable GKE Image Streaming (gcfs_config { enabled = true })"
+        )
+        # Ensure existing GPU node pool posture controls remain intact
+        assert re.search(r"spot\s*=\s*false", gpu_block)
+        assert 'mode = "GKE_METADATA"' in gpu_block
+        assert 'key    = "nvidia.com/gpu"' in gpu_block
+        assert "enable_secure_boot          = true" in gpu_block
+        assert "enable_integrity_monitoring = true" in gpu_block
+        assert "node_locations = var.gpu_node_locations" in gpu_block
+        assert "autoscaling {" in gpu_block
+
     def test_general_spot_pool_only_in_staging_with_spot_taint(self) -> None:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         spot_start = main_tf.index('resource "google_container_node_pool" "general_spot_nodes"')
@@ -700,6 +718,8 @@ class TestPerimeterControls:
             "cloudkms.googleapis.com",
             "sqladmin.googleapis.com",
             "redis.googleapis.com",
+            "artifactregistry.googleapis.com",
+            "containerfilesystem.googleapis.com",
         ):
             assert restricted_svc in perimeter_tf, (
                 f"VPC-SC perimeter in perimeter.tf must restrict {restricted_svc}"
