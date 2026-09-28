@@ -808,20 +808,22 @@ def langfuse_client():
 def get_cloudrun_identity_token(audience: str | None = None) -> str | None:
     """
     Retrieve Google Cloud Run identity token for IAM-authenticated requests.
-    
+
     Prefers service account impersonation when CLOUDRUN_TEST_SERVICE_ACCOUNT is set,
     falling back to personal user credentials for local development.
-    
+
     Returns:
         Identity token string, or None if unavailable.
     """
     # Check for pre-cached token in environment
-    token = os.environ.get("CLOUDRUN_IDENTITY_TOKEN") or os.environ.get("GCP_IDENTITY_TOKEN")
+    token = os.environ.get("CLOUDRUN_IDENTITY_TOKEN") or os.environ.get(
+        "GCP_IDENTITY_TOKEN"
+    )
     if token:
         return token.strip()
-    
+
     test_sa = os.environ.get("CLOUDRUN_TEST_SERVICE_ACCOUNT", "").strip()
-    
+
     try:
         import subprocess
 
@@ -835,7 +837,7 @@ def get_cloudrun_identity_token(audience: str | None = None) -> str | None:
             ]
             if audience:
                 cmd.append(f"--audiences={audience}")
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -852,7 +854,7 @@ def get_cloudrun_identity_token(audience: str | None = None) -> str | None:
             cmd = ["gcloud", "auth", "print-identity-token"]
             if audience:
                 cmd.append(f"--audiences={audience}")
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -864,11 +866,17 @@ def get_cloudrun_identity_token(audience: str | None = None) -> str | None:
                 "\n⚠️  [pytest bootstrap] Using personal gcloud credentials (set CLOUDRUN_TEST_SERVICE_ACCOUNT for SA impersonation)"
             )
             return result.stdout.strip()
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
         return None
 
 
-def get_cloudrun_auth_headers(url: str | None = None, app_auth: tuple[str, str] | None = None) -> dict[str, str]:
+def get_cloudrun_auth_headers(
+    url: str | None = None, app_auth: tuple[str, str] | None = None
+) -> dict[str, str]:
     """
     Build Cloud Run auth headers with optional dual-layer authentication.
 
@@ -890,7 +898,7 @@ def get_cloudrun_auth_headers(url: str | None = None, app_auth: tuple[str, str] 
     token = get_cloudrun_identity_token()
     if not token:
         return {}
-    
+
     if app_auth is None:
         # Single-layer mode: ID token in Authorization (legacy behavior)
         return {"Authorization": f"Bearer {token}"}
@@ -915,6 +923,15 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
     not running.  Start them with ``./setup_test_env.sh``.
     """
     if not pytestconfig.getoption("--run-integration"):
+        return
+    if os.environ.get("SKIP_PORT_FORWARD_CHECKS", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    args = [str(a) for a in pytestconfig.args]
+    if args and all("test_linkerd_mesh_conformance" in a for a in args):
         return
 
     import base64
@@ -948,16 +965,23 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
         "yes",
     )
     # Cloud Run services with minScale=0 require longer timeout for cold starts
-    timeout = 30 if (
-        os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
-        or ".run.app" in current_backend
-    ) else 3
+    timeout = (
+        30
+        if (
+            os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
+            or ".run.app" in current_backend
+        )
+        else 3
+    )
 
     is_cloudrun = (
         os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
         or os.environ.get("TARGET_PLATFORM", "").lower() == "cloudrun"
         or ".run.app" in current_backend
-        or (current_backend.startswith("https://") and "localhost" not in current_backend)
+        or (
+            current_backend.startswith("https://")
+            and "localhost" not in current_backend
+        )
     )
 
     unreachable: list[str] = []
@@ -1276,7 +1300,10 @@ def assert_formal_tier_ordering_matches():
 
     plugin = load_domain_plugin()
     governor = assemble_governor(
-        [plugin], posture=resolve_posture(), opa=allow_opa(), stpa_validator=clean_stpa()
+        [plugin],
+        posture=resolve_posture(),
+        opa=allow_opa(),
+        stpa_validator=clean_stpa(),
     )
     # Production registers the domain's compliance overlays in bootstrap_governor();
     # do the same once per session so domain controls (e.g. CTRL_MRM_004) resolve.
@@ -1291,7 +1318,9 @@ def assert_formal_tier_ordering_matches():
         # The formal model mandates this relative order for the finance tiers.
         expected = ["consensus", "causal", "cbf", "fiscal"]
         actual = [t for t in tiers if t in expected]
-        assert actual == expected, f"Tier order mismatch! Expected {expected}, got {actual}"
+        assert actual == expected, (
+            f"Tier order mismatch! Expected {expected}, got {actual}"
+        )
 
 
 # ── W1/W3 Post-v3 Remediation: Register fixture modules ───────────────────────

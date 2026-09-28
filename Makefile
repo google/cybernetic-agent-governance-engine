@@ -31,7 +31,9 @@ NAMESPACE ?= cage
         test-fast \
         test-last-failed \
         test-coverage \
-        test-random
+        test-random \
+        test-mesh \
+        test-live
 
 generate-policies:
 	@echo "Regenerating governance policies from RiskAnalystAgent outputs..."
@@ -181,6 +183,16 @@ test-partner:
 	@echo "==> Running live external partner integration tests..."
 	@echo "NOTE: Requires partner sandbox credentials. See config/environments/partner-sandbox.env.example"
 	@uv run pytest tests/ -m partner_integration --run-partner-integration -v
+
+## Run Linkerd service-mesh conformance tests against a Linkerd-enabled cluster (kind or GKE)
+test-mesh:
+	@echo "==> Running Linkerd service-mesh conformance tests..."
+	@SKIP_PORT_FORWARD_CHECKS=1 uv run pytest tests/integration/test_linkerd_mesh_conformance.py --run-integration -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v
+
+## Run live external service tests (e.g. Google CAS certificate issuance)
+test-live:
+	@echo "==> Running live external tests..."
+	@uv run pytest tests/live/ -m live_external --run-live-external -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v
 
 ## Run live Cloud Run integration suite with automated pre-flight checks and explicit skip reporting
 test-cloudrun:
