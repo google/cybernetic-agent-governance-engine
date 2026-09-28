@@ -786,3 +786,42 @@ jobs:
         # to verify deterministic evidence chains resist tampering.
         run: |
           uv run pytest tests/test_jcs_property_invariants.py -v -p no:langsmith -p no:langsmith_plugin
+
+  mesh-conformance:
+    name: "Linkerd Mesh Policy Conformance (kind)"
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install Dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Create kind cluster and install Linkerd control plane
+        run: |
+          kind create cluster --name cage-mesh-test --wait 90s
+          export LINKERD2_VERSION=edge-26.9.3
+          curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install-edge | sh
+          export PATH="$HOME/.linkerd2/bin:$PATH"
+          linkerd install --crds | kubectl apply -f -
+          linkerd install | kubectl apply -f -
+          linkerd check
+      - name: Run Linkerd service-mesh conformance suite
+        env:
+          CAGE_REQUIRE_LINKERD_CLUSTER: "1"
+          SKIP_PORT_FORWARD_CHECKS: "1"
+        run: |
+          make test-mesh
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name cage-mesh-test || true
+
