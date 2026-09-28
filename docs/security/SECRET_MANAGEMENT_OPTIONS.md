@@ -79,8 +79,8 @@ helm install external-secrets external-secrets/external-secrets \
 
 ### Required IAM / permissions
 
-The `financial-advisor-sa` Kubernetes Service Account (or a dedicated ESO SA)
-must have read access to the secret store. The exact permission depends on the
+A dedicated ESO Kubernetes Service Account, bound to its own GCP service
+account, must have read access to the secret store. The exact permission depends on the
 provider:
 
 | Provider            | Required permission                                                                         |
@@ -111,7 +111,7 @@ spec:
           clusterLocation: YOUR_GKE_REGION
           clusterName: YOUR_GKE_CLUSTER
           serviceAccountRef:
-            name: financial-advisor-sa
+            name: external-secrets-sa # dedicated; never a workload's KSA (POAM-2026-079)
             namespace: governance-stack
 ```
 

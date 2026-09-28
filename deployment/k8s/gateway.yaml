@@ -29,7 +29,7 @@ spec:
       labels:
         app: gateway
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-gateway-sa
       containers:
         - name: gateway
           # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)

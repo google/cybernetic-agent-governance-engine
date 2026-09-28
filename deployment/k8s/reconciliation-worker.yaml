@@ -42,7 +42,7 @@ spec:
             cage.io/account-purpose: "ledger-reconciliation"
         spec:
           restartPolicy: OnFailure
-          serviceAccountName: financial-advisor-sa
+          serviceAccountName: cage-reconciler-sa
           securityContext:
             runAsNonRoot: true
             seccompProfile:

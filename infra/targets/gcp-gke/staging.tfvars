@@ -189,9 +189,8 @@ presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
 #   kms_key_id = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>"
 #   # REQUIRED when enable_cmek=true — set in terraform.auto.tfvars
 
-# K-3: KMS_GOVERNANCE_KEY for compliance-bridge KMSBatchSigner.
-#   kms_governance_key = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/1"
-#   # Set in terraform.auto.tfvars
+# K-3: signing keys are provisioned by kms_signing.tf (one key per signer,
+#   POAM-2026-079); there is no kms_governance_key input any more.
 
 # K-4: OTLP auth header for Langfuse trace ingestion (gateway + governed_advisor).
 #   Option A — provide explicit header:

@@ -298,17 +298,28 @@ component-definition:
             - uuid: "61c43f8a-6693-4049-ae09-edd8b22f500a"
               control-id: sc-12
               description: |
-                Cryptographic key establishment is implemented via HMAC-SHA256 routing
-                seals in src/gateway/governance/contracts.py. The routing seal secret
-                is loaded from the CAGE_ROUTING_SEAL_SECRET environment variable, which
-                is backed by a Kubernetes Secret (deployment/k8s/oscal-artifact-secrets.yaml).
-                Every request must carry a valid HMAC-SHA256 seal computed over the
-                request payload; invalid seals result in immediate rejection with a 401
-                response. Key rotation is performed via Kubernetes Secret update without
-                service restart.
+                Signing keys are established in Cloud KMS by Terraform
+                (infra/targets/gcp-gke/kms_signing.tf): one asymmetric
+                EC_SIGN_P256_SHA256 key per signer (gateway-seal, reconciler-snapshot,
+                compliance-evidence, benchmark-signing), HSM-protected outside dev
+                postures. Private keys never leave KMS. Each key has an authoritative
+                key-level IAM policy granting roles/cloudkms.signer to its owning
+                workload's GCP service account only; verifiers receive
+                roles/cloudkms.publicKeyViewer. No KMS role is granted at keyring or
+                project scope, and a static guard
+                (tests/infrastructure/test_workload_identity_partition.py) fails the
+                build if one is added.
+
+                The HMAC-SHA256 routing seal keyed by CAGE_ROUTING_SEAL_SECRET is a
+                dev-posture fallback only; enforcing postures refuse it at startup, and
+                it is not evidence for this control.
+
+                Partial: POAM-2026-079 tracks the residual. The governed advisor still
+                holds signer on gateway-seal because it hosts an in-process governor
+                that mints routing seals.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -589,6 +600,13 @@ component-definition:
                 enforce per-user-class constraints. Users cannot escalate their own permissions;
                 all role assignments are managed via Kubernetes RBAC and propagated to OPA
                 via environment configuration.
+
+                Workload least privilege: each workload runs as its own Kubernetes
+                service account bound 1:1 to its own GCP service account
+                (infra/targets/gcp-gke/iam.tf, deployment/k8s/service-account.yaml). The
+                model-serving (vLLM), telemetry and UI workloads hold no KMS role.
+                POAM-2026-079 tracks the remaining exception (advisor signer on
+                gateway-seal).
               props:
                 - name: implementation-status
                   value: implemented

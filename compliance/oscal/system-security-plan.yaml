@@ -776,8 +776,13 @@ system-security-plan:
       description: 'Account management for CAGE is partially implemented. GCP IAM
         manages organizational user accounts with role-based access bindings. Kubernetes
         RBAC (ClusterRoleBindings, RoleBindings) controls access to governance-stack
-        namespace resources. Service accounts use Workload Identity (financial-advisor-sa,
-        agentsight-ui-sa) with least-privilege IAM roles per deployment/terraform/iam.tf.
+        namespace resources. Each workload runs as its own Kubernetes service account,
+        bound 1:1 through Workload Identity to its own GCP service account (cage-gateway,
+        cage-advisor, cage-reconciler, cage-compliance-bridge, cage-vllm, cage-benchmark)
+        per infra/targets/gcp-gke/iam.tf. Signing keys are granted per key to a single
+        signer with authoritative key-level IAM policies (infra/targets/gcp-gke/kms_signing.tf).
+        POAM-2026-079 tracks the residual: the advisor still signs with the gateway-seal
+        key until its in-process governor moves behind the gateway.
 
         Zero-trust outbound tool credential brokering (CredentialBrokerAdapter seam)
         enforces SPIFFE SVID-based authorization for egress API credentials. Autonomous

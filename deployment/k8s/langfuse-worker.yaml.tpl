@@ -49,7 +49,7 @@ spec:
       labels:
         app: langfuse-worker
     spec:
-      serviceAccountName: "financial-advisor-sa"
+      serviceAccountName: langfuse-sa
       securityContext:
         fsGroup: 65532
         runAsNonRoot: true

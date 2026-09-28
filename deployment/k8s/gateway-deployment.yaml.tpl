@@ -15,7 +15,7 @@ spec:
       labels:
         app: gateway
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-gateway-sa
       containers:
         - name: gateway
           image: ${REGISTRY_URL}/gateway:latest

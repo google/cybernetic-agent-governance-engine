@@ -26,7 +26,7 @@ spec:
         run.googleapis.com/startup-cpu-boost: "true"
         autoscaling.knative.dev/min-scale: "1"
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-advisor@PROJECT_ID.iam.gserviceaccount.com
       containers:
         # --- CONTAINER 1: The Agent (Ingress) ---
         - name: governed-financial-advisor

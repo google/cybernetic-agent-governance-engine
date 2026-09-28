@@ -15,7 +15,7 @@ spec:
       labels:
         app: gateway
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-gateway-sa
       containers:
         - name: gateway
           image: gcr.io/YOUR_PROJECT_ID/gateway:latest

@@ -29,7 +29,7 @@ spec:
       labels:
         app: governed-financial-advisor
     spec:
-      serviceAccountName: financial-advisor-sa
+      serviceAccountName: cage-advisor-sa
       volumes:
         - name: policy-volume
           secret:

@@ -154,7 +154,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `gateway.yaml.tpl` | Template | Rendered by `deploy_all.sh` — substitutes `${CAGE_ENV}`, `${CAGE_DEPLOYMENT_REGION}` |
 | `gateway-hpa.yaml` | HPA | Scale 1–5 replicas at 50% CPU |
 | `gateway-deployment.yaml.tpl` | Template | Alternative Deployment template |
-| `financial-advisor.yaml` | Deployment + ClusterIP Service | Port 80 → 8080; uses `financial-advisor-sa` ServiceAccount |
+| `financial-advisor.yaml` | Deployment + ClusterIP Service | Port 80 → 8080; runs as the `cage-advisor-sa` ServiceAccount |
 | `backend-deployment.yaml` | Deployment | Static (non-templated) version |
 | `backend-deployment.yaml.tpl` | Template | Rendered for region-specific deployments |
 | `compliance-bridge.yaml` | Deployment + ClusterIP Service | Port 80 → 3001; 150s startup delay (dowhy/matplotlib import) |
@@ -222,7 +222,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `reconciliation-worker.yaml` | CronJob (`*/5 * * * *`) + Secret template. Runs `GroundTruthReconciler` (`src/gateway/governance/reconciliation/daemon.py`) with the simulated Tier 2 provider and writes KMS-signed ground-truth snapshots to Redis. `RECONCILIATION_PROVIDER` is a span label only. |
 | `sbom-cronjob.yaml` | SBOM generation CronJob |
 | `oscal-artifact-secrets.yaml` | OSCAL artifact secret template |
-| `service-account.yaml` | `financial-advisor-sa` ServiceAccount |
+| `service-account.yaml` | One ServiceAccount per workload (`cage-gateway-sa`, `cage-advisor-sa`, `cage-reconciler-sa`, …), each bound to its own GSA (POAM-2026-079) |
 | `ingress.yaml` | GCE Ingress (HTTPS; uses NodePort 30080 for gateway) |
 | `db-reset.yaml` | Database reset Job (one-time; dev only) |
 

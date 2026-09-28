@@ -136,3 +136,27 @@ output "opa_endpoint" {
   description = "OPA policy engine endpoint"
   value       = module.opa.endpoint_url
 }
+
+# ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
+# Key version resource names for the manifest deployment path
+# (deployment/k8s/): KMS_GOVERNANCE_KEY / RECONCILER_KMS_KEY secrets.
+
+output "gateway_seal_key_version" {
+  description = "gateway-seal key version (KMS_GOVERNANCE_KEY for the gateway and, temporarily, the advisor)"
+  value       = local.gateway_seal_key_version
+}
+
+output "reconciler_snapshot_key_version" {
+  description = "reconciler-snapshot key version (RECONCILER_KMS_KEY for the reconciler, gateway and advisor)"
+  value       = local.reconciler_snapshot_key_version
+}
+
+output "compliance_evidence_key_version" {
+  description = "compliance-evidence key version (KMS_GOVERNANCE_KEY for the compliance bridge)"
+  value       = local.compliance_evidence_key_version
+}
+
+output "benchmark_signing_key_version" {
+  description = "benchmark-signing key version (KMS_GOVERNANCE_KEY for the benchmark job only; not a trust anchor)"
+  value       = local.benchmark_signing_key_version
+}

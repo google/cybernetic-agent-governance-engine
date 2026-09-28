@@ -21,11 +21,6 @@ terraform {
   }
 }
 
-# NOTE: kubernetes_service_account "financial-advisor-sa" is intentionally
-# created at the top-level target (infra/targets/gcp-gke/main.tf) as a
-# standalone resource so that module.vllm and module.vllm_reasoning can
-# depend on it without creating a circular dependency through this module.
-
 resource "kubernetes_deployment" "governed_advisor" {
   metadata {
     name      = "governed-financial-advisor"
@@ -52,7 +47,7 @@ resource "kubernetes_deployment" "governed_advisor" {
       }
 
       spec {
-        service_account_name = "financial-advisor-sa"
+        service_account_name = var.service_account_name
 
         container {
           name              = "ingress-agent"
@@ -290,6 +285,10 @@ resource "kubernetes_deployment" "governed_advisor" {
           env {
             name  = "KMS_GOVERNANCE_KEY"
             value = var.kms_governance_key
+          }
+          env {
+            name  = "RECONCILER_KMS_KEY"
+            value = var.reconciler_kms_key
           }
 
           # MCP Configuration

@@ -49,7 +49,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
       }
 
       spec {
-        service_account_name = "financial-advisor-sa"
+        service_account_name = var.service_account_name
 
         security_context {
           run_as_non_root = true

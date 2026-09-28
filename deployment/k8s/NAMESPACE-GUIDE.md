@@ -32,7 +32,7 @@ All CAGE application services run in `governance-stack`. The namespace enforces 
 |---------|----------|----------|---------|-------|
 | Gateway (HTTP) | Deployment + NodePort Service | `gateway` | 8080 (http), 50051 (grpc), NodePort 30080 | Exposes NodePort for GCE Ingress backend |
 | Gateway HPA | HPA | `gateway-hpa` | — | 1–5 replicas at 50% CPU |
-| Governed Financial Advisor | Deployment + ClusterIP Service | `governed-financial-advisor` | 80 → 8080 | ServiceAccount: `financial-advisor-sa` |
+| Governed Financial Advisor | Deployment + ClusterIP Service | `governed-financial-advisor` | 80 → 8080 | ServiceAccount: `cage-advisor-sa` |
 | OPA policy engine | Deployment + ClusterIP Service | `opa-service` | 8181 (policy), 8282 (diagnostics) | Package: `trade.governance` |
 | NeMo Guardrails | Deployment + ClusterIP Service | `nemo-service` | 8000 | |
 | Compliance Bridge | Deployment + ClusterIP Service | `compliance-bridge` | 80 → 3001 | 150s startup delay (dowhy/matplotlib) |

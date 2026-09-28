@@ -111,9 +111,8 @@ presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
 # K-1: CAGE_ROUTING_SEAL_SECRET for gateway routing seal enforcement (POAM-012).
 #   routing_seal_secret = "<random-32-char-hex>"  # Set in terraform.auto.tfvars
 
-# K-3: KMS_GOVERNANCE_KEY for compliance-bridge KMSBatchSigner.
-#   kms_governance_key = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/1"
-#   # Set in terraform.auto.tfvars
+# K-3: signing keys are provisioned by kms_signing.tf (one key per signer,
+#   POAM-2026-079); there is no kms_governance_key input any more.
 
 # K-4: OTLP auth header for Langfuse trace ingestion (gateway + governed_advisor).
 #   Option A — provide explicit header:
@@ -122,3 +121,6 @@ presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
 #     root module will derive the header automatically from those two values.
 #   Both must go in terraform.auto.tfvars (gitignored) — never commit real keys here.
 
+# ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
+# Dev posture only: SOFTWARE protection. Staging/prod keep the HSM default.
+kms_signing_protection_level = "SOFTWARE"

@@ -148,3 +148,13 @@ variable "cage_deployment_region" {
     error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS."
   }
 }
+
+variable "service_account_name" {
+  description = "Kubernetes ServiceAccount the pods run as. Must be this workload's own KSA, bound 1:1 to its own GSA (POAM-2026-079). No default: a missing identity fails the plan."
+  type        = string
+
+  validation {
+    condition     = var.service_account_name != "" && var.service_account_name != "financial-advisor-sa"
+    error_message = "service_account_name must name the workload's own KSA; the shared financial-advisor-sa is retired (POAM-2026-079)."
+  }
+}

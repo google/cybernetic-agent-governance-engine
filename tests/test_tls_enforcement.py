@@ -133,10 +133,51 @@ class TestLinkerdMtlsPolicyManifest:
     def test_service_accounts_declare_sc8_and_poam011(
         self, policy_manifest: list[dict]
     ) -> None:
-        """Verify ServiceAccounts have compliance annotations for SC-8 and POAM-011."""
-        service_accounts = [
-            d for d in policy_manifest if d.get("kind") == "ServiceAccount"
-        ]
+        """Verify mesh ServiceAccounts have compliance annotations for SC-8 and POAM-011.
+
+        Mesh-only identities (OPA, NeMo) are declared in the policy manifest.
+        Workload KSAs (gateway, compliance bridge) are declared once, with their
+        Workload Identity bindings, in ``service-account.yaml`` (POAM-2026-079).
+        Every SPIFFE identity trusted by a MeshTLSAuthentication must resolve
+        to a declared ServiceAccount, so a trusted identity cannot silently
+        lose its compliance annotations by moving between manifests.
+        """
+        sa_manifest_path = (
+            Path(__file__).resolve().parents[1]
+            / "deployment"
+            / "k8s"
+            / "service-account.yaml"
+        )
+        with open(sa_manifest_path, encoding="utf-8") as f:
+            workload_docs = [d for d in yaml.safe_load_all(f) if d is not None]
+
+        policy_sas = [d for d in policy_manifest if d.get("kind") == "ServiceAccount"]
+        workload_sas = {
+            (d["metadata"]["name"], d["metadata"].get("namespace")): d
+            for d in workload_docs
+            if d.get("kind") == "ServiceAccount"
+        }
+
+        trusted: set[tuple[str, str]] = set()
+        for doc in policy_manifest:
+            if doc.get("kind") != "MeshTLSAuthentication":
+                continue
+            for identity in doc.get("spec", {}).get("identities", []):
+                sa_name, namespace = identity.split(".")[:2]
+                trusted.add((sa_name, namespace))
+        assert trusted, "No MeshTLSAuthentication identities found"
+
+        service_accounts = list(policy_sas)
+        policy_keys = {
+            (d["metadata"]["name"], d["metadata"].get("namespace")) for d in policy_sas
+        }
+        for key in sorted(trusted - policy_keys):
+            assert key in workload_sas, (
+                f"Trusted mesh identity {key[0]}.{key[1]} has no ServiceAccount "
+                "in linkerd-mtls-policy.yaml or service-account.yaml"
+            )
+            service_accounts.append(workload_sas[key])
+
         assert len(service_accounts) >= 3, (
             "Expected at least gateway, opa, and nemo ServiceAccounts"
         )
