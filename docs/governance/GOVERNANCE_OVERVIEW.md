@@ -139,7 +139,7 @@ The **NoDirectBind invariant** is the foundational safety property of the pipeli
 
 > *No output produced by an LLM may be bound directly to an executable action (trade, API call, state mutation) without first passing through the full `SymbolicGovernor._run_checks()` pipeline.*
 
-This invariant is enforced structurally: `validate_action()` is the single choke point through which every tool execution request must pass, and the caller must present a valid HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`, verified via `verify_seal()`) before the downstream actuator will fire. A routing seal is issued **only** after all tiers complete successfully.
+This invariant is enforced structurally: `validate_action()` is the single choke point through which every tool execution request must pass. The caller must present a trusted Linkerd mTLS workload identity to reach it at all (`WorkloadIdentityMiddleware`, `src/gateway/server/workload_identity.py`), and the downstream actuator verifies the governor's routing seal (`verify_seal()`) before it fires. A routing seal is issued **only** after all tiers complete successfully.
 
 ### Tier 2/4 — Concurrent CBF + OPA Evaluation
 
@@ -361,7 +361,7 @@ The gateway-side `validate_action()` / `verify_seal()` pair is the single choke 
 1. Validates Pydantic schema (infrastructure boundary — not a pipeline step).
 2. Optionally verifies `policy_version_id` against `ControlRegistry.active_hash` to detect substrate policy drift.
 3. Invokes the full `SymbolicGovernor._run_checks()` pipeline: STPA (Tier 0) → Confidence (Tier 1) → CBF/OPA concurrent (Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → Consensus (Tier 5) → Causal Gatekeeper (Tier 6) → FRIA (Tier 6b).
-4. Issues an HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) only after all tiers pass.
+4. Issues the governor's KMS-signed routing seal (`src/gateway/governance/routing_seal.py`; HMAC fallback in dev/test only) only after all tiers pass.
 5. The downstream actuator calls `verify_seal()` before firing — the wrapped action is never invoked if the seal is missing, expired, or tampered.
 6. Wraps execution in ISO 42001-stamped OpenTelemetry spans.
 

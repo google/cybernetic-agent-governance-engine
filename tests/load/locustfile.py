@@ -50,9 +50,12 @@ TICKERS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "JPM", "V", "NVDA", "BRK.B"]
 RISK_LEVELS = ["low", "moderate", "high", "speculative"]
 TIME_HORIZONS = ["short_term", "medium_term", "long_term"]
 
-# Realistic HMAC test value — empty string is accepted in development/test
-# environments where CAGE_ROUTING_SEAL_SECRET is not set.
-_TEST_SEAL = ""
+# Caller authentication is mesh workload identity (POAM-2026-080): inside the
+# Linkerd mesh, the inbound proxy overwrites l5d-client-id with the mTLS peer
+# identity; for local/unmeshed load runs, inject the configured test identity.
+_DEFAULT_CLIENT_ID = (
+    "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+)
 
 
 def _make_trade_params() -> dict:
@@ -108,11 +111,13 @@ class GovernanceUser(HttpUser):
     # wait 1-5 seconds between requests to model realistic concurrency.
     wait_time = between(1, 5)
 
+    def on_start(self) -> None:
+        self.client.headers["l5d-client-id"] = _DEFAULT_CLIENT_ID
+
     # ------------------------------------------------------------------ #
     # Task: POST /governance/check                                         #
     # Endpoint: governance_middleware.governance_check()                   #
     # Body: {"tool_name": str, "params": dict}                            #
-    # Header: X-CAGE-Routing-Seal (HMAC-SHA256 of body bytes)             #
     # ------------------------------------------------------------------ #
     @task(3)
     def governance_check(self):
@@ -128,7 +133,6 @@ class GovernanceUser(HttpUser):
         with self.client.post(
             "/governance/check",
             json=payload,
-            headers={"X-CAGE-Routing-Seal": _TEST_SEAL},
             name="POST /governance/check",
             catch_response=True,
             timeout=30,
@@ -155,8 +159,9 @@ class GovernanceUser(HttpUser):
             elif response.status_code == 400:
                 response.failure(f"Bad request: {response.text[:200]}")
             elif response.status_code == 403:
-                # Seal rejected — expected in strict enforcement mode
-                response.success()
+                # /check never denies with 403; this is the ingress identity
+                # check refusing the load generator — a setup failure.
+                response.failure(f"Caller identity refused: {response.text[:200]}")
             else:
                 response.failure(f"HTTP Error: {response.status_code}")
 
@@ -179,11 +184,6 @@ class GovernanceUser(HttpUser):
         with self.client.post(
             "/governance/validate-action",
             json=payload,
-            # K-6 fix: use the correct header name that governance_middleware.py
-            # checks (_SEAL_HEADER = "X-CAGE-Routing-Seal").  The previous value
-            # "X-Governance-Seal" caused every request to fail with HTTP 403 in
-            # environments where CAGE_ROUTING_SEAL_SECRET is set.
-            headers={"X-CAGE-Routing-Seal": _TEST_SEAL},
             name="POST /governance/validate-action",
             catch_response=True,
             timeout=30,

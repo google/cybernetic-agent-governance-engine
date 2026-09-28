@@ -184,21 +184,6 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         raise RuntimeError(str(cfg_err)) from cfg_err
 
     # ------------------------------------------------------------------
-    # POAM-012 / NIST SC-12: Fail fast if CAGE_ROUTING_SEAL_SECRET is
-    # absent or is a known development default in non-dev environments.
-    # ------------------------------------------------------------------
-    _env = os.environ.get("ENVIRONMENT", "development").lower()
-    _seal = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "")
-    _DEV_DEFAULTS = {"dev", "development", "changeme", "secret", "test", ""}
-    if _env not in ("development", "dev", "test", "ci") and _seal in _DEV_DEFAULTS:
-        raise RuntimeError(
-            "[compliance-bridge] CAGE_ROUTING_SEAL_SECRET is absent or set to a "
-            "known development default in a non-development environment. "
-            "Set a strong secret to enable cryptographic enforcement of governance "
-            "routing seals. (POAM-012 / NIST SC-12)"
-        )
-
-    # ------------------------------------------------------------------
     # POAM-014 / NIST SC-28: CMEK validation for evidence artifact storage.
     # Hard-fails in non-dev on missing/malformed key; GCS check is best-effort.
     # ------------------------------------------------------------------

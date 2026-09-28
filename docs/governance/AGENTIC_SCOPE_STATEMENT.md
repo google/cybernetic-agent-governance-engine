@@ -32,9 +32,12 @@ The authorized action space is enforced at three independent layers:
    denied with a `GovernanceError`. System-level authorization is enforced by `deployment/system_authz.rego`.
 
 2. **Routing Seal** (`src/gateway/governance/routing_seal.py`):
-   Every approved governance decision is sealed with an HMAC-SHA256 token
-   (`CAGE_ROUTING_SEAL_SECRET` key, ≥32 bytes). Downstream actuators MUST verify the seal
-   before executing any action. Seal TTL: 30 seconds (`GOVERNANCE_SEAL_TTL_S`).
+   Every approved governance decision is sealed with a KMS-signed JWT bound to the
+   evidence record (HMAC-SHA256 keyed by `GOVERNANCE_SALT` only in dev/test). The
+   gateway's actuator path MUST verify and consume the seal before executing any
+   action. Seal TTL: 30 seconds (`GOVERNANCE_SEAL_TTL_S`). Callers of the gateway are
+   authenticated separately, by Linkerd mTLS workload identity
+   (`src/gateway/server/workload_identity.py`).
 
 3. **CausalGatekeeper** (`src/gateway/governance/causal/gatekeeper.py`):
    Performs DoWhy causal inference + placebo refutation before any high-stakes action.

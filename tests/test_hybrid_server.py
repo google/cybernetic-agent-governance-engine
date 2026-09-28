@@ -36,6 +36,17 @@ import pytest
 pytestmark = pytest.mark.local
 
 
+@pytest.fixture(autouse=True)
+def _trusted_client_identities(monkeypatch):
+    """Several tests import hybrid_server in a production posture, where
+    ``load_identity_policy()`` refuses to start without trusted identities
+    (POAM-2026-080). Supply one so those imports reach the code under test."""
+    monkeypatch.setenv(
+        "CAGE_TRUSTED_CLIENT_IDENTITIES",
+        "advisor.cage.serviceaccount.identity.linkerd.cluster.local",
+    )
+
+
 # ---------------------------------------------------------------------------
 # sys.modules stubs — allow hybrid_server to import without live services
 # ---------------------------------------------------------------------------
@@ -83,7 +94,6 @@ def _make_hybrid_stubs() -> dict:
         "src.gateway.server.governance_middleware": MagicMock(
             governance_app=mock_governance_app,
             enforce_governance=AsyncMock(return_value=MagicMock()),
-            enforce_routing_seal=MagicMock(),
         ),
         # Tracing
         "src.gateway.tracing_setup": MagicMock(setup_tracing=MagicMock()),

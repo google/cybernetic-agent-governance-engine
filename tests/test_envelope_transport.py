@@ -102,23 +102,10 @@ def mock_kms_signer():
 
 @pytest.fixture()
 def client(mock_symbolic_governor, mock_kms_signer):
-    """TestClient with seal enforcement disabled."""
-    import src.gateway.server.governance_middleware as mw
-
-    original_secret = mw._CAGE_SEAL_SECRET
-    original_env = mw._ENVIRONMENT
-
-    mw._CAGE_SEAL_SECRET = None
-    mw._ENVIRONMENT = "test"
-
+    """TestClient on governance_app with a mock governor installed."""
     from src.gateway.server.governance_middleware import governance_app
 
-    test_client = TestClient(governance_app, raise_server_exceptions=False)
-
-    yield test_client
-
-    mw._CAGE_SEAL_SECRET = original_secret
-    mw._ENVIRONMENT = original_env
+    return TestClient(governance_app, raise_server_exceptions=False)
 
 
 class TestEnvelopeTransportApproved:
@@ -260,14 +247,6 @@ class TestEnvelopeTransportDenied:
             side_effect=GovernanceError("CBF safety bound exceeded")
         )
 
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_env = mw._ENVIRONMENT
-
-        mw._CAGE_SEAL_SECRET = None
-        mw._ENVIRONMENT = "test"
-
         from src.gateway.server.governance_middleware import governance_app
 
         with (
@@ -279,9 +258,6 @@ class TestEnvelopeTransportDenied:
         ):
             test_client = TestClient(governance_app, raise_server_exceptions=False)
             yield test_client
-
-        mw._CAGE_SEAL_SECRET = original_secret
-        mw._ENVIRONMENT = original_env
 
     def test_denied_verdict_returns_http_403(self, client_for_denial):
         """DENIED verdict returns HTTP 403."""

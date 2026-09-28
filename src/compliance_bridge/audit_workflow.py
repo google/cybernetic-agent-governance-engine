@@ -107,7 +107,7 @@ logger = logging.getLogger(__name__)
 
 # POAM-018 flag: _CAGE_ENV_STRICT determines whether missing compliance credentials
 # are a RuntimeError (production) or a WARNING (development/test).
-# Mirrors the pattern in governance_middleware.py for CAGE_ROUTING_SEAL_SECRET.
+# Unknown or missing environment names are treated as production (fail secure).
 _CAGE_ENV_STRICT = os.environ.get(
     "CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")
 ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement

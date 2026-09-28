@@ -137,11 +137,11 @@ def proxy_deps(monkeypatch):
 
     nemo_safe = MagicMock(is_safe=True, reason="")
 
-    # Mock SPIFFE extractor to return a test SPIFFE URI
-    mock_spiffe_uri = "spiffe://cluster.local/ns/default/sa/test-agent"
+    # Mock workload identity extractor to return the advisor Linkerd identity
+    mock_client_id = "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
     monkeypatch.setattr(
-        "src.gateway.governance.spiffe_extractor.extract_spiffe_uri_from_asgi_scope",
-        lambda scope: mock_spiffe_uri,
+        "src.gateway.server.workload_identity.extract_client_identity",
+        lambda scope: mock_client_id,
     )
 
     # Patch at the point-of-use (the imported name in the module)
@@ -595,35 +595,34 @@ async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
 
 @pytest.mark.asyncio
 async def test_agent_id_from_spiffe_cert_used_for_quota(proxy_deps):
-    """agent_id extracted from SPIFFE certificate is used for quota enforcement."""
+    """agent_id extracted from Linkerd l5d-client-id is used for quota enforcement."""
     app = proxy_deps["app"]
     quota_proxy = proxy_deps["quota_proxy"]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        # Body agent_id is ignored - SPIFFE cert takes precedence
+        # Body agent_id is ignored - Linkerd workload identity takes precedence
         await client.post(
             "/v1/chat/completions",
             json=_chat_body(agent_id="ignored-body-value"),
         )
 
     call_args = quota_proxy.check_and_increment.call_args
-    # Agent ID comes from mocked SPIFFE certificate, not from body
+    # Agent ID comes from verified Linkerd workload identity, not from body
     assert (
         call_args.kwargs.get("agent_id")
-        == "spiffe://cluster.local/ns/default/sa/test-agent"
+        == "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
     )
 
 
 @pytest.mark.asyncio
 async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
-    """Requests without SPIFFE certificate are rejected with 401."""
+    """Requests without Linkerd l5d-client-id are rejected with 401."""
     import src.gateway.server.inference_proxy as _mod
     from src.gateway.server.inference_proxy import inference_app
 
-    # Do NOT mock the SPIFFE extractor - let it fail naturally
-    # Mock other dependencies to isolate the SPIFFE check
+    # Do NOT mock extract_client_identity - let it fail naturally when header is absent
     monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
     monkeypatch.setattr(_mod, "stamp_iso_control", MagicMock())
     import src.integrations.nemo.manager as _nemo_mgr
@@ -635,11 +634,11 @@ async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
     ) as client:
         response = await client.post("/v1/chat/completions", json=_chat_body())
 
-        # Should fail with 401 Unauthorized due to missing SPIFFE certificate
+        # Should fail with 401 Unauthorized due to missing l5d-client-id header
         assert response.status_code == 401
         data = response.json()
         assert data.get("error") == "authentication_required"
-        assert "SPIFFE" in data.get("message", "")
+        assert "l5d-client-id" in data.get("message", "")
 
 
 # ---------------------------------------------------------------------------

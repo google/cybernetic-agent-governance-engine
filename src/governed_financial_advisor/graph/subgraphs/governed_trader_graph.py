@@ -85,11 +85,9 @@ class GovernedTraderState(TypedDict):
     rehydration_result: dict | None  # fresh market snapshot + drift metrics
     post_hitl_safety_status: str | None  # "APPROVED" | "BLOCKED" after re-validation
 
-    # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
-    agent_id: str  # Audit trail identifier
-    proposed_action: dict[str, Any] | None  # Parameters for governance validation
-    governance_envelope: dict[str, Any] | None  # Signed ALLOW decision from Gateway
-    governance_status: str | None  # "ALLOWED" | "DENIED" | "DEFERRED"
+    # Written by gateway_tool_guard (POST /governance/validate-action)
+    governance_envelope: dict[str, Any] | None  # Gateway APPROVED verdict
+    governance_status: str | None  # "ALLOWED" | "DENIED"
 
 
 # ---------------------------------------------------------------------------
@@ -210,17 +208,17 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     """Execute trade tools after CAGE governance validation.
 
     CRITICAL SECURITY GATE: This node invokes execute_trade_action via MCP, which
-    triggers real financial transactions. The @cage_guard decorator (applied in
-    graph builder below) enforces pre-execution validation through the full 8-tier
-    governance pipeline (FTRA, STPA, Confidence, CBF, OPA, Fiscal, Consensus, Causal, FRIA) before ANY tool
+    triggers real financial transactions. ``gateway_tool_guard`` (applied in the
+    graph builder below) submits every pending tool call to the gateway's
+    ``POST /governance/validate-action`` (full 8-tier pipeline: FTRA, STPA,
+    Confidence, CBF, OPA, Fiscal, Consensus, Causal, FRIA) before ANY tool
     executes.
 
     Governance Contract:
-        - Decorator extracts state["proposed_action"] (populated by executor_node)
-        - Submits to Gateway PDP: POST /v1/validate with action="execute_trade"
-        - On ALLOW: Injects state["governance_envelope"] and proceeds
-        - On DENY: Raises PolicyViolationException → routes to explainer
-        - On DEFER: Raises DeferralPending → routes to defer_node
+        - Every tool call must receive an explicit APPROVED verdict
+        - DENIED / DEFER / PAUSE verdicts, HTTP errors, timeouts and an
+          unreachable gateway all refuse the batch: this node does not run,
+          ``governance_status`` becomes "DENIED" and the subgraph ends
 
     TOCTOU Closure: This node executes AFTER post_hitl_revalidate_node when
     approval was required, ensuring fresh market data and slippage bounds are
@@ -275,12 +273,10 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
 
 
 async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
-    """Generate tool calls and populate proposed_action for governance.
+    """Generate execute_trade_action tool calls from the approved plan.
 
-    This node's LLM generates tool_calls based on the approved execution plan.
-    It MUST populate state["proposed_action"] with the extracted trade parameters
-    so the downstream tool_executor_node's @cage_guard decorator can validate
-    them before actual execution.
+    The downstream ``gateway_tool_guard`` validates every emitted tool call with
+    the gateway before ``tool_executor_node`` may run it.
     """
     tracer = get_tracer()
 
@@ -333,28 +329,13 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
             OBSERVATION_OUTPUT, getattr(response, "content", "No content")
         )
 
-        # Extract proposed action parameters for downstream @cage_guard validation
-        proposed_action: dict[str, Any] = {}
-        if hasattr(response, "tool_calls") and response.tool_calls:
-            # Take the first tool call as the proposed action
-            first_call = response.tool_calls[0]
-            proposed_action = {
-                "tool_name": first_call["name"],
-                "arguments": first_call["args"],
-                # Flatten common trade parameters to top level for CBF/OPA
-                "symbol": first_call["args"].get("symbol", "UNKNOWN"),
-                "amount": first_call["args"].get("amount", 0),
-                "confidence": first_call["args"].get("confidence", 0.0),
-            }
-
-        return {
-            "messages": [response],
-            "proposed_action": proposed_action,  # Consumed by @cage_guard
-        }
+        # The tool calls on ``response`` are what gateway_tool_guard submits to
+        # the gateway — every one of them, not a summarised first call.
+        return {"messages": [response]}
 
 
 # ---------------------------------------------------------------------------
-# Conditional edge: executor → tools | END
+# Conditional edges: executor → tools | END, tools → executor | END
 # ---------------------------------------------------------------------------
 
 
@@ -365,6 +346,18 @@ def should_continue(state: GovernedTraderState) -> str:
 
     if last_message.tool_calls:  # type: ignore[attr-defined]
         return "tools"
+    return END
+
+
+def route_after_tools(state: GovernedTraderState) -> str:
+    """End the subgraph on a governance refusal; otherwise loop to the executor.
+
+    Only an explicit ``ALLOWED`` from ``gateway_tool_guard`` continues the loop,
+    so a refused trade cannot be re-proposed by the executor in the same run.
+    """
+    if state.get("governance_status") == "ALLOWED":
+        return "executor"
+    logger.warning("[GovernedTrader] Gateway refused the tool batch — ending subgraph.")
     return END
 
 
@@ -757,16 +750,13 @@ def route_post_revalidation(state: GovernedTraderState) -> str:
 # Build Graph
 # ---------------------------------------------------------------------------
 
-from src.gateway.client.adapters.langgraph import cage_guard
-from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
+from src.governed_financial_advisor.graph.governance.tool_guard import (
+    gateway_tool_guard,
+)
 
-
-def _create_guarded_tool_executor() -> Any:
-    """Lazy factory for @cage_guard decorator to defer env var validation until runtime."""
-    return cage_guard(
-        client=get_cage_client(),
-        action="execute_trade",
-    )(tool_executor_node)
+# Every tool call is validated by the gateway (POST /governance/validate-action)
+# before execution; any non-APPROVED outcome refuses the batch (fail closed).
+guarded_tool_executor_node = gateway_tool_guard("execute_trade")(tool_executor_node)
 
 
 def build_governed_trader_graph() -> Any:
@@ -789,7 +779,7 @@ def build_governed_trader_graph() -> Any:
     )  # TOCTOU: pre-actuation re-eval
     builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
     builder.add_node("executor", executor_node)
-    builder.add_node("tools", _create_guarded_tool_executor())  # CAGE governance enforced
+    builder.add_node("tools", guarded_tool_executor_node)  # CAGE governance enforced
 
     # Entry: conditional — approval required or not
     builder.add_conditional_edges(
@@ -811,9 +801,11 @@ def build_governed_trader_graph() -> Any:
     )
     builder.add_edge("drift_blocked", END)
 
-    # Executor tool-call loop
+    # Executor tool-call loop; a gateway refusal terminates the subgraph.
     builder.add_conditional_edges("executor", should_continue, {"tools": "tools", END: END})
-    builder.add_edge("tools", "executor")
+    builder.add_conditional_edges(
+        "tools", route_after_tools, {"executor": "executor", END: END}
+    )
 
     # Rejection terminates the subgraph
     builder.add_edge("rejection", END)

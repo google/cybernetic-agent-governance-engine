@@ -17,10 +17,13 @@
 Checks performed:
   1. Health checks — GET /, /health, /v1/models on the Cloud Run URL
      (or CAGE_GATEWAY_URL if set) to confirm the service is reachable.
-  2. Seal enforcement (Track C, gates U-15 / U-16):
-       U-15: unsigned POST to /governance/check → must return HTTP 403
-       U-16: HMAC-SHA256-signed POST to /governance/check → must NOT return 403
-     Requires CAGE_ROUTING_SEAL_SECRET to be set; skipped with a warning if absent.
+  2. Ingress identity enforcement (Track C, gates U-15 / U-16, POAM-2026-080):
+       U-15: POST to /governance/check without a trusted mesh workload
+             identity → must return HTTP 403 (deny by default)
+       U-16: GET /health (open path) → must return HTTP 200
+     The gateway authenticates callers by Linkerd mTLS workload identity, so
+     this script — running outside the mesh — is by construction an
+     unauthenticated caller. No secret is needed.
   3. Langfuse posture — runs scripts/verify_langfuse_posture.py as a subprocess
      and reports pass/fail based on exit code.
 
@@ -29,8 +32,6 @@ Exit codes:
   1 — one or more checks failed
 """
 
-import hashlib
-import hmac
 import json
 import os
 import subprocess
@@ -62,7 +63,7 @@ _GOVERNANCE_CHECK_BODY: bytes = json.dumps(
     separators=(",", ":"),
 ).encode()
 
-_SEAL_HEADER = "X-CAGE-Routing-Seal"
+_HEALTH_PATH = "/health"
 
 
 # ---------------------------------------------------------------------------
@@ -101,74 +102,61 @@ def verify_deployment() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Seal enforcement checks (Track C — U-15 / U-16)
+# Ingress identity enforcement checks (Track C — U-15 / U-16)
 # ---------------------------------------------------------------------------
 
 
-def _compute_seal(secret: str, body_bytes: bytes) -> str:
-    """Return the HMAC-SHA256 hex digest of *body_bytes* keyed with *secret*."""
-    return hmac.new(
-        secret.encode(),
-        body_bytes,
-        hashlib.sha256,
-    ).hexdigest()
+def check_identity_enforcement(gateway_url: str) -> bool:
+    """Verify the gateway refuses unauthenticated callers and keeps /health open.
 
-
-def check_seal_enforcement(gateway_url: str, secret: str) -> bool:
-    """Verify that the gateway enforces the X-CAGE-Routing-Seal header.
-
-    U-15: POST without seal → expect HTTP 403.
-    U-16: POST with valid HMAC-SHA256 seal → expect any status except 403.
+    U-15: POST /governance/check with no trusted workload identity → expect 403.
+    U-16: GET /health → expect 200 (open path, no identity required).
 
     Args:
         gateway_url: Base URL of the gateway (no trailing slash).
-        secret:      Value of CAGE_ROUTING_SEAL_SECRET.
 
     Returns:
         True if both U-15 and U-16 pass, False otherwise.
     """
-    url = f"{gateway_url}{_GOVERNANCE_CHECK_PATH}"
-    body = _GOVERNANCE_CHECK_BODY
-    headers_base = {"Content-Type": "application/json"}
     all_pass = True
+    print(f"\n🔒 Ingress identity checks against {gateway_url}")
 
-    print(f"\n🔒 Seal enforcement checks against {url}")
-
-    # ── U-15: unsigned request must be rejected with 403 ────────────────────
-    print(f"  [U-15] POST (no {_SEAL_HEADER}) → expect 403 ...")
+    # ── U-15: unauthenticated call to a gated route must be refused ─────────
+    url = f"{gateway_url}{_GOVERNANCE_CHECK_PATH}"
+    print(f"  [U-15] POST {_GOVERNANCE_CHECK_PATH} (no workload identity) → expect 403 ...")
     try:
-        resp = requests.post(url, data=body, headers=headers_base, timeout=10)
+        resp = requests.post(
+            url,
+            data=_GOVERNANCE_CHECK_BODY,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
         status = resp.status_code
         if status == 403:
-            print(
-                f"  [PASS] U-15: unsigned request returned {status} (403 as expected)"
-            )
+            print(f"  [PASS] U-15: unauthenticated request returned {status} (refused)")
         else:
             print(
-                f"  [FAIL] U-15: unsigned request returned {status} "
-                f"(expected 403 — seal enforcement may be disabled)"
+                f"  [FAIL] U-15: unauthenticated request returned {status} "
+                "(expected 403 — check CAGE_TRUSTED_CLIENT_IDENTITIES and Linkerd "
+                "mesh policy on the gateway)"
             )
             all_pass = False
     except Exception as exc:
         print(f"  [ERROR] U-15: connection error — {exc}")
         all_pass = False
 
-    # ── U-16: signed request must NOT be rejected with 403 ──────────────────
-    seal = _compute_seal(secret, body)
-    signed_headers = {**headers_base, _SEAL_HEADER: seal}
-    print(f"  [U-16] POST (with valid {_SEAL_HEADER}) → expect non-403 ...")
+    # ── U-16: the open health path must stay reachable ──────────────────────
+    url = f"{gateway_url}{_HEALTH_PATH}"
+    print(f"  [U-16] GET {_HEALTH_PATH} → expect 200 ...")
     try:
-        resp = requests.post(url, data=body, headers=signed_headers, timeout=10)
+        resp = requests.get(url, timeout=10)
         status = resp.status_code
-        if status != 403:
-            print(
-                f"  [PASS] U-16: signed request returned {status} "
-                f"(seal accepted — non-403 as expected)"
-            )
+        if status == 200:
+            print(f"  [PASS] U-16: {_HEALTH_PATH} returned {status}")
         else:
             print(
-                "  [FAIL] U-16: signed request returned 403 "
-                "(seal was rejected — check CAGE_ROUTING_SEAL_SECRET matches the gateway)"
+                f"  [FAIL] U-16: {_HEALTH_PATH} returned {status} "
+                "(expected 200 — open-path list may be out of sync)"
             )
             all_pass = False
     except Exception as exc:
@@ -176,9 +164,9 @@ def check_seal_enforcement(gateway_url: str, secret: str) -> bool:
         all_pass = False
 
     if all_pass:
-        print("🔒 Seal enforcement checks PASSED.")
+        print("🔒 Ingress identity checks PASSED.")
     else:
-        print("❌ Seal enforcement checks FAILED.")
+        print("❌ Ingress identity checks FAILED.")
     return all_pass
 
 
@@ -238,15 +226,8 @@ def main() -> int:
     # 1. Health checks
     results.append(verify_deployment())
 
-    # 2. Seal enforcement (U-15 / U-16)
-    seal_secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "")
-    if not seal_secret:
-        print(
-            "\n⚠️  CAGE_ROUTING_SEAL_SECRET is not set — "
-            "skipping seal enforcement checks (U-15 / U-16)."
-        )
-    else:
-        results.append(check_seal_enforcement(BASE_URL, seal_secret))
+    # 2. Ingress identity enforcement (U-15 / U-16)
+    results.append(check_identity_enforcement(BASE_URL))
 
     # 3. Langfuse posture
     results.append(check_langfuse_posture())

@@ -48,7 +48,7 @@ The kernel modules below are the load-bearing Layer 1 components for caller iden
 
 | Module | Role |
 |---|---|
-| [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) | Canonical transport-layer identity extraction. Exposes `extract_spiffe_uri_from_asgi_scope()`, `extract_spiffe_uri_from_grpc_context()`, `validate_spiffe_uri()`, and `SpiffeExtractionError`. |
+| [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) | Canonical gateway ingress authentication and caller identity extraction under Linkerd mTLS (`l5d-client-id`). Exposes `WorkloadIdentityMiddleware`, `extract_client_identity(scope)`, and `load_identity_policy()`. |
 | [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) | Vendor-neutral `ProofOfPossessionValidator` protocol plus the RFC 9449 `DPoPValidator` implementation and `TokenBindingError`. |
 | [`src/gateway/governance/seams/actuation.py`](../../src/gateway/governance/seams/actuation.py) | `ExecutionActuator` protocol, `ExecutionClearance`, `ActuationReceipt`, and `ActuatorCapability`. |
 | [`src/gateway/governance/seams/attestation.py`](../../src/gateway/governance/seams/attestation.py) | `AttestationProvider` base class, `ExternalAttestation`, and `AttestationStatus`. |
@@ -58,14 +58,14 @@ The kernel modules below are the load-bearing Layer 1 components for caller iden
 
 Seam modules under [`src/gateway/governance/seams/`](../../src/gateway/governance/seams/) define contracts only and must never import the rest of the kernel — this is the property that keeps Layer 3 adapters free of circular dependencies.
 
-### Transport-Layer Agent Identity (SPIFFE)
+### Transport-Layer Agent Identity (Linkerd mTLS)
 
-Agent identity is established at the transport layer and is **never** read from HTTP headers or request bodies. The canonical specification is [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md); this section states only the macro-architecture invariants:
+Agent identity is established at the transport/mesh layer and is **never** read from client-supplied HTTP headers or request bodies. The canonical specification is [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md); this section states only the macro-architecture invariants:
 
-- **Single source of truth**: the SPIFFE URI in the SAN of the verified mTLS peer certificate, validated against `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`.
+- **Single source of truth**: under Linkerd mTLS, the Linkerd inbound proxy terminates TLS and sets `l5d-client-id` (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress authentication and caller identity extraction live in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`). `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment.
 - **Removed (breaking change, v3.1.0)**: the `X-Agent-ID` header, any `X-SPIFFE-ID` header, body-derived `agent_id` fields, and the anonymous-caller fallback. Callers that previously asserted identity this way are now rejected.
-- **Fail-closed rejection**: HTTP/ASGI ingress returns **401** (`Client certificate with valid SPIFFE URI required`); the Envoy `ext_authz` gRPC path returns a `DeniedHttpResponse` — **401** when the SPIFFE URI is absent or malformed, **403** when the `CheckRequest` fields cannot be extracted at all.
-- **Authorization remains policy-side**: the extracted SPIFFE URI is the OPA principal; agent-to-agent authorization is evaluated in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by prefix matching against `authorized_parent_prefixes`.
+- **Fail-closed rejection**: `WorkloadIdentityMiddleware` rejects any non-open request lacking a single trusted `l5d-client-id` header with **403**, and `extract_client_identity(scope)` raises `WorkloadIdentityError` when no verified Linkerd workload identity is present.
+- **Authorization remains policy-side**: the extracted identity is the OPA principal; agent-to-agent authorization is evaluated in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by prefix matching against `authorized_parent_prefixes`.
 
 ---
 
@@ -119,7 +119,7 @@ graph TB
 ```
 
 ### Hot-Path Execution Steps
-1. **Ingress, Identity Extraction & Content-Addressing**: The verified mTLS peer certificate is read first — [`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) resolves the caller's SPIFFE URI from the ASGI scope (HTTP) or the gRPC peer context, and requests without one are rejected before any governance work (401 on HTTP ingress, `DeniedHttpResponse` on the `ext_authz` gRPC path). Admitted payloads are then normalized and content-addressed via RFC 8785 JSON Canonicalization Scheme (JCS) producing an invariant payload digest.
+1. **Ingress, Identity Extraction & Content-Addressing**: The Linkerd-verified peer workload identity is checked first — [`workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`) verifies and resolves the caller's `l5d-client-id` from the ASGI scope, and requests without a trusted identity are rejected before any governance work (403 at `WorkloadIdentityMiddleware`, 401 on `extract_client_identity` failure). Admitted payloads are then normalized and content-addressed via RFC 8785 JSON Canonicalization Scheme (JCS) producing an invariant payload digest.
 2. **FTRA Reachability Boundary**: The request hits the Finite-Time Reachability Analysis gate. Actions classified as terminal or irreversible undergo strict reachability path checks before entering the governance pipeline.
 3. **SymbolicGovernor Two-Phase Dispatch**:
    - **Phase 1 (Read-Only Inspection)**: Concurrently runs non-mutating checks: deterministic STPA invariants, declarative OPA rules, multi-agent consensus debate, and DoWhy causal counterfactual refutations.

@@ -65,7 +65,6 @@ def _mcp_import_stubs():
         "src.gateway.observability.mcp_tracing": MagicMock(patch_mcp_tools=MagicMock()),
         "src.gateway.server.governance_middleware": MagicMock(
             enforce_governance=AsyncMock(return_value=MagicMock()),
-            enforce_routing_seal=MagicMock(),
         ),
         "src.gateway.tracing_setup": MagicMock(setup_tracing=MagicMock()),
         "src.governed_financial_advisor.infrastructure.config_manager": MagicMock(

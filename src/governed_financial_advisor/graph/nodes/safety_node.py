@@ -16,21 +16,28 @@
 Explicit Safety Interceptor Node (Layer 2 Enforcement) — Financial Advisor.
 
 This module provides the governance pre-execution gate that routes action
-evaluation through the out-of-process CAGE Gateway via CageClient (PEP/PDP
-architecture). It enforces strict architectural separation between Layer 4
-domain agents and Layer 1 governance infrastructure.
+evaluation through the out-of-process CAGE Gateway (PEP/PDP architecture). It
+enforces strict architectural separation between Layer 4 domain agents and
+Layer 1 governance infrastructure.
 
 Key responsibilities:
-  - Extract trade payload from AgentState via `_extract_trade_payload`
-  - Submit action to CAGE Gateway via `CageClient.validate_action()`
-  - Handle tri-state governance response:
-      * ALLOW → Reset consecutive_denials counter, route to execution
-      * DENY → Increment consecutive_denials, store violation details, route to explainer
-      * DEFER → Store deferral ticket, route to defer_node for checkpoint
+  - Extract the proposed trade from ``AgentState.execution_plan_output``
+  - Submit it to ``POST /governance/validate-action`` via the advisor's
+    standard ``GatewayClient.validate_action()``
+  - Handle the gateway verdict:
+      * APPROVED → reset consecutive_denials, route to execution
+      * DENIED   → increment consecutive_denials, store violation, route to explainer
+      * DEFER    → store the gateway's deferral ticket, route to defer_node
 
 R-11: Policy evaluation is performed by the out-of-process CAGE Gateway PDP,
-enforcing fail-closed governance that cannot be bypassed by LLM agents.
-See ADR 2026-03-09 (v3: CageClient SDK enforcement).
+enforcing fail-closed governance that cannot be bypassed by LLM agents. The
+advisor is an untrusted, zero-identity client (POAM-2026-080): the gateway
+authenticates it by mesh workload identity, and the advisor holds no
+routing-seal secret, signer or governor of its own.
+
+Fail-closed: only an explicit APPROVED verdict approves. A DENIED verdict, a
+PAUSE / unknown / missing verdict, a DEFER without a ticket, an HTTP error, a
+timeout or an unreachable gateway all produce ``BLOCKED``.
 
 MAX_CONSECUTIVE_DENIALS = 2: Policy-probing attack mitigation. When an agent
 receives 2 consecutive DENY verdicts without an intervening ALLOW, the graph
@@ -43,48 +50,90 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.gateway.client.exceptions import DeferralPending, PolicyViolationException
-from src.governed_financial_advisor.graph.cage_client_singleton import get_cage_client
-from src.governed_financial_advisor.graph.state import AgentState
+import httpx
 
-# R-11 / POAM-024: In out-of-process PEP/PDP architecture, CageClient delegates
-# policy evaluation to the CAGE Gateway's SymbolicGovernor PDP.
+from src.governed_financial_advisor.graph.state import AgentState
+from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+
 logger = logging.getLogger("SafetyNode")
 
 # Policy-probing attack mitigation constant (ADR-008)
 MAX_CONSECUTIVE_DENIALS = 2
 
 
+def _violations_of(response: httpx.Response) -> str:
+    """Render the ``violations`` of a gateway refusal body (best effort)."""
+    try:
+        violations = response.json().get("violations") or ["governance denied"]
+    except Exception:
+        violations = ["governance denied"]
+    return "; ".join(str(v) for v in violations)
+
+
+def _blocked(
+    state: AgentState,
+    *,
+    policy_rule: str,
+    evidence: str,
+    reason_code: str,
+    recoverable: bool,
+) -> dict[str, Any]:
+    """Build a BLOCKED (or budget-exhausted) outcome, counting the denial."""
+    current_denials = state.get("consecutive_denials", 0) or 0
+    new_denials = current_denials + 1
+    violation = {
+        "reason_code": reason_code,
+        "policy_rule": policy_rule,
+        "evidence": evidence,
+        "audit_id": None,
+        "recoverable": recoverable,
+    }
+    if new_denials >= MAX_CONSECUTIVE_DENIALS:
+        logger.error(
+            "🛑 Safety Node: MAX_CONSECUTIVE_DENIALS exceeded (%d >= %d) — "
+            "HARD_PAUSE_BUDGET_EXCEEDED (requires human review)",
+            new_denials,
+            MAX_CONSECUTIVE_DENIALS,
+        )
+        return {
+            "safety_status": "HARD_PAUSE_BUDGET_EXCEEDED",
+            "consecutive_denials": new_denials,
+            "last_violation": violation,
+        }
+    return {
+        "safety_status": "BLOCKED",
+        "consecutive_denials": new_denials,
+        "last_violation": violation,
+    }
+
+
 async def safety_check_node(state: AgentState) -> dict[str, Any]:
     """
-    Governance pre-execution gate via CageClient (out-of-process PDP).
+    Governance pre-execution gate via the CAGE Gateway (out-of-process PDP).
 
-    Submits the proposed trade action to the CAGE Gateway for policy evaluation.
-    Handles tri-state response (ALLOW/DENY/DEFER) and updates agent state accordingly.
+    Submits the proposed trade to ``POST /governance/validate-action`` and maps
+    the verdict onto agent state.
 
     Fail-closed semantics:
-      - Network errors, gateway errors, or seal verification failures → halt graph
-      - PolicyViolationException → increment consecutive_denials, route to explainer
-      - DeferralPending → store ticket, route to defer_node
-      - ALLOW → reset consecutive_denials to 0, route to execution
+      - APPROVED → safety_status "APPROVED", consecutive_denials reset to 0
+      - DENIED (``PermissionError``) → "BLOCKED" (or HARD_PAUSE on budget exhaustion)
+      - DEFER with a ``defer_id`` → "DEFERRED" with the gateway's ticket
+      - Anything else (PAUSE, unknown verdict, HTTP error, timeout,
+        unreachable gateway) → "BLOCKED" with ``GATEWAY_ERROR`` / ``NOT_APPROVED``
 
     Args:
         state: Current AgentState containing execution plan and context
 
     Returns:
         State updates dictionary containing:
-          - safety_status: "APPROVED" | "BLOCKED" | "DEFERRED" | "HARD_PAUSE_BUDGET_EXCEEDED"
+          - safety_status: "APPROVED" | "BLOCKED" | "DEFERRED" |
+            "HARD_PAUSE_BUDGET_EXCEEDED" | "SKIPPED"
           - consecutive_denials: Updated counter (reset to 0 on ALLOW, incremented on DENY)
           - last_violation: Structured violation details on DENY
-          - deferral_ticket_id: Ticket ID on DEFER
-          - deferral_reason: Deferral reason on DEFER
-
-    Raises:
-        Exception: On network errors, gateway errors, or budget exhaustion
+          - deferral_ticket_id / deferral_reason: On DEFER
     """
-    logger.info("🛡️ Safety Node: Submitting action to CAGE Gateway via CageClient")
+    logger.info("🛡️ Safety Node: Submitting action to CAGE Gateway for validation")
 
-    # Extract trade parameters from state
     plan_raw = state.get("execution_plan_output")
     plan: dict[str, Any] = plan_raw if isinstance(plan_raw, dict) else {}
 
@@ -96,160 +145,105 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             "safety_status": "SKIPPED",
         }
 
-    # Build action parameters for CageClient
-    parameters = {
-        "action": plan.get("action", "execute_trade"),
-        "symbol": plan.get("symbol", "UNKNOWN"),
-        "amount": float(plan.get("amount", 0) or 0),
-        "currency": plan.get("currency", "USD"),
-        "trader_role": plan.get("trader_role", "junior"),
-        "confidence": plan.get("confidence", 1.0),
-    }
-
-    # Add context metadata
-    context = {
-        "user_id": state.get("user_id", "anonymous"),
-        "risk_profile": state.get("risk_attitude", "neutral"),
-        "thread_id": str(state.get("thread_id", "unknown")),
-    }
-
-    # Use singleton CageClient for consistency across all LangGraph nodes
-    client = get_cage_client()
-
     try:
-        try:
-            # Submit action for governance validation
-            envelope = await client.validate_action(
-                action="execute_trade",
-                parameters=parameters,
-                agent_id="governed-financial-advisor",
-                context=context,
+        params: dict[str, Any] = {
+            "action": plan.get("action", "execute_trade"),
+            "symbol": plan.get("symbol", "UNKNOWN"),
+            "amount": float(plan.get("amount", 0) or 0),
+            "currency": plan.get("currency", "USD"),
+            "trader_role": plan.get("trader_role", "junior"),
+            "confidence": plan.get("confidence", 1.0),
+        }
+        result = await GatewayClient().validate_action(
+            action="execute_trade", params=params
+        )
+    except PermissionError as exc:
+        # Gateway DENIED the action.
+        logger.warning("🚫 Safety Node: Action DENIED by governance: %s", exc)
+        return _blocked(
+            state,
+            policy_rule="GOVERNANCE_DENIED",
+            evidence=str(exc),
+            reason_code="GOVERNANCE_DENIED",
+            recoverable=True,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            # The gateway's refusal contract: HTTP 403 {"verdict": "DENIED", ...}.
+            logger.warning("🚫 Safety Node: Action DENIED by governance (HTTP 403)")
+            return _blocked(
+                state,
+                policy_rule="GOVERNANCE_DENIED",
+                evidence=_violations_of(exc.response),
+                reason_code="GOVERNANCE_DENIED",
+                recoverable=True,
             )
-
-            # ALLOW path: Reset consecutive denials counter
-            logger.info(
-                "✅ Safety Node: Action ALLOWED by governance (record_hash=%s)",
-                envelope.subject.get("record_hash", "unknown"),
-            )
-            return {
-                "safety_status": "APPROVED",
-                "consecutive_denials": 0,  # Reset on ALLOW
-                "last_violation": None,  # Clear previous violations
-                "governance_signature": str(
-                    envelope.signature
-                ),  # Store envelope signature
-            }
-
-        except PolicyViolationException as exc:
-            # DENY path: Increment consecutive denials, check budget
-            current_denials = state.get("consecutive_denials", 0)
-            new_denials = current_denials + 1
-
-            logger.warning(
-                "🚫 Safety Node: Action DENIED by governance (reason_code=%s, "
-                "audit_id=%s, consecutive_denials=%d→%d, recoverable=%s)",
-                exc.reason_code,
-                exc.audit_id,
-                current_denials,
-                new_denials,
-                exc.recoverable,
-            )
-
-            # Check if replanning budget is exhausted
-            if new_denials >= MAX_CONSECUTIVE_DENIALS:
-                logger.error(
-                    "🛑 Safety Node: MAX_CONSECUTIVE_DENIALS exceeded (%d >= %d) — "
-                    "HARD_PAUSE_BUDGET_EXCEEDED (requires human review)",
-                    new_denials,
-                    MAX_CONSECUTIVE_DENIALS,
-                )
-                return {
-                    "safety_status": "HARD_PAUSE_BUDGET_EXCEEDED",
-                    "consecutive_denials": new_denials,
-                    "last_violation": {
-                        "reason_code": exc.reason_code,
-                        "policy_rule": exc.violation_details.get(
-                            "policy_rule", "unknown"
-                        ),
-                        "evidence": exc.violation_details.get("evidence", ""),
-                        "audit_id": exc.audit_id,
-                        "recoverable": exc.recoverable,
-                    },
-                }
-
-            # Within budget: Store violation and route to explainer for self-correction
-            return {
-                "safety_status": "BLOCKED",
-                "consecutive_denials": new_denials,
-                "last_violation": {
-                    "reason_code": exc.reason_code,
-                    "policy_rule": exc.violation_details.get("policy_rule", "unknown"),
-                    "evidence": exc.violation_details.get("evidence", ""),
-                    "suggested_alternatives": exc.violation_details.get(
-                        "suggested_alternatives", []
-                    ),
-                    "audit_id": exc.audit_id,
-                    "recoverable": exc.recoverable,
-                },
-            }
-
-        except DeferralPending as exc:
-            # DEFER path: Store ticket and route to defer_node
-            logger.info(
-                "⏸️ Safety Node: Action DEFERRED by governance (ticket_id=%s, "
-                "expires_at=%s)",
-                exc.ticket_id,
-                exc.expires_at.isoformat(),
-            )
-            return {
-                "safety_status": "DEFERRED",
-                "deferral_ticket_id": exc.ticket_id,
-                "deferral_reason": exc.defer_reason,
-                # Do NOT reset consecutive_denials — deferral doesn't count as approval
-            }
-
-        except Exception as exc:
-            # Fail-closed: Network errors, gateway errors, seal verification failures
-            logger.error(
-                "❌ Safety Node: Unexpected error during governance validation — "
-                "failing closed (error=%s: %s)",
-                type(exc).__name__,
-                str(exc),
-                exc_info=True,
-            )
-            current_denials = state.get("consecutive_denials", 0)
-            new_denials = current_denials + 1
-            return {
-                "safety_status": "BLOCKED",
-                "consecutive_denials": new_denials,
-                "last_violation": {
-                    "policy_rule": "GATEWAY_ERROR",
-                    "evidence": f"Failed to validate action due to {type(exc).__name__}: {exc!s}",
-                    "audit_id": None,
-                    "recoverable": False,
-                },
-            }
-
-    except Exception as exc:
-        # Fail-closed: Singleton initialization or network errors
         logger.error(
-            "❌ Safety Node: Failed to access CageClient singleton — failing closed (error=%s: %s)",
+            "❌ Safety Node: Gateway HTTP %d — failing closed",
+            exc.response.status_code,
+        )
+        return _blocked(
+            state,
+            policy_rule="GATEWAY_ERROR",
+            evidence=f"Gateway returned HTTP {exc.response.status_code}",
+            reason_code="GATEWAY_ERROR",
+            recoverable=False,
+        )
+    except Exception as exc:
+        # Fail closed: HTTP errors, timeouts, unreachable gateway, bad plan data.
+        logger.error(
+            "❌ Safety Node: Governance validation failed — failing closed (%s: %s)",
             type(exc).__name__,
-            str(exc),
+            exc,
             exc_info=True,
         )
-        current_denials = state.get("consecutive_denials", 0)
-        new_denials = current_denials + 1
+        return _blocked(
+            state,
+            policy_rule="GATEWAY_ERROR",
+            evidence=f"Failed to validate action due to {type(exc).__name__}: {exc!s}",
+            reason_code="GATEWAY_ERROR",
+            recoverable=False,
+        )
+
+    verdict = result.get("verdict") if isinstance(result, dict) else None
+
+    if verdict == "APPROVED":
+        logger.info(
+            "✅ Safety Node: Action ALLOWED by governance (envelope_id=%s)",
+            result.get("envelope_id", "unknown"),
+        )
         return {
-            "safety_status": "BLOCKED",
-            "consecutive_denials": new_denials,
-            "last_violation": {
-                "policy_rule": "CLIENT_INIT_ERROR",
-                "evidence": f"Failed to initialize governance client: {type(exc).__name__}: {exc!s}",
-                "audit_id": None,
-                "recoverable": False,
-            },
+            "safety_status": "APPROVED",
+            "consecutive_denials": 0,
+            "last_violation": None,
+            "governance_signature": str(result.get("signature") or ""),
         }
+
+    if verdict == "DEFER" and result.get("defer_id"):
+        logger.info(
+            "⏸️ Safety Node: Action DEFERRED by governance (defer_id=%s)",
+            result["defer_id"],
+        )
+        return {
+            "safety_status": "DEFERRED",
+            "deferral_ticket_id": str(result["defer_id"]),
+            "deferral_reason": str(
+                result.get("defer_reason") or "Human approval required"
+            ),
+            # Do NOT reset consecutive_denials — deferral is not approval.
+        }
+
+    logger.warning(
+        "🚫 Safety Node: Gateway returned no APPROVED verdict (verdict=%r) — failing closed",
+        verdict,
+    )
+    return _blocked(
+        state,
+        policy_rule="NOT_APPROVED",
+        evidence=f"Gateway returned verdict {verdict!r}, not APPROVED",
+        reason_code="NOT_APPROVED",
+        recoverable=False,
+    )
 
 
 def route_safety(state: AgentState) -> str:

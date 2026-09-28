@@ -12,85 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cryptographic seal verification and W3C traceparent generation.
+"""W3C traceparent generation for distributed tracing.
 
 Zero vendor SDKs. Fail-closed security posture.
 """
 
-import hashlib
-import hmac
 import secrets
-import time
-from typing import Optional
-
-from .exceptions import RoutingSealVerificationError
-
-
-def verify_routing_seal(
-    seal_header: str, body_bytes: bytes, secret: str, ttl_seconds: int = 30
-) -> bool:
-    """Verify HMAC-SHA256 routing seal with micro-TTL enforcement.
-
-    Args:
-        seal_header: X-CAGE-Routing-Seal header value in format "timestamp.signature"
-        body_bytes: Raw response body bytes to verify
-        secret: Shared secret for HMAC verification
-        ttl_seconds: Maximum age of seal in seconds (default 30s)
-
-    Returns:
-        True if seal is valid and within TTL window
-
-    Raises:
-        RoutingSealVerificationError: On tampering, expiration, or malformed seal
-    """
-    if not seal_header or not secret:
-        raise RoutingSealVerificationError("Seal header and secret are required")
-
-    # Parse seal format: "timestamp.signature"
-    # Use rsplit(".", 1) to support both float (e.g. 1712345.678.sig) and integer timestamps
-    parts = seal_header.rsplit(".", 1)
-    if len(parts) != 2:
-        raise RoutingSealVerificationError(
-            f"Malformed seal header: expected 'timestamp.signature', got {len(parts)} parts"
-        )
-
-    timestamp_str, provided_signature = parts
-
-    # Validate timestamp format and parse
-    try:
-        seal_timestamp = float(timestamp_str)
-    except ValueError as e:
-        raise RoutingSealVerificationError(
-            f"Invalid timestamp in seal: {timestamp_str}"
-        ) from e
-
-    # Enforce micro-TTL (fail-closed on expiration)
-    current_time = time.time()
-    age_seconds = current_time - seal_timestamp
-
-    if age_seconds < 0:
-        raise RoutingSealVerificationError(
-            f"Seal timestamp is in the future: {seal_timestamp} > {current_time}"
-        )
-
-    if age_seconds > ttl_seconds:
-        raise RoutingSealVerificationError(
-            f"Seal expired: age {age_seconds:.2f}s exceeds TTL {ttl_seconds}s"
-        )
-
-    # Compute expected HMAC-SHA256 signature
-    message = f"{timestamp_str}.{body_bytes.hex()}".encode()
-    expected_signature = hmac.new(
-        secret.encode("utf-8"), message, hashlib.sha256
-    ).hexdigest()
-
-    # Constant-time comparison to prevent timing attacks
-    if not hmac.compare_digest(provided_signature, expected_signature):
-        raise RoutingSealVerificationError(
-            "Seal signature mismatch: tampering detected"
-        )
-
-    return True
 
 
 def generate_w3c_traceparent() -> str:

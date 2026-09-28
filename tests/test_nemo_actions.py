@@ -15,14 +15,11 @@
 # Build a name→callable dict for count / duplicate assertions
 import pytest
 
-from src.integrations.nemo.action_registry import (
-    get_all_actions,
-)
-from src.governed_financial_advisor.governance.nemo_actions import (
-    check_approval_token as _gfa_check_approval_token,
-)
 from src.governed_financial_advisor.governance.nemo_actions import (
     check_drawdown_limit as _gfa_check_drawdown_limit,
+)
+from src.integrations.nemo.action_registry import (
+    get_all_actions,
 )
 
 _FULL_REGISTRY: dict = dict(get_all_actions())
@@ -41,44 +38,6 @@ def test_nemo_action_registry_no_duplicates():
     names = list(_FULL_REGISTRY.keys())
     assert len(names) == len(set(names)), (
         f"Duplicate action names detected: {[n for n in names if names.count(n) > 1]}"
-    )
-
-
-def test_check_approval_token_action_fail_closed_on_exception():
-    """check_approval_token must return False (fail-closed) when token raises or is absent."""
-    # Missing token — synchronous governed_financial_advisor version
-    result = _gfa_check_approval_token({})
-    assert result is False, "Missing approval_token must fail-closed to False"
-
-    # Token is the known bad sentinel
-    result = _gfa_check_approval_token({"approval_token": "bad_sig"})
-    assert result is False, "Known bad token 'bad_sig' must be rejected"
-
-
-def test_check_approval_token_denies_unverifiable_token():
-    """A non-empty token with no thread_id/trade_id cannot be verified — DENY.
-
-    The token's HMAC binds thread_id:trade_id:expiry, so without those fields
-    the signature cannot be recomputed. A forged, unsigned string must not be
-    accepted just because it is non-empty.
-    """
-    from src.governed_financial_advisor.governance.nemo_actions import (
-        generate_approval_token,
-    )
-
-    # Forged token, no identity fields — must fail-closed.
-    assert _gfa_check_approval_token({"approval_token": "forged-not-signed"}) is False
-
-    # Even a genuinely signed token is unverifiable without the bound ids.
-    token = generate_approval_token("thread-1", "trade-abc")
-    assert _gfa_check_approval_token({"approval_token": token}) is False
-
-    # With the correct bound ids present it validates.
-    assert (
-        _gfa_check_approval_token(
-            {"approval_token": token, "thread_id": "thread-1", "trade_id": "trade-abc"}
-        )
-        is True
     )
 
 

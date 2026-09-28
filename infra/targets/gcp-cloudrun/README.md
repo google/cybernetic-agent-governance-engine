@@ -29,6 +29,16 @@ This implementation deploys:
   - `sbom_generator` (CM-8 Syft container inventory daily)
   - `security_scan` (RA-5 Trivy vulnerability scanning weekly)
 
+> **Known gap — gateway caller authentication (POAM-2026-080).** The gateway
+> authenticates callers only by Linkerd mTLS workload identity
+> ([`workload_identity.py`](../../../src/gateway/server/workload_identity.py));
+> the former HMAC routing-seal secrets were removed from this target. Cloud Run
+> has no mesh and this target does not set `CAGE_TRUSTED_CLIENT_IDENTITIES`, so
+> the gateway refuses to start when `CAGE_ENV` (set from `environment`) is an
+> enforcing posture (anything but dev/test/ci). In dev it starts with the
+> identity check disabled. This stays true until a Cloud Run identity source
+> exists; use the `gcp-gke` target for an enforcing deployment.
+
 All services use **VPC Direct Egress** via network interfaces (no VPC Connector) for private communication with Redis, PostgreSQL, and ClickHouse.
 
 ## Prerequisites
@@ -89,15 +99,12 @@ If deploying via GitHub Actions, Cloud Build, or GitLab CI, pass the variables u
 ```yaml
 # Example CI/CD step
 env:
-  TF_VAR_routing_seal_secret: ${{ secrets.ROUTING_SEAL_SECRET }}
   TF_VAR_langfuse_nextauth_secret: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
 run: terraform apply -auto-approve
 ```
 
 **Required secrets** (never commit these):
 - `project_id` — GCP project ID
-- `routing_seal_secret` — Gateway routing HMAC secret (32+ bytes)
-- `routing_seal_salt` — Gateway routing HMAC salt (32+ bytes)
 - `langfuse_nextauth_secret` — NextAuth.js secret (32+ bytes)
 - `langfuse_salt` — Langfuse encryption salt (32+ bytes)
 

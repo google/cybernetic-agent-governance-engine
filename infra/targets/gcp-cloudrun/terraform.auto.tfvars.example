@@ -30,13 +30,6 @@
 
 project_id = "your-gcp-project-id"
 
-# ─── Gateway Routing Seal Secrets ─────────────────────────────────────────────
-# REQUIRED: Used for cryptographic request routing and integrity seals
-# Generate via: openssl rand -hex 32
-
-routing_seal_secret = "REPLACE_WITH_64_CHAR_HEX_STRING"
-routing_seal_salt   = "REPLACE_WITH_64_CHAR_HEX_STRING"
-
 # ─── Langfuse Authentication Secrets ──────────────────────────────────────────
 # REQUIRED: Used for Langfuse NextAuth.js and encryption
 # Generate via: openssl rand -hex 32

@@ -405,34 +405,6 @@ resource "google_storage_bucket" "compliance_artifacts" {
 
 # ─── Secret Manager Secrets ───────────────────────────────────────────────────
 
-resource "google_secret_manager_secret" "routing_seal_secret" {
-  secret_id = "cage-routing-seal-secret-${var.environment}"
-  project   = var.project_id
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret_version" "routing_seal_secret" {
-  secret      = google_secret_manager_secret.routing_seal_secret.id
-  secret_data = var.routing_seal_secret
-}
-
-resource "google_secret_manager_secret" "routing_seal_salt" {
-  secret_id = "cage-routing-seal-salt-${var.environment}"
-  project   = var.project_id
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret_version" "routing_seal_salt" {
-  secret      = google_secret_manager_secret.routing_seal_salt.id
-  secret_data = var.routing_seal_salt
-}
-
 resource "google_secret_manager_secret" "langfuse_nextauth_secret" {
   secret_id = "langfuse-nextauth-secret-${var.environment}"
   project   = var.project_id
@@ -591,21 +563,6 @@ resource "google_service_account" "test_automation" {
 }
 
 # ─── IAM Bindings ─────────────────────────────────────────────────────────────
-
-# Gateway: Secret Manager access
-resource "google_secret_manager_secret_iam_member" "gateway_routing_seal_secret" {
-  secret_id = google_secret_manager_secret.routing_seal_secret.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.gateway.email}"
-  project   = var.project_id
-}
-
-resource "google_secret_manager_secret_iam_member" "gateway_routing_seal_salt" {
-  secret_id = google_secret_manager_secret.routing_seal_salt.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.gateway.email}"
-  project   = var.project_id
-}
 
 # Gateway: GCS bucket access (B5 fix — downgraded from objectAdmin)
 # objectCreator: can write objects but NOT delete them (AU-9 WORM compliance)
@@ -875,26 +832,6 @@ resource "google_cloud_run_v2_service" "gateway" {
       env {
         name  = "REDIS_URL"
         value = "redis://${google_redis_instance.redis.host}:${google_redis_instance.redis.port}"
-      }
-
-      env {
-        name = "CAGE_ROUTING_SEAL_SECRET"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.routing_seal_secret.secret_id
-            version = "latest"
-          }
-        }
-      }
-
-      env {
-        name = "CAGE_ROUTING_SEAL_SALT"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.routing_seal_salt.secret_id
-            version = "latest"
-          }
-        }
       }
 
       env {

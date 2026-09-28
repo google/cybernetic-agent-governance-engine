@@ -49,15 +49,15 @@ component-definition:
       type: software
       description: >
         Python FastAPI gateway providing three-tier semantic shielding and
-        HMAC-SHA256 routing seal verification. Implements OPA-backed RBAC
-        enforcement, OTel-based audit trail generation, and cryptographic
-        request integrity verification via routing seals loaded from
-        Kubernetes Secrets.
+        deny-by-default ingress authentication by Linkerd mTLS workload
+        identity (src/gateway/server/workload_identity.py). Implements
+        OPA-backed RBAC enforcement, OTel-based audit trail generation, and
+        KMS-signed routing seals on governance decisions.
       purpose: >
         Acts as the primary ingress enforcement layer for all AI governance
         requests. Enforces access control via OPA, generates ISO 42001
         6-attribute evidence stamps on every governance decision, and
-        cryptographically authenticates request routing via HMAC seals.
+        admits only callers whose mesh-verified workload identity is trusted.
       responsible-roles:
         - role-id: provider
       control-implementations:
@@ -69,10 +69,13 @@ component-definition:
               control-id: ac-3
               description: |
                 Access enforcement is implemented via OPA RBAC policy evaluation on every
-                inbound API request through deployment/system_authz.rego. The governance
-                middleware in src/gateway/server/governance_middleware.py performs routing
-                seal verification before processing any request, rejecting requests with
-                invalid or missing HMAC seals. OPA allow/deny decisions are recorded in
+                inbound API request through deployment/system_authz.rego. Before any
+                handler runs, WorkloadIdentityMiddleware
+                (src/gateway/server/workload_identity.py) rejects with 403 every request
+                outside a small open-path list (health, metrics, JWKS, pause-status reads)
+                unless its Linkerd-verified l5d-client-id is listed in
+                CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only). Live mesh evidence is
+                pending under POAM-2026-080. OPA allow/deny decisions are recorded in
                 structured audit logs with full request context and user identity.
 
                 Dual-control authentication enforcement (Work Item 2, 2026-09-07): All defer
@@ -111,19 +114,22 @@ component-definition:
               description: |
                 AC-3 (Access Enforcement) is implemented through multiple layers:
 
-                1. **Kernel-Level SPIFFE Extraction (2026-09-22 BREAKING CHANGE)**:
-                   All public inference and AGW ingress endpoints enforce strict mTLS/SPIFFE
-                   validation. Agent identity is extracted exclusively from verified mTLS
-                   client certificate Subject Alternative Name (SAN) fields via
-                   src/gateway/governance/spiffe_extractor.py. HTTP header-based identity
+                1. **Kernel-Level Workload Identity Extraction (2026-09-22 BREAKING CHANGE)**:
+                   All public inference and AGW ingress endpoints enforce strict Linkerd mTLS
+                   workload identity validation. Under Linkerd mTLS, the Linkerd inbound proxy
+                   terminates TLS and sets `l5d-client-id`
+                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress
+                   authentication and caller identity extraction live in
+                   src/gateway/server/workload_identity.py (`WorkloadIdentityMiddleware` and
+                   `extract_client_identity(scope)`). HTTP header-based identity
                    (X-Agent-ID, X-SPIFFE-ID) has been deprecated and removed.
-                   Requests without a valid SPIFFE SVID fail closed with 401 Unauthorized.
+                   Requests without a verified Linkerd workload identity fail closed (403/401).
 
-                   The extract_spiffe_uri_from_asgi_scope() function validates:
-                   - Client certificate presence in ASGI scope["client_cert"]
-                   - SAN URI field extraction from certificate
-                   - SPIFFE URI pattern match (^spiffe://[trust-domain]/path)
-                   - Fails closed on any validation error (SpiffeExtractionError → 401)
+                   `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` validate:
+                   - Presence of a single Linkerd-verified `l5d-client-id` header in ASGI scope
+                   - Match against Linkerd workload identity syntax (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`)
+                   - Membership in `CAGE_TRUSTED_CLIENT_IDENTITIES` (required and enforced in every environment)
+                   - Fails closed on any validation error (403 Forbidden / 401 Unauthorized)
 
                 2. **Agent-to-Agent (A2A) Authorization with SPIFFE Prefix Matching**:
                    Parent agent SPIFFE IDs are evaluated against subagent authorization
@@ -148,9 +154,9 @@ component-definition:
                   rel: reference
                 - href: "#9fbe4cdd-f9b0-4635-bc7d-6a3a3beae05a"
                   rel: lula
-                - href: "../../src/gateway/governance/spiffe_extractor.py"
+                - href: "../../src/gateway/server/workload_identity.py"
                   rel: implementation
-                  text: "Kernel-level SPIFFE URI extraction from mTLS certificates"
+                  text: "Gateway workload identity enforcement and extraction (WorkloadIdentityMiddleware, extract_client_identity)"
                 - href: "../../config/opa/agent_catalog.rego"
                   rel: implementation
                   text: "A2A authorization with SPIFFE namespace prefix matching"
@@ -310,13 +316,15 @@ component-definition:
                 (tests/infrastructure/test_workload_identity_partition.py) fails the
                 build if one is added.
 
-                The HMAC-SHA256 routing seal keyed by CAGE_ROUTING_SEAL_SECRET is a
-                dev-posture fallback only; enforcing postures refuse it at startup, and
-                it is not evidence for this control.
+                The HMAC-SHA256 seal fallback keyed by GOVERNANCE_SALT
+                (src/gateway/governance/routing_seal.py) is a dev-posture fallback only;
+                enforcing postures refuse it at startup, and it is not evidence for this
+                control. The former HMAC ingress secret (CAGE_ROUTING_SEAL_SECRET) is
+                retired (POAM-2026-080).
 
-                Partial: POAM-2026-079 tracks the residual. The governed advisor still
-                holds signer on gateway-seal because it hosts an in-process governor
-                that mints routing seals.
+                Partial: POAM-2026-079 stays open until the old shared service
+                accounts and keyring-scope grants are torn down and the teardown is
+                verified with IAM evidence reads.
               props:
                 - name: implementation-status
                   value: partial
@@ -580,8 +588,8 @@ component-definition:
       purpose: >
         Provides deterministic, auditable policy enforcement independent of the
         LLM reasoning layer. Least-privilege access and RBAC are enforced via
-        declarative Rego rules. HMAC seal validation per request provides
-        cryptographic device authentication at the policy layer.
+        declarative Rego rules. Caller workload authentication happens before
+        the policy layer, by Linkerd mTLS identity at the gateway.
       responsible-roles:
         - role-id: provider
       control-implementations:
@@ -644,20 +652,22 @@ component-definition:
                 cryptographic SPIFFE SVID extraction from mTLS substrate across all
                 ingress and inter-service communication paths:
 
-                1. **Kernel-Level SPIFFE Extraction (2026-09-22 Extension)**:
-                   The linkerd mTLS mesh policy has been extended to all public ingress
-                   agent paths via strict SPIFFE SVID validation. The spiffe_extractor.py
-                   module (src/gateway/governance/spiffe_extractor.py) provides fail-closed
-                   cryptographic identity extraction from mTLS client certificates at the
-                   ASGI/gRPC transport layer, eliminating header-based identity spoofing
+                1. **Kernel-Level Workload Identity Extraction (2026-09-22 Extension)**:
+                   The Linkerd mTLS mesh policy has been extended to all public ingress
+                   agent paths via strict workload identity validation. Under Linkerd mTLS,
+                   the Linkerd inbound proxy terminates TLS and sets `l5d-client-id`
+                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress
+                   authentication and caller identity extraction live in
+                   src/gateway/server/workload_identity.py (`WorkloadIdentityMiddleware` and
+                   `extract_client_identity(scope)`), eliminating header-based identity spoofing
                    attack surface.
 
-                   Extraction functions:
-                   - extract_spiffe_uri_from_asgi_scope(): FastAPI/Uvicorn inference proxy
-                   - extract_spiffe_uri_from_grpc_context(): Envoy ext_authz/AGW adapter
-                   - Both validate SAN URI fields and fail closed on missing/invalid certificates
+                   Extraction and enforcement functions:
+                   - `WorkloadIdentityMiddleware`: Deny-by-default ASGI middleware enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment
+                   - `extract_client_identity(scope)`: FastAPI/Uvicorn inference proxy and gateway caller identity extraction from `l5d-client-id`
+                   - Both validate the Linkerd identity syntax and fail closed on missing or untrusted identities
 
-                   Requests without valid SPIFFE SVID fail with 401 Unauthorized.
+                   Requests without a verified Linkerd workload identity fail closed (403/401).
 
                 2. **Linkerd Service Mesh mTLS Foundation**:
                    Linkerd enforces pod-to-pod mutual TLS (mTLS) across all in-cluster
@@ -665,11 +675,14 @@ component-definition:
                    receives a SPIFFE ID in the format:
                    spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
 
-                3. **HMAC Routing Seal Verification**:
-                   Device authentication is also enforced via HMAC-SHA256 seal verification
-                   in src/gateway/governance/contracts.py. Clients compute seals over request
-                   payloads using CAGE_ROUTING_SEAL_SECRET. Requests with missing/invalid
-                   seals are rejected with HTTP 401.
+                3. **Gateway Workload-Identity Ingress Check** (POAM-2026-080):
+                   The gateway trusts the l5d-client-id header set by its Linkerd inbound
+                   proxy after mTLS, and admits only identities in
+                   CAGE_TRUSTED_CLIENT_IDENTITIES (src/gateway/server/workload_identity.py),
+                   which is required and enforced in every environment.
+                   Linkerd identities are DNS-style
+                   (<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>). The former
+                   HMAC request seal (CAGE_ROUTING_SEAL_SECRET) is removed.
 
                 4. **Dual-Layer Identity Model**:
                    Workload SVID authenticates the device/channel (IA-3); OIDC sub identifies
@@ -684,8 +697,8 @@ component-definition:
                    the defer escalation approval path.
 
                 BREAKING CHANGE (2026-09-22): Removed X-Agent-ID and X-SPIFFE-ID header
-                parsing. All requests must present a valid mTLS client certificate with
-                SPIFFE URI in SAN field. Anonymous/unauthenticated requests fail closed (401).
+                parsing. All requests must present a verified Linkerd mTLS workload identity.
+                Anonymous/unauthenticated requests fail closed (403/401).
               props:
                 - name: implementation-status
                   value: implemented
@@ -700,9 +713,9 @@ component-definition:
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-3"
                   rel: reference
-                - href: "../../src/gateway/governance/spiffe_extractor.py"
+                - href: "../../src/gateway/server/workload_identity.py"
                   rel: implementation
-                  text: "Kernel-level SPIFFE URI extraction from mTLS certificates"
+                  text: "Gateway workload identity enforcement and extraction (WorkloadIdentityMiddleware, extract_client_identity)"
                 - href: "../../deployment/k8s/linkerd-mtls-policy.yaml"
                   rel: configuration
                   text: "Linkerd SPIFFE trust domain and mTLS policy"
@@ -949,20 +962,21 @@ component-definition:
                    organizational policy level. GCP Identity-Aware Proxy (IAP) protects
                    any externally accessible management endpoints.
 
-                2. **Kernel-Level SPIFFE Extraction (2026-09-22 Extension)**:
-                   All public inference and AGW ingress endpoints enforce cryptographic
-                   SPIFFE SVID extraction from mTLS client certificate SAN fields via
-                   src/gateway/governance/spiffe_extractor.py. This provides fail-closed
-                   cryptographic identity verification at the transport layer, eliminating
+                2. **Kernel-Level Workload Identity Extraction (2026-09-22 Extension)**:
+                   All public inference and AGW ingress endpoints enforce Linkerd mTLS
+                   workload identity authentication and caller identity extraction (`l5d-client-id`,
+                   `<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) via
+                   src/gateway/server/workload_identity.py. This provides fail-closed
+                   cryptographic identity verification at the transport/proxy layer, eliminating
                    header-based identity assertion attack surface.
 
-                   Extraction paths:
-                   - extract_spiffe_uri_from_asgi_scope(): FastAPI/Uvicorn inference proxy
-                   - extract_spiffe_uri_from_grpc_context(): Envoy ext_authz/AGW adapter
+                   Extraction and enforcement paths:
+                   - `WorkloadIdentityMiddleware`: ASGI ingress middleware enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment
+                   - `extract_client_identity(scope)`: FastAPI/Uvicorn inference proxy and gateway caller identity extraction
 
                    BREAKING CHANGE: Removed X-Agent-ID and X-SPIFFE-ID header parsing.
-                   All requests must present valid mTLS client certificate. Unauthenticated
-                   requests fail closed with 401 Unauthorized.
+                   All requests must present a verified Linkerd mTLS workload identity.
+                   Unauthenticated requests fail closed (403/401).
 
                 3. **Application-Level Operator Identification (2026-09-07)**:
                    Human operator identity for defer escalation approval path is extracted via

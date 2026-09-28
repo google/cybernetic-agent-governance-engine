@@ -175,7 +175,7 @@ Before deploying CAGE in a regulated financial environment:
 
 1. **Complete the NIST RMF steps 1–6** — obtain an ATO from an Authorizing Official before processing live customer data
 2. **Draft and sign the SSP** — use `compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md` as the scaffold; `compliance/oscal/system-security-plan.yaml` is an OSCAL draft but is not AO-signed (POAM-015)
-3. **Set `CAGE_ROUTING_SEAL_SECRET`** — failure to set this in production silently disables governance routing seal enforcement (POAM-012)
+3. **Install the Linkerd mesh and set `CAGE_TRUSTED_CLIENT_IDENTITIES`** — the gateway always enforces caller authentication by mTLS workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)) in every environment; `CAGE_TRUSTED_CLIENT_IDENTITIES` is always required, the gateway refuses to start without the allow-list, and it returns 403 to any caller without a trusted identity (POAM-2026-080)
 4. **Configure Langfuse compliance credentials** — `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` must be set; absence silently drops all compliance audit traces (POAM-018)
 5. **Add TLS enforcement test** — verify all REST and gRPC endpoints require TLS 1.2+ with a test assertion (POAM-011)
 6. **Pin all dependencies** — replace `>=` specifiers with exact pinned versions to prevent uncontrolled updates (POAM-013)

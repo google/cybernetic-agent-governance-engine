@@ -151,11 +151,20 @@ class TestPlatformNarrativeGeneration:
             assert "responsible-roles" in narrative
 
     def test_props_include_implementation_status(self) -> None:
-        """Each narrative props include implementation-status = implemented."""
+        """Each narrative is implemented, or partial with the open POAM cited.
+
+        GKE SC-8 stays partial until POAM-2026-080 has live mesh evidence.
+        """
         narratives = generate_platform_control_narratives("gcp-gke")
+        partial = set()
         for narrative in narratives:
             props = {p["name"]: p["value"] for p in narrative["props"]}
-            assert props["implementation-status"] == "implemented"
+            status = props["implementation-status"]
+            assert status in {"implemented", "partial"}
+            if status == "partial":
+                partial.add(narrative["control-id"])
+                assert "POAM-2026-080" in props["poam-refs"]
+        assert partial == {"sc-8"}
 
     def test_props_include_deployment_platform(self) -> None:
         """Each narrative props include deployment-platform tag."""

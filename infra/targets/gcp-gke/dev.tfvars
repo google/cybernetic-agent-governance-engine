@@ -108,9 +108,6 @@ presidio_analyzer_image   = "mcr.microsoft.com/presidio-analyzer:latest"
 presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
 
 # ─── Secrets (set in terraform.auto.tfvars — gitignored) ──────────────────────
-# K-1: CAGE_ROUTING_SEAL_SECRET for gateway routing seal enforcement (POAM-012).
-#   routing_seal_secret = "<random-32-char-hex>"  # Set in terraform.auto.tfvars
-
 # K-3: signing keys are provisioned by kms_signing.tf (one key per signer,
 #   POAM-2026-079); there is no kms_governance_key input any more.
 

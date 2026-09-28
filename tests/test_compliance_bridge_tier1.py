@@ -19,7 +19,6 @@ Tier-1 roadmap implementation tests:
   1.1 — ISO_CONTROL_MAP is the single source of truth (no dual-maintenance)
   1.2 — GET /v1/controls discovery endpoint
   1.3 — GET /v1/audit/status/{audit_id} poll endpoint
-  1.4 — CAGE_ROUTING_SEAL_SECRET guard (POAM-012)
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 # ---------------------------------------------------------------------------
@@ -287,66 +286,3 @@ class TestAuditStatusEndpoint:
         assert "audit-4" not in _audit_status
         # The latest entry must be present
         assert f"audit-{_AUDIT_STATUS_MAXSIZE + 4}" in _audit_status
-
-
-# ---------------------------------------------------------------------------
-# 1.4  CAGE_ROUTING_SEAL_SECRET guard (POAM-012)
-# ---------------------------------------------------------------------------
-
-
-class TestCageRoutingSealGuard:
-    """
-    The lifespan guard should raise RuntimeError when:
-      - ENVIRONMENT is a production-like value (not dev/test/ci)
-      - AND CAGE_ROUTING_SEAL_SECRET is absent or matches a known dev default
-    """
-
-    def _attempt_startup(self, env: str, secret: str) -> bool:
-        """Returns True if the app started without error, False if RuntimeError raised."""
-        env_vars = {
-            "ENVIRONMENT": env,
-            "CAGE_ROUTING_SEAL_SECRET": secret,
-            # Disable Tier 3 guards so these tests focus only on the seal-secret guard
-            "CMEK_CHECK_DISABLED": "1",
-            "LULA_SCHEDULER_DISABLED": "1",
-            "EVIDENCE_SLA_DISABLED": "1",
-            "EVIDENCE_STREAM_ENABLED": "true",
-        }
-        with patch("src.compliance_bridge.main.Langfuse") as MockLF:
-            MockLF.return_value = MagicMock()
-            from fastapi.testclient import TestClient
-
-            from src.compliance_bridge.main import app
-
-            try:
-                with patch.dict(os.environ, env_vars, clear=False):
-                    with TestClient(app, raise_server_exceptions=True):
-                        pass
-                return True
-            except RuntimeError:
-                return False
-
-    def test_dev_environment_no_secret_ok(self):
-        """development + no secret must start without error."""
-        assert self._attempt_startup("development", "") is True
-
-    def test_ci_environment_no_secret_ok(self):
-        assert self._attempt_startup("ci", "") is True
-
-    def test_test_environment_no_secret_ok(self):
-        assert self._attempt_startup("test", "") is True
-
-    def test_production_with_strong_secret_ok(self):
-        assert (
-            self._attempt_startup("production", "hunter2-very-long-random-secret")
-            is True
-        )
-
-    def test_production_with_empty_secret_raises(self):
-        assert self._attempt_startup("production", "") is False
-
-    def test_production_with_changeme_raises(self):
-        assert self._attempt_startup("production", "changeme") is False
-
-    def test_staging_with_dev_default_raises(self):
-        assert self._attempt_startup("staging", "secret") is False

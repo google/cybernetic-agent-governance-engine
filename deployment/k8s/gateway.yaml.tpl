@@ -94,9 +94,6 @@ spec:
               value: ""  # Set to your model artifact path, e.g. gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/<sha>
             - name: SERVICE_NAME
               value: "hybrid-gateway"
-            # SC-12 / AC-3 / POAM-012: HMAC routing seal enforcement.
-            # CAGE_ENV=production activates RuntimeError at import time if
-            # CAGE_ROUTING_SEAL_SECRET is absent or shorter than 32 chars.
             # DEP-04: CAGE_ENV is substituted at deploy time from the --env flag
             # passed to deploy_all.sh (dev → "dev", prod → "production").
             - name: CAGE_DOMAIN  # exactly one domain per process
@@ -105,11 +102,12 @@ spec:
               value: "${CAGE_ENV}"
             - name: ENVIRONMENT
               value: "${CAGE_ENV}"
-            - name: CAGE_ROUTING_SEAL_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: cage-routing-seal
-                  key: secret
+            - name: CAGE_TRUSTED_CLIENT_IDENTITIES
+              # POAM-2026-080: deny by default. Every path except the open list
+              # in workload_identity.py requires this Linkerd identity in
+              # l5d-client-id; outside dev/test the gateway refuses to start
+              # without it. Needs the Linkerd proxy (linkerd-mtls-policy.yaml).
+              value: "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
             - name: EVIDENCE_STREAM_ENABLED
               value: "true"
             # BLOCKER-06: the startup posture check refuses production when

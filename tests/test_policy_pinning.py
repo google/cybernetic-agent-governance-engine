@@ -157,93 +157,69 @@ def _installed_governor():
 
 def test_middleware_validate_action_version_matching(registry):
     """FastAPI validate-action endpoint should pass when correct version_id is provided."""
-    import src.gateway.server.governance_middleware as mw
+    client = TestClient(governance_app, raise_server_exceptions=False)
+    active_hash = registry.active_hash
 
-    # Disable seal enforcement for this test
-    original_secret = mw._CAGE_SEAL_SECRET
-    original_env = mw._ENVIRONMENT
-    mw._CAGE_SEAL_SECRET = None
-    mw._ENVIRONMENT = "test"
+    mock_gov_result = {
+        "verdict": "APPROVED",
+        "violations": [],
+        "seal": "mock-seal-hash",
+        "latency_ms": 12.5,
+    }
 
-    try:
-        client = TestClient(governance_app, raise_server_exceptions=False)
-        active_hash = registry.active_hash
+    # Install a governor whose validate_action is mocked on the app
+    with _installed_governor() as mock_validate:
+        mock_validate.return_value = mock_gov_result
 
-        mock_gov_result = {
-            "verdict": "APPROVED",
-            "violations": [],
-            "seal": "mock-seal-hash",
-            "latency_ms": 12.5,
-        }
+        # Request with matching version
+        resp = client.post(
+            "/validate-action",
+            json={
+                "action": "execute_trade",
+                "params": {"amount": 100},
+                "policy_version_id": active_hash,
+            },
+        )
+        assert resp.status_code == 200
 
-        # Install a governor whose validate_action is mocked on the app
-        with _installed_governor() as mock_validate:
-            mock_validate.return_value = mock_gov_result
+        # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
+        data = resp.json()
+        assert data.get("envelope_version") == "3.0"
+        assert data["payload"]["verdict"] == "APPROVED"
 
-            # Request with matching version
+        mock_validate.assert_awaited_once_with(
+            action="execute_trade",
+            params={"amount": 100},
+            policy_version_id=active_hash,
+        )
+
+
+def test_middleware_validate_action_version_mismatch_returns_403(registry):
+    """FastAPI validate-action endpoint should return 403 when a version mismatch occurs."""
+    client = TestClient(governance_app, raise_server_exceptions=False)
+
+    # Install a governor whose validate_action raises GovernanceError
+    with _installed_governor() as mock_validate:
+        mock_validate.side_effect = GovernanceError(
+            "Substrate Policy Drift Detected. Session pinned to version..."
+        )
+
+        with patch(
+            "src.gateway.server.governance_middleware._emit_refusal_receipt",
+            new_callable=AsyncMock,
+        ) as mock_emit:
             resp = client.post(
                 "/validate-action",
                 json={
                     "action": "execute_trade",
                     "params": {"amount": 100},
-                    "policy_version_id": active_hash,
+                    "policy_version_id": "stale-policy-hash",
                 },
             )
-            assert resp.status_code == 200
-
-            # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
-            data = resp.json()
-            assert data.get("envelope_version") == "3.0"
-            assert data["payload"]["verdict"] == "APPROVED"
-
-            mock_validate.assert_awaited_once_with(
-                action="execute_trade",
-                params={"amount": 100},
-                policy_version_id=active_hash,
-            )
-    finally:
-        mw._CAGE_SEAL_SECRET = original_secret
-        mw._ENVIRONMENT = original_env
-
-
-def test_middleware_validate_action_version_mismatch_returns_403(registry):
-    """FastAPI validate-action endpoint should return 403 when a version mismatch occurs."""
-    import src.gateway.server.governance_middleware as mw
-
-    # Disable seal enforcement for this test
-    original_secret = mw._CAGE_SEAL_SECRET
-    original_env = mw._ENVIRONMENT
-    mw._CAGE_SEAL_SECRET = None
-    mw._ENVIRONMENT = "test"
-
-    try:
-        client = TestClient(governance_app, raise_server_exceptions=False)
-
-        # Install a governor whose validate_action raises GovernanceError
-        with _installed_governor() as mock_validate:
-            mock_validate.side_effect = GovernanceError(
-                "Substrate Policy Drift Detected. Session pinned to version..."
-            )
-
-            with patch(
-                "src.gateway.server.governance_middleware._emit_refusal_receipt",
-                new_callable=AsyncMock,
-            ) as mock_emit:
-                resp = client.post(
-                    "/validate-action",
-                    json={
-                        "action": "execute_trade",
-                        "params": {"amount": 100},
-                        "policy_version_id": "stale-policy-hash",
-                    },
-                )
-                assert resp.status_code == 403
-                assert resp.json()["verdict"] == "DENIED"
-                assert "Substrate Policy Drift" in resp.json()["violations"][0]
-                mock_emit.assert_awaited_once()
-    finally:
-        mw._CAGE_SEAL_SECRET = original_secret
-        mw._ENVIRONMENT = original_env
+            assert resp.status_code == 403
+            assert resp.json()["verdict"] == "DENIED"
+            assert "Substrate Policy Drift" in resp.json()["violations"][0]
+            mock_emit.assert_awaited_once()
 
 
 def test_serialization_float_coercion_consistency():
@@ -338,6 +314,7 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
 def _stub_pipeline(mock_result):
     """Patch run_pipeline where run_sealed (validate_action's check path) calls it with a canned result."""
     from unittest.mock import AsyncMock, patch
+
     from src.gateway.governance.contracts import Violation, ViolationKind
     from src.gateway.governance.governor.pipeline import PipelineResult
     violations = tuple(

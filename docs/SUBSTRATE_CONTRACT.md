@@ -186,30 +186,33 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 
 ---
 
-## 3. Routing Seal Contract
+## 3. Caller Authentication and Routing Seal Contract
 
-### 3.1 Header
+### 3.1 Caller authentication
 
-```
-X-CAGE-Routing-Seal: <hmac-sha256-hex>
-```
+Callers are authenticated by Linkerd mTLS workload identity, not by a request
+header secret (POAM-2026-080). The gateway admits a non-open request only if
+the proxy-set `l5d-client-id` header carries an identity listed in
+`CAGE_TRUSTED_CLIENT_IDENTITIES`; otherwise it returns HTTP 403.
+`CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and the
+gateway always enforces workload identity (`WorkloadIdentityMiddleware` and
+`extract_client_identity(scope)`).
 
-The routing seal is an HMAC-SHA256 signature over the canonical request payload,
-computed using the deployment's routing seal key (loaded from Kubernetes Secret).
+**Implementation:** [`workload_identity.py`](../src/gateway/server/workload_identity.py)
 
-**Purpose:** Proves that the request passed through the CAGE governance pipeline
-and was not injected directly into the backend, bypassing governance.
+### 3.2 Governor routing seal
 
-### 3.2 Verification
-
-Backend services **must** verify the routing seal before processing any request.
-Requests without a valid seal must be rejected with HTTP 403.
+After all tiers pass, the governor issues a KMS-signed routing seal (JWT,
+v3 format) bound to the action, its parameters and the evidence record. The
+seal stays inside the gateway: the actuator path verifies and consumes it
+(single use) before dispatch, e.g. `verify_and_consume_seal()` in
+[`tool_provider.py`](../src/cage_finance/tools/tool_provider.py).
 
 **Implementation:** [`routing_seal.py`](../src/gateway/governance/routing_seal.py)
 
 ### 3.3 Seal Lifetime
 
-Routing seals carry a **30-second TTL** (`<expire_ts_hex>.<action_slug>.<hmac_hex>` format, per [`routing_seal.py`](../src/gateway/governance/routing_seal.py)). Replayed or expired seals are rejected by the backend with HTTP 403.
+Routing seals carry a **30-second TTL** by default (`GOVERNANCE_SEAL_TTL_S`, per [`routing_seal.py`](../src/gateway/governance/routing_seal.py)). Replayed or expired seals are rejected.
 
 ---
 
@@ -222,7 +225,7 @@ The following are guaranteed stable across minor versions:
 - `POST /governance/ingest-policy` request/response schema
 - `POST /governance/validate-action` request/response schema
 - `policy_version_id` format (16-char hex prefix of SHA-256)
-- `X-CAGE-Routing-Seal` header name and HMAC-SHA256 algorithm
+- Caller authentication by Linkerd workload identity (`l5d-client-id`, `CAGE_TRUSTED_CLIENT_IDENTITIES`)
 - `GovernanceControl` enum values (`CTRL_*` identifiers)
 - UCA YAML schema (`config/stpa_control_structure.yaml`)
 

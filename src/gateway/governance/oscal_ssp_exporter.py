@@ -291,21 +291,27 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
             "uuid": _PLATFORM_SC8_IMPL_UUID,
             "control-id": "sc-8",
             "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
-            "status": "implemented",
+            "status": "partial",
             "narrative": (
-                "Intra-cluster communications between CAGE core components (Gateway → OPA, "
-                "Gateway → NeMo Guardrails) are encrypted using mutual TLS via Linkerd data-plane "
-                "proxies. Each workload's identity is derived deterministically from its "
-                "Kubernetes ServiceAccount as a SPIFFE Verifiable Identity Document (SVID). "
-                "Private keys are stored exclusively in-memory (tmpfs) and TLS certificates are "
-                "rotated automatically every 24 hours by the Linkerd control plane. "
-                "AuthorizationPolicy resources enforce that only explicitly authorized service "
-                "accounts (cage-gateway-sa, cage-compliance-bridge-sa) may reach the OPA Server "
-                "on port 8181; any other caller is rejected at the proxy sidecar before reaching "
-                "the application layer. Evidence: linkerd viz authz deployment/opa-service -n governance-stack."
+                "Pods in the governance-stack namespace are meshed by Linkerd "
+                "(linkerd.io/inject=enabled), which Terraform installs with "
+                "infra/modules/service_mesh. Pod-to-pod traffic is mutual TLS between Linkerd "
+                "proxies. Each proxy certificate names the pod's Kubernetes ServiceAccount "
+                "(<sa>.<namespace>.serviceaccount.identity.linkerd.cluster.local), lives in "
+                "memory only, and is re-issued every 24 hours. The trust anchor is a Google "
+                "Certificate Authority Service root CA whose key is generated and held by CAS; "
+                "the intermediate issuer certificate is obtained by cert-manager through a CSR "
+                "and rotated every 48 hours, so no CA private key exists in Terraform state or "
+                "in the repository. The gateway's HTTP port is deny by default: a Linkerd "
+                "Server/HTTPRoute/AuthorizationPolicy set admits only cage-advisor-sa outside a "
+                "short list of open paths, and the gateway repeats the check on the verified "
+                "l5d-client-id header (src/gateway/server/workload_identity.py). OPA and NeMo "
+                "Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only the "
+                "gateway (and the compliance bridge for OPA). Status is partial until the mesh "
+                "is applied and verified in a deployed environment (POAM-2026-080)."
             ),
-            "evidence": "deployment/k8s/linkerd-mtls-policy.yaml",
-            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8)",
+            "evidence": "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy, deployment/k8s/linkerd-mtls-policy.yaml",
+            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9)",
         },
         "sc-39": {
             "uuid": _PLATFORM_SC39_IMPL_UUID,
@@ -564,24 +570,30 @@ class FrameworkRouter:
 NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
     "sc-8": {
         "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
-        "implemented_by": "Linkerd Service Mesh (Server + AuthorizationPolicy + MeshTLSAuthentication)",
-        "status": "implemented",
+        "implemented_by": "Linkerd Service Mesh (Server + HTTPRoute + AuthorizationPolicy + MeshTLSAuthentication), trust anchor in Google CAS",
+        "status": "partial",
         "evidence_file": "deployment/k8s/linkerd-mtls-policy.yaml",
         "iso_clause": "A.7.5 (Cryptographic Controls), A.8.4 (AI System Operation)",
         "narrative": (
-            "Intra-cluster communications between CAGE core components (Gateway → OPA, "
-            "Gateway → NeMo Guardrails) are encrypted using mutual TLS via Linkerd data-plane "
-            "proxies. Each workload's identity is derived deterministically from its "
-            "Kubernetes ServiceAccount as a SPIFFE Verifiable Identity Document (SVID). "
-            "Private keys are stored exclusively in-memory (tmpfs) and TLS certificates are "
-            "rotated automatically every 24 hours by the Linkerd control plane. "
-            "AuthorizationPolicy resources enforce that only explicitly authorized service "
-            "accounts (cage-gateway-sa, cage-compliance-bridge-sa) may reach the OPA Server "
-            "on port 8181; any other caller is rejected at the proxy sidecar before reaching "
-            "the application layer. Evidence: linkerd viz authz deployment/opa-service -n governance-stack."
+            "Pods in the governance-stack namespace are meshed by Linkerd "
+            "(linkerd.io/inject=enabled), which Terraform installs with "
+            "infra/modules/service_mesh. Pod-to-pod traffic is mutual TLS between Linkerd "
+            "proxies. Each proxy certificate names the pod's Kubernetes ServiceAccount "
+            "(<sa>.<namespace>.serviceaccount.identity.linkerd.cluster.local), lives in "
+            "memory only, and is re-issued every 24 hours. The trust anchor is a Google "
+            "Certificate Authority Service root CA whose key is generated and held by CAS; "
+            "the intermediate issuer certificate is obtained by cert-manager through a CSR "
+            "and rotated every 48 hours, so no CA private key exists in Terraform state or "
+            "in the repository. The gateway's HTTP port is deny by default: a Linkerd "
+            "Server/HTTPRoute/AuthorizationPolicy set admits only cage-advisor-sa outside a "
+            "short list of open paths, and the gateway repeats the check on the verified "
+            "l5d-client-id header (src/gateway/server/workload_identity.py). OPA and NeMo "
+            "Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only the "
+            "gateway (and the compliance bridge for OPA). Status is partial until the mesh "
+            "is applied and verified in a deployed environment (POAM-2026-080)."
         ),
-        "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8)",
-        "poam_status": "CLOSED — Linkerd mTLS implemented and verified",
+        "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9)",
+        "poam_status": "OPEN — POAM-2026-080: mesh defined in infra/modules/service_mesh, not yet applied and verified",
     },
     "sc-7": {
         "title": "Boundary Protection — Cilium L7 FQDN Egress Lockdown",

@@ -343,9 +343,10 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ],
         notes=(
             "Sovereign vLLM deployment on GKE: all inference runs within cluster "
-            "boundary (no external LLM API calls). CAGE_ROUTING_SEAL_SECRET "
-            "(POAM-012 / NIST SC-12) provides cryptographic enforcement of governance "
-            "routing seals. CMEK encryption guard (POAM-014 / NIST SC-28) protects "
+            "boundary (no external LLM API calls). Gateway ingress is authenticated "
+            "by Linkerd mTLS workload identity, deny by default (POAM-2026-080 / "
+            "NIST IA-9, SC-8): only trusted mesh identities reach the governance "
+            "surface. CMEK encryption guard (POAM-014 / NIST SC-28) protects "
             "model artifacts at rest."
         ),
     ),

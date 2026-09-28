@@ -94,7 +94,7 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | ----------- | ------------------ | ------------------ | ------------------------ | ------- |
 | **AARM-V1** | Memory Poisoning — attacker mutates the agent's context accumulator to inject false beliefs | SHA-256 hash-chained `OscalFinding` log ([`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py)) | $\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$ — any mutation at node $k$ produces $\text{record\_hash}_k \ne \text{expected}_k$, detectable at $O(n)$ | **NEUTRALIZED** |
 | **AARM-V2** | Goal Hijacking — agent's objective is redirected mid-execution | STPA UCA Validator (Tier 0) + OPA Rego policy (Tier 4) | $\forall \text{action}: \text{UCA}(\text{action}) \notin \{\text{UCA-1}, \dots, \text{UCA-9}\} \land \text{OPA}(\text{action}) = \text{ALLOW}$ | **NEUTRALIZED** |
-| **AARM-V3** | Confused Deputy — agent is manipulated into performing actions on behalf of an unauthorized principal | OPA RBAC (`trade.governance` package) + HMAC routing seal (`X-CAGE-Routing-Seal`) | $\forall \text{tool\_call}: \text{seal\_valid}(\text{request}) \land \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ | **NEUTRALIZED** |
+| **AARM-V3** | Confused Deputy — agent is manipulated into performing actions on behalf of an unauthorized principal | OPA RBAC (`trade.governance` package) + gateway ingress by Linkerd mTLS workload identity (`WorkloadIdentityMiddleware`, `src/gateway/server/workload_identity.py`) | $\forall \text{tool\_call}: \text{identity}(\text{caller}) \in \text{trusted\_identities} \land \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ | **NEUTRALIZED** |
 | **AARM-V4** | Cross-Agent Propagation — malicious payload propagates across agent boundaries | Linkerd mTLS SPIFFE/SVID identity + NeMo input rail on every agent boundary | $\forall \text{agent\_msg}: \text{SPIFFE\_identity\_verified} \land \text{NeMo}(\text{msg}) = \text{SAFE}$ | **NEUTRALIZED** |
 | **AARM-V5** | Prompt Injection — adversarial input hijacks agent intent | Aho-Corasick Tier-1 scan + NeMo Guardrails Tier-2 + Presidio PII scan | $\forall \text{input}: \text{AhoCorasick}(\text{input}) = \emptyset \land \text{NeMo}(\text{input}) = \text{SAFE}$ before any agent node executes | **NEUTRALIZED** |
 | **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 0) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$ required for ALLOW | **NEUTRALIZED** |
@@ -159,7 +159,7 @@ Let $m$ = governance decision payload (JSON), $\sigma$ = signature, $k_{\text{pr
 1. **Binding:** $\sigma$ is cryptographically bound to $m$ via SHA-256 pre-image resistance. Modifying $m$ invalidates $\sigma$.
 2. **Key custody:** Google Cloud Audit Logs provide an immutable, externally attested record of every `cloudkms.cryptoKeyVersions.useToSign` operation, including timestamp, caller identity, and key version. This record is outside CAGE's control plane.
 3. **Temporal attestation:** The Cloud Audit Log timestamp $t_{\text{sign}}$ is authoritative — it cannot be backdated by the CAGE system.
-4. **Fallback scope:** The HMAC-SHA256 fallback (dev/CI only, activated when `CAGE_KMS_KEY_NAME` is unset) does **not** provide non-repudiation — it provides only integrity. The fallback is explicitly prohibited in production by the `CAGE_ROUTING_SEAL_SECRET` validation check.
+4. **Fallback scope:** The HMAC-SHA256 fallback (dev/CI only, activated when `CAGE_KMS_KEY_NAME` is unset) does **not** provide non-repudiation — it provides only integrity. The fallback is explicitly prohibited in production: `routing_seal.py` rejects HMAC seals when `CAGE_SEAL_STRICT_MODE` is on (the default) or the environment is production, and refuses the default `GOVERNANCE_SALT` outside development/test.
 
 **Conclusion:** For any governance decision $m$ with signature $\sigma$ produced in production:
 $$\text{verify}(k_{\text{pub}}, m, \sigma) = \text{true} \Rightarrow \exists t_{\text{sign}} \in \text{CloudAuditLog}: \text{KMS.sign}(k_{\text{priv}}, m) \text{ was called at } t_{\text{sign}}$$
@@ -398,7 +398,7 @@ In development/test environments without KMS, it falls back to a **4-tuple HMAC*
 
 ### Cryptographic Contract
 
-**Key:** Cloud KMS HSM asymmetric key ring in production; `CAGE_ROUTING_SEAL_SECRET` / `GOVERNANCE_SALT` ($\ge 32$ bytes in production; enforced by startup assertions) for HMAC fallback.
+**Key:** Cloud KMS HSM asymmetric key ring in production; `GOVERNANCE_SALT` for the dev/test HMAC fallback (the default salt is refused outside development/test).
 
 **Evidence Binding:** The seal binds the action to the exact compliance evidence stream record via `record_hash` (`ehash` JWT claim).
 

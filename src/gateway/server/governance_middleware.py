@@ -16,9 +16,9 @@
 Governance Middleware (Phase 3.1)
 ==================================
 Isolated execution environment orchestrating STPA, the Symbolic Governor,
-and OPA.  Also enforces the HMAC-SHA256 ``X-CAGE-Routing-Seal`` (Phase 3.3)
-to guarantee that only trusted upstream orchestrators can reach the
-governance enforcement surface.
+and OPA.  Callers are authenticated before they reach this surface by mesh
+workload identity (``workload_identity.WorkloadIdentityMiddleware`` on the
+gateway root app, POAM-2026-080); this module holds no ingress secret.
 
 This module is intentionally free of MCP tool definitions and HTTP proxy
 logic — those live in ``mcp_tool_server.py`` and ``inference_proxy.py``
@@ -27,8 +27,6 @@ respectively.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import math
@@ -57,29 +55,10 @@ from src.gateway.server.app_state import governor_of
 logger = logging.getLogger("Gateway.GovernanceMiddleware")
 
 
-_CAGE_SEAL_SECRET: str | None = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
-_SEAL_HEADER = "X-CAGE-Routing-Seal"
-_SEAL_ENFORCEMENT = os.environ.get("CAGE_SEAL_ENFORCEMENT", "enforce").lower()
-# Set CAGE_SEAL_ENFORCEMENT=log to log-only without blocking (useful in development).
-
 # CAGE_ENV takes precedence over ENVIRONMENT for forward compatibility.
 _ENVIRONMENT: str = (
     os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
 ).lower()
-
-_IS_PRODUCTION: bool = _ENVIRONMENT not in ("development", "test", "dev", "ci")
-
-# CAGE-SEC-001: CAGE_SEAL_ENFORCEMENT=log is prohibited in production.
-# In log mode, requests with invalid routing seals are allowed through with only
-# a warning — this creates a bypass vector equivalent to disabling seal enforcement.
-if _SEAL_ENFORCEMENT == "log" and _IS_PRODUCTION:
-    raise RuntimeError(
-        f"CAGE STARTUP FAILURE (CAGE-SEC-001): CAGE_SEAL_ENFORCEMENT=log is set in "
-        f"environment '{_ENVIRONMENT}'. Log mode allows requests with invalid routing "
-        f"seals to pass through — this is a governance bypass vector equivalent to "
-        f"disabling seal enforcement. Set CAGE_SEAL_ENFORCEMENT=enforce (the default) "
-        f"or set CAGE_ENV=development to bypass (not for production use)."
-    )
 
 
 def _is_dev_environment() -> bool:
@@ -110,106 +89,6 @@ def _is_dev_environment() -> bool:
     except Exception as exc:
         logger.warning("M-15: Could not read K8s namespace file: %s", exc)
     return True
-
-
-# ---------------------------------------------------------------------------
-# POAM-012 — Module-level startup validation of CAGE_ROUTING_SEAL_SECRET
-# SC-12 / AC-3: HMAC key must be present and sufficiently strong in all
-# non-development environments.  This check runs at import time so the
-# service fails fast rather than surfacing the gap on the first live request.
-# ---------------------------------------------------------------------------
-_HMAC_MIN_LENGTH = 32  # HMAC-SHA256 security minimum (256-bit key)
-
-if not _CAGE_SEAL_SECRET:
-    if _IS_PRODUCTION:
-        raise RuntimeError(
-            "CAGE_ROUTING_SEAL_SECRET must be set in non-development environments (POAM-012). "
-            "Generate a cryptographically random secret of at least 32 characters and export it "
-            "as CAGE_ROUTING_SEAL_SECRET.  To bypass in local dev, set CAGE_ENV=development or "
-            "ENVIRONMENT=development."
-        )
-    logger.warning(
-        "⚠️  POAM-012: CAGE_ROUTING_SEAL_SECRET is not set. "
-        "Routing seal verification is DISABLED. "
-        "Acceptable only in development/test environments — never in production."
-    )
-elif len(_CAGE_SEAL_SECRET) < _HMAC_MIN_LENGTH:
-    raise RuntimeError(
-        f"CAGE_ROUTING_SEAL_SECRET is set but is only {len(_CAGE_SEAL_SECRET)} characters long. "
-        f"A minimum of {_HMAC_MIN_LENGTH} characters is required for HMAC-SHA256 security (POAM-012)."
-    )
-
-
-def _verify_routing_seal(request: Request, body_bytes: bytes) -> bool:
-    """Verify the HMAC-SHA256 routing seal on an incoming request.
-
-    The upstream API gateway computes:
-        HMAC-SHA256(key=CAGE_ROUTING_SEAL_SECRET, msg=<raw request body bytes>)
-    and places the hex digest in the ``X-CAGE-Routing-Seal`` header.
-
-    Returns ``True`` if the seal is valid or if enforcement is disabled.
-    """
-    # SC-12 / AC-3 Control: CAGE_ROUTING_SEAL_SECRET must be set in production.
-    # NIST SP 800-53 SC-12 requires cryptographic key establishment for system integrity.
-    # POAM-012: Enforced via RuntimeError in non-development environments (2026-04-01).
-    if not _CAGE_SEAL_SECRET:
-        if _ENVIRONMENT not in ("development", "test"):
-            raise RuntimeError(
-                "CAGE_ROUTING_SEAL_SECRET is not set. Routing seal enforcement cannot be "
-                "disabled in non-development environments. Set CAGE_ROUTING_SEAL_SECRET or "
-                "set ENVIRONMENT=development to bypass (not for production use)."
-            )
-        logger.warning(
-            "⚠️ CAGE_ROUTING_SEAL_SECRET not set — routing seal verification DISABLED. "
-            "This is only acceptable in development/test environments."
-        )
-        return True  # Bypass allowed only in development/test
-
-    provided_seal = request.headers.get(_SEAL_HEADER, "")
-    if not provided_seal:
-        logger.warning(
-            "Missing %s header on request to %s", _SEAL_HEADER, request.url.path
-        )
-        return False
-
-    expected = hmac.new(
-        _CAGE_SEAL_SECRET.encode(),
-        body_bytes,
-        hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, provided_seal.lower())
-
-
-def enforce_routing_seal(request: Request, body_bytes: bytes) -> None:
-    """Raise HTTP 403 if the routing seal is invalid and enforcement is active.
-
-    In ``log`` mode the violation is recorded but the request is allowed through.
-    In ``enforce`` mode (default) an HTTP 403 is raised.
-    """
-    if _verify_routing_seal(request, body_bytes):
-        return
-
-    if _SEAL_ENFORCEMENT == "log":
-        logger.warning(
-            "🔓 Routing seal INVALID for %s — enforcement=log, allowing through.",
-            request.url.path,
-        )
-        return
-
-    logger.error(
-        "🔒 Routing seal INVALID for %s — rejecting request.", request.url.path
-    )
-    raise HTTPException(
-        status_code=403,
-        detail={
-            "error": "invalid_routing_seal",
-            "message": (
-                f"Request missing or has an invalid {_SEAL_HEADER} header. "
-                "Only trusted upstream orchestrators may invoke this endpoint."
-            ),
-        },
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -430,13 +309,12 @@ class GovernanceCheckRequest(dict):
 async def governance_check(request: Request) -> JSONResponse:
     """Internal endpoint: run a governance dry-run check against a proposed tool call.
 
-    Requires a valid X-CAGE-Routing-Seal.
+    Requires a trusted caller workload identity (WorkloadIdentityMiddleware).
 
     Request body (JSON):
         {"tool_name": str, "params": dict}
     """
     body_bytes = await request.body()
-    enforce_routing_seal(request, body_bytes)
 
     try:
         body = json.loads(body_bytes)
@@ -822,11 +700,8 @@ async def validate_action_endpoint(
         JSON with ``verdict`` (APPROVED|DENIED), ``violations`` list,
         ``seal`` (HMAC-SHA256 routing seal on approval), and ``latency_ms``.
     """
-    # ── GHSA-v3h4-8458-5ww3: Enforce routing seal FIRST, before any processing.
-    # Without this check, unauthenticated callers could trigger DoS or use the
-    # endpoint as a governance configuration oracle.
-    body_bytes = await request.body()
-    enforce_routing_seal(request, body_bytes)
+    # GHSA-v3h4-8458-5ww3: the caller is authenticated before any processing by
+    # WorkloadIdentityMiddleware (mesh identity, POAM-2026-080) on the root app.
 
     # ── Rate limiting: prevent DoS via rapid unauthenticated requests ─────────
     # HIGH-5 fix: only trust X-Forwarded-For when the direct TCP connection
@@ -1013,9 +888,6 @@ async def revalidate_post_hitl_endpoint(
     "violations": [...]}``. A refusal emits the same signed receipt as
     ``/validate-action`` — refusals are primary evidence.
     """
-    body_bytes = await request.body()
-    enforce_routing_seal(request, body_bytes)
-
     client_ip = _client_ip(request)
     if not _check_validate_action_rate_limit(client_ip):
         raise HTTPException(

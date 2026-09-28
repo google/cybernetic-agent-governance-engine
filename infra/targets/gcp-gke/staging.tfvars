@@ -182,9 +182,6 @@ presidio_analyzer_image   = "mcr.microsoft.com/presidio-analyzer:latest"
 presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
 
 # ─── Secrets (set in terraform.auto.tfvars — gitignored) ──────────────────────
-# K-1: CAGE_ROUTING_SEAL_SECRET for gateway routing seal enforcement (POAM-012).
-#   routing_seal_secret = "<random-32-char-hex>"  # Set in terraform.auto.tfvars
-
 # K-2: KMS key for CMEK encryption (etcd + persistent volumes).
 #   kms_key_id = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>"
 #   # REQUIRED when enable_cmek=true — set in terraform.auto.tfvars

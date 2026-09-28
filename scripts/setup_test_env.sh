@@ -49,21 +49,17 @@ fi
 # CAGE_ENV default changed to "prod" (fail-secure) in Phase 1.
 # This script MUST explicitly set CAGE_ENV=dev so that:
 #   • KMS evidence signing falls back to stub HMAC (no GCP KMS required locally)
-#   • Routing seal accepts the insecure placeholder secret below
 #   • Normative provider uses stub thresholds instead of Langfuse production data
 #   • OPA runs in dry-run mode (no hard enforcement locally)
 #
 # These values are INTENTIONALLY INSECURE and must NEVER be used in production.
 export CAGE_ENV=dev
 export CAGE_DOMAIN="${CAGE_DOMAIN:-finance}"  # exactly one domain per process
+export CAGE_TRUSTED_CLIENT_IDENTITIES="${CAGE_TRUSTED_CLIENT_IDENTITIES:-cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local}"
 
 # Prevents regional compliance overlays (US_FED / EU_ECB / APAC_MAS) from
 # activating.  Leave unset or set to LOCAL for local development.
 export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-LOCAL}"
-
-# Insecure placeholder — satisfies the routing seal length check without
-# requiring a real ≥64-char secret from Kubernetes Secrets.
-export CAGE_ROUTING_SEAL_SECRET="${CAGE_ROUTING_SEAL_SECRET:-dev-only-insecure-placeholder-not-for-production-use}"
 
 # Insecure placeholder — satisfies the HMAC governance salt check locally.
 export GOVERNANCE_SALT="${GOVERNANCE_SALT:-dev-only-insecure-placeholder-not-for-production-use}"

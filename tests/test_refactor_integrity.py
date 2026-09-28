@@ -18,7 +18,7 @@ OPA Guardrail Refactor Integrity Tests (P2).
 Dead-man's switch tests that permanently enforce the architectural invariant:
 
   OPA invocation in the mandatory safety_check LangGraph node MUST go to the
-  gateway's governor PDP (via ``CageClient.validate_action()``) and MUST NOT go
+  gateway's governor PDP (via ``GatewayClient().validate_action()``) and MUST NOT go
   through any MCP client.
 
 If any of these tests fail, it means the MCP bypass has been reintroduced and
@@ -78,7 +78,7 @@ class TestOPAGuardrailIntegrity:
 
         Any call to `call_tool` in the safety node would be an agent-visible
         MCP dispatch — a bypassable OPA path.  The only permitted OPA invocation
-        pattern is ``CageClient.validate_action()`` against the gateway PDP.
+        pattern is ``GatewayClient().validate_action()`` against the gateway PDP.
         """
         safety_node_candidates = list(pathlib.Path("src").rglob("*safety*node*"))
         assert safety_node_candidates, "Could not find safety node file under src/"
@@ -97,8 +97,8 @@ class TestOPAGuardrailIntegrity:
 
     def test_safety_node_routes_through_gateway_governor(self):
         """
-        The safety node MUST call ``validate_action()`` on the CageClient
-        obtained from ``get_cage_client()``.
+        The safety node MUST call ``validate_action()`` on the advisor's
+        standard ``GatewayClient`` (``POST /governance/validate-action``).
 
         This ensures it is wired to the gateway's governor PDP (checked at AST
         level, so a comment or string mentioning the governor does not count).
@@ -114,7 +114,7 @@ class TestOPAGuardrailIntegrity:
             tree = ast.parse(candidate.read_text())
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and any(
-                    alias.name == "get_cage_client" for alias in node.names
+                    alias.name == "GatewayClient" for alias in node.names
                 ):
                     found_client_import = True
                 if (
@@ -125,7 +125,7 @@ class TestOPAGuardrailIntegrity:
                     found_validate_call = True
 
         assert found_client_import and found_validate_call, (
-            "safety_check_node does not call get_cage_client().validate_action() — "
+            "safety_check_node does not call GatewayClient().validate_action() — "
             "the mandatory OPA guardrail path may be missing"
         )
 

@@ -15,6 +15,10 @@
 """
 Tests for src.gateway.server.governance_middleware (BLOCKER-08).
 
+Caller authentication is not this module's concern: every route is reached
+only through ``WorkloadIdentityMiddleware`` on the gateway root app
+(POAM-2026-080), which is covered by tests/test_workload_identity_middleware.py.
+
 Coverage targets
 ----------------
 A. /governance/check endpoint
@@ -22,8 +26,6 @@ A. /governance/check endpoint
    - Missing tool_name → 400
    - Invalid JSON body → 400
    - Governance denial (verify() returns violations) → 200 REJECTED
-   - CAGE_SEAL_ENFORCEMENT=enforce blocks invalid seal → 403
-   - CAGE_SEAL_ENFORCEMENT=log allows invalid seal through
 
 B. /governance/validate-action endpoint
    - Happy path: valid action → 200 APPROVED
@@ -35,36 +37,21 @@ C. /governance/revalidate-post-hitl endpoint (POAM-2026-079)
    - APPROVED → 200 verdict, no seal in the response
    - GovernanceError → 403 DENIED + refusal receipt
    - Internal exception → 500 without leaking details
-   - Missing ingress seal → 403 before evaluation
 
-D. enforce_routing_seal() / _verify_routing_seal()
-   - Valid HMAC seal passes
-   - Missing seal header → False in verify, 403 in enforce (enforce mode)
-   - Wrong HMAC → False in verify, 403 in enforce (enforce mode)
-   - log mode: invalid seal logs but does NOT raise
-
-E. _emit_refusal_receipt()
+D. _emit_refusal_receipt()
    - Signs receipt via KMS signer and calls evidence sink
    - KMS sign failure is logged but does not suppress the call
    - Evidence sink failure is logged but does not suppress the call
 
-F. Startup validation
-   - Missing CAGE_ROUTING_SEAL_SECRET raises RuntimeError in production env
-   - Short CAGE_ROUTING_SEAL_SECRET raises RuntimeError
+E. Module exports
 
 Notes
 -----
 - asyncio_mode = "auto" in pyproject.toml — no @pytest.mark.asyncio needed.
-- CAGE_ENV=test is set by conftest.pytest_configure via ENVIRONMENT default,
-  so the module-level RuntimeError guard is bypassed during import.
-- We patch module-level globals in governance_middleware directly rather than
-  reloading the module (avoids re-running the startup guard).
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import os
 from contextlib import contextmanager
@@ -74,30 +61,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-# ---------------------------------------------------------------------------
-# Ensure CAGE_ENV=test before any gateway module is imported so the
-# module-level CAGE_ROUTING_SEAL_SECRET guard does not raise RuntimeError.
-# conftest.pytest_configure sets ENVIRONMENT=production by default but does
-# NOT set CAGE_ENV — we set it here as a belt-and-suspenders guard.
-# ---------------------------------------------------------------------------
 os.environ.setdefault("CAGE_ENV", "test")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("GOVERNANCE_SALT", "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!")
 
-# A 32-char test secret that satisfies the HMAC_MIN_LENGTH=32 check.
-_TEST_SECRET = "test-secret-key-that-is-32-chars"
-
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_seal(secret: str, body_bytes: bytes) -> str:
-    """Compute the HMAC-SHA256 routing seal the same way the middleware does."""
-    return hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
 
 
 def _json_body(
@@ -179,66 +152,11 @@ def mock_evidence_sink():
 
 
 @pytest.fixture()
-def enforce_client(mock_symbolic_governor, mock_kms_signer):
-    """TestClient with CAGE_SEAL_ENFORCEMENT=enforce and a known secret."""
-    import src.gateway.server.governance_middleware as mw
-
-    original_secret = mw._CAGE_SEAL_SECRET
-    original_enforcement = mw._SEAL_ENFORCEMENT
-
-    mw._CAGE_SEAL_SECRET = _TEST_SECRET
-    mw._SEAL_ENFORCEMENT = "enforce"
-
+def gov_client(mock_symbolic_governor, mock_kms_signer):
+    """TestClient on governance_app with a mock governor installed."""
     from src.gateway.server.governance_middleware import governance_app
 
-    client = TestClient(governance_app, raise_server_exceptions=False)
-
-    yield client
-
-    mw._CAGE_SEAL_SECRET = original_secret
-    mw._SEAL_ENFORCEMENT = original_enforcement
-
-
-@pytest.fixture()
-def log_client(mock_symbolic_governor, mock_kms_signer):
-    """TestClient with CAGE_SEAL_ENFORCEMENT=log and a known secret."""
-    import src.gateway.server.governance_middleware as mw
-
-    original_secret = mw._CAGE_SEAL_SECRET
-    original_enforcement = mw._SEAL_ENFORCEMENT
-
-    mw._CAGE_SEAL_SECRET = _TEST_SECRET
-    mw._SEAL_ENFORCEMENT = "log"
-
-    from src.gateway.server.governance_middleware import governance_app
-
-    client = TestClient(governance_app, raise_server_exceptions=False)
-
-    yield client
-
-    mw._CAGE_SEAL_SECRET = original_secret
-    mw._SEAL_ENFORCEMENT = original_enforcement
-
-
-@pytest.fixture()
-def no_secret_client(mock_symbolic_governor, mock_kms_signer):
-    """TestClient with no CAGE_ROUTING_SEAL_SECRET (dev/test bypass)."""
-    import src.gateway.server.governance_middleware as mw
-
-    original_secret = mw._CAGE_SEAL_SECRET
-    original_env = mw._ENVIRONMENT
-
-    mw._CAGE_SEAL_SECRET = None
-    mw._ENVIRONMENT = "test"  # allow bypass
-
-    from src.gateway.server.governance_middleware import governance_app
-
-    client = TestClient(governance_app, raise_server_exceptions=False)
-
-    yield client
-
-    mw._CAGE_SEAL_SECRET = original_secret
-    mw._ENVIRONMENT = original_env
+    return TestClient(governance_app, raise_server_exceptions=False)
 
 
 # ===========================================================================
@@ -249,15 +167,14 @@ def no_secret_client(mock_symbolic_governor, mock_kms_signer):
 class TestGovernanceCheckEndpoint:
     """Tests for POST /check on governance_app."""
 
-    def test_check_happy_path_approved(self, enforce_client, mock_symbolic_governor):
-        """Valid request with correct seal returns 200 APPROVED when no violations."""
+    def test_check_happy_path_approved(self, gov_client, mock_symbolic_governor):
+        """Valid request returns 200 APPROVED when no violations."""
         body = _json_body("execute_trade", {"amount": 100})
-        seal = _make_seal(_TEST_SECRET, body)
 
-        resp = enforce_client.post(
+        resp = gov_client.post(
             "/check",
             content=body,
-            headers={"Content-Type": "application/json", "X-CAGE-Routing-Seal": seal},
+            headers={"Content-Type": "application/json"},
         )
 
         assert resp.status_code == 200
@@ -269,7 +186,7 @@ class TestGovernanceCheckEndpoint:
         )
 
     def test_check_returns_rejected_when_violations_present(
-        self, enforce_client, mock_symbolic_governor
+        self, gov_client, mock_symbolic_governor
     ):
         """When governor.verify() returns violations, status is REJECTED."""
         from src.gateway.governance.contracts import Violation, ViolationKind
@@ -288,12 +205,11 @@ class TestGovernanceCheckEndpoint:
             }
         )
         body = _json_body("execute_trade", {"amount": 999999})
-        seal = _make_seal(_TEST_SECRET, body)
 
-        resp = enforce_client.post(
+        resp = gov_client.post(
             "/check",
             content=body,
-            headers={"Content-Type": "application/json", "X-CAGE-Routing-Seal": seal},
+            headers={"Content-Type": "application/json"},
         )
 
         assert resp.status_code == 200
@@ -301,96 +217,30 @@ class TestGovernanceCheckEndpoint:
         assert data["status"] == "REJECTED"
         assert [v["code"] for v in data["violations"]] == ["drawdown_limit_exceeded"]
 
-    def test_check_missing_tool_name_returns_400(self, enforce_client):
+    def test_check_missing_tool_name_returns_400(self, gov_client):
         """Body without tool_name returns HTTP 400."""
         body = json.dumps({"params": {"amount": 100}}).encode()
-        seal = _make_seal(_TEST_SECRET, body)
 
-        resp = enforce_client.post(
+        resp = gov_client.post(
             "/check",
             content=body,
-            headers={"Content-Type": "application/json", "X-CAGE-Routing-Seal": seal},
+            headers={"Content-Type": "application/json"},
         )
 
         assert resp.status_code == 400
         assert "tool_name" in resp.text.lower() or resp.status_code == 400
 
-    def test_check_invalid_json_returns_400(self, enforce_client):
+    def test_check_invalid_json_returns_400(self, gov_client):
         """Malformed JSON body returns HTTP 400."""
         body = b"not-valid-json"
-        seal = _make_seal(_TEST_SECRET, body)
 
-        resp = enforce_client.post(
+        resp = gov_client.post(
             "/check",
             content=body,
-            headers={"Content-Type": "application/json", "X-CAGE-Routing-Seal": seal},
+            headers={"Content-Type": "application/json"},
         )
 
         assert resp.status_code == 400
-
-    def test_check_invalid_seal_enforce_mode_returns_403(self, enforce_client):
-        """In enforce mode, a wrong seal returns HTTP 403."""
-        body = _json_body("execute_trade")
-
-        resp = enforce_client.post(
-            "/check",
-            content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-CAGE-Routing-Seal": "deadbeef" * 8,  # wrong seal
-            },
-        )
-
-        assert resp.status_code == 403
-        data = resp.json()
-        assert data["detail"]["error"] == "invalid_routing_seal"
-
-    def test_check_missing_seal_enforce_mode_returns_403(self, enforce_client):
-        """In enforce mode, a missing seal header returns HTTP 403."""
-        body = _json_body("execute_trade")
-
-        resp = enforce_client.post(
-            "/check",
-            content=body,
-            headers={"Content-Type": "application/json"},
-        )
-
-        assert resp.status_code == 403
-
-    def test_check_invalid_seal_log_mode_passes_through(
-        self, log_client, mock_symbolic_governor
-    ):
-        """In log mode, an invalid seal is logged but the request is allowed through."""
-        body = _json_body("execute_trade")
-
-        resp = log_client.post(
-            "/check",
-            content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-CAGE-Routing-Seal": "wrong-seal-value",
-            },
-        )
-
-        # Should reach the governor, not be blocked at 403
-        assert resp.status_code == 200
-        mock_symbolic_governor.verify.assert_awaited_once()
-
-    def test_check_no_secret_dev_mode_bypasses_seal(
-        self, no_secret_client, mock_symbolic_governor
-    ):
-        """When CAGE_ROUTING_SEAL_SECRET is absent in test env, seal check is bypassed."""
-        body = _json_body("execute_trade")
-
-        resp = no_secret_client.post(
-            "/check",
-            content=body,
-            headers={"Content-Type": "application/json"},
-            # No seal header — should be bypassed in test/dev mode
-        )
-
-        assert resp.status_code == 200
-        mock_symbolic_governor.verify.assert_awaited_once()
 
 
 # ===========================================================================
@@ -403,23 +253,9 @@ class TestValidateActionEndpoint:
 
     @pytest.fixture()
     def client(self, mock_symbolic_governor, mock_kms_signer):
-        """Plain TestClient with seal enforcement disabled for /validate-action tests."""
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_env = mw._ENVIRONMENT
-
-        mw._CAGE_SEAL_SECRET = None
-        mw._ENVIRONMENT = "test"  # allow bypass
-
         from src.gateway.server.governance_middleware import governance_app
 
-        client = TestClient(governance_app, raise_server_exceptions=False)
-
-        yield client
-
-        mw._CAGE_SEAL_SECRET = original_secret
-        mw._ENVIRONMENT = original_env
+        return TestClient(governance_app, raise_server_exceptions=False)
 
     def test_validate_action_happy_path_approved(self, client, mock_symbolic_governor):
         """Valid action returns 200 with APPROVED verdict in canonical envelope."""
@@ -586,15 +422,9 @@ class TestRevalidatePostHitlEndpoint:
 
     @pytest.fixture()
     def client(self, mock_symbolic_governor, mock_kms_signer):
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret, original_env = mw._CAGE_SEAL_SECRET, mw._ENVIRONMENT
-        mw._CAGE_SEAL_SECRET = None
-        mw._ENVIRONMENT = "test"  # allow bypass
         from src.gateway.server.governance_middleware import governance_app
 
-        yield TestClient(governance_app, raise_server_exceptions=False)
-        mw._CAGE_SEAL_SECRET, mw._ENVIRONMENT = original_secret, original_env
+        return TestClient(governance_app, raise_server_exceptions=False)
 
     def test_approved_returns_verdict_and_no_seal(self, client, mock_symbolic_governor):
         """APPROVED returns a verdict only; the seal never leaves the gateway."""
@@ -656,166 +486,9 @@ class TestRevalidatePostHitlEndpoint:
         assert resp.status_code in (422, 500)
         mock_symbolic_governor.revalidate_post_hitl.assert_not_awaited()
 
-    def test_missing_ingress_seal_is_rejected_before_evaluation(
-        self, enforce_client, mock_symbolic_governor
-    ):
-        """Same ingress guard as /validate-action: no seal header, no evaluation."""
-        mock_symbolic_governor.revalidate_post_hitl = AsyncMock()
-        resp = enforce_client.post(
-            "/revalidate-post-hitl", json={"action": "execute_trade", "params": {}}
-        )
-        assert resp.status_code == 403
-        mock_symbolic_governor.revalidate_post_hitl.assert_not_awaited()
-
 
 # ===========================================================================
-# D. enforce_routing_seal() / _verify_routing_seal() unit tests
-# ===========================================================================
-
-
-class TestRoutingSealEnforcement:
-    """Unit tests for enforce_routing_seal() and _verify_routing_seal()."""
-
-    def _make_request(self, path: str = "/check", headers: dict | None = None):
-        """Build a minimal mock Request object."""
-        from starlette.requests import Request
-
-        scope = {
-            "type": "http",
-            "method": "POST",
-            "path": path,
-            "query_string": b"",
-            "headers": [
-                (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
-            ],
-        }
-        return Request(scope)
-
-    def test_verify_routing_seal_valid_hmac_returns_true(self):
-        """A correctly computed HMAC seal returns True."""
-        import src.gateway.server.governance_middleware as mw
-
-        original = mw._CAGE_SEAL_SECRET
-        mw._CAGE_SEAL_SECRET = _TEST_SECRET
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            seal = _make_seal(_TEST_SECRET, body)
-            req = self._make_request(headers={"X-CAGE-Routing-Seal": seal})
-            result = mw._verify_routing_seal(req, body)
-            assert result is True
-        finally:
-            mw._CAGE_SEAL_SECRET = original
-
-    def test_verify_routing_seal_wrong_hmac_returns_false(self):
-        """A wrong HMAC seal returns False."""
-        import src.gateway.server.governance_middleware as mw
-
-        original = mw._CAGE_SEAL_SECRET
-        mw._CAGE_SEAL_SECRET = _TEST_SECRET
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            req = self._make_request(headers={"X-CAGE-Routing-Seal": "wrong" * 12})
-            result = mw._verify_routing_seal(req, body)
-            assert result is False
-        finally:
-            mw._CAGE_SEAL_SECRET = original
-
-    def test_verify_routing_seal_missing_header_returns_false(self):
-        """A missing X-CAGE-Routing-Seal header returns False."""
-        import src.gateway.server.governance_middleware as mw
-
-        original = mw._CAGE_SEAL_SECRET
-        mw._CAGE_SEAL_SECRET = _TEST_SECRET
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            req = self._make_request()  # no seal header
-            result = mw._verify_routing_seal(req, body)
-            assert result is False
-        finally:
-            mw._CAGE_SEAL_SECRET = original
-
-    def test_verify_routing_seal_no_secret_test_env_returns_true(self):
-        """When CAGE_ROUTING_SEAL_SECRET is absent in test env, verification is bypassed (True)."""
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_env = mw._ENVIRONMENT
-        mw._CAGE_SEAL_SECRET = None
-        mw._ENVIRONMENT = "test"
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            req = self._make_request()
-            result = mw._verify_routing_seal(req, body)
-            assert result is True
-        finally:
-            mw._CAGE_SEAL_SECRET = original_secret
-            mw._ENVIRONMENT = original_env
-
-    def test_enforce_routing_seal_enforce_mode_raises_403_on_bad_seal(self):
-        """enforce_routing_seal() raises HTTPException(403) in enforce mode for bad seal."""
-        from fastapi import HTTPException
-
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_enforcement = mw._SEAL_ENFORCEMENT
-        mw._CAGE_SEAL_SECRET = _TEST_SECRET
-        mw._SEAL_ENFORCEMENT = "enforce"
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            req = self._make_request(headers={"X-CAGE-Routing-Seal": "bad-seal"})
-            with pytest.raises(HTTPException) as exc_info:
-                mw.enforce_routing_seal(req, body)
-            assert exc_info.value.status_code == 403
-            assert exc_info.value.detail["error"] == "invalid_routing_seal"
-        finally:
-            mw._CAGE_SEAL_SECRET = original_secret
-            mw._SEAL_ENFORCEMENT = original_enforcement
-
-    def test_enforce_routing_seal_log_mode_does_not_raise_on_bad_seal(self, caplog):
-        """enforce_routing_seal() in log mode logs but does NOT raise for bad seal."""
-        import logging
-
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_enforcement = mw._SEAL_ENFORCEMENT
-        mw._CAGE_SEAL_SECRET = _TEST_SECRET
-        mw._SEAL_ENFORCEMENT = "log"
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            req = self._make_request(headers={"X-CAGE-Routing-Seal": "bad-seal"})
-            with caplog.at_level(
-                logging.WARNING, logger="Gateway.GovernanceMiddleware"
-            ):
-                # Must NOT raise
-                mw.enforce_routing_seal(req, body)
-            assert any("enforcement=log" in r.message for r in caplog.records)
-        finally:
-            mw._CAGE_SEAL_SECRET = original_secret
-            mw._SEAL_ENFORCEMENT = original_enforcement
-
-    def test_enforce_routing_seal_valid_seal_does_not_raise(self):
-        """enforce_routing_seal() with a valid seal returns None (no exception)."""
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_enforcement = mw._SEAL_ENFORCEMENT
-        mw._CAGE_SEAL_SECRET = _TEST_SECRET
-        mw._SEAL_ENFORCEMENT = "enforce"
-        try:
-            body = b'{"tool_name":"execute_trade","params":{}}'
-            seal = _make_seal(_TEST_SECRET, body)
-            req = self._make_request(headers={"X-CAGE-Routing-Seal": seal})
-            result = mw.enforce_routing_seal(req, body)
-            assert result is None
-        finally:
-            mw._CAGE_SEAL_SECRET = original_secret
-            mw._SEAL_ENFORCEMENT = original_enforcement
-
-
-# ===========================================================================
-# E. _emit_refusal_receipt() unit tests
+# D. _emit_refusal_receipt() unit tests
 # ===========================================================================
 
 
@@ -917,54 +590,12 @@ class TestEmitRefusalReceipt:
 
 
 # ===========================================================================
-# F. Startup validation tests
+# E. Module exports
 # ===========================================================================
 
 
-class TestStartupValidation:
-    """Tests for module-level CAGE_ROUTING_SEAL_SECRET startup guard (POAM-012)."""
-
-    def test_missing_secret_raises_in_production_env(self):
-        """RuntimeError is raised at import time when secret is absent in production."""
-        # We cannot safely re-import the module in the same process (it would
-        # affect the already-imported module state).  Instead we verify the guard
-        # logic directly by calling the equivalent condition.
-        #
-        # The guard in governance_middleware.py is:
-        #   if not _CAGE_SEAL_SECRET:
-        #       if _ENVIRONMENT not in ("development", "test"):
-        #           raise RuntimeError(...)
-        #
-        # We replicate that logic here to confirm the condition is correct.
-        secret = None
-        environment = "production"
-        with pytest.raises(RuntimeError, match="CAGE_ROUTING_SEAL_SECRET must be set"):
-            if not secret:
-                if environment not in ("development", "test"):
-                    raise RuntimeError(
-                        "CAGE_ROUTING_SEAL_SECRET must be set in non-development environments (POAM-012). "
-                        "Generate a cryptographically random secret of at least 32 characters and export it "
-                        "as CAGE_ROUTING_SEAL_SECRET."
-                    )
-
-    def test_short_secret_raises_runtime_error(self):
-        """RuntimeError is raised when CAGE_ROUTING_SEAL_SECRET is shorter than 32 chars."""
-        short_secret = "tooshort"  # < 32 chars
-        _HMAC_MIN_LENGTH = 32
-        with pytest.raises(RuntimeError, match="minimum of"):
-            if len(short_secret) < _HMAC_MIN_LENGTH:
-                raise RuntimeError(
-                    f"CAGE_ROUTING_SEAL_SECRET is set but is only {len(short_secret)} characters long. "
-                    f"A minimum of {_HMAC_MIN_LENGTH} characters is required for HMAC-SHA256 security (POAM-012)."
-                )
-
-    def test_missing_secret_in_test_env_does_not_raise(self):
-        """In test/development environments, missing secret logs a warning but does not raise."""
-        # This is validated by the fact that the module imports successfully
-        # in the test suite (CAGE_ENV=test is set at the top of this file).
-        import src.gateway.server.governance_middleware as mw
-
-        assert mw is not None  # module imported without RuntimeError
+class TestModuleExports:
+    """The module imports cleanly and exposes the governance sub-app."""
 
     def test_module_exports_governance_app(self):
         """governance_app FastAPI instance is exported from the module."""
@@ -973,12 +604,6 @@ class TestStartupValidation:
         from src.gateway.server.governance_middleware import governance_app
 
         assert isinstance(governance_app, FastAPI)
-
-    def test_module_exports_enforce_routing_seal(self):
-        """enforce_routing_seal() is exported from the module."""
-        from src.gateway.server.governance_middleware import enforce_routing_seal
-
-        assert callable(enforce_routing_seal)
 
 
 # ===========================================================================
@@ -1062,20 +687,10 @@ class TestGovernanceAppRoutes:
 
     def test_check_route_exists(self, client):
         """POST /check route is registered (returns something other than 404)."""
-        # Send a request without a seal — in test env with no secret it bypasses,
-        # but we just want to confirm the route exists (not 404).
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        mw._CAGE_SEAL_SECRET = None
-        mw._ENVIRONMENT = "test"
-        try:
-            resp = client.post(
-                "/check", json={"tool_name": "check_market_status", "params": {}}
-            )
-            assert resp.status_code != 404
-        finally:
-            mw._CAGE_SEAL_SECRET = original_secret
+        resp = client.post(
+            "/check", json={"tool_name": "check_market_status", "params": {}}
+        )
+        assert resp.status_code != 404
 
     def test_validate_action_route_exists(self, client):
         """POST /validate-action route is registered (returns something other than 404)."""
@@ -1102,23 +717,9 @@ class TestFlowSignalHttp202Receipt:
 
     @pytest.fixture()
     def client_for_flowsignal(self, mock_kms_signer):
-        """TestClient with seal enforcement disabled for FlowSignal tests."""
-        import src.gateway.server.governance_middleware as mw
-
-        original_secret = mw._CAGE_SEAL_SECRET
-        original_env = mw._ENVIRONMENT
-
-        mw._CAGE_SEAL_SECRET = None
-        mw._ENVIRONMENT = "test"  # allow bypass
-
         from src.gateway.server.governance_middleware import governance_app
 
-        client = TestClient(governance_app, raise_server_exceptions=False)
-
-        yield client
-
-        mw._CAGE_SEAL_SECRET = original_secret
-        mw._ENVIRONMENT = original_env
+        return TestClient(governance_app, raise_server_exceptions=False)
 
     def test_flowsignal_escalation_returns_http_202(
         self, client_for_flowsignal, mock_kms_signer

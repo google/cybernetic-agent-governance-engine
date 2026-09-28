@@ -13,6 +13,11 @@
 # limitations under the License.
 
 # -----------------------------------------------------------------------------
+# Requires the Linkerd control plane and CRDs. Terraform installs them
+# (infra/modules/service_mesh, trust anchor in Google CAS); nothing in
+# deployment/k8s/ does. The identity strings below are the l5d-client-id
+# format: <sa>.<namespace>.serviceaccount.identity.linkerd.cluster.local.
+#
 # Workload ServiceAccounts (cage-gateway-sa, cage-compliance-bridge-sa, ...)
 # are defined once, with their Workload Identity annotations, in
 # deployment/k8s/service-account.yaml (POAM-2026-079). The gateway and the
@@ -66,9 +71,9 @@ metadata:
 # that satisfy an attached AuthorizationPolicy are permitted; all others are
 # dropped at the proxy level before reaching the application port.
 #
-# API: policy.linkerd.io/v1beta2 (Linkerd 2.12+)
+# API: policy.linkerd.io/v1beta3 (storage version in Linkerd edge-26.9.3)
 # =============================================================================
-apiVersion: policy.linkerd.io/v1beta2
+apiVersion: policy.linkerd.io/v1beta3
 kind: Server
 metadata:
   name: opa-server-8181
@@ -94,7 +99,7 @@ spec:
 # =============================================================================
 # LINKERD SERVER — NeMo Guardrails (port 8000)
 # =============================================================================
-apiVersion: policy.linkerd.io/v1beta2
+apiVersion: policy.linkerd.io/v1beta3
 kind: Server
 metadata:
   name: nemo-server-8000
@@ -176,9 +181,9 @@ spec:
 # This is the cryptographic enforcement of the Zero-Trust "never trust,
 # always verify" principle at the transport layer.
 #
-# API: policy.linkerd.io/v1beta2
+# API: policy.linkerd.io/v1alpha1 (the only served AuthorizationPolicy version)
 # =============================================================================
-apiVersion: policy.linkerd.io/v1beta2
+apiVersion: policy.linkerd.io/v1alpha1
 kind: AuthorizationPolicy
 metadata:
   name: authorize-gateway-to-opa
@@ -206,7 +211,7 @@ spec:
 # =============================================================================
 # LINKERD AUTHORIZATION POLICY — Authorize gateway → NeMo
 # =============================================================================
-apiVersion: policy.linkerd.io/v1beta2
+apiVersion: policy.linkerd.io/v1alpha1
 kind: AuthorizationPolicy
 metadata:
   name: authorize-gateway-to-nemo
@@ -230,24 +235,159 @@ spec:
 
 ---
 # =============================================================================
-# LINKERD SERVER AUTHORIZATION (legacy v1beta1 fallback)
+# GATEWAY (port 8080) — deny by default (POAM-2026-080)
 #
-# If running Linkerd < 2.12, use ServerAuthorization instead of the
-# AuthorizationPolicy + MeshTLSAuthentication split. Both cannot coexist;
-# remove this block if using the v1beta2 resources above.
-#
-# Uncomment ONLY if using Linkerd < 2.12:
+# Mirrors infra/modules/gateway/mesh-policy (the Terraform path). Once a
+# Server has HTTPRoutes, Linkerd refuses requests that match no route, and a
+# route without an AuthorizationPolicy admits nobody:
+#   gateway-open   exact open paths + GET pause state → any client (probes, scrapers, JWKS readers)
+#   gateway-gated  PathPrefix "/" (everything else)   → cage-advisor-sa only
+# The gateway repeats this check on l5d-client-id (WorkloadIdentityMiddleware,
+# CAGE_TRUSTED_CLIENT_IDENTITIES in gateway.yaml), so deleting these objects
+# does not open it. tests/test_gateway_mesh_policy.py keeps the open paths in
+# sync with src/gateway/server/workload_identity.py.
 # =============================================================================
-# apiVersion: policy.linkerd.io/v1beta1
-# kind: ServerAuthorization
-# metadata:
-#   name: gateway-to-opa-legacy
-#   namespace: governance-stack
-# spec:
-#   server:
-#     name: opa-server-8181
-#   client:
-#     meshTLS:
-#       serviceAccounts:
-#         - name: cage-gateway-sa
-#         - name: cage-compliance-bridge-sa
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: gateway-http
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,IA-9,AC-3,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    cage.io/poam: "POAM-2026-080"
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  port: http
+
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: gateway-open
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: gateway-http
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: "/health"
+        - path:
+            type: Exact
+            value: "/healthz"
+        - path:
+            type: Exact
+            value: "/metrics"
+        - path:
+            type: Exact
+            value: "/governance/jwks"
+        - path:
+            type: Exact
+            value: "/governance/.well-known/jwks.json"
+        - path:
+            type: PathPrefix
+            value: "/v1/pause/"
+          method: GET
+
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: gateway-gated
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: gateway-http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: "/"
+
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata:
+  name: gateway-any-network
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+spec:
+  networks:
+    - cidr: 0.0.0.0/0
+    - cidr: ::/0
+
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: gateway-open
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: gateway-open
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: gateway-any-network
+
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: gateway-trusted-clients
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+spec:
+  identities:
+    # The advisor is the only client of the gated routes. The gateway does
+    # not call itself, so its own identity is deliberately absent.
+    - "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: gateway-gated
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,IA-9,AC-3,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    cage.io/poam: "POAM-2026-080"
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: gateway-gated
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: gateway-trusted-clients

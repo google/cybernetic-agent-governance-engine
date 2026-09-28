@@ -47,7 +47,7 @@ Architecture
                                 ALLOW       DENY  REQUIRE_APPROVAL          DEFER
                                   │           │        │                     │
                            OkHttpResponse  403 Denied  202 REQUIRE_APPROVAL  202 DEFER
-                           + routing seal  + violation + thread_id           + defer_id
+                                           + violation + thread_id           + defer_id
                                                        (human sign-off)      (data-hydration)
 
 GCP Adaptation (optional deployment configuration)
@@ -354,31 +354,18 @@ def parse_jsonrpc_body(body: str | bytes) -> tuple[str, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _build_ok_response(routing_seal: str) -> dict[str, Any]:
-    """Build an OkHttpResponse dict with the CAGE routing seal header.
+def _build_ok_response() -> dict[str, Any]:
+    """Build an OkHttpResponse dict for an ALLOW verdict.
 
-    The routing seal is injected as ``x-cage-routing-seal`` so the downstream
-    MCP tool server can verify it via ``enforce_routing_seal()``.
-
-    Args:
-        routing_seal: HMAC-SHA256 routing seal string from validate_action().
+    No governance material is forwarded upstream in headers. The governor's
+    routing seal never leaves the gateway, and the gateway authenticates its
+    callers by mesh workload identity (POAM-2026-080), not by a header this
+    adapter could inject.
 
     Returns:
-        Dict representation of OkHttpResponse with headers list.
+        Dict representation of OkHttpResponse with an empty headers list.
     """
-    return {
-        "ok_response": {
-            "headers": [
-                {
-                    "header": {
-                        "key": "x-cage-routing-seal",
-                        "value": routing_seal,
-                    },
-                    "append": False,
-                }
-            ]
-        }
-    }
+    return {"ok_response": {"headers": []}}
 
 
 def _build_denied_response(
@@ -419,16 +406,17 @@ async def _build_narrow_response(
 
     NARROW decisions return HTTP 200 OK (action is allowed but with modified
     parameters). The response includes:
-      - x-cage-routing-seal header (attests to narrowed params)
       - X-Governance-Narrowed: true header (signals param modification)
 
     **Phase 3.2 — Receipt-Based Transport (CAGE-SEC-004)**
 
-    The narrowed parameters are stored in Redis keyed by the routing seal
-    prefix (fetch-and-burn pattern):
+    The narrowed parameters are stored in Redis keyed by the governor's
+    routing seal prefix (fetch-and-burn pattern). The seal itself is not
+    forwarded in any response header:
 
       1. Store narrowed params in Redis using seal prefix as key
-      2. MCP server uses seal to look up and burn the receipt before execution
+      2. The tool provider holding the same governor seal looks up and burns
+         the receipt before execution
       3. 5min TTL prevents receipt leakage
 
     This solves the architectural gap where the Envoy OkHttpResponse proto
@@ -436,7 +424,8 @@ async def _build_narrow_response(
     server.
 
     Args:
-        routing_seal: HMAC-SHA256 routing seal for the narrowed parameters.
+        routing_seal: Governor routing seal for the narrowed parameters
+                      (used only as the receipt key and signature binding).
         body:         JSON-serialisable response body dict containing original
                       and narrowed parameters.
 
@@ -458,7 +447,7 @@ async def _build_narrow_response(
     narrowed_params = body.get("narrowed_params", {})
 
     # Generate receipt key from seal (first 32 hex chars = 128 bits)
-    # This allows MCP server to look up receipt using the seal it receives
+    # so the tool provider holding the same seal can look up the receipt
     seal_prefix = routing_seal[:32] if len(routing_seal) >= 32 else routing_seal
     receipt_key = f"narrow:receipt:{seal_prefix}"
 
@@ -491,17 +480,10 @@ async def _build_narrow_response(
         )
         raise RuntimeError(f"Failed to store NARROW receipt: {exc}") from exc
 
-    # Return headers with body and Redis receipt for downstream tools
+    # Return headers with body; narrowed params travel via the Redis receipt
     return {
         "ok_response": {
             "headers": [
-                {
-                    "header": {
-                        "key": "x-cage-routing-seal",
-                        "value": routing_seal,
-                    },
-                    "append": False,
-                },
                 {
                     "header": {
                         "key": "X-Governance-Narrowed",
@@ -592,9 +574,9 @@ async def handle_check_request(
     Decision table (canonical GovernanceDecision vocabulary):
       - Parse error          → DeniedHttpResponse(403) fail-closed
       - Body > 64KB          → DeniedHttpResponse(403) fail-closed
-      - ALLOW                → OkHttpResponse + x-cage-routing-seal header
+      - ALLOW                → OkHttpResponse (no governance headers)
       - DENY                 → DeniedHttpResponse(403) + violation JSON
-      - NARROW               → OkHttpResponse(200) + x-cage-routing-seal + X-Governance-Narrowed
+      - NARROW               → OkHttpResponse(200) + X-Governance-Narrowed
                                Action allowed with constrained parameters. Client proceeds with
                                narrowed_params. Feature flag: CAGE_NARROW_ENABLED (default: false)
       - PAUSE                → DeniedHttpResponse(503) + Retry-After header + {verdict: PAUSE,
@@ -677,7 +659,6 @@ async def handle_check_request(
 
         verdict: str = result.get("verdict", GovernanceDecision.DENY)
         violations: list[str] = result.get("violations", [])
-        seal: str = result.get("seal", "")
         thread_id: str = result.get("thread_id", "")
         defer_id: str = result.get("defer_id", "")
         missing_input_reason: str = result.get("missing_input_reason", "")
@@ -697,7 +678,7 @@ async def handle_check_request(
                 tool_name,
                 caller_principal,
             )
-            return _build_ok_response(seal)
+            return _build_ok_response()
 
         if verdict == GovernanceDecision.REQUIRE_APPROVAL:
             logger.info(
@@ -1135,14 +1116,11 @@ class CAGEAuthorizationServicer:
             # The peer principal is set by the service mesh from the SPIFFE ID
             # in the client certificate's SAN field.
             # Validate it's a proper SPIFFE URI and fail closed if missing.
-            from src.gateway.governance.spiffe_extractor import (
-                extract_spiffe_uri_from_grpc_context,
-            )
-
             try:
-                caller_principal = extract_spiffe_uri_from_grpc_context(
-                    request.attributes
-                )
+                source = getattr(request.attributes, "source", None)
+                caller_principal = getattr(source, "principal", "") if source else ""
+                if not isinstance(caller_principal, str) or not caller_principal.startswith("spiffe://"):
+                    raise ValueError("Missing or invalid peer principal")
             except Exception as spiffe_exc:
                 logger.error(
                     "AgentGatewayAdapter: SPIFFE extraction failed: %s — fail-closed",

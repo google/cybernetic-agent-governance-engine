@@ -75,8 +75,8 @@ spec:
               value: "${GUARDRAILS_MODEL_NAME}"
             - name: SERVICE_NAME
               value: "hybrid-gateway"
-            # Dev-mode bypass: disables CAGE_ROUTING_SEAL_SECRET enforcement (POAM-012)
-            # In production, set CAGE_ENV=production and provide a 32+ char secret.
+            # Dev posture: with CAGE_TRUSTED_CLIENT_IDENTITIES unset the ingress
+            # identity check is off (POAM-2026-080). Any other posture requires it.
             - name: CAGE_DOMAIN  # exactly one domain per process
               value: "${CAGE_DOMAIN:-finance}"
             - name: CAGE_ENV

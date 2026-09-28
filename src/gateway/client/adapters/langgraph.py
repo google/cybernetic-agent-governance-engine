@@ -51,7 +51,6 @@ Usage:
     # Initialize client (typically once at app startup)
     cage_client = CageClient(
         gateway_url="https://cage-gateway.example.com",
-        routing_seal_secret="shared-secret"
     )
 
     # Decorate LangGraph node functions

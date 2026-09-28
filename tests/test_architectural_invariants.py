@@ -22,6 +22,7 @@ Invariant Categories:
   1. AST Seam Isolation — enforce call-graph boundaries
   2. Runtime Traversal — verify execution paths with spies
   3. Wire Protocol — validate transport-level contracts
+  4. Ingress Authentication — mesh workload identity, no shared secret
 
 Test Selection Markers: pytest.mark.unit, pytest.mark.local
 """
@@ -362,19 +363,8 @@ async def test_validate_action_returns_canonical_envelope(monkeypatch):
         },
     }
 
-    import hashlib
-    import hmac
-    import os
-
-    from src.gateway.server.governance_middleware import _CAGE_SEAL_SECRET, _SEAL_HEADER
-
     body_bytes = json.dumps(request_body).encode()
     headers = {"Content-Type": "application/json", "x-forwarded-for": "127.0.0.1"}
-    seal_secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET") or _CAGE_SEAL_SECRET
-    if seal_secret:
-        headers[_SEAL_HEADER] = hmac.new(
-            seal_secret.encode(), body_bytes, hashlib.sha256
-        ).hexdigest()
 
     # Store a mock governor on the app (as the lifespan would) returning ALLOW
     from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -437,3 +427,74 @@ async def test_validate_action_returns_canonical_envelope(monkeypatch):
     assert body["payload"]["verdict"] == "APPROVED", (
         f"Expected APPROVED, got {body['payload']['verdict']}"
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Invariant 6: Ingress Authentication — Mesh Workload Identity (POAM-2026-080)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_HYBRID_SERVER = _REPO_ROOT / "src" / "gateway" / "server" / "hybrid_server.py"
+
+
+def _root_app_middleware_calls() -> list[ast.Call]:
+    """Return every ``root_app.add_middleware(...)`` call in hybrid_server.py, in order."""
+    tree = ast.parse(_HYBRID_SERVER.read_text())
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_middleware"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "root_app"
+    ]
+    return sorted(calls, key=lambda c: c.lineno)
+
+
+def test_root_app_installs_workload_identity_middleware_outermost():
+    """
+    The gateway root app authenticates every caller by mesh workload identity.
+
+    Architectural Invariant:
+        ``WorkloadIdentityMiddleware`` is installed on ``root_app`` and is the
+        last ``add_middleware`` call, so Starlette runs it first — ahead of
+        every other middleware and every mounted sub-app (governance, MCP,
+        inference). Removing or reordering it re-opens the ingress.
+    """
+    calls = _root_app_middleware_calls()
+    names = [c.args[0].id for c in calls if c.args and isinstance(c.args[0], ast.Name)]
+
+    assert "WorkloadIdentityMiddleware" in names, (
+        "root_app must install WorkloadIdentityMiddleware (POAM-2026-080)"
+    )
+    assert names[-1] == "WorkloadIdentityMiddleware", (
+        "WorkloadIdentityMiddleware must be the last add_middleware call on "
+        f"root_app so it runs first; order is {names}"
+    )
+
+
+def test_root_app_workload_identity_middleware_is_live():
+    """The imported root app carries WorkloadIdentityMiddleware at runtime."""
+    from src.gateway.server.hybrid_server import root_app
+    from src.gateway.server.workload_identity import WorkloadIdentityMiddleware
+
+    assert any(m.cls is WorkloadIdentityMiddleware for m in root_app.user_middleware)
+
+
+def test_hmac_ingress_seal_is_gone_from_src():
+    """
+    The shared-secret HMAC ingress check stays deleted.
+
+    Architectural Invariant:
+        Caller authentication is mesh workload identity only. No module under
+        ``src/`` may define or call ``enforce_routing_seal`` (the removed
+        ``X-CAGE-Routing-Seal`` HMAC check), so a shared-secret ingress path
+        cannot silently return alongside the identity check.
+    """
+    offenders = [
+        str(path.relative_to(_REPO_ROOT))
+        for path in (_REPO_ROOT / "src").rglob("*.py")
+        if "enforce_routing_seal" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], f"enforce_routing_seal must not exist in src/: {offenders}"

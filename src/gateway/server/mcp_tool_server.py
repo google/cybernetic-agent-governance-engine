@@ -60,9 +60,6 @@ from src.gateway.governance.schemas.thresholds import load_and_validate_threshol
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
 from src.gateway.server.app_state import governor_of
-from src.gateway.server.governance_middleware import (
-    enforce_routing_seal,
-)
 from src.gateway.tracing_setup import setup_tracing
 
 logger = logging.getLogger("Gateway.MCPToolServer")
@@ -455,7 +452,11 @@ class ToolExecutionRequest(BaseModel):
 
 @app.post("/tools/execute")
 async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Request):  # type: ignore[no-untyped-def]
-    """Execute a named tool via HTTP.  Requires X-CAGE-Routing-Seal."""
+    """Execute a named tool via HTTP.
+
+    The caller is authenticated by mesh workload identity before this handler
+    runs (WorkloadIdentityMiddleware on the gateway root app, POAM-2026-080).
+    """
     # M-20: Per-client rate limiting (sliding window)
     client_ip: str = request.client.host if request.client else "unknown"
     if not await _check_rate_limit(client_ip):
@@ -467,9 +468,6 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 f"per {_RATE_LIMIT_WINDOW_SECONDS}s per client."
             ),
         )
-
-    body_bytes = await request.body()
-    enforce_routing_seal(request, body_bytes)
 
     # Reconstruct the tool map by calling the registered tools from the MCP server
     tool_map: dict[str, Any] = {

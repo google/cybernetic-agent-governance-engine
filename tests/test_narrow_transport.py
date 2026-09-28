@@ -25,7 +25,7 @@ cannot reach mcp_tool_server.py through Envoy ext_authz protocol.
 
 **Fix**: Receipt-based transport using Redis fetch-and-burn pattern:
   1. Gateway adapter stores narrowed params in Redis keyed by seal prefix
-  2. MCP server uses seal to look up and delete receipt before execution
+  2. The tool provider uses the governor seal to look up and delete the receipt
   3. 5-minute TTL prevents receipt leakage
   4. Signature verification prevents receipt forgery
 
@@ -86,13 +86,13 @@ async def test_narrow_verdict_generates_receipt():
     assert payload["clamp_reason"] == "amount clamped to max threshold"
     assert payload["constraints_applied"] == ["amount clamped: 100.0 → 50.0"]
 
-    # Verify response structure
+    # Verify response structure: the narrowed marker is set and the governor
+    # seal is not forwarded in any response header (POAM-2026-080).
     assert "ok_response" in response
     headers = response["ok_response"]["headers"]
-    seal_header = next(
-        h for h in headers if h["header"]["key"] == "x-cage-routing-seal"
-    )
-    assert seal_header["header"]["value"] == seal
+    header_map = {h["header"]["key"]: h["header"]["value"] for h in headers}
+    assert header_map["X-Governance-Narrowed"] == "true"
+    assert seal not in header_map.values()
 
 
 @pytest.mark.unit

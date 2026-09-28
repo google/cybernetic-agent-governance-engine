@@ -55,6 +55,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from src.gateway.server.governance_middleware import governance_app
 from src.gateway.server.inference_proxy import inference_app
 from src.gateway.server.mcp_tool_server import app as mcp_app
+from src.gateway.server.workload_identity import (
+    WorkloadIdentityMiddleware,
+    load_identity_policy,
+)
 from src.gateway.tracing_setup import setup_tracing
 
 logger = logging.getLogger("Gateway.HybridServer")
@@ -294,6 +298,13 @@ root_app = FastAPI(
 
 # M-16: Block /debug/* in non-dev environments
 root_app.add_middleware(_DebugEndpointGuard)
+
+# POAM-2026-080: deny by default. Every path except the open list in
+# workload_identity.py requires a trusted Linkerd workload identity
+# (l5d-client-id). Added last so it runs first, ahead of every mounted app.
+# load_identity_policy() raises at import without CAGE_TRUSTED_CLIENT_IDENTITIES,
+# so the gateway cannot start unprotected in any environment.
+root_app.add_middleware(WorkloadIdentityMiddleware, policy=load_identity_policy())
 
 
 @root_app.get("/healthz")

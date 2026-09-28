@@ -22,7 +22,7 @@ and receive cryptographically signed decisions.
 
 from .adapters.langgraph import cage_guard
 from .core import CageClient
-from .crypto import generate_w3c_traceparent, verify_routing_seal
+from .crypto import generate_w3c_traceparent
 from .envelope import ExecutionGrant, GovernanceEnvelope
 from .exceptions import (
     CageGatewayError,
@@ -43,5 +43,4 @@ __all__ = [
     "cage_guard",
     "create_mtls_transport",
     "generate_w3c_traceparent",
-    "verify_routing_seal",
 ]
