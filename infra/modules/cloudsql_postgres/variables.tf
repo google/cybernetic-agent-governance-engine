@@ -110,3 +110,9 @@ variable "user_type" {
   type        = string
   default     = "BUILT_IN"
 }
+
+variable "enable_iam_auth" {
+  description = "Enable Cloud SQL IAM database authentication"
+  type        = bool
+  default     = true
+}

@@ -77,7 +77,7 @@ output "deployment_summary" {
     nist_compliance_enabled = var.enable_nist_compliance
     gpu_node_pool_enabled   = var.enable_gpu_node_pool
     langfuse_bucket         = google_storage_bucket.langfuse_events.name
-    postgres_service        = module.postgres.service_name
+    postgres_service        = module.cloudsql_postgres.instance_name
     redis_host              = module.memorystore_governance.primary_endpoint_ip
     memorystore_governance  = module.memorystore_governance.primary_endpoint_ip
     memorystore_app         = module.memorystore_app.primary_endpoint_ip
@@ -88,15 +88,24 @@ output "deployment_summary" {
 
 # ─── Database and Cache ───────────────────────────────────────────────────────
 
-output "postgres_connection_string" {
-  description = "PostgreSQL connection string"
-  value       = module.postgres.connection_string
-  sensitive   = true
+output "cloudsql_postgres_instance_name" {
+  description = "Cloud SQL PostgreSQL instance name"
+  value       = module.cloudsql_postgres.instance_name
+}
+
+output "cloudsql_postgres_connection_name" {
+  description = "Cloud SQL PostgreSQL connection name"
+  value       = module.cloudsql_postgres.connection_name
+}
+
+output "cloudsql_postgres_private_ip" {
+  description = "Cloud SQL PostgreSQL private IP address"
+  value       = module.cloudsql_postgres.private_ip_address
 }
 
 output "postgres_service" {
-  description = "PostgreSQL service FQDN"
-  value       = module.postgres.service_name
+  description = "PostgreSQL instance identifier"
+  value       = module.cloudsql_postgres.instance_name
 }
 
 output "redis_host" {

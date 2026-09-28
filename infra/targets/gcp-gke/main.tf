@@ -257,13 +257,10 @@ resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writ
   member  = "serviceAccount:compliance-bridge-sa@${var.project_id}.iam.gserviceaccount.com"
 }
 
-# ─── Deploy PostgreSQL Database ───────────────────────────────────────────────
+# ─── Deploy Cloud SQL PostgreSQL (Langfuse Metadata Store) ─────────────────────
+# §2.5: Managed Cloud SQL PostgreSQL (PG15, private IP, ENCRYPTED_ONLY, PITR in prod).
+# IAM database authentication is used with Cloud SQL Auth Proxy sidecar (no static password).
 
-# DEP-20: Derive a unified "hardening active" flag from all three jurisdiction
-# compliance toggles. This ensures EU_ECB (DORA Art. 10 HA, GDPR Art. 32
-# encryption) and APAC_MAS (MAS TRM §9.1) deployments independently activate
-# the same infrastructure hardening that US_FED activates via enable_nist_compliance.
-# R-3: EU AI Act / GDPR / DORA logic MUST be gated on CAGE_DEPLOYMENT_REGION == "EU_ECB".
 locals {
   # Any jurisdiction-specific compliance flag activates hardening
   any_compliance_active = (
@@ -273,21 +270,34 @@ locals {
   )
 }
 
-module "postgres" {
-  source = "../../modules/postgres_db"
+module "cloudsql_postgres" {
+  source = "../../modules/cloudsql_postgres"
 
-  namespace          = module.namespace.name
-  storage_size       = var.postgres_storage_size
-  storage_class      = var.storage_class
-  enable_persistence = true
-  enable_backup      = false
-  # DEP-20: Resource limits now activate for any jurisdiction compliance flag,
-  # not only enable_nist_compliance. DORA Art. 10 and MAS TRM §9.1 both require
-  # resource guarantees for production database workloads.
-  resources_limits_memory   = local.any_compliance_active ? "4Gi" : ""
-  resources_limits_cpu      = local.any_compliance_active ? "2000m" : ""
-  resources_requests_cpu    = "500m"
-  resources_requests_memory = "1Gi"
+  project_id         = var.project_id
+  environment        = var.environment
+  region             = var.region
+  instance_name      = "cage-postgres-${var.environment}"
+  database_version   = "POSTGRES_15"
+  authorized_network = var.network
+
+  # §1.1 Infrastructure Posture:
+  # dev: db-f1-micro, ZONAL
+  # staging: db-g1-small, ZONAL
+  # prod: db-custom-2-7680, REGIONAL, PITR
+  tier                          = var.environment == "prod" ? "db-custom-2-7680" : (var.environment == "staging" ? "db-g1-small" : var.postgres_tier)
+  enable_high_availability      = var.environment == "prod" || var.enable_high_availability
+  enable_point_in_time_recovery = var.environment == "prod" || local.any_compliance_active
+  disk_size                     = var.postgres_disk_size
+
+  enable_cmek = var.enable_cmek
+  kms_key_id  = var.kms_key_id
+
+  deletion_protection = var.enable_deletion_protection
+
+  database_name   = "langfuse"
+  user_name       = google_service_account.langfuse.email
+  user_type       = "CLOUD_IAM_SERVICE_ACCOUNT"
+  enable_iam_auth = true
 
   depends_on = [module.gke]
 }
@@ -553,7 +563,11 @@ module "langfuse" {
   source = "../../modules/langfuse_stack"
 
   namespace                = module.namespace.name
-  database_url             = module.postgres.connection_string
+  service_account_name     = kubernetes_service_account.workload["langfuse"].metadata[0].name
+  enable_cloudsql_proxy    = true
+  cloudsql_connection_name = module.cloudsql_postgres.connection_name
+  cloudsql_iam_user        = module.cloudsql_postgres.iam_user_name
+  cloudsql_database_name   = module.cloudsql_postgres.database_name
   clickhouse_url           = "http://${module.clickhouse.service_name}:${module.clickhouse.http_port}"
   clickhouse_migration_url = "clickhouse://default:${module.clickhouse.password}@${module.clickhouse.service_name}:${module.clickhouse.tcp_port}"
   clickhouse_user          = "default"
@@ -586,7 +600,7 @@ module "langfuse" {
   langfuse_init_org_id        = "CAGE"
   langfuse_init_org_name      = "CAGE"
 
-  depends_on = [module.postgres, module.clickhouse, module.memorystore_app, google_storage_hmac_key.langfuse_key, module.gke]
+  depends_on = [module.cloudsql_postgres, module.clickhouse, module.memorystore_app, google_storage_hmac_key.langfuse_key, module.gke]
 }
 
 # ─── Deploy Compliance Bridge ───────────────────────────────────────────────────
@@ -759,7 +773,7 @@ module "app_secrets" {
   clickhouse_migration_url = "clickhouse://default:${module.clickhouse.password}@${module.clickhouse.service_name}:${module.clickhouse.tcp_port}"
   clickhouse_user          = "default"
   clickhouse_password      = module.clickhouse.password
-  database_url             = module.postgres.connection_string
+  database_url             = ""
   nextauth_secret          = module.langfuse.nextauth_secret
   nextauth_url             = var.langfuse_nextauth_url
 
@@ -786,7 +800,7 @@ module "app_secrets" {
 
   cage_deployment_region = var.cage_deployment_region
 
-  depends_on = [module.langfuse, module.postgres, module.clickhouse]
+  depends_on = [module.langfuse, module.cloudsql_postgres, module.clickhouse]
 }
 
 # POAM-019 enforcement: fail the plan if compliance keys are missing when

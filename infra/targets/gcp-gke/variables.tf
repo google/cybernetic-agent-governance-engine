@@ -285,9 +285,21 @@ variable "model_bucket_name" {
 # ─── Database Configuration ───────────────────────────────────────────────────
 
 variable "postgres_storage_size" {
-  description = "PostgreSQL PVC size"
+  description = "PostgreSQL PVC size (legacy parameter kept for backward compatibility)"
   type        = string
   default     = "50Gi"
+}
+
+variable "postgres_tier" {
+  description = "Cloud SQL machine tier for dev posture (staging and prod use posture matrix defaults)"
+  type        = string
+  default     = "db-f1-micro"
+}
+
+variable "postgres_disk_size" {
+  description = "Cloud SQL disk size in GB"
+  type        = number
+  default     = 10
 }
 
 variable "redis_storage_size" {

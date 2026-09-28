@@ -21,6 +21,7 @@ locals {
   sa_vllm              = "cage-vllm"
   sa_agentsight        = "cage-agentsight"
   sa_benchmark         = "cage-benchmark"
+  sa_langfuse          = "langfuse"
 
   # Kubernetes ServiceAccount names (KSAs), one per workload (POAM-2026-079).
   # The "-sa" suffix matches the Linkerd mesh identities in
@@ -33,6 +34,7 @@ locals {
   ksa_vllm              = "cage-vllm-sa"
   ksa_lula              = "cage-lula-sa"
   ksa_benchmark         = "cage-benchmark-sa"
+  ksa_langfuse          = "langfuse-sa"
 
   # vLLM runs in var.namespace when deployed by Terraform and in
   # "vllm-inference" when deployed from deployment/k8s/ manifests.
@@ -89,6 +91,13 @@ resource "google_service_account" "agentsight" {
   account_id   = local.sa_agentsight
   display_name = "CAGE AgentSight Service Account"
   description  = "Least-privilege SA for AgentSight eBPF monitoring. Writes telemetry to Cloud Logging and Monitoring. (POAM-002 / AC-6)"
+  project      = var.project_id
+}
+
+resource "google_service_account" "langfuse" {
+  account_id   = local.sa_langfuse
+  display_name = "CAGE Langfuse Service Account"
+  description  = "Least-privilege SA for Langfuse observability. Connects to Cloud SQL via IAM authentication and Memorystore app cache. (POAM-002 / POAM-2026-079 / AC-6)"
   project      = var.project_id
 }
 
@@ -192,6 +201,23 @@ resource "google_project_iam_member" "agentsight_metric_writer" {
 }
 
 # ---------------------------------------------------------------------------
+# IAM Role Bindings — Langfuse
+# Roles: Cloud SQL Client, Cloud SQL Instance User (IAM DB authn, no static password)
+# ---------------------------------------------------------------------------
+
+resource "google_project_iam_member" "langfuse_cloudsql_client" {
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.langfuse.email}"
+}
+
+resource "google_project_iam_member" "langfuse_cloudsql_instance_user" {
+  project = var.project_id
+  role    = "roles/cloudsql.instanceUser"
+  member  = "serviceAccount:${google_service_account.langfuse.email}"
+}
+
+# ---------------------------------------------------------------------------
 # Kubernetes ServiceAccounts for Terraform-deployed workloads
 # One KSA per workload, annotated to its own GSA (POAM-2026-079 / AC-5 / AC-6).
 # The advisor is the untrusted neural plane: its KSA has no GSA at all, so the
@@ -221,6 +247,11 @@ locals {
       name    = local.ksa_vllm
       gsa     = google_service_account.vllm.email
       purpose = "model-inference"
+    }
+    langfuse = {
+      name    = local.ksa_langfuse
+      gsa     = google_service_account.langfuse.email
+      purpose = "telemetry"
     }
   }
 }
@@ -302,5 +333,14 @@ resource "google_service_account_iam_binding" "benchmark_workload_identity" {
 
   members = [
     "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_benchmark}]",
+  ]
+}
+
+resource "google_service_account_iam_binding" "langfuse_workload_identity" {
+  service_account_id = google_service_account.langfuse.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_langfuse}]",
   ]
 }

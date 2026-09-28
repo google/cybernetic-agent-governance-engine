@@ -67,6 +67,14 @@ resource "google_sql_database_instance" "postgres" {
       name  = "max_connections"
       value = "100"
     }
+
+    dynamic "database_flags" {
+      for_each = var.enable_iam_auth ? [1] : []
+      content {
+        name  = "cloudsql.iam_authentication"
+        value = "on"
+      }
+    }
   }
 
   deletion_protection = var.deletion_protection
@@ -78,8 +86,13 @@ resource "google_sql_database" "db" {
   project  = var.project_id
 }
 
+locals {
+  # For PostgreSQL, Cloud SQL IAM Service Account users must NOT have the .gserviceaccount.com suffix.
+  effective_user_name = var.user_type == "CLOUD_IAM_SERVICE_ACCOUNT" ? trimsuffix(var.user_name, ".gserviceaccount.com") : var.user_name
+}
+
 resource "google_sql_user" "db_user" {
-  name     = var.user_name
+  name     = local.effective_user_name
   instance = google_sql_database_instance.postgres.name
   password = var.user_type == "BUILT_IN" ? var.user_password : null
   type     = var.user_type
