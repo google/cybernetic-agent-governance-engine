@@ -327,7 +327,7 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 - `GET /v1/defer/pending`: List pending deferred evaluation tokens.
 - `POST /v1/defer/{id}/inject`: Inject supplemental context into a parked evaluation.
 - `POST /v1/defer/{id}/escalate`: Escalate a parked evaluation to manual human review.
-- `POST /tools/execute`: Protected actuator execution requiring a valid `X-CAGE-Routing-Seal` or `ConsequenceToken`.
+- `POST /tools/execute`: Protected actuator execution; the caller must present a trusted Linkerd workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)).
 - `POST /inference/v1/chat/completions`: Streaming and non-streaming proxy to the backend Model Pools with GenAI span instrumentation.
 - `GET /healthz`: Liveness and readiness probe verifying Cloud KMS HSM connectivity and Redis availability.
 
@@ -370,23 +370,23 @@ Every governance clearance is attested by an unforgeable routing seal verified b
   - **Primary Signer**: Google Cloud KMS HSM asymmetric signing (private key never leaves HSM). HMAC-SHA256 is strictly dev/CI fallback.
   - **Fail-Closed Enforcement**: Requests reaching `/tools/execute` without a valid, unexpired seal are rejected by `GovernanceMiddleware` with HTTP 403.
 
-### 5.4 Transport-Layer Agent Identity (SPIFFE mTLS)
+### 5.4 Transport-Layer Agent Identity (Linkerd mTLS Workload Identity)
 
 Agent identity is a **transport-layer fact**, not an application-layer claim. The canonical specification is [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md); this section records how the kernel implements it.
 
-**Extraction module** — [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py):
+**Enforcement & extraction module** — [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py):
 
 | Symbol | Transport | Behaviour |
 |---|---|---|
-| `extract_spiffe_uri_from_asgi_scope(scope)` | HTTP / ASGI (FastAPI, Uvicorn) | Reads the peer certificate from the ASGI scope and returns the first SAN URI matching the SPIFFE pattern. |
-| `extract_spiffe_uri_from_grpc_context(context)` | gRPC (`ext_authz`) | Reads the mesh-supplied peer principal and validates it as a SPIFFE URI. |
-| `validate_spiffe_uri(uri)` | Shared | Raises unless the URI matches `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`. |
-| `SpiffeExtractionError` | Shared | Raised on every failure mode; callers translate it into a fail-closed rejection. |
+| `WorkloadIdentityMiddleware` | HTTP / ASGI (FastAPI, Uvicorn) | Outermost deny-by-default middleware; admits a non-open request only if it carries a single Linkerd `l5d-client-id` listed in `CAGE_TRUSTED_CLIENT_IDENTITIES` (enforced in every environment). |
+| `extract_client_identity(scope)` | HTTP / ASGI (FastAPI, Uvicorn) | Reads the verified `l5d-client-id` header (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) from the ASGI scope. |
+| `load_identity_policy()` | Startup | Parses and validates `CAGE_TRUSTED_CLIENT_IDENTITIES`; raises `RuntimeError` if unset or malformed in any environment. |
+| `WorkloadIdentityError` | Shared | Raised by `extract_client_identity()` when no single valid Linkerd identity header is present; callers translate it into a fail-closed rejection. |
 
 **Removed in v3.1.0 (breaking change — `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extraction`):**
 
 - The `X-Agent-ID` request header is **no longer read anywhere** in the kernel and confers no identity.
-- No `X-SPIFFE-ID` (or equivalent) header is trusted — headers are attacker-controlled.
+- No `X-SPIFFE-ID` (or equivalent) client-supplied header is trusted — only `l5d-client-id` set by the Linkerd inbound proxy after mTLS is accepted.
 - No `agent_id` is derived from the JSON request body.
 - The anonymous / unauthenticated caller fallback has been deleted from both ingress paths and from [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego).
 
@@ -394,10 +394,10 @@ Agent identity is a **transport-layer fact**, not an application-layer claim. Th
 
 | Ingress | Implementation | Failure response |
 |---|---|---|
-| HTTP chat-completions proxy | [`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) | HTTP **401** with `{"error": "authentication_required", "message": "Client certificate with valid SPIFFE URI required"}`; the SC-8 control is stamped `BLOCK` on the span. Quota accounting downstream keys on the extracted SPIFFE URI. |
-| Envoy `ext_authz` gRPC | [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) | A denied `CheckResponse`: **401** when the SPIFFE URI is missing or malformed, **403** when the `CheckRequest` fields themselves cannot be extracted. `caller_principal` is otherwise the verified SPIFFE URI and is forwarded into `handle_check_request()`. |
+| Gateway ASGI ingress & HTTP chat-completions proxy | [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py), [`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) | `WorkloadIdentityMiddleware` rejects untrusted or missing `l5d-client-id` with HTTP **403**; `inference_proxy.py` extracts the caller via `extract_client_identity(request.scope)` and returns HTTP **401** (`authentication_required`) with SC-8 stamped `BLOCK` on failure. Quota accounting downstream keys on the extracted workload identity. |
+| Envoy `ext_authz` gRPC | [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) | A denied `CheckResponse`: **401** when the verified peer principal is missing or malformed, **403** when the `CheckRequest` fields themselves cannot be extracted. `caller_principal` is forwarded into `handle_check_request()`. |
 
-**Authorization (distinct from authentication):** the extracted SPIFFE URI becomes the OPA principal. Agent-to-agent delegation is authorized declaratively in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by `startswith()` prefix matching against each subagent's `authorized_parent_prefixes`, so ephemeral pod suffixes never enter policy bodies.
+**Authorization (distinct from authentication):** the extracted identity becomes the OPA principal. Agent-to-agent delegation is authorized declaratively in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by `startswith()` prefix matching against each subagent's `authorized_parent_prefixes`, so ephemeral pod suffixes never enter policy bodies.
 
 **Proof-of-possession (available, not yet on the hot path):** [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) provides the vendor-neutral `ProofOfPossessionValidator` protocol and an RFC 9449 `DPoPValidator` that binds a DPoP proof to the mTLS client certificate, raising `TokenBindingError` on failure. It is unit-tested in [`tests/test_dpop_validator.py`](../../tests/test_dpop_validator.py) but is not yet invoked by gateway middleware; see §5 of the identity spec for the remaining rollout items.
 
@@ -468,7 +468,7 @@ The ingress adapter layer normalizes external governance signals from heterogene
 
 [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) implements the Envoy `ext_authz` gRPC servicer (`envoy.service.auth.v3.Authorization.Check`), enabling the Gateway to serve as an external authorization engine for Istio, Contour, Emissary, or GCP Agent Gateway (AGW) proxies without code modification.
 
-The adapter resolves `caller_principal` with `extract_spiffe_uri_from_grpc_context()` before the JSON-RPC body is dispatched to `validate_action()`. There is no header or body fallback: an absent or malformed SPIFFE URI produces a denied `CheckResponse` (401), and an unparseable `CheckRequest` produces a denied `CheckResponse` (403). See [§5.4](#54-transport-layer-agent-identity-spiffe-mtls).
+The adapter resolves `caller_principal` from the verified mesh peer principal before the JSON-RPC body is dispatched to `validate_action()`. There is no header or body fallback: an absent or malformed principal produces a denied `CheckResponse` (401), and an unparseable `CheckRequest` produces a denied `CheckResponse` (403). See [§5.4](#54-transport-layer-agent-identity-linkerd-mtls-workload-identity).
 
 ### 7.3 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
@@ -537,7 +537,6 @@ src/gateway/
 │   ├── execution_actuator.py # ExecutionActuator protocol & ActuatorRegistry
 │   ├── kms_signer.py       # Cloud KMS HSM asymmetric governance signer
 │   ├── routing_seal.py     # Cryptographic routing seal generator & validator
-│   ├── spiffe_extractor.py # SPIFFE SVID extraction from mTLS peer certificates
 │   └── symbolic_governor.py # Neuro-symbolic governance dispatch loop
 ├── infrastructure/         # Telemetry setup & OTel client configuration
 ├── observability/          # Distributed W3C MCP tracing context propagation
@@ -547,7 +546,8 @@ src/gateway/
     ├── governance_middleware.py # Core governance endpoints & seal verification
     ├── hybrid_server.py    # FastAPI composition root & lifespan manager
     ├── inference_proxy.py  # vLLM proxy for Reasoning/Governance Model Pools
-    └── mcp_tool_server.py  # FastMCP server & actuator invocation
+    ├── mcp_tool_server.py  # FastMCP server & actuator invocation
+    └── workload_identity.py # Linkerd mTLS workload identity enforcement & extraction
 ```
 
 ### Key Source Files Reference
@@ -568,6 +568,6 @@ src/gateway/
 | `src/gateway/governance/routing_seal.py` | Routing Seal | Constant-time HMAC-SHA256 and KMS routing seal generation and verification. |
 | `src/gateway/governance/contracts.py` | Subsystem Protocols | Structural subtyping contracts (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, etc.). |
 | `src/gateway/observability/mcp_tracing.py` | Distributed Tracing | W3C `traceparent` context extraction and child span creation across SSE transports. |
-| `src/gateway/governance/spiffe_extractor.py` | Agent Identity | SPIFFE SVID extraction and validation from the mTLS peer certificate on both the ASGI and gRPC ingress paths; raises `SpiffeExtractionError` to force fail-closed rejection. |
+| `src/gateway/server/workload_identity.py` | Agent Identity | Linkerd mTLS workload identity ingress gate (`WorkloadIdentityMiddleware`) and caller identity extraction (`extract_client_identity(scope)`), enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment. |
 | `src/gateway/server/dpop_validator.py` | Token Binding | `ProofOfPossessionValidator` protocol and RFC 9449 `DPoPValidator` binding DPoP proofs to the client certificate (not yet wired into middleware). |
 | `src/gateway/governance/seams/` | Seam Contracts | Vendor-neutral protocol and dataclass contracts (`actuation.py`, `attestation.py`, `credential_broker.py`, `graph_topology.py`, `normative.py`) with zero kernel imports. |

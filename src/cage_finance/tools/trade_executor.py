@@ -69,7 +69,11 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
         or not routing_seal.strip()
     ):
         raise SymbolicGovernorViolation(
-            "CRITICAL: Direct execution attempt rejected. execute_trade requires a valid x-cage-routing-seal.",
+            (
+                "CRITICAL: Direct execution attempt rejected. execute_trade "
+                "requires a governor routing seal and must be dispatched through "
+                "ConsequenceGateway / ActuatorRegistry."
+            ),
             action="execute_trade",
         )
     # C-01: Validate trade side before use — fail closed on invalid values.

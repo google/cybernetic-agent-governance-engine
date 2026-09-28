@@ -37,7 +37,7 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 | Capability | Location | Description |
 |---|---|---|
-| **Native SPIFFE Identity Extraction** | `src/gateway/governance/spiffe_extractor.py` | Agent identity is read exclusively from the verified mTLS client certificate SAN on both ASGI and gRPC ingress. Header- and body-supplied identity is ignored; there is no anonymous principal. |
+| **Linkerd mTLS Workload Identity** | `src/gateway/server/workload_identity.py` | Gateway ingress authentication (`WorkloadIdentityMiddleware`) and caller identity extraction (`extract_client_identity(scope)`) from Linkerd's verified `l5d-client-id` header (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment; there is no anonymous principal. |
 | **DPoP Proof-of-Possession (RFC 9449)** | `src/gateway/server/dpop_validator.py` | Vendor-neutral `ProofOfPossessionValidator` protocol and pure-Python `DPoPValidator` binding tokens to the client certificate thumbprint. Unit-tested; **not yet wired into an ingress path**. |
 | **Declarative A2A Authorization** | `config/opa/agent_catalog.rego` | Subagents declare `authorized_parent_prefixes`; OPA authorizes via `startswith()` prefix matching, keeping ephemeral instance IDs out of policy bodies. |
 | **Egress Credential Broker Seam** | `src/gateway/governance/seams/credential_broker.py` | Layer 1 holds the `CredentialBrokerAdapter` protocol; the Layer 3 reference actuator invokes it as a pre-dispatch gate keyed on agent SVID and tool name, masks values in logs, keeps them out of the audit record, and fails closed on denial. |
@@ -242,7 +242,7 @@ CAGE is composed of the following runtime subsystems:
 | **Consequence Gateway**          | **L1** | `src/gateway/governance/`         | 6-step token evaluation, JWS verification, and authority store — see [`CONSEQUENCE_GATEWAY.md`](docs/architecture/CONSEQUENCE_GATEWAY.md) |
 | **FTRA Reachability Analyzer**   | **L1** | `src/gateway/governance/ftra/`    | Irreversibility classification and graph bounding — see [`FTRA_REACHABILITY_ANALYZER.md`](docs/architecture/FTRA_REACHABILITY_ANALYZER.md) |
 | **Cryptographic Signer Engine**  | **L1** | `src/gateway/governance/`         | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution — see [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) |
-| **Ingress Identity Boundary**    | **L1** | `src/gateway/governance/spiffe_extractor.py`, `src/gateway/server/dpop_validator.py` | SPIFFE SVID extraction from the verified mTLS client certificate SAN (ASGI + gRPC), fail-closed 401 on both paths. An RFC 9449 DPoP validator ships but is not yet wired into ingress — see [`AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
+| **Ingress Identity Boundary**    | **L1** | `src/gateway/server/workload_identity.py`, `src/gateway/server/dpop_validator.py` | Linkerd mTLS workload identity allowlist enforcement (`WorkloadIdentityMiddleware`) and caller extraction (`extract_client_identity(scope)`), required in every environment and failing closed with 403/401. An RFC 9449 DPoP validator ships but is not yet wired into ingress — see [`AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
 | **Seam Contracts**               | **L1** | `src/gateway/governance/seams/`   | Zero-kernel-import protocols for external adapters: `normative.py`, `attestation.py`, `actuation.py`, `graph_topology.py`, `credential_broker.py` |
 | **Compliance Bridge**            | **L3** | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API; infrastructure telemetry to ClickHouse |
 | **Vendor Integrations**          | **L3** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `actuator_01/` (execution actuator), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier), `storage_gcs/` (GCS durable sink), `storage_s3/` (S3 durable sink) |
@@ -367,7 +367,6 @@ from cage_client.adapters.langgraph import cage_guard
 # Initialize client (once at app startup)
 cage = CageClient(
     gateway_url="http://localhost:8080",
-    routing_seal_secret="dev-secret-key",  # From .env
 )
 
 
@@ -398,7 +397,7 @@ app = graph.compile()
 
 **What happens at runtime:**
 1. LangGraph reaches the `execute_trade` node
-2. `@cage_guard` intercepts execution and calls `http://localhost:8080/v1/governance/validate`
+2. `@cage_guard` intercepts execution and calls `http://localhost:8080/governance/validate-action`
 3. CAGE Gateway runs the 8-tier governance pipeline (STPA, OPA, CBF, Consensus, Causal, FRIA)
 4. **ALLOW** → Node executes; **DENY** → Raises [`PolicyViolationException`](packages/cage-client/src/cage_client/exceptions.py); **DEFER** → Raises [`DeferralPending`](packages/cage-client/src/cage_client/exceptions.py) for HITL parking
 

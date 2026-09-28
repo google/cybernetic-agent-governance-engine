@@ -18,6 +18,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.23"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"
+    }
   }
 }
 
@@ -114,7 +118,7 @@ resource "kubernetes_deployment" "gateway" {
             value = "otlp"
           }
           env {
-            name  = "OTEL_EXPORTER_OTLP_ENDPOINT"
+            name = "OTEL_EXPORTER_OTLP_ENDPOINT"
             # Langfuse v3 native OTLP ingestion — no separate OTel Collector deployed.
             value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000/api/public/otel/v1/traces"
           }
@@ -206,15 +210,11 @@ resource "kubernetes_deployment" "gateway" {
             name  = "OPA_URL"
             value = var.opa_url
           }
-          # K-1: Explicit CAGE_ROUTING_SEAL_SECRET env var.
-          # The advisor-secrets bulk env_from mount also delivers this key, but
-          # the explicit declaration ensures Terraform tracks the dependency,
-          # plan-time checks (verify_remote.py / scripts/verify_remote.py) can
-          # confirm the value is non-empty, and pod env inspection shows the var
-          # even when the secret mount is stripped by policy auditing tools.
+          # POAM-2026-080: deny-by-default ingress. Every path except the open
+          # list requires one of these mesh identities in l5d-client-id.
           env {
-            name  = "CAGE_ROUTING_SEAL_SECRET"
-            value = var.routing_seal_secret
+            name  = "CAGE_TRUSTED_CLIENT_IDENTITIES"
+            value = join(",", var.trusted_client_identities)
           }
           env {
             name  = "RECONCILIATION_PROVIDER"
@@ -275,4 +275,21 @@ resource "kubernetes_service" "gateway" {
       app = "gateway"
     }
   }
+}
+
+# ─── Mesh authorization (POAM-2026-080) ──────────────────────────────────────
+# Linkerd half of the two-layer ingress check; the gateway's
+# WorkloadIdentityMiddleware is the other half. A local chart rather than
+# kubernetes_manifest because the policy.linkerd.io CRDs are installed in the
+# same apply (infra/modules/service_mesh).
+resource "helm_release" "mesh_policy" {
+  count = var.enable_mesh_policy ? 1 : 0
+
+  name      = "gateway-mesh-policy"
+  chart     = "${path.module}/mesh-policy"
+  namespace = var.namespace
+
+  values = [yamlencode({
+    trustedIdentities = var.trusted_client_identities
+  })]
 }

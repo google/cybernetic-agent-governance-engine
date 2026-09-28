@@ -140,21 +140,10 @@ class TestParseJsonRpcBody:
 class TestResponseBuilders:
     """Tests for OkHttpResponse and DeniedHttpResponse builders."""
 
-    def test_ok_response_has_routing_seal_header(self):
-        resp = _build_ok_response("abc123seal")
-        assert "ok_response" in resp
-        headers = resp["ok_response"]["headers"]
-        seal_header = next(
-            (h for h in headers if h["header"]["key"] == "x-cage-routing-seal"),
-            None,
-        )
-        assert seal_header is not None
-        assert seal_header["header"]["value"] == "abc123seal"
-        assert seal_header["append"] is False
-
-    def test_ok_response_empty_seal_still_valid(self):
-        resp = _build_ok_response("")
-        assert "ok_response" in resp
+    def test_ok_response_forwards_no_governance_headers(self):
+        """ALLOW forwards nothing upstream: the governor seal never leaves the gateway."""
+        resp = _build_ok_response()
+        assert resp == {"ok_response": {"headers": []}}
 
     def test_denied_response_has_status_code(self):
         resp = _build_denied_response(403, {"error": "denied"})
@@ -244,8 +233,8 @@ class TestHandleCheckRequest:
         assert resp["denied_response"]["status"]["code"] == 403
 
     @pytest.mark.asyncio
-    async def test_governance_allow_returns_ok_with_seal(self):
-        """ALLOW verdict → OkHttpResponse with x-cage-routing-seal header."""
+    async def test_governance_allow_returns_ok_without_seal(self):
+        """ALLOW verdict → OkHttpResponse that does not leak the governor seal."""
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -266,11 +255,7 @@ class TestHandleCheckRequest:
         )
 
         assert "ok_response" in resp
-        headers = resp["ok_response"]["headers"]
-        seal_header = next(
-            h for h in headers if h["header"]["key"] == "x-cage-routing-seal"
-        )
-        assert seal_header["header"]["value"] == "test-seal-abc123"
+        assert "test-seal-abc123" not in json.dumps(resp)
 
     @pytest.mark.asyncio
     async def test_governance_deny_returns_denied_403(self):

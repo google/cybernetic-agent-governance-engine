@@ -36,15 +36,10 @@ self-managed Envoy/Istio deployments with zero code difference.
 Every agent tool call passes through the adapter before reaching the
 application container:
 
-1. Extract the caller's SPIFFE URI from the mTLS peer principal via
-   `extract_spiffe_uri_from_grpc_context()`
-   ([`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py));
-   this value becomes `caller_principal`. Identity is **never** taken from a
-   request header (the former `X-Agent-ID` header was removed in v3.1.0) or
-   from the JSON-RPC body, and there is no anonymous fallback
+1. Extract the caller's verified identity from the mTLS peer principal (never from a client-supplied `X-Agent-ID` / `X-SPIFFE-ID` header or the JSON-RPC body, with no anonymous fallback); gateway ingress authentication and caller identity extraction live in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`)
 2. Parse the JSON-RPC 2.0 body to extract `(tool_name, params)`
 3. Run the full CAGE 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) via `validate_action()`
-4. Return `OkHttpResponse` + `x-cage-routing-seal` header on `APPROVED`
+4. Return `OkHttpResponse` (no governance headers) on `APPROVED`. The governor's routing seal never leaves the gateway, and the gateway's MCP surface admits only callers with a trusted Linkerd workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py), POAM-2026-080), so calls forwarded by Agent Gateway are refused there
 5. Return `DeniedHttpResponse(403)` + violation JSON on `DENIED`
 6. Return `DeniedHttpResponse(202)` + `{verdict: DEFERRED, thread_id}` on `MANUAL_REVIEW`
 
@@ -52,11 +47,10 @@ application container:
 
 | Condition | Response |
 |-----------|----------|
-| SPIFFE URI missing or not matching `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$` | `DeniedHttpResponse(401)` — `{"error": "authentication_required", "message": "Client certificate with valid SPIFFE URI required"}` |
+| Verified peer identity missing or invalid | `DeniedHttpResponse(401)` — `{"error": "authentication_required", "message": ...}` |
 | `CheckRequest` fields cannot be extracted at all | `DeniedHttpResponse(403)` — `{"error": "request_extraction_error"}` |
 
-The equivalent HTTP/ASGI ingress (`inference_proxy.py`) returns plain HTTP 401
-for the same identity failure. The canonical identity contract is
+On the HTTP/ASGI gateway ingress, `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) enforce `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment and extract the Linkerd `l5d-client-id` identity (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`), failing closed with HTTP 403/401. The canonical identity contract is
 [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
 
 ---
@@ -220,10 +214,12 @@ the ext_authz timeout is typically 5 seconds.
 
 > **Corrected 2026-09-22:** earlier revisions of this document stated that the
 > GCP path supplies a *GCP service account email* as the peer principal. That is
-> no longer accurate. `extract_spiffe_uri_from_grpc_context()` validates the
-> principal against `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$` and raises
-> `SpiffeExtractionError` otherwise, so the AGW/Workload Identity deployment must
-> present the caller as a SPIFFE URI. A bare service-account email is rejected.
+> no longer accurate. The AGW/Workload Identity deployment must present a
+> verified workload identity (never a bare service-account email or client header);
+> on the HTTP/ASGI gateway ingress, [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py)
+> (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`) validates
+> the Linkerd `l5d-client-id` identity (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`)
+> and fails closed otherwise.
 
 **SC-12 compliance:** mTLS certificate lifecycle is managed by the service
 mesh or GCP Workload Identity — not by CAGE. CAGE only reads the peer
@@ -234,7 +230,7 @@ registered proxy service account. This is enforced by the service mesh
 mTLS policy (Istio `PeerAuthentication`) or AGW IAM binding — not by CAGE.
 
 **IA-3 compliance (fail-closed):** CAGE derives `caller_principal` solely from
-the validated peer SPIFFE URI and feeds it to OPA as `input.caller_identity.sub`.
+the validated peer identity and feeds it to OPA as `input.caller_identity.sub`.
 No header, body field, or anonymous fallback can supply it; an unresolvable
 principal terminates the request with a denied `CheckResponse` before
 `validate_action()` is reached.
@@ -248,7 +244,7 @@ principal terminates the request with a denied `CheckResponse` before
 | **SC-8** (Transmission Confidentiality) | mTLS required between calling proxy and CAGE :50051; enforced by service mesh or AGW |
 | **SC-12** (Cryptographic Key Establishment) | mTLS certificate lifecycle managed by Istio CA or GCP Certificate Manager |
 | **AC-3** (Access Enforcement) | gRPC endpoint only accepts calls from registered proxy service account (mTLS CN/SAN validation) |
-| **IA-3** (Device Identification & Authentication) | `extract_spiffe_uri_from_grpc_context()` in [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) derives `caller_principal` from the mTLS peer SPIFFE URI; header/body identity and anonymous fallback removed (v3.1.0); fail-closed denied response on extraction failure |
+| **IA-3** (Device Identification & Authentication) | `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) enforce `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment and extract the verified Linkerd `l5d-client-id` identity; header/body identity and anonymous fallback removed (v3.1.0); fail-closed denied response on extraction failure |
 | **AU-2** (Audit Events) | Every `CheckRequest`/`CheckResponse` logged via OTel/Langfuse pipeline in `_emit_audit_event()` |
 | **SI-10** (Information Input Validation) | `parse_jsonrpc_body()` validates JSON-RPC 2.0 structure before passing to `validate_action()`; fail-closed on parse error |
 

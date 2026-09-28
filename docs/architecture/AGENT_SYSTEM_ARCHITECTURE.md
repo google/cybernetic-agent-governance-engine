@@ -22,7 +22,7 @@ Multi-agent pipelines are composed using LangGraph's `StateGraph`, creating a de
 
 CAGE governance checks are not advisory: they gate every state transition before execution can reach sensitive nodes (such as `governed_trader`). The pipeline guarantees that reasoning, data acquisition, plan generation, evaluation, and safety validation must all complete successfully before an action is executed, with human approval enforced as the final gate. No path exists from user instruction to execution that bypasses CAGE policy enforcement.
 
-Enforcement at the node boundary is applied by the `@cage_guard` decorator from the CAGE Client SDK (`src/gateway/client/adapters/langgraph.py`; standalone distribution in `packages/cage-client/`). Every tool executor is wrapped by `cage_guard(client=get_cage_client(), action=...)`, which submits the node's `proposed_action` to the Gateway PDP via `CageClient.validate_action()` before the node body runs. The client is a lazily initialized singleton (`src/governed_financial_advisor/graph/cage_client_singleton.py`) so that all governed nodes share uniform semantics. This is a pure client/server split — LangGraph nodes never call `SymbolicGovernor` in-process.
+Enforcement at the node boundary is applied by `gateway_tool_guard(action)` (`src/governed_financial_advisor/graph/governance/tool_guard.py`). Every tool executor is wrapped by it; before the node body runs, the guard submits each pending tool call to the gateway's `POST /governance/validate-action` through the advisor's `GatewayClient().validate_action()` (`src/governed_financial_advisor/infrastructure/gateway_client.py`). The batch runs only if the gateway returns `APPROVED` for every call; any other verdict, an HTTP error or an unreachable gateway refuses the whole batch. The advisor holds no governor, signer or ingress secret: the gateway authenticates it by its Linkerd mTLS workload identity (`src/gateway/server/workload_identity.py`, POAM-2026-080). This is a pure client/server split — LangGraph nodes never call `SymbolicGovernor` in-process.
 
 ### 1.1 Primary Regulatory Framework: SR 26-2 (Federal Reserve)
 
@@ -56,7 +56,7 @@ The agent system is governed under **SR 26-2** (Federal Reserve Supervisory Guid
 | `ExecutionAnalystAgent` | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | `MODEL_REASONING`; guided JSON               | `ChatOpenAI` on `GATEWAY_API_BASE`             | `ExecutionPlan` (`PlanStep` list)                |
 | `EvaluatorAgent`        | `src/governed_financial_advisor/agents/evaluator/agent.py`         | `Qwen/Qwen2.5-1.5B-Instruct` via `VLLM_FAST`  | `create_tool_calling_agent`; 5 async MCP tools | `evaluation_result`, `opa_results`               |
 | `ExplainerAgent`        | `src/governed_financial_advisor/agents/explainer/agent.py`         | `MODEL_FAST`                                 | LangGraph node                                 | Compliance narrative                             |
-| `GovernedTrader`        | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | `MODEL_FAST` (execution)                     | LangGraph subgraph; `@cage_guard` on tool executor | `execution_result`                               |
+| `GovernedTrader`        | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | `MODEL_FAST` (execution)                     | LangGraph subgraph; `gateway_tool_guard` on tool executor | `execution_result`                               |
 | `RiskAnalystAgent`      | `src/governed_financial_advisor/agents/risk_analyst/agent.py`      | STAMP hazards from GCS; fallback H-1/H-2/H-3 | LangGraph node                                 | `ProposedUCA` structs                            |
 | `FinancialAdvisor`      | `src/governed_financial_advisor/agents/financial_advisor/prompt.py`| `MODEL_REASONING`                            | Prompt template only                           | Advisor framing prompt                           |
 
@@ -104,12 +104,12 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `pause_reason`          | `str \| None` — Reason code for transient PAUSE    | Extended          | `SymbolicGovernor`            |
 | `consecutive_denials`   | `int` — Sequential DENY counter (reset on ALLOW)   | Extended          | `SymbolicGovernor`            |
 | `last_violation`        | `dict \| None` — Most recent structured violation   | Extended          | `SymbolicGovernor`            |
-| `deferral_ticket_id`    | `str \| None` — Ticket ID from `DeferralPending`   | Extended          | `@cage_guard` / `DeferQueue`  |
-| `deferral_reason`       | `str \| None` — Justification for the deferral     | Extended          | `@cage_guard` / `DeferQueue`  |
-| `agent_id`              | `str` — Identifier submitted to the Gateway PDP    | Extended          | Input / `@cage_guard`         |
+| `deferral_ticket_id`    | `str \| None` — Ticket ID from `DeferralPending`   | Extended          | `safety_node` / `defer_node`  |
+| `deferral_reason`       | `str \| None` — Justification for the deferral     | Extended          | `safety_node`                 |
+| `agent_id`              | `str` — Identifier submitted to the Gateway PDP    | Extended          | Input                         |
 | `proposed_action`       | `dict \| None` — Parameters staged for validation   | Extended          | Upstream tool-planning nodes  |
-| `governance_envelope`   | `dict \| None` — Signed ALLOW decision from the PDP | Extended          | `@cage_guard`                 |
-| `governance_status`     | `str \| None` — `"ALLOWED"` / `"DENIED"` / `"DEFERRED"` | Extended      | `@cage_guard`                 |
+| `governance_envelope`   | `dict \| None` — Gateway APPROVED verdict          | Extended          | `gateway_tool_guard`          |
+| `governance_status`     | `str \| None` — `"ALLOWED"` / `"DENIED"` / `"DEFERRED"` | Extended      | `gateway_tool_guard`          |
 
 ### ExecutionPlan Pydantic Schema (TOCTOU Defense)
 
@@ -182,14 +182,14 @@ Defined in `src/governed_financial_advisor/graph/subgraphs/data_analyst_graph.py
 3. **Latest Close**: Extracts latest market close price for downstream planning.
 4. **Top 3 News**: Fetches the 3 most recent news headlines for ticker context.
 
-The `execute_tool` node is the subgraph's `tool_executor_node` wrapped by `cage_guard(client=get_cage_client(), action="fetch_market_data")`. The upstream `doer` node stages the call parameters into `state["proposed_action"]`; the guard submits them to the Gateway PDP before the fetch runs.
+The `execute_tool` node is the subgraph's `tool_executor_node` wrapped by `gateway_tool_guard("fetch_market_data")`. The upstream `doer` node emits the tool calls; the guard submits each one to the gateway's `POST /governance/validate-action` before the fetch runs.
 
 ### 5.2 Governed Trader Subgraph
 Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is conditional via `route_approval`: high-risk/high-value threads enter the `approval` node (the dynamic `interrupt()` gate of §7), all others go straight to `executor`.
 1. **HITL Gate (`approval`)**: `approval_node` suspends the subgraph via `interrupt()`; on resume it issues `Command(goto="post_hitl_rehydrate")` when approved or `Command(goto="rejection")` when refused.
 2. **State Rehydration (`post_hitl_rehydrate`)**: Restores the parked execution context after resume.
 3. **Continuous State Revalidation (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift, asserts drift $\le$ `max_slippage_pct`, and re-runs governance with fresh prices. On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`.
-4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `cage_guard(client=get_cage_client(), action="execute_trade")`, so no trade tool can fire without a signed ALLOW envelope from the Gateway PDP. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
+4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an explicit `APPROVED` verdict from the gateway's `POST /governance/validate-action`. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
 5. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
 
 ---

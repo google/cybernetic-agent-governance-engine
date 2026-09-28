@@ -53,7 +53,6 @@ from src.gateway.governance.uca_logger import _get_uca_logger
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.infrastructure.privacy import scrub_pii
 
-
 logger = logging.getLogger("Gateway.InferenceProxy")
 
 inference_app = FastAPI(title="CAGE Inference Proxy")
@@ -260,26 +259,24 @@ async def chat_completions(
             return JSONResponse(content=blocked, status_code=403)
         stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="PASS")
 
-        # ── Step 2: Agent Identity Extraction (SC-8 mTLS Authentication) ──
-        # Extract verified SPIFFE URI from client TLS certificate.
-        # Requests without a verified SPIFFE certificate fail closed (401).
+        # ── Step 2: Agent Identity Extraction (SC-8 / POAM-2026-080) ──
+        # Extract verified Linkerd workload identity from l5d-client-id header.
+        # Requests without a verified identity fail closed (401).
         try:
-            from src.gateway.governance.spiffe_extractor import (
-                extract_spiffe_uri_from_asgi_scope,
-            )
+            from src.gateway.server.workload_identity import extract_client_identity
 
-            agent_id = extract_spiffe_uri_from_asgi_scope(request.scope)
-        except Exception as spiffe_exc:
+            agent_id = extract_client_identity(request.scope)
+        except Exception as identity_exc:
             logger.error(
-                "Failed to extract SPIFFE identity from client certificate: %s — failing closed",
-                spiffe_exc,
+                "Failed to extract workload identity from l5d-client-id: %s — failing closed",
+                identity_exc,
             )
             stamp_iso_control(span, ingress_stage=0, control="SC-8", outcome="BLOCK")
             return JSONResponse(
                 content={
                     "error": "authentication_required",
-                    "message": "Client certificate with valid SPIFFE URI required",
-                    "detail": str(spiffe_exc),
+                    "message": "Verified Linkerd workload identity (l5d-client-id) required",
+                    "detail": str(identity_exc),
                 },
                 status_code=401,
             )

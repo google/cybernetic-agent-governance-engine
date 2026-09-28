@@ -80,23 +80,31 @@ service. All transport must use TLS.
 
 ---
 
-### 2.1 `X-CAGE-Routing-Seal` — Gateway Service
+### 2.1 Mesh workload identity — Gateway Service
 
-An HMAC-SHA256 seal computed over the raw request body bytes. The Gateway
-Service verifies this seal on governed write operations to ensure request
-integrity end-to-end.
+The Gateway Service authenticates callers by Linkerd mTLS workload identity
+(POAM-2026-080), not by a request header secret. The Linkerd inbound proxy
+sets `l5d-client-id` to the peer identity it verified (or strips the header).
+The gateway admits a request only if exactly one such header carries an
+identity listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`; otherwise it returns
+`403`. `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and
+the gateway always enforces workload identity (`WorkloadIdentityMiddleware`
+and `extract_client_identity(scope)`). Only the advisor identity is trusted:
 
-**Required on:**
-- `POST /governance/check`
-- `POST /tools/execute`
-
-The seal is also returned in `POST /governance/validate-action` responses and
-**must be verified by callers before actuating any trade**.
-
-**Header format:**
 ```
-X-CAGE-Routing-Seal: <hex-encoded HMAC-SHA256>
+cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
 ```
+
+**Open paths (no identity):** `GET /health`, `GET /healthz`, `GET /metrics`,
+`GET /governance/jwks`, `GET /governance/.well-known/jwks.json`,
+`GET /v1/pause/<token>`.
+
+**Every other path requires a trusted identity**, including `/mcp/*`,
+`/tools/execute`, `/governance/*`, `POST /v1/pause/<token>/resume` and
+`/inference/*`. Callers through Agent Gateway / Envoy or a plain ingress have
+no trusted identity and are refused.
+
+**Implementation:** [`src/gateway/server/workload_identity.py`](../src/gateway/server/workload_identity.py)
 
 ---
 
@@ -649,9 +657,10 @@ metrics breach configured thresholds.
 
 Execute a named tool with full governance enforcement. For `execute_trade`,
 the Gateway Service validates the action and verifies the routing seal before
-actuation. Requires `X-API-Key` and `X-CAGE-Routing-Seal` headers.
+actuation. The caller must present a trusted mesh workload identity
+(see [§2.1](#21-mesh-workload-identity--gateway-service)).
 
-**Required headers:** `X-API-Key`, `X-CAGE-Routing-Seal`
+**Required identity:** trusted `l5d-client-id` (set by the Linkerd proxy)
 
 **Request body:**
 ```json
@@ -837,9 +846,13 @@ changes.
 | Parse error | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
 | Body > 64KB | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
 
-**On `ALLOW`:** The `OkHttpResponse` includes the `x-cage-routing-seal`
-header so the downstream MCP tool server can verify it via
-`enforce_routing_seal()`.
+**On `ALLOW`:** The `OkHttpResponse` carries no governance headers. The
+governor's routing seal never leaves the gateway, and the adapter does not
+inject any credential for the upstream call
+([`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py)).
+Because the gateway authenticates callers by mesh workload identity
+(POAM-2026-080), requests forwarded by Agent Gateway / Envoy are refused with
+`403` by the gateway.
 
 **On `REQUIRE_APPROVAL`:** The action context is complete and evaluable, but
 requires explicit human sign-off. The adapter returns 202 immediately
@@ -1066,16 +1079,20 @@ rule is triggered.
 }
 ```
 
-**Sub-type: `X-CAGE-Routing-Seal-Missing` (Phase B)**
+**Sub-type: untrusted workload identity (POAM-2026-080)**
 
-Returned by the MCP Tool Server when a tool execution request arrives without
-a valid `X-CAGE-Routing-Seal` header (i.e., the request bypassed the
-governance pipeline).
+Returned by the Gateway Service (`WorkloadIdentityMiddleware`,
+[`workload_identity.py`](../src/gateway/server/workload_identity.py)) when a
+request to a non-open path carries no trusted `l5d-client-id` identity.
+
+```
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+```
 
 ```json
 {
-  "error": "invalid_routing_seal",
-  "message": "Request missing or has an invalid X-CAGE-Routing-Seal header. Only trusted upstream orchestrators may invoke this endpoint."
+  "detail": "Forbidden: caller workload identity is not authorized for this route."
 }
 ```
 
@@ -1570,8 +1587,9 @@ The optional `message` string is surfaced in the finding. On `REFUSE` and
 | Service | Method | Path | Auth | Description |
 |---|---|---|---|---|
 | Gateway Service | `GET` | `/healthz` | None | Key management service connectivity health check |
-| Gateway Service | `POST` | `/inference/v1/chat/completions` | None | OpenAI-compatible governed LLM inference |
+| Gateway Service | `POST` | `/inference/v1/chat/completions` | Mesh identity | OpenAI-compatible governed LLM inference |
 | Gateway Service | `GET` | `/health` | None | MCP tool server health probe |
+| Gateway Service | `POST` | `/tools/execute` | Mesh identity | Execute named tool with governance (MCP tool server) |
 | Compliance Artifact Service | `GET` | `/health` | None | Service health probe |
 | Compliance Artifact Service | `GET` | `/v1/events/stream` | None | SSE governance event stream |
 | Compliance Artifact Service | `GET` | `/v1/controls` | None | List compliance controls registry |
@@ -1591,7 +1609,6 @@ The optional `message` string is surfaced in the finding. On `REFUSE` and
 | Financial Advisory Service | `GET` | `/v1/nemo/proposals/pending` | None | List pending AI safety guardrails proposals |
 | Financial Advisory Service | `POST` | `/v1/nemo/apply-refinement` | None | Legacy AI safety guardrails refinement endpoint |
 | Financial Advisory Service | `POST` | `/v1/webhooks/langfuse` | None | Observability webhook receiver |
-| Financial Advisory Service | `POST` | `/tools/execute` | `X-API-Key` + `X-CAGE-Routing-Seal` | Execute named tool with governance |
 | gRPC Gateway | `rpc` | `Chat` | — | Server-streaming governed LLM responses |
 | gRPC Gateway | `rpc` | `ExecuteTool` | — | Unary tool execution via gRPC |
 

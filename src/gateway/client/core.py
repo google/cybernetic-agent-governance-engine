@@ -18,7 +18,7 @@ CAGE Gateway Client - Out-of-Process Policy Enforcement Point (PEP).
 This module provides the `CageClient` singleton that communicates with the
 CAGE Gateway Policy Decision Point (PDP) over HTTP/2. It maps governance
 responses into tri-state actions:
-  - ALLOW → Return GovernanceEnvelope with verified routing seal
+  - ALLOW → Return KMS-signed GovernanceEnvelope
   - DENY → Raise PolicyViolationException with structured diagnostics
   - DEFER → Raise DeferralPending with ticket details for HITL approval
 
@@ -26,7 +26,7 @@ Architecture:
     ┌──────────────┐         HTTP/2         ┌──────────────┐
     │ CageClient   │ ──────────────────────> │ CAGE Gateway │
     │ (PEP)        │ <────────────────────── │ (PDP)        │
-    └──────────────┘    TLS/mTLS + Seal     └──────────────┘
+    └──────────────┘        TLS/mTLS        └──────────────┘
          │
          ├─ ALLOW  → GovernanceEnvelope
          ├─ DENY   → PolicyViolationException
@@ -35,7 +35,6 @@ Architecture:
 Fail-Closed Semantics:
     - Network errors → Raise CageGatewayError (deny action)
     - 5xx server errors → Raise CageGatewayError (deny action)
-    - Invalid seal → Raise RoutingSealVerificationError (deny action)
     - Missing audit_id → Raise CageGatewayError (deny action)
 
 Usage:
@@ -43,7 +42,6 @@ Usage:
 
     async with CageClient(
         gateway_url="https://cage-gateway.example.com",
-        routing_seal_secret="shared-secret",
         timeout_s=5.0
     ) as client:
         try:
@@ -90,11 +88,7 @@ try:
 except ImportError:
     _HTTP2_AVAILABLE = False
 
-from src.gateway.client.crypto import (
-    RoutingSealVerificationError,
-    generate_w3c_traceparent,
-    verify_routing_seal,
-)
+from src.gateway.client.crypto import generate_w3c_traceparent
 from src.gateway.client.envelope import GovernanceEnvelope
 from src.gateway.client.exceptions import (
     CageGatewayError,
@@ -113,11 +107,10 @@ class CageClient:
     This client acts as a reusable HTTP/2 singleton that submits proposed
     actions to the CAGE Gateway for governance evaluation. It maintains a
     persistent connection pool to minimize latency overhead and supports
-    optional mTLS authentication and routing seal verification.
+    optional mTLS authentication.
 
     Attributes:
         gateway_url: Base URL of the CAGE Gateway API (e.g., "https://cage.example.com")
-        routing_seal_secret: Optional shared secret for HMAC seal verification
         timeout_s: Request timeout in seconds (default: 5.0)
         _client: Internal httpx.AsyncClient instance (HTTP/2 enabled)
     """
@@ -125,7 +118,6 @@ class CageClient:
     def __init__(
         self,
         gateway_url: str,
-        routing_seal_secret: str | None = None,
         mtls_certs: tuple[str, str, str] | None = None,
         timeout_s: float = 5.0,
     ):
@@ -134,7 +126,6 @@ class CageClient:
 
         Args:
             gateway_url: Base URL of the CAGE Gateway API (no trailing slash)
-            routing_seal_secret: Optional shared secret for X-CAGE-Routing-Seal verification
             mtls_certs: Optional tuple of (cert_path, key_path, ca_path) for mutual TLS
             timeout_s: Request timeout in seconds (default: 5.0)
 
@@ -142,7 +133,6 @@ class CageClient:
             FileNotFoundError: If mTLS certificate paths are invalid (fail-closed)
         """
         self.gateway_url = gateway_url.rstrip("/")
-        self.routing_seal_secret = routing_seal_secret
         self.timeout_s = timeout_s
 
         # Configure HTTP/2 transport with optional mTLS
@@ -167,7 +157,6 @@ class CageClient:
 
         logger.info(
             f"CageClient initialized: gateway={self.gateway_url}, "
-            f"seal_enabled={routing_seal_secret is not None}, "
             f"mtls_enabled={mtls_certs is not None}"
         )
 
@@ -181,9 +170,9 @@ class CageClient:
         """
         Submit an action to the CAGE Gateway for governance validation.
 
-        This method sends a POST request to the gateway's `/v1/governance/validate`
+        This method sends a POST request to the gateway's `/governance/validate-action`
         endpoint with the proposed action details. It handles the tri-state response:
-          - 200 OK (ALLOW) → Verify seal, return GovernanceEnvelope
+          - 200 OK (ALLOW) → Return GovernanceEnvelope
           - 403/422 (DENY) → Parse diagnostics, raise PolicyViolationException
           - 202/409 (DEFER) → Parse ticket, raise DeferralPending
 
@@ -200,7 +189,6 @@ class CageClient:
             PolicyViolationException: Action denied by governance policy
             DeferralPending: Action requires human-in-the-loop approval
             CageGatewayError: Network error, server error, or invalid response
-            RoutingSealVerificationError: Routing seal verification failed
         """
         # Canonicalize parameters using sorted JSON (deterministic hash)
         canonical_params = self._canonicalize_params(parameters)
@@ -213,6 +201,7 @@ class CageClient:
         # Build request payload
         payload: dict[str, Any] = {
             "action": action,
+            "params": parameters,
             "parameters": parameters,
             "parameter_hash": param_hash,
             "agent_id": agent_id,
@@ -228,7 +217,7 @@ class CageClient:
             "User-Agent": "CageClient/3.0",
         }
 
-        endpoint = f"{self.gateway_url}/v1/governance/validate"
+        endpoint = f"{self.gateway_url}/governance/validate-action"
 
         logger.debug(
             f"Submitting action for validation: action={action}, "
@@ -248,7 +237,7 @@ class CageClient:
 
         # Handle tri-state response
         if response.status_code == 200:
-            # ALLOW: Parse envelope and verify routing seal
+            # ALLOW: Parse governance envelope
             return await self._handle_allow_response(response)
 
         if response.status_code in (403, 422):
@@ -296,7 +285,6 @@ class CageClient:
 
         Raises:
             CageGatewayError: Invalid response structure or missing envelope
-            RoutingSealVerificationError: Routing seal verification failed
         """
         try:
             response_data = response.json()
@@ -307,28 +295,6 @@ class CageClient:
         envelope_data = response_data.get("envelope")
         if not envelope_data:
             raise CageGatewayError("ALLOW response missing required 'envelope' field")
-
-        # Verify routing seal if secret is configured
-        if self.routing_seal_secret:
-            seal_header = response.headers.get("X-CAGE-Routing-Seal")
-            if not seal_header:
-                raise RoutingSealVerificationError(
-                    "ALLOW response missing required X-CAGE-Routing-Seal header"
-                )
-
-            # Verify seal against response body
-            body_bytes = response.content
-            try:
-                verify_routing_seal(
-                    seal_header=seal_header,
-                    body_bytes=body_bytes,
-                    secret=self.routing_seal_secret,
-                    ttl_seconds=30,
-                )
-                logger.debug("Routing seal verification successful")
-            except RoutingSealVerificationError as e:
-                logger.error(f"Routing seal verification failed: {e}")
-                raise
 
         # Parse envelope into validated Pydantic model
         try:

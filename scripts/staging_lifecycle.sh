@@ -36,7 +36,7 @@
 #
 # Prerequisites:
 #   - .env configured with GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION
-#   - terraform.auto.tfvars with staging secrets (routing_seal_secret, kms_key_id, etc.)
+#   - terraform.auto.tfvars with staging secrets (kms_key_id, etc.)
 #   - Langfuse compliance project keys (LANGFUSE_COMPLIANCE_PUBLIC_KEY, LANGFUSE_COMPLIANCE_SECRET_KEY)
 #   - kubectl context pointing to the GKE cluster (will be created during provision)
 #

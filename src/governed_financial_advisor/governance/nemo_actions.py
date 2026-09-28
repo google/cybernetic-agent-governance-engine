@@ -27,11 +27,7 @@ These fallback implementations should NOT be registered with production NeMo Gua
 Threshold loading: reads from GovernanceThresholds singleton (60s TTL cache).
 """
 
-import base64
-import hashlib
-import hmac
 import logging
-import os
 import time
 from typing import Any
 
@@ -177,109 +173,6 @@ def check_slippage_risk(context: dict[str, Any]) -> bool:
             limit,
         )
     return result
-
-
-def generate_approval_token(
-    thread_id: str, trade_id: str, ttl_seconds: int = 3600
-) -> str:
-    """Generate a cryptographically signed approval token."""
-    secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
-    if not secret:
-        raise RuntimeError(
-            "CAGE_ROUTING_SEAL_SECRET must be set in the environment. "
-            "Generate a cryptographically random secret of at least 32 characters."
-        )
-    if len(secret) < 32:
-        raise RuntimeError(
-            f"CAGE_ROUTING_SEAL_SECRET is only {len(secret)} characters long. "
-            f"A minimum of 32 characters is required for HMAC-SHA256 security."
-        )
-    expiry = int(time.time()) + ttl_seconds
-    payload = f"{thread_id}:{trade_id}:{expiry}"
-    signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    token_data = f"{payload}:{signature}"
-    return base64.urlsafe_b64encode(token_data.encode()).decode()
-
-
-def validate_approval_token(token: str, thread_id: str, trade_id: str) -> bool:
-    """Validate a cryptographically signed approval token."""
-    try:
-        token_data = base64.urlsafe_b64decode(token.encode()).decode()
-        parts = token_data.rsplit(":", 1)
-        if len(parts) != 2:
-            return False
-        payload, signature = parts
-        payload_parts = payload.split(":")
-        if len(payload_parts) != 3:
-            return False
-        t_id, tr_id, expiry_str = payload_parts
-        if t_id != thread_id or tr_id != trade_id:
-            return False
-        if int(time.time()) > int(expiry_str):
-            return False
-        secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
-        if not secret:
-            raise RuntimeError(
-                "CAGE_ROUTING_SEAL_SECRET must be set in the environment. "
-                "Generate a cryptographically random secret of at least 32 characters."
-            )
-        if len(secret) < 32:
-            raise RuntimeError(
-                f"CAGE_ROUTING_SEAL_SECRET is only {len(secret)} characters long. "
-                f"A minimum of 32 characters is required for HMAC-SHA256 security."
-            )
-        expected_sig = hmac.new(
-            secret.encode(), payload.encode(), hashlib.sha256
-        ).hexdigest()
-        return hmac.compare_digest(signature, expected_sig)
-    except Exception:
-        return False
-
-
-def check_approval_token(context: dict[str, Any]) -> bool:
-    """Return True if a valid HMAC-signed approval token is present.
-
-    Uses cryptographic HMAC-SHA256 validation. When thread_id/trade_id are
-    not present in the context the token cannot be bound or verified, so the
-    check denies rather than trusting an unverified value.
-
-    Returns:
-        True  — token present and cryptographically valid.
-        False — token absent, unverifiable, or invalid (fail-closed).
-    """
-    token = context.get("approval_token")
-    if not token:
-        logger.warning("check_approval_token: approval_token missing — DENY")
-        return False
-
-    token_str = str(token).strip()
-    if not token_str:
-        return False
-
-    # Explicit rejection list (fail-closed)
-    if token_str == "bad_sig":
-        logger.warning("check_approval_token: token is known bad signature — DENY")
-        return False
-
-    # Attempt HMAC validation when thread_id and trade_id are available
-    thread_id = context.get("thread_id", "")
-    trade_id = context.get("trade_id", "")
-    if thread_id and trade_id:
-        valid = validate_approval_token(token_str, thread_id, trade_id)
-        if not valid:
-            logger.warning(
-                "check_approval_token: HMAC validation failed for thread=%s trade=%s — DENY",
-                thread_id,
-                trade_id,
-            )
-        return valid
-
-    # Without thread_id/trade_id the token's HMAC cannot be recomputed, so a
-    # non-empty string proves nothing. Deny instead of accepting it unverified.
-    logger.warning(
-        "check_approval_token: thread_id/trade_id absent — token unverifiable — DENY"
-    )
-    return False
 
 
 def check_data_latency(context: dict[str, Any]) -> bool:

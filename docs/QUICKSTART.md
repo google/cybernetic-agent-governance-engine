@@ -24,19 +24,21 @@ Edit `.env` and set at minimum:
 
 ```bash
 OPENAI_API_KEY=<your-api-key>          # Or your LLM provider key
-CAGE_ROUTING_SEAL_SECRET=<random-32-char-string>
 
 # Exactly one domain per process (required). Only `finance` is runnable today;
 # see §8 for why healthcare and physical_ai refuse to start.
 CAGE_DOMAIN=finance
 CAGE_DEPLOYMENT_REGION=LOCAL
 CAGE_ENV=development
+CAGE_TRUSTED_CLIENT_IDENTITIES=cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
 ```
 
-Generate a routing seal secret:
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
+`CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and the
+gateway always enforces workload identity: `WorkloadIdentityMiddleware` and
+`load_identity_policy()` in
+[`src/gateway/server/workload_identity.py`](../src/gateway/server/workload_identity.py)
+admit only callers presenting a trusted Linkerd `l5d-client-id` header and
+refuse to start if `CAGE_TRUSTED_CLIENT_IDENTITIES` is unset.
 
 ## 2. Start the stack
 

@@ -311,10 +311,7 @@ def test_gateway_tools_execute_reaches_plugin_registered_tool() -> None:
         return f"probe:{x}"
 
     mod.mcp.tool(name="plugin_probe_poam079")(plugin_probe)
-    with (
-        patch.object(mod, "enforce_routing_seal", lambda *args: None),
-        patch.object(mod, "_check_rate_limit", AsyncMock(return_value=True)),
-    ):
+    with patch.object(mod, "_check_rate_limit", AsyncMock(return_value=True)):
         resp = TestClient(mod.app).post(
             "/tools/execute", json={"tool_name": "plugin_probe_poam079", "params": {"x": 3}}
         )

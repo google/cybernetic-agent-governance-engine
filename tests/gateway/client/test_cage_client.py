@@ -18,9 +18,7 @@ All tests run without live external gateway or vendor SDK dependencies.
 Mocking uses respx for HTTP/2 interception and unittest.mock for crypto.
 """
 
-import hashlib
 import json
-import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -28,7 +26,6 @@ import pytest
 import respx
 
 from src.gateway.client.core import CageClient
-from src.gateway.client.crypto import RoutingSealVerificationError
 from src.gateway.client.envelope import GovernanceEnvelope
 from src.gateway.client.exceptions import (
     CageGatewayError,
@@ -46,17 +43,8 @@ def mock_gateway_url() -> str:
 
 
 @pytest.fixture
-def mock_routing_seal_secret() -> str:
-    """Mock routing seal shared secret for hermetic tests."""
-    return "test-seal-secret-32-bytes-long!!"
-
-
-@pytest.fixture
-async def cage_client(
-    mock_gateway_url: str, mock_routing_seal_secret: str, monkeypatch
-):
+async def cage_client(mock_gateway_url: str, monkeypatch):
     """Create CageClient instance for hermetic testing with mocked transport."""
-    from unittest.mock import MagicMock
 
     # Mock create_mtls_transport to return a simple httpx.HTTPTransport without h2
     def mock_create_mtls_transport(*args, **kwargs):
@@ -78,26 +66,14 @@ async def cage_client(
 
     client = CageClient(
         gateway_url=mock_gateway_url,
-        routing_seal_secret=mock_routing_seal_secret,
         timeout_s=5.0,
     )
     yield client
     await client.aclose()
 
 
-def generate_mock_routing_seal(body_bytes: bytes, secret: str) -> str:
-    """Generate valid routing seal for mock responses."""
-    import hmac
-
-    timestamp = str(time.time())
-    message = f"{timestamp}.{body_bytes.hex()}".encode()
-    signature = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
-    return f"{timestamp}.{signature}"
-
-
 def create_mock_allow_envelope() -> dict:
     """Create mock ALLOW governance envelope with ISO timestamp strings."""
-    # Use fixed timestamps for deterministic sealing
     now_str = "2026-09-18T20:00:00+00:00"
     expires_str = "2026-09-18T20:05:00+00:00"
 
@@ -137,27 +113,17 @@ def create_mock_allow_envelope() -> dict:
 async def test_validate_action_allow(
     cage_client: CageClient,
     mock_gateway_url: str,
-    mock_routing_seal_secret: str,
-    monkeypatch,
 ):
     """Test successful ALLOW response returns frozen GovernanceEnvelope."""
-
-    # Mock verify_routing_seal to always succeed (hermetic test)
-    def mock_verify_seal(*args, **kwargs):
-        return True
-
-    monkeypatch.setattr("src.gateway.client.core.verify_routing_seal", mock_verify_seal)
-
     # Mock ALLOW response
     envelope_data = create_mock_allow_envelope()
     response_body = {"envelope": envelope_data}
 
     # Mock HTTP endpoint
-    mock_route = respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    mock_route = respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=200,
             json=response_body,
-            headers={"X-CAGE-Routing-Seal": "mock.seal"},
         )
     )
 
@@ -183,9 +149,12 @@ async def test_validate_action_allow(
     with pytest.raises(ValidationError):
         result.envelope_version = "4.0"  # type: ignore
 
-    # Verify request was made
+    # Verify request was made with both params and parameters
     assert mock_route.called
     assert mock_route.call_count == 1
+    sent_payload = json.loads(mock_route.calls.last.request.content)
+    assert sent_payload["params"] == {"symbol": "AAPL", "amount": 1000}
+    assert sent_payload["parameters"] == {"symbol": "AAPL", "amount": 1000}
 
 
 @respx.mock
@@ -207,7 +176,7 @@ async def test_validate_action_deny_raises_policy_violation(
         "recoverable": True,
     }
 
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=403,
             json=response_body,
@@ -248,7 +217,7 @@ async def test_validate_action_defer_raises_deferral_pending(
         "ttl_seconds": 14400,
     }
 
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=202,
             json=response_body,
@@ -280,7 +249,7 @@ async def test_validate_action_transport_failure_fails_closed(
 ):
     """Test connection timeout/500 errors fail closed with CageGatewayError."""
     # Test 1: Connection timeout (network failure)
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         side_effect=httpx.ConnectTimeout("Connection timed out")
     )
 
@@ -294,7 +263,7 @@ async def test_validate_action_transport_failure_fails_closed(
     assert "Failed to reach CAGE Gateway" in str(exc_info.value)
 
     # Test 2: 500 Internal Server Error (fail-closed)
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=500,
             text="Internal Server Error",
@@ -312,76 +281,13 @@ async def test_validate_action_transport_failure_fails_closed(
     assert "500" in str(exc_info.value)
 
 
-@respx.mock
-async def test_routing_seal_tamper_detection(
-    cage_client: CageClient,
-    mock_gateway_url: str,
-    mock_routing_seal_secret: str,
-):
-    """Test verify_routing_seal raises on body tampering."""
-    # Create valid envelope
-    envelope_data = create_mock_allow_envelope()
-    response_body = {"envelope": envelope_data}
-    original_bytes = json.dumps(response_body).encode("utf-8")
-
-    # Generate seal for original body
-    valid_seal = generate_mock_routing_seal(original_bytes, mock_routing_seal_secret)
-
-    # Tamper with response body (change decision to DENY)
-    tampered_body = response_body.copy()
-    tampered_body["envelope"]["payload"]["decision"] = "DENY"
-
-    # Mock endpoint with tampered body but original seal
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
-        return_value=httpx.Response(
-            status_code=200,
-            json=tampered_body,  # Tampered content
-            headers={"X-CAGE-Routing-Seal": valid_seal},  # Seal for original
+def test_routing_seal_secret_rejected(mock_gateway_url: str):
+    """Test CageClient no longer accepts routing_seal_secret parameter."""
+    with pytest.raises(TypeError):
+        CageClient(
+            gateway_url=mock_gateway_url,
+            routing_seal_secret="legacy-secret",  # type: ignore[call-arg]
         )
-    )
-
-    # Execute validation and assert seal verification failure
-    with pytest.raises(RoutingSealVerificationError) as exc_info:
-        await cage_client.validate_action(
-            action="execute_trade",
-            parameters={"symbol": "MSFT", "amount": 2000},
-            agent_id="test-agent",
-        )
-
-    assert (
-        "tampering detected" in str(exc_info.value).lower()
-        or "mismatch" in str(exc_info.value).lower()
-    )
-
-
-@respx.mock
-async def test_routing_seal_missing_header_fails_closed(
-    cage_client: CageClient,
-    mock_gateway_url: str,
-):
-    """Test missing routing seal header fails closed when seal is configured."""
-    # Mock ALLOW response without routing seal header
-    envelope_data = create_mock_allow_envelope()
-    response_body = {"envelope": envelope_data}
-
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
-        return_value=httpx.Response(
-            status_code=200,
-            json=response_body,
-            # No X-CAGE-Routing-Seal header
-        )
-    )
-
-    # Execute validation and assert failure
-    with pytest.raises(RoutingSealVerificationError) as exc_info:
-        await cage_client.validate_action(
-            action="execute_trade",
-            parameters={"symbol": "NVDA", "amount": 1500},
-            agent_id="test-agent",
-        )
-
-    assert "missing" in str(exc_info.value).lower()
-    assert "X-CAGE-Routing-Seal" in str(exc_info.value)
 
 
 @respx.mock
@@ -398,7 +304,7 @@ async def test_deny_response_missing_audit_id_fails_closed(
         "recoverable": True,
     }
 
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=403,
             json=response_body,
@@ -429,7 +335,7 @@ async def test_defer_response_missing_ticket_id_fails_closed(
         # Missing ticket_id field
     }
 
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=202,
             json=response_body,
@@ -459,7 +365,7 @@ async def test_allow_response_missing_envelope_fails_closed(
         # Missing envelope field
     }
 
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=200,
             json=response_body,
@@ -484,7 +390,7 @@ async def test_unexpected_status_code_fails_closed(
 ):
     """Test unexpected HTTP status code fails closed."""
     # Mock 418 I'm a teapot (unexpected status)
-    respx.post(f"{mock_gateway_url}/v1/governance/validate").mock(
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=418,
             text="I'm a teapot",
@@ -547,3 +453,4 @@ def test_parameter_canonicalization():
     params3 = {"nested": {"b": 2, "a": 1}, "top": "value"}
     canon3 = CageClient._canonicalize_params(params3)
     assert '{"nested":{"a":1,"b":2},"top":"value"}' == canon3
+

@@ -717,27 +717,39 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 
 ## 6. Authentication and Security Model
 
-### `X-CAGE-Routing-Seal` (Gateway)
+### Mesh workload identity (Gateway)
 
-HMAC-SHA256 computed over the raw request body bytes. Verified by
-`_verify_routing_seal()`
-and enforced by
-`enforce_routing_seal()`.
+The gateway authenticates callers by Linkerd mTLS workload identity
+(POAM-2026-080), implemented by `WorkloadIdentityMiddleware` and
+`extract_client_identity(scope)` in
+[`src/gateway/server/workload_identity.py`](../src/gateway/server/workload_identity.py).
+The Linkerd inbound proxy sets the `l5d-client-id` header to the verified
+peer identity (or strips it). The request is admitted only if exactly one
+such header is present and it is listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`
+(only the advisor,
+`cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local`).
+Otherwise the gateway returns `403`. `CAGE_TRUSTED_CLIENT_IDENTITIES` is
+required in every environment and the gateway always enforces workload
+identity (there is no permissive dev/test mode). The mesh policy in
+`deployment/k8s/linkerd-mtls-policy.yaml` enforces the same rule before the
+container.
 
-Required on:
-- `POST /governance/check`
-- `POST /governance/revalidate-post-hitl`
-- `POST /tools/execute` (MCP tool server)
+Open paths (no identity needed): `GET /health`, `GET /healthz`, `GET /metrics`,
+`GET /governance/jwks`, `GET /governance/.well-known/jwks.json`, and
+`GET /v1/pause/<token>`. Every other path is deny-by-default, including
+`/mcp/*`, `/tools/execute`, `/governance/*` (`check`, `validate-action`,
+`revalidate-post-hitl`), `POST /v1/pause/<token>/resume` and `/inference/*`.
 
 `POST /governance/revalidate-post-hitl` re-runs the governor's post-HITL
 check (`SymbolicGovernor.revalidate_post_hitl`) for an approved trade. It
 returns `{"verdict": "APPROVED"}` with no seal on success, and 403
 `{"verdict": "DENIED", "violations": [...]}` with a refusal receipt on
-failure. The advisor's `GatewayClient` does not yet send
-`X-CAGE-Routing-Seal`; see POAM-2026-080.
+failure.
 
-The seal is also returned in `POST /governance/validate-action` responses and
-must be verified by callers before actuating any trade.
+APPROVED `POST /governance/validate-action` responses carry a signed
+governance envelope. The governor's KMS-signed routing seal
+(`src/gateway/governance/routing_seal.py`) is a separate mechanism and is not
+a caller credential.
 
 ---
 

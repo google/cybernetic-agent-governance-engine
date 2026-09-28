@@ -51,7 +51,6 @@ from cage_client.adapters.langgraph import cage_guard
 # Initialize governance client (once at app startup)
 cage = CageClient(
     gateway_url="http://localhost:8080",
-    routing_seal_secret="dev-secret-key",  # From your .env
 )
 
 
@@ -94,7 +93,7 @@ print(result["result"])
 ## What Happens at Runtime
 
 1. LangGraph reaches `execute_trade_node`
-2. `@cage_guard` intercepts and calls `http://localhost:8080/v1/governance/validate`
+2. `@cage_guard` intercepts and calls `http://localhost:8080/governance/validate-action`
 3. CAGE Gateway evaluates the action through its STERA 8-tier admissibility pipeline:
    - **Tier 0:** STPA/UCA validation
    - **Tier 1:** Agent confidence threshold (4-State AARM):
@@ -143,7 +142,7 @@ except DeferralPending as e:
 
 ## Next Steps
 
-- **Define Your Policy:** Edit `config/opa/trade_governance.rego` or use STPA compiler
+- **Define Your Policy:** Edit `config/opa/trade_policy.rego` or use STPA compiler
 - **HITL Workflow:** See [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../security/HITL_TOCTOU_REMEDIATION.md)
 - **Production Deployment:** See [`infra/DEPLOYMENT_GUIDE.md`](../../infra/DEPLOYMENT_GUIDE.md)
 - **Full Example:** Governed Financial Advisor at [`src/governed_financial_advisor/`](../../src/governed_financial_advisor/)

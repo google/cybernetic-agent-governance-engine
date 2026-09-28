@@ -63,9 +63,6 @@ os.environ.setdefault("CAGE_ENV", "test")
 os.environ.setdefault("CAGE_DOMAIN", "finance")
 
 os.environ.setdefault(
-    "CAGE_ROUTING_SEAL_SECRET", "dev-only-insecure-placeholder-not-for-production-use"
-)
-os.environ.setdefault(
     "GOVERNANCE_SALT", "dev-only-insecure-placeholder-not-for-production-use"
 )
 os.environ.setdefault("CAGE_DEPLOYMENT_REGION", "LOCAL")
@@ -73,6 +70,10 @@ os.environ.setdefault("LANGFUSE_POSTURE_DRY_RUN", "true")
 os.environ.setdefault(
     "CMEK_KEY_RESOURCE_NAME",
     "projects/test-project/locations/us-central1/keyRings/test-keyring/cryptoKeys/test-key/cryptoKeyVersions/1",
+)
+os.environ.setdefault(
+    "CAGE_TRUSTED_CLIENT_IDENTITIES",
+    "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
 )
 
 import pytest
@@ -254,6 +255,10 @@ def pytest_configure(config: pytest.Config) -> None:
     # CAGE_ENV must be set to "test" to enable HMAC fallback in routing_seal
     # and kms_signer when KMS_GOVERNANCE_KEY is not configured.
     _setdefault("CAGE_ENV", "test")
+    _setdefault(
+        "CAGE_TRUSTED_CLIENT_IDENTITIES",
+        "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+    )
 
     # For integration tests against staging/production with real KMS, preserve KMS credentials
     # Only remove KMS credentials for unit tests (when CAGE_ENV=test and not running integration tests)

@@ -111,17 +111,26 @@ variable "otel_exporter_otlp_headers" {
   sensitive   = true
 }
 
-# K-1: Explicit variable for CAGE_ROUTING_SEAL_SECRET.
-# The gateway pod already receives this via the advisor-secrets bulk env_from
-# mount, but declaring it here makes the Terraform dependency graph explicit
-# and allows verify_remote.py / plan-time checks to confirm the value is
-# non-empty before apply.  Actual value must come from terraform.auto.tfvars
-# (gitignored) — never commit a real secret here.
-variable "routing_seal_secret" {
-  description = "Gateway routing seal secret (CAGE_ROUTING_SEAL_SECRET). Set via terraform.auto.tfvars (gitignored). Empty string silently disables seal enforcement in non-dev environments."
-  type        = string
-  default     = ""
-  sensitive   = true
+# POAM-2026-080: callers are authenticated by Linkerd mTLS workload identity,
+# not by a shared HMAC secret. The gateway refuses every non-open path unless
+# l5d-client-id is one of these identities.
+variable "trusted_client_identities" {
+  description = "Linkerd workload identities (l5d-client-id format: <sa>.<namespace>.serviceaccount.identity.linkerd.<trust-domain>) allowed to call the gateway's gated routes. Rendered into CAGE_TRUSTED_CLIENT_IDENTITIES and the mesh AuthorizationPolicy."
+  type        = list(string)
+
+  validation {
+    condition = length(var.trusted_client_identities) > 0 && alltrue([
+      for id in var.trusted_client_identities :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.serviceaccount\\.identity\\.linkerd\\.[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", id))
+    ])
+    error_message = "trusted_client_identities must be a non-empty list of Linkerd identities (<sa>.<namespace>.serviceaccount.identity.linkerd.<trust-domain>), not spiffe:// URIs."
+  }
+}
+
+variable "enable_mesh_policy" {
+  description = "Install the gateway's Linkerd Server/HTTPRoute/AuthorizationPolicy set. Requires the Linkerd CRDs (infra/modules/service_mesh)."
+  type        = bool
+  default     = true
 }
 
 variable "reconciliation_provider" {

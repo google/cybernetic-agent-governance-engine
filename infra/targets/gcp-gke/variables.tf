@@ -576,19 +576,6 @@ variable "cage_kms_provider" {
   default     = "gcp"
 }
 
-# DEP-21: Remove default = "" from routing_seal_secret.
-# A missing or empty value previously caused terraform apply to silently write
-# an empty string into advisor-secrets.CAGE_ROUTING_SEAL_SECRET, triggering
-# RuntimeError: CAGE STARTUP FAILURE in the gateway on every apply that ran
-# without a populated terraform.auto.tfvars. Removing the default forces a
-# Terraform plan error rather than a silent runtime failure.
-# The value must always be supplied via terraform.auto.tfvars (gitignored).
-variable "routing_seal_secret" {
-  description = "Gateway routing seal secret (from CAGE_ROUTING_SEAL_SECRET). No default — must be supplied via terraform.auto.tfvars (gitignored). Omitting this causes a Terraform plan error rather than silently writing an empty secret that crashes the gateway."
-  type        = string
-  sensitive   = true
-}
-
 # K-4: otel_exporter_otlp_headers — Langfuse OTLP Basic-auth header.
 # Format: "Authorization=Basic <base64(publicKey:secretKey)>"
 # If left empty the root module derives it from langfuse_public_key /

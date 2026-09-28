@@ -5,12 +5,14 @@
 # The wrapper flow in main_logic.co will handle argument passing.
 #
 # NOTE (R-22 fix, 2026-03-10): Financial safety action declarations
-# (check_approval_token, check_data_latency, check_drawdown_limit,
+# (check_data_latency, check_drawdown_limit,
 # check_slippage_risk, check_atomic_execution) were removed from this file
 # together with their corresponding Colang flows in main_logic.co.
 # Financial policy enforcement is owned by the safety_check_node → OPA path.
 # The pass-through Python stubs and the gateway-internal implementations were
-# deleted on 2026-09-26 (no flow referenced them).
+# deleted on 2026-09-26 (no flow referenced them). The HMAC approval-token
+# helpers (keyed on the retired routing-seal secret) were deleted with
+# POAM-2026-080; the advisor holds no gateway secret.
 action MaskPIIAction
 action InvokeVllmFallbackAction
 action CustomSelfCheckInputAction

@@ -180,15 +180,17 @@ def test_import_is_pure_in_production_without_kms_or_redis() -> None:
     """Importing the governor and both server apps must not touch KMS or Redis.
 
     Redis points at a closed port and no KMS key is set: any import-time
-    connection or posture guard would fail the import. (The routing-seal
-    HMAC secret is a separate import-time requirement, POAM-012.)
+    connection or posture guard would fail the import. (The gateway's trusted
+    caller identity list is a separate import-time requirement, POAM-2026-080.)
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith(("KMS_", "REDIS"))}
     env.update(
         CAGE_ENV="production",
         REDIS_HOST="127.0.0.1",
         REDIS_PORT="1",
-        CAGE_ROUTING_SEAL_SECRET="import-purity-test-" + "x" * 32,
+        CAGE_TRUSTED_CLIENT_IDENTITIES=(
+            "advisor.cage.serviceaccount.identity.linkerd.cluster.local"
+        ),
         CAGE_SEAL_ENFORCEMENT="enforce",
     )
     code = (

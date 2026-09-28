@@ -279,7 +279,7 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 | **Server-Sent Events (SSE)**   | MCP transport (`FastMCP`); compliance event streaming from `GovernanceEventBus`   |
 | **W3C Traceparent**            | Distributed trace propagation across the MCP SSE boundary via `patch_mcp_tools()` |
 | **Cloud KMS (RSA-4096-SHA256)**| **Primary** governance signing — HSM-backed asymmetric signatures for non-repudiation |
-| **HMAC-SHA256**                | **Fallback** routing seal (`X-CAGE-Routing-Seal` header) in dev/test environments |
+| **HMAC-SHA256**                | **Fallback** signing for the governor's routing seal (`routing_seal.py`, keyed by `GOVERNANCE_SALT`) in dev/test environments |
 | **OTLP (gRPC / HTTP)**         | OpenTelemetry $\to$ Langfuse ingestion; all trace and span export                 |
 | **ISO-20022**                  | Banking payments standard; message format reference for transaction fields        |
 | **OSCAL v1.0.4**               | NIST-standard machine-readable compliance artifact format                         |

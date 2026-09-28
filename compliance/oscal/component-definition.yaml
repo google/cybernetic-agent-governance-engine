@@ -254,8 +254,8 @@ component-definition:
       - uuid: aarm2026-v11-model-subst
         control-id: SC-8
         description: AARM-V11 Model Substitution neutralized by sovereign vLLM deployment
-          on GKE (no external LLM API calls) and CAGE_ROUTING_SEAL_SECRET cryptographic
-          routing seal (POAM-012 / NIST SC-12).
+          on GKE (no external LLM API calls) and KMS-signed governance routing seals
+          (src/gateway/governance/routing_seal.py).
         remarks: 'CMEK guard: src/compliance_bridge/cmek_guard.py. POAM-012.'
     - uuid: aarm2026-v200-ctrl-impl-iso-00002222
       source: https://www.iso.org/standard/81230.html

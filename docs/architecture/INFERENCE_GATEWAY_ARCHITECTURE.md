@@ -173,32 +173,32 @@ Once this variable is set, the `GatewayService` will automatically switch to **G
 
 ---
 
-## 6. Agent Identity at the Inference Edge (mTLS SPIFFE)
+## 6. Agent Identity at the Inference Edge (Linkerd mTLS Workload Identity)
 
-The Inference Gateway handles **routing, priority, and autoscaling**. It does not establish who the caller is. Caller identity is resolved inside the CAGE gateway process from the mTLS transport, and it is the only accepted source of identity.
+The Inference Gateway handles **routing, priority, and autoscaling**. It does not establish who the caller is. Under Linkerd mTLS, the Linkerd inbound proxy terminates TLS and sets `l5d-client-id` (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress authentication and caller identity extraction live in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`).
 
 ### 6.1 Extraction and fail-closed rejection
 
-[`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) resolves the caller immediately after the Tier-1 keyword scan and before any quota or NeMo work:
+`WorkloadIdentityMiddleware` gates every non-open request against `CAGE_TRUSTED_CLIENT_IDENTITIES` (which is required in every environment), and [`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) resolves the caller immediately after the Tier-1 keyword scan and before any quota or NeMo work:
 
-- It calls `extract_spiffe_uri_from_asgi_scope(request.scope)` from [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py), which returns the first SAN URI matching `^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`.
-- On any failure it stamps the SC-8 control as `BLOCK` on the span and returns **HTTP 401** with `{"error": "authentication_required", "message": "Client certificate with valid SPIFFE URI required"}`.
+- It calls `extract_client_identity(request.scope)` from [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py), which returns the verified `l5d-client-id` matching `<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`.
+- On any failure it stamps the SC-8 control as `BLOCK` on the span and returns **HTTP 401** with `{"error": "authentication_required", "message": ...}`.
 - There is **no anonymous fallback** — the request never reaches quota enforcement, NeMo rails, or the model pools.
-- The resulting SPIFFE URI is the `agent_id` used for per-session token/step quota accounting (the HTTP 429 quota path reports it verbatim).
+- The resulting workload identity is the `agent_id` used for per-session token/step quota accounting (the HTTP 429 quota path reports it verbatim).
 
 ### 6.2 Removed identity sources (breaking change, v3.1.0)
 
 | Removed | Replacement |
 |---|---|
-| `X-Agent-ID` request header | SPIFFE URI from the verified mTLS peer certificate |
-| Any `X-SPIFFE-ID`-style header | SPIFFE URI from the verified mTLS peer certificate |
-| `agent_id` field in the JSON request body | SPIFFE URI from the verified mTLS peer certificate |
-| Anonymous / unauthenticated fallback identity | HTTP 401 rejection |
+| `X-Agent-ID` request header | Verified `l5d-client-id` from the Linkerd inbound mTLS proxy |
+| Any `X-SPIFFE-ID`-style header | Verified `l5d-client-id` from the Linkerd inbound mTLS proxy |
+| `agent_id` field in the JSON request body | Verified `l5d-client-id` from the Linkerd inbound mTLS proxy |
+| Anonymous / unauthenticated fallback identity | HTTP 403/401 rejection |
 
-Clients that previously identified themselves with a header or body field now receive HTTP 401 until they present a client certificate.
+Clients that previously identified themselves with a client-supplied header or body field now receive HTTP 403/401 unless they call through the Linkerd mesh with a trusted workload identity.
 
 ### 6.3 Deployment implication
 
-Because extraction reads the peer certificate from the ASGI scope, the verified client certificate must actually reach the gateway process: either TLS with client-certificate verification terminates at the gateway's ASGI server, or the fronting mesh/proxy must populate the verified peer certificate in the scope. Terminating client TLS at the Inference Gateway without propagating the verified peer certificate will cause every inference request to fail closed with 401.
+Because extraction reads `l5d-client-id` set by the Linkerd inbound proxy, the caller must be meshed and listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`. Unmeshed callers or callers whose identity is not in `CAGE_TRUSTED_CLIENT_IDENTITIES` are refused fail-closed.
 
 The canonical identity specification — including the DPoP double-binding design and the OPA namespace-prefix authorization model — is [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).

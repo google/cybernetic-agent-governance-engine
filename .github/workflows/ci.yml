@@ -630,7 +630,6 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
           CAGE_DEPLOYMENT_REGION: "APAC_MAS"
           GOOGLE_CLOUD_LOCATION: "asia-southeast1"
-          CAGE_ROUTING_SEAL_SECRET: "dev-only-insecure-placeholder-not-for-production-use"
           GOVERNANCE_SALT: "dev-only-insecure-placeholder-not-for-production-use"
         run: |
           uv run pytest -p no:langsmith -p no:langsmith_plugin tests/red_team/ -m "red_team and not integration" -v --no-cov

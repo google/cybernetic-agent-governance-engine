@@ -283,18 +283,6 @@ variable "artifacts_bucket_name" {
 
 # ─── Secrets Configuration ────────────────────────────────────────────────────
 
-variable "routing_seal_secret" {
-  description = "Gateway routing seal secret (from CAGE_ROUTING_SEAL_SECRET). No default — must be supplied via terraform.auto.tfvars (gitignored). Omitting this causes a Terraform plan error rather than silently writing an empty secret that crashes the gateway."
-  type        = string
-  sensitive   = true
-}
-
-variable "routing_seal_salt" {
-  description = "Gateway routing seal salt (from CAGE_ROUTING_SEAL_SALT). No default — must be supplied via terraform.auto.tfvars (gitignored)."
-  type        = string
-  sensitive   = true
-}
-
 variable "langfuse_nextauth_secret" {
   description = "Langfuse NextAuth secret (from NEXTAUTH_SECRET)"
   type        = string

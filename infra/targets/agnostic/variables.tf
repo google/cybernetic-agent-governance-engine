@@ -287,13 +287,6 @@ variable "governance_salt" {
   default     = ""
 }
 
-variable "routing_seal_secret" {
-  description = "Gateway routing seal secret (from CAGE_ROUTING_SEAL_SECRET)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "hf_token" {
   description = "Hugging Face Hub token (from HUGGING_FACE_HUB_TOKEN)"
   type        = string

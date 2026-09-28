@@ -1,0 +1,44 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# The Linkerd identity issuer: an intermediate CA signed by the CAS root.
+# cert-manager generates the key in-cluster (rotated on every renewal) and
+# sends only the CSR to CAS. Linkerd's identity controller reads the
+# resulting kubernetes.io/tls Secret (identity.issuer.scheme=kubernetes.io/tls)
+# and reloads it on rotation.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: linkerd-identity-issuer
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: linkerd-identity-issuer
+  duration: {{ .Values.duration | quote }}
+  renewBefore: {{ .Values.renewBefore | quote }}
+  commonName: {{ required "issuerDnsName is required" .Values.issuerDnsName | quote }}
+  dnsNames:
+    - {{ .Values.issuerDnsName | quote }}
+  isCA: true
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - cert sign
+    - crl sign
+    - server auth
+    - client auth
+  issuerRef:
+    group: cas-issuer.jetstack.io
+    kind: GoogleCASIssuer
+    name: cage-mesh-cas

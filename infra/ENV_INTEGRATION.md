@@ -179,7 +179,6 @@ The following `.env` variables are automatically mapped to Terraform variables:
 | `AWS_SECRET_ACCESS_KEY` | `aws_secret_key` | S3/MinIO secret key |
 | `HUGGING_FACE_HUB_TOKEN` | `hf_token` | HuggingFace token for model downloads |
 | `GOVERNANCE_SALT` | `governance_salt` | HMAC salt for governance |
-| `CAGE_ROUTING_SEAL_SECRET` | `routing_seal_secret` | Gateway routing seal |
 
 ### Langfuse Observability
 

@@ -33,81 +33,54 @@ agent_id = request.json.get("agent_id")  # Client-controlled
 
 **Canonical Pattern:**
 ```python
-# ✅ REQUIRED: Extract SVID from verified TLS peer certificate
-from cryptography.x509 import (
-    load_der_x509_certificate,
-    SubjectAlternativeName,
-    UniformResourceIdentifier,
-)
-from cryptography.hazmat.backends import default_backend
+# ✅ REQUIRED: Extract Linkerd mTLS workload identity from the inbound proxy
+from src.gateway.server.workload_identity import extract_client_identity
 
-
-def extract_spiffe_id_from_mtls(tls_peer_cert_der: bytes) -> str:
-    """
-    Extract SPIFFE ID from the verified TLS client certificate's Subject Alternative Name.
-
-    Args:
-        tls_peer_cert_der: DER-encoded X.509 certificate from the TLS handshake peer
-
-    Returns:
-        SPIFFE ID URI (e.g., 'spiffe://cage.altostrat.com/agents/finance/trading-bot-abc123')
-
-    Raises:
-        ValueError: If certificate lacks SPIFFE SAN or is malformed
-    """
-    cert = load_der_x509_certificate(tls_peer_cert_der, default_backend())
-
-    try:
-        san_ext = cert.extensions.get_extension_for_oid(SubjectAlternativeName.oid)
-        for san in san_ext.value:
-            if isinstance(san, UniformResourceIdentifier):
-                uri = san.value
-                if uri.startswith("spiffe://"):
-                    return uri
-    except Exception as e:
-        raise ValueError(f"Certificate lacks valid SPIFFE SAN: {e}")
-
-    raise ValueError("No SPIFFE URI found in certificate SANs")
+# Linkerd's inbound proxy terminates TLS, verifies the peer certificate against
+# the Google CAS trust anchor, and overwrites l5d-client-id (or strips it when
+# no valid client certificate was presented).
+agent_id = extract_client_identity(request.scope)
 ```
 
 ### 1.2 Layer 1 Integration Point
 
-Extraction is implemented in [`src/gateway/governance/spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) and is invoked at every ingress edge, upstream of all governance decision logic. The module exposes three functions:
+Under Linkerd mTLS, the Linkerd inbound proxy terminates TLS in front of the gateway container and sets `l5d-client-id` (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) — or strips the header if no verified peer certificate was presented. Gateway ingress authentication and caller identity extraction live in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py), invoked at every ingress edge upstream of all governance decision logic:
 
-| Function | Transport | Raises |
+| Symbol | Role | Failure Mode |
 |---|---|---|
-| `extract_spiffe_uri_from_asgi_scope(scope)` | HTTP / ASGI (Starlette, FastAPI) | `SpiffeExtractionError` |
-| `extract_spiffe_uri_from_grpc_context(context)` | gRPC | `SpiffeExtractionError` |
-| `validate_spiffe_uri(uri)` | Shared | `SpiffeExtractionError` |
+| `WorkloadIdentityMiddleware` | Outermost ASGI middleware enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment | HTTP **403** / WebSocket **1008** |
+| `extract_client_identity(scope)` | Extracts the single verified `l5d-client-id` from the ASGI scope | `WorkloadIdentityError` |
+| `load_identity_policy()` | Loads `CAGE_TRUSTED_CLIENT_IDENTITIES` (always required in every environment) | `RuntimeError` |
 
-URIs are validated against `_SPIFFE_URI_PATTERN` (`^spiffe://[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]*)?$`) before any downstream consumption.
+Identities are validated against `_LINKERD_IDENTITY` (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) before any downstream consumption.
 
-**Call sites (both fail closed):**
+**Call sites (fail closed):**
 
 ```python
 # src/gateway/server/inference_proxy.py — HTTP ingress
-from src.gateway.governance.spiffe_extractor import (
-    extract_spiffe_uri_from_asgi_scope,
+from src.gateway.server.workload_identity import (
+    WorkloadIdentityError,
+    extract_client_identity,
 )
 
 try:
-    agent_id = extract_spiffe_uri_from_asgi_scope(request.scope)
-except Exception as spiffe_exc:
-    # No verified client certificate → 401, no anonymous fallback.
+    agent_id = extract_client_identity(request.scope)
+except WorkloadIdentityError as identity_exc:
+    # No verified Linkerd workload identity → 401, no anonymous fallback.
     return JSONResponse(
         content={
-            "message": "Client certificate with valid SPIFFE URI required",
-            "detail": str(spiffe_exc),
+            "error": "authentication_required",
+            "message": str(identity_exc),
         },
         status_code=401,
     )
 ```
 
-The ext_authz / gRPC path in [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) resolves `caller_principal` via `extract_spiffe_uri_from_grpc_context()`. A missing or malformed SPIFFE URI yields a denied `CheckResponse` with status **401** and `error: authentication_required`. `403` is reserved for governance denials and for unparseable request fields — it is not an authentication outcome.
+The ext_authz / gRPC path in [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) resolves `caller_principal` from the verified mesh peer principal (never from client-supplied headers or body fields). A missing or malformed principal yields a denied `CheckResponse` with status **401** and `error: authentication_required`. `403` is reserved for governance denials, untrusted workload identities at `WorkloadIdentityMiddleware`, and unparseable request fields.
 
 **Security Boundary:**
-- **Trust Anchor:** Service mesh mTLS termination proxy (Envoy, Istio, Linkerd) validates certificate chains against the SPIFFE trust bundle before forwarding to the gateway.
-- **Zero Trust Assumption:** CAGE Layer 1 code MUST NOT accept identity claims from application-layer protocols. The TLS layer is the sole source of truth.
+- **Trust Anchor:** Linkerd inbound mTLS termination proxy validates certificate chains against the mesh trust anchor before forwarding to the gateway and setting `l5d-client-id`.
+- **Zero Trust Assumption:** CAGE Layer 1 code MUST NOT accept identity claims from client-controlled application-layer headers or bodies. `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and the gateway always enforces workload identity.
 
 ---
 
@@ -552,7 +525,7 @@ deny[msg] if {
 Shipped in `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extraction` (v3.1.0).
 
 ### Phase 1 — Transport-Layer Identity Extraction ✅ SHIPPED
-- [x] [`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py) extracts SVIDs from ASGI scope and gRPC context
+- [x] [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`) enforces `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment and extracts verified Linkerd `l5d-client-id` identities from the ASGI scope
 - [x] All `X-Agent-ID` / `X-SPIFFE-ID` header parsing and anonymous fallback removed from [`inference_proxy.py`](../../src/gateway/server/inference_proxy.py) and [`agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py)
 - [x] Fail-closed coverage: `test_missing_spiffe_certificate_fails_closed` and `test_agent_id_from_spiffe_cert_used_for_quota` in [`tests/test_inference_proxy_extended.py`](../../tests/test_inference_proxy_extended.py)
 
@@ -626,7 +599,7 @@ Shipped in `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extract
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0.0 | 2026-09-22 | Principal Security & Governance Architect | Initial specification: SPIFFE extraction, DPoP binding, namespace prefix matching, A2A delegation |
-| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`governance/spiffe_extractor.py`, `server/dpop_validator.py`, `governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `config/agent_catalog.json` + `agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
+| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`server/workload_identity.py`, `server/dpop_validator.py`, `governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `config/agent_catalog.json` + `agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
 
 ---
 

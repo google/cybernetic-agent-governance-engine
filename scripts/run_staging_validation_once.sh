@@ -35,7 +35,7 @@
 #
 # Prerequisites:
 #   - .env configured with GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION
-#   - terraform.auto.tfvars with staging secrets (routing_seal_secret, kms_key_id)
+#   - terraform.auto.tfvars with staging secrets (kms_key_id)
 #   - Langfuse admin token OR existing staging project ID
 #   - lula CLI installed (brew install defenseunicorns/tap/lula)
 #   - kubectl, gcloud, terraform CLIs available

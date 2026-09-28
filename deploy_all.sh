@@ -218,10 +218,6 @@ load_env() {
     [[ -n "$_secret_val" ]] && export TF_VAR_governance_salt="$_secret_val"
     unset _secret_val
 
-    _secret_val=$(_read_env_var CAGE_ROUTING_SEAL_SECRET)
-    [[ -n "$_secret_val" ]] && export TF_VAR_routing_seal_secret="$_secret_val"
-    unset _secret_val
-
     _secret_val=$(_read_env_var LANGFUSE_PUBLIC_KEY)
     [[ -n "$_secret_val" ]] && export TF_VAR_langfuse_public_key="$_secret_val"
     unset _secret_val
@@ -385,7 +381,7 @@ deploy_terraform_target() {
   fi
 
   # ── Auto-generate terraform.auto.tfvars from .env (gitignored) ───────────
-  # Reads CAGE_ROUTING_SEAL_SECRET, KMS_GOVERNANCE_KEY, and
+  # Reads KMS_GOVERNANCE_KEY and
   # OTEL_EXPORTER_OTLP_HEADERS (or derives it from LANGFUSE_PUBLIC_KEY +
   # LANGFUSE_SECRET_KEY) and writes infra/targets/gcp-gke/terraform.auto.tfvars.
   # The output file is gitignored — it must never be committed.

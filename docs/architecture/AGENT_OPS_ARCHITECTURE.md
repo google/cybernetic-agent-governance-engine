@@ -364,7 +364,7 @@ new operations follow the same shape.
 - [Deployment Rules](../operations/DEPLOYMENT_RULES.md) — Specific policies for CAGE deployment
 - [MCP Setup Guide](../MCP_SETUP.md) — Setting up MCP servers
 - [Infrastructure MCP Server](../../mcp-servers/infrastructure/README.md) — Tool reference
-- [Agent Identity Binding Spec](AGENT_IDENTITY_BINDING_SPEC.md) — Native SPIFFE/SVID identity extraction ([`spiffe_extractor.py`](../../src/gateway/governance/spiffe_extractor.py)), which replaced the `X-Agent-ID` request header
+- [Agent Identity Binding Spec](AGENT_IDENTITY_BINDING_SPEC.md) — Linkerd mTLS workload identity authentication and caller identity extraction ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)), which replaced the `X-Agent-ID` request header
 - [Git Workflow Standards](../operations/GIT_WORKFLOW_STANDARDS.md) — Branch lifecycle and squash-merge policy
 
 ## Conclusion

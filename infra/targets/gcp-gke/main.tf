@@ -120,6 +120,29 @@ module "namespace" {
   enable_pod_security_standards = var.enable_pod_security_standards
   pod_security_level            = var.pod_security_level
 
+  # POAM-2026-080: every pod in the namespace gets a Linkerd proxy, so every
+  # call carries a verified mTLS identity. Pods started before the injector
+  # exists have no proxy; restart them after the first mesh install.
+  annotations = {
+    "linkerd.io/inject" = "enabled"
+  }
+
+  depends_on = [module.gke]
+}
+
+# ─── Service Mesh (Linkerd, trust anchor in Google CAS) ──────────────────────
+
+module "service_mesh" {
+  source = "../../modules/service_mesh"
+
+  project_id             = var.project_id
+  region                 = var.region
+  environment            = var.environment
+  master_ipv4_cidr_block = var.master_ipv4_cidr_block
+  # proxy-init needs NET_ADMIN, which 'restricted' Pod Security forbids; the
+  # CNI plugin sets up the redirect on the node instead.
+  enable_cni = var.enable_pod_security_standards && var.pod_security_level != "privileged"
+
   depends_on = [module.gke]
 }
 
@@ -142,7 +165,7 @@ resource "google_storage_bucket" "langfuse_events" {
   # Compounding with downgraded writer SA (objectCreator instead of objectAdmin)
   # ensures even the compliance bridge cannot erase evidence it writes.
   retention_policy {
-    retention_period = 220752000  # 2555 days in seconds
+    retention_period = 220752000 # 2555 days in seconds
     is_locked        = var.enable_nist_compliance ? true : false
   }
 
@@ -599,9 +622,11 @@ module "gateway" {
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181/v1/data/trade/governance"
   governance_salt         = var.governance_salt
 
-  # K-1: wire CAGE_ROUTING_SEAL_SECRET into the gateway pod explicitly.
-  # Value must be supplied via terraform.auto.tfvars (gitignored).
-  routing_seal_secret = var.routing_seal_secret
+  # POAM-2026-080: only the advisor's mesh identity may call gated routes.
+  # The gateway does not call itself, so its own identity is not listed.
+  trusted_client_identities = [
+    "${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
+  ]
 
   # K-4: wire OTLP auth header so Langfuse trace ingestion returns 200, not 401.
   # If an explicit override is provided use it; otherwise derive from the
@@ -618,7 +643,7 @@ module "gateway" {
   kms_governance_key   = local.gateway_seal_key_version
   reconciler_kms_key   = local.reconciler_snapshot_key_version
 
-  depends_on = [module.app_secrets, module.opa, module.vllm, module.redis]
+  depends_on = [module.app_secrets, module.opa, module.vllm, module.redis, module.service_mesh]
 }
 
 # ─── Deploy Governed Financial Advisor ────────────────────────────────────────
@@ -657,7 +682,7 @@ module "governed_advisor" {
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
   )
 
-  depends_on = [module.gateway, module.langfuse, module.vllm, module.opa]
+  depends_on = [module.gateway, module.langfuse, module.vllm, module.opa, module.service_mesh]
 }
 
 # ─── Deploy AgentSight UI ─────────────────────────────────────────────────────
@@ -685,7 +710,6 @@ module "app_secrets" {
   openai_api_key       = ""
   model_fast           = var.model_fast
   model_reasoning      = var.model_reasoning
-  routing_seal_secret  = var.routing_seal_secret
 
   langfuse_public_key = var.langfuse_public_key != "" ? var.langfuse_public_key : module.langfuse.public_key
   langfuse_secret_key = var.langfuse_secret_key != "" ? var.langfuse_secret_key : module.langfuse.secret_key

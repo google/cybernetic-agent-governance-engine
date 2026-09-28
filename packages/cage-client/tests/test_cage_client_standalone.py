@@ -16,16 +16,12 @@
 Standalone unit test for cage-client SDK subpackage.
 """
 
-import hashlib
-import hmac
-import time
+import sys
+from pathlib import Path
 
 import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
-
-import sys
-from pathlib import Path
 
 # Add standalone subpackage src directory to path for testing
 subpackage_src = Path(__file__).parent.parent / "src"
@@ -42,16 +38,18 @@ from cage_client import (
     RoutingSealVerificationError,
     cage_guard,
     generate_w3c_traceparent,
-    verify_routing_seal,
 )
 
 
 def test_standalone_exports():
     """Verify all top-level symbols export correctly."""
     assert cage_client.CageClient is CageClient
+    assert cage_client.GovernanceEnvelope is GovernanceEnvelope
+    assert cage_client.cage_guard is cage_guard
     assert issubclass(PolicyViolationException, CageGatewayError)
     assert issubclass(DeferralPending, CageGatewayError)
     assert issubclass(RoutingSealVerificationError, Exception)
+    assert "verify_routing_seal" not in cage_client.__all__
 
 
 def test_w3c_traceparent_format():
@@ -64,27 +62,3 @@ def test_w3c_traceparent_format():
     assert len(parts[2]) == 16  # 8 bytes hex
     assert parts[3] == "01"
 
-
-def test_routing_seal_verification():
-    """Verify HMAC routing seal verification logic."""
-    secret = "test-secret-key-12345"
-    body = b'{"decision":"ALLOW"}'
-    ts = str(time.time())
-    message = f"{ts}.{body.hex()}".encode()
-    sig = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
-    seal_header = f"{ts}.{sig}"
-
-    # Valid seal succeeds
-    assert verify_routing_seal(seal_header, body, secret, ttl_seconds=60) is True
-
-    # Tampered body fails
-    with pytest.raises(RoutingSealVerificationError):
-        verify_routing_seal(seal_header, b'{"decision":"DENY"}', secret, ttl_seconds=60)
-
-    # Expired seal fails
-    old_ts = str(time.time() - 100)
-    old_msg = f"{old_ts}.{body.hex()}".encode()
-    old_sig = hmac.new(secret.encode(), old_msg, hashlib.sha256).hexdigest()
-    old_seal = f"{old_ts}.{old_sig}"
-    with pytest.raises(RoutingSealVerificationError):
-        verify_routing_seal(old_seal, body, secret, ttl_seconds=30)

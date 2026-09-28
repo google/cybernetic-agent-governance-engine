@@ -38,6 +38,12 @@ metadata:
     cage.io/jurisdiction-note: "US_FED also satisfies NIST SC-39 via this label"
     # Existing operational labels preserved
     app.kubernetes.io/managed-by: cage
+  annotations:
+    # POAM-2026-080: every pod gets a Linkerd proxy, so gateway callers carry
+    # a verified mTLS identity (l5d-client-id). The restricted profile forbids
+    # proxy-init's NET_ADMIN, so the mesh must run with linkerd2-cni here
+    # (infra/modules/service_mesh enable_cni).
+    linkerd.io/inject: enabled
 ---
 # Langfuse Namespace — Baseline Security Profile
 # Langfuse is a third-party observability tool that may run processes as root

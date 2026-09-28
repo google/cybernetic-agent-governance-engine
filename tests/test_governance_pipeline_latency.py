@@ -258,12 +258,11 @@ def _mock_governor():
 
 def _opa_patches():
     """Return a list of patch context managers for the OPA safety node."""
-    mock_client = AsyncMock()
-    mock_envelope = MagicMock()
-    mock_envelope.subject.get.return_value = "mock_hash"
-    mock_envelope.signature = "mock_sig"
-    mock_client.validate_action = AsyncMock(return_value=mock_envelope)
-    mock_get_client = MagicMock(return_value=mock_client)
+    mock_client = MagicMock()
+    mock_client.validate_action = AsyncMock(
+        return_value={"verdict": "APPROVED", "signature": "mock_sig"}
+    )
+    mock_gateway_client_cls = MagicMock(return_value=mock_client)
 
     return [
         patch(
@@ -275,8 +274,8 @@ def _opa_patches():
             new_callable=MagicMock,
         ),
         patch(
-            "src.governed_financial_advisor.graph.nodes.safety_node.get_cage_client",
-            mock_get_client,
+            "src.governed_financial_advisor.graph.nodes.safety_node.GatewayClient",
+            mock_gateway_client_cls,
         ),
     ]
 

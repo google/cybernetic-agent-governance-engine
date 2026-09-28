@@ -161,7 +161,12 @@ The GFA exposes a FastAPI server ([`src/governed_financial_advisor/server.py`](.
 
 All endpoints require:
 - **`X-API-Key` header**: Validated against `CAGE_API_KEY` environment variable
-- **Routing Seal** (internal calls): HMAC-SHA256 seal from the gateway (`X-CAGE-Routing-Seal`)
+
+Calls from the GFA to the gateway carry no shared secret. The gateway
+authenticates the GFA by its Linkerd mTLS workload identity
+(`cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local`),
+see [`workload_identity.py`](../../../src/gateway/server/workload_identity.py)
+(POAM-2026-080).
 
 ---
 

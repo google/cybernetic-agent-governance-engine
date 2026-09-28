@@ -136,9 +136,6 @@ while IFS= read -r line || [ -n "$line" ]; do
             GOVERNANCE_SALT)
                 export TF_VAR_governance_salt="$var_value"
                 ;;
-            CAGE_ROUTING_SEAL_SECRET)
-                export TF_VAR_routing_seal_secret="$var_value"
-                ;;
             
             # Storage backend
             STORAGE_BACKEND)

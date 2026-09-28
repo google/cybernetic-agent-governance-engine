@@ -26,7 +26,7 @@ or vendor SDKs.
 
 from src.gateway.client.adapters.langgraph import cage_guard
 from src.gateway.client.core import CageClient
-from src.gateway.client.crypto import generate_w3c_traceparent, verify_routing_seal
+from src.gateway.client.crypto import generate_w3c_traceparent
 from src.gateway.client.envelope import ExecutionGrant, GovernanceEnvelope
 from src.gateway.client.exceptions import (
     CageGatewayError,
@@ -47,5 +47,4 @@ __all__ = [
     "cage_guard",
     "create_mtls_transport",
     "generate_w3c_traceparent",
-    "verify_routing_seal",
 ]
