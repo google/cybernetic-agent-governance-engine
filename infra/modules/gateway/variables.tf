@@ -165,3 +165,66 @@ variable "reconciler_kms_key" {
   description = "Cloud KMS key version of the reconciler-snapshot key (RECONCILER_KMS_KEY). The governor trusts ground-truth snapshots only from this key (G8); the startup posture check refuses an unset value or one equal to KMS_GOVERNANCE_KEY."
   type        = string
 }
+
+# ─── Track 6b Posture & Memorystore Invariants (§1.2, §2.1) ─────────────────
+
+variable "cbf_strict_mode" {
+  description = "CAGE_CBF_STRICT_MODE: false in dev, true in staging/prod (§1.2)"
+  type        = bool
+  default     = null
+}
+
+variable "strict_replication" {
+  description = "CAGE_STRICT_REPLICATION: false in dev, true in staging/prod (§1.2)"
+  type        = bool
+  default     = null
+}
+
+variable "redis_synchronous_replication" {
+  description = "CAGE_REDIS_SYNCHRONOUS_REPLICATION: true across all environments (§1.2)"
+  type        = bool
+  default     = true
+}
+
+variable "redis_wait_replicas" {
+  description = "CAGE_REDIS_WAIT_REPLICAS: 0 in dev (no replica), 1 in staging/prod (§1.2)"
+  type        = number
+  default     = null
+}
+
+variable "redis_wait_timeout_ms" {
+  description = "CAGE_REDIS_WAIT_TIMEOUT_MS: 100 in staging/prod (§1.2)"
+  type        = number
+  default     = 100
+}
+
+variable "reconciliation_replay_defense" {
+  description = "CAGE_RECONCILIATION_REPLAY_DEFENSE: true across all environments (§1.2)"
+  type        = bool
+  default     = true
+}
+
+variable "governance_redis_replica_count" {
+  description = "Replica count of the governance Memorystore instance, used for the §1.2 wait-replica invariant check"
+  type        = number
+  default     = 0
+}
+
+variable "enable_redis_tls" {
+  description = "Enable TLS for Redis connections (REDIS_TLS)"
+  type        = bool
+  default     = false
+}
+
+variable "redis_ca_cert_path" {
+  description = "CA certificate path for Redis TLS server certificate pinning"
+  type        = string
+  default     = ""
+}
+
+variable "redis_auth_mode" {
+  description = "Redis authentication mode ('iam', 'password', 'none')"
+  type        = string
+  default     = ""
+}
+

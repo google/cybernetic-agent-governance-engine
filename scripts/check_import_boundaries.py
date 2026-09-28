@@ -124,6 +124,7 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/server/hybrid_server.py",
         "src/gateway/server/mcp_tool_server.py",
         "src/gateway/governance/langgraph_harness/nemo_node_factory.py",
+        "src/gateway/infrastructure/redis_credential_factory.py",  # lazy-loads gcp Memorystore IAM credential provider
     ]
 )
 

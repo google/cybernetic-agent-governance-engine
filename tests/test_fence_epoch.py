@@ -834,45 +834,17 @@ class TestWaitEnvironmentVariables:
 # ---------------------------------------------------------------------------
 
 
-class TestSentinelAwarenessStub:
-    """Tests for Phase 4.3 Sentinel awareness configuration stub."""
+class TestSentinelAwarenessRetired:
+    """Verifies that the Sentinel stub is retired (Track 6b: Memorystore handles failover)."""
 
-    def test_sentinel_master_name_env_var_read(self):
-        """Phase 4.3: REDIS_SENTINEL_MASTER_NAME env var is read."""
-        original_env = os.environ.get("REDIS_SENTINEL_MASTER_NAME")
-        try:
-            os.environ["REDIS_SENTINEL_MASTER_NAME"] = "mymaster"
+    def test_sentinel_stub_retired(self):
+        """Sentinel env vars and variables are no longer defined in cbf_engine or redis_client."""
+        import src.gateway.governance.safety.cbf_engine as cbf_module
+        import src.gateway.infrastructure.redis_client as redis_client_module
 
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            assert cbf_module._REDIS_SENTINEL_MASTER_NAME == "mymaster"
-        finally:
-            if original_env is not None:
-                os.environ["REDIS_SENTINEL_MASTER_NAME"] = original_env
-            elif "REDIS_SENTINEL_MASTER_NAME" in os.environ:
-                del os.environ["REDIS_SENTINEL_MASTER_NAME"]
-
-    def test_sentinel_master_name_defaults_to_none(self):
-        """Phase 4.3: REDIS_SENTINEL_MASTER_NAME defaults to None."""
-        original_env = os.environ.get("REDIS_SENTINEL_MASTER_NAME")
-        try:
-            if "REDIS_SENTINEL_MASTER_NAME" in os.environ:
-                del os.environ["REDIS_SENTINEL_MASTER_NAME"]
-
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            assert cbf_module._REDIS_SENTINEL_MASTER_NAME is None
-        finally:
-            if original_env is not None:
-                os.environ["REDIS_SENTINEL_MASTER_NAME"] = original_env
+        assert not hasattr(cbf_module, "_REDIS_SENTINEL_MASTER_NAME")
+        assert not hasattr(redis_client_module, "_REDIS_SENTINEL_MASTER_NAME")
+        assert not hasattr(redis_client_module, "_REDIS_SENTINEL_HOSTS")
 
 
 # ---------------------------------------------------------------------------

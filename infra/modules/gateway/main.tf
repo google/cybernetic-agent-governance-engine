@@ -25,7 +25,27 @@ terraform {
   }
 }
 
+locals {
+  is_prod_or_staging            = contains(["prod", "production", "staging"], var.cage_env)
+  cbf_strict_mode               = var.cbf_strict_mode != null ? var.cbf_strict_mode : local.is_prod_or_staging
+  strict_replication            = var.strict_replication != null ? var.strict_replication : local.is_prod_or_staging
+  redis_synchronous_replication = var.redis_synchronous_replication
+  redis_wait_replicas           = var.redis_wait_replicas != null ? var.redis_wait_replicas : (local.is_prod_or_staging ? 1 : 0)
+  redis_wait_timeout_ms         = var.redis_wait_timeout_ms
+  reconciliation_replay_defense = var.reconciliation_replay_defense
+}
+
 resource "kubernetes_deployment" "gateway" {
+  lifecycle {
+    precondition {
+      condition = (
+        !contains(["staging", "prod", "production"], var.cage_env) ||
+        (local.redis_wait_replicas <= var.governance_redis_replica_count)
+      )
+      error_message = "CAGE Invariant (§1.2): in staging and prod, CAGE_REDIS_WAIT_REPLICAS must be <= the governance instance's replica count."
+    }
+  }
+
   metadata {
     name      = "gateway"
     namespace = var.namespace
@@ -231,6 +251,49 @@ resource "kubernetes_deployment" "gateway" {
           env {
             name  = "CAGE_KMS_PROVIDER"
             value = var.cage_kms_provider
+          }
+          # Track 6b Posture & Memorystore Invariants (§1.2, §2.1)
+          env {
+            name  = "CAGE_CBF_STRICT_MODE"
+            value = tostring(local.cbf_strict_mode)
+          }
+          env {
+            name  = "CAGE_STRICT_REPLICATION"
+            value = tostring(local.strict_replication)
+          }
+          env {
+            name  = "CAGE_REDIS_SYNCHRONOUS_REPLICATION"
+            value = tostring(local.redis_synchronous_replication)
+          }
+          env {
+            name  = "CAGE_REDIS_WAIT_REPLICAS"
+            value = tostring(local.redis_wait_replicas)
+          }
+          env {
+            name  = "CAGE_REDIS_WAIT_TIMEOUT_MS"
+            value = tostring(local.redis_wait_timeout_ms)
+          }
+          env {
+            name  = "CAGE_RECONCILIATION_REPLAY_DEFENSE"
+            value = tostring(local.reconciliation_replay_defense)
+          }
+          env {
+            name  = "REDIS_TLS"
+            value = tostring(var.enable_redis_tls)
+          }
+          dynamic "env" {
+            for_each = var.redis_ca_cert_path != "" ? [1] : []
+            content {
+              name  = "REDIS_CA_CERT_PATH"
+              value = var.redis_ca_cert_path
+            }
+          }
+          dynamic "env" {
+            for_each = var.redis_auth_mode != "" ? [1] : []
+            content {
+              name  = "REDIS_AUTH_MODE"
+              value = var.redis_auth_mode
+            }
           }
           resources {
             requests = {

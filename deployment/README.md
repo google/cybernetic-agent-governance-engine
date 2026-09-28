@@ -191,11 +191,6 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `langfuse-worker-hpa.yaml` | HPA: 2–15 replicas (70% CPU / 80% memory) |
 | `langfuse-db.yaml` | PostgreSQL for Langfuse |
 | `langfuse-db-secrets.yaml` | Secret template (gitignored after population) |
-| `redis-stack-fresh.yaml` | Active Bitnami Redis Sentinel StatefulSet |
-| `redis-statefulset.yaml` | **DEPRECATED** — do not apply; retained for reference |
-| `redis-config.yaml` | Redis ConfigMap (`cage-redis-config`) |
-| `redis-credentials-secret.yaml` | Secret template |
-| `redis-master-service.yaml` | Write-only ClusterIP pinned to Sentinel primary (`redis-node-1`) |
 | `minio.yaml` | MinIO object storage (Langfuse event upload; S3-compatible) |
 | `agentsight-daemon.yaml` | AgentSight eBPF DaemonSet (namespace: `agentsight`) |
 | `agentsight-ui.yaml.tpl` | AgentSight UI template |

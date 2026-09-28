@@ -62,37 +62,6 @@ try:
     _REDIS_URL = os.environ.get("REDIS_URL", "")
     _REDIS_DB = int(os.environ.get("REDIS_DB", "0"))
 
-    # ---------------------------------------------------------------------------
-    # Phase 4.3: Sentinel-aware connection support (stretch goal)
-    # ---------------------------------------------------------------------------
-    # When REDIS_SENTINEL_MASTER_NAME is set, the client should use Redis
-    # Sentinel for automatic failover handling instead of direct connections.
-    #
-    # TODO(phase-4.3): Implement Sentinel-aware connection factory.
-    # Reference: https://redis-py.readthedocs.io/en/stable/sentinel.html
-    #
-    # Implementation outline:
-    #   1. Parse REDIS_SENTINEL_HOSTS (comma-separated host:port pairs)
-    #   2. Create redis.sentinel.Sentinel or redis.asyncio.sentinel.Sentinel
-    #   3. Use sentinel.master_for(REDIS_SENTINEL_MASTER_NAME) for writes
-    #   4. Optionally use sentinel.slave_for() for reads (read replicas)
-    #
-    # Example configuration:
-    #   REDIS_SENTINEL_MASTER_NAME=mymaster
-    #   REDIS_SENTINEL_HOSTS=sentinel1:26379,sentinel2:26379,sentinel3:26379
-    #
-    _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get(
-        "REDIS_SENTINEL_MASTER_NAME"
-    )
-    _REDIS_SENTINEL_HOSTS: str | None = os.environ.get("REDIS_SENTINEL_HOSTS")
-
-    if _REDIS_SENTINEL_MASTER_NAME:
-        logger.info(
-            "🔧 Redis Sentinel mode configured (master=%s) — "
-            "NOTE: Sentinel connection factory is a Phase 4.3 stub. "
-            "Using direct connection until full Sentinel support is implemented.",
-            _REDIS_SENTINEL_MASTER_NAME,
-        )
 
     # Parse defaults from REDIS_URL if present, then allow REDIS_HOST/REDIS_PORT overrides
     if _REDIS_URL:
@@ -210,6 +179,14 @@ try:
             ):
                 return self._client
 
+            # Resolve credential provider (e.g. IAM auth for Memorystore)
+            from src.gateway.infrastructure.redis_credential_factory import (
+                get_redis_credential_provider,
+            )
+
+            cred_provider = get_redis_credential_provider()
+            effective_password = None if cred_provider is not None else _REDIS_PASSWORD
+
             # Slow path: need to create client, use lock to prevent races
             async with self._get_lock():
                 # Double-check inside lock
@@ -223,7 +200,8 @@ try:
                         host=_REDIS_HOST,
                         port=_REDIS_PORT,
                         db=_REDIS_DB,
-                        password=_REDIS_PASSWORD,
+                        password=effective_password,
+                        credential_provider=cred_provider,
                         decode_responses=True,
                         socket_connect_timeout=3.0,
                         socket_timeout=3.0,
