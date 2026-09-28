@@ -85,7 +85,7 @@ All components listed below are in scope for AI 600-1. Components marked ★ car
 | OPA Policy Engine | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | Value Chain | BOTH |
 | TokenQuotaProxy | `src/gateway/governance/token_quota_proxy.py` | Environmental | BOTH |
 | RoutingSeal | `src/gateway/governance/routing_seal.py` | Information Security | BOTH |
-| vLLM Inference | `deployment/k8s/vllm-inference-spot.yaml` | Confabulation, IP, CBRN | PROD |
+| vLLM Inference | `infra/modules/vllm_inference/main.tf` | Confabulation, IP, CBRN | PROD |
 | AgentSight Daemon | `deployment/k8s/agentsight-daemon.yaml` | Information Integrity | BOTH |
 | LangGraph Harness | `src/gateway/governance/langgraph_harness/` | Human-AI Config | BOTH |
 
@@ -1454,7 +1454,7 @@ SBOM to the GCS WORM bucket and adding a Trivy vulnerability gate.
    - name: 'python:3.11'
      id: verify-model-weights
      entrypoint: python
-     args: ['scripts/generate_reasoning_manifest.py', '--verify-only']
+     args: ['deployment/scripts/mirror_models.py', '--verify-only']
    ```
 
 **Prod acceptance criteria**:

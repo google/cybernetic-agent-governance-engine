@@ -34,8 +34,8 @@ CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 
 | Deployment | K8s Name | Port | Notes |
 |------------|----------|------|-------|
-| Fast inference (Qwen2.5-7B) | `vllm-service` | 8000 | Proxied into `governance-stack` via `vllm-services.yaml` ExternalName |
-| Reasoning inference | `vllm-reasoning` | 8000 | Proxied into `governance-stack` via `vllm-services.yaml` ExternalName |
+| Fast inference (Qwen2.5-7B) | `vllm-service` | 8000 | Provisioned via `infra/modules/vllm_inference/main.tf` |
+| Reasoning inference | `vllm-reasoning` | 8000 | Provisioned via `infra/modules/vllm_inference/main.tf` |
 
 > **Note:** NeMo Guardrails also runs as an in-process module embedded inside the gateway. The standalone `nemo-service` Deployment handles requests that require an isolated NeMo process.
 >
@@ -162,20 +162,12 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `nemo-rails-configmap.yaml` | ConfigMap | NeMo Colang/actions; regenerate with `make update-nemo-configmap` |
 | `opa.yaml` | Deployment + ConfigMap × 2 + ClusterIP Service | Ports 8181 (policy), 8282 (diagnostics); policy package `trade.governance` |
 
-### vLLM manifests
+### vLLM and model manifests
+
+> vLLM Deployments (`vllm-inference`, `vllm-reasoning`), ClusterIP Services (`vllm-service`, `vllm-reasoning`), and PodDisruptionBudgets are provisioned by Terraform ([`infra/modules/vllm_inference/main.tf`](../infra/modules/vllm_inference/main.tf)).
 
 | File | Description |
 |------|-------------|
-| `vllm-namespace.yaml` | `vllm-inference` namespace (PSA: baseline) |
-| `vllm-services.yaml` | ExternalName Services in `governance-stack` proxying to `vllm-inference` |
-| `vllm-cross-namespace-services.yaml` | Real ClusterIP Services in `vllm-inference` |
-| `vllm-deployment.yaml.tpl` | vLLM fast-path Deployment template |
-| `vllm-inference-spot.yaml` / `.tpl` | Spot-node vLLM Deployment |
-| `vllm-reasoning.yaml.tpl` | Reasoning vLLM Deployment template |
-| `vllm-reasoning-pdb.yaml` | PodDisruptionBudget for reasoning vLLM |
-| `vllm-pdb.yaml` | PodDisruptionBudget for fast-path vLLM |
-| `vllm-streaming.yaml` | Streaming configuration |
-| `vllm-governance.yaml` | vLLM governance sidecar |
 | `model-pvc.yaml` / `.tpl` | PVC for model weights |
 | `model-downloader.yaml.tpl` | Model downloader Job template |
 | `tensorize-job.yaml` | One-time tensorization Job (HuggingFace → MinIO) |

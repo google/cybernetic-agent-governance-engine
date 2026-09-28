@@ -106,7 +106,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         neutralizing_controls=["A.5.3", "A.8.4"],
         lula_validation_files=[
             "compliance/lula/lula-validation-a53.yaml",
-            "compliance/lula/lula-validation-a84.yaml",
+            "compliance/lula/lula-validation-au12.yaml",
         ],
         implementation_files=[
             "src/compliance_bridge/context_accumulator.py",
@@ -132,9 +132,9 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src.integrations.nemo/manager.py",
-            "src/governed_financial_advisor/governance/policy/trade_governance.rego",
-            "config/rails/",
+            "src/integrations/nemo/manager.py",
+            "src/cage_finance/opa/trade_governance.rego",
+            "config/rails/config.yml",
         ],
         notes=(
             "NeMo Guardrails Colang rails enforce topic lock-down at Layer 0. "
@@ -178,8 +178,8 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc8.yaml",
         ],
         implementation_files=[
-            "src/gateway/governance/fiscal_limit_guard.py",
-            "deployment/k8s/linkerd-annotations.yaml",
+            "src/cage_finance/safety/fiscal_limit_guard.py",
+            "deployment/k8s/linkerd-mtls-policy.yaml",
         ],
         notes=(
             "FiscalLimitGuard atomically pre-reserves capacity (Redis WATCH/MULTI/EXEC) "
@@ -201,7 +201,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-a92.yaml",
         ],
         implementation_files=[
-            "src.integrations.nemo/manager.py",
+            "src/integrations/nemo/manager.py",
         ],
         notes=(
             "Multi-tier shielding: Pre-gate Aho-Corasick heuristic, "
@@ -222,7 +222,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-a92.yaml",  # closest available Lula manifest
         ],
         implementation_files=[
-            "src/gateway/governance/causal_gatekeeper.py",
+            "src/gateway/governance/causal/gatekeeper.py",
             "src/gateway/governance/telemetry_provider.py",
         ],
         notes=(
@@ -288,7 +288,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src/governed_financial_advisor/governance/policy/trade_governance.rego",
+            "src/cage_finance/opa/trade_governance.rego",
             "deployment/system_authz.rego",
             "config/agent_scope.yaml",
         ],
@@ -314,8 +314,8 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src.integrations.nemo/manager.py",
-            "deployment/k8s/cilium-network-policy.yaml",
+            "src/integrations/nemo/manager.py",
+            "deployment/k8s/cilium/egress-lockdown.yaml",
         ],
         notes=(
             "Presidio PII masking (20 entity types, spaCy en_core_web_sm) strips "
@@ -337,8 +337,8 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc8.yaml",
         ],
         implementation_files=[
-            "Dockerfile.vllm",
-            "deployment/k8s/vllm-deployment.yaml",
+            "deployment/docker/Dockerfile.vllm",
+            "infra/modules/vllm_inference/main.tf",
             "src/compliance_bridge/cmek_guard.py",
         ],
         notes=(

@@ -1,8 +1,8 @@
 # Kubernetes Namespace Guide — Cybernetic Governance Engine
 
 > **Reference:** See `deployment/k8s/pod-security-admission.yaml` for namespace PSA labels,
-> `deployment/k8s/opa.yaml` for the OPA deployment, and `deployment/k8s/vllm-namespace.yaml`
-> for the vLLM namespace. See `docs/architecture/ARCHITECTURE.md` for the broader service map.
+> `deployment/k8s/opa.yaml` for the OPA deployment, and `infra/modules/vllm_inference/main.tf`
+> for the vLLM deployments and services. See `docs/architecture/ARCHITECTURE.md` for the broader service map.
 
 ---
 
@@ -43,29 +43,29 @@ All CAGE application services run in `governance-stack`. The namespace enforces 
 | MinIO | Deployment + Service | `minio` | 9000 (api), 9001 (console) | Langfuse event storage |
 | Redis (Bitnami Sentinel) | StatefulSet (3 pods) + Services | `redis-node-{0,1,2}` | 6379 (redis), 26379 (sentinel) | Active Sentinel-mode cluster |
 | Redis write endpoint | ClusterIP Service | `redis-master` | 6379 | Pinned to current Sentinel primary |
-| vLLM fast proxy | ExternalName Service | `vllm-service` | 8000 | Proxies → `vllm-service.vllm-inference` |
-| vLLM reasoning proxy | ExternalName Service | `vllm-reasoning` | 8000 | Proxies → `vllm-reasoning.vllm-inference` |
+| vLLM fast inference | Deployment + ClusterIP Service | `vllm-service` | 8000 | Provisioned via `infra/modules/vllm_inference/main.tf` |
+| vLLM reasoning inference | Deployment + ClusterIP Service | `vllm-reasoning` | 8000 | Provisioned via `infra/modules/vllm_inference/main.tf` |
 | AgentSight UI | Deployment + ClusterIP Service | `agentsight-ui` | 80 | Visualization frontend |
 
 ---
 
 ## `vllm-inference` — GPU Inference Namespace
 
-vLLM workloads require GPU/CUDA access, which is incompatible with the `restricted` PSS profile. This namespace uses `baseline` to permit the required elevated privileges.
+vLLM workloads require GPU/CUDA access, which is incompatible with the `restricted` PSS profile. When isolated in a dedicated namespace, `baseline` permits the required elevated privileges.
 
 **PSA label:** `pod-security.kubernetes.io/enforce: baseline`  
 **Compliance label:** `cage.io/iso42001-control: A.8.4`, `cage.io/pss-exception: gpu-cuda-access`
 
 US_FED deployments additionally satisfy NIST SC-39 via the same PSS controls.
 
-### Services in `vllm-inference`
+### Services for vLLM Inference
 
 | K8s Name | Port | Description |
 |----------|------|-------------|
 | `vllm-service` | 8000 | Fast-path inference (Qwen2.5-7B-Instruct) |
 | `vllm-reasoning` | 8000 | Reasoning inference (QwQ-32B or DeepSeek R1) |
 
-Cross-namespace service discovery: pods in `governance-stack` reach vLLM via `ExternalName` Services defined in `deployment/k8s/vllm-services.yaml`. These ExternalName Services proxy `vllm-service.governance-stack` → `vllm-service.vllm-inference.svc.cluster.local`, so existing env vars (`VLLM_BASE_URL`, `VLLM_FAST_API_BASE`, `VLLM_REASONING_API_BASE`) require no changes.
+Service discovery: vLLM Deployments and ClusterIP Services (`vllm-service` and `vllm-reasoning`) are provisioned directly by Terraform (`infra/modules/vllm_inference/main.tf`), so existing env vars (`VLLM_BASE_URL`, `VLLM_FAST_API_BASE`, `VLLM_REASONING_API_BASE`) resolve directly in-cluster.
 
 ---
 
@@ -227,12 +227,11 @@ No standalone OpenTelemetry Collector is deployed.
 | File | Description |
 |------|-------------|
 | [`deployment/k8s/pod-security-admission.yaml`](pod-security-admission.yaml) | PSA labels for `governance-stack`, `langfuse`, `vllm` namespaces |
-| [`deployment/k8s/vllm-namespace.yaml`](vllm-namespace.yaml) | `vllm-inference` namespace (PSA: baseline) |
+| [`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf) | Terraform module for vLLM Deployments, Services, and PDBs |
 | [`deployment/k8s/agentsight-daemon.yaml`](agentsight-daemon.yaml) | AgentSight DaemonSet (namespace: `agentsight`) |
 | [`deployment/k8s/opa.yaml`](opa.yaml) | OPA Deployment, ConfigMaps, Service |
-| [`deployment/k8s/vllm-services.yaml`](vllm-services.yaml) | ExternalName Services proxying vLLM into `governance-stack` |
 | [`deployment/k8s/langfuse-web.yaml`](langfuse-web.yaml) | Langfuse Web Deployment + Service |
 | [`deployment/opa_config.yaml`](../opa_config.yaml) | OPA runtime configuration |
 | [`deployment/system_authz.rego`](../system_authz.rego) | System authorisation policy |
-| [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | INCRBY fiscal counter (Redis write path) |
+| [`src/cage_finance/safety/fiscal_limit_guard.py`](../../src/cage_finance/safety/fiscal_limit_guard.py) | INCRBY fiscal counter (Redis write path) |
 | [`src/gateway/infrastructure/redis_client.py`](../../src/gateway/infrastructure/redis_client.py) | Redis client configuration |

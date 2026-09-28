@@ -49,7 +49,7 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 | ----------------------- | ------------------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | **vLLM Reasoning Node** | `DeepSeek-R1-Distill-Llama-8B` | AWQ; `max_model_len=32768`; NVIDIA L4   | Deep reasoning for complex investment theses; active Risk Manager in `ConsensusEngine`         |
 | **vLLM Fast Node**      | `Meta-Llama-3.1-8B-Instruct`   | Unquantized / FP16; spot L4 instances  | Low-latency instruction decomposition and reporting; active Compliance Officer in ConsensusEngine |
-| **vLLM Governance**     | `Qwen/Qwen2.5-1.5B-Instruct`   | Reference profile (undeployed)          | Compact model for dedicated classification tasks (`vllm-governance.yaml`)                      |
+| **vLLM Governance**     | `Qwen/Qwen2.5-1.5B-Instruct`   | Reference profile (undeployed)          | Compact model profile for dedicated classification tasks (`infra/modules/vllm_inference/main.tf`) |
 | **liteLLM**             | LLM Router                     | In-memory proxy                         | Abstract routing between `MODEL_REASONING` and `MODEL_FAST` endpoints                          |
 | **vLLM Tensorizer**     | Cold-Start Streaming           | MinIO weight streaming                  | Sub-minute cold-start container initialization without baked-in model weights                  |
 | **Guided JSON (FSM)**   | Structured Output Engine       | vLLM native regex/schema FSM            | Eliminates JSON syntax errors at generation time, replacing deprecated `outlines` library      |

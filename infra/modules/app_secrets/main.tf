@@ -137,22 +137,6 @@ resource "kubernetes_secret" "compliance_alert_channel" {
   }
 }
 
-resource "kubernetes_secret" "finance_policy_rego" {
-  metadata {
-    name      = "finance-policy-rego"
-    namespace = var.namespace
-  }
-
-  data = {
-    "finance_policy.rego" = <<-EOT
-# Default empty policy created by Terraform
-package governance.policy.finance
-
-default allow = true
-EOT
-  }
-}
-
 resource "kubernetes_config_map" "advisor_config" {
   metadata {
     name      = "advisor-config"
