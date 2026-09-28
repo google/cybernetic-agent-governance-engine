@@ -61,11 +61,12 @@ def test_no_evicting_policy_anywhere_in_infra() -> None:
 def test_memorystore_instances_set_noeviction() -> None:
     for p in _tf_files():
         text = p.read_text()
-        for match in re.finditer(r'resource\s+"google_redis_instance"', text):
-            block = text[match.start() : match.start() + 4000]
-            assert re.search(r'"maxmemory-policy"\s*=\s*"noeviction"', block), (
-                f"{p.relative_to(_REPO)}: google_redis_instance without noeviction"
-            )
+        for resource_type in ("google_redis_instance", "google_memorystore_instance"):
+            for match in re.finditer(rf'resource\s+"{resource_type}"', text):
+                block = text[match.start() : match.start() + 4000]
+                assert re.search(r'"maxmemory-policy"\s*=\s*"noeviction"', block), (
+                    f"{p.relative_to(_REPO)}: {resource_type} without noeviction"
+                )
 
 
 def test_guard_detects_evicting_policy() -> None:
