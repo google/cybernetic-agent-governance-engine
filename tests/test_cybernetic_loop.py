@@ -271,32 +271,26 @@ class TestLangfuseWebhook:
 
 
 class TestApplyRefinementProposalFlow:
-    """POST /v1/nemo/apply-refinement must always return pending_approval (v3.0.0+).
+    """POST /v1/nemo/apply-refinement on the gateway must always return pending_approval (v3.0.0+).
 
-    The legacy auto-apply branch was removed in CR-2/EV-4 to eliminate the
-    recursive self-authentication loop. All refinement requests now require
-    explicit human approval via POST /v1/nemo/approve-refinement/{proposal_id}.
+    The gateway owns NeMo Guardrails; refinement proposals are staged and
+    approved on the gateway (/v1/nemo/*), never on the advisor.
     """
 
-    @pytest.fixture
-    def client(self):
-        with (
-            patch(
-                "src.integrations.nemo.manager.load_rails",
-                return_value=MagicMock(),
-            ),
-            patch(
-                "src.governed_financial_advisor.graph.graph.create_graph",
-                return_value=MagicMock(),
-            ),
-            patch("src.gateway.infrastructure.telemetry_client.configure_telemetry"),
-            patch(
-                "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
-            ),
-        ):
-            import src.governed_financial_advisor.server as srv
+    _TRUSTED_ID = "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
 
-            return TestClient(srv.app, raise_server_exceptions=False)
+    @pytest.fixture
+    def client(self, monkeypatch):
+        monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", self._TRUSTED_ID)
+        import src.gateway.server.hybrid_server as gw_srv
+
+        gw_srv._refinement_proposals.clear()
+        tc = TestClient(
+            gw_srv.root_app,
+            raise_server_exceptions=False,
+            headers={"l5d-client-id": self._TRUSTED_ID},
+        )
+        return tc
 
     def test_always_returns_pending_approval(self, client):
         """R-LOOP-4: apply-refinement must return {status: pending_approval} unconditionally."""

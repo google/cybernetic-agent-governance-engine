@@ -128,16 +128,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # KMS signing mode (K3), KMS/Redis readiness, the POAM-023 stub
     # reconciliation guard and the default GOVERNANCE_SALT guard (C-04) run in
     # assert_production_posture() when the governor is assembled
-    # (_activate_domain below).
-    from src.gateway.governance.env_posture import is_enforcing
-
-    if is_enforcing():
-        # BLOCKER-03: log-mode seal enforcement is prohibited.
-        if os.getenv("CAGE_SEAL_ENFORCEMENT") == "log":
-            raise RuntimeError(
-                "CAGE_SEAL_ENFORCEMENT=log is prohibited in production — "
-                "set CAGE_SEAL_ENFORCEMENT=enforce or remove the variable."
-            )
+    # (_activate_domain below). NeMo guardrails always fail closed (no log-only
+    # mode exists).
 
     # External Normative Provider integration (§2.5)
     provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
@@ -413,6 +405,191 @@ async def get_pause_state(pause_token: str) -> JSONResponse:
 
     status_code, response_body = await handle_get_pause_state(pause_token)
     return JSONResponse(status_code=status_code, content=response_body)
+
+
+# ---------------------------------------------------------------------------
+# NeMo Refinement Proposal/Approval Flow (Gateway-owned NeMo rails)
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timezone
+import uuid as _uuid
+
+from fastapi import HTTPException
+from opentelemetry import trace as _otel_trace
+from pydantic import BaseModel as _BaseModel
+
+
+class NeMoApplyRefinementRequest(_BaseModel):
+    """Request body for POST /v1/nemo/apply-refinement and /v1/nemo/propose-refinement."""
+
+    control_id: str
+    verdict: str
+    source: str = "unknown"
+
+
+class NeMoApproveRequest(_BaseModel):
+    """Request body for POST /v1/nemo/approve-refinement/{proposal_id}."""
+
+    approved: bool
+    reviewer: str
+    rationale: str
+
+
+_refinement_proposals: dict[str, dict[str, Any]] = {}
+
+
+@root_app.post("/v1/nemo/propose-refinement")
+async def propose_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, Any]:
+    """Stage a NeMo Guardrails refinement proposal for human review."""
+    proposal_id = str(_uuid.uuid4())
+    proposal = {
+        "proposal_id": proposal_id,
+        "control_id": req.control_id,
+        "verdict": req.verdict,
+        "source": req.source,
+        "staged_at": datetime.now(timezone.utc).isoformat(),
+        "status": "staged",
+        "reviewer": None,
+        "rationale": None,
+    }
+    _refinement_proposals[proposal_id] = proposal
+
+    logger.info(
+        "[NeMo/Refinement] Proposal STAGED: id=%s control_id=%s source=%s",
+        proposal_id,
+        req.control_id,
+        req.source,
+    )
+
+    current_span = _otel_trace.get_current_span()
+    if current_span and current_span.is_recording():
+        current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
+        current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
+        current_span.set_attribute("ai.refinement.apply.source", req.source)
+        current_span.set_attribute("ai.refinement.status", "staged")
+
+    return {
+        "status": "staged",
+        "proposal_id": proposal_id,
+        "control_id": req.control_id,
+        "message": (
+            "Refinement proposal staged. A risk officer must approve via "
+            f"POST /v1/nemo/approve-refinement/{proposal_id}"
+        ),
+    }
+
+
+@root_app.post("/v1/nemo/approve-refinement/{proposal_id}")
+async def approve_nemo_refinement(
+    proposal_id: str,
+    req: NeMoApproveRequest,
+) -> dict[str, Any]:
+    """Approve or reject a staged NeMo refinement proposal and reload gateway NeMo rails."""
+    if not req.rationale or not req.rationale.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="rationale is required — provide the business justification "
+            "for this governance configuration change.",
+        )
+
+    proposal = _refinement_proposals.get(proposal_id)
+    if proposal is None or proposal["status"] != "staged":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Proposal '{proposal_id}' not found or already processed.",
+        )
+
+    proposal["reviewer"] = req.reviewer
+    proposal["rationale"] = req.rationale
+    proposal["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+
+    if not req.approved:
+        proposal["status"] = "rejected"
+        logger.info(
+            "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s",
+            proposal_id,
+            req.reviewer,
+        )
+        return {"status": "rejected", "proposal_id": proposal_id}
+
+    try:
+        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
+            get_nemo_rails,
+            reload_nemo_rails,
+        )
+
+        await reload_nemo_rails()
+        new_rails = get_nemo_rails()
+        root_app.state.nemo_rails = new_rails
+        inference_app.state.nemo_rails = new_rails
+        mcp_app.state.nemo_rails = new_rails
+        proposal["status"] = "applied"
+        logger.info(
+            "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s control_id=%s",
+            proposal_id,
+            req.reviewer,
+            proposal["control_id"],
+        )
+    except Exception as exc:
+        proposal["status"] = "apply_failed"
+        logger.error("[NeMo/Refinement] Rails reload failed after approval: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"NeMo rails reload failed: {exc}",
+        ) from exc
+
+    return {
+        "status": "applied",
+        "proposal_id": proposal_id,
+        "control_id": proposal["control_id"],
+        "reviewer": req.reviewer,
+    }
+
+
+@root_app.get("/v1/nemo/proposals/pending")
+async def list_pending_nemo_proposals() -> dict[str, Any]:
+    """List all staged NeMo refinement proposals awaiting human review."""
+    pending = [p for p in _refinement_proposals.values() if p["status"] == "staged"]
+    return {"pending": pending, "count": len(pending)}
+
+
+@root_app.post("/v1/nemo/apply-refinement")
+async def apply_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, Any]:
+    """Stage a NeMo refinement proposal and return pending_approval."""
+    logger.info(
+        "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s",
+        req.control_id,
+        req.source,
+    )
+
+    proposal_id = str(_uuid.uuid4())
+    proposal = {
+        "proposal_id": proposal_id,
+        "control_id": req.control_id,
+        "verdict": req.verdict,
+        "source": req.source,
+        "staged_at": datetime.now(timezone.utc).isoformat(),
+        "status": "staged",
+        "reviewer": None,
+        "rationale": None,
+    }
+    _refinement_proposals[proposal_id] = proposal
+
+    current_span = _otel_trace.get_current_span()
+    if current_span and current_span.is_recording():
+        current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
+        current_span.set_attribute("ai.refinement.apply.source", req.source)
+        current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
+
+    return {
+        "status": "pending_approval",
+        "proposal_id": proposal_id,
+        "control_id": req.control_id,
+        "message": (
+            "Refinement proposal staged. A risk officer must "
+            f"approve via POST /v1/nemo/approve-refinement/{proposal_id}"
+        ),
+    }
 
 
 # Inference proxy handles /v1/chat/completions

@@ -402,31 +402,6 @@ async def test_healthz_returns_200_on_kms_exception_in_dev(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_lifespan_raises_when_seal_enforcement_is_log_in_prod(monkeypatch):
-    """_gateway_lifespan raises RuntimeError when CAGE_SEAL_ENFORCEMENT=log in prod."""
-    monkeypatch.setenv("CAGE_ENV", "production")
-    monkeypatch.setenv("CAGE_SEAL_ENFORCEMENT", "log")
-    monkeypatch.setenv("RECONCILIATION_PROVIDER", "anchorage")
-    monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
-
-    stubs = _make_hybrid_stubs()
-
-    sys.modules.pop("src.gateway.server.hybrid_server", None)
-
-    with patch.dict("sys.modules", stubs):
-        from src.gateway.server.hybrid_server import _gateway_lifespan
-
-        app_mock = MagicMock()
-        app_mock.state = MagicMock()
-
-        with pytest.raises(
-            RuntimeError, match="CAGE_SEAL_ENFORCEMENT=log is prohibited"
-        ):
-            async with _gateway_lifespan(app_mock):
-                pass
-
-
 @pytest.mark.parametrize(
     ("env", "refusal"),
     [
@@ -452,7 +427,6 @@ async def test_lifespan_aborts_when_governor_posture_is_refused(monkeypatch, env
     from src.gateway.governance.governor.posture import PostureViolation
 
     monkeypatch.setenv("CAGE_ENV", "production")
-    monkeypatch.setenv("CAGE_SEAL_ENFORCEMENT", "enforce")
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -491,7 +465,6 @@ async def test_lifespan_aborts_when_governor_posture_is_refused(monkeypatch, env
 async def test_lifespan_succeeds_in_dev_mode(monkeypatch):
     """In dev mode, _gateway_lifespan yields without raising."""
     monkeypatch.setenv("CAGE_ENV", "ci")
-    monkeypatch.setenv("CAGE_SEAL_ENFORCEMENT", "log")  # only blocked in prod
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "stub")  # only blocked in prod
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")  # skip normative daemon
 

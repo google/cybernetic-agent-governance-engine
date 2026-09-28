@@ -367,3 +367,28 @@ def test_terraform_advisor_secrets_hold_no_signing_key() -> None:
     block = app_secrets.split('resource "kubernetes_secret" "advisor_secrets"', 1)[1]
     block = block.split("\nresource ", 1)[0]
     assert [v for v in _SIGNING_KEY_VARS if f'"{v}"' in block] == []
+
+
+def test_advisor_pods_receive_no_governance_salt_or_seal_enforcement_vars() -> None:
+    """The advisor has no governance salt and no CAGE_SEAL_ENFORCEMENT flag."""
+    forbidden = {"GOVERNANCE_SALT", "CAGE_SEAL_ENFORCEMENT"}
+    offenders = []
+    for path, _doc, pod in _workloads():
+        if pod.get("serviceAccountName") != _ADVISOR_KSA:
+            continue
+        for c in pod.get("containers", []):
+            for env in c.get("env") or []:
+                if env.get("name") in forbidden:
+                    offenders.append(f"{path}: {env['name']}")
+    module_tf = (_INFRA / "modules" / "governed_advisor" / "main.tf").read_text()
+    variables_tf = (_INFRA / "modules" / "governed_advisor" / "variables.tf").read_text()
+    offenders += [
+        f"governed_advisor/main.tf: {v}" for v in forbidden if f'"{v}"' in module_tf
+    ]
+    offenders += [
+        f"governed_advisor/variables.tf: {v}"
+        for v in ("governance_salt", "cage_seal_enforcement")
+        if f'variable "{v}"' in variables_tf
+    ]
+    assert offenders == [], f"Advisor receives governance state variables: {offenders}"
+

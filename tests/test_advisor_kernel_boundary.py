@@ -54,7 +54,9 @@ _FORBIDDEN_PREFIXES = (
     "src.gateway.governance.signer_factory",
     "src.gateway.governance.jwks",
     "src.gateway.governance.execution_actuator",
+    "src.gateway.governance.defer_queue",
     "src.gateway.server.app_state",
+    "src.integrations.nemo",
     "src.cage_finance.tools.trade_executor",
     "src.cage_finance.actuators",
 )

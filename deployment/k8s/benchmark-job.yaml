@@ -85,8 +85,6 @@ spec:
               value: "finance"
             - name: CAGE_ENV
               value: "development"
-            - name: CAGE_SEAL_ENFORCEMENT
-              value: "enforce"
             - name: BACKEND_URL
               value: "http://governed-financial-advisor.governance-stack.svc.cluster.local:80"
             - name: GATEWAY_URL

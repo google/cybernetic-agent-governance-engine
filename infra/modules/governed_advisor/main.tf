@@ -256,10 +256,6 @@ resource "kubernetes_deployment" "governed_advisor" {
             name  = "MCP_SERVER_SSE_URL"
             value = "http://gateway:8080/mcp/sse"
           }
-          env {
-            name  = "GOVERNANCE_SALT"
-            value = var.governance_salt
-          }
 
           # Runtime environment posture. Controls the dev-mode auth bypass in
           # src/governed_financial_advisor/infrastructure/auth.py (requires
@@ -268,10 +264,6 @@ resource "kubernetes_deployment" "governed_advisor" {
           env {
             name  = "CAGE_ENV"
             value = var.cage_env
-          }
-          env {
-            name  = "CAGE_SEAL_ENFORCEMENT"
-            value = var.cage_seal_enforcement
           }
 
           # No signing-key variables (POAM-2026-079): the advisor holds no

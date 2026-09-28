@@ -23,7 +23,6 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.cage_finance.models.trade_order import TradeOrder
-from src.gateway.governance.langgraph_harness.nemo_node_factory import get_nemo_rails
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
@@ -35,7 +34,6 @@ from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
-from src.integrations.nemo.manager import validate_with_nemo
 
 _tracer = otel_trace.get_tracer("gfa.tools")
 _gateway_client = GatewayClient()
@@ -74,9 +72,10 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
     """
     Executes a named tool directly via HTTP.
 
-    Governed tools (``simulate_governance_check``, ``evaluate_policy``,
-    ``execute_trade``) are forwarded to the gateway, which hosts the only
-    ``SymbolicGovernor``, OPA client and ``ActuatorRegistry`` (POAM-2026-079).
+    Governed tools (``simulate_governance_check``, ``verify_content_safety``,
+    ``evaluate_policy``, ``execute_trade``) are forwarded to the gateway, which
+    hosts the only ``SymbolicGovernor``, NeMo Guardrails, OPA client and
+    ``ActuatorRegistry`` (POAM-2026-079).
     The ``execute_trade`` branch opens an OTel root span (``cage.tool_execute``)
     whose W3C context ``GatewayClient`` propagates, so the gateway's governance
     spans attach to one trace in Langfuse.
@@ -118,22 +117,21 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             output = "INTERVENTION_ACK: System Locked."
 
         elif tool == "verify_content_safety":
-            # Open a root span so NeMo child spans are captured in Langfuse.
+            # Forward to the gateway's verify_content_safety tool — the gateway
+            # hosts the NeMo rails singleton (POAM-2026-079).
             with _tracer.start_as_current_span("cage.tool_execute") as span:
                 span.set_attribute("cage.tool_name", "verify_content_safety")
                 span.set_attribute("cage.governance", True)
                 span.set_attribute(OBSERVATION_TYPE, "span")
                 span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
-                text = params.get("text", "")
-                is_safe, response, _deterministic = await validate_with_nemo(
-                    text, get_nemo_rails()
+                output = await _gateway_tool(
+                    "verify_content_safety",
+                    {"text": params.get("text", "")},
                 )
-                if not is_safe:
+                if str(output).startswith("BLOCKED"):
                     span.set_attribute("cage.verdict", "BLOCKED")
-                    output = f"BLOCKED: {response}"
                 else:
                     span.set_attribute("cage.verdict", "SAFE")
-                    output = "SAFE"
 
         elif tool == "evaluate_policy":
             # OPA evaluation runs against the gateway's OPA client.

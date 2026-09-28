@@ -20,8 +20,7 @@ The factories encapsulate:
   - ``validate_with_nemo()`` for input rails
   - ``verify_and_mask_output()`` for output rails
   - OTel span instrumentation with Telemetry attributes
-  - Fail-closed exception handling (any error → blocked / sentinel)
-  - CAGE_SEAL_ENFORCEMENT mode awareness
+  - Unconditional fail-closed enforcement (any error or unsafe verdict → blocked / sentinel)
 
 Domain-specific message extraction is injected via ``NemoNodeConfig.message_extractor``.
 """
@@ -30,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from typing import Any
 
@@ -287,8 +285,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
       1. Extracts user input via ``config.message_extractor`` (or default).
       2. Calls ``validate_with_nemo()`` — NeMo input rails (LLM-backed filter).
       3. Sets ``config.blocked_state_key`` and ``config.reason_state_key``.
-      4. Fail-closed: any exception → block.
-      5. Respects ``CAGE_SEAL_ENFORCEMENT`` env var for dev/log-only mode.
+      4. Fail-closed: any exception or unsafe verdict → block.
 
     If ``config.pass_through_state`` is ``True`` (default), the returned dict
     includes ``{**state, ...}`` so that downstream conditional edges can read
@@ -337,11 +334,6 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 }
 
             span.set_attribute("nemo.input_rail.input_length", len(user_input))
-
-            cage_enforcement = os.environ.get(
-                "CAGE_SEAL_ENFORCEMENT", "enforce"
-            ).lower()
-            span.set_attribute("nemo.cage_enforcement", cage_enforcement)
 
             try:
                 rails = get_nemo_rails()
@@ -412,61 +404,31 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 span.set_attribute("nemo.input_rail.reason", reason or "")
                 span.set_attribute("nemo.input_rail.deterministic", deterministic)
             except Exception as exc:
-                if cage_enforcement == "enforce":
-                    logger.error(
-                        "nemo_guardrail_node: exception during validate_with_nemo — blocking: %s",
-                        exc,
-                    )
-                    span.record_exception(exc)
-                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
-                    base = {**state} if cfg.pass_through_state else {}
-                    return {
-                        **base,
-                        cfg.blocked_state_key: True,
-                        cfg.reason_state_key: f"GUARDRAIL_ERROR: {exc}",
-                    }
-                else:
-                    logger.warning(
-                        "nemo_guardrail_node: exception (enforcement=%s) — proceeding anyway: %s",
-                        cage_enforcement,
-                        exc,
-                    )
-                    base = {**state} if cfg.pass_through_state else {}
-                    return {
-                        **base,
-                        cfg.blocked_state_key: False,
-                        cfg.reason_state_key: "",
-                    }
+                logger.error(
+                    "nemo_guardrail_node: exception during validate_with_nemo — blocking: %s",
+                    exc,
+                )
+                span.record_exception(exc)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
+                base = {**state} if cfg.pass_through_state else {}
+                return {
+                    **base,
+                    cfg.blocked_state_key: True,
+                    cfg.reason_state_key: f"GUARDRAIL_ERROR: {exc}",
+                }
 
             if not is_safe:
-                if deterministic or cage_enforcement == "enforce":
-                    # Hard-block when:
-                    #   (a) the verdict came from a deterministic stage (Stage 1/1'/1B/1C/1D) — always block
-                    #       regardless of enforcement mode, because these detectors have zero false-positive
-                    #       risk and are the primary defence against regex/keyword/structural attacks; OR
-                    #   (b) CAGE_SEAL_ENFORCEMENT=enforce — enforce mode always blocks on any unsafe verdict.
-                    #
-                    # The stochastic Stage-3 LLM judge with enforcement=log is the ONLY path that proceeds
-                    # despite an unsafe verdict.
-                    logger.warning(
-                        "nemo_guardrail_node: input BLOCKED (deterministic=%s, enforcement=%s) — reason: %s",
-                        deterministic,
-                        cage_enforcement,
-                        reason,
-                    )
-                    base = {**state} if cfg.pass_through_state else {}
-                    return {
-                        **base,
-                        cfg.blocked_state_key: True,
-                        cfg.reason_state_key: reason,
-                    }
-                else:
-                    logger.warning(
-                        "⚠️ nemo_guardrail_node: input flagged by non-deterministic stage "
-                        "(enforcement=%s) — proceeding. reason: %s",
-                        cage_enforcement,
-                        reason,
-                    )
+                logger.warning(
+                    "nemo_guardrail_node: input BLOCKED (deterministic=%s) — reason: %s",
+                    deterministic,
+                    reason,
+                )
+                base = {**state} if cfg.pass_through_state else {}
+                return {
+                    **base,
+                    cfg.blocked_state_key: True,
+                    cfg.reason_state_key: reason,
+                }
 
             logger.info("nemo_guardrail_node: input PASSED — proceeding")
             base = {**state} if cfg.pass_through_state else {}
@@ -519,11 +481,6 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
 
             span.set_attribute("nemo.output_rail.input_length", len(output_text))
 
-            cage_enforcement = os.environ.get(
-                "CAGE_SEAL_ENFORCEMENT", "enforce"
-            ).lower()
-            span.set_attribute("nemo.cage_enforcement", cage_enforcement)
-
             # --- Optimization opportunity (Group D / D2) ---
             # Currently PII masking and semantic validation are two sequential
             # NeMo LLMRails invocations on the same LLMRails instance.  They
@@ -571,9 +528,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 masked_text = cfg.output_blocked_sentinel
 
             # --- Call 2 of 2: Semantic safety validation ---
-            # Run validate_output_semantics() on the PII-masked text.
-            # In enforce mode: block on UNSAFE verdict.
-            # In log mode: warn but pass through.
+            # Run validate_output_semantics() on the PII-masked text and fail closed.
             final_text = masked_text
             try:
                 rails = get_nemo_rails()
@@ -583,36 +538,23 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 span.set_attribute("output.semantic_validated", True)
                 span.set_attribute("output.semantic_safe", sem_safe)
                 if not sem_safe:
-                    if cage_enforcement == "enforce":
-                        logger.warning(
-                            "nemo_output_rail_node: output BLOCKED by semantic validation — reason: %s",
-                            sem_reason,
-                        )
-                        span.set_attribute("output.semantic_blocked", True)
-                        final_text = cfg.output_blocked_sentinel
-                    else:
-                        logger.warning(
-                            "⚠️ nemo_output_rail_node: output flagged by semantic validation "
-                            "(enforcement=%s) — passing through. reason: %s",
-                            cage_enforcement,
-                            sem_reason,
-                        )
-                        span.set_attribute("output.semantic_flagged", True)
+                    logger.warning(
+                        "nemo_output_rail_node: output BLOCKED by semantic validation — reason: %s",
+                        sem_reason,
+                    )
+                    span.set_attribute("output.semantic_blocked", True)
+                    final_text = cfg.output_blocked_sentinel
                 else:
                     logger.debug("nemo_output_rail_node: semantic validation PASSED")
             except Exception as sem_exc:
                 logger.error(
                     "nemo_output_rail_node: validate_output_semantics raised — "
-                    "applying fail-closed logic (enforcement=%s): %s",
-                    cage_enforcement,
+                    "applying fail-closed logic: %s",
                     sem_exc,
                 )
                 span.set_attribute("output.semantic_validated", False)
-                if cage_enforcement == "enforce":
-                    span.set_attribute("output.semantic_blocked", True)
-                    final_text = cfg.output_blocked_sentinel
-                else:
-                    span.set_attribute("output.semantic_flagged", True)
+                span.set_attribute("output.semantic_blocked", True)
+                final_text = cfg.output_blocked_sentinel
 
             # Write the final text back.  add_messages reducer replaces an
             # existing message when the returned message carries the same id.

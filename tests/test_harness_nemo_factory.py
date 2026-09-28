@@ -284,11 +284,11 @@ class TestNemoGuardrailNodeFactory:
         )
 
     @pytest.mark.asyncio
-    async def test_nondeterministic_block_proceeds_in_log_mode(self):
-        """Non-deterministic (LLM judge) verdict with CAGE_SEAL_ENFORCEMENT=log must NOT block.
+    async def test_nondeterministic_block_also_blocks_when_legacy_log_env_set(self):
+        """Non-deterministic (LLM judge) unsafe verdict must hard-block even if CAGE_SEAL_ENFORCEMENT=log is set.
 
-        This is the complementary invariant: the stochastic Stage-3 LLM judge verdict
-        is subject to enforcement-mode softening.  In log mode, the node proceeds.
+        CAGE_SEAL_ENFORCEMENT has been removed: NeMo guardrails have no log-only
+        bypass and always fail closed on any unsafe verdict.
         """
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
@@ -306,8 +306,8 @@ class TestNemoGuardrailNodeFactory:
             ):
                 result = await node(_state_with_message("borderline query"))
 
-        # Must NOT block — log mode + non-deterministic verdict → proceed
-        assert result["guardrail_blocked"] is False
+        assert result["guardrail_blocked"] is True
+        assert "LLM judge flagged as ambiguous" in result["guardrail_reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +412,11 @@ class TestNemoOutputRailNodeFactory:
                 "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
                 new_callable=AsyncMock,
                 return_value="safe output",
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_output_semantics",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
             ),
         ):
             result = await node(state)
