@@ -469,6 +469,21 @@ class GroundTruthReconciler:
                         result.signature,
                     )
             pipe.execute()
+            if result.sequence is not None and isinstance(result.sequence, int):
+                try:
+                    from src.gateway.governance.safety.cbf_engine import (
+                        trim_local_debits_through_sequence_sync,
+                    )
+
+                    trim_local_debits_through_sequence_sync(
+                        self._redis, result.sequence
+                    )
+                except Exception as trim_exc:
+                    logger.warning(
+                        "Failed to trim debits through sequence %s: %s",
+                        result.sequence,
+                        trim_exc,
+                    )
         except Exception as redis_exc:
             self._failure_count += 1
             logger.error(
