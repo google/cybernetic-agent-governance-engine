@@ -3,8 +3,8 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-09-22T23:23:29Z'
-    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa
+    last-modified: '2026-09-28T02:42:33Z'
+    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
       for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
@@ -767,8 +767,8 @@ system-security-plan:
       remarks: AU-9 audit log protection mechanism
     - param-id: sc-8_prm_1
       values:
-      - TLS 1.3 for all external communications; NetworkPolicy for intra-cluster;
-        mTLS planned (POAM-013)
+      - TLS 1.3 for all external communications; Linkerd mTLS + NetworkPolicy for
+        intra-cluster
       remarks: SC-8 transmission confidentiality protection
     implemented-requirements:
     - uuid: g7000001-0000-4000-8000-000000000001
@@ -780,9 +780,8 @@ system-security-plan:
         bound 1:1 through Workload Identity to its own GCP service account (cage-gateway,
         cage-advisor, cage-reconciler, cage-compliance-bridge, cage-vllm, cage-benchmark)
         per infra/targets/gcp-gke/iam.tf. Signing keys are granted per key to a single
-        signer with authoritative key-level IAM policies (infra/targets/gcp-gke/kms_signing.tf).
-        POAM-2026-079 tracks the residual: the advisor still signs with the gateway-seal
-        key until its in-process governor moves behind the gateway.
+        signer with authoritative key-level IAM policies (infra/targets/gcp-gke/kms_signing.tf;
+        POAM-2026-079 closed).
 
         Zero-trust outbound tool credential brokering (CredentialBrokerAdapter seam)
         enforces SPIFFE SVID-based authorization for egress API credentials. Autonomous
@@ -1182,38 +1181,37 @@ system-security-plan:
           Full SPIFFE/SPIRE integration planned for automated SVID lifecycle management.
     - uuid: g7000010-0000-4000-8000-000000000010
       control-id: sc-8
-      description: 'Transmission confidentiality and integrity is partially implemented.
-        All external communications use TLS 1.3 (gateway ingress, LLM API egress,
-        Langfuse OTel export). Kubernetes NetworkPolicy (deployment/k8s/network-policy.yaml)
-        restricts intra-cluster traffic to authorized service pairs only. POAM-013
-        tracks the gap: mutual TLS (mTLS) for intra-cluster service-to-service communications
-        is not yet implemented. The current gRPC-based internal communication relies
-        on Kubernetes network isolation rather than per-connection authentication.
-        mTLS implementation (via Istio or Linkerd service mesh) is planned for Phase
-        3.
+      description: 'Transmission confidentiality and integrity is implemented across
+        external and intra-cluster boundaries. All external communications use TLS
+        1.3 (gateway ingress, LLM API egress, Langfuse OTel export). Kubernetes NetworkPolicy
+        (deployment/k8s/network-policy.yaml) restricts intra-cluster traffic to authorized
+        service pairs only, and Linkerd service mesh enforces pod-to-pod mutual TLS
+        (mTLS) with Google CAS-backed trust anchors (infra/modules/service_mesh/main.tf)
+        and Server/AuthorizationPolicy/HTTPRoute access controls (deployment/k8s/linkerd-mtls-policy.yaml;
+        POAM-013 and POAM-2026-080 closed).
 
         '
       props:
       - name: implementation-status
-        value: partially-implemented
+        value: implemented
       - name: poam-reference
-        value: POAM-013
+        value: POAM-013, POAM-2026-080
       - name: current-capability
-        value: TLS 1.3 external + Kubernetes NetworkPolicy intra-cluster
-      - name: planned-capability
-        value: mTLS intra-cluster via service mesh (Phase 3)
+        value: TLS 1.3 external + Linkerd mTLS (Google CAS root CA) + Kubernetes NetworkPolicy
+          intra-cluster
       responsible-roles:
       - role-id: system-admin
       by-components:
       - component-uuid: e5000007-0000-4000-8000-000000000007
         uuid: h8000010-0000-4000-8000-000000000011
         description: 'Kubernetes NetworkPolicy enforces intra-cluster traffic restrictions.
-          TLS 1.3 enforced for all external communications. mTLS pending POAM-013
-          (Phase 3 service mesh implementation).
+          TLS 1.3 enforced for all external communications. Linkerd service mesh enforces
+          intra-cluster mTLS with Google CAS trust anchors (POAM-013, POAM-2026-080
+          closed).
 
           '
         implementation-status:
-          state: partially-implemented
+          state: implemented
       - component-uuid: e5000001-0000-4000-8000-000000000001
         uuid: h8000010-0000-4000-8000-000000000012
         description: 'CAGE Gateway enforces TLS 1.3 for all inbound client connections
@@ -1232,13 +1230,13 @@ system-security-plan:
         \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
         \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
         \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
-        \    (OPA Rego — 5 UCAs)\n            - config/rails/generated_stpa_rails.co\
-        \     (NeMo Colang — 5 UCAs)\n            - src/gateway/governance/generated_stpa_validator.py\
+        \    (OPA Rego — 6 UCAs)\n            - config/rails/generated_stpa_rails.co\
+        \     (NeMo Colang — 5 UCAs)\n            - src/gateway/governance/stpa_validator.py\
         \ (Python — 7 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-09-22T23:23:29Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-09-28T02:42:33Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1246,13 +1244,19 @@ system-security-plan:
         \ stale connection data.\n  → NIST: cm-6 (Configuration Settings), si-4 (System\
         \ Monitoring)\nUCA-11 (unsafe_action): Agent initiates wire transfer that\
         \ is reversible only within settlement window.\n  → NIST: ac-3 (Access Enforcement),\
-        \ sc-4 (Information in Shared System Resources / Fiscal Limits)\nUCA-2 (wrong_timing):\
-        \ Agent executes trade with stale market data (latency > threshold).\n  →\
-        \ NIST: cm-6 (Configuration Settings), sa-11 (Developer Testing and Evaluation)\n\
-        UCA-3 (unsafe_action): Agent outputs PII to user interface.\n  → NIST: ac-3\
-        \ (Access Enforcement), sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon):\
-        \ Agent debits account but fails to credit asset (atomic failure).\n  → NIST:\
-        \ si-7 (Software, Firmware, and Information Integrity), au-10 (Non-Repudiation)\n\
+        \ sc-4 (Information in Shared System Resources / Fiscal Limits)\nUCA-12 (unsafe_action):\
+        \ Agent executes bounded trade when bounding contracts B1-B10 fail validation.\
+        \ Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback\
+        \ window validation passes, enabling HITL review without confidence hard-gate\
+        \ per VEC-004. When B10 fails, classification override to IRREVERSIBLE_TERMINAL\
+        \ prevents execution.\n  → NIST: ac-3 (Access Enforcement), sa-11 (Developer\
+        \ Testing and Evaluation)\nUCA-2 (wrong_timing): Agent executes trade with\
+        \ stale market data (latency > threshold).\n  → NIST: cm-6 (Configuration\
+        \ Settings), sa-11 (Developer Testing and Evaluation)\nUCA-3 (unsafe_action):\
+        \ Agent outputs PII to user interface.\n  → NIST: ac-3 (Access Enforcement),\
+        \ sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon): Agent\
+        \ debits account but fails to credit asset (atomic failure).\n  → NIST: si-7\
+        \ (Software, Firmware, and Information Integrity), au-10 (Non-Repudiation)\n\
         UCA-5 (unsafe_action): Agent executes buy order when daily drawdown exceeds\
         \ limit.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information in Shared\
         \ System Resources / Fiscal Limits)\nUCA-6 (wrong_timing): Agent submits market\
@@ -1264,12 +1268,7 @@ system-security-plan:
         \ trade before risk assessment is complete.\n  → NIST: ac-3 (Access Enforcement),\
         \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing): Agent executes\
         \ trade with compliance check bypassed.\n  → NIST: ac-3 (Access Enforcement),\
-        \ cm-6 (Configuration Settings)\nUCA-12 (unsafe_action): Agent executes bounded\
-        \ trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded\
-        \ is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling\
-        \ HITL review without confidence hard-gate per VEC-004. When B10 fails, classification\
-        \ override to IRREVERSIBLE_TERMINAL prevents execution.\n  → NIST: ac-3 (Access\
-        \ Enforcement), sa-11 (Developer Testing and Evaluation)"
+        \ cm-6 (Configuration Settings)"
       props:
       - name: implementation-status
         value: implemented
@@ -1280,7 +1279,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-09-22T23:23:29Z'
+        value: '2026-09-28T02:42:33Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
@@ -1288,7 +1287,7 @@ system-security-plan:
       - name: artifact-nemo
         value: config/rails/generated_stpa_rails.co
       - name: artifact-python
-        value: src/gateway/governance/generated_stpa_validator.py
+        value: src/gateway/governance/stpa_validator.py
       - name: compiler-source
         value: src/gateway/governance/stpa_compiler.py
       responsible-roles:
@@ -1299,7 +1298,7 @@ system-security-plan:
         description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
           artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
           (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-          validator). UCAs covered: UCA-1, UCA-11, UCA-3, UCA-5, UCA-8, UCA-9, UCA-12.'
+          validator). UCAs covered: UCA-1, UCA-11, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
         implementation-status:
           state: implemented
         links:
@@ -1359,7 +1358,7 @@ system-security-plan:
         description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
           via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
           config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-          (Python validator). UCAs covered: UCA-2, UCA-8, UCA-12.'
+          (Python validator). UCAs covered: UCA-12, UCA-2, UCA-8.'
         implementation-status:
           state: implemented
         links:

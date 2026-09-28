@@ -395,7 +395,6 @@ Agent identity is a **transport-layer fact**, not an application-layer claim. Th
 | Ingress | Implementation | Failure response |
 |---|---|---|
 | Gateway ASGI ingress & HTTP chat-completions proxy | [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py), [`src/gateway/server/inference_proxy.py`](../../src/gateway/server/inference_proxy.py) | `WorkloadIdentityMiddleware` rejects untrusted or missing `l5d-client-id` with HTTP **403**; `inference_proxy.py` extracts the caller via `extract_client_identity(request.scope)` and returns HTTP **401** (`authentication_required`) with SC-8 stamped `BLOCK` on failure. Quota accounting downstream keys on the extracted workload identity. |
-| Envoy `ext_authz` gRPC | [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) | A denied `CheckResponse`: **401** when the verified peer principal is missing or malformed, **403** when the `CheckRequest` fields themselves cannot be extracted. `caller_principal` is forwarded into `handle_check_request()`. |
 
 **Authorization (distinct from authentication):** the extracted identity becomes the OPA principal. Agent-to-agent delegation is authorized declaratively in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by `startswith()` prefix matching against each subagent's `authorized_parent_prefixes`, so ephemeral pod suffixes never enter policy bodies.
 
@@ -464,13 +463,7 @@ The ingress adapter layer normalizes external governance signals from heterogene
 | **Policy Translator** | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Translates between OSCAL/Lula/AAIF representations and OPA Rego |
 | **Agent Registry Adapter** | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | SPIFFE trust-domain agent catalog integration |
 
-### 7.2 Agent Gateway Adapter (Envoy `ext_authz`)
-
-[`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) implements the Envoy `ext_authz` gRPC servicer (`envoy.service.auth.v3.Authorization.Check`), enabling the Gateway to serve as an external authorization engine for Istio, Contour, Emissary, or GCP Agent Gateway (AGW) proxies without code modification.
-
-The adapter resolves `caller_principal` from the verified mesh peer principal before the JSON-RPC body is dispatched to `validate_action()`. There is no header or body fallback: an absent or malformed principal produces a denied `CheckResponse` (401), and an unparseable `CheckRequest` produces a denied `CheckResponse` (403). See [§5.4](#54-transport-layer-agent-identity-linkerd-mtls-workload-identity).
-
-### 7.3 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
+### 7.2 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
 The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a **Pre-Pipeline Boundary Gate** that analyzes an entire multi-step `ExecutionPlan` before execution begins.
 
@@ -541,7 +534,6 @@ src/gateway/
 ├── infrastructure/         # Telemetry setup & OTel client configuration
 ├── observability/          # Distributed W3C MCP tracing context propagation
 └── server/                 # Composition root & protocol servicers
-    ├── agent_gateway_adapter.py # Envoy ext_authz gRPC servicer & AGW bridge
     ├── dpop_validator.py   # RFC 9449 proof-of-possession validator & protocol
     ├── governance_middleware.py # Core governance endpoints & seal verification
     ├── hybrid_server.py    # FastAPI composition root & lifespan manager
@@ -556,7 +548,6 @@ src/gateway/
 |---|---|---|
 | `src/gateway/server/hybrid_server.py` | Composition Root | FastAPI composition root assembling MCP tool server, inference proxy, and governance sub-applications. |
 | `src/gateway/server/governance_middleware.py` | Governance API | Mounts `/governance/validate-action`, verifies routing seals, coordinates pipeline checks. |
-| `src/gateway/server/agent_gateway_adapter.py` | AGW / ext_authz | Envoy `ext_authz` gRPC servicer bridging proxy traffic into `SymbolicGovernor.validate_action()`. |
 | `src/gateway/server/inference_proxy.py` | Inference Proxy | Reverse proxy routing chat completions to backend Reasoning and Governance Model Pools. |
 | `src/gateway/server/mcp_tool_server.py` | Tool Server | FastMCP server exposing tool endpoints and executing verified actuators via `ActuatorRegistry`. |
 | `src/gateway/governance/governor/governor.py` | Governor Loop | Neuro-symbolic governance dispatch loop coordinating the 8-tier admissibility checks. |

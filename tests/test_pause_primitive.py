@@ -562,7 +562,7 @@ class TestResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_returns_200_on_success(self):
         """resume endpoint returns HTTP 200 on successful resume."""
-        from src.gateway.server.agent_gateway_adapter import handle_resume_request
+        from src.gateway.governance.pause_primitive import handle_resume_request
 
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.RESUMED)
@@ -583,7 +583,7 @@ class TestResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_returns_404_for_unknown_token(self):
         """resume endpoint returns HTTP 404 for unknown tokens."""
-        from src.gateway.server.agent_gateway_adapter import handle_resume_request
+        from src.gateway.governance.pause_primitive import handle_resume_request
 
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.NOT_FOUND)
@@ -605,7 +605,7 @@ class TestResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_returns_410_for_expired(self):
         """resume endpoint returns HTTP 410 Gone for expired tokens."""
-        from src.gateway.server.agent_gateway_adapter import handle_resume_request
+        from src.gateway.governance.pause_primitive import handle_resume_request
 
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.EXPIRED)
@@ -627,7 +627,7 @@ class TestResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_with_context_stores_context(self):
         """resume endpoint passes context to PauseManager."""
-        from src.gateway.server.agent_gateway_adapter import handle_resume_request
+        from src.gateway.governance.pause_primitive import handle_resume_request
 
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.RESUMED)
@@ -657,7 +657,7 @@ class TestResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_idempotent_returns_200(self):
         """resume endpoint returns HTTP 200 for already-resumed tokens."""
-        from src.gateway.server.agent_gateway_adapter import handle_resume_request
+        from src.gateway.governance.pause_primitive import handle_resume_request
 
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(
@@ -680,7 +680,7 @@ class TestResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_redis_error_returns_500(self):
         """resume endpoint returns HTTP 500 on Redis errors."""
-        from src.gateway.server.agent_gateway_adapter import handle_resume_request
+        from src.gateway.governance.pause_primitive import handle_resume_request
 
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(
@@ -814,7 +814,9 @@ class TestValidateActionPauseHandler:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action = MagicMock(return_value="SAFE")
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus = AsyncMock(return_value={"status": "APPROVE"})
@@ -913,6 +915,7 @@ class TestValidateActionPauseHandler:
         }
 
         from src.gateway.governance.classification_engine import ClassificationResult
+
         mock_engine.classify.return_value = ClassificationResult(
             decision=GovernanceDecision.PAUSE,
             metadata={
@@ -1267,15 +1270,24 @@ class TestPauseReceipt:
 def _stub_pipeline(mock_result):
     """Patch run_pipeline where run_sealed (validate_action's check path) calls it with a canned result."""
     from unittest.mock import AsyncMock, patch
+
     from src.gateway.governance.contracts import Violation, ViolationKind
     from src.gateway.governance.governor.pipeline import PipelineResult
+
     violations = tuple(
-        v if isinstance(v, Violation)
-        else Violation(tier="test", code="TEST", message=str(v), kind=ViolationKind.TRANSIENT)
+        v
+        if isinstance(v, Violation)
+        else Violation(
+            tier="test", code="TEST", message=str(v), kind=ViolationKind.TRANSIENT
+        )
         for v in mock_result.get("violations", [])
     )
     result = PipelineResult(
-        violations=violations, tier_failures=(), opa_verdict=None, ftra=None, committed_stages=(),
+        violations=violations,
+        tier_failures=(),
+        opa_verdict=None,
+        ftra=None,
+        committed_stages=(),
     )
     return patch(
         "src.gateway.governance.governor.sealing.run_pipeline",

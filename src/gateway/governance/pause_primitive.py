@@ -557,3 +557,123 @@ def build_resume_endpoint(pause_token: str) -> str:
         URL path for POST /v1/pause/{pause_token}/resume.
     """
     return f"/v1/pause/{pause_token}/resume"
+
+
+async def handle_resume_request(
+    pause_token: str,
+    resume_context: dict[str, Any] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Handle a resume request for a paused action (POST /v1/pause/{pause_token}/resume)."""
+    from opentelemetry import trace as _trace
+
+    from src.gateway.infrastructure.redis_client import redis_client
+
+    _tracer = _trace.get_tracer(__name__)
+    with _tracer.start_as_current_span("cage.pause.resume") as span:
+        span.set_attribute("cage.pause_token", pause_token)
+        try:
+            pause_manager = PauseManager(redis_client)
+            result = await pause_manager.resume_request(
+                pause_token=pause_token,
+                resume_context=resume_context,
+            )
+            span.set_attribute("cage.resume_result", result.value)
+
+            if result == ResumeResult.RESUMED:
+                return 200, {
+                    "status": "RESUMED",
+                    "pause_token": pause_token,
+                    "message": "Request successfully resumed",
+                }
+            if result == ResumeResult.ALREADY_RESUMED:
+                return 200, {
+                    "status": "ALREADY_RESUMED",
+                    "pause_token": pause_token,
+                    "message": "Request was already resumed (idempotent success)",
+                }
+            if result == ResumeResult.EXPIRED:
+                return 410, {
+                    "status": "EXPIRED",
+                    "pause_token": pause_token,
+                    "error": "pause_expired",
+                    "message": "Pause expired — retry the original request",
+                }
+            if result == ResumeResult.NOT_FOUND:
+                return 404, {
+                    "status": "NOT_FOUND",
+                    "pause_token": pause_token,
+                    "error": "pause_not_found",
+                    "message": "Pause token not found or already expired",
+                }
+            return 500, {
+                "status": "ERROR",
+                "pause_token": pause_token,
+                "error": "unexpected_result",
+                "message": f"Unexpected resume result: {result}",
+            }
+        except Exception as exc:
+            logger.error(
+                "[pause_primitive] Resume failed with exception pause_token='%s': %s",
+                pause_token,
+                exc,
+                exc_info=True,
+            )
+            span.record_exception(exc)
+            return 500, {
+                "status": "ERROR",
+                "pause_token": pause_token,
+                "error": "internal_error",
+                "message": "Resume failed due to internal error",
+            }
+
+
+async def handle_get_pause_state(
+    pause_token: str,
+) -> tuple[int, dict[str, Any]]:
+    """Handle a GET request to retrieve pause state (GET /v1/pause/{pause_token})."""
+    from opentelemetry import trace as _trace
+
+    from src.gateway.infrastructure.redis_client import redis_client
+
+    _tracer = _trace.get_tracer(__name__)
+    with _tracer.start_as_current_span("cage.pause.get_state") as span:
+        span.set_attribute("cage.pause_token", pause_token)
+        try:
+            pause_manager = PauseManager(redis_client)
+            state = await pause_manager.get_pause_state(pause_token)
+
+            if state is None:
+                span.set_attribute("cage.pause_found", False)
+                return 404, {
+                    "status": "NOT_FOUND",
+                    "pause_token": pause_token,
+                    "error": "pause_not_found",
+                    "message": "Pause token not found or already expired",
+                }
+
+            span.set_attribute("cage.pause_found", True)
+            span.set_attribute("cage.pause_status", state.status.value)
+            return 200, {
+                "pause_token": state.pause_token,
+                "request_id": state.request_id,
+                "pause_reason": state.pause_reason.value,
+                "status": state.status.value,
+                "paused_at_utc": state.paused_at_utc,
+                "expires_at_utc": state.expires_at_utc,
+                "resumed_at_utc": state.resumed_at_utc,
+                "estimated_wait_secs": state.estimated_wait_secs,
+            }
+        except Exception as exc:
+            logger.error(
+                "[pause_primitive] Get pause state failed pause_token='%s': %s",
+                pause_token,
+                exc,
+                exc_info=True,
+            )
+            span.record_exception(exc)
+            return 500, {
+                "status": "ERROR",
+                "pause_token": pause_token,
+                "error": "internal_error",
+                "message": "Failed to retrieve pause state",
+            }

@@ -357,25 +357,9 @@ async def resume_paused_request(
     pause_token: str,
     request: Request,
 ) -> JSONResponse:
-    """Resume a paused execution.
+    """Resume a paused execution."""
+    from src.gateway.governance.pause_primitive import handle_resume_request
 
-    Calls handle_resume_request() from agent_gateway_adapter.py to process
-    the resume request. The body may optionally contain an override_action field.
-
-    Args:
-        pause_token: The pause token UUID from the original PAUSE response.
-        request: The incoming HTTP request (body may contain override_action).
-
-    Returns:
-        JSON response with resume result:
-            - 200 OK: Resume successful (RESUMED or ALREADY_RESUMED)
-            - 404 Not Found: pause_token invalid or not found
-            - 410 Gone: pause_token expired (must retry original request)
-            - 500 Internal Server Error: Redis unavailable
-    """
-    from src.gateway.server.agent_gateway_adapter import handle_resume_request
-
-    # Parse optional JSON body (may contain override_action)
     try:
         body = await request.json()
     except Exception:
@@ -387,21 +371,8 @@ async def resume_paused_request(
 
 @root_app.get("/v1/pause/{pause_token}")
 async def get_pause_state(pause_token: str) -> JSONResponse:
-    """Get current pause state.
-
-    Calls handle_get_pause_state() from agent_gateway_adapter.py to retrieve
-    the current state of a paused request.
-
-    Args:
-        pause_token: The pause token UUID to query.
-
-    Returns:
-        JSON response with pause state:
-            - 200 OK: Pause state found (includes status, reason, timestamps)
-            - 404 Not Found: pause_token invalid or not found
-            - 500 Internal Server Error: Redis unavailable
-    """
-    from src.gateway.server.agent_gateway_adapter import handle_get_pause_state
+    """Get current pause state."""
+    from src.gateway.governance.pause_primitive import handle_get_pause_state
 
     status_code, response_body = await handle_get_pause_state(pause_token)
     return JSONResponse(status_code=status_code, content=response_body)
@@ -411,8 +382,8 @@ async def get_pause_state(pause_token: str) -> JSONResponse:
 # NeMo Refinement Proposal/Approval Flow (Gateway-owned NeMo rails)
 # ---------------------------------------------------------------------------
 
-from datetime import datetime, timezone
 import uuid as _uuid
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from opentelemetry import trace as _otel_trace

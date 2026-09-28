@@ -155,11 +155,9 @@ def _detect_deployment_platform() -> str:
     """Detect the current deployment platform via environment variables.
 
     Returns:
-        Platform identifier: one of ``gcp-cloudrun``, ``gcp-gke``, ``aws-ecs``,
+        Platform identifier: one of ``gcp-gke``, ``aws-ecs``,
         ``azure-containerapp``, or ``agnostic`` (local/unknown).
     """
-    if os.getenv("K_SERVICE"):
-        return "gcp-cloudrun"
     if os.getenv("KUBERNETES_SERVICE_HOST"):
         return "gcp-gke"
     if os.getenv("ECS_CONTAINER_METADATA_URI_V4"):
@@ -180,91 +178,6 @@ _PLATFORM_SC39_IMPL_UUID = "p9000001-plat-sc39-8000-platform001"
 _PLATFORM_SI3_IMPL_UUID = "s3000001-plat-si3-8000-platform0001"
 
 PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
-    "gcp-cloudrun": {
-        "sc-7": {
-            "uuid": _PLATFORM_SC7_IMPL_UUID,
-            "control-id": "sc-7",
-            "title": "Boundary Protection — Cloud Run IAM Identity Perimeter",
-            "status": "implemented",
-            "narrative": (
-                "**Compensating Control Disclosure:** Cloud Run execution environments eliminate "
-                "Kubernetes network-layer microsegmentation (Cilium L7 FQDN egress filtering, "
-                "NetworkPolicy default-deny, service mesh mTLS) in favor of a coarser-grained "
-                "IAM-based invoker identity boundary. Individual service instances cannot apply "
-                "pod-level network ACLs; instead, ingress authorization is enforced at the Google "
-                "Front End (GFE) via Cloud Run IAM bindings (roles/run.invoker). Egress control "
-                "is limited to VPC Connector subnet routing and Cloud NAT static IP allow-listing, "
-                "which operates at the IP layer without application-layer FQDN awareness. "
-                "**This compensating control is not equivalent to GKE's defense-in-depth "
-                "microsegmentation posture** and carries elevated lateral movement risk if a "
-                "service instance is compromised. Suitable for moderate-sensitivity workloads "
-                "where simplicity and reduced operational overhead outweigh granular network isolation."
-            ),
-            "evidence": "Cloud Run IAM policy (roles/run.invoker), VPC Connector subnet routes",
-            "poam_refs": "POAM-CR-001 (SC-7 Compensating Control)",
-        },
-        "sc-8": {
-            "uuid": _PLATFORM_SC8_IMPL_UUID,
-            "control-id": "sc-8",
-            "title": "Transmission Confidentiality and Integrity — GFE TLS 1.3 + OIDC Tokens",
-            "status": "implemented",
-            "narrative": (
-                "**Superior Control Implementation:** Cloud Run enforces TLS 1.3 termination at "
-                "the Google Front End (GFE) for all ingress traffic, with automatic certificate "
-                "provisioning and rotation managed by Google's Certificate Authority. Service-to-service "
-                "authentication uses IAM-issued OIDC bearer tokens in the `Authorization: Bearer` header, "
-                "cryptographically binding caller identity to the GCP service account without requiring "
-                "explicit mTLS certificate management. This eliminates the attack surface of in-cluster "
-                "service mesh control planes (Linkerd identity issuer, SPIFFE trust domain, certificate "
-                "rotation daemons) and private key material stored in pod tmpfs. **This control is "
-                "superior to GKE service mesh mTLS** for scenarios prioritizing simplicity and Google-native "
-                "identity federation, at the cost of reduced defense-in-depth against compromised GCP "
-                "control plane components."
-            ),
-            "evidence": "GFE TLS 1.3 termination, Cloud Run IAM OIDC token exchange",
-            "poam_refs": "N/A — superior to baseline",
-        },
-        "sc-39": {
-            "uuid": _PLATFORM_SC39_IMPL_UUID,
-            "control-id": "sc-39",
-            "title": "Process Isolation — Execution-Environment Dependent (gVisor vs. microVM)",
-            "status": "implemented",
-            "narrative": (
-                "Cloud Run process isolation posture is **execution-environment dependent**: "
-                "Gen1 instances use gVisor (application kernel sandbox) with reduced syscall attack "
-                "surface but shared host kernel; Gen2 instances use microVM isolation (Firecracker-style "
-                "hardware virtualization boundary) with stronger guarantees against kernel exploits. "
-                "CAGE governance workloads default to **Gen2 microVM** for high-assurance isolation. "
-                "Unlike GKE RuntimeClass=gvisor or Confidential GKE (AMD SEV), Cloud Run does not "
-                "expose fine-grained RuntimeClass selection or attestation APIs; isolation model is "
-                "determined by instance generation choice at service creation time. **This control "
-                "satisfies SC-39 requirements** for Gen2 deployments but requires architectural review "
-                "for safety-critical workloads requiring hardware root-of-trust attestation."
-            ),
-            "evidence": "Cloud Run Gen2 execution environment (microVM isolation)",
-            "poam_refs": "POAM-CR-002 (SC-39 Gen2 Verification)",
-        },
-        "si-3": {
-            "uuid": _PLATFORM_SI3_IMPL_UUID,
-            "control-id": "si-3",
-            "title": "Malicious Code Protection — Writable Root Filesystem (Compensating)",
-            "status": "implemented",
-            "narrative": (
-                "**Compensating Control Disclosure:** Cloud Run containers execute with a **writable "
-                "root filesystem** by default, eliminating GKE's `readOnlyRootFilesystem: true` "
-                "security context constraint that prevents runtime modification of container image layers. "
-                "This expanded write surface increases risk of malware persistence and fileless attack "
-                "staging areas surviving across requests (if using minimum instances > 0). **This "
-                "compensating control is not equivalent** to GKE's immutable root filesystem posture. "
-                "Mitigation: (a) Binary Authorization admission policy preventing unsigned images, "
-                "(b) VPC Service Controls perimeter blocking exfiltration paths, (c) Cloud Logging "
-                "file access audit trail for forensic detection. Deployments requiring strict immutability "
-                "guarantees (PCI-DSS, FedRAMP High) should use GKE with readOnlyRootFilesystem enforcement."
-            ),
-            "evidence": "Binary Authorization policy, VPC Service Controls perimeter, Cloud Logging",
-            "poam_refs": "POAM-CR-003 (SI-3 Compensating Control)",
-        },
-    },
     "gcp-gke": {
         "sc-7": {
             "uuid": _PLATFORM_SC7_IMPL_UUID,
@@ -291,7 +204,7 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
             "uuid": _PLATFORM_SC8_IMPL_UUID,
             "control-id": "sc-8",
             "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
-            "status": "partial",
+            "status": "implemented",
             "narrative": (
                 "Pods in the governance-stack namespace are meshed by Linkerd "
                 "(linkerd.io/inject=enabled), which Terraform installs with "
@@ -305,12 +218,17 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "in the repository. The gateway's HTTP port is deny by default: a Linkerd "
                 "Server/HTTPRoute/AuthorizationPolicy set admits only cage-advisor-sa outside a "
                 "short list of open paths, and the gateway repeats the check on the verified "
-                "l5d-client-id header (src/gateway/server/workload_identity.py). OPA and NeMo "
-                "Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only the "
-                "gateway (and the compliance bridge for OPA). Status is partial until the mesh "
-                "is applied and verified in a deployed environment (POAM-2026-080)."
+                "l5d-client-id header in every environment (src/gateway/server/workload_identity.py). "
+                "OPA and NeMo Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only "
+                "the gateway (and the compliance bridge for OPA). Verified by automated Linkerd mesh "
+                "conformance tests (tests/integration/test_linkerd_mesh_conformance.py) and live CAS "
+                "issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080)."
             ),
-            "evidence": "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy, deployment/k8s/linkerd-mtls-policy.yaml",
+            "evidence": (
+                "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy, "
+                "deployment/k8s/linkerd-mtls-policy.yaml, "
+                "tests/integration/test_linkerd_mesh_conformance.py"
+            ),
             "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9)",
         },
         "sc-39": {
@@ -353,7 +271,9 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
 }
 
 
-def generate_platform_control_narratives(platform: str | None = None) -> list[dict[str, Any]]:
+def generate_platform_control_narratives(
+    platform: str | None = None,
+) -> list[dict[str, Any]]:
     """Generate OSCAL implemented-requirement blocks for platform-aware controls.
 
     Args:
@@ -1237,11 +1157,11 @@ def _build_parser() -> argparse.ArgumentParser:
     exp.add_argument(
         "--platform",
         default=None,
-        choices=["gcp-cloudrun", "gcp-gke", "aws-ecs", "azure-containerapp", "agnostic"],
+        choices=["gcp-gke", "aws-ecs", "azure-containerapp", "agnostic"],
         metavar="PLATFORM",
         help=(
             "Deployment platform for platform-aware control narratives (SC-7, SC-8, SC-39, SI-3). "
-            "Auto-detected if not specified. gcp-cloudrun = Cloud Run, gcp-gke = GKE (default for K8s), "
+            "Auto-detected if not specified. gcp-gke = GKE (default for K8s), "
             "aws-ecs = ECS, azure-containerapp = Azure Container Apps, agnostic = local/unknown."
         ),
     )
@@ -1289,7 +1209,9 @@ def cmd_export(args: argparse.Namespace) -> int:
             )
             cs = load_control_structures(yaml_files)
         elif args.input.resolve() == _DEFAULT_INPUT.resolve():
-            domain_yamls = sorted((_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml"))
+            domain_yamls = sorted(
+                (_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")
+            )
             cs = load_control_structures([args.input, *domain_yamls])
         else:
             cs = load_control_structure(args.input)
@@ -1305,10 +1227,10 @@ def cmd_export(args: argparse.Namespace) -> int:
     # Generate platform-aware control narratives (Phase E)
     platform = getattr(args, "platform", None)
     platform_narratives = generate_platform_control_narratives(platform)
-    
+
     # Combine STPA patch with platform narratives
-    all_patch_blocks = [stpa_patch_block] + platform_narratives
-    
+    all_patch_blocks = [stpa_patch_block, *platform_narratives]
+
     # Apply all patches to SSP
     ok_ssp = _apply_ssp_patch(args.ssp, all_patch_blocks, dry_run=args.dry_run)
     _apply_component_patch(args.component_def, component_entry, dry_run=args.dry_run)

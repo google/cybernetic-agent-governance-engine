@@ -22,7 +22,6 @@ NAMESPACE ?= cage
         deploy-logs \
         deploy-kill \
         verify-deploy \
-        test-cloudrun \
         poam-drift-check \
         lint \
         security \
@@ -193,10 +192,6 @@ test-mesh:
 test-live:
 	@echo "==> Running live external tests..."
 	@uv run pytest tests/live/ -m live_external --run-live-external -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v
-
-## Run live Cloud Run integration suite with automated pre-flight checks and explicit skip reporting
-test-cloudrun:
-	@bash scripts/run_cloudrun_integration_tests.sh
 
 ## Run R-22 regression guard test suite
 test-r22:
