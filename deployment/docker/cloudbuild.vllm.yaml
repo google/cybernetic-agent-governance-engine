@@ -13,7 +13,6 @@
 # limitations under the License.
 
 substitutions:
-  _HF_TOKEN: ""      # Override via --substitutions=_HF_TOKEN=hf_xxx at submit time
   _SHORT_SHA: "latest"  # Override via --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
 
 steps:
@@ -23,7 +22,6 @@ steps:
       - 'build'
       - '--file=deployment/docker/Dockerfile.vllm'
       - '--no-cache'
-      - '--build-arg=HF_TOKEN=${_HF_TOKEN}'
       - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:latest'
       - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
       - '.'

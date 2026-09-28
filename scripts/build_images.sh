@@ -129,15 +129,9 @@ if [[ "${SKIP_VLLM:-false}" == "true" ]]; then
   echo "⏩ Skipping vLLM Streamer build (SKIP_VLLM=true)."
 elif [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
   echo "🏗️  Starting build for vllm-streamer..."
-  # vLLM has its own cloudbuild yaml file
-  hf_token=${HUGGING_FACE_HUB_TOKEN:-$HF_TOKEN}
-  if [[ -n "$hf_token" ]]; then
-    gcloud builds submit --config "deployment/docker/cloudbuild.vllm.yaml" \
-      --project "$PROJECT_ID" --substitutions="_SHORT_SHA=${SHORT_SHA},_HF_TOKEN=$hf_token" . > "/tmp/build_vllm.log" 2>&1 &
-  else
-    gcloud builds submit --config "deployment/docker/cloudbuild.vllm.yaml" \
-      --project "$PROJECT_ID" --substitutions="_SHORT_SHA=${SHORT_SHA}" . > "/tmp/build_vllm.log" 2>&1 &
-  fi
+  # vLLM has its own cloudbuild yaml file (no HF token needed; build only runs pip)
+  gcloud builds submit --config "deployment/docker/cloudbuild.vllm.yaml" \
+    --project "$PROJECT_ID" --substitutions="_SHORT_SHA=${SHORT_SHA}" . > "/tmp/build_vllm.log" 2>&1 &
   wait_for_pids+=("$!")
 else
   echo "⚠️  deployment/docker/cloudbuild.vllm.yaml not found. Skipping vLLM Streamer build."

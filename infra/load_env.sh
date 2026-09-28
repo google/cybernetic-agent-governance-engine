@@ -72,10 +72,18 @@ while IFS= read -r line || [ -n "$line" ]; do
             
             # Model configuration
             MODEL_REASONING)
-                export TF_VAR_model_reasoning="$var_value"
+                if [[ "$var_value" == gs://* ]]; then
+                    export TF_VAR_model_reasoning="$var_value"
+                else
+                    export TF_VAR_served_model_reasoning="$var_value"
+                fi
                 ;;
             MODEL_FAST)
-                export TF_VAR_model_fast="$var_value"
+                if [[ "$var_value" == gs://* ]]; then
+                    export TF_VAR_model_fast="$var_value"
+                else
+                    export TF_VAR_served_model_fast="$var_value"
+                fi
                 ;;
             MODEL_CONSENSUS)
                 export TF_VAR_model_consensus="$var_value"
@@ -112,11 +120,6 @@ while IFS= read -r line || [ -n "$line" ]; do
             # Container registry
             REGISTRY_URL)
                 export TF_VAR_registry_url="$var_value"
-                ;;
-            
-            # Hugging Face
-            HUGGING_FACE_HUB_TOKEN)
-                export TF_VAR_hf_token="$var_value"
                 ;;
             
             # Kubernetes configuration

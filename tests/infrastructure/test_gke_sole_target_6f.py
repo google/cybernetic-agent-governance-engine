@@ -300,6 +300,32 @@ def _fqdn_matches_pattern(fqdn: str, pattern: str) -> bool:
     return fqdn == pattern
 
 
+def _selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
+    """Evaluate a Kubernetes LabelSelector (matchLabels + matchExpressions)."""
+    for k, v in selector.get("matchLabels", {}).items():
+        if labels.get(k) != v:
+            return False
+    for expr in selector.get("matchExpressions", []):
+        key = expr.get("key", "")
+        op = expr.get("operator", "")
+        values = expr.get("values", [])
+        if op == "In":
+            if labels.get(key) not in values:
+                return False
+        elif op == "NotIn":
+            if labels.get(key) in values:
+                return False
+        elif op == "Exists":
+            if key not in labels:
+                return False
+        elif op == "DoesNotExist":
+            if key in labels:
+                return False
+        else:
+            return False
+    return True
+
+
 def _evaluate_pod_egress(
     network_policies: list[dict[str, Any]],
     fqdn_policies: list[dict[str, Any]],
@@ -315,18 +341,12 @@ def _evaluate_pod_egress(
     """Simulate GKE Dataplane V2 + FQDNNetworkPolicy egress evaluation (fail-closed)."""
     matching_netpols = [
         np for np in network_policies
-        if all(
-            pod_labels.get(k) == v
-            for k, v in np.get("spec", {}).get("podSelector", {}).get("matchLabels", {}).items()
-        )
+        if _selector_matches(np.get("spec", {}).get("podSelector", {}), pod_labels)
         and "Egress" in np.get("spec", {}).get("policyTypes", [])
     ]
     matching_fqdnpols = [
         fp for fp in fqdn_policies
-        if all(
-            pod_labels.get(k) == v
-            for k, v in fp.get("spec", {}).get("podSelector", {}).get("matchLabels", {}).items()
-        )
+        if _selector_matches(fp.get("spec", {}).get("podSelector", {}), pod_labels)
         and "Egress" in fp.get("spec", {}).get("policyTypes", [])
     ]
 
@@ -648,5 +668,197 @@ class TestOSCALStep6fCompliance:
         assert meta_prop["class"] == "customer-responsibility"
         assert "Tier-3 commercial-deployment-only" in meta_prop["value"]
         assert meta_prop["value"] == TIER3_COMMERCIAL_LEDGER_CUSTOMER_RESPONSIBILITY
+
+
+# ============================================================================
+# 7. WP2 — Remove HF Token & Load vLLM Weights from GCS (POAM-2026-082)
+# ============================================================================
+
+
+class TestVllmHfTokenRemovalAndGcsModelStreaming:
+    """Verify WP2 / POAM-2026-082 invariants:
+    - No Dockerfile contains `ENV .*TOKEN` or `ARG .*TOKEN`.
+    - No `.tf` file declares `hf_token` or `hf-token-secret`.
+    - Cloud Build and `build_images.sh` do not pass `_HF_TOKEN` or `--build-arg=HF_TOKEN`.
+    - vLLM loads weights from `gs://` paths via `runai_streamer` with `--load-format $VLLM_LOAD_FORMAT`,
+      `--served-model-name $SERVED_MODEL_NAME`, `HF_HUB_OFFLINE=1`, and `TRANSFORMERS_OFFLINE=1`.
+    - vLLM NetworkPolicy + FQDNNetworkPolicy permit DNS, GKE Workload Identity metadata server
+      (`169.254.169.254:80`, `169.254.169.252:988`), and `storage.googleapis.com:443` /
+      `oauth2.googleapis.com:443`, while failing closed on `huggingface.co` and other external egress.
+    - `local.fqdn_network_policies` is materialized via `kubernetes_manifest.fqdn_network_policy`.
+    """
+
+    def test_no_dockerfile_declares_env_or_arg_token(self) -> None:
+        dockerfiles = [
+            p
+            for p in REPO_ROOT.rglob("*Dockerfile*")
+            if p.is_file() and ".git" not in p.parts and ".venv" not in p.parts
+        ]
+        assert dockerfiles, "Expected to find Dockerfiles in repository"
+        token_directive_re = re.compile(r"^\s*(?:ENV|ARG)\s+[^\n]*TOKEN", re.IGNORECASE | re.MULTILINE)
+        for df in dockerfiles:
+            content = df.read_text(encoding="utf-8")
+            match = token_directive_re.search(content)
+            assert match is None, (
+                f"{df.relative_to(REPO_ROOT)} must not declare ENV/ARG *TOKEN "
+                f"(found: {match.group(0).strip()!r})"
+            )
+
+    def test_no_terraform_file_declares_hf_token_or_hf_token_secret(self) -> None:
+        tf_files = list((REPO_ROOT / "infra").rglob("*.tf"))
+        assert tf_files, "Expected .tf files under infra/"
+        for tf_file in tf_files:
+            content = tf_file.read_text(encoding="utf-8")
+            assert "hf_token" not in content, (
+                f"{tf_file.relative_to(REPO_ROOT)} must not declare or reference hf_token"
+            )
+            assert "hf-token-secret" not in content, (
+                f"{tf_file.relative_to(REPO_ROOT)} must not declare or reference hf-token-secret"
+            )
+            assert "HUGGING_FACE_HUB_TOKEN" not in content, (
+                f"{tf_file.relative_to(REPO_ROOT)} must not inject HUGGING_FACE_HUB_TOKEN into pods"
+            )
+
+    def test_cloudbuild_and_build_scripts_do_not_pass_hf_token(self) -> None:
+        cb_vllm = (REPO_ROOT / "deployment" / "docker" / "cloudbuild.vllm.yaml").read_text(
+            encoding="utf-8"
+        )
+        build_sh = (REPO_ROOT / "scripts" / "build_images.sh").read_text(encoding="utf-8")
+        deploy_sh = (REPO_ROOT / "deploy_all.sh").read_text(encoding="utf-8")
+        load_env_sh = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
+
+        assert "_HF_TOKEN" not in cb_vllm
+        assert "HF_TOKEN" not in cb_vllm
+        assert "_HF_TOKEN" not in build_sh
+        assert "hf_token" not in build_sh
+        assert "TF_VAR_hf_token" not in deploy_sh
+        assert "TF_VAR_hf_token" not in load_env_sh
+
+    def test_vllm_loads_from_gcs_with_runai_streamer_served_model_name_and_offline_mode(
+        self,
+    ) -> None:
+        gke_main = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
+        gke_vars = (GKE_TARGET_DIR / "variables.tf").read_text(encoding="utf-8")
+        vllm_mod_main = (REPO_ROOT / "infra" / "modules" / "vllm_inference" / "main.tf").read_text(
+            encoding="utf-8"
+        )
+        vllm_mod_vars = (
+            REPO_ROOT / "infra" / "modules" / "vllm_inference" / "variables.tf"
+        ).read_text(encoding="utf-8")
+
+        # 1. Invalid loader name gcs_filesystem is gone; runai_streamer is used
+        assert "gcs_filesystem" not in gke_main
+        assert 'can(regex("^gs://", var.model_fast)) ? "runai_streamer" : "auto"' in gke_main
+        assert 'can(regex("^gs://", var.model_reasoning)) ? "runai_streamer" : "auto"' in gke_main
+
+        # 2. vllm_command passes --served-model-name $SERVED_MODEL_NAME and --load-format $VLLM_LOAD_FORMAT
+        assert "--served-model-name $SERVED_MODEL_NAME" in gke_main
+        assert "--load-format $VLLM_LOAD_FORMAT" in gke_main
+        assert "--served-model-name $SERVED_MODEL_NAME" in vllm_mod_vars
+        assert "--load-format $VLLM_LOAD_FORMAT" in vllm_mod_vars
+
+        # 3. HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1 set on vLLM pods
+        assert '"HF_HUB_OFFLINE"       = "1"' in gke_main
+        assert '"TRANSFORMERS_OFFLINE" = "1"' in gke_main
+        assert 'name  = "HF_HUB_OFFLINE"' in vllm_mod_main
+        assert 'name  = "TRANSFORMERS_OFFLINE"' in vllm_mod_main
+        assert 'name  = "SERVED_MODEL_NAME"' in vllm_mod_main
+
+        # 4. Default model_fast and model_reasoning in gcp-gke variables.tf and all posture tfvars are gs:// paths
+        assert 'default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"' in gke_vars
+        assert 'default     = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"' in gke_vars
+        assert 'variable "served_model_fast"' in gke_vars
+        assert 'variable "served_model_reasoning"' in gke_vars
+
+        for tfvars_name in (
+            "dev.tfvars",
+            "staging.tfvars",
+            "prod.tfvars",
+            "us-dev.tfvars",
+            "eu-dev.tfvars",
+            "eu-prod.tfvars",
+            "apac-dev.tfvars",
+            "apac-prod.tfvars",
+        ):
+            tfvars_text = (GKE_TARGET_DIR / tfvars_name).read_text(encoding="utf-8")
+            assert 'model_fast             = "gs://' in tfvars_text, (
+                f"{tfvars_name} must set model_fast to a gs:// path in the model bucket"
+            )
+            assert 'model_reasoning        = "gs://' in tfvars_text, (
+                f"{tfvars_name} must set model_reasoning to a gs:// path in the model bucket"
+            )
+
+    def test_fqdn_network_policies_materialized_and_vllm_egress_enforced(self) -> None:
+        netpol_tf = (GKE_TARGET_DIR / "network_policy.tf").read_text(encoding="utf-8")
+
+        # 1. Terraform materializes local.fqdn_network_policies via kubernetes_manifest
+        assert 'resource "kubernetes_manifest" "fqdn_network_policy"' in netpol_tf
+        assert "for_each = local.fqdn_network_policies" in netpol_tf
+        assert "manifest = each.value" in netpol_tf
+
+        # 2. Terraform defines vllm_egress_l3_l4 and vllm_egress_fqdn
+        assert 'resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4"' in netpol_tf
+        assert "vllm_egress_fqdn = {" in netpol_tf
+        assert '"169.254.169.254/32"' in netpol_tf
+        assert '"169.254.169.252/32"' in netpol_tf
+        assert 'port     = "988"' in netpol_tf
+
+        # 3. Behavioral evaluation of vLLM egress in deployment/k8s/cilium/egress-lockdown.yaml
+        docs = _load_yaml_docs(CILIUM_DIR / "egress-lockdown.yaml")
+        netpols = [d for d in docs if d.get("kind") == "NetworkPolicy"]
+        fqdnpols = [d for d in docs if d.get("kind") == "FQDNNetworkPolicy"]
+
+        for app_label in ("vllm-inference", "vllm-reasoning"):
+            pod_labels = {"app": app_label, "component": "vllm-inference"}
+
+            # Allowed: DNS to kube-dns and 169.254.169.254:53
+            assert _evaluate_pod_egress(
+                netpols,
+                fqdnpols,
+                pod_labels,
+                dest_pod_labels={"k8s-app": "kube-dns"},
+                dest_namespace_labels={"kubernetes.io/metadata.name": "kube-system"},
+                port=53,
+                protocol="UDP",
+            ) is True
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_ip="169.254.169.254", port=53, protocol="UDP"
+            ) is True
+
+            # Allowed: GKE Workload Identity metadata server (169.254.169.254:80 and 169.254.169.252:988)
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_ip="169.254.169.254", port=80, protocol="TCP"
+            ) is True
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_ip="169.254.169.252", port=988, protocol="TCP"
+            ) is True
+
+            # Allowed: GCS and OAuth2 token exchange over HTTPS (443)
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_fqdn="storage.googleapis.com", port=443
+            ) is True
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_fqdn="oauth2.googleapis.com", port=443
+            ) is True
+
+            # Fail-closed: Hugging Face Hub and arbitrary external FQDNs are blocked
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_fqdn="huggingface.co", port=443
+            ) is False
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_fqdn="cdn-lfs.huggingface.co", port=443
+            ) is False
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_fqdn="example.com", port=443
+            ) is False
+
+            # Fail-closed: direct IP literal on 443 and external DNS 8.8.8.8:53 are blocked
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_ip="142.250.80.46", port=443
+            ) is False
+            assert _evaluate_pod_egress(
+                netpols, fqdnpols, pod_labels, dest_ip="8.8.8.8", port=53, protocol="UDP"
+            ) is False
+
 
 

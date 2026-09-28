@@ -113,12 +113,6 @@ variable "minio_root_password" {
   default   = ""
 }
 
-variable "hf_token" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-
 variable "langfuse_compliance_public_key" {
   type      = string
   sensitive = true

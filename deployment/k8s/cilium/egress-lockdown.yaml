@@ -306,3 +306,106 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+
+---
+# =============================================================================
+# Policy 4: vLLM L3/L4 Egress — DNS + GKE Workload Identity Metadata Server
+#
+# Permits vLLM inference pods (vllm-inference, vllm-reasoning) to resolve DNS
+# via kube-dns / Cloud DNS and exchange Workload Identity tokens via the GKE
+# metadata server (169.254.169.254:80, 169.254.169.252:988).
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-egress-l3-l4
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,IA-2"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
+    cage.io/poam: "POAM-007,POAM-011,POAM-2026-082"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - vllm-inference
+          - vllm-reasoning
+  policyTypes:
+    - Egress
+  egress:
+    # DNS — kube-dns and Cloud DNS metadata IP only (never 0.0.0.0/0)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # GKE compute metadata server (HTTP 80) for Workload Identity
+    - to:
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 80
+    # GKE Workload Identity metadata server (TCP 988)
+    - to:
+        - ipBlock:
+            cidr: 169.254.169.252/32
+      ports:
+        - protocol: TCP
+          port: 988
+
+---
+# =============================================================================
+# Policy 4b: vLLM FQDN Egress — GCS Model Streaming + OAuth2 Token Exchange
+#
+# Permits vLLM pods to stream weights from GCS (storage.googleapis.com:443) and
+# exchange Workload Identity credentials (oauth2.googleapis.com:443), while all
+# other external egress (including huggingface.co) remains blocked.
+# =============================================================================
+apiVersion: networking.gke.io/v1alpha1
+kind: FQDNNetworkPolicy
+metadata:
+  name: vllm-egress-fqdn
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,IA-2"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
+    cage.io/poam: "POAM-007,POAM-011,POAM-2026-082"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - vllm-inference
+          - vllm-reasoning
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - fqdns:
+            - "storage.googleapis.com"
+            - "oauth2.googleapis.com"
+      ports:
+        - protocol: TCP
+          port: 443
+

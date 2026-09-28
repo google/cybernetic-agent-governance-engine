@@ -106,10 +106,13 @@ enable_vllm              = true
 enable_compliance_bridge = true
 enable_nemo_guardrails   = true
 
-# vLLM configuration — model names pulled from .env via TF_VAR_model_fast / TF_VAR_model_reasoning
-# DO NOT hardcode model names here — use .env MODEL_FAST and MODEL_REASONING instead
-vllm_gpu_count = 1
-vllm_replicas  = 1
+# vLLM configuration — weights streamed from GCS model bucket via runai_streamer
+model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
+model_reasoning        = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
+served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+vllm_gpu_count         = 1
+vllm_replicas          = 1
 
 # NeMo Guardrails — use Cloud-Build custom image (auto-built by deploy_sw.py)
 # Override via TF_VAR_nemo_image if you want a specific tag

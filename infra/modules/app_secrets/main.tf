@@ -65,17 +65,6 @@ resource "kubernetes_secret" "advisor_secrets" {
   }
 }
 
-resource "kubernetes_secret" "hf_token" {
-  metadata {
-    name      = "hf-token-secret"
-    namespace = var.namespace
-  }
-
-  data = {
-    "token" = var.hf_token
-  }
-}
-
 resource "kubernetes_secret" "compliance_secrets" {
   metadata {
     name      = "langfuse-compliance-secrets"

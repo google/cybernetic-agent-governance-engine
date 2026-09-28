@@ -287,13 +287,6 @@ variable "governance_salt" {
   default     = ""
 }
 
-variable "hf_token" {
-  description = "Hugging Face Hub token (from HUGGING_FACE_HUB_TOKEN)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "aws_access_key" {
   description = "AWS/S3 access key ID (from AWS_ACCESS_KEY_ID)"
   type        = string

@@ -155,6 +155,51 @@ locals {
         ]
       }
     }
+
+    vllm_egress_fqdn = {
+      apiVersion = "networking.gke.io/v1alpha1"
+      kind       = "FQDNNetworkPolicy"
+      metadata = {
+        name      = "vllm-egress-fqdn"
+        namespace = module.namespace.name
+        labels = {
+          "app.kubernetes.io/managed-by" = "terraform"
+          "cage.io/component"            = "z3n-egress"
+        }
+        annotations = {
+          "compliance.nist.gov/control"  = "SC-7,AC-4,IA-2"
+          "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+          "cage.io/poam"                 = "POAM-007,POAM-011,POAM-2026-082"
+        }
+      }
+      spec = {
+        podSelector = {
+          matchExpressions = [
+            {
+              key      = "app"
+              operator = "In"
+              values   = ["vllm-inference", "vllm-reasoning"]
+            }
+          ]
+        }
+        policyTypes = ["Egress"]
+        egress = [
+          {
+            to = [
+              {
+                fqdns = var.vllm_egress_allowed_fqdns
+              }
+            ]
+            ports = [
+              {
+                protocol = "TCP"
+                port     = 443
+              }
+            ]
+          }
+        ]
+      }
+    }
   }
 
   # Digest of all NetworkPolicy + FQDNNetworkPolicy parameters.
@@ -688,7 +733,101 @@ resource "kubernetes_network_policy_v1" "trivy_scanner_dns_egress" {
   }
 }
 
-# ─── 7. Workload Rollout Trigger on Policy Change (§5.3, §7) ──────────────────
+# ─── 7. vLLM L3/L4 Egress (DNS + GKE Workload Identity Metadata Server) ──────
+
+resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4" {
+  metadata {
+    name      = "vllm-egress-l3-l4"
+    namespace = module.namespace.name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-egress"
+    }
+    annotations = {
+      "compliance.nist.gov/control"  = "SC-7,AC-4,IA-2"
+      "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+      "cage.io/poam"                 = "POAM-007,POAM-011,POAM-2026-082"
+    }
+  }
+
+  spec {
+    pod_selector {
+      match_expressions {
+        key      = "app"
+        operator = "In"
+        values   = ["vllm-inference", "vllm-reasoning"]
+      }
+    }
+    policy_types = ["Egress"]
+
+    # DNS — kube-dns and Cloud DNS (var.kube_dns_cidr) only
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        ip_block {
+          cidr = var.kube_dns_cidr
+        }
+      }
+      ports {
+        protocol = "UDP"
+        port     = "53"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "53"
+      }
+    }
+
+    # GKE compute metadata server (HTTP 80) for Workload Identity
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.254/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "80"
+      }
+    }
+
+    # GKE Workload Identity metadata server (TCP 988)
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.252/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "988"
+      }
+    }
+  }
+}
+
+# ─── 8. Materialize GKE FQDNNetworkPolicy Objects in Cluster (§5.3) ──────────
+
+resource "kubernetes_manifest" "fqdn_network_policy" {
+  for_each = local.fqdn_network_policies
+
+  manifest = each.value
+
+  depends_on = [module.gke, module.namespace]
+}
+
+# ─── 9. Workload Rollout Trigger on Policy Change (§5.3, §7) ──────────────────
 # Connections established before a policy change survive until closed on GKE
 # Dataplane V2. This resource records the active policy hash and triggers a
 # rollout restart of selected workloads whenever any NetworkPolicy or
@@ -713,5 +852,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.agent_egress_internal_only,
     kubernetes_network_policy_v1.reconciliation_worker_egress,
     kubernetes_network_policy_v1.trivy_scanner_dns_egress,
+    kubernetes_network_policy_v1.vllm_egress_l3_l4,
+    kubernetes_manifest.fqdn_network_policy,
   ]
 }

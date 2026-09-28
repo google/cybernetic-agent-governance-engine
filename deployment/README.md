@@ -257,7 +257,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `CAGE_DEPLOYMENT_REGION` | Compliance posture: `US_FED` \| `EU_ECB` \| `APAC_MAS` |
 | `K8S_NAMESPACE` | Target namespace (default: `governance-stack`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials → `TF_VAR_langfuse_public_key` |
-| `HUGGING_FACE_HUB_TOKEN` | HuggingFace token for model downloads → `TF_VAR_hf_token` |
+| `HUGGING_FACE_HUB_TOKEN` | Operator-only token for out-of-band model mirroring (`deployment/scripts/mirror_models.py`), never passed to Terraform or cluster pods |
 | `GOVERNANCE_SALT` | Governance salt secret → `TF_VAR_governance_salt` |
 
 ---

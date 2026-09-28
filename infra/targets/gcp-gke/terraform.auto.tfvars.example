@@ -141,8 +141,8 @@ redis_storage_size = "10Gi"
 # Enable vLLM deployment
 enable_vllm = false
 
-# Model path (HuggingFace ID or GCS path)
-vllm_model_path = "meta-llama/Llama-3.2-3B-Instruct"
+# Model path in GCS model bucket
+vllm_model_path = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
 
 # GPUs per vLLM pod
 vllm_gpu_count = 1

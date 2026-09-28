@@ -463,9 +463,9 @@ variable "enable_vllm" {
 }
 
 variable "vllm_model_path" {
-  description = "HuggingFace model ID or GCS path"
+  description = "GCS path in the model bucket for vLLM weights"
   type        = string
-  default     = "meta-llama/Llama-3.2-3B-Instruct"
+  default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
 }
 
 variable "vllm_image" {
@@ -661,15 +661,33 @@ variable "langfuse_host" {
 
 
 variable "model_reasoning" {
-  description = "Reasoning model path (from MODEL_REASONING)"
+  description = "Reasoning model GCS path in the model bucket (from MODEL_REASONING)"
+  type        = string
+  default     = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+}
+
+variable "model_fast" {
+  description = "Fast model GCS path in the model bucket (from MODEL_FAST)"
+  type        = string
+  default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
+}
+
+variable "served_model_reasoning" {
+  description = "Served model ID for the reasoning vLLM pool (--served-model-name), used by gateway and advisor"
   type        = string
   default     = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 }
 
-variable "model_fast" {
-  description = "Fast model path (from MODEL_FAST)"
+variable "served_model_fast" {
+  description = "Served model ID for the fast vLLM pool (--served-model-name), used by gateway, NeMo, compliance bridge, and advisor"
   type        = string
   default     = "Qwen/Qwen2.5-1.5B-Instruct"
+}
+
+variable "served_model_name" {
+  description = "Optional override for vLLM --served-model-name"
+  type        = string
+  default     = ""
 }
 
 variable "model_consensus" {
@@ -709,13 +727,6 @@ variable "cage_kms_provider" {
 # Set an explicit override in terraform.auto.tfvars (gitignored) for prod.
 variable "otel_exporter_otlp_headers" {
   description = "OTLP Authorization header for Langfuse trace ingestion (Authorization=Basic <b64>). If empty, derived from langfuse_public_key/langfuse_secret_key."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "hf_token" {
-  description = "Hugging Face Hub token (from HUGGING_FACE_HUB_TOKEN)"
   type        = string
   sensitive   = true
   default     = ""
@@ -932,6 +943,15 @@ variable "trivy_egress_allowed_fqdns" {
     "*.ghcr.io",
     "pkg.dev",
     "*.pkg.dev",
+  ]
+}
+
+variable "vllm_egress_allowed_fqdns" {
+  description = "FQDNs allowed for vLLM model weight streaming and Workload Identity token exchange over HTTPS (443) via GKE FQDNNetworkPolicy (§5.3)"
+  type        = list(string)
+  default = [
+    "storage.googleapis.com",
+    "oauth2.googleapis.com",
   ]
 }
 

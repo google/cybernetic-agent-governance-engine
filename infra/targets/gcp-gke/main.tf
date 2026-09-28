@@ -480,7 +480,7 @@ module "nemo_guardrails" {
   # LLM backend: NeMo rails call vLLM fast service for rail evaluation
   llm_api_base   = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   llm_api_key    = "EMPTY"
-  llm_model_name = var.model_fast
+  llm_model_name = var.served_model_fast
 
   # Resource sizing
   nemo_cpu_request    = "500m"
@@ -512,19 +512,20 @@ module "vllm" {
   deployment_name      = "vllm-inference"
   service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
-  # model_path dynamically routes: gs:// to GCS tensor streaming, else HF hub
-  model_path     = var.model_fast
-  gpu_count      = var.vllm_gpu_count
-  gpu_product    = var.gpu_type
-  replicas       = var.vllm_replicas
-  enable_pdb     = var.enable_high_availability
-  memory_limit   = var.vllm_memory_limit
-  cpu_limit      = var.vllm_cpu_limit
-  memory_request = var.vllm_memory_request
-  cpu_request    = var.vllm_cpu_request
+  # model_path loads weights from GCS model bucket via runai_streamer
+  model_path        = var.model_fast
+  served_model_name = var.served_model_name != "" ? var.served_model_name : var.served_model_fast
+  gpu_count         = var.vllm_gpu_count
+  gpu_product       = var.gpu_type
+  replicas          = var.vllm_replicas
+  enable_pdb        = var.enable_high_availability
+  memory_limit      = var.vllm_memory_limit
+  cpu_limit         = var.vllm_cpu_limit
+  memory_request    = var.vllm_memory_request
+  cpu_request       = var.vllm_cpu_request
 
-  # Dynamic weight streaming if gs:// is provided
-  vllm_load_format = can(regex("^gs://", var.model_fast)) ? "gcs_filesystem" : "auto"
+  # Stream weights from GCS via Run:ai model streamer when gs:// is provided
+  vllm_load_format = can(regex("^gs://", var.model_fast)) ? "runai_streamer" : "auto"
 
   # --enable-auto-tool-choice + --tool-call-parser hermes: this pool serves
   # MODEL_FAST (Qwen2.5-7B-Instruct), which is bound via llm.bind_tools() in
@@ -537,12 +538,15 @@ module "vllm" {
   # tool-calling request in the 2026-08-01 measurement run. "hermes" is the
   # vLLM tool-call parser compatible with Qwen2.5-Instruct's tool-calling
   # output format.
-  vllm_command = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --host 0.0.0.0 --port 8000 --enable-auto-tool-choice --tool-call-parser hermes"
+  vllm_command = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --served-model-name $SERVED_MODEL_NAME --load-format $VLLM_LOAD_FORMAT --host 0.0.0.0 --port 8000 --enable-auto-tool-choice --tool-call-parser hermes"
 
   # GCS model streamer requires GOOGLE_CLOUD_PROJECT to authenticate with GCS.
   # Without it, runai_model_streamer_gcs raises OSError: Project was not passed.
+  # Offline flags forbid runtime egress to huggingface.co.
   env_vars = {
     "GOOGLE_CLOUD_PROJECT" = var.project_id
+    "HF_HUB_OFFLINE"       = "1"
+    "TRANSFORMERS_OFFLINE" = "1"
   }
 
   # GCP-specific GPU node targeting
@@ -582,27 +586,31 @@ module "vllm_reasoning" {
   service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   service_name         = "vllm-reasoning"
   image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
-  # model_path dynamically routes: gs:// to GCS tensor streaming, else HF hub
-  model_path     = var.model_reasoning
-  gpu_count      = var.vllm_gpu_count
-  gpu_product    = var.gpu_type
-  replicas       = var.vllm_replicas
-  enable_pdb     = var.enable_high_availability
-  memory_limit   = var.vllm_memory_limit
-  cpu_limit      = var.vllm_cpu_limit
-  memory_request = var.vllm_memory_request
-  cpu_request    = var.vllm_cpu_request
+  # model_path loads weights from GCS model bucket via runai_streamer
+  model_path        = var.model_reasoning
+  served_model_name = var.served_model_name != "" ? var.served_model_name : var.served_model_reasoning
+  gpu_count         = var.vllm_gpu_count
+  gpu_product       = var.gpu_type
+  replicas          = var.vllm_replicas
+  enable_pdb        = var.enable_high_availability
+  memory_limit      = var.vllm_memory_limit
+  cpu_limit         = var.vllm_cpu_limit
+  memory_request    = var.vllm_memory_request
+  cpu_request       = var.vllm_cpu_request
 
-  # Dynamic weight streaming if gs:// is provided
-  vllm_load_format = can(regex("^gs://", var.model_reasoning)) ? "gcs_filesystem" : "auto"
+  # Stream weights from GCS via Run:ai model streamer when gs:// is provided
+  vllm_load_format = can(regex("^gs://", var.model_reasoning)) ? "runai_streamer" : "auto"
 
   # Cap max context to 16K — 14B AWQ model needs 24 GiB KV for 131K default (> 8.9 GiB available)
-  vllm_command = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --host 0.0.0.0 --port 8000 --max-model-len 16384"
+  vllm_command = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --served-model-name $SERVED_MODEL_NAME --load-format $VLLM_LOAD_FORMAT --host 0.0.0.0 --port 8000 --max-model-len 16384"
 
   # GCS model streamer requires GOOGLE_CLOUD_PROJECT to authenticate with GCS.
   # Without it, runai_model_streamer_gcs raises OSError: Project was not passed.
+  # Offline flags forbid runtime egress to huggingface.co.
   env_vars = {
     "GOOGLE_CLOUD_PROJECT" = var.project_id
+    "HF_HUB_OFFLINE"       = "1"
+    "TRANSFORMERS_OFFLINE" = "1"
   }
 
   # GCP-specific GPU node targeting
@@ -687,7 +695,7 @@ module "compliance_bridge" {
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   replicas      = var.enable_high_availability ? 2 : 1
 
-  remediation_model          = var.model_fast
+  remediation_model          = var.served_model_fast
   remediation_max_tokens     = "2048"
   remediation_timeout_ms     = "30000"
   vllm_base_url              = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
@@ -749,7 +757,7 @@ module "gateway" {
   vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  guardrails_model_name   = var.model_fast
+  guardrails_model_name   = var.served_model_fast
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181/v1/data/trade/governance"
   governance_salt         = var.governance_salt
 
@@ -795,9 +803,9 @@ module "governed_advisor" {
   redis_host              = module.memorystore_app.primary_endpoint_ip
   redis_port              = tostring(module.memorystore_app.primary_endpoint_port)
   redis_password          = ""
-  model_fast              = var.model_fast
-  model_reasoning         = var.model_reasoning
-  model_consensus         = var.model_reasoning
+  model_fast              = var.served_model_fast
+  model_reasoning         = var.served_model_reasoning
+  model_consensus         = var.served_model_reasoning
   vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
@@ -843,8 +851,8 @@ module "app_secrets" {
   salt                 = var.governance_salt
   alphavantage_api_key = "" # Add variable if needed
   openai_api_key       = ""
-  model_fast           = var.model_fast
-  model_reasoning      = var.model_reasoning
+  model_fast           = var.served_model_fast
+  model_reasoning      = var.served_model_reasoning
 
   langfuse_public_key = var.langfuse_public_key != "" ? var.langfuse_public_key : module.langfuse.public_key
   langfuse_secret_key = var.langfuse_secret_key != "" ? var.langfuse_secret_key : module.langfuse.secret_key
@@ -862,8 +870,6 @@ module "app_secrets" {
   aws_secret_access_key = var.aws_secret_key
   s3_endpoint_url       = "https://storage.googleapis.com"
   s3_bucket_name        = google_storage_bucket.langfuse_events.name
-
-  hf_token = var.hf_token
 
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
   # Dev posture: pass the key as-is (may be empty → module skips secret creation

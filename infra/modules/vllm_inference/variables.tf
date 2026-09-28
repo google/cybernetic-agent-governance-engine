@@ -99,15 +99,21 @@ variable "shared_memory_size" {
 
 # Model Configuration
 variable "model_path" {
-  description = "Path to the model (HuggingFace ID or local path)"
+  description = "Path to the model (GCS gs:// URI, HuggingFace ID, or local path)"
   type        = string
-  default     = "meta-llama/Llama-3.2-3B-Instruct"
+  default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
+}
+
+variable "served_model_name" {
+  description = "Model ID advertised by the vLLM OpenAI-compatible API (--served-model-name). Defaults to model_path when empty."
+  type        = string
+  default     = ""
 }
 
 variable "vllm_load_format" {
-  description = "vLLM load format (auto, safetensors, pt, etc.)"
+  description = "vLLM load format (runai_streamer, auto, safetensors, pt, etc.)"
   type        = string
-  default     = "auto"
+  default     = "runai_streamer"
 }
 
 variable "enable_model_volume" {
@@ -126,7 +132,7 @@ variable "model_pvc_name" {
 variable "vllm_command" {
   description = "vLLM startup command"
   type        = string
-  default     = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --host 0.0.0.0 --port 8000"
+  default     = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --served-model-name $SERVED_MODEL_NAME --load-format $VLLM_LOAD_FORMAT --host 0.0.0.0 --port 8000"
 }
 
 # Environment Variables
