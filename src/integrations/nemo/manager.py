@@ -71,12 +71,6 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 # ---------------------------------------------------------------------------
-# Enforcement mode — read once at module load so all functions share the same
-# value.  "enforce" (default) = fail-closed; "log" = fail-open for dev/obs.
-# ---------------------------------------------------------------------------
-CAGE_SEAL_ENFORCEMENT: str = os.getenv("CAGE_SEAL_ENFORCEMENT", "enforce").lower()
-
-# ---------------------------------------------------------------------------
 # Monkeypatch for nemoguardrails SDD _get_analyzer — ensures en_core_web_sm
 # is used when en_core_web_lg is unavailable.
 # ---------------------------------------------------------------------------
@@ -527,9 +521,7 @@ async def validate_with_nemo(
     The third element ``deterministic`` is ``True`` when the BLOCK verdict was
     produced by a deterministic detection stage (Stage 1/1'/1B/1C/1D/2 in
     ``CustomSelfCheckInputAction``) rather than the stochastic Stage-3 LLM
-    judge.  Callers can use this flag to hard-block regardless of the
-    ``CAGE_SEAL_ENFORCEMENT`` env var — deterministic verdicts are not subject
-    to enforcement-mode softening.
+    judge.
 
     Phase 4.2: The legacy ``"I cannot answer"`` substring check is removed.
     Safety is determined solely from whether NeMo's rails pipeline emitted a
@@ -554,16 +546,12 @@ async def validate_with_nemo(
 
     with tracer.start_as_current_span("guardrails.validate_input") as span:
         # --- Transparent Fallback Circuit Breaker ---
-        # If NeMo is running as a no-op stub (is_transparent_fallback=True), skip
-        # generate_async entirely and stamp Langfuse with DEGRADED_FAIL_OPEN.
-        # This provides full audit visibility into every request processed while
-        # NeMo's semantic layer was offline (ISO 42001 A.5.2 / STPA UCA-1).
+        # If NeMo is running as a no-op stub (is_transparent_fallback=True),
+        # fail closed: reject the request rather than silently passing it through.
         if getattr(rails, "is_transparent_fallback", False) is True:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "nemo_guardrails_validation")
             span.set_attribute("input", scrub_pii(user_input))
-            # Langfuse-indexed metadata fields (langfuse.observation.metadata.* prefix
-            # elevates these to top-level searchable columns in the Langfuse UI).
             span.set_attribute(
                 OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
             )
@@ -575,43 +563,22 @@ async def validate_with_nemo(
             stamp_iso_control(
                 span, ingress_stage=1, control="A.5.2", outcome="DEGRADED"
             )
-
-            if CAGE_SEAL_ENFORCEMENT != "log":
-                # Fail-closed: in enforce mode a circuit-breaker trip must reject
-                # the request rather than silently pass it through.  A DoS attack
-                # that crashes NeMo would otherwise bypass the semantic rail entirely.
-                logger.warning(
-                    "🔴 NeMo circuit breaker OPEN in enforce mode — rejecting request "
-                    "(CAGE_SEAL_ENFORCEMENT=%s). Set to 'log' for fail-open dev posture.",
-                    CAGE_SEAL_ENFORCEMENT,
-                )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "CIRCUIT_OPEN_REJECTED",
-                )
-                span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
-                span.set_status(Status(StatusCode.ERROR))
-                if token is not None:
-                    streaming_handler_var.reset(token)
-                return (
-                    False,
-                    "NeMo guardrails unavailable in enforce mode — request rejected",
-                    False,  # circuit-breaker: not a stage-based deterministic verdict
-                )
-            else:
-                # Log-only / dev posture: preserve existing fail-open behaviour.
-                logger.warning(
-                    "⚠️ Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA."
-                )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "DEGRADED_FAIL_OPEN",
-                )
-                span.set_attribute("output", "PASS_THROUGH_ACTIVE")
-                span.set_status(Status(StatusCode.OK))
-                if token is not None:
-                    streaming_handler_var.reset(token)
-                return True, "", False
+            logger.warning(
+                "🔴 NeMo circuit breaker OPEN — rejecting request (fail-closed)."
+            )
+            span.set_attribute(
+                OBSERVATION_METADATA_GOVERNANCE_STATE,
+                "CIRCUIT_OPEN_REJECTED",
+            )
+            span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
+            span.set_status(Status(StatusCode.ERROR))
+            if token is not None:
+                streaming_handler_var.reset(token)
+            return (
+                False,
+                "NeMo guardrails unavailable — request rejected",
+                False,  # circuit-breaker: not a stage-based deterministic verdict
+            )
 
         if _detect_bypass(user_input):
             logger.warning(
@@ -836,38 +803,19 @@ async def verify_input(
             stamp_iso_control(
                 span, ingress_stage=1, control="A.5.2", outcome="DEGRADED"
             )
-
-            if CAGE_SEAL_ENFORCEMENT != "log":
-                # Fail-closed: in enforce mode a circuit-breaker trip must reject
-                # the request rather than silently pass it through.  A DoS attack
-                # that crashes NeMo would otherwise bypass the semantic rail entirely.
-                logger.warning(
-                    "🔴 NeMo circuit breaker OPEN in enforce mode — rejecting request via verify_input "
-                    "(CAGE_SEAL_ENFORCEMENT=%s). Set to 'log' for fail-open dev posture.",
-                    CAGE_SEAL_ENFORCEMENT,
-                )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "CIRCUIT_OPEN_REJECTED",
-                )
-                span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
-                span.set_status(Status(StatusCode.ERROR))
-                return SafetyResult(
-                    is_safe=False,
-                    reason="NeMo guardrails unavailable in enforce mode — request rejected",
-                )
-            else:
-                # Log-only / dev posture: preserve existing fail-open behaviour.
-                logger.warning(
-                    "⚠️ verify_input: Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA."
-                )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "DEGRADED_FAIL_OPEN",
-                )
-                span.set_attribute("output", "PASS_THROUGH_ACTIVE")
-                span.set_status(Status(StatusCode.OK))
-                return SafetyResult(is_safe=True)
+            logger.warning(
+                "🔴 NeMo circuit breaker OPEN — rejecting request via verify_input (fail-closed)."
+            )
+            span.set_attribute(
+                OBSERVATION_METADATA_GOVERNANCE_STATE,
+                "CIRCUIT_OPEN_REJECTED",
+            )
+            span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
+            span.set_status(Status(StatusCode.ERROR))
+            return SafetyResult(
+                is_safe=False,
+                reason="NeMo guardrails unavailable — request rejected",
+            )
 
         try:
             res = await rails.generate_async(
@@ -914,31 +862,13 @@ async def verify_input(
 
 
 async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
-    """Verify and mask output strings (Interceptor pattern).
-
-    In dev/log-only enforcement mode (CAGE_SEAL_ENFORCEMENT != 'enforce'),
-    PII scrubbing is always applied but the NeMo output LLM rail is skipped
-    (the rail requires a live vLLM instance; in dev this may be unavailable).
-    """
+    """Verify and mask output strings (Interceptor pattern)."""
     with tracer.start_as_current_span("guardrails.verify_and_mask_output") as span:
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_output_masking")
         span.set_attribute("input", scrub_pii(text))
 
         scrubbed_text = scrub_pii(text)
-
-        cage_enforcement = os.environ.get("CAGE_SEAL_ENFORCEMENT", "enforce").lower()
-        if cage_enforcement != "enforce":
-            # Dev / log-only posture: skip NeMo LLM output rails, just return scrubbed text.
-            logger.debug(
-                "CAGE_SEAL_ENFORCEMENT=%s — skipping NeMo output rail (PII scrub applied).",
-                cage_enforcement,
-            )
-            span.set_attribute("output", scrubbed_text)
-            stamp_iso_control(
-                span, ingress_stage=3, control="A.6.1.2", outcome="REDACT"
-            )
-            return scrubbed_text
 
         try:
             res = await rails.generate_async(
@@ -994,24 +924,16 @@ async def validate_output_semantics(
 
     Returns:
         ``(True, "")`` if the output is semantically safe.
-        ``(False, "<reason>")`` if the output is semantically unsafe.
-
-    Fail-closed behaviour:
-        If NeMo is unavailable in enforce mode, returns
-        ``(False, "NeMo output validation unavailable in enforce mode")``.
-        In log mode, returns ``(True, "")`` (fail-open) with a WARNING log.
+        ``(False, "<reason>")`` if the output is semantically unsafe or NeMo is unavailable.
 
     Args:
         rails:       The LLMRails instance to use for semantic evaluation.
         output_text: The LLM output text to evaluate (should be PII-masked first).
     """
-    cage_enforcement = os.environ.get("CAGE_SEAL_ENFORCEMENT", "enforce").lower()
-
     with tracer.start_as_current_span("guardrails.validate_output_semantics") as span:
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_output_semantic_validation")
         span.set_attribute("input", scrub_pii(output_text))
-        span.set_attribute("nemo.cage_enforcement", cage_enforcement)
 
         # --- Transparent Fallback Circuit Breaker ---
         if getattr(rails, "is_transparent_fallback", False):
@@ -1027,30 +949,16 @@ async def validate_output_semantics(
             stamp_iso_control(
                 span, ingress_stage=1, control="A.5.2", outcome="DEGRADED"
             )
-
-            if cage_enforcement == "enforce":
-                logger.warning(
-                    "🔴 validate_output_semantics: NeMo circuit breaker OPEN in enforce mode — "
-                    "blocking output (CAGE_SEAL_ENFORCEMENT=%s).",
-                    cage_enforcement,
-                )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "CIRCUIT_OPEN_REJECTED",
-                )
-                span.set_status(Status(StatusCode.ERROR))
-                return False, "NeMo output validation unavailable in enforce mode"
-            else:
-                logger.warning(
-                    "⚠️ validate_output_semantics: NeMo fallback active (log mode) — "
-                    "passing output through without semantic validation."
-                )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "DEGRADED_FAIL_OPEN",
-                )
-                span.set_status(Status(StatusCode.OK))
-                return True, ""
+            logger.warning(
+                "🔴 validate_output_semantics: NeMo circuit breaker OPEN — "
+                "blocking output (fail-closed)."
+            )
+            span.set_attribute(
+                OBSERVATION_METADATA_GOVERNANCE_STATE,
+                "CIRCUIT_OPEN_REJECTED",
+            )
+            span.set_status(Status(StatusCode.ERROR))
+            return False, "NeMo output validation unavailable"
 
         try:
             # Use a two-message conversation: system prompt + the output to evaluate.
@@ -1121,12 +1029,4 @@ async def validate_output_semantics(
             logger.error("validate_output_semantics: NeMo error: %s", exc)
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR))
-
-            if cage_enforcement == "enforce":
-                return False, "NeMo output validation unavailable in enforce mode"
-            else:
-                logger.warning(
-                    "⚠️ validate_output_semantics: exception in log mode — passing through: %s",
-                    exc,
-                )
-                return True, ""
+            return False, "NeMo output validation unavailable"

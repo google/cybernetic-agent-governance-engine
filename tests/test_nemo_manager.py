@@ -211,13 +211,8 @@ class TestValidateWithNemo:
             "response": [{"content": "I cannot help with that."}]
         }
 
-        with (
-            patch(
-                "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-            ),
-            patch(
-                "src.integrations.nemo.manager.CAGE_SEAL_ENFORCEMENT", "enforce"
-            ),
+        with patch(
+            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
         ):
             from src.integrations.nemo.manager import validate_with_nemo
 
@@ -259,13 +254,8 @@ class TestVerifyInput:
         mock_rails.is_transparent_fallback = False
         mock_rails.generate_async.side_effect = RuntimeError("NeMo internal error")
 
-        with (
-            patch(
-                "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-            ),
-            patch(
-                "src.integrations.nemo.manager.CAGE_SEAL_ENFORCEMENT", "enforce"
-            ),
+        with patch(
+            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
         ):
             from src.integrations.nemo.manager import verify_input
 

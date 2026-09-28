@@ -87,15 +87,6 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     logger.info("Initializing Agent Graph...")
     app.state.graph = create_graph(redis_url=Config.REDIS_URL)
 
-    # Initialize DeferQueue for atomic ticket resolution
-    import redis.asyncio as aioredis
-
-    from src.gateway.governance.defer_queue import DeferQueue
-
-    redis_client_db1 = aioredis.from_url(Config.REDIS_URL, db=1, decode_responses=True)
-    app.state.defer_queue = DeferQueue(redis_client=redis_client_db1)
-    logger.info("✅ DeferQueue initialized (db=1)")
-
     # ── Connect the GFA AsyncRedisClient singleton ────────────────────────
     # The singleton is created at module import time (redis_client.py) but
     # connect() must be called explicitly to establish the connection pool.
@@ -198,25 +189,6 @@ class RefinementTriggerRequest(BaseModel):
     pipeline_id: str
     trigger_reason: str
     trace_ids: list[str] = []
-
-
-class NeMoApplyRefinementRequest(BaseModel):
-    """Request body for POST /v1/nemo/apply-refinement.
-
-    Called by the KFP ``trigger_nemo_refinement`` component at the end of the
-    cybernetic governance loop when safety metrics breach a threshold.  The
-    endpoint hot-reloads the NeMo rails configuration in-process so the change
-    takes effect without restarting the pod.
-
-    Attributes:
-        control_id: ISO 42001 control whose threshold was breached (e.g. "A.5.2").
-        verdict:    The FAIL verdict string from ``evaluate_governance_metrics``.
-        source:     Caller identifier for audit tracing (e.g. "kfp-governance-loop").
-    """
-
-    control_id: str
-    verdict: str
-    source: str = "unknown"
 
 
 class LangfuseWebhookEvent(BaseModel):
@@ -568,7 +540,8 @@ def _submit_kfp_run(pipeline_id: str, trigger_reason: str, trace_ids: list) -> d
                     "COMPLIANCE_BRIDGE_URL", "http://compliance-bridge/"
                 ),
                 "backend_url": os.environ.get(
-                    "BACKEND_URL", "http://governed-financial-advisor/"
+                    "BACKEND_URL",
+                    os.environ.get("GATEWAY_URL", "http://cage-gateway:8080"),
                 ),
                 "control_id": pipeline_id,
             },
@@ -642,247 +615,6 @@ async def trigger_refinement(req: RefinementTriggerRequest):  # type: ignore[no-
         "pipeline_id": req.pipeline_id,
         "message": "Refinement pipeline triggered",
         "kfp": kfp_result,
-    }
-
-
-# ---------------------------------------------------------------------------
-# NeMo Refinement Proposal/Approval Flow (Priority 2 — Evidentiary Independence)
-#
-# The NeMo hot-reload requires human approval.
-#
-# Flow:
-#   Langfuse webhook → KFP → POST /v1/nemo/propose-refinement → STAGED
-#   Human risk officer → POST /v1/nemo/approve-refinement/{id} → APPLIED
-#
-# This eliminates the recursive self-authentication loop where the system's
-# telemetry could autonomously modify its own governance rules.
-#
-# v3.0.0 Breaking Change: NEMO_AUTO_APPLY_ENABLED has been removed.
-# ---------------------------------------------------------------------------
-
-# In-memory proposal store (production: replace with Redis or DB)
-_refinement_proposals: dict[str, dict] = {}
-
-
-@app.post("/v1/nemo/propose-refinement")
-async def propose_nemo_refinement(req: NeMoApplyRefinementRequest):  # type: ignore[no-untyped-def]
-    """Stage a NeMo Guardrails refinement proposal for human review.
-
-    Called by the KFP ``trigger_nemo_refinement`` component when the
-    ``evaluate_governance_metrics`` component emits a FAIL verdict.
-
-    The proposal is STAGED but NOT applied.  A human risk officer must
-    call ``POST /v1/nemo/approve-refinement/{proposal_id}`` with their
-    identity, rationale, and explicit approval to apply the change.
-
-    Satisfies:
-      - EU AI Act Article 14 (human oversight of high-risk AI systems)
-      - ISO 42001 A.7.2 (accountability — reviewer identity attributed)
-      - NIST AI RMF GOVERN-5 (human oversight and intervention)
-
-    Returns:
-        ``{"status": "staged", "proposal_id": str, "control_id": str}``
-    """
-    import uuid as _uuid
-
-    proposal_id = str(_uuid.uuid4())
-    proposal = {
-        "proposal_id": proposal_id,
-        "control_id": req.control_id,
-        "verdict": req.verdict,
-        "source": req.source,
-        "staged_at": datetime.now(timezone.utc).isoformat(),
-        "status": "staged",
-        "reviewer": None,
-        "rationale": None,
-    }
-    _refinement_proposals[proposal_id] = proposal
-
-    logger.info(
-        "[NeMo/Refinement] Proposal STAGED: id=%s control_id=%s source=%s",
-        proposal_id,
-        req.control_id,
-        req.source,
-    )
-
-    current_span = trace.get_current_span()
-    if current_span and current_span.is_recording():
-        current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
-        current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
-        current_span.set_attribute("ai.refinement.apply.source", req.source)
-        current_span.set_attribute("ai.refinement.status", "staged")
-
-    return {
-        "status": "staged",
-        "proposal_id": proposal_id,
-        "control_id": req.control_id,
-        "message": (
-            "Refinement proposal staged. A risk officer must approve via "
-            f"POST /v1/nemo/approve-refinement/{proposal_id}"
-        ),
-    }
-
-
-class NeMoApproveRequest(BaseModel):
-    """Request body for POST /v1/nemo/approve-refinement/{proposal_id}."""
-
-    approved: bool
-    reviewer: str
-    rationale: str
-
-
-@app.post("/v1/nemo/approve-refinement/{proposal_id}")
-async def approve_nemo_refinement(  # type: ignore[no-untyped-def]
-    proposal_id: str,
-    req: NeMoApproveRequest,
-    _auth: str = Depends(require_api_key),
-):
-    """Approve or reject a staged NeMo refinement proposal.
-
-    Requires a human risk officer to provide their identity and a mandatory
-    rationale.  The approval decision is recorded in the evidence chain
-    before the refinement is applied.
-
-    This endpoint is the sole mechanism for applying NeMo configuration
-    changes in production.  There is no automated path from telemetry to
-    applied config.
-
-    Returns:
-        ``{"status": "applied"|"rejected", "proposal_id": str}``
-
-    Raises:
-        404 if the proposal_id is not found or already processed.
-        400 if rationale is empty.
-    """
-    if not req.rationale or not req.rationale.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="rationale is required — provide the business justification "
-            "for this governance configuration change.",
-        )
-
-    proposal = _refinement_proposals.get(proposal_id)
-    if proposal is None or proposal["status"] != "staged":
-        raise HTTPException(
-            status_code=404,
-            detail=f"Proposal '{proposal_id}' not found or already processed.",
-        )
-
-    proposal["reviewer"] = req.reviewer
-    proposal["rationale"] = req.rationale
-    proposal["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-
-    if not req.approved:
-        proposal["status"] = "rejected"
-        logger.info(
-            "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s",
-            proposal_id,
-            req.reviewer,
-        )
-        return {"status": "rejected", "proposal_id": proposal_id}
-
-    # Record the approval in the evidence chain BEFORE applying
-    try:
-        from examples.telemetry import PlaygroundTelemetry
-
-        _tel = PlaygroundTelemetry()
-        _tel.record_approval(
-            thread_id=f"nemo-refinement-{proposal_id}",
-            approved=True,
-            reviewer=req.reviewer,
-            rationale=req.rationale,
-            comment=f"NeMo refinement for {proposal['control_id']}",
-        )
-    except Exception as _tel_exc:
-        logger.error("[NeMo/Refinement] Evidence chain write failed: %s", _tel_exc)
-
-    # Apply the refinement
-    try:
-        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
-            reload_nemo_rails,
-        )
-
-        await reload_nemo_rails()
-        proposal["status"] = "applied"
-        logger.info(
-            "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s control_id=%s",
-            proposal_id,
-            req.reviewer,
-            proposal["control_id"],
-        )
-    except Exception as exc:
-        proposal["status"] = "apply_failed"
-        logger.error("[NeMo/Refinement] Rails reload failed after approval: %s", exc)
-        raise HTTPException(
-            status_code=500,
-            detail=f"NeMo rails reload failed: {exc}",
-        ) from exc
-
-    return {
-        "status": "applied",
-        "proposal_id": proposal_id,
-        "control_id": proposal["control_id"],
-        "reviewer": req.reviewer,
-    }
-
-
-@app.get("/v1/nemo/proposals/pending")
-async def list_pending_nemo_proposals():  # type: ignore[no-untyped-def]
-    """List all staged NeMo refinement proposals awaiting human review."""
-    pending = [p for p in _refinement_proposals.values() if p["status"] == "staged"]
-    return {"pending": pending, "count": len(pending)}
-
-
-@app.post("/v1/nemo/apply-refinement")
-async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):  # type: ignore[no-untyped-def]
-    """NeMo hot-reload routes through the proposal/approval flow.
-
-    v3.0.0 Breaking Change: This endpoint always stages a proposal and
-    returns ``{"status": "pending_approval"}``. The caller must then approve
-    via POST /v1/nemo/approve-refinement/{id}.
-
-    This eliminates the recursive self-authentication loop where the system's
-    telemetry could autonomously modify its own governance rules.
-
-    Satisfies:
-      - EU AI Act Article 14 (human oversight of high-risk AI systems)
-      - ISO 42001 A.7.2 (accountability — reviewer identity attributed)
-    """
-    import uuid as _uuid
-
-    logger.info(
-        "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s",
-        req.control_id,
-        req.source,
-    )
-
-    proposal_id = str(_uuid.uuid4())
-    proposal = {
-        "proposal_id": proposal_id,
-        "control_id": req.control_id,
-        "verdict": req.verdict,
-        "source": req.source,
-        "staged_at": datetime.now(timezone.utc).isoformat(),
-        "status": "staged",
-        "reviewer": None,
-        "rationale": None,
-    }
-    _refinement_proposals[proposal_id] = proposal
-
-    current_span = trace.get_current_span()
-    if current_span and current_span.is_recording():
-        current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
-        current_span.set_attribute("ai.refinement.apply.source", req.source)
-        current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
-
-    return {
-        "status": "pending_approval",
-        "proposal_id": proposal_id,
-        "control_id": req.control_id,
-        "message": (
-            "Refinement proposal staged. A risk officer must "
-            f"approve via POST /v1/nemo/approve-refinement/{proposal_id}"
-        ),
     }
 
 

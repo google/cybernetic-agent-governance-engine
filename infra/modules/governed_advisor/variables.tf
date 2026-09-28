@@ -132,11 +132,6 @@ variable "gateway_url" {
   default = "http://gateway.governance-stack.svc.cluster.local:8080"
 }
 
-variable "governance_salt" {
-  type      = string
-  sensitive = true
-}
-
 variable "mcp_mode" {
   type    = string
   default = "stdio"
@@ -158,12 +153,6 @@ variable "cage_env" {
   description = "Runtime environment for the advisor (development, staging, production). Controls the dev-mode auth bypass (auth.py)."
   type        = string
   default     = "development"
-}
-
-variable "cage_seal_enforcement" {
-  description = "Routing seal enforcement mode for the advisor: 'enforce' or 'log'."
-  type        = string
-  default     = "log"
 }
 
 variable "service_account_name" {

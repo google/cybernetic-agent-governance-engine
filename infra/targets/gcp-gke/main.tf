@@ -667,9 +667,8 @@ module "governed_advisor" {
   vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
-  langfuse_host   = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
-  governance_salt = var.governance_salt
-  gateway_url     = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
+  langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
+  gateway_url   = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
   # POAM-2026-079: own KSA with no cloud identity and no signing key. The
   # advisor refuses to start if a signing-key variable is set.
   service_account_name = kubernetes_service_account.workload["advisor"].metadata[0].name

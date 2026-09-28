@@ -132,8 +132,6 @@ spec:
               value: "${GATEWAY_URL}"
             - name: MCP_SERVER_SSE_URL
               value: "http://gateway:8080/mcp/sse"
-            - name: GOVERNANCE_SALT
-              value: "${GOVERNANCE_SALT}"
 
 
 
