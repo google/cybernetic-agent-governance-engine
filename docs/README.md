@@ -196,7 +196,6 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [AGENT_SYSTEM_ARCHITECTURE.md](architecture/AGENT_SYSTEM_ARCHITECTURE.md) | Multi-agent system architecture, 9-agent inventory, 25/33-field AgentState schema, HITL |
 | [AGENT_IDENTITY_BINDING_SPEC.md](architecture/AGENT_IDENTITY_BINDING_SPEC.md) | **Canonical identity spec (v3.1.0)** — SPIFFE SVID extraction from mTLS, DPoP double-binding (RFC 9449), namespace prefix policies, A2A delegation |
 | [VENDOR_NEUTRALITY_CONTRACT.md](architecture/VENDOR_NEUTRALITY_CONTRACT.md) | Vendor-neutrality obligations for the Layer 1 kernel and Layer 3 adapters |
-| [CAGE_AGW_REFERENCE_ARCH.md](architecture/CAGE_AGW_REFERENCE_ARCH.md) | Agent Gateway reference architecture and adapter surface |
 | [CLICKHOUSE_EVIDENCE_SINK.md](architecture/CLICKHOUSE_EVIDENCE_SINK.md) | ClickHouse durable evidence sink design specification |
 | [AUDIT_STREAM_MIGRATION_ANALYSIS.md](architecture/AUDIT_STREAM_MIGRATION_ANALYSIS.md) | Audit stream migration analysis |
 | [NON_FORMATION_PROOF_SPEC.md](architecture/NON_FORMATION_PROOF_SPEC.md) | Non-formation proof specification — refusal receipts and burden-of-proof mapping |

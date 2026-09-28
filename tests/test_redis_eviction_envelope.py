@@ -75,10 +75,9 @@ def test_redis_noeviction_invariant():
     Governance state must never be silently evicted; at the memory ceiling
     Redis refuses writes and the gateway fails closed.
 
-    On Cloud Run / Cloud Memorystore, CONFIG GET is not supported — the
-    eviction policy is enforced at the managed-service tier and this
-    assertion is skipped (memory policy is validated via Terraform in
-    tests/infrastructure/test_cloudrun_cmek.py).
+    On managed Redis instances where CONFIG GET is not supported, the
+    eviction policy is enforced at the infrastructure tier and this
+    assertion is skipped.
     """
     client = _get_redis_client(db=1)
     expected_policy = "noeviction"

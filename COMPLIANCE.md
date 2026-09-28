@@ -83,7 +83,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | **AI Safety (US_FED)** | PII Sanitization & Data Privacy Audit Logging | **NIST AI 600-1 §2.2** | `CTRL_PII_010` | `src/gateway/governance/pii_sanitizer.py` | `US_FED` only |
 | **AI Safety (US_FED)** | Prompt Injection Detection & CausalGatekeeper WAL Integrity | **NIST AI 600-1 §2.3** | `CTRL_WAL_002` | `src/gateway/governance/prompt_injection_detector.py` | `US_FED` only |
 | **AI Safety (US_FED)** | Human-AI Configuration / HITL Escalation (DEFER Queue) | **NIST AI 600-1 §2.5** | `CTRL_DFR_008` | `src/gateway/governance/hitl_escalator.py` | `US_FED` only |
-| **AI Safety (US_FED)** | CBRN Content Filtering (NeMo Guardrails) | **NIST AI 600-1 §2.6 / §2.12** | `CTRL_CBRN_011` | `src/gateway/governance/nemo/colang/cbrn_rails.co` | `US_FED` only *(Cat-M: AO pre-approval required)* |
+| **AI Safety (US_FED)** | CBRN Content Filtering (NeMo Guardrails) | **NIST AI 600-1 §2.6 / §2.12** | `CTRL_CBRN_011` | `src/integrations/nemo/colang/cbrn_rails.co` | `US_FED` only *(Cat-M: AO pre-approval required)* |
 | **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** <br> **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` | *Optional — GCP-specific deployment target (`infra/targets/gcp-gke/`); not required for `agnostic` target deployments* |
 
 ---

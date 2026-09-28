@@ -259,13 +259,13 @@ Span attributes also change: `safety.cash.next` → `safety.barrier.state_next`,
 
 Simulated *data* providers are the intended posture for a reference architecture. The real-data-provider obligation is recorded for adopters in OSCAL (§5.3). Key custody isn't handed to adopters this way: CAGE itself exercises it.
 
-**Deployment.** The reconciliation service in [infra/targets/gcp-cloudrun/main.tf](../infra/targets/gcp-cloudrun/main.tf) stays as an illustrative model with `RECONCILIATION_PROVIDER=simulated`. It keeps its existing KMS verifier binding (`reconciliation_kms_verifier`). Update its entrypoint and env var names in the README. Run `terraform plan` only; apply per the deployment rules.
+**Deployment.** The reconciliation service in [infra/targets/gcp-gke/main.tf](../infra/targets/gcp-gke/main.tf) stays as an illustrative model with `RECONCILIATION_PROVIDER=simulated`. It keeps its existing KMS verifier binding (`reconciliation_kms_verifier`). Update its entrypoint and env var names in the README. Run `terraform plan` only; apply per the deployment rules.
 
 **Tests.** No `partner_integration` tests are needed, because no Tier 1 adapter is involved.
 - **Hermetic tests** (`unit`, `local`):
   - `tests/cage_finance/test_reconciliation_worker.py`, `test_cbf_reconciliation.py` and `tests/test_replay_defense.py` move to the generic reader and the finance simulator;
   - a table-driven test runs **each fault mode × each domain simulator** and asserts the expected verdict. Signing uses the software Ed25519 provider (K4).
-- **Posture-evidence test** (`integration`, against the GKE or Cloud Run illustrative target with real KMS): the reconciler signs through KMS; the gateway verifies by `kid`. A forged software-key reading and an HMAC reading are both rejected. Run it per the [GKE](../docs/operations/GKE_TEST_RUNBOOK.md) / [Cloud Run](../docs/operations/CLOUDRUN_TEST_RUNBOOK.md) runbooks. **Only this run counts toward POAM-023 closure.**
+- **Posture-evidence test** (`integration`, against the GKE illustrative target with real KMS): the reconciler signs through KMS; the gateway verifies by `kid`. A forged software-key reading and an HMAC reading are both rejected. Run it per the [GKE](../docs/operations/GKE_TEST_RUNBOOK.md) runbook. **Only this run counts toward POAM-023 closure.**
 
 ### 4b.3 KMS signer as a Tier 2 security primitive — K1–K4
 Findings at HEAD in [kms_signer.py](../src/gateway/governance/kms_signer.py) and [reconciliation/daemon.py](../src/gateway/governance/reconciliation/daemon.py):
@@ -520,7 +520,6 @@ Update these files in place. None should describe behaviour that no longer exist
 | **New ADR** `docs/adr/ADR-2026-10-XX-interface-tiering.md` | Record the Completeness Principle and Interface Tiering (already in AGENTS.md on this branch). Worked classifications: Plaid/Anchorage → Tier 3 (removed); ground truth → Tier 2 (simulated data, real KMS); `provider_01`–`provider_08`/`actuator_01` → Tier 1. |
 | [AGENTS.md](../AGENTS.md) Layer 1 row | Add "Kernel engines take all domain semantics as required constructor arguments". Update the note on vendor SDK enforcement: after 4b, G3 enforces `FORBIDDEN_VENDOR_SDKS` across all of `src/gateway/`, not only `evidence/`. |
 | [BREAKING_CHANGES_v3.md](../docs/BREAKING_CHANGES_v3.md) → add a v4 section (or a new `BREAKING_CHANGES_v4.md`) | Every breaking change from PRs 1–4b with migration snippets. **PRs 1–4a:** `Violation.kind`, `CommitReceipt`, `contribute()`, removed flags, import paths, `pre_check` removal, HMAC rejected in production posture. **PR 4b:** engine constructor signatures; threshold JSON `domains.*`; reconciliation key `reconciliation:verified:{invariant_id}`; moved and deleted modules (§4b.8–§4b.11); KMS providers moved to `src/integrations/`; span attribute renames; Plaid, Anchorage and GCS/S3 ledger providers deleted; `RECONCILIATION_PROVIDER=simulated` with `CAGE_SIM_SEED`/`CAGE_SIM_FAULT`. |
-| [infra/targets/gcp-cloudrun/README.md](../infra/targets/gcp-cloudrun/README.md) | New reconciliation entrypoint and env vars. |
 | `CHANGELOG.md` | One entry per PR (outside the Gate G9 scope, but required for release notes). |
 
 **Sweep for stale references.** 41 docs currently mention `symbolic_governor`, `SymbolicGovernor`, `_run_checks`, `8-Tier STERA` or `revalidate_post_hitl`. Fix all of them in `docs/architecture/**`, `docs/security/**`, `docs/operations/**` and `docs/compliance/**`. `docs/paper/measurements/**` holds historical snapshots: leave those files unchanged and add a header note pointing to the new runtime doc. Run `make docs-check` (Gate G9) until it is clean. Don't remove files from its scope to make it pass.

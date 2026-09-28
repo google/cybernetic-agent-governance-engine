@@ -76,8 +76,6 @@ except WorkloadIdentityError as identity_exc:
     )
 ```
 
-The ext_authz / gRPC path in [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) resolves `caller_principal` from the verified mesh peer principal (never from client-supplied headers or body fields). A missing or malformed principal yields a denied `CheckResponse` with status **401** and `error: authentication_required`. `403` is reserved for governance denials, untrusted workload identities at `WorkloadIdentityMiddleware`, and unparseable request fields.
-
 **Security Boundary:**
 - **Trust Anchor:** Linkerd inbound mTLS termination proxy validates certificate chains against the mesh trust anchor before forwarding to the gateway and setting `l5d-client-id`.
 - **Zero Trust Assumption:** CAGE Layer 1 code MUST NOT accept identity claims from client-controlled application-layer headers or bodies. `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and the gateway always enforces workload identity.
@@ -526,7 +524,7 @@ Shipped in `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extract
 
 ### Phase 1 — Transport-Layer Identity Extraction ✅ SHIPPED
 - [x] [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`) enforces `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment and extracts verified Linkerd `l5d-client-id` identities from the ASGI scope
-- [x] All `X-Agent-ID` / `X-SPIFFE-ID` header parsing and anonymous fallback removed from [`inference_proxy.py`](../../src/gateway/server/inference_proxy.py) and [`agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py)
+- [x] All `X-Agent-ID` / `X-SPIFFE-ID` header parsing and anonymous fallback removed from [`inference_proxy.py`](../../src/gateway/server/inference_proxy.py)
 - [x] Fail-closed coverage: `test_missing_spiffe_certificate_fails_closed` and `test_agent_id_from_spiffe_cert_used_for_quota` in [`tests/test_inference_proxy_extended.py`](../../tests/test_inference_proxy_extended.py)
 
 ### Phase 2 — DPoP Double-Binding ⚠️ PARTIAL

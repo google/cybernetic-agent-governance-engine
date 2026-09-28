@@ -83,8 +83,8 @@ class GovernanceDecision(str, Enum):
 
     This enum MUST be used for:
       - validate_action() return values (``verdict`` key)
-      - HTTP response body ``verdict`` fields in agent_gateway_adapter.py
-      - Audit event ``verdict`` fields in _emit_audit_event()
+      - HTTP response body ``verdict`` fields on gateway endpoints
+      - Audit event ``verdict`` fields
       - Provenance chain ``decision`` fields
 
     It MUST NOT be used for:
@@ -214,7 +214,7 @@ from pydantic import BaseModel, Field
 class DeferResponse(BaseModel):
     """Pydantic model for DEFER decision HTTP response serialization.
 
-    Used by agent_gateway_adapter.py to serialize DEFER responses with
+    Used by the gateway to serialize DEFER responses with
     consistent structure. HTTP 202 Accepted is returned for DEFER.
 
     Fields:
@@ -281,7 +281,7 @@ class DeferResponse(BaseModel):
 class NarrowResponse(BaseModel):
     """Pydantic model for NARROW decision HTTP response serialization.
 
-    Used by agent_gateway_adapter.py to serialize NARROW responses with
+    Used by the gateway to serialize NARROW responses with
     consistent structure. HTTP 200 OK is returned for NARROW (action is
     allowed but with constrained parameters).
 
@@ -359,7 +359,7 @@ class NarrowResponse(BaseModel):
 class PauseResponse(BaseModel):
     """Pydantic model for PAUSE decision HTTP response serialization.
 
-    Used by agent_gateway_adapter.py to serialize PAUSE responses with
+    Used by the gateway to serialize PAUSE responses with
     consistent structure. HTTP 503 Service Unavailable is returned for PAUSE.
 
     The PAUSE primitive allows resumable suspension of action execution.

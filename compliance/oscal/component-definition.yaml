@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-09-22T23:23:29Z'
+    last-modified: '2026-09-28T02:42:33Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -605,7 +605,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-09-22T23:23:29Z'
+      value: '2026-09-28T02:42:33Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -617,7 +617,7 @@ component-definition:
         control-id: A.8.4
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa_control_structure.yaml.
-          UCAs: UCA-1, UCA-11, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9, UCA-12.'
+          UCAs: UCA-1, UCA-11, UCA-12, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0001001
@@ -631,7 +631,7 @@ component-definition:
         control-id: A.6.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa_control_structure.yaml.
-          UCAs: UCA-11, UCA-2, UCA-5, UCA-6, UCA-12.'
+          UCAs: UCA-11, UCA-12, UCA-2, UCA-5, UCA-6.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0003003
@@ -663,7 +663,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/ftra/schemas.py
     - name: last-compiled
-      value: '2026-09-22T23:23:29Z'
+      value: '2026-09-28T02:42:33Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-validator01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home

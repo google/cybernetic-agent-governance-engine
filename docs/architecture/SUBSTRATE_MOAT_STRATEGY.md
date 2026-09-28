@@ -151,7 +151,7 @@ However, there is no **public substrate contract** — a versioned, documented A
 The [`SymbolicGovernor`](../../src/gateway/governance/governor/pipeline.py) pipeline is structurally focused: CBF checks resource invariants (cash balance in the financial deployment; any continuous safety variable in other domains), OPA checks policy rules, STPA checks unsafe control actions. The [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) and [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) provide some semantic context, but they are not integrated into the main `_run_checks()` pipeline as first-class tiers.
 
 **What is missing:**
-1. A **Semantic Intent Tier** — a governance tier (Tier 0 or Tier 8) that validates the semantic coherence of the agent's stated intent against the action being requested. This would use the existing NeMo Guardrails infrastructure ([`nemo/`](../../src/gateway/governance/nemo/)) to check that the action is semantically consistent with the declared user intent.
+1. A **Semantic Intent Tier** — a governance tier (Tier 0 or Tier 8) that validates the semantic coherence of the agent's stated intent against the action being requested. This would use the existing NeMo Guardrails infrastructure ([`nemo/`](../../src/integrations/nemo/)) to check that the action is semantically consistent with the declared user intent.
 2. A **Context Provenance Chain** — [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) exists but its output is not currently used as a governance gate input. Integrating provenance chain validation into `_run_checks()` would allow CAGE to detect when an agent's action context has been semantically corrupted mid-chain.
 
 ---
@@ -407,12 +407,10 @@ CAGE has no integration with Google Agent Gateway's Service Extensions mechanism
 **Full protocol and implementation analysis:** see the proposed implementation steps below.
 
 **Proposed implementation:**
-1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.
-2. A **Deployment Template** (`infra/agw/`, new) — a Terraform module (GCP-specific, optional) that registers the Service Extension with AGW and configures the callout to CAGE's endpoint with `fail_open = false` (fail-closed). Operators on other platforms should use the equivalent service mesh or API gateway extension mechanism.
-3. A **Joint Reference Architecture** (`docs/architecture/CAGE_AGW_REFERENCE_ARCH.md`, new) — describing the CAGE + AGW defense-in-depth stack for GCP-native deployments.
+1. A **Service Extension Adapter** (proposed) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py), and returns `OkHttpResponse` or `DeniedHttpResponse(403)`.
+2. A **Deployment Template** (proposed) — a Terraform module (GCP-specific, optional) that registers the Service Extension with AGW and configures the callout to CAGE's endpoint with `fail_open = false` (fail-closed). Operators on other platforms should use the equivalent service mesh or API gateway extension mechanism.
 
-**Proposed location:** `src/gateway/server/agw_service_extension.py` (new), gRPC port 50051 (reuses the already-whitelisted port — no NetworkPolicy or Kubernetes Service changes required)
-**Priority:** HIGH — this is the fastest path to enterprise adoption on GCP, as it positions CAGE as an AGW complement rather than a competitor.
+**Priority:** Future evaluation — the canonical CAGE reference architecture standardizes on GKE + Linkerd SPIFFE mTLS (`WorkloadIdentityMiddleware`).
 **Change management:** Cat-M (Major) — new external API integration + new GCP service. AO pre-approval required before implementation.
 
 ### 9.7 Updated Competitive Matrix — Four-Way Comparison
@@ -433,13 +431,9 @@ CAGE has no integration with Google Agent Gateway's Service Extensions mechanism
 
 ### 9.8 Updated Roadmap Addition — Phase 1 Priority Revision
 
-The AGW Service Extension integration (Gap 6) should be elevated to **Phase 1** alongside the ACS/AAIF ingress adapters, as it provides the fastest path to enterprise adoption on GCP:
-
-| Work Item | Priority | Phase | Files |
+| Work Item | Priority | Phase | Status |
 |---|---|---|---|
-| AGW Service Extension Adapter (gRPC port 50051) | **[BLOCKER for GCP GTM]** | Phase 1 | [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) (partial), gRPC ext_authz servicer pending |
-| AGW + CAGE Joint Reference Architecture | HIGH | Phase 1 | [`docs/architecture/CAGE_AGW_REFERENCE_ARCH.md`](CAGE_AGW_REFERENCE_ARCH.md) ✅ exists |
-| IaC AGW Integration Module *(GCP-specific, optional)* | HIGH | Phase 1 | `infra/agw/` (new, e.g., Terraform / Pulumi / OpenTofu) |
-| CAGE + AGW Defense-in-Depth Quickstart | HIGH | Phase 2 | `docs/QUICKSTART_AGW.md` (new) |
+| GKE + Linkerd SPIFFE mTLS Boundary | HIGH | Phase 1 | [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) ✅ shipped |
+| ACS / AAIF / OSCAL Ingress Adapters | HIGH | Phase 1 | [`src/gateway/governance/ingress/`](../../src/gateway/governance/ingress/) ✅ shipped |
 
 **Change Management:** The AGW Service Extension adapter is a new external API integration, which constitutes a **Cat-M (Major)** change requiring AO pre-approval in a real deployment's own change-management process. The IaC module for AGW constitutes a new cloud provider service integration, also **Cat-M**. Both items apply only to GCP deployments; operators on other platforms are unaffected.

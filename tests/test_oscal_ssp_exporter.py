@@ -1031,55 +1031,7 @@ class TestFtraTelemetryToOscalTraceability:
 class TestPhaseEPlatformNarratives:
     """Integration tests for Phase E platform-aware OSCAL SSP narratives."""
 
-    def test_export_with_explicit_cloudrun_platform(
-        self, tmp_path: Path, minimal_cs: ControlStructureModel
-    ) -> None:
-        """Verify --platform gcp-cloudrun generates compensating control narratives."""
-        cs_file = tmp_path / "cs.yaml"
-        cs_file.write_text(_MINIMAL_YAML)
-        ssp_file = tmp_path / "ssp.yaml"
-        ssp_file.write_text(_MINIMAL_SSP)
-        comp_file = tmp_path / "comp.yaml"
-        comp_file.write_text(_MINIMAL_COMP_DEF)
-        patch_out = tmp_path / "patch.yaml"
-
-        ret = main(
-            [
-                "export",
-                "--input",
-                str(cs_file),
-                "--ssp",
-                str(ssp_file),
-                "--component-def",
-                str(comp_file),
-                "--patch-out",
-                str(patch_out),
-                "--platform",
-                "gcp-cloudrun",
-            ]
-        )
-        assert ret == 0
-
-        # Load SSP and verify platform control narratives are present
-        with open(ssp_file) as fh:
-            ssp = yaml.safe_load(fh)
-
-        impl_reqs = ssp["system-security-plan"]["control-implementation"][
-            "implemented-requirements"
-        ]
-        control_ids = {r["control-id"] for r in impl_reqs}
-
-        # Verify SC-7, SC-8, SC-39, SI-3 are present
-        assert "sc-7" in control_ids
-        assert "sc-8" in control_ids
-        assert "sc-39" in control_ids
-        assert "si-3" in control_ids
-
-        # Verify SC-7 narrative contains compensating control label
-        sc7_req = next(r for r in impl_reqs if r["control-id"] == "sc-7")
-        assert "**Compensating Control Disclosure:**" in sc7_req["description"]
-
-    def test_export_with_gke_platform_has_different_narratives(
+    def test_export_with_gke_platform_narratives(
         self, tmp_path: Path, minimal_cs: ControlStructureModel
     ) -> None:
         """Verify --platform gcp-gke generates GKE-specific narratives (Cilium, Linkerd)."""
@@ -1115,6 +1067,12 @@ class TestPhaseEPlatformNarratives:
         impl_reqs = ssp["system-security-plan"]["control-implementation"][
             "implemented-requirements"
         ]
+        control_ids = {r["control-id"] for r in impl_reqs}
+
+        assert "sc-7" in control_ids
+        assert "sc-8" in control_ids
+        assert "sc-39" in control_ids
+        assert "si-3" in control_ids
 
         # Verify SC-7 mentions Cilium
         sc7_req = next(r for r in impl_reqs if r["control-id"] == "sc-7")

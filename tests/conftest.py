@@ -583,7 +583,7 @@ def pytest_collection_modifyitems(
     skip_integration = pytest.mark.skip(
         reason=(
             "Integration test — requires live external services. "
-            "Pass --run-integration to enable (or run 'make test-cloudrun' for Cloud Run live verification)."
+            "Pass --run-integration to enable (or run 'make test-mesh' for Linkerd mesh conformance)."
         )
     )
     skip_live_external = pytest.mark.skip(
