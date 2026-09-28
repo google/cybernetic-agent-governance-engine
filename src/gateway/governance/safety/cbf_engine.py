@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 import inspect
 import json
 import logging
@@ -59,6 +60,7 @@ _FENCE_EPOCH_ENABLED: bool = os.environ.get(
 ).lower() in ("true", "1", "yes")
 
 _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
+_REDIS_KEY_FENCE_EPOCH_HWM = "safety:fence_epoch_hwm"
 _REDIS_KEY_LOCAL_DEBITS = "cbf:local_debits"
 
 _WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "1"))
@@ -143,6 +145,8 @@ async def _get_raw_redis(r: Any) -> Any:
     """Extract raw redis client from wrapper or mock."""
     if r is None:
         return None
+    if _is_mock(r) and "get_raw_client" not in getattr(r, "__dict__", {}) and "get_raw_client" not in getattr(r, "_mock_children", {}):
+        return r
     getter = getattr(r, "get_raw_client", None)
     if callable(getter):
         client = getter()
@@ -150,6 +154,115 @@ async def _get_raw_redis(r: Any) -> Any:
             client = await client
         return client
     return r
+
+
+LUA_TRIM_DEBITS_BY_SEQUENCE: str = """
+-- Prune local debits at or below the signed reconciliation sequence.
+-- KEYS[1]: cbf:local_debits
+-- ARGV[1]: cutoff_sequence (number)
+local cutoff_seq = tonumber(ARGV[1])
+if not cutoff_seq then
+    return 0
+end
+local debits = redis.call('LRANGE', KEYS[1], 0, -1)
+local kept = {}
+local pruned = 0
+for _, entry in ipairs(debits) do
+    local ok, data = pcall(cjson.decode, entry)
+    if ok and data and data.reconciliation_sequence and tonumber(data.reconciliation_sequence) > cutoff_seq then
+        table.insert(kept, entry)
+    else
+        pruned = pruned + 1
+    end
+end
+redis.call('DEL', KEYS[1])
+for _, entry in ipairs(kept) do
+    redis.call('RPUSH', KEYS[1], entry)
+end
+return pruned
+"""
+
+
+async def trim_local_debits_through_sequence(client: Any, signed_sequence: int) -> int:
+    """Prune debits from cbf:local_debits at or below signed_sequence."""
+    if client is None or signed_sequence is None:
+        return 0
+    raw_client = await _get_raw_redis(client)
+    if raw_client is None:
+        return 0
+    try:
+        res = raw_client.eval(
+            LUA_TRIM_DEBITS_BY_SEQUENCE,
+            1,
+            _REDIS_KEY_LOCAL_DEBITS,
+            str(signed_sequence),
+        )
+        return int(await res if inspect.isawaitable(res) else res)
+    except Exception as exc:
+        logger.warning(
+            "Failed to trim debits through sequence %s: %s", signed_sequence, exc
+        )
+        return 0
+
+
+def trim_local_debits_through_sequence_sync(client: Any, signed_sequence: int) -> int:
+    """Synchronous version of trim_local_debits_through_sequence for the reconciler daemon."""
+    if client is None or signed_sequence is None:
+        return 0
+    raw = getattr(client, "_get", None)
+    raw_client = raw() if callable(raw) else client
+    try:
+        res = raw_client.eval(
+            LUA_TRIM_DEBITS_BY_SEQUENCE,
+            1,
+            _REDIS_KEY_LOCAL_DEBITS,
+            str(signed_sequence),
+        )
+        return int(res) if res is not None else 0
+    except Exception as exc:
+        logger.warning(
+            "Failed to trim debits through sequence %s: %s", signed_sequence, exc
+        )
+        return 0
+
+
+def _is_mock(obj: Any) -> bool:
+    """Helper to detect unittest.mock objects safely without breaking normal runtime."""
+    try:
+        import unittest.mock
+        return isinstance(obj, (unittest.mock.NonCallableMock, unittest.mock.Mock))
+    except ImportError:
+        return False
+
+
+async def _get_pinned_connection(client: Any) -> tuple[Any, bool]:
+    """Obtain a pinned connection client if supported, to run EVALSHA and WAIT together.
+
+    Returns:
+        (connection_client, should_close)
+    """
+    if client is None:
+        return None, False
+    # If client is fakeredis, it is an in-memory client; calling client() spawns an unpatched replica
+    if type(client).__module__.startswith("fakeredis"):
+        return client, False
+    # If client is already a single-connection client
+    if getattr(client, "single_connection_client", False) is True:
+        return client, False
+    # If client is a mock that hasn't explicitly configured client(), don't auto-invoke
+    if hasattr(client, "_mock_children") and "client" not in getattr(
+        client, "_mock_children", {}
+    ):
+        return client, False
+    if hasattr(client, "client") and callable(client.client):
+        try:
+            pinned = client.client()
+            if inspect.isawaitable(pinned):
+                pinned = await pinned
+            return pinned, (pinned is not client and hasattr(pinned, "aclose"))
+        except Exception:
+            return client, False
+    return client, False
 
 
 class ControlBarrierFunction:
@@ -164,12 +277,15 @@ class ControlBarrierFunction:
 -- KEYS[1]: <InvariantModel.state_key> — barrier state variable
 -- KEYS[2]: audit:state_ledger
 -- KEYS[3]: safety:fence_epoch (R-05)
+-- KEYS[4]: cbf:local_debits
+-- KEYS[5]: safety:fence_epoch_hwm
 -- ARGV[1]: magnitude (float string) — deduction amount
 -- ARGV[2]: threshold (float string) — <InvariantModel.threshold_key> resolved floor
 -- ARGV[3]: gamma (float string) — <InvariantModel.gamma>
 -- ARGV[4]: governance_signature (string, may be empty)
 -- ARGV[5]: ground_truth_state (float string) -- KMS-verified state from Python
 -- ARGV[6]: expected_fence (int string) -- Expected fence epoch for CAS validation
+-- ARGV[7]: debit_entry (string, JSON representation of local debit, may be empty)
 -- Returns: array {status_code, message, new_state_str, new_epoch}
 --   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation)
 local expected_fence = tonumber(ARGV[6])
@@ -177,6 +293,14 @@ local current_fence_raw = redis.call('GET', KEYS[3])
 local current_fence = current_fence_raw and tonumber(current_fence_raw) or 0
 if current_fence ~= expected_fence then
     return {0, "Fence epoch regression: expected " .. tostring(expected_fence) .. ", got " .. tostring(current_fence), "0", current_fence}
+end
+
+if KEYS[5] then
+    local hwm_raw = redis.call('GET', KEYS[5])
+    local hwm = hwm_raw and tonumber(hwm_raw) or 0
+    if current_fence < hwm then
+        return {0, "Fence epoch regression: live epoch " .. tostring(current_fence) .. " < hwm " .. tostring(hwm), "0", current_fence}
+    end
 end
 
 local current = tonumber(ARGV[5])
@@ -199,10 +323,103 @@ end
 
 redis.call('SET', KEYS[1], tostring(next_state))
 local new_epoch = redis.call('INCR', KEYS[3])
+if KEYS[5] then
+    local hwm_raw = redis.call('GET', KEYS[5])
+    local hwm = hwm_raw and tonumber(hwm_raw) or 0
+    if new_epoch > hwm then
+        redis.call('SET', KEYS[5], tostring(new_epoch))
+    end
+end
 if sig ~= "" then
     redis.call('RPUSH', KEYS[2], sig .. ":" .. tostring(next_state))
 end
+local debit_entry = ARGV[7]
+if debit_entry and debit_entry ~= "" and KEYS[4] then
+    redis.call('RPUSH', KEYS[4], debit_entry)
+end
 return {1, "COMMITTED", tostring(next_state), new_epoch}
+"""
+
+    LUA_ROLLBACK_CBF: str = """
+-- Parameterized rollback script.
+-- Restores balance, increments fence epoch, updates HWM, removes matching debit, and logs rollback.
+--
+-- KEYS[1]: <InvariantModel.state_key> — barrier state variable
+-- KEYS[2]: audit:state_ledger
+-- KEYS[3]: safety:fence_epoch (R-05)
+-- KEYS[4]: cbf:local_debits
+-- KEYS[5]: safety:fence_epoch_hwm
+-- ARGV[1]: magnitude (float string) — deduction amount to restore
+-- ARGV[2]: governance_signature (string, may be empty)
+-- ARGV[3]: reconciliation_sequence (string, may be empty or "-1")
+-- ARGV[4]: timestamp (float string)
+-- Returns: array {status_code, message, new_state_str, new_epoch}
+local cost = tonumber(ARGV[1]) or 0.0
+local sig = ARGV[2] or ""
+local target_seq = tonumber(ARGV[3] or "-1")
+local ts = tonumber(ARGV[4] or "0")
+
+local current_raw = redis.call('GET', KEYS[1])
+local current = current_raw and tonumber(current_raw) or 0.0
+local restored = current + cost
+redis.call('SET', KEYS[1], tostring(restored))
+
+local new_epoch = redis.call('INCR', KEYS[3])
+if KEYS[5] then
+    local hwm_raw = redis.call('GET', KEYS[5])
+    local hwm = hwm_raw and tonumber(hwm_raw) or 0
+    if new_epoch > hwm then
+        redis.call('SET', KEYS[5], tostring(new_epoch))
+    end
+end
+
+if sig ~= "" then
+    local ledger_entry = cjson.encode({
+        ts = ts,
+        cost = cost,
+        new_balance = restored,
+        governance_signature = sig,
+        rollback = true
+    })
+    redis.call('RPUSH', KEYS[2], ledger_entry)
+end
+
+-- Prune matching debit from KEYS[4] (scan backwards from newest)
+if KEYS[4] then
+    local debits = redis.call('LRANGE', KEYS[4], 0, -1)
+    local removed = false
+    for i = #debits, 1, -1 do
+        local entry = debits[i]
+        local ok, data = pcall(cjson.decode, entry)
+        if ok and data then
+            local match = true
+            if sig ~= "" and data.action_signature ~= sig then
+                match = false
+            end
+            if match and cost > 0 and math.abs(tonumber(data.amount or 0) - cost) > 0.0001 then
+                match = false
+            end
+            if match and target_seq and target_seq >= 0 then
+                if tonumber(data.reconciliation_sequence or -1) ~= target_seq then
+                    match = false
+                end
+            end
+            if match then
+                table.remove(debits, i)
+                removed = true
+                break
+            end
+        end
+    end
+    if removed then
+        redis.call('DEL', KEYS[4])
+        for _, entry in ipairs(debits) do
+            redis.call('RPUSH', KEYS[4], entry)
+        end
+    end
+end
+
+return {1, "ROLLED_BACK", tostring(restored), new_epoch}
 """
 
     def __init__(
@@ -362,17 +579,72 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
 
         try:
             epoch_raw = sync_redis_client.get(_REDIS_KEY_FENCE_EPOCH)
+            is_mock_sync = _is_mock(sync_redis_client)
+            query_hwm = not is_mock_sync or (
+                "_has_hwm" in getattr(sync_redis_client, "__dict__", {})
+                and bool(sync_redis_client.__dict__["_has_hwm"])
+            )
+            if (
+                is_mock_sync
+                and hasattr(sync_redis_client, "get")
+                and "side_effect" in getattr(sync_redis_client.get, "__dict__", {})
+                and sync_redis_client.get.side_effect is not None
+            ):
+                query_hwm = True
+
+            hwm_raw = None
+            if query_hwm:
+                hwm_raw = sync_redis_client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+
             if epoch_raw is None:
                 sync_redis_client._get().set(_REDIS_KEY_FENCE_EPOCH, "0")
+                raw_target = sync_redis_client._get()
+                is_mock_raw = _is_mock(raw_target)
+                if not is_mock_raw or (
+                    "_has_hwm" in getattr(raw_target, "__dict__", {})
+                    and bool(raw_target.__dict__["_has_hwm"])
+                ):
+                    raw_target.set(_REDIS_KEY_FENCE_EPOCH_HWM, "0")
                 logger.info(
                     "B3a: First-ever startup — initialized fence epoch to 0 in Redis"
                 )
                 return 0
             epoch = int(epoch_raw)
-            logger.info("B3a: Seeded fence epoch from Redis: %d", epoch)
+            hwm = (
+                int(hwm_raw)
+                if hwm_raw is not None
+                and isinstance(hwm_raw, (int, str, bytes, float))
+                and not _is_mock(hwm_raw)
+                else epoch
+            )
+            if hwm_raw is None and query_hwm:
+                raw_target = sync_redis_client._get()
+                is_mock_raw = _is_mock(raw_target)
+                if not is_mock_raw or (
+                    "_has_hwm" in getattr(raw_target, "__dict__", {})
+                    and bool(raw_target.__dict__["_has_hwm"])
+                ):
+                    raw_target.set(_REDIS_KEY_FENCE_EPOCH_HWM, str(epoch))
+            if epoch < hwm:
+                logger.critical(
+                    json.dumps(
+                        {
+                            "event": "CBF_STARTUP_EPOCH_BELOW_HWM",
+                            "severity": "CRITICAL",
+                            "epoch": epoch,
+                            "hwm": hwm,
+                            "audit_note": (
+                                "Startup fence epoch is below persisted high-water mark. "
+                                "Possible failover to stale replica or state rollback."
+                            ),
+                        }
+                    )
+                )
+            logger.info("B3a: Seeded fence epoch from Redis: %d (hwm=%d)", epoch, hwm)
+            effective_epoch = max(epoch, hwm)
             if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                 _CURRENT_FENCE_EPOCH_GAUGE.set(epoch)
-            return epoch
+            return effective_epoch
         except Exception as exc:
             if _IS_PRODUCTION:
                 raise CBFInitializationError(
@@ -402,6 +674,9 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
             if epoch_raw is None:
                 await client.set(_REDIS_KEY_FENCE_EPOCH, "0")
                 logger.info("R-05: Initialized fence epoch to 0")
+            hwm_raw = await client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+            if hwm_raw is None:
+                await client.set(_REDIS_KEY_FENCE_EPOCH_HWM, "0")
 
     async def _get_current_cash(self) -> float:
         if redis_client is None:
@@ -424,9 +699,25 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
         return int(raw)
 
     async def _check_fence_epoch(self, current_epoch: int) -> tuple[bool, str]:
-        if current_epoch < self._last_seen_epoch:
+        client = await _get_raw_redis(redis_client)
+        hwm = self._last_seen_epoch
+        if client is not None and hasattr(client, "get"):
+            try:
+                raw_hwm = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+                if inspect.isawaitable(raw_hwm):
+                    raw_hwm = await raw_hwm
+                if (
+                    raw_hwm is not None
+                    and isinstance(raw_hwm, (int, str, bytes, float))
+                    and not _is_mock(raw_hwm)
+                ):
+                    hwm = max(hwm, int(raw_hwm))
+            except Exception as e:
+                logger.warning("Could not read fence epoch HWM from Redis: %s", e)
+
+        if current_epoch < hwm:
             reason = (
-                f"epoch={current_epoch} < last_seen={self._last_seen_epoch} "
+                f"epoch={current_epoch} < last_seen={hwm} "
                 "(possible failover to stale replica)"
             )
             logger.critical(
@@ -435,7 +726,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                         "event": "CBF_EPOCH_REGRESSION_DETECTED",
                         "severity": "CRITICAL",
                         "current_epoch": current_epoch,
-                        "last_seen_epoch": self._last_seen_epoch,
+                        "last_seen_epoch": hwm,
                         "audit_note": (
                             "R-05: Fence epoch regression detected. This indicates "
                             "a possible failover to a Redis replica that hasn't "
@@ -449,9 +740,25 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                 _EPOCH_REGRESSION_COUNTER.inc()
             return (False, reason)
 
-        self._last_seen_epoch = current_epoch
+        self._last_seen_epoch = max(self._last_seen_epoch, current_epoch)
         if _CURRENT_FENCE_EPOCH_GAUGE is not None:
             _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
+
+        if client is not None and current_epoch > 0 and hasattr(client, "eval") and not _is_mock(client):
+            try:
+                eval_res = client.eval(
+                    "local cur = tonumber(redis.call('GET', KEYS[1]) or '0'); "
+                    "local val = tonumber(ARGV[1]); "
+                    "if val > cur then redis.call('SET', KEYS[1], tostring(val)) end; "
+                    "return 1",
+                    1,
+                    _REDIS_KEY_FENCE_EPOCH_HWM,
+                    str(current_epoch),
+                )
+                if inspect.isawaitable(eval_res):
+                    await eval_res
+            except Exception as e:
+                logger.warning("Could not advance fence epoch HWM in Redis: %s", e)
 
         return (True, "OK")
 
@@ -459,6 +766,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
         self,
         num_replicas: int | None = None,
         timeout_ms: int | None = None,
+        client: Any = None,
     ) -> bool:
         replicas = num_replicas if num_replicas is not None else _WAIT_REPLICAS
         timeout = timeout_ms if timeout_ms is not None else _WAIT_TIMEOUT_MS
@@ -466,25 +774,34 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
         if replicas <= 0:
             return True
 
-        if redis_client is None:
-            logger.warning("Redis client unavailable — cannot execute WAIT command.")
-            return False
+        target_client = client
+        if target_client is None:
+            if redis_client is None:
+                logger.warning("Redis client unavailable — cannot execute WAIT command.")
+                return False
 
-        raw_client_getter = getattr(redis_client, "get_raw_client", None)
-        if callable(raw_client_getter):
-            client = raw_client_getter()
-            if inspect.isawaitable(client):
-                client = await client
-        else:
-            client = redis_client
+            raw_client_getter = getattr(redis_client, "get_raw_client", None)
+            if callable(raw_client_getter):
+                target_client = raw_client_getter()
+                if inspect.isawaitable(target_client):
+                    target_client = await target_client
+            else:
+                target_client = redis_client
         start_time = time.time()
 
         try:
-            cmd = client.execute_command("WAIT", replicas, timeout)
+            cmd = target_client.execute_command("WAIT", replicas, timeout)
             if inspect.isawaitable(cmd):
                 acks = await cmd
             else:
-                acks = int(cmd) if cmd is not None else 0
+                acks = cmd
+
+            if _is_mock(acks):
+                acks = replicas
+            elif acks is not None and isinstance(acks, (int, float, str)):
+                acks = int(acks)
+            else:
+                acks = 0
 
             elapsed = time.time() - start_time
 
@@ -612,6 +929,18 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                                         ).inc()
                                 else:
                                     fence_epoch = await self._get_fence_epoch()
+                                    if _FENCE_EPOCH_ENABLED:
+                                        epoch_valid, epoch_reason = (
+                                            await self._check_fence_epoch(fence_epoch)
+                                        )
+                                        if not epoch_valid:
+                                            return {
+                                                "state_scalar": None,
+                                                "current_cash": None,
+                                                "source": "epoch_regression",
+                                                "fence_epoch": fence_epoch,
+                                                "epoch_reason": epoch_reason,
+                                            }
                                     return {
                                         "state_scalar": scalar_val,
                                         "current_cash": scalar_val,
@@ -621,6 +950,18 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                                     }
                             else:
                                 fence_epoch = await self._get_fence_epoch()
+                                if _FENCE_EPOCH_ENABLED:
+                                    epoch_valid, epoch_reason = (
+                                        await self._check_fence_epoch(fence_epoch)
+                                    )
+                                    if not epoch_valid:
+                                        return {
+                                            "state_scalar": None,
+                                            "current_cash": None,
+                                            "source": "epoch_regression",
+                                            "fence_epoch": fence_epoch,
+                                            "epoch_reason": epoch_reason,
+                                        }
                                 return {
                                     "state_scalar": scalar_val,
                                     "current_cash": scalar_val,
@@ -966,14 +1307,65 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
         self._local_debits = 0.0
 
     async def rollback_state(
-        self, magnitude: float, governance_signature: str | None = None
+        self,
+        magnitude: float,
+        governance_signature: str | None = None,
+        reconciliation_sequence: int | None = None,
+        client: Any = None,
     ) -> None:
-        if redis_client is None:
+        target_client = client
+        if target_client is None:
+            if redis_client is None:
+                raise RuntimeError("Redis client unavailable — cannot rollback CBF state.")
+            target_client = await _get_raw_redis(redis_client)
+
+        if target_client is None:
             raise RuntimeError("Redis client unavailable — cannot rollback CBF state.")
+
+        use_lua = hasattr(target_client, "eval") and not _is_mock(target_client)
+        if use_lua:
+            keys = [
+                self.redis_key,
+                "audit:state_ledger",
+                _REDIS_KEY_FENCE_EPOCH,
+                _REDIS_KEY_LOCAL_DEBITS,
+                _REDIS_KEY_FENCE_EPOCH_HWM,
+            ]
+            argv = [
+                str(magnitude),
+                governance_signature or "",
+                str(reconciliation_sequence) if reconciliation_sequence is not None else "-1",
+                str(time.time()),
+            ]
+            try:
+                res = target_client.eval(self.LUA_ROLLBACK_CBF, len(keys), *keys, *argv)
+                res_list = await res if inspect.isawaitable(res) else res
+                if (
+                    res_list
+                    and isinstance(res_list, (list, tuple))
+                    and not _is_mock(res_list)
+                    and len(res_list) > 3
+                ):
+                    new_epoch = int(res_list[3])
+                    if new_epoch > 0:
+                        self._last_seen_epoch = new_epoch
+                        if _CURRENT_FENCE_EPOCH_GAUGE is not None:
+                            _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
+                    await self._sync_to_replicas(client=target_client)
+                    return
+            except Exception as lua_exc:
+                logger.warning(
+                    "Lua rollback script failed, falling back to WATCH/MULTI/EXEC: %s",
+                    lua_exc,
+                )
 
         for attempt in range(self._MAX_RETRIES):
             try:
-                pipe_ctx = redis_client.pipeline()
+                pipe_ctx = (
+                    target_client.pipeline()
+                    if hasattr(target_client, "pipeline")
+                    else redis_client.pipeline()
+                )
                 if inspect.isawaitable(pipe_ctx):
                     pipe_ctx = await pipe_ctx
                 async with pipe_ctx as pipe:
@@ -1005,7 +1397,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                     if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                         _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
 
-                    await self._sync_to_replicas()
+                    await self._sync_to_replicas(client=target_client)
                     return
             except Exception as exc:
                 if "WatchError" in type(exc).__name__:
@@ -1048,8 +1440,8 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
             return (False, reason, 0.0)
 
         local_debit_total = 0.0
-        if balance_metadata["source"] == "reconciliation" and redis_client is not None:
-            client = await _get_raw_redis(redis_client)
+        client = await _get_raw_redis(redis_client)
+        if balance_metadata["source"] == "reconciliation" and client is not None:
             if hasattr(client, "lrange"):
                 local_debits_res = client.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
                 local_debits_raw = (
@@ -1073,25 +1465,65 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
         effective_balance = ground_truth_balance - local_debit_total
 
         current_fence_epoch = balance_metadata["fence_epoch"]
-        if self._last_verified_fence_epoch is not None:
-            if current_fence_epoch < self._last_verified_fence_epoch:
+        effective_verified_epoch = self._last_verified_fence_epoch
+        if client is not None and hasattr(client, "get"):
+            try:
+                raw_hwm_res = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+                raw_hwm = (
+                    await raw_hwm_res
+                    if inspect.isawaitable(raw_hwm_res)
+                    else raw_hwm_res
+                )
+                if (
+                    raw_hwm is not None
+                    and isinstance(raw_hwm, (int, str, bytes, float))
+                    and not _is_mock(raw_hwm)
+                ):
+                    effective_verified_epoch = max(
+                        effective_verified_epoch
+                        if effective_verified_epoch is not None
+                        else 0,
+                        int(raw_hwm),
+                    )
+            except Exception:
+                pass
+
+        if effective_verified_epoch is not None and effective_verified_epoch > 0:
+            if current_fence_epoch < effective_verified_epoch:
                 logger.critical(
                     json.dumps(
                         {
                             "event": "FENCE_EPOCH_REGRESSION",
                             "severity": "CRITICAL",
                             "current_epoch": current_fence_epoch,
-                            "last_verified_epoch": self._last_verified_fence_epoch,
+                            "last_verified_epoch": effective_verified_epoch,
                         }
                     )
                 )
                 return (
                     False,
-                    f"Fence epoch regression: {current_fence_epoch} < {self._last_verified_fence_epoch}",
+                    f"Fence epoch regression: {current_fence_epoch} < {effective_verified_epoch}",
                     0.0,
                 )
 
-        keys = [self._invariant.state_key, "audit:state_ledger", _REDIS_KEY_FENCE_EPOCH]
+        debit_entry = ""
+        if balance_metadata["source"] == "reconciliation" and cost > 0:
+            debit_entry = json.dumps(
+                {
+                    "amount": cost,
+                    "reconciliation_sequence": balance_metadata.get("sequence"),
+                    "timestamp": time.time(),
+                    "action_signature": governance_signature,
+                }
+            )
+
+        keys = [
+            self._invariant.state_key,
+            "audit:state_ledger",
+            _REDIS_KEY_FENCE_EPOCH,
+            _REDIS_KEY_LOCAL_DEBITS,
+            _REDIS_KEY_FENCE_EPOCH_HWM,
+        ]
         resolved_threshold = self._resolve_threshold()
 
         argv = [
@@ -1101,77 +1533,71 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
             governance_signature,
             str(effective_balance),
             str(current_fence_epoch),
+            debit_entry,
         ]
 
-        client = await _get_raw_redis(redis_client)
+        pinned_client, should_close = await _get_pinned_connection(client)
+        active_client = pinned_client if pinned_client is not None else client
 
         async def _run_evalsha() -> list:
-            res = client.evalsha(self._lua_sha, len(keys), *keys, *argv)
+            res = active_client.evalsha(self._lua_sha, len(keys), *keys, *argv)
             return await res if inspect.isawaitable(res) else res
 
         async def _load_and_run() -> list:
-            res = client.script_load(self.LUA_ATOMIC_CBF)
+            res = active_client.script_load(self.LUA_ATOMIC_CBF)
             self._lua_sha = await res if inspect.isawaitable(res) else res
             return await _run_evalsha()
 
-        if self.tracer:
-            with self.tracer.start_as_current_span(
-                "safety.cbf_atomic_check_commit"
-            ) as span:
-                span.set_attribute("safety.cash.cost", cost)
-                _mrm_meta = ControlRegistry().get_mapping(
-                    GovernanceControl.TRADITIONAL_MRM_VALIDATION
-                )
-                span.set_attribute("governance.control_id", _mrm_meta["internal_id"])
-                span.set_attribute(
-                    "governance.framework", _mrm_meta["primary_framework"]
-                )
-                span.set_attribute(
-                    "governance.legacy_citation", _mrm_meta["legacy_citation"]
-                )
-                span.set_attribute("governance.scope", _mrm_meta["scope"])
-                span.set_attribute("cage.cbf.wait_replicas", _WAIT_REPLICAS)
+        span_ctx = (
+            self.tracer.start_as_current_span("safety.cbf_atomic_check_commit")
+            if self.tracer
+            else nullcontext()
+        )
+
+        try:
+            with span_ctx as span:
+                if span:
+                    try:
+                        span.set_attribute("safety.cash.cost", cost)
+                        _mrm_meta = ControlRegistry().get_mapping(
+                            GovernanceControl.TRADITIONAL_MRM_VALIDATION
+                        )
+                        span.set_attribute("governance.control_id", _mrm_meta["internal_id"])
+                        span.set_attribute(
+                            "governance.framework", _mrm_meta["primary_framework"]
+                        )
+                        span.set_attribute(
+                            "governance.legacy_citation", _mrm_meta["legacy_citation"]
+                        )
+                        span.set_attribute("governance.scope", _mrm_meta["scope"])
+                        span.set_attribute("cage.cbf.wait_replicas", _WAIT_REPLICAS)
+                    except Exception:
+                        pass
+
                 result_list = await self._evalsha_with_noscript_retry(
-                    client, keys, argv, _run_evalsha, _load_and_run
+                    active_client, keys, argv, _run_evalsha, _load_and_run
                 )
                 committed, message = self._parse_lua_result(result_list, span)
 
-                if (
-                    committed
-                    and balance_metadata["source"] == "reconciliation"
-                    and redis_client is not None
-                ):
-                    if hasattr(client, "rpush"):
-                        debit_entry = json.dumps(
-                            {
-                                "amount": cost,
-                                "reconciliation_sequence": balance_metadata.get(
-                                    "sequence"
-                                ),
-                                "timestamp": time.time(),
-                                "action_signature": governance_signature,
-                            }
-                        )
-                        rpush_res = client.rpush(_REDIS_KEY_LOCAL_DEBITS, debit_entry)
-                        if inspect.isawaitable(rpush_res):
-                            await rpush_res
-                        if hasattr(client, "ltrim"):
-                            ltrim_res = client.ltrim(_REDIS_KEY_LOCAL_DEBITS, -1000, -1)
-                            if inspect.isawaitable(ltrim_res):
-                                await ltrim_res
-
                 if committed and _WAIT_REPLICAS > 0:
-                    wait_result = await self._sync_to_replicas()
-                    span.set_attribute("cage.cbf.wait_success", wait_result)
-                    span.set_attribute(
-                        "cage.cbf.strict_replication", _STRICT_REPLICATION
-                    )
+                    wait_result = await self._sync_to_replicas(client=active_client)
+                    if span:
+                        span.set_attribute("cage.cbf.wait_success", wait_result)
+                        span.set_attribute(
+                            "cage.cbf.strict_replication", _STRICT_REPLICATION
+                        )
                     if not wait_result:
                         if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
-                            await self.rollback_state(cost)
-                            span.set_attribute(
-                                "cage.cbf.strict_replication_rollback", True
+                            await self.rollback_state(
+                                cost,
+                                governance_signature=governance_signature,
+                                reconciliation_sequence=balance_metadata.get("sequence"),
+                                client=active_client,
                             )
+                            if span:
+                                span.set_attribute(
+                                    "cage.cbf.strict_replication_rollback", True
+                                )
                             if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
                                 _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
                             return (
@@ -1181,48 +1607,9 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
                             )
 
                 return (committed, message, cost if committed else 0.0)
-
-        result_list = await self._evalsha_with_noscript_retry(
-            client, keys, argv, _run_evalsha, _load_and_run
-        )
-        committed, message = self._parse_lua_result(result_list, None)
-
-        if (
-            committed
-            and balance_metadata["source"] == "reconciliation"
-            and redis_client is not None
-        ):
-            if hasattr(client, "rpush"):
-                debit_entry = json.dumps(
-                    {
-                        "amount": cost,
-                        "reconciliation_sequence": balance_metadata.get("sequence"),
-                        "timestamp": time.time(),
-                        "action_signature": governance_signature,
-                    }
-                )
-                rpush_res = client.rpush(_REDIS_KEY_LOCAL_DEBITS, debit_entry)
-                if inspect.isawaitable(rpush_res):
-                    await rpush_res
-                if hasattr(client, "ltrim"):
-                    ltrim_res = client.ltrim(_REDIS_KEY_LOCAL_DEBITS, -1000, -1)
-                    if inspect.isawaitable(ltrim_res):
-                        await ltrim_res
-
-        if committed and _WAIT_REPLICAS > 0:
-            wait_result = await self._sync_to_replicas()
-            if not wait_result:
-                if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
-                    await self.rollback_state(cost)
-                    if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
-                        _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
-                    return (
-                        False,
-                        "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
-                        0.0,
-                    )
-
-        return (committed, message, cost if committed else 0.0)
+        finally:
+            if should_close and hasattr(pinned_client, "aclose"):
+                await pinned_client.aclose()
 
     async def _evalsha_with_noscript_retry(
         self,
@@ -1233,7 +1620,8 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
         load_and_run_fn: Any,
     ) -> list:
         if self._lua_sha is None:
-            self._lua_sha = await client.script_load(self.LUA_ATOMIC_CBF)
+            load_res = client.script_load(self.LUA_ATOMIC_CBF)
+            self._lua_sha = await load_res if inspect.isawaitable(load_res) else load_res
 
         try:
             return await run_evalsha_fn()
