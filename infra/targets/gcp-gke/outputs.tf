@@ -42,6 +42,16 @@ output "namespace" {
 
 # ─── Storage ──────────────────────────────────────────────────────────────────
 
+output "worm_bucket_name" {
+  description = "Retention-locked GCS WORM bucket name (system of record for compliance evidence)"
+  value       = module.worm_bucket.bucket_name
+}
+
+output "worm_bucket_url" {
+  description = "Retention-locked GCS WORM bucket gs:// URL"
+  value       = module.worm_bucket.bucket_url
+}
+
 output "langfuse_events_bucket" {
   description = "GCS bucket for Langfuse event traces"
   value       = google_storage_bucket.langfuse_events.name
@@ -76,15 +86,19 @@ output "deployment_summary" {
     namespace               = module.namespace.name
     nist_compliance_enabled = var.enable_nist_compliance
     gpu_node_pool_enabled   = var.enable_gpu_node_pool
+    worm_bucket             = module.worm_bucket.bucket_name
     langfuse_bucket         = google_storage_bucket.langfuse_events.name
     postgres_service        = module.cloudsql_postgres.instance_name
     redis_host              = module.memorystore_governance.primary_endpoint_ip
     memorystore_governance  = module.memorystore_governance.primary_endpoint_ip
     memorystore_app         = module.memorystore_app.primary_endpoint_ip
+    clickhouse_service      = module.clickhouse_operator.service_name
+    clickhouse_engine       = module.clickhouse_operator.table_engine
     langfuse_url            = module.langfuse.web_url
     opa_endpoint            = module.opa.endpoint_url
   }
 }
+
 
 # ─── Database and Cache ───────────────────────────────────────────────────────
 

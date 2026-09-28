@@ -166,4 +166,4 @@ To upgrade the PostgreSQL Helm chart version:
 
 - [`infra/modules/langfuse_stack/README.md`](../langfuse_stack/README.md) — Langfuse (primary consumer of this module)
 - [`infra/modules/redis_cache/README.md`](../redis_cache/README.md) — Redis cache (required by Langfuse v3)
-- [`infra/modules/clickhouse/README.md`](../clickhouse/README.md) — ClickHouse (required by Langfuse v3)
+- [`infra/modules/clickhouse_operator/README.md`](../clickhouse_operator/README.md) — ClickHouse Operator & Query-Plane (required by Langfuse v3)

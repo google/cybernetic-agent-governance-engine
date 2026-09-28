@@ -68,3 +68,21 @@ variable "archive_transition_days" {
   type        = number
   default     = 365
 }
+
+variable "cage_deployment_region" {
+  description = "Jurisdictional deployment region (US_FED, EU_ECB, APAC_MAS) for data-residency validation"
+  type        = string
+  default     = "US_FED"
+
+  validation {
+    condition     = contains(["US_FED", "EU_ECB", "APAC_MAS"], var.cage_deployment_region)
+    error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS."
+  }
+}
+
+variable "labels" {
+  description = "Resource labels for the WORM bucket"
+  type        = map(string)
+  default     = {}
+}
+

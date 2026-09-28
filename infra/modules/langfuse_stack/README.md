@@ -227,4 +227,4 @@ The worker HPA (`langfuse-worker-hpa.yaml`) scales 2–15 replicas at 70% CPU / 
 - [`deployment/k8s/langfuse-worker.yaml`](../../../deployment/k8s/langfuse-worker.yaml) — static Langfuse Worker manifest
 - [`deployment/k8s/langfuse-worker-hpa.yaml`](../../../deployment/k8s/langfuse-worker-hpa.yaml) — HPA
 - [`infra/modules/postgres_db/README.md`](../postgres_db/README.md) — PostgreSQL module
-- [`infra/modules/clickhouse/README.md`](../clickhouse/README.md) — ClickHouse module
+- [`infra/modules/clickhouse_operator/README.md`](../clickhouse_operator/README.md) — ClickHouse Operator & Query-Plane module

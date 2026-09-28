@@ -45,18 +45,28 @@ spec:
       labels:
         app: clickhouse
     spec:
-      # Persistence Safeguard: Use On-Demand nodes (NOT Spot)
-      # Persistence Safeguard: Use On-Demand nodes (NOT Spot)
+      # §3, §7: ClickHouse runs on the dedicated local-SSD clickhouse node pool
+      # (tainted workload=clickhouse:NoSchedule) and NEVER on general or Spot nodes.
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: clickhouse
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - clickhouse
               - key: cloud.google.com/gke-spot
                 operator: NotIn
                 values:
                 - "true"
       # PSA restricted compliance: pod-level security context
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 101

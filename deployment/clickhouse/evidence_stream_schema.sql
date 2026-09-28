@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS cage_evidence.evidence_stream
     CONSTRAINT chk_record_hash_hex  CHECK match(record_hash, '^[0-9a-f]{64}$'),
     CONSTRAINT chk_genesis_prev_hash CHECK (sequence = 0) = (prev_hash IS NULL)
 )
+-- Posture matrix (§1.1, §2.6):
+--   - dev / staging: ENGINE = MergeTree (single node on local SSD)
+--   - prod:          ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/evidence_stream', '{replica}')
+--                    with SETTINGS storage_policy = 'hot_to_cold' (hot local SSD + GCS cold tier)
+-- System of record is the retention-locked GCS WORM bucket (infra/modules/worm_bucket).
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (chain_id, sequence)
@@ -94,6 +99,7 @@ SETTINGS
     index_granularity = 8192,
     ttl_only_drop_parts = 1,
     min_bytes_for_wide_part = 0;
+
 
 -- ===========================================================================
 -- §6.1 — Chain Sequence Gap Detector

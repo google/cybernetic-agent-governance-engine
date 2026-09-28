@@ -153,8 +153,21 @@ resource "google_project_iam_member" "reconciler_memorystore_user" {
 
 # ---------------------------------------------------------------------------
 # IAM Role Bindings — Compliance Bridge
-# Roles: Storage Object Creator (OSCAL artifacts), Storage Object Viewer (reads)
+# Roles: WORM bucket Storage Object Creator (append-only evidence & OSCAL artifacts),
+#        Storage Object Viewer (reads), Secret Manager Accessor (§5.1)
 # ---------------------------------------------------------------------------
+
+resource "google_storage_bucket_iam_member" "compliance_bridge_worm_creator" {
+  bucket = module.worm_bucket.bucket_name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.compliance_bridge.email}"
+}
+
+resource "google_storage_bucket_iam_member" "compliance_bridge_worm_viewer" {
+  bucket = module.worm_bucket.bucket_name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.compliance_bridge.email}"
+}
 
 resource "google_project_iam_member" "compliance_bridge_storage_creator" {
   project = var.project_id
@@ -173,6 +186,7 @@ resource "google_project_iam_member" "compliance_bridge_secret_accessor" {
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
+
 
 # ---------------------------------------------------------------------------
 # IAM Role Bindings — Lula
