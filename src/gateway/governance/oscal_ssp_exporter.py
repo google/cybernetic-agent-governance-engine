@@ -177,27 +177,51 @@ _PLATFORM_SC8_IMPL_UUID = "p8000001-plat-sc8-8000-platform0001"
 _PLATFORM_SC39_IMPL_UUID = "p9000001-plat-sc39-8000-platform001"
 _PLATFORM_SI3_IMPL_UUID = "s3000001-plat-si3-8000-platform0001"
 
+TIER3_COMMERCIAL_LEDGER_CUSTOMER_RESPONSIBILITY = (
+    "Customer Responsibility (Tier-3 Commercial Deployment Interface — Retail-Banking, "
+    "Custody & Payment Ledger APIs): CAGE ships the Tier-2 posture-completing simulated "
+    "ground-truth reconciliation provider (SimulatedEstateProvider) with deterministic "
+    "seeding, fault injection, and real Cloud KMS asymmetric snapshot signing "
+    "(RECONCILER_KMS_KEY). Commercial retail-banking, custody, and core-banking ledger "
+    "APIs are classified as Tier-3 commercial-deployment-only interfaces and do not "
+    "live in the reference repository; organizations deploying CAGE in commercial "
+    "production are responsible for supplying and accrediting their own external "
+    "retail-banking ledger integration behind the EstateProvider seam."
+)
+
 PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
     "gcp-gke": {
         "sc-7": {
             "uuid": _PLATFORM_SC7_IMPL_UUID,
             "control-id": "sc-7",
-            "title": "Boundary Protection — Cilium L7 FQDN Egress Lockdown",
+            "title": "Boundary Protection — GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy & FQDNNetworkPolicy Egress Lockdown",
             "status": "implemented",
             "narrative": (
-                "Layer-7 FQDN-aware egress boundaries are enforced on all governance-stack pods "
-                "by Cilium CiliumNetworkPolicy resources. Standard Kubernetes NetworkPolicies "
-                "(network-policy.yaml) provide L3/L4 default-deny; Cilium extends this to the "
-                "application layer by intercepting DNS responses and binding resolved IP addresses "
-                "to the FQDN allow-list in real time. Gateway pods may reach only approved external "
-                "LLM provider endpoints (api.vendor-a.com, api.vendor-b.com, "
-                "generativelanguage.googleapis.com) and required GCP service APIs. Sovereign "
-                "agent pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080, "
-                "OTel:4317/4318) and cannot contact any external endpoint directly, preventing "
-                "lateral movement and data exfiltration even if a pod is compromised. "
-                "Evidence: cilium monitor --type l7."
+                "L3/L4 and FQDN-resolved IP egress boundaries are enforced on all governance-stack "
+                "pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy "
+                "(networking.gke.io/v1alpha1) resources on GKE Dataplane V2 (Cilium/eBPF). "
+                "Standard Kubernetes NetworkPolicies (deployment/k8s/network-policy.yaml) provide "
+                "L3/L4 default-deny and restrict port 53 DNS egress strictly to kube-system "
+                "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32); "
+                "GKE Dataplane V2 (Cilium) snoops DNS responses from kube-dns or Cloud DNS and "
+                "programs the resolved IP addresses into Cilium's eBPF policy map in real time. "
+                "Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved IPs "
+                "and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7 HTTP-method "
+                "enforcement is not claimed by this control implementation. Gateway pods may reach "
+                "only approved external LLM provider endpoints (generativelanguage.googleapis.com, "
+                "api.anthropic.com) and required GCP service APIs (*.googleapis.com). "
+                "Reconciliation worker egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), "
+                "the Memorystore for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign "
+                "telemetry OTLP (port 3000), and cluster DNS. Sovereign agent and financial advisor pods are "
+                "locked to intra-cluster egress only (OPA:8181, Gateway:8080, Compliance-Bridge:8090) "
+                "and cannot contact any external endpoint directly, preventing lateral movement and "
+                "data exfiltration even if a pod is compromised."
             ),
-            "evidence": "deployment/k8s/cilium-egress-lockdown.yaml",
+            "evidence": (
+                "deployment/k8s/cilium/egress-lockdown.yaml, "
+                "deployment/k8s/cilium/reconciliation-worker-egress.yaml, "
+                "deployment/k8s/network-policy.yaml"
+            ),
             "poam_refs": "POAM-007 (IA-3)",
         },
         "sc-8": {
@@ -220,12 +244,19 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "short list of open paths, and the gateway repeats the check on the verified "
                 "l5d-client-id header in every environment (src/gateway/server/workload_identity.py). "
                 "OPA and NeMo Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only "
-                "the gateway (and the compliance bridge for OPA). Verified by automated Linkerd mesh "
+                "the gateway (and the compliance bridge for OPA). Managed data-plane connections "
+                "enforce in-transit TLS: dual Memorystore for Valkey instances (governance and app) "
+                "enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private Service Connect "
+                "with server CA pinning via REDIS_CA_CERT_PATH (infra/modules/memorystore_valkey/main.tf, "
+                "src/gateway/infrastructure/redis_client.py), and Cloud SQL PostgreSQL enforces "
+                "ssl_mode=ENCRYPTED_ONLY via the Cloud SQL Auth Proxy sidecar "
+                "(infra/modules/cloudsql_postgres/main.tf). Verified by automated Linkerd mesh "
                 "conformance tests (tests/integration/test_linkerd_mesh_conformance.py) and live CAS "
                 "issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080)."
             ),
             "evidence": (
                 "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy, "
+                "infra/modules/memorystore_valkey/main.tf, infra/modules/cloudsql_postgres/main.tf, "
                 "deployment/k8s/linkerd-mtls-policy.yaml, "
                 "tests/integration/test_linkerd_mesh_conformance.py"
             ),
@@ -277,7 +308,7 @@ def generate_platform_control_narratives(
     """Generate OSCAL implemented-requirement blocks for platform-aware controls.
 
     Args:
-        platform: Explicit platform identifier (``gcp-cloudrun``, ``gcp-gke``, etc.).
+        platform: Explicit platform identifier (``gcp-gke``, ``agnostic``, etc.).
             If ``None``, auto-detect via :func:`_detect_deployment_platform`.
 
     Returns:
@@ -516,26 +547,32 @@ NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
         "poam_status": "OPEN — POAM-2026-080: mesh defined in infra/modules/service_mesh, not yet applied and verified",
     },
     "sc-7": {
-        "title": "Boundary Protection — Cilium L7 FQDN Egress Lockdown",
-        "implemented_by": "Cilium CNI CiliumNetworkPolicy (L7 FQDN rules)",
+        "title": "Boundary Protection — GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy & FQDNNetworkPolicy Egress Lockdown",
+        "implemented_by": "GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy + FQDNNetworkPolicy (L3/L4 + FQDN-resolved IP rules)",
         "status": "implemented",
-        "evidence_file": "deployment/k8s/cilium-egress-lockdown.yaml",
+        "evidence_file": "deployment/k8s/cilium/egress-lockdown.yaml",
         "iso_clause": "A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)",
         "narrative": (
-            "Layer-7 FQDN-aware egress boundaries are enforced on all governance-stack pods "
-            "by Cilium CiliumNetworkPolicy resources. Standard Kubernetes NetworkPolicies "
-            "(network-policy.yaml) provide L3/L4 default-deny; Cilium extends this to the "
-            "application layer by intercepting DNS responses and binding resolved IP addresses "
-            "to the FQDN allow-list in real time. Gateway pods may reach only approved external "
-            "LLM provider endpoints (api.vendor-a.com, api.vendor-b.com, "
-            "generativelanguage.googleapis.com) and required GCP service APIs. Sovereign "
-            "agent pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080, "
-            "OTel:4317/4318) and cannot contact any external endpoint directly, preventing "
-            "lateral movement and data exfiltration even if a pod is compromised. "
-            "Evidence: cilium monitor --type l7."
+            "L3/L4 and FQDN-resolved IP egress boundaries are enforced on all governance-stack "
+            "pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy "
+            "(networking.gke.io/v1alpha1) resources on GKE Dataplane V2 (Cilium/eBPF). "
+            "Standard Kubernetes NetworkPolicies (deployment/k8s/network-policy.yaml) provide "
+            "L3/L4 default-deny and restrict port 53 DNS egress strictly to kube-system "
+            "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32); "
+            "GKE Dataplane V2 (Cilium) snoops DNS responses from kube-dns or Cloud DNS and "
+            "programs the resolved IP addresses into Cilium's eBPF policy map in real time. "
+            "Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved IPs "
+            "and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7 HTTP-method "
+            "enforcement is not claimed by this control implementation. Gateway pods may reach "
+            "only approved external LLM provider endpoints (generativelanguage.googleapis.com, "
+            "api.anthropic.com) and required GCP service APIs (*.googleapis.com). "
+            "Reconciliation worker egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), "
+            "the Memorystore for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign "
+            "telemetry OTLP (port 3000), and cluster DNS. Sovereign agent and financial advisor pods are "
+            "locked to intra-cluster egress only and cannot contact any external endpoint directly."
         ),
         "poam_refs": "POAM-007 (IA-3)",
-        "poam_status": "CLOSED — Cilium L7 egress lockdown implemented",
+        "poam_status": "CLOSED — GKE Dataplane V2 NetworkPolicy + FQDNNetworkPolicy egress lockdown implemented",
     },
 }
 
@@ -588,6 +625,12 @@ def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
             "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
             "value": posture.disclaimer,
             "class": "legal-notice",
+        },
+        {
+            "name": "customer_responsibility_tier3_ledger_apis",
+            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+            "value": TIER3_COMMERCIAL_LEDGER_CUSTOMER_RESPONSIBILITY,
+            "class": "customer-responsibility",
         },
     ]
 
@@ -942,6 +985,25 @@ def _apply_ssp_patch(
     posture_dict = AssurancePosture().model_dump(mode="json")
     ssp["system-security-plan"]["metadata"]["assurance-posture"] = posture_dict
 
+    # Inject Tier-3 commercial retail-banking ledger API customer-responsibility statement (§6 Step 6f)
+    meta_props: list[dict[str, Any]] = list(
+        ssp["system-security-plan"]["metadata"].get("props") or []
+    )
+    meta_props = [
+        p
+        for p in meta_props
+        if p.get("name") != "customer_responsibility_tier3_ledger_apis"
+    ]
+    meta_props.append(
+        {
+            "name": "customer_responsibility_tier3_ledger_apis",
+            "ns": "https://cage.laah.cybernetics.dev/ns/oscal",
+            "value": TIER3_COMMERCIAL_LEDGER_CUSTOMER_RESPONSIBILITY,
+            "class": "customer-responsibility",
+        }
+    )
+    ssp["system-security-plan"]["metadata"]["props"] = meta_props
+
     if dry_run:
         logger.info("[DRY-RUN] Would update SSP at %s", ssp_path)
         return True
@@ -1224,8 +1286,10 @@ def cmd_export(args: argparse.Namespace) -> int:
     component_entry = generate_component_entry(cs)
     ftra_component_entry = generate_ftra_component_entry()
 
-    # Generate platform-aware control narratives (Phase E)
+    # Generate platform-aware control narratives (Phase E / Step 6f: GKE is sole cloud target)
     platform = getattr(args, "platform", None)
+    if platform is None and args.ssp.resolve() == _DEFAULT_SSP.resolve():
+        platform = "gcp-gke"
     platform_narratives = generate_platform_control_narratives(platform)
 
     # Combine STPA patch with platform narratives

@@ -137,17 +137,50 @@ variable "enable_private_nodes" {
   default     = false
 }
 
-variable "enable_dataplane_v2" {
-  description = <<-EOT
-    Enable GKE Dataplane V2 (Cilium/eBPF via anetd). Required for CiliumNetworkPolicy
-    L7 FQDN enforcement. When true, the legacy Calico network_policy addon is removed
-    (they are mutually exclusive). CANNOT be changed on existing clusters — requires
-    cluster replacement.
-  EOT
+variable "regional_cluster" {
+  description = "When true, provisions a regional GKE cluster (location = var.region). Defaults to true when environment == 'prod', false (zonal) in dev and staging (§1.1)."
   type        = bool
-  default     = false
+  default     = null
 }
 
+variable "enable_dataplane_v2" {
+  description = <<-EOT
+    Enable GKE Dataplane V2 (Cilium/eBPF via anetd). Required for GKE FQDNNetworkPolicy
+    enforcement (§1.1, §5.3). When true, the legacy Calico network_policy addon is removed
+    (they are mutually exclusive). Enabled at cluster creation in every posture (dev, staging, prod).
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "enable_fqdn_network_policy" {
+  description = "Enable GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1) enforcement at cluster creation alongside Dataplane V2 (§5.3, §7)."
+  type        = bool
+  default     = true
+}
+
+variable "release_channel" {
+  description = "GKE release channel (REGULAR, STABLE, RAPID) to guarantee control-plane version >= 1.27.1-gke.400 for FQDNNetworkPolicy (§5.3)."
+  type        = string
+  default     = "REGULAR"
+}
+
+variable "min_master_version" {
+  description = "Minimum GKE control-plane version (>= 1.27.1-gke.400 required for FQDNNetworkPolicy — §5.3)."
+  type        = string
+  default     = "1.28"
+}
+
+variable "cluster_dns_provider" {
+  description = "Cluster DNS provider. FQDNNetworkPolicy requires kube-dns (PROVIDER_UNSPECIFIED) or CLOUD_DNS; custom CoreDNS is forbidden (§5.3, §7)."
+  type        = string
+  default     = "PROVIDER_UNSPECIFIED"
+
+  validation {
+    condition     = contains(["PROVIDER_UNSPECIFIED", "CLOUD_DNS"], var.cluster_dns_provider)
+    error_message = "cluster_dns_provider must be PROVIDER_UNSPECIFIED (kube-dns) or CLOUD_DNS. Custom CoreDNS is unsupported by GKE FQDNNetworkPolicy (§5.3, §7)."
+  }
+}
 
 variable "enable_pod_security_standards" {
   description = "Enable Pod Security Standards in namespace"
@@ -178,39 +211,71 @@ variable "kms_key_id" {
   default     = ""
 }
 
-# ─── Node Pool Configuration ──────────────────────────────────────────────────
+# ─── Node Pool Configuration (§3: general, general-spot, gpu-l4, clickhouse) ─
 
 variable "primary_node_pool_machine_type" {
-  description = "Machine type for primary node pool"
+  description = "Machine type for general (primary) node pool"
   type        = string
   default     = "e2-standard-4"
 }
 
 variable "primary_node_pool_min_count" {
-  description = "Minimum nodes in primary pool"
+  description = "Minimum nodes in general (primary) pool"
   type        = number
   default     = 1
 }
 
 variable "primary_node_pool_max_count" {
-  description = "Maximum nodes in primary pool"
+  description = "Maximum nodes in general (primary) pool"
   type        = number
   default     = 5
 }
 
 variable "primary_node_pool_initial_count" {
-  description = "Initial node count for primary pool"
+  description = "Initial node count for general (primary) pool"
   type        = number
   default     = 2
 }
 
 variable "primary_node_pool_disk_type" {
-  description = "Disk type for primary nodes (pd-standard, pd-ssd)"
+  description = "Disk type for general (primary) nodes (pd-standard, pd-ssd)"
   type        = string
   default     = "pd-standard"
 }
 
-# ─── GPU Node Pool Configuration ──────────────────────────────────────────────
+# ─── General-Spot Node Pool Configuration (§3: general-spot) ──────────────────
+
+variable "enable_general_spot_node_pool" {
+  description = "Enable general-spot node pool (c3-highcpu-4, Spot, 0-5 in staging only — §3)"
+  type        = bool
+  default     = null
+}
+
+variable "general_spot_machine_type" {
+  description = "Machine type for general-spot node pool (§3)"
+  type        = string
+  default     = "c3-highcpu-4"
+}
+
+variable "general_spot_min_count" {
+  description = "Minimum nodes in general-spot pool (§3: 0 in staging)"
+  type        = number
+  default     = 0
+}
+
+variable "general_spot_max_count" {
+  description = "Maximum nodes in general-spot pool (§3: 5 in staging)"
+  type        = number
+  default     = 5
+}
+
+variable "general_spot_initial_count" {
+  description = "Initial node count for general-spot pool"
+  type        = number
+  default     = 0
+}
+
+# ─── GPU Node Pool Configuration (§3: gpu-l4) ─────────────────────────────────
 
 variable "enable_gpu_node_pool" {
   description = "Enable GPU node pool for vLLM inference"
@@ -231,9 +296,9 @@ variable "gpu_count" {
 }
 
 variable "gpu_node_pool_machine_type" {
-  description = "Machine type for GPU nodes"
+  description = "Machine type for GPU nodes (g2-standard-8, 1x L4 — §3)"
   type        = string
-  default     = "g2-standard-4"
+  default     = "g2-standard-8"
 }
 
 variable "gpu_node_pool_min_count" {
@@ -254,16 +319,65 @@ variable "gpu_node_pool_initial_count" {
   default     = 1
 }
 
+variable "gpu_node_pool_name" {
+  description = "Name of the GPU node pool"
+  type        = string
+  default     = "gpu-node-pool-nvidia-l4"
+}
+
 variable "gpu_node_pool_spot" {
-  description = "Use Spot VMs for the GPU node pool"
+  description = "GPU Spot must remain false in every posture (§3, §7): measurement runs must not be preempted."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = var.gpu_node_pool_spot == false
+    error_message = "GPU Spot must stay false in every posture (§3, §7): measurement runs must not be preempted."
+  }
+}
+
+variable "gpu_node_locations" {
+  description = "List of zones to deploy the GPU node pool to. Enables multi-zonal/regional node configuration."
+  type        = list(string)
+  default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
+}
+
+# ─── ClickHouse Node Pool Configuration (§3, §7: clickhouse) ──────────────────
+
+variable "enable_clickhouse_node_pool" {
+  description = "Enable dedicated ClickHouse node pool with local SSD and workload=clickhouse:NoSchedule taint (§3, §7)"
   type        = bool
   default     = true
 }
 
-variable "gpu_node_locations" {
-  description = "List of zones to deploy the GPU node pool to. Enables multi-zonal/regional node configuration to source GPUs from other zones during Spot capacity shortages."
-  type        = list(string)
-  default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
+variable "clickhouse_node_pool_machine_type" {
+  description = "Machine type for ClickHouse node pool (local-SSD machine type)"
+  type        = string
+  default     = "n2-standard-4"
+}
+
+variable "clickhouse_node_pool_min_count" {
+  description = "Minimum nodes in ClickHouse pool (1 in dev/staging, 3 in prod — §3)"
+  type        = number
+  default     = null
+}
+
+variable "clickhouse_node_pool_max_count" {
+  description = "Maximum nodes in ClickHouse pool (1 in dev/staging, 3 in prod — §3)"
+  type        = number
+  default     = null
+}
+
+variable "clickhouse_node_pool_initial_count" {
+  description = "Initial node count for ClickHouse pool (1 in dev/staging, 3 in prod — §3)"
+  type        = number
+  default     = null
+}
+
+variable "clickhouse_node_pool_local_ssd_count" {
+  description = "Number of raw-block local NVMe SSDs attached to each ClickHouse node for hot-tier storage"
+  type        = number
+  default     = 1
 }
 
 # ─── Storage Configuration ────────────────────────────────────────────────────
@@ -696,4 +810,129 @@ variable "enable_memorystore_tls" {
   type        = bool
   default     = true
 }
+
+# ─── Track 6f VPC & Perimeter Configuration (§5.4) ────────────────────────────
+
+variable "network" {
+  description = "VPC network name or self_link for GKE, Cloud SQL, and Memorystore (§5.4)"
+  type        = string
+  default     = "default"
+}
+
+variable "subnetwork" {
+  description = "VPC subnetwork name or self_link for GKE (§5.4)"
+  type        = string
+  default     = "default"
+}
+
+variable "subnet_cidr" {
+  description = "Primary CIDR range for the VPC subnetwork (§5.4)"
+  type        = string
+  default     = "10.0.0.0/20"
+}
+
+variable "create_vpc_network" {
+  description = "Provision dedicated VPC network with GKE pod/service secondary ranges via module.vpc_network (§5.4)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_vpc_sc" {
+  description = "Enable VPC Service Controls perimeter around GCP services (SC-7, AC-4, §5.4)"
+  type        = bool
+  default     = false
+}
+
+variable "organization_id" {
+  description = "GCP Organization ID for VPC Service Controls access policy (required when enable_vpc_sc=true and access_policy_id is empty)"
+  type        = string
+  default     = ""
+}
+
+variable "access_policy_id" {
+  description = "Existing Access Context Manager policy ID (optional; if empty and enable_vpc_sc=true, creates a new policy)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloud_armor" {
+  description = "Enable Cloud Armor WAF security policy attached to GKE Ingress backend via BackendConfig (SC-5, SC-7, SI-10, §5.4)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_cloud_dns" {
+  description = "Enable Cloud DNS A-record binding to GKE Ingress global IP (§5.4)"
+  type        = bool
+  default     = false
+}
+
+variable "dns_managed_zone_name" {
+  description = "Existing persistent Cloud DNS managed zone name (§5.4)"
+  type        = string
+  default     = ""
+}
+
+variable "dns_domain_name" {
+  description = "FQDN for the GKE Ingress DNS A-record (e.g., gateway.laah.altostrat.com. — §5.4)"
+  type        = string
+  default     = ""
+}
+
+# ─── Track 6f Network Policy & FQDN Policy Configuration (§5.3, §7) ──────────
+# The policy set is identical in every posture; only CIDRs and FQDNs differ via tfvars.
+
+variable "memorystore_governance_psc_cidr" {
+  description = "PSC endpoint CIDR block for the governance Memorystore instance on TLS port 6379 (§5.3)"
+  type        = string
+  default     = "10.0.16.0/28"
+}
+
+variable "memorystore_app_psc_cidr" {
+  description = "PSC endpoint CIDR block for the app Memorystore instance on TLS port 6379 (§5.3)"
+  type        = string
+  default     = "10.0.16.16/28"
+}
+
+variable "kube_dns_cidr" {
+  description = "Cloud DNS / node-local metadata DNS resolver IP block (169.254.169.254/32 — §5.3)"
+  type        = string
+  default     = "169.254.169.254/32"
+}
+
+variable "gateway_egress_allowed_fqdns" {
+  description = "FQDNs allowed for gateway external HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3)"
+  type        = list(string)
+  default = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "*.googleapis.com",
+    "metadata.google.internal",
+    "us.i.posthog.com",
+    "cloud.langfuse.com",
+    "api.trade.gov",
+    "www.treasury.gov",
+  ]
+}
+
+variable "reconciler_egress_allowed_fqdns" {
+  description = "FQDNs allowed for reconciliation-worker HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3)"
+  type        = list(string)
+  default = [
+    "cloudkms.googleapis.com",
+  ]
+}
+
+variable "trivy_egress_allowed_fqdns" {
+  description = "FQDNs allowed for Trivy vulnerability scanner HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3)"
+  type        = list(string)
+  default = [
+    "ghcr.io",
+    "*.ghcr.io",
+    "pkg.dev",
+    "*.pkg.dev",
+  ]
+}
+
 

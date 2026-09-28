@@ -228,3 +228,10 @@ variable "redis_auth_mode" {
   default     = ""
 }
 
+variable "network_policy_hash" {
+  description = "SHA-256 digest of active NetworkPolicy/FQDNNetworkPolicy specs; changing this triggers a pod rollout so pre-change connections do not survive (§5.3, §7)"
+  type        = string
+  default     = ""
+}
+
+

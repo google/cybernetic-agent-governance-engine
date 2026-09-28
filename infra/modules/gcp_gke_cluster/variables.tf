@@ -79,15 +79,58 @@ variable "enable_private_nodes" {
   default     = false
 }
 
+variable "regional_cluster" {
+  description = "When true, provisions a regional GKE cluster (location = var.region). Defaults to true when environment == 'prod', false (zonal) in dev and staging (§1.1)."
+  type        = bool
+  default     = null
+}
+
 variable "enable_dataplane_v2" {
   description = <<-EOT
-    Enable GKE Dataplane V2 (Cilium/eBPF via anetd). Required for CiliumNetworkPolicy
-    L7 FQDN enforcement. When true, the legacy Calico network_policy addon is removed
-    (they are mutually exclusive). CANNOT be changed on existing clusters — requires
-    cluster replacement.
+    Enable GKE Dataplane V2 (Cilium/eBPF via anetd). Required for GKE FQDNNetworkPolicy
+    enforcement (§1.1, §5.3). When true, the legacy Calico network_policy addon is removed
+    (they are mutually exclusive). Enabled at cluster creation in every posture (dev, staging, prod).
   EOT
   type        = bool
-  default     = false # false = backwards-compatible default; new clusters set true
+  default     = true
+}
+
+variable "enable_fqdn_network_policy" {
+  description = <<-EOT
+    Enable GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1) enforcement at cluster creation
+    alongside Dataplane V2 (§5.3, §7). Requires Dataplane V2, GKE >= 1.27.1-gke.400, and
+    kube-dns or Cloud DNS (custom CoreDNS is unsupported).
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "release_channel" {
+  description = "GKE release channel (REGULAR, STABLE, RAPID) to guarantee control-plane version >= 1.27.1-gke.400 for FQDNNetworkPolicy (§5.3)."
+  type        = string
+  default     = "REGULAR"
+
+  validation {
+    condition     = contains(["RAPID", "REGULAR", "STABLE"], var.release_channel)
+    error_message = "release_channel must be RAPID, REGULAR, or STABLE."
+  }
+}
+
+variable "min_master_version" {
+  description = "Minimum GKE control-plane version (>= 1.27.1-gke.400 required for FQDNNetworkPolicy — §5.3)."
+  type        = string
+  default     = "1.28"
+}
+
+variable "cluster_dns_provider" {
+  description = "Cluster DNS provider. FQDNNetworkPolicy requires kube-dns (PROVIDER_UNSPECIFIED) or CLOUD_DNS; custom CoreDNS is forbidden (§5.3, §7)."
+  type        = string
+  default     = "PROVIDER_UNSPECIFIED"
+
+  validation {
+    condition     = contains(["PROVIDER_UNSPECIFIED", "CLOUD_DNS"], var.cluster_dns_provider)
+    error_message = "cluster_dns_provider must be PROVIDER_UNSPECIFIED (kube-dns) or CLOUD_DNS. Custom CoreDNS is unsupported by GKE FQDNNetworkPolicy (§5.3, §7)."
+  }
 }
 
 # ─── Network Configuration ───────────────────────────────────────────────────
@@ -165,51 +208,83 @@ variable "maintenance_start_time" {
   default     = "03:00"
 }
 
-# ─── Primary Node Pool Configuration ─────────────────────────────────────────
+# ─── General Node Pool Configuration (§3: general) ───────────────────────────
 
 variable "primary_node_pool_machine_type" {
-  description = "Machine type for primary node pool"
+  description = "Machine type for general (primary) node pool: e2-standard-4 (dev/staging), e2-standard-8 (prod)"
   type        = string
   default     = "e2-standard-4"
 }
 
 variable "primary_node_pool_min_count" {
-  description = "Minimum nodes in primary pool"
+  description = "Minimum nodes in general (primary) pool"
   type        = number
   default     = 1
 }
 
 variable "primary_node_pool_max_count" {
-  description = "Maximum nodes in primary pool"
+  description = "Maximum nodes in general (primary) pool"
   type        = number
   default     = 5
 }
 
 variable "primary_node_pool_initial_count" {
-  description = "Initial node count for primary pool"
+  description = "Initial node count for general (primary) pool"
   type        = number
   default     = 2
 }
 
 variable "primary_node_pool_disk_size" {
-  description = "Disk size in GB for primary nodes"
+  description = "Disk size in GB for general (primary) nodes"
   type        = number
   default     = 100
 }
 
 variable "primary_node_pool_disk_type" {
-  description = "Disk type for primary nodes (pd-standard, pd-ssd, pd-balanced)"
+  description = "Disk type for general (primary) nodes (pd-standard, pd-ssd, pd-balanced)"
   type        = string
   default     = "pd-standard"
 }
 
 variable "primary_node_pool_labels" {
-  description = "Additional labels for primary node pool"
+  description = "Additional labels for general (primary) node pool"
   type        = map(string)
   default     = {}
 }
 
-# ─── GPU Node Pool Configuration ─────────────────────────────────────────────
+# ─── General-Spot Node Pool Configuration (§3: general-spot) ─────────────────
+
+variable "enable_general_spot_node_pool" {
+  description = "Enable general-spot node pool (c3-highcpu-4, Spot, 0-5 in staging only; tainted cloud.google.com/gke-spot=true:NoSchedule — §3)"
+  type        = bool
+  default     = null
+}
+
+variable "general_spot_machine_type" {
+  description = "Machine type for general-spot node pool (§3)"
+  type        = string
+  default     = "c3-highcpu-4"
+}
+
+variable "general_spot_min_count" {
+  description = "Minimum nodes in general-spot pool (§3: 0 in staging)"
+  type        = number
+  default     = 0
+}
+
+variable "general_spot_max_count" {
+  description = "Maximum nodes in general-spot pool (§3: 5 in staging)"
+  type        = number
+  default     = 5
+}
+
+variable "general_spot_initial_count" {
+  description = "Initial node count for general-spot pool"
+  type        = number
+  default     = 0
+}
+
+# ─── GPU Node Pool Configuration (§3: gpu-l4) ────────────────────────────────
 
 variable "enable_gpu_node_pool" {
   description = "Enable GPU node pool for vLLM inference"
@@ -230,19 +305,19 @@ variable "gpu_count" {
 }
 
 variable "gpu_node_pool_machine_type" {
-  description = "Machine type for GPU node pool"
+  description = "Machine type for GPU node pool (g2-standard-8, 1x L4 — §3)"
   type        = string
-  default     = "g2-standard-4"
+  default     = "g2-standard-8"
 }
 
 variable "gpu_node_pool_min_count" {
-  description = "Minimum GPU nodes"
+  description = "Minimum GPU nodes (0 in dev/staging, 2 in prod — §3)"
   type        = number
   default     = 0
 }
 
 variable "gpu_node_pool_max_count" {
-  description = "Maximum GPU nodes"
+  description = "Maximum GPU nodes (2 in dev/staging, 5 in prod — §3)"
   type        = number
   default     = 2
 }
@@ -272,20 +347,25 @@ variable "gpu_node_pool_labels" {
 }
 
 variable "gpu_node_pool_spot" {
-  description = "Use Spot VMs for the GPU node pool (false = on-demand, recommended for stable measurement runs)"
+  description = "GPU Spot must remain false in every posture (§3, §7): measurement and governance runs must not be preempted."
   type        = bool
   default     = false
+
+  validation {
+    condition     = var.gpu_node_pool_spot == false
+    error_message = "GPU Spot must stay false in every posture (§3, §7): measurement runs must not be preempted."
+  }
 }
 
 variable "gpu_node_locations" {
-  description = "List of zones to deploy the GPU node pool to. Enables multi-zonal/regional node configuration to source GPUs from other zones during Spot capacity shortages."
+  description = "List of zones to deploy the GPU node pool to. Enables multi-zonal/regional node configuration."
   type        = list(string)
   default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
 }
 
 variable "master_ipv4_cidr_block" { default = "172.16.0.0/28" }
 
-# ─── ClickHouse Node Pool Configuration (§3, §7) ──────────────────────────────
+# ─── ClickHouse Node Pool Configuration (§3, §7: clickhouse) ─────────────────
 
 variable "enable_clickhouse_node_pool" {
   description = "Enable dedicated ClickHouse node pool with local SSD and workload=clickhouse:NoSchedule taint (§3, §7)"
@@ -294,27 +374,27 @@ variable "enable_clickhouse_node_pool" {
 }
 
 variable "clickhouse_node_pool_machine_type" {
-  description = "Machine type for ClickHouse node pool"
+  description = "Machine type for ClickHouse node pool (local-SSD machine type)"
   type        = string
   default     = "n2-standard-4"
 }
 
 variable "clickhouse_node_pool_min_count" {
-  description = "Minimum nodes in ClickHouse pool"
+  description = "Minimum nodes in ClickHouse pool (1 in dev/staging, 3 in prod — §3)"
   type        = number
-  default     = 1
+  default     = null
 }
 
 variable "clickhouse_node_pool_max_count" {
-  description = "Maximum nodes in ClickHouse pool"
+  description = "Maximum nodes in ClickHouse pool (1 in dev/staging, 3 in prod — §3)"
   type        = number
-  default     = 3
+  default     = null
 }
 
 variable "clickhouse_node_pool_initial_count" {
-  description = "Initial node count for ClickHouse pool"
+  description = "Initial node count for ClickHouse pool (1 in dev/staging, 3 in prod — §3)"
   type        = number
-  default     = 1
+  default     = null
 }
 
 variable "clickhouse_node_pool_local_ssd_count" {
@@ -322,4 +402,29 @@ variable "clickhouse_node_pool_local_ssd_count" {
   type        = number
   default     = 1
 }
+
+# ─── Node Pool List Specification (§3) ───────────────────────────────────────
+
+variable "node_pools" {
+  description = "Optional list of additional node pool specifications (§3)"
+  type = list(object({
+    name              = string
+    machine_type      = string
+    min_count         = number
+    max_count         = number
+    initial_count     = optional(number, 1)
+    disk_size_gb      = optional(number, 100)
+    disk_type         = optional(string, "pd-standard")
+    spot              = optional(bool, false)
+    local_ssd_count   = optional(number, 0)
+    labels            = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = string
+      effect = string
+    })), [])
+  }))
+  default = []
+}
+
 

@@ -95,6 +95,8 @@ enable_private_master_endpoint = false  # Enable in prod: SC-7 / AC-17
 # for egress instead. Master endpoint remains public (kubectl access preserved).
 enable_private_nodes           = true
 enable_pod_security_standards  = false  # Apply manually via pod-security-admission.yaml
+enable_dataplane_v2            = true
+enable_fqdn_network_policy     = true
 
 # US Dev: open access (prod must restrict to corporate VPN CIDR)
 # SR 26-2 §IV.C — access controls; restrict to known CIDRs in prod
@@ -124,7 +126,7 @@ gpu_node_pool_machine_type  = "g2-standard-8"
 gpu_node_pool_min_count     = 0  # cost-opt: scale to zero when idle; cluster autoscaler removes node after ~10 min of no GPU pod
 gpu_node_pool_max_count     = 2
 gpu_node_pool_initial_count = 1
-gpu_node_pool_spot          = true  # Spot VMs for dev cost optimisation
+gpu_node_pool_spot          = false # §3, §7: GPU Spot stays off in every posture
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # ─── Storage (Dev: Smaller, US-resident) ──────────────────────────────────────

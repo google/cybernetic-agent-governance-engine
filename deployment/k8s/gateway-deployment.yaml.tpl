@@ -16,6 +16,15 @@ spec:
         app: gateway
     spec:
       serviceAccountName: cage-gateway-sa
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-spot
+                    operator: NotIn
+                    values:
+                      - "true"
       containers:
         - name: gateway
           image: ${REGISTRY_URL}/gateway:latest

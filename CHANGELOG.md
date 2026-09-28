@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **GKE Sole Cloud Target, Regional Prod, Dataplane V2 FQDN NetworkPolicy & Perimeter Hardening (Step 6f)** (`infra/targets/gcp-gke/`, `infra/modules/gcp_gke_cluster/`, `deployment/k8s/cilium/`):
+  Retired `gcp-cloudrun` as a deployment target so `gcp-gke` is the sole cloud deployment target alongside `agnostic`.
+  Made GKE clusters regional in `prod` (`location = var.region`) and zonal in `dev`/`staging` (`location = var.zone`),
+  enabled GKE Dataplane V2 (`enable_dataplane_v2 = true`) and `enable_fqdn_network_policy = true` in every posture,
+  standardized the 4-node-pool topology (`general`, `general-spot` in `staging` only, `gpu-l4` with Spot disabled in all postures, and `clickhouse` on local NVMe SSD) with anti-Spot `nodeAffinity` on governance-critical pods (`gateway`, `reconciliation-worker`),
+  rewrote `deployment/k8s/cilium/` from L7 `CiliumNetworkPolicy` to Kubernetes `NetworkPolicy` (`networking.k8s.io/v1`) + GKE `FQDNNetworkPolicy` (`networking.gke.io/v1alpha1`) with restricted DNS egress (`kube-dns` + Cloud DNS `169.254.169.254/32`), Memorystore PSC `ipBlock` on TLS port `6379`, and pod rollout restart triggers on policy change,
+  wired `vpc_network`, Binary Authorization, VPC Service Controls, Cloud Armor WAF (`BackendConfig`), and Cloud DNS in `infra/targets/gcp-gke/perimeter.tf`,
+  and updated OSCAL `SC-7` narratives and Tier 3 commercial retail-banking ledger API customer-responsibility statements.
 - **provider_08 — Verdict runtime evidence `NormativeProvider`** (`src/integrations/provider_08/`):
   synchronous adapter for https://verdict.systems/api/cage covering all three seam
   endpoints (`/legal-baseline/{region}`, `/validate/fria`, `/evidence-chain/{thread_id}`),

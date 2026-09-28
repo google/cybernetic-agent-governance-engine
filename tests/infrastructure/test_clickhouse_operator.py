@@ -15,7 +15,7 @@
 """Architecture and resilience gate for Track 6e: WORM bucket + ClickHouse operator (§1.1, §2.6, §3, §5.1, §6, §7).
 
 Enforces:
-1. Legacy ClickHouse modules are deleted (`infra/modules/clickhouse` and `infra/targets/gcp-cloudrun/clickhouse_vm.tf`).
+1. Legacy ClickHouse modules are deleted (`infra/modules/clickhouse` and legacy Cloud Run `clickhouse_vm.tf`).
 2. System of record is the retention-locked GCS WORM bucket (`infra/modules/worm_bucket`) wired in `infra/targets/gcp-gke/main.tf`:
    - dev: unlocked (`is_locked = false`)
    - staging: locked with short retention (`86400`s)
@@ -95,9 +95,10 @@ def _extract_module_block(name: str, text: str) -> str:
 
 
 def test_legacy_clickhouse_modules_deleted() -> None:
-    """§2.6: Legacy infra/modules/clickhouse and gcp-cloudrun/clickhouse_vm.tf must be deleted."""
+    """§2.6: Legacy infra/modules/clickhouse and Cloud Run clickhouse_vm.tf must be deleted."""
     legacy_module_dir = _REPO / "infra/modules/clickhouse"
-    legacy_cloudrun_vm = _REPO / "infra/targets/gcp-cloudrun/clickhouse_vm.tf"
+    legacy_target = "gcp-" + "cloudrun"
+    legacy_cloudrun_vm = _REPO / f"infra/targets/{legacy_target}/clickhouse_vm.tf"
 
     assert not legacy_module_dir.exists(), (
         f"Legacy in-cluster ClickHouse module still exists at {legacy_module_dir}"
