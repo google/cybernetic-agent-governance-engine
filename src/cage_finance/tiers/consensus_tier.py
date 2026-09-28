@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from pathlib import Path
 from typing import Any
 
 from src.gateway.governance.consensus.engine import (
     ConsensusGate,
     ConsensusModelRegistry,
+    extract_field_magnitude,
     load_critic_specs,
 )
 from src.gateway.governance.contracts import (
@@ -60,8 +62,7 @@ def build_finance_consensus_contribution(
     return ConsensusContribution(
         critics=load_finance_critics(),
         threshold=resolved_threshold,
-        magnitude_extractor=lambda p: float(p.get("amount", 0.0) or 0.0),
-        quorum=2,
+        magnitude_extractor=extract_field_magnitude("amount"),
         high_stakes_actions=frozenset({"HIGH_VALUE_TRADE"}),
     )
 
@@ -103,23 +104,62 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
         return action == "execute_trade"
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        amount = float(params.get("amount", 0.0))
-        result = await self.consensus.check_consensus(action, params, magnitude=amount)
-        if not isinstance(result, dict):
-            return []
-        status = result.get("status") or result.get("decision")
-        reason = str(result.get("reason", "Consensus check failed"))
-
-        if status in ("REJECT", "ERROR", "DENY"):
+        if self.consensus is None:
             return [
                 Violation(
                     tier=self.tier_name,
                     code="CONSENSUS_REJECTED",
-                    message=reason,
+                    message="Consensus engine is not configured",
                     kind=ViolationKind.HARD,
                 )
             ]
-        elif status == "ESCALATE":
+        raw_amount = params.get("amount", 0.0) if isinstance(params, dict) else None
+        if isinstance(raw_amount, bool) or raw_amount is None:
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="CONSENSUS_REJECTED",
+                    message="Invalid trade amount for consensus evaluation",
+                    kind=ViolationKind.HARD,
+                )
+            ]
+        try:
+            amount = float(raw_amount)
+        except (TypeError, ValueError):
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="CONSENSUS_REJECTED",
+                    message="Invalid trade amount for consensus evaluation",
+                    kind=ViolationKind.HARD,
+                )
+            ]
+        if not math.isfinite(amount) or amount < 0.0:
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="CONSENSUS_REJECTED",
+                    message="Non-finite or negative trade amount for consensus evaluation",
+                    kind=ViolationKind.HARD,
+                )
+            ]
+
+        result = await self.consensus.check_consensus(action, params, magnitude=amount)
+        if not isinstance(result, dict):
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="CONSENSUS_REJECTED",
+                    message="Invalid consensus result payload",
+                    kind=ViolationKind.HARD,
+                )
+            ]
+        status = result.get("status") if "status" in result else result.get("decision")
+        reason = str(result.get("reason") or "Consensus check failed")
+
+        if status in ("APPROVE", "APPROVED", "SKIPPED"):
+            return []
+        if status == "ESCALATE":
             return [
                 Violation(
                     tier=self.tier_name,
@@ -128,7 +168,14 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
                     kind=ViolationKind.HITL,
                 )
             ]
-        return []
+        return [
+            Violation(
+                tier=self.tier_name,
+                code="CONSENSUS_REJECTED",
+                message=reason,
+                kind=ViolationKind.HARD,
+            )
+        ]
 
     async def commit(
         self, action: str, params: dict[str, Any]

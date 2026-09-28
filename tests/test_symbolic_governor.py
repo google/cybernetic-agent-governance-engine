@@ -278,6 +278,7 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe, classi
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
+    consensus_engine.check_consensus.return_value = {"status": "SKIPPED"}
 
     governor = make_governor(
         opa=opa_client,
@@ -324,6 +325,7 @@ async def test_symbolic_governor_cbf_fail(mock_ftra_safe, classification_engine)
     )
 
     consensus_engine = AsyncMock()
+    consensus_engine.check_consensus.return_value = {"status": "SKIPPED"}
 
     governor = make_governor(
         opa=opa_client,

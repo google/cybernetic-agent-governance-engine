@@ -23,6 +23,15 @@ critics:
       Parameters: {params}
       Evaluate whether velocity, acceleration, and joint torque stay within safe dynamic envelopes.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
+    context_keys:
+      - velocity_m_s
+      - target_velocity_mm_s
+      - approach_distance_mm
+      - torque_nm
+      - separation_distance_mm
+      - joint_id
+      - zone_id
+      - operational_mode
 
   "Proximity Safety Critic":
     model: gemini-2.5-flash
@@ -33,3 +42,12 @@ critics:
       Parameters: {params}
       Evaluate minimum separation distance, workspace incursion risk, and stopping distance.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
+    context_keys:
+      - velocity_m_s
+      - target_velocity_mm_s
+      - approach_distance_mm
+      - torque_nm
+      - separation_distance_mm
+      - joint_id
+      - zone_id
+      - operational_mode

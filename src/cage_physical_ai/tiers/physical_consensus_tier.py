@@ -17,8 +17,12 @@
 from pathlib import Path
 from typing import Any
 
-from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
-from src.gateway.governance.consensus import ConsensusGate, load_critic_specs
+from src.cage_physical_ai.constants import CTRL_PHYS_004, PHYSICAL_AI_GOVERNED_ACTIONS
+from src.gateway.governance.consensus import (
+    ConsensusGate,
+    extract_field_magnitude,
+    load_critic_specs,
+)
 from src.gateway.governance.contracts import (
     CommitReceipt,
     ConsensusContribution,
@@ -38,6 +42,10 @@ HIGH_STAKES_PHYSICAL_ACTIONS: frozenset[str] = frozenset(
 )
 
 
+def _format_ctrl_phys_004(reason: str) -> str:
+    return reason if reason.startswith("[") else f"[{CTRL_PHYS_004}] {reason}"
+
+
 def load_physical_critics(path: Path = _CRITICS_PATH) -> tuple[CriticSpec, ...]:
     return load_critic_specs(path)
 
@@ -46,8 +54,7 @@ def build_physical_consensus_contribution() -> ConsensusContribution:
     return ConsensusContribution(
         critics=load_physical_critics(),
         threshold=2.0,
-        magnitude_extractor=lambda p: float(p.get("velocity_m_s", 0.0) or 0.0),
-        quorum=1.0,
+        magnitude_extractor=extract_field_magnitude("velocity_m_s"),
         high_stakes_actions=HIGH_STAKES_PHYSICAL_ACTIONS,
     )
 
@@ -90,20 +97,43 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.consensus_engine is None:
-            return []
-        result = await self.consensus_engine.check_consensus(
-            action_type=action, params=params
-        )
-        if result.get("status") not in ("APPROVE", "APPROVED", "SKIPPED"):
             return [
                 Violation(
                     tier=self.tier_name,
                     code="PHYSICAL_SAFETY_CONSENSUS_REJECTED",
-                    message=result.get("reason", "Consensus rejected physical action"),
-                    kind=ViolationKind.HITL,
+                    message=_format_ctrl_phys_004(
+                        "Physical safety consensus engine is not configured"
+                    ),
+                    kind=ViolationKind.HARD,
                 )
             ]
-        return []
+        result = await self.consensus_engine.check_consensus(
+            action_type=action, params=params
+        )
+        if not isinstance(result, dict):
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="PHYSICAL_SAFETY_CONSENSUS_REJECTED",
+                    message=_format_ctrl_phys_004(
+                        "Invalid physical safety consensus result payload"
+                    ),
+                    kind=ViolationKind.HARD,
+                )
+            ]
+        status = result.get("status")
+        reason = str(result.get("reason") or "Consensus rejected physical action")
+        if status in ("APPROVE", "APPROVED", "SKIPPED"):
+            return []
+        kind = ViolationKind.HITL if status == "ESCALATE" else ViolationKind.HARD
+        return [
+            Violation(
+                tier=self.tier_name,
+                code="PHYSICAL_SAFETY_CONSENSUS_REJECTED",
+                message=_format_ctrl_phys_004(reason),
+                kind=kind,
+            )
+        ]
 
     async def commit(
         self, action: str, params: dict[str, Any]

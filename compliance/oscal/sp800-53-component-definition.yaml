@@ -548,6 +548,12 @@ component-definition:
                 FTRA semantic validator enforces schema-aware validation of tool parameters
                 against ActionSchema definitions in src/gateway/governance/ftra/schemas.py,
                 preventing malformed types, numerical limit breaches, and payload injection.
+                Multi-critic consensus evaluation in src/gateway/governance/consensus/engine.py
+                enforces strict critic vote parsing (_parse_critic_vote), per-critic context_keys
+                parameter allowlisting, RFC 8785 canonical JSON parameter delimiting
+                (<params_json>...</params_json>), and pinned gateway prompt fields (role, action,
+                action_type, magnitude) so untrusted agent parameters cannot override critic
+                instructions or induce fail-open vote misinterpretation (POAM-2026-081).
               props:
                 - name: implementation-status
                   value: implemented
