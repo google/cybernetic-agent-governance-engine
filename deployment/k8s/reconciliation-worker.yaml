@@ -43,6 +43,17 @@ spec:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: cage-reconciler-sa
+          # §3: Governance-critical pods carry an explicit anti-Spot nodeAffinity rule
+          # so even a wildcard toleration cannot schedule them on Spot VMs.
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: cloud.google.com/gke-spot
+                        operator: NotIn
+                        values:
+                          - "true"
           securityContext:
             runAsNonRoot: true
             seccompProfile:
@@ -163,6 +174,5 @@ type: Opaque
 # stringData:
 #   reconciler-kms-key: ""              # REQUIRED
 
-# L7 FQDN overlay for this worker lives in deployment/k8s/cilium/reconciliation-worker-egress.yaml
-# Apply that file separately on GKE Dataplane V2 clusters.
-# On non-Cilium clusters the networking.k8s.io/v1 NetworkPolicies above provide L3/L4 isolation.
+# NetworkPolicy + GKE FQDNNetworkPolicy overlay for this worker lives in
+# deployment/k8s/cilium/reconciliation-worker-egress.yaml.

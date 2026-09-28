@@ -365,7 +365,7 @@ resource "kubernetes_config_map" "clickhouse_config" {
     EOT
 
     # §2.6: ReplicatedMergeTree + 3-node ClickHouse Keeper coordination in prod.
-    "remote_servers_and_keeper.xml" = local.is_ha ? <<-EOT
+    "remote_servers_and_keeper.xml" = local.is_ha ? (<<-EOT
       <clickhouse>
         <remote_servers>
           <cage_cluster>
@@ -406,11 +406,12 @@ resource "kubernetes_config_map" "clickhouse_config" {
         </macros>
       </clickhouse>
     EOT
-    : <<-EOT
+    ) : (<<-EOT
       <clickhouse>
         <!-- Single-node dev/staging query plane on local SSD (no Keeper required) -->
       </clickhouse>
     EOT
+    )
   }
 }
 

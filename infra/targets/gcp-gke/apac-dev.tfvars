@@ -85,6 +85,8 @@ enable_audit_logging           = true  # MAS Notice 655 §10 — mandatory
 enable_cmek                    = false
 enable_private_master_endpoint = false
 enable_pod_security_standards  = false # Apply manually via pod-security-admission.yaml
+enable_dataplane_v2            = true
+enable_fqdn_network_policy     = true
 
 # SECURITY (C-06): Restrict to RFC 1918 private ranges only.
 # Never use 0.0.0.0/0 — it exposes the GKE API server to the internet.
@@ -115,7 +117,7 @@ gpu_node_pool_min_count     = 0  # cost-opt: scale to zero when idle; cluster au
 gpu_node_pool_max_count     = 2
 gpu_node_pool_initial_count = 1
 gpu_node_pool_name          = "gpu-node-pool-nvidia-l4"
-gpu_node_pool_spot          = true
+gpu_node_pool_spot          = false # §3, §7: GPU Spot stays off in every posture
 gpu_node_locations          = ["asia-southeast1-a", "asia-southeast1-b", "asia-southeast1-c"]
 
 # ─── Storage (Dev: Smaller, Singapore-resident) ────────────────────────────────

@@ -115,7 +115,8 @@ spec:
           port: 8181
 
 ---
-# Policy 5: Allow pods in governance-stack to reach Redis on port 6379
+# Policy 5: Allow pods in governance-stack to reach Memorystore for Valkey PSC endpoint
+# (or local Redis) on TLS port 6379
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -130,6 +131,8 @@ spec:
     - Egress
   egress:
     - to:
+        - ipBlock:
+            cidr: 10.128.0.0/20
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: governance-stack
@@ -168,7 +171,8 @@ spec:
           port: 3000 # Langfuse OTLP HTTP (/api/public/otel/v1/traces)
 
 ---
-# Policy 7: Allow DNS egress (required for all cluster DNS resolution)
+# Policy 7: Allow DNS egress strictly to kube-dns and Cloud DNS metadata IP (§5.3)
+# Never open port 53 to 0.0.0.0/0 so pods cannot bypass GKE FQDNNetworkPolicy DNS snooping.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -182,7 +186,16 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - ports:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
         - protocol: UDP
           port: 53
         - protocol: TCP

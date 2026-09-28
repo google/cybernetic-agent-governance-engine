@@ -81,11 +81,12 @@ locals {
 module "gke" {
   source = "../../modules/gcp_gke_cluster"
 
-  project_id   = var.project_id
-  region       = var.region
-  zone         = var.zone
-  cluster_name = var.cluster_name
-  environment  = var.environment
+  project_id       = var.project_id
+  region           = var.region
+  zone             = var.zone
+  cluster_name     = var.cluster_name
+  environment      = var.environment
+  regional_cluster = var.regional_cluster
 
   # Security posture toggles
   enable_nist_compliance         = var.enable_nist_compliance
@@ -96,19 +97,30 @@ module "gke" {
   enable_private_master_endpoint = var.enable_private_master_endpoint
   enable_private_nodes           = var.enable_private_nodes
   enable_dataplane_v2            = var.enable_dataplane_v2
+  enable_fqdn_network_policy     = var.enable_fqdn_network_policy
+  release_channel                = var.release_channel
+  min_master_version             = var.min_master_version
+  cluster_dns_provider           = var.cluster_dns_provider
 
   # NIST-specific configuration
   authorized_networks = var.authorized_networks
   kms_key_id          = local.cmek_key_id
 
-  # Node pools
+  # Pool 1: General node pool (§3: general)
   primary_node_pool_machine_type  = var.primary_node_pool_machine_type
   primary_node_pool_min_count     = var.primary_node_pool_min_count
   primary_node_pool_max_count     = var.primary_node_pool_max_count
   primary_node_pool_initial_count = var.primary_node_pool_initial_count
   primary_node_pool_disk_type     = var.primary_node_pool_disk_type
 
-  # GPU node pool
+  # Pool 2: General-spot node pool (§3: general-spot, staging 0-5)
+  enable_general_spot_node_pool = var.enable_general_spot_node_pool
+  general_spot_machine_type     = var.general_spot_machine_type
+  general_spot_min_count        = var.general_spot_min_count
+  general_spot_max_count        = var.general_spot_max_count
+  general_spot_initial_count    = var.general_spot_initial_count
+
+  # Pool 3: GPU node pool (§3: gpu-l4, spot=false in every posture)
   enable_gpu_node_pool        = var.enable_gpu_node_pool
   gpu_type                    = var.gpu_type
   gpu_count                   = var.gpu_count
@@ -119,10 +131,20 @@ module "gke" {
   gpu_node_pool_spot          = var.gpu_node_pool_spot
   gpu_node_locations          = var.gpu_node_locations
 
+  # Pool 4: ClickHouse node pool (§3: clickhouse, local SSD, tainted)
+  enable_clickhouse_node_pool          = var.enable_clickhouse_node_pool
+  clickhouse_node_pool_machine_type    = var.clickhouse_node_pool_machine_type
+  clickhouse_node_pool_min_count       = var.clickhouse_node_pool_min_count
+  clickhouse_node_pool_max_count       = var.clickhouse_node_pool_max_count
+  clickhouse_node_pool_initial_count   = var.clickhouse_node_pool_initial_count
+  clickhouse_node_pool_local_ssd_count = var.clickhouse_node_pool_local_ssd_count
+
   # GCP-specific features
   enable_gcs_fuse_csi = var.enable_gcs_fuse_csi
 
   # Networking
+  network                = var.network
+  subnetwork             = var.subnetwork
   pod_cidr               = var.pod_cidr
   service_cidr           = var.service_cidr
   master_ipv4_cidr_block = var.master_ipv4_cidr_block
@@ -751,6 +773,10 @@ module "gateway" {
   service_account_name = kubernetes_service_account.workload["gateway"].metadata[0].name
   kms_governance_key   = local.gateway_seal_key_version
   reconciler_kms_key   = local.reconciler_snapshot_key_version
+
+  # §5.3, §7: Trigger gateway pod rollout whenever network/FQDN policy specs change
+  # so pre-change connections do not outlive a policy tightening.
+  network_policy_hash = local.network_policy_spec_hash
 
   depends_on = [module.app_secrets, module.opa, module.vllm, module.memorystore_governance, module.service_mesh]
 }

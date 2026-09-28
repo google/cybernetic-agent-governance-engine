@@ -1,62 +1,55 @@
-# Cilium L7 NetworkPolicy Overlay
+# GKE Dataplane V2 NetworkPolicy & FQDNNetworkPolicy Overlay
 
-This directory contains `apiVersion: cilium.io/v2` (`CiliumNetworkPolicy`) resources that form an **optional L7 security overlay** on top of CAGE's portable Kubernetes `networking.k8s.io/v1` NetworkPolicy baseline.
+This directory contains Kubernetes `networking.k8s.io/v1` (`NetworkPolicy`) and GKE `networking.gke.io/v1alpha1` (`FQDNNetworkPolicy`) resources enforced by **GKE Dataplane V2** (Cilium/eBPF via `anetd`).
 
 ---
 
-## Requirements
+## Requirements & Architecture (§5.3)
 
-- **GKE Clusters**: GKE Dataplane V2 must be enabled (`enable_dataplane_v2 = true` in Terraform). GKE Dataplane V2 runs Cilium and eBPF via the `anetd` DaemonSet in `kube-system`.
-- **Non-GKE Clusters (EKS, AKS, k3s, OpenShift)**: Requires self-managed open-source Cilium CNI (v1.12+) installed on the cluster.
-- **Agnostic / Default Posture**: On standard Kubernetes clusters without Cilium/Dataplane V2 (e.g. running Calico, Flannel, AWS VPC CNI, Azure CNI), **do not apply this directory**. The base `networking.k8s.io/v1` policies in `../network-policy.yaml`, `../network-policy-hardening.yaml`, and `../ftra-network-policy.yaml` provide complete L3/L4 isolation (default deny, namespace segmentation, port restrictions) across all conformant Kubernetes environments.
-
-> [!WARNING]
-> On GKE clusters where Dataplane V2 is disabled (standard Calico addon), `kubectl apply -f deployment/k8s/cilium/` may succeed if CRDs are registered, but **no enforcement occurs**. Only apply this directory on clusters running active Cilium (`anetd`).
+- **GKE Dataplane V2 & FQDN Network Policy**: Both `enable_dataplane_v2 = true` and `enable_fqdn_network_policy = true` are enabled by default in `infra/modules/gcp_gke_cluster/` across all postures (`dev`, `staging`, `prod`). The cluster pins `release_channel = "REGULAR"` and `min_master_version = "1.28"` (≥ `1.27.1-gke.400`).
+- **L3/L4 + DNS-Snooped FQDN Enforcement**: GKE's managed Cilium dataplane does not enforce L7 `CiliumNetworkPolicy` HTTP-method or DNS-pattern rules. Instead, `FQDNNetworkPolicy` (`networking.gke.io/v1alpha1`) intercepts DNS responses from `kube-dns` or Cloud DNS and programs the resolved IPs into Cilium's eBPF policy map at L3/L4.
+- **Restricted DNS Egress**: Because `FQDNNetworkPolicy` relies on DNS snooping at `kube-dns` or Cloud DNS (`169.254.169.254/32`), port 53 egress is strictly restricted to `kube-system` (`k8s-app: kube-dns`) and `169.254.169.254/32` — never open to `0.0.0.0/0`. Custom CoreDNS, external resolvers, and DoH/DoT are prohibited.
+- **Single-Label Prefix Wildcards**: `FQDNNetworkPolicy` wildcards use single-label prefixes only (`*.googleapis.com`, `*.ghcr.io`, `*.pkg.dev`).
+- **Memorystore PSC Egress**: Egress from `reconciliation-worker` to managed Memorystore for Valkey uses an `ipBlock` for the Private Service Connect (PSC) endpoint CIDR on TLS port `6379`.
+- **Connection Re-Evaluation on Policy Change**: Pre-existing connections opened before a policy change are not re-evaluated by `FQDNNetworkPolicy`. Terraform (`infra/targets/gcp-gke/network_policy.tf`) computes a SHA-256 hash (`local.network_policy_spec_hash`) across all policy specs and injects it into `cage.io/network-policy-hash` on pod templates to trigger a rolling restart whenever egress policy specs change.
 
 ---
 
 ## Apply Order
 
-Always apply the portable base layer first, followed by the Cilium overlay:
+Always apply the base `NetworkPolicy` and `FQDNNetworkPolicy` resources before workload Deployments (or trigger a rollout restart after policy changes):
 
 ```bash
-# 1. Base L3/L4 NetworkPolicy layer (portable across all conformant K8s clusters)
+# 1. Base L3/L4 NetworkPolicy layer
 kubectl apply -f deployment/k8s/network-policy.yaml
 kubectl apply -f deployment/k8s/network-policy-hardening.yaml
 kubectl apply -f deployment/k8s/ftra-network-policy.yaml
 kubectl apply -f deployment/k8s/lula-network-policy.yaml
 kubectl apply -f deployment/k8s/linkerd-mtls-policy.yaml
 
-# 2. Cilium L7 FQDN Overlay (GKE Dataplane V2 or Cilium-enabled clusters only)
-# Verify anetd / cilium daemon is running first:
+# 2. GKE Dataplane V2 FQDNNetworkPolicy + Egress Lockdown layer
 kubectl get ds -n kube-system anetd
 kubectl apply -f deployment/k8s/cilium/
+
+# 3. Restart governance workloads if policies were updated on a running cluster
+kubectl rollout restart deployment/gateway -n governance-stack
 ```
 
 ---
 
 ## Manifest Inventory
 
-| Manifest | Kind | Description |
+| Manifest | Kind(s) | Description |
 |---|---|---|
-| `egress-lockdown.yaml` | `CiliumNetworkPolicy` | FQDN allowlist for Gateway (external LLM APIs: OpenAI, Anthropic, Gemini); internal-only lockdown for `governed-financial-advisor` and `sovereign-agent` pods; explicit cluster-wide external egress default-deny. |
-| `trivy-egress-fqdn.yaml` | `CiliumNetworkPolicy` | FQDN egress allowlist for Trivy vulnerability scanner (`ghcr.io`, `pkg.dev`) via DNS proxy interception. |
-| `reconciliation-worker-egress.yaml` | `CiliumNetworkPolicy` | Egress isolation for the ground-truth reconciler CronJob (Cloud KMS, Redis, Langfuse OTLP, and internal DNS). |
+| `egress-lockdown.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | FQDN allowlist for Gateway (external LLM APIs, `*.googleapis.com`, `metadata.google.internal`, Langfuse, OFAC); restricted DNS egress (`kube-dns` + `169.254.169.254/32`); internal-only lockdown for `governed-financial-advisor` and `sovereign-agent` pods; cluster-wide external egress default-deny. |
+| `trivy-egress-fqdn.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | FQDN egress allowlist for Trivy vulnerability scanner (`ghcr.io`, `*.ghcr.io`, `pkg.dev`, `*.pkg.dev`) + restricted DNS egress. |
+| `reconciliation-worker-egress.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | Egress isolation for the ground-truth reconciler CronJob (`cloudkms.googleapis.com` via `FQDNNetworkPolicy`, Memorystore for Valkey PSC CIDR via `ipBlock` on TLS port `6379`, Langfuse OTLP on port `3000`, and restricted DNS). |
 
 ---
 
-## Verification & Observability
-
-Evidence commands return live stream data only when `anetd` is running and enforcing policies:
+## Verification
 
 ```bash
-# Verify CiliumNetworkPolicies are registered:
-kubectl get ciliumnetworkpolicies -n governance-stack
-
-# Stream real-time L7 DNS proxy and egress flow inspection:
-cilium monitor --type l7 --from-label app=gateway
-
-# Monitor sovereign agent lockdown (should show zero external egress):
-cilium monitor --type l7 --from-label role=sovereign-agent
+# Verify NetworkPolicies and FQDNNetworkPolicies are registered:
+kubectl get networkpolicy,fqdnnetworkpolicy -n governance-stack
 ```
-

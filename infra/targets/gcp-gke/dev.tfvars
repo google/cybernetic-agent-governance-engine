@@ -29,6 +29,8 @@ enable_pod_security_standards  = false
 # Required: org policy constraints/compute.vmExternalIpAccess blocks nodes with external IPs.
 # Private nodes use NAT egress (Cloud NAT) instead of external IPs.
 enable_private_nodes           = true
+enable_dataplane_v2            = true
+enable_fqdn_network_policy     = true
 
 # Authorized networks for private cluster access
 authorized_networks = [
@@ -40,14 +42,17 @@ authorized_networks = [
 
 # ─── Cost Optimization (Dev: Cheap Nodes, Scale to Zero) ─────────────────────
 
-# Primary pool: Small, cheap nodes
+# Pool 1: General pool: Small, cheap nodes
 primary_node_pool_machine_type  = "e2-standard-4"
 primary_node_pool_min_count     = 1
 primary_node_pool_max_count     = 5
 primary_node_pool_initial_count = 1
 primary_node_pool_disk_type     = "pd-standard" # Cheaper
 
-# GPU pool: L4 (24 GiB VRAM) — required for 7B+ models.
+# Pool 2: General-spot pool disabled in dev (§3: staging only)
+enable_general_spot_node_pool = false
+
+# Pool 3: GPU pool: L4 (24 GiB VRAM) — required for 7B+ models.
 # T4 (16 GiB) cannot fit model weights (14.25 GiB) + KV cache.
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
@@ -57,8 +62,15 @@ gpu_node_pool_min_count     = 0               # cost-opt: scale to zero when idl
 gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
 gpu_node_pool_initial_count = 1
 gpu_node_pool_name          = "gpu-node-pool-nvidia-l4" # used as cloud.google.com/gke-nodepool nodeSelector
-gpu_node_pool_spot          = false                      # on-demand: prevents spot preemptions from disrupting measurement runs
+gpu_node_pool_spot          = false                      # §3, §7: GPU Spot stays off in every posture
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
+
+# Pool 4: ClickHouse pool: 1 local-SSD node in dev (§3)
+enable_clickhouse_node_pool        = true
+clickhouse_node_pool_machine_type  = "n2-standard-4"
+clickhouse_node_pool_min_count     = 1
+clickhouse_node_pool_max_count     = 1
+clickhouse_node_pool_initial_count = 1
 
 # ─── Storage (Dev: Smaller, Cheaper) ──────────────────────────────────────────
 storage_class = "standard-rwo" # Correct GKE storage class

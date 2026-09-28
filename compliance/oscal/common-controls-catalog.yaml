@@ -691,10 +691,12 @@ component-definition:
               description: >
                 GCP encrypts all data at rest by default using AES-256 encryption with
                 GCP-managed keys. This covers all storage media within GCP data centers
-                including persistent disks, Cloud SQL databases, and GCS buckets.
-                CAGE adds a second encryption layer via CMEK for Cloud SQL PostgreSQL
-                (Langfuse metadata and session data) and GCS audit log archive buckets,
-                ensuring CAGE controls the cryptographic boundary for sensitive data.
+                including persistent disks, Cloud SQL databases, Memorystore for Valkey
+                instances, and GCS buckets. CAGE adds a second encryption layer via CMEK
+                (staging and prod) for Cloud SQL PostgreSQL (Langfuse metadata), dual
+                Memorystore for Valkey instances (governance and app), and the retention-locked
+                GCS WORM bucket (system of record), ensuring CAGE controls the cryptographic
+                boundary for sensitive data.
               props:
                 - name: implementation-status
                   value: "shared"
@@ -706,13 +708,12 @@ component-definition:
                 Physical disk encryption at the storage layer inherited from GCP.
 
                 CAGE RESPONSIBILITY: (1) Enable CMEK on Cloud SQL instance for Langfuse
-                PostgreSQL data (deployment/terraform/cloudsql.tf).
-                (2) Enable CMEK on GCS buckets storing audit log archives
-                (deployment/terraform/storage.tf).
-                (3) Enable GCS object versioning on audit buckets for WORM-equivalent protection.
+                PostgreSQL data (infra/modules/cloudsql_postgres/main.tf).
+                (2) Enable CMEK and retention policy lock on GCS WORM buckets storing audit
+                evidence (infra/modules/worm_bucket/main.tf).
+                (3) Enable CMEK on dual Memorystore for Valkey instances (governance and app)
+                in staging and prod postures (infra/modules/memorystore_valkey/main.tf).
                 (4) Verify CMEK configuration via Terraform plan and Cloud Audit Logs.
-                (5) Redis cache stores transient session state only; CAGE ensures no persistent
-                sensitive data is stored in Redis beyond session TTL.
 
             # =================================================================
             # AU-3: Content of Audit Records

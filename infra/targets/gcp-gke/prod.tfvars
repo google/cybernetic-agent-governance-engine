@@ -51,15 +51,19 @@ enable_nist_compliance     = true
 enable_eu_ecb_compliance   = false
 enable_apac_mas_compliance = false
 # POAM-024: HA decoupled from compliance — set explicitly true for production
+regional_cluster               = true
 enable_high_availability       = true
 enable_deletion_protection     = true
 enable_binary_authorization    = true
 enable_audit_logging           = true
-enable_cmek                    = false # Enable when KMS key is configured
-enable_private_master_endpoint = false # Enable when VPN is configured
+enable_cmek                    = true
+enable_private_master_endpoint = true
+enable_private_nodes           = true
 enable_pod_security_standards  = true
 pod_security_level             = "restricted"
 enable_dataplane_v2            = true
+enable_fqdn_network_policy     = true
+kms_signing_protection_level   = "HSM"
 
 # Prod: Lock down to corporate VPN only (REPLACE with your CIDR)
 authorized_networks = [
@@ -72,16 +76,19 @@ authorized_networks = [
 # CMEK: Uncomment when Cloud KMS key is created
 # kms_key_id = "projects/your-project/locations/us-central1/keyRings/cage-prod/cryptoKeys/gke-disk"
 
-# ─── High Availability (Prod: Multi-Zone, Larger Nodes) ──────────────────────
+# ─── High Availability (Prod: Regional Multi-Zone, Larger Nodes) ─────────────
 
-# Primary pool: Production-grade nodes
+# General pool: Production-grade nodes (3-10 across 3 zones)
 primary_node_pool_machine_type  = "e2-standard-8"
 primary_node_pool_min_count     = 3 # HA requires 3+ nodes
 primary_node_pool_max_count     = 10
 primary_node_pool_initial_count = 3
 primary_node_pool_disk_type     = "pd-ssd" # Faster
 
-# GPU pool: Production L4 GPUs, always available, on-demand only
+# General-spot pool: disabled in prod (§3: 0 in dev & prod, 0-5 in staging)
+enable_general_spot_node_pool = false
+
+# GPU pool: Production L4 GPUs, always available, on-demand only (Spot OFF)
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4" # Better than T4
 gpu_count                   = 1
@@ -90,6 +97,13 @@ gpu_node_pool_min_count     = 2 # Always-on for production
 gpu_node_pool_max_count     = 5
 gpu_node_pool_initial_count = 2
 gpu_node_pool_spot          = false # on-demand — production workloads must not be preempted
+
+# ClickHouse pool: 3 nodes across 3 zones in prod (§3)
+enable_clickhouse_node_pool        = true
+clickhouse_node_pool_machine_type  = "n2-standard-4"
+clickhouse_node_pool_min_count     = 3
+clickhouse_node_pool_max_count     = 3
+clickhouse_node_pool_initial_count = 3
 
 # ─── Storage (Prod: Larger, Faster) ───────────────────────────────────────────
 storage_class = "pd-ssd"

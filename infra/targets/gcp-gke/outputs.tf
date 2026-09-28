@@ -70,8 +70,18 @@ output "gcs_bucket" {
 # ─── kubectl Access Command ───────────────────────────────────────────────────
 
 output "kubectl_command" {
-  description = "Command to configure kubectl access"
-  value       = "gcloud container clusters get-credentials ${module.gke.cluster_name} --zone=${var.zone} --project=${var.project_id}"
+  description = "Command to configure kubectl access (uses --region for regional prod, --zone for zonal dev/staging)"
+  value       = "gcloud container clusters get-credentials ${module.gke.cluster_name} ${module.gke.is_regional ? "--region=${var.region}" : "--zone=${var.zone}"} --project=${var.project_id}"
+}
+
+output "node_pools" {
+  description = "Canonical 4-pool topology summary (§3)"
+  value       = module.gke.node_pools
+}
+
+output "network_policy_spec_hash" {
+  description = "SHA-256 hash of egress NetworkPolicy + FQDNNetworkPolicy specs (§5.3 rollout trigger)"
+  value       = local.network_policy_spec_hash
 }
 
 # ─── Deployment Summary ───────────────────────────────────────────────────────
@@ -83,6 +93,8 @@ output "deployment_summary" {
     environment             = var.environment
     project_id              = var.project_id
     cluster_name            = module.gke.cluster_name
+    cluster_location        = module.gke.cluster_location
+    is_regional             = module.gke.is_regional
     namespace               = module.namespace.name
     nist_compliance_enabled = var.enable_nist_compliance
     gpu_node_pool_enabled   = var.enable_gpu_node_pool

@@ -68,10 +68,28 @@ resource "kubernetes_deployment" "gateway" {
         labels = {
           app = "gateway"
         }
+        annotations = var.network_policy_hash != "" ? {
+          "cage.io/network-policy-hash" = var.network_policy_hash
+        } : {}
       }
 
       spec {
         service_account_name = var.service_account_name
+
+        # §3, §7 Pitfalls: Governance-critical gateway pods must NEVER schedule on Spot nodes.
+        affinity {
+          node_affinity {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
+                match_expressions {
+                  key      = "cloud.google.com/gke-spot"
+                  operator = "NotIn"
+                  values   = ["true"]
+                }
+              }
+            }
+          }
+        }
 
         security_context {
           run_as_non_root = true

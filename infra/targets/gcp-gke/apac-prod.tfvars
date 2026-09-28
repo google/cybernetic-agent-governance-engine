@@ -74,15 +74,19 @@ enable_nist_compliance     = false
 enable_eu_ecb_compliance   = false
 enable_apac_mas_compliance = true
 # POAM-024: HA decoupled from compliance — set explicitly true for production
+regional_cluster               = true
 enable_high_availability       = true
 enable_deletion_protection     = true
 enable_binary_authorization    = true
-enable_audit_logging           = true  # MAS Notice 655 §10 — mandatory
-enable_cmek                    = false # Enable when KMS key is configured
-enable_private_master_endpoint = false # Enable when VPN is configured
+enable_audit_logging           = true # MAS Notice 655 §10 — mandatory
+enable_cmek                    = true
+enable_private_master_endpoint = true
+enable_private_nodes           = true
 enable_pod_security_standards  = true
 pod_security_level             = "restricted"
 enable_dataplane_v2            = true
+enable_fqdn_network_policy     = true
+kms_signing_protection_level   = "HSM"
 
 # Prod: Lock down to corporate VPN only (REPLACE with your SG VPN CIDR)
 authorized_networks = [
@@ -92,14 +96,17 @@ authorized_networks = [
   }
 ]
 
-# ─── High Availability (APAC Prod: Multi-Zone, MAS TRM §7.2 availability) ─────
+# ─── High Availability (APAC Prod: Regional Multi-Zone, MAS TRM §7.2 availability) ─
 
-# Primary pool: Production-grade nodes in asia-southeast1
+# General pool: Production-grade nodes in asia-southeast1
 primary_node_pool_machine_type  = "e2-standard-8"
 primary_node_pool_min_count     = 3 # HA requires 3+ nodes (MAS TRM §7.2)
 primary_node_pool_max_count     = 10
 primary_node_pool_initial_count = 3
 primary_node_pool_disk_type     = "pd-ssd"
+
+# General-spot pool: disabled in prod (§3: 0 in dev & prod)
+enable_general_spot_node_pool = false
 
 # GPU pool: L4 available in asia-southeast1-b, asia-southeast1-c
 enable_gpu_node_pool        = true
@@ -109,9 +116,16 @@ gpu_node_pool_machine_type  = "g2-standard-8"
 gpu_node_pool_min_count     = 2 # Always-on for production
 gpu_node_pool_max_count     = 5
 gpu_node_pool_initial_count = 2
-gpu_node_pool_name          = "gpu-node-pool-nvidia-l4"
+gpu_node_pool_name          = "gpu-l4"
 gpu_node_pool_spot          = false # No spot VMs in APAC prod (MAS TRM §7.2 availability)
 gpu_node_locations          = ["asia-southeast1-a", "asia-southeast1-b", "asia-southeast1-c"]
+
+# ClickHouse pool: 3 nodes across 3 zones in APAC prod (§3)
+enable_clickhouse_node_pool        = true
+clickhouse_node_pool_machine_type  = "n2-standard-4"
+clickhouse_node_pool_min_count     = 3
+clickhouse_node_pool_max_count     = 3
+clickhouse_node_pool_initial_count = 3
 
 # ─── Storage (APAC Prod: Singapore-resident, MAS TRM §4.2) ────────────────────
 storage_class           = "pd-ssd"

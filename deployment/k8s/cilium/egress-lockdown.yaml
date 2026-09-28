@@ -14,21 +14,17 @@
 
 ---
 # =============================================================================
-# Policy 1: Gateway Egress — Strict FQDN allowlist for external LLM APIs
+# Policy 1a: Gateway FQDN Egress — Strict FQDN allowlist for external APIs
 #
-# The gateway pod is the ONLY pod permitted to contact external AI providers.
-# All other pods' egress is blocked at L3/L4 by network-policy.yaml
-# default-deny-egress. This policy layers L7 FQDN enforcement on top.
-#
-# Approved external endpoints:
-#   api.openai.com        — OpenAI GPT-4 / Embedding API
-#   api.anthropic.com     — Anthropic Claude API
-#   generativelanguage.googleapis.com — Google Gemini API
-#   *.googleapis.com      — GCP service APIs (Secret Manager, Cloud Logging, GCS)
-#   us.i.posthog.com      — Langfuse analytics (SaaS)
+# Rewritten from CiliumNetworkPolicy to GKE FQDNNetworkPolicy
+# (networking.gke.io/v1alpha1) + Kubernetes NetworkPolicy (networking.k8s.io/v1).
+# GKE Dataplane V2 enforces FQDN policies at L3/L4 by snooping DNS replies from
+# kube-dns or Cloud DNS (169.254.169.254/32) and programming resolved IPs into
+# Cilium's eBPF policy map. L7 HTTP-method and DNS-pattern rules are not
+# supported on GKE Dataplane V2 and have been removed (recorded in OSCAL SC-7).
 # =============================================================================
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
+apiVersion: networking.gke.io/v1alpha1
+kind: FQDNNetworkPolicy
 metadata:
   name: gateway-egress-fqdn-allowlist
   namespace: governance-stack
@@ -38,87 +34,115 @@ metadata:
   annotations:
     compliance.nist.gov/control: "SC-7,AC-4,SI-3"
     compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-05-17"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
     cage.io/poam: "POAM-007,POAM-011"
-    cage.io/evidence: "cilium monitor --type l7"
+    cage.io/RolloutTrigger: "restart-on-policy-change"
 spec:
-  # H-14: Corrected label selector — the gateway pod carries label app=gateway,
-  # NOT app=governed-financial-advisor.  The previous selector was matching the
-  # wrong pod, blocking legitimate gateway egress and granting unintended
-  # external egress to the financial advisor pod.
-  endpointSelector:
+  podSelector:
     matchLabels:
       app: gateway
+  policyTypes:
+    - Egress
   egress:
-    # ---- Rule 1: DNS proxy — allows ALL internal DNS resolution -----------
-    # The Cilium DNS proxy intercepts UDP 53 responses and dynamically
-    # binds resolved IPs to the FQDN rules below. This rule must come first.
-    - toEndpoints:
-        - matchLabels:
-            io.kubernetes.pod.namespace: kube-system
-            k8s-app: kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: UDP
-            - port: "53"
-              protocol: TCP
-          rules:
-            dns:
-              - matchPattern: "*"
+    # ---- Rule 1: Approved external AI provider APIs ----------------------
+    - to:
+        - fqdns:
+            - "api.openai.com"
+            - "api.anthropic.com"
+            - "generativelanguage.googleapis.com"
+      ports:
+        - protocol: TCP
+          port: 443
 
-    # ---- Rule 2: Approved external AI provider APIs ----------------------
-    - toFQDNs:
-        - matchName: "api.openai.com"
-        - matchName: "api.anthropic.com"
-        - matchName: "generativelanguage.googleapis.com"
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
-          rules:
-            http:
-              - method: "POST"   # Inference requests only
-              - method: "GET"    # Health/model listing
+    # ---- Rule 2: GCP service APIs (Cloud KMS, Cloud Logging, GCS) --------
+    # Wildcards use single-label prefix only (*.googleapis.com).
+    - to:
+        - fqdns:
+            - "*.googleapis.com"
+            - "metadata.google.internal"
+      ports:
+        - protocol: TCP
+          port: 443
 
-    # ---- Rule 3: GCP service APIs (Secret Manager, Cloud Logging, GCS) ---
-    - toFQDNs:
-        - matchPattern: "*.googleapis.com"
-        - matchPattern: "metadata.google.internal"  # GKE Workload Identity
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
+    # ---- Rule 3: Langfuse telemetry --------------------------------------
+    - to:
+        - fqdns:
+            - "us.i.posthog.com"
+            - "cloud.langfuse.com"
+      ports:
+        - protocol: TCP
+          port: 443
 
-    # ---- Rule 4: Langfuse SaaS telemetry ---------------------------------
-    - toFQDNs:
-        - matchName: "us.i.posthog.com"
-        - matchPattern: "cloud.langfuse.com"
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
+    # ---- Rule 4: OFAC Sanctions API (SDN list lookups) -------------------
+    - to:
+        - fqdns:
+            - "api.trade.gov"
+            - "www.treasury.gov"
+      ports:
+        - protocol: TCP
+          port: 443
 
-    # ---- Rule 5: OFAC Sanctions API (SDN list lookups) ------------------
-    - toFQDNs:
-        - matchName: "api.trade.gov"
-        - matchName: "www.treasury.gov"
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
+---
+# =============================================================================
+# Policy 1a-dns: Gateway L3/L4 Egress — DNS (kube-dns / Cloud DNS) & Memorystore PSC
+#
+# Restricts port 53 egress to kube-system (k8s-app: kube-dns) and Cloud DNS
+# metadata IP (169.254.169.254/32) so pods cannot bypass GKE Dataplane V2 DNS
+# snooping via external resolvers, and permits TLS port 6379 egress to the
+# Memorystore for Valkey PSC endpoint CIDR (§5.1 / §5.3 G6).
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-dns-egress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Memorystore for Valkey Governance PSC endpoint CIDR on TLS port 6379 (§5.1 / §5.3 G6)
+    - to:
+        - ipBlock:
+            cidr: 10.128.0.0/20
+      ports:
+        - protocol: TCP
+          port: 6379
+
 
 ---
 # =============================================================================
 # Policy 1b: Financial Advisor Egress — internal-only (H-14 companion rule)
 #
 # The governed-financial-advisor pod must NOT have external egress.
-# It communicates only with the gateway (port 8080) and internal services.
-# This rule replaces the unintended external egress that Policy 1 previously
-# granted to the financial advisor pod via the wrong label selector.
+# It communicates only with the gateway (port 8080), compliance-bridge (8090),
+# and cluster DNS (kube-dns / Cloud DNS).
 # =============================================================================
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
   name: financial-advisor-egress-internal-only
   namespace: governance-stack
@@ -128,64 +152,61 @@ metadata:
   annotations:
     compliance.nist.gov/control: "SC-7,AC-4,SI-3"
     compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-06-13"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
     cage.io/poam: "POAM-007"
     cage.io/description: >
       H-14 companion: restricts governed-financial-advisor to internal egress only.
       The pod must route all external calls through the gateway watchdog.
 spec:
-  endpointSelector:
+  podSelector:
     matchLabels:
       app: governed-financial-advisor
+  policyTypes:
+    - Egress
   egress:
-    # DNS — internal cluster names only
-    - toEndpoints:
-        - matchLabels:
-            io.kubernetes.pod.namespace: kube-system
-            k8s-app: kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: UDP
-            - port: "53"
-              protocol: TCP
-          rules:
-            dns:
-              - matchPattern: "*.governance-stack.svc.cluster.local"
-              - matchPattern: "*.svc.cluster.local"
+    # DNS — kube-dns and Cloud DNS metadata IP only (never 0.0.0.0/0)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
     # Gateway (orchestration return path and inference proxy)
-    - toEndpoints:
-        - matchLabels:
-            app: gateway
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: gateway
+      ports:
+        - protocol: TCP
+          port: 8080
     # Compliance bridge
-    - toEndpoints:
-        - matchLabels:
-            app: compliance-bridge
-      toPorts:
-        - ports:
-            - port: "8090"
-              protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: compliance-bridge
+      ports:
+        - protocol: TCP
+          port: 8090
 
 ---
 # =============================================================================
 # Policy 2: Sovereign Agent Egress — Strict internal-only lockdown
 #
 # Pods labelled role=sovereign-agent may ONLY reach:
-#   - kube-dns (DNS resolution — required for internal service discovery)
+#   - kube-dns / Cloud DNS (port 53)
 #   - OPA (policy evaluation — port 8181)
 #   - CAGE Gateway (orchestration callbacks — port 8080)
-#   - OTel Collector (audit trace emission — ports 4317/4318)
-#
-# ALL external egress is implicitly denied. A compromised agent pod cannot
-# exfiltrate data, contact command-and-control infrastructure, or query
-# external APIs directly — it MUST go through the gateway watchdog.
 # =============================================================================
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
   name: agent-egress-internal-only
   namespace: governance-stack
@@ -195,63 +216,59 @@ metadata:
   annotations:
     compliance.nist.gov/control: "SC-7,AC-4,SI-3,SC-39"
     compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-05-17"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
     cage.io/poam: "POAM-007"
-    cage.io/evidence: "cilium monitor --type l7 --from-label role=sovereign-agent"
 spec:
-  endpointSelector:
+  podSelector:
     matchLabels:
       role: sovereign-agent
+  policyTypes:
+    - Egress
   egress:
-    # ---- Rule 1: DNS — kube-dns only, with FQDN audit logging -----------
-    - toEndpoints:
-        - matchLabels:
-            io.kubernetes.pod.namespace: kube-system
-            k8s-app: kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: UDP
-            - port: "53"
-              protocol: TCP
-          rules:
-            dns:
-              - matchPattern: "*.governance-stack.svc.cluster.local"
-              - matchPattern: "*.svc.cluster.local"
-              # Block external DNS names — any attempt to resolve an external
-              # hostname from an agent pod is surfaced in cilium monitor logs
-              # as a policy violation for immediate alert.
+    # ---- Rule 1: DNS — kube-dns and Cloud DNS only -----------------------
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 
     # ---- Rule 2: OPA policy evaluation -----------------------------------
-    - toEndpoints:
-        - matchLabels:
-            app: opa
-      toPorts:
-        - ports:
-            - port: "8181"
-              protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - protocol: TCP
+          port: 8181
 
     # ---- Rule 3: CAGE Gateway (orchestration return path) ----------------
-    - toEndpoints:
-        - matchLabels:
-            app: governed-financial-advisor
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: gateway
+      ports:
+        - protocol: TCP
+          port: 8080
 
 ---
 # =============================================================================
 # Policy 3: Default-deny external egress for ALL governance-stack pods
 #
-# GKE Dataplane V2 replaces kube-proxy and Calico entirely.
-# These CiliumNetworkPolicies layer L7 FQDN enforcement on top of the
-# networking.k8s.io/v1 NetworkPolicies in ../network-policy.yaml
-# and ../network-policy-hardening.yaml (which enforce L3/L4 baseline).
-# Both layers are required; this directory is the L7 overlay.
+# Works alongside network-policy.yaml default-deny-egress for defence-in-depth.
+# Permits intra-namespace traffic and DNS resolution to kube-dns / Cloud DNS
+# while blocking direct external IP connects not authorized by FQDNNetworkPolicy.
 # =============================================================================
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
   name: default-deny-external-egress
   namespace: governance-stack
@@ -261,26 +278,31 @@ metadata:
   annotations:
     compliance.nist.gov/control: "SC-7,AC-4"
     compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-05-17"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
     cage.io/description: >
-      Explicit Cilium-layer default-deny for all external (non-cluster) egress.
-      Works alongside network-policy.yaml default-deny-egress for defence-in-depth.
-      Individual pods override this via specific CiliumNetworkPolicy rules above.
+      Explicit L3/L4 default-deny for all external (non-cluster) egress.
+      Works alongside network-policy.yaml default-deny-egress and GKE
+      FQDNNetworkPolicy resources on Dataplane V2.
 spec:
-  endpointSelector: {}
+  podSelector: {}
+  policyTypes:
+    - Egress
   egress:
-    # Allow intra-cluster traffic only (cluster CIDR is resolved by Cilium
-    # automatically; this rule permits any endpoint within the cluster).
-    - toEndpoints:
-        - {}  # any pod in governance-stack namespace
-    # DNS is required cluster-wide
-    - toEndpoints:
-        - matchLabels:
-            io.kubernetes.pod.namespace: kube-system
-            k8s-app: kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: UDP
-            - port: "53"
-              protocol: TCP
+    # Allow intra-namespace traffic only
+    - to:
+        - podSelector: {}
+    # DNS strictly restricted to kube-dns and Cloud DNS metadata IP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

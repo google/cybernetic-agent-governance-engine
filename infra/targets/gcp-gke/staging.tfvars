@@ -94,18 +94,19 @@ enable_high_availability = false # Single-replica scale (cost optimization)
 # provision-validate-destroy cycle (step 15).
 enable_deletion_protection = false
 
-# Cluster-scoped security controls (simplified for initial deployment)
-enable_binary_authorization    = false # Disabled for initial deployment (no attestations yet)
-enable_audit_logging           = false # Disabled to simplify initial deployment
-enable_cmek                    = false # Disabled: Requires KMS key setup first
-enable_pod_security_standards  = false # Disabled initially (may block pods during bootstrap)
-enable_private_master_endpoint = false # Keep master endpoint public for easier access
+# Cluster-scoped security controls (§1.1 staging posture: full security, 1-replica scale)
+regional_cluster               = false
+enable_binary_authorization    = true
+enable_audit_logging           = true
+enable_cmek                    = true
+enable_pod_security_standards  = true
+pod_security_level             = "restricted"
+enable_private_master_endpoint = false # Authorized networks restricted via VPN CIDR
 enable_private_nodes           = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
 
-# PR 1: Enable GKE Dataplane V2 for staging validation.
-# Staging is ephemeral — zero migration cost; new cluster per cycle.
-# Validates DPv2 + Cilium overlay + AgentSight coexistence before any prod change.
-enable_dataplane_v2 = true
+# §1.1 & §5.3: GKE Dataplane V2 + FQDN network policy enabled in every posture.
+enable_dataplane_v2        = true
+enable_fqdn_network_policy = true
 
 
 # Authorized networks: Allow all for initial staging deployment
@@ -119,15 +120,21 @@ authorized_networks = [
 
 # ─── Cost Optimization (Staging: Dev-Scale Hardware) ──────────────────────────
 
-# Primary pool: Small, cheap nodes (same as dev)
+# General pool: Small, cheap nodes (same as dev)
 primary_node_pool_machine_type  = "e2-standard-4" # Half the CPU/RAM of prod (e2-standard-8)
 primary_node_pool_min_count     = 1
 primary_node_pool_max_count     = 5
 primary_node_pool_initial_count = 1
 primary_node_pool_disk_type     = "pd-standard" # Cheaper than prod (pd-ssd)
 
-# GPU pool: L4 (24 GiB VRAM) — required for 7B+ models.
-# Scale to zero when idle to minimize cost during validation windows.
+# §3 General-spot pool: c3-highcpu-4, Spot, 0-5 in staging only, tainted cloud.google.com/gke-spot=true:NoSchedule
+enable_general_spot_node_pool        = true
+general_spot_node_pool_machine_type  = "c3-highcpu-4"
+general_spot_node_pool_min_count     = 0
+general_spot_node_pool_max_count     = 5
+general_spot_node_pool_initial_count = 0
+
+# §3 GPU pool: L4 (24 GiB VRAM) — required for 7B+ models, Spot OFF in every posture.
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
 gpu_count                   = 1
@@ -135,8 +142,15 @@ gpu_node_pool_machine_type  = "g2-standard-8" # Same as dev (32 GB RAM prevents 
 gpu_node_pool_min_count     = 0               # Cost-opt: scale to zero when idle
 gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
 gpu_node_pool_initial_count = 1
-gpu_node_pool_spot          = false # On-demand: prevent spot preemptions during validation
+gpu_node_pool_spot          = false # On-demand: Spot OFF in every posture (§3)
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
+
+# §3 ClickHouse pool: n2-standard-4 + local SSD, 1 node in staging, Spot OFF
+enable_clickhouse_node_pool        = true
+clickhouse_node_pool_machine_type  = "n2-standard-4"
+clickhouse_node_pool_min_count     = 1
+clickhouse_node_pool_max_count     = 1
+clickhouse_node_pool_initial_count = 1
 
 # ─── Storage (Staging: Dev-Scale, Cheap) ──────────────────────────────────────
 storage_class = "standard-rwo"

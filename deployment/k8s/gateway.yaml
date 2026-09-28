@@ -30,6 +30,17 @@ spec:
         app: gateway
     spec:
       serviceAccountName: cage-gateway-sa
+      # §3: Governance-critical pods carry an explicit anti-Spot nodeAffinity rule
+      # so even a wildcard toleration cannot schedule them on Spot VMs.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-spot
+                    operator: NotIn
+                    values:
+                      - "true"
       containers:
         - name: gateway
           # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
@@ -219,6 +230,8 @@ kind: Service
 metadata:
   name: gateway
   namespace: governance-stack
+  annotations:
+    cloud.google.com/backend-config: '{"default": "cage-gateway-backendconfig"}'
 spec:
   selector:
     app: gateway

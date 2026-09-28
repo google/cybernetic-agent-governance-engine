@@ -13,74 +13,110 @@
 # limitations under the License.
 
 ---
-# CiliumNetworkPolicy — reconciliation-worker egress isolation
+# =============================================================================
+# NetworkPolicy + FQDNNetworkPolicy — reconciliation-worker egress isolation
+#
+# Rewritten from CiliumNetworkPolicy to Kubernetes NetworkPolicy
+# (networking.k8s.io/v1) + GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1).
 #
 # Allows only the traffic required for a single reconciliation cycle:
-#   1. Cloud KMS (port 443) — asymmetric signing of ground-truth snapshots
-#   2. Redis (port 6379) — signed snapshot write
-#   3. DNS (port 53 UDP/TCP) — name resolution
+#   1. Cloud KMS (port 443 via FQDNNetworkPolicy) — asymmetric signing of snapshots
+#   2. Memorystore for Valkey PSC endpoint CIDR (TLS port 6379 via ipBlock) — signed snapshot write
+#   3. DNS (port 53 UDP/TCP) — restricted strictly to kube-dns and Cloud DNS (169.254.169.254/32)
 #   4. Langfuse (port 3000) — OTLP export of reconciliation spans
 #
 # The ground-truth source is the in-process simulated Tier 2 provider, so no
 # ledger or object-store egress is allowed.
-#
-# All other ingress and egress is denied by the default-deny posture established
-# in deployment/k8s/cilium/egress-lockdown.yaml.
-#
-# CAGE_DEPLOYMENT_REGION guard: this policy applies universally because KMS
-# and Redis are used in all three postures (US_FED, EU_ECB, APAC_MAS).
-# Regional data residency is enforced by the KMS key location configured in
-# reconciliation-worker-secrets, not by this policy.
-apiVersion: "cilium.io/v2"
-kind: CiliumNetworkPolicy
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
   name: reconciliation-worker-egress
   namespace: governance-stack
   labels:
     app: reconciliation-worker
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
 spec:
-  endpointSelector:
+  podSelector:
     matchLabels:
       app: reconciliation-worker
       cage.io/account-purpose: "ledger-reconciliation"
+  policyTypes:
+    - Ingress
+    - Egress
 
   # No ingress permitted — worker is write-only.
   ingress: []
 
   egress:
-    # DNS resolution (required for KMS FQDN lookup)
-    - toPorts:
-        - ports:
-            - port: "53"
-              protocol: UDP
-            - port: "53"
-              protocol: TCP
+    # DNS resolution — restricted strictly to kube-dns and Cloud DNS metadata IP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 
-    # Cloud KMS — port 443 (asymmetricSign / getPublicKey only)
-    - toFQDNs:
-        - matchName: "cloudkms.googleapis.com"
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
-
-    # Redis in-cluster — governance-stack namespace only
-    - toEndpoints:
-        - matchLabels:
-            app: redis-stack
-            k8s:io.kubernetes.pod.namespace: governance-stack
-      toPorts:
-        - ports:
-            - port: "6379"
-              protocol: TCP
+    # Memorystore for Valkey PSC endpoint CIDR on TLS port 6379 (§5.1 / §5.3 G6)
+    - to:
+        - ipBlock:
+            cidr: 10.128.0.0/20
+      ports:
+        - protocol: TCP
+          port: 6379
 
     # Langfuse OTLP trace export (audit trail for reconciliation spans)
-    - toEndpoints:
-        - matchLabels:
-            app: langfuse-web
-            k8s:io.kubernetes.pod.namespace: governance-stack
-      toPorts:
-        - ports:
-            - port: "3000"
-              protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: langfuse-web
+      ports:
+        - protocol: TCP
+          port: 3000
 
+---
+# Cloud KMS FQDN egress for reconciliation-worker (asymmetricSign / getPublicKey)
+apiVersion: networking.gke.io/v1alpha1
+kind: FQDNNetworkPolicy
+metadata:
+  name: reconciliation-worker-egress-fqdn
+  namespace: governance-stack
+  labels:
+    app: reconciliation-worker
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,SC-12"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-09-28"
+spec:
+  podSelector:
+    matchLabels:
+      app: reconciliation-worker
+      cage.io/account-purpose: "ledger-reconciliation"
+  policyTypes:
+    - Egress
+  egress:
+    # Cloud KMS — port 443 (asymmetricSign / getPublicKey only)
+    - to:
+        - fqdns:
+            - "cloudkms.googleapis.com"
+      ports:
+        - protocol: TCP
+          port: 443

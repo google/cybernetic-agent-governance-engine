@@ -54,3 +54,17 @@ spec:
                 name: gateway
                 port:
                   number: 8080
+---
+# §5.4 Perimeter: GKE BackendConfig binding Cloud Armor WAF policy (OWASP + rate limit)
+# to the gateway Ingress backend service.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: cage-gateway-backendconfig
+  namespace: governance-stack
+  labels:
+    app: gateway
+    app.kubernetes.io/managed-by: cage
+spec:
+  securityPolicy:
+    name: cage-waf-policy
