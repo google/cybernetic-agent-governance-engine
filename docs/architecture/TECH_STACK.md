@@ -188,14 +188,14 @@ The policy-enforcement-point client is shipped as a standalone, independently in
 
 | Attribute | Value |
 | --------- | ----- |
-| **Distribution name** | `cage-client` v0.1.0 (Apache-2.0) |
+| **Distribution name** | `cage-client` v0.2.0 (Apache-2.0) |
 | **Source root** | [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client) |
 | **Runtime dependencies** | `httpx>=0.27.0`, `pydantic>=2.0.0`, `cryptography>=41.0.0` — three packages only |
 | **Optional extras** | `langgraph` (`langgraph`, `langchain-core`), `http2` (`h2`), `all` |
 | **Python floor** | $\ge 3.10$ |
 | **Build command** | `make build-client-sdk` (`cd packages/cage-client && uv build`) |
 
-Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client): `core.py` exposes `CageClient.validate_action()`; `transport.py` and `envelope.py` carry the wire layer; `crypto.py` performs routing-seal verification; `exceptions.py` defines `PolicyViolationException`, `DeferralPending`, `RoutingSealVerificationError` and the `CageGatewayError` base; and the `adapters` subpackage provides the `@cage_guard` LangGraph decorator.
+Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client): `core.py` exposes `CageClient.validate_action()`; `transport.py` and `envelope.py` carry the wire layer; `crypto.py` generates W3C `traceparent` headers (`generate_w3c_traceparent()`); `exceptions.py` defines `PolicyViolationException`, `DeferralPending`, `RoutingSealVerificationError` and the `CageGatewayError` base; and the `adapters` subpackage provides the `@cage_guard` LangGraph decorator.
 
 > [!NOTE]
 > An in-tree mirror of the same client lives at [`src/gateway/client/`](../../src/gateway/client) and is what the reference advisor imports (`from src.gateway.client.adapters.langgraph import cage_guard`). The two trees are near-identical but not byte-identical; `packages/cage-client/` is the published artifact.

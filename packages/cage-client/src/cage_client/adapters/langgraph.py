@@ -45,8 +45,8 @@ Architecture Integration:
     └─────────────────────┘
 
 Usage:
-    from src.gateway.client.core import CageClient
-    from src.gateway.client.adapters.langgraph import cage_guard
+    from cage_client import CageClient
+    from cage_client.adapters.langgraph import cage_guard
 
     # Initialize client (typically once at app startup)
     cage_client = CageClient(
@@ -54,18 +54,18 @@ Usage:
     )
 
     # Decorate LangGraph node functions
-    @cage_guard(client=cage_client, action="execute_trade")
-    async def execute_trade_node(state: dict[str, Any]) -> dict[str, Any]:
+    @cage_guard(client=cage_client, action="execute_action")
+    async def execute_action_node(state: dict[str, Any]) -> dict[str, Any]:
         # This node only runs if governance allows
         trade_params = state["proposed_action"]
-        result = await execute_trade(**trade_params)
+        result = await execute_action(**trade_params)
         return {"trade_result": result}
 
     # LangGraph workflow definition
     from langgraph.graph import StateGraph
 
     workflow = StateGraph()
-    workflow.add_node("execute_trade", execute_trade_node)
+    workflow.add_node("execute_action", execute_action_node)
     # ... add more nodes and edges
 
     # Error handling in LangGraph
@@ -131,7 +131,7 @@ def cage_guard(
 
     Args:
         client: CageClient instance for gateway communication
-        action: Action name for governance evaluation (e.g., "execute_trade")
+        action: Action name for governance evaluation (e.g., "execute_action")
         agent_id_key: State key containing the agent identifier (default: "agent_id")
 
     Returns:
