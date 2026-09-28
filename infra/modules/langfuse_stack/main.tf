@@ -25,6 +25,14 @@ terraform {
   }
 }
 
+locals {
+  # For Cloud SQL IAM authentication via proxy:
+  # The database user name for service accounts in Postgres is the SA email without .gserviceaccount.com.
+  # When constructing the DATABASE_URL, '@' in the username must be URL-encoded as '%40' for Prisma parsing.
+  encoded_iam_user = replace(var.cloudsql_iam_user, "@", "%40")
+  effective_database_url = var.enable_cloudsql_proxy ? "postgresql://${local.encoded_iam_user}:unused@127.0.0.1:5432/${var.cloudsql_database_name}?sslmode=disable" : var.database_url
+}
+
 # Generate Langfuse secrets
 resource "random_id" "nextauth_secret" {
   byte_length = 32
@@ -94,6 +102,8 @@ resource "kubernetes_deployment" "langfuse_web" {
       }
 
       spec {
+        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+
         container {
           name  = "langfuse-web"
           image = var.langfuse_image
@@ -105,7 +115,7 @@ resource "kubernetes_deployment" "langfuse_web" {
 
           env {
             name  = "DATABASE_URL"
-            value = var.database_url
+            value = local.effective_database_url
           }
 
           dynamic "env" {
@@ -407,6 +417,40 @@ resource "kubernetes_deployment" "langfuse_web" {
             failure_threshold     = 30
           }
         }
+
+        dynamic "container" {
+          for_each = var.enable_cloudsql_proxy ? [1] : []
+          content {
+            name  = "cloud-sql-proxy"
+            image = var.cloudsql_proxy_image
+            args = [
+              "--structured-logs",
+              "--port=5432",
+              "--auto-iam-authn",
+              var.cloudsql_connection_name,
+            ]
+
+            security_context {
+              allow_privilege_escalation = false
+              capabilities {
+                drop = ["ALL"]
+              }
+              run_as_non_root = true
+              run_as_user     = 65532
+            }
+
+            resources {
+              requests = {
+                cpu    = "50m"
+                memory = "64Mi"
+              }
+              limits = {
+                cpu    = "200m"
+                memory = "256Mi"
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -468,13 +512,15 @@ resource "kubernetes_deployment" "langfuse_worker" {
       }
 
       spec {
+        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+
         container {
           name  = "langfuse-worker"
           image = var.langfuse_worker_image
 
           env {
             name  = "DATABASE_URL"
-            value = var.database_url
+            value = local.effective_database_url
           }
 
           dynamic "env" {
@@ -654,6 +700,40 @@ resource "kubernetes_deployment" "langfuse_worker" {
             limits = {
               memory = var.worker_memory_limit
               cpu    = var.worker_cpu_limit
+            }
+          }
+        }
+
+        dynamic "container" {
+          for_each = var.enable_cloudsql_proxy ? [1] : []
+          content {
+            name  = "cloud-sql-proxy"
+            image = var.cloudsql_proxy_image
+            args = [
+              "--structured-logs",
+              "--port=5432",
+              "--auto-iam-authn",
+              var.cloudsql_connection_name,
+            ]
+
+            security_context {
+              allow_privilege_escalation = false
+              capabilities {
+                drop = ["ALL"]
+              }
+              run_as_non_root = true
+              run_as_user     = 65532
+            }
+
+            resources {
+              requests = {
+                cpu    = "50m"
+                memory = "64Mi"
+              }
+              limits = {
+                cpu    = "200m"
+                memory = "256Mi"
+              }
             }
           }
         }

@@ -213,6 +213,27 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 30
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.2
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            - "--auto-iam-authn"
+            - "<your-project-id>:<your-region>:cage-postgres-dev"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service

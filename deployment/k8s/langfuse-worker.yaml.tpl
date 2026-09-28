@@ -215,6 +215,27 @@ spec:
             limits:
               cpu: "1"
               memory: "2Gi"
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.2
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            - "--auto-iam-authn"
+            - "${GOOGLE_CLOUD_PROJECT}:${GOOGLE_CLOUD_LOCATION}:cage-postgres-dev"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
 # NOTE: HPA is defined in the standalone langfuse-worker-hpa.yaml.
 # The duplicate HPA that was previously inlined here has been removed
 # to avoid conflicting maxReplicas (8 vs 10) and CPU thresholds (60% vs 70%).

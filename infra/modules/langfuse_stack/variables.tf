@@ -30,9 +30,46 @@ variable "langfuse_worker_image" {
 }
 
 variable "database_url" {
-  description = "PostgreSQL database URL"
+  description = "PostgreSQL database URL (optional if enable_cloudsql_proxy is true)"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "service_account_name" {
+  description = "Kubernetes ServiceAccount name for Langfuse pods (Workload Identity)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloudsql_proxy" {
+  description = "Enable Cloud SQL Auth Proxy sidecar container with --auto-iam-authn"
+  type        = bool
+  default     = false
+}
+
+variable "cloudsql_connection_name" {
+  description = "Cloud SQL instance connection name (project:region:instance)"
+  type        = string
+  default     = ""
+}
+
+variable "cloudsql_iam_user" {
+  description = "Cloud SQL IAM database user (e.g. service account email or name without .gserviceaccount.com)"
+  type        = string
+  default     = ""
+}
+
+variable "cloudsql_database_name" {
+  description = "Cloud SQL database name for Langfuse"
+  type        = string
+  default     = "langfuse"
+}
+
+variable "cloudsql_proxy_image" {
+  description = "Container image for Cloud SQL Auth Proxy"
+  type        = string
+  default     = "gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.2"
 }
 
 variable "clickhouse_url" {

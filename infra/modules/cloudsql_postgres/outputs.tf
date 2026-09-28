@@ -41,3 +41,8 @@ output "user_name" {
   description = "Created database user name"
   value       = google_sql_user.db_user.name
 }
+
+output "iam_user_name" {
+  description = "IAM user name formatted for PostgreSQL"
+  value       = local.effective_user_name
+}
