@@ -232,11 +232,12 @@ component-definition:
         remarks: 'NeMo rails: config/rails/. OPA policy: finance_policy.rego.'
       - uuid: aarm2026-v3-confused-deputy
         control-id: SC-4
-        description: AARM-V3 Confused Deputy neutralized by HMAC-SHA256 governance
-          signature (Layer 4 Signed Handshake). Missing signatures route to explainer
-          node — trade never executes.
-        remarks: Implemented in evaluator_node.py. check_safety_signature conditional
-          edge.
+        description: AARM-V3 Confused Deputy neutralized by KMS-backed ECDSA-P256
+          routing seals (gateway-seal via KMS_GOVERNANCE_KEY) issued exclusively by
+          the gateway and verified with single-use consumption before actuation.
+          The advisor pod runs with zero cloud identity and zero signing keys.
+        remarks: Implemented in src/gateway/governance/routing_seal.py (sign_seal,
+          verify_and_consume_seal) and enforced in src/gateway/governance/consequence_gateway.py.
       - uuid: aarm2026-v4-cross-agent
         control-id: SC-8
         description: AARM-V4 Cross-Agent Propagation neutralized by FiscalLimitGuard

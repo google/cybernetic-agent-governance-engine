@@ -26,11 +26,13 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-# Signing-key references read by the kernel's signer factory and the
-# reconciler trust anchor, for every supported KMS provider.
+# Signing-key references read by the kernel's signer factory, the
+# reconciler trust anchor, and the compliance bridge batch signer, for every
+# supported KMS provider.
 FORBIDDEN_SIGNING_KEY_VARS: tuple[str, ...] = (
     "KMS_GOVERNANCE_KEY",
     "RECONCILER_KMS_KEY",
+    "EVIDENCE_KMS_KEY",
     "AWS_KMS_KEY_ID",
     "AZURE_KMS_KEY_NAME",
 )

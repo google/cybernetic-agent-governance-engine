@@ -83,6 +83,20 @@ spec:
               value: "${CAGE_ENV:-development}"
             - name: ENVIRONMENT
               value: "${CAGE_ENV:-development}"
+            # Signing-key references come from gateway-secrets, never from the
+            # shared advisor-secrets (POAM-2026-079, identity_guard.py).
+            - name: KMS_GOVERNANCE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: KMS_GOVERNANCE_KEY
+                  optional: true
+            - name: RECONCILER_KMS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: RECONCILER_KMS_KEY
+                  optional: true
             # OPA Configuration
             - name: OPA_URL
               value: "http://opa-service:8181"

@@ -124,11 +124,31 @@ resource "google_project_iam_member" "gateway_secret_accessor" {
   member  = "serviceAccount:${google_service_account.gateway.email}"
 }
 
-resource "google_project_iam_member" "gateway_kms_encrypter_decrypter" {
-  count   = var.enable_cmek ? 1 : 0
+resource "google_kms_crypto_key_iam_member" "gateway_kms_encrypter_decrypter" {
+  count         = var.enable_cmek ? 1 : 0
+  crypto_key_id = local.cmek_key_id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${google_service_account.gateway.email}"
+}
+
+resource "google_project_iam_member" "gateway_memorystore_user" {
+  count   = var.enable_memorystore_iam_auth ? 1 : 0
   project = var.project_id
-  role    = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  role    = "roles/memorystore.dbConnectionUser"
   member  = "serviceAccount:${google_service_account.gateway.email}"
+}
+
+# ---------------------------------------------------------------------------
+# IAM Role Bindings — Reconciler
+# Roles: Memorystore DB Connection User (when IAM auth is enabled; signing role
+# is bound per-key in kms_signing.tf)
+# ---------------------------------------------------------------------------
+
+resource "google_project_iam_member" "reconciler_memorystore_user" {
+  count   = var.enable_memorystore_iam_auth ? 1 : 0
+  project = var.project_id
+  role    = "roles/memorystore.dbConnectionUser"
+  member  = "serviceAccount:${google_service_account.reconciler.email}"
 }
 
 # ---------------------------------------------------------------------------
@@ -202,7 +222,8 @@ resource "google_project_iam_member" "agentsight_metric_writer" {
 
 # ---------------------------------------------------------------------------
 # IAM Role Bindings — Langfuse
-# Roles: Cloud SQL Client, Cloud SQL Instance User (IAM DB authn, no static password)
+# Roles: Cloud SQL Client, Cloud SQL Instance User (IAM DB authn, no static password),
+#        Memorystore DB Connection User (when IAM auth is enabled)
 # ---------------------------------------------------------------------------
 
 resource "google_project_iam_member" "langfuse_cloudsql_client" {
@@ -214,6 +235,13 @@ resource "google_project_iam_member" "langfuse_cloudsql_client" {
 resource "google_project_iam_member" "langfuse_cloudsql_instance_user" {
   project = var.project_id
   role    = "roles/cloudsql.instanceUser"
+  member  = "serviceAccount:${google_service_account.langfuse.email}"
+}
+
+resource "google_project_iam_member" "langfuse_memorystore_user" {
+  count   = var.enable_memorystore_iam_auth ? 1 : 0
+  project = var.project_id
+  role    = "roles/memorystore.dbConnectionUser"
   member  = "serviceAccount:${google_service_account.langfuse.email}"
 }
 

@@ -177,6 +177,15 @@ spec:
             - name: CAGE_DEPLOYMENT_REGION
               value: "US_FED"
 
+            # POAM-2026-079 / §5.2: Dedicated compliance-evidence KMS signing key.
+            # KMSBatchSigner reads EVIDENCE_KMS_KEY (never KMS_GOVERNANCE_KEY).
+            - name: EVIDENCE_KMS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: compliance-bridge-secrets
+                  key: EVIDENCE_KMS_KEY
+                  optional: true
+
             - name: PORT
               value: "3001"
 
