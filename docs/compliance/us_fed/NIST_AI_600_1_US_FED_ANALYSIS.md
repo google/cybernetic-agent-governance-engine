@@ -367,7 +367,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **Low-Moderate** — CAGE operates vLLM inference on GKE GPU nodes (spot instances). The environmental impact is real but not a primary compliance risk for US_FED financial regulation. However, OMB M-24-10 requires federal agencies to track AI environmental impacts.
 
 **Current Coverage:**
-- vLLM inference uses GKE spot GPU instances (`deployment/k8s/vllm-inference-spot.yaml`) — spot instances reduce cost but do not directly reduce energy consumption
+- vLLM inference runs on GKE GPU instances (`infra/modules/vllm_inference/main.tf`) — GPU sizing reduces cost but does not directly track energy consumption
 - No energy consumption metrics collected
 - No carbon footprint tracking
 
@@ -916,7 +916,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | AI-P2-4 | `compliance/lula/lula-validation-ai600-privacy.yaml` | New Lula validation: memorization probe returns 0 PII extractions | SI-19, AI600-002 | 3d |
 | AI-P2-5 | `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` | Algorithmic fairness testing methodology; demographic impact assessment per SR 11-7 | RA-3, AI600-004 | 3d |
 | AI-P2-6 | `tests/red_team/adversarial_dataset.json` | Add `model_extraction`, `jailbreak_advanced`, `adversarial_financial` red team categories | CA-8, AI600-006 | 4d |
-| AI-P2-7 | `deployment/k8s/vllm-services.yaml`, OPA policy | Add OPA-enforced authentication layer in front of vLLM endpoints | SC-7, AI600-006 | 3d |
+| AI-P2-7 | `infra/modules/vllm_inference/main.tf`, OPA policy | Add OPA-enforced authentication layer in front of vLLM endpoints | SC-7, AI600-006 | 3d |
 | AI-P2-8 | `compliance/oscal/component-definition.yaml` | Add full AI 600-1 component definition with all 9 applicable risk category control implementations | CA-2, CA-7 | 2d |
 
 ### 9.4 Phase 3 — Architectural Uplift (Weeks 16–52)
@@ -988,7 +988,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | Create `docs/compliance/universal/MODEL_CARD_REVIEW.md` | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | AI600-007 | High |
 | Algorithmic fairness assessment | `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` | AI600-004 | High |
 | Advanced jailbreak red team dataset | `tests/red_team/adversarial_dataset.json` | AI600-006 | High |
-| OPA auth layer in front of vLLM | `deployment/k8s/vllm-services.yaml` | AI600-006 | High |
+| OPA auth layer in front of vLLM | `infra/modules/vllm_inference/main.tf` | AI600-006 | High |
 | Carlini et al. memorization probe | `scripts/evaluate_langfuse_traces.py` | AI600-002 | Medium |
 | OSCAL AI 600-1 component definition | `compliance/oscal/component-definition.yaml` | ALL | Medium |
 

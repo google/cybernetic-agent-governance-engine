@@ -27,8 +27,8 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 
 ### Current State (Application-Side Routing)
 
-- **Logic:** `src/gateway/core/llm.py` (`GatewayClient`) contains if/else logic to select the backend based on `mode` (e.g., `planner` -> `vllm-reasoning`, `fast` -> `vllm-governance`).
-- **Infrastructure:** Two separate Kubernetes Services (`vllm-reasoning`, `vllm-governance`).
+- **Logic:** `src/gateway/core/llm.py` (`GatewayClient`) contains if/else logic to select the backend based on `mode` (e.g., `planner` -> `vllm-reasoning`, `fast` -> `vllm-service`).
+- **Infrastructure:** Two separate Kubernetes Services (`vllm-reasoning`, `vllm-service`) provisioned via `infra/modules/vllm_inference/main.tf`.
 - **Scaling:** Standard HPA based on CPU/Memory (reactive).
 
 ### Proposed State (Kubernetes Inference Gateway)
@@ -36,7 +36,7 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 - **Logic:** `GatewayClient` points to a single endpoint (the Inference Gateway). It specifies a `model` name (e.g., `llama-3.1-8b-instruct`, `deepseek-r1-distill-llama-8b`).
 - **Infrastructure:**
   - **Gateway:** A unified Kubernetes Gateway resource.
-  - **InferencePools:** Custom resources defining the backend pools (`vllm-reasoning`, `vllm-governance`).
+  - **InferencePools:** Custom resources defining the backend pools (`vllm-reasoning`, `vllm-service`).
   - **HTTPRoutes:** Rules mapping `model` names or headers to specific pools.
 - **Scaling:** Metric-based HPA (Queue Depth, KV Cache Usage) managed by the Gateway controller (proactive).
 
@@ -85,7 +85,7 @@ To adopt this without disrupting the current workflow, we recommend a phased app
 ### Phase 1: Infrastructure Preparation (DevOps)
 
 1.  Install Gateway API CRDs via Helm (`kubectl apply -f` or `helm install gateway-api`).
-2.  Define `InferencePool` resources for `vllm-reasoning` and `vllm-governance`.
+2.  Define `InferencePool` resources for `vllm-reasoning` and `vllm-service`.
 3.  Deploy the `InferenceGateway` with `gatewayClassName: nginx`.
 
 ### Phase 2: Application Update (Code)

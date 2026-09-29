@@ -1201,7 +1201,7 @@ The 66 findings across all four phases are not isolated defects — they reflect
 - `deployment/k8s/compliance-bridge.yaml`: `OSCAL_S3_REGION: "auto"`
 - `infra/modules/app_secrets/main.tf`: `AWS_REGION = "us-east-1"`
 
-**Root cause:** The codebase has a pattern of using `.yaml.tpl` templates for some resources (e.g., `vllm-reasoning.yaml.tpl`, `compliance-bridge-deployment.yaml.tpl`) but not for the most critical ones. This creates a two-tier system where some manifests are region-aware and others are not.
+**Root cause:** The codebase has a pattern of using `.yaml.tpl` templates for some resources (e.g., `gateway-deployment.yaml.tpl`, `compliance-bridge-deployment.yaml.tpl`) but not for the most critical ones. This creates a two-tier system where some manifests are region-aware and others are not.
 
 **Systemic fix:** Convert all static K8s manifests that contain region-specific values to `.yaml.tpl` templates. Add a manifest generation step to `deploy_all.sh` that substitutes `CAGE_DEPLOYMENT_REGION`-derived values before `kubectl apply`.
 

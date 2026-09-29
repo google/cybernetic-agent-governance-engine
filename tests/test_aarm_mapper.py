@@ -27,6 +27,8 @@ Verifies:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.compliance_bridge.aarm_mapper import (
@@ -34,6 +36,8 @@ from src.compliance_bridge.aarm_mapper import (
     build_aarm_conformance_report,
 )
 from src.compliance_bridge.types import OscalFinding
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Expected set of all 11 vector IDs
 _ALL_VECTOR_IDS = {f"AARM-V{i}" for i in range(1, 12)}
@@ -102,6 +106,21 @@ def test_each_vector_has_required_fields():
         )
         assert len(v.neutralizing_controls) >= 1, f"{vid}: no neutralizing controls"
         assert len(v.implementation_files) >= 1, f"{vid}: no implementation files"
+
+
+def test_all_vector_evidence_files_exist_at_repo_root():
+    """Every listed implementation_files and lula_validation_files entry exists as a file at REPO_ROOT."""
+    for vid, v in AARM_THREAT_VECTORS.items():
+        for rel_path in v.implementation_files:
+            target = REPO_ROOT / rel_path
+            assert target.is_file(), (
+                f"{vid}: implementation_files entry {rel_path!r} does not exist as a file at {REPO_ROOT}"
+            )
+        for rel_path in v.lula_validation_files:
+            target = REPO_ROOT / rel_path
+            assert target.is_file(), (
+                f"{vid}: lula_validation_files entry {rel_path!r} does not exist as a file at {REPO_ROOT}"
+            )
 
 
 def test_critical_severity_vectors():

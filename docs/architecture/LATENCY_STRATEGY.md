@@ -35,9 +35,9 @@ We utilize a dedicated, self-hosted inference node for structure enforcement, op
 
 ### Software: vLLM + Guided Decoding
 
-We use **vLLM** with its **native JSON-mode API** for structured output enforcement. The `--guided-decoding-backend outlines` flag and the `outlines` Python package have been **removed** due to CVE-2025-69872 (diskcache pickle RCE); vLLM's built-in JSON-mode decoder is used instead (see `deployment/k8s/vllm-governance.yaml`).
+We use **vLLM** with its **native JSON-mode API** for structured output enforcement. The `--guided-decoding-backend outlines` flag and the `outlines` Python package have been **removed** due to CVE-2025-69872 (diskcache pickle RCE); vLLM's built-in JSON-mode decoder is used instead (provisioned via [`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)).
 
-> **Note on Prefix Caching:** Enabling `--enable-prefix-caching` on the governance node is a planned optimization that would reduce TTFT for repeated schema prefixes from ~200ms to <50ms. It is **not yet present** in the current `vllm-governance.yaml` deployment manifest and should be treated as aspirational until added.
+> **Note on Prefix Caching:** Enabling `--enable-prefix-caching` on the vLLM inference deployment (`infra/modules/vllm_inference/main.tf`) is a planned optimization that would reduce TTFT for repeated schema prefixes from ~200ms to <50ms. It is **not yet enabled** in the Terraform module and should be treated as aspirational until added.
 
 #### How vLLM Native JSON-Mode Works
 
@@ -51,11 +51,11 @@ We use **vLLM** with its **native JSON-mode API** for structured output enforcem
 
 | Component      | Model                              | Hosted On            | Optimization                        |
 | -------------- | ---------------------------------- | -------------------- | ----------------------------------- |
-| **Reasoning**  | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | Spot GPU (NVIDIA L4) | Deep semantic understanding.        |
-| **Governance** | `Qwen/Qwen2.5-7B-Instruct` *(NOT CURRENTLY DEPLOYED — aspirational)* | Spot GPU (NVIDIA L4) | Structured JSON (vLLM native JSON-mode API). |
+| **Reasoning**  | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | GPU (NVIDIA L4) | Deep semantic understanding.        |
+| **Fast / Governance** | `Qwen/Qwen2.5-7B-Instruct` | GPU (NVIDIA L4) | Structured JSON (vLLM native JSON-mode API). |
 | **Guardrails** | NeMo Guardrails service            | CPU pod (0.5–1 vCPU, 1–2Gi RAM) | In-cluster, no GPU required.  |
 
-The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by `create_nemo_manager()` via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. The governance model (`Qwen/Qwen2.5-7B-Instruct`) is declared in `deployment/k8s/vllm-governance.yaml` but is **NOT CURRENTLY DEPLOYED** — it is the aspirational governance backend.
+The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by `create_nemo_manager()` via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. Both fast (`Qwen/Qwen2.5-7B-Instruct`) and reasoning vLLM deployments are provisioned via Terraform ([`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)); raw static vLLM manifests under `deployment/k8s/` have been retired.
 
 ## Latency Budget Example
 
