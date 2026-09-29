@@ -186,7 +186,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [CONSEQUENCE_GATEWAY.md](architecture/CONSEQUENCE_GATEWAY.md) | 6-step token evaluation, JWS verification, and authority store |
 | [FTRA_REACHABILITY_ANALYZER.md](architecture/FTRA_REACHABILITY_ANALYZER.md) | Forward-Looking Trajectory Reachability Analyzer — Irreversibility classification and graph bounding |
 | [DEFERRAL_QUEUE.md](architecture/DEFERRAL_QUEUE.md) | AARM deferral queue, Redis storage, and dual-control resolution |
-| [EVIDENCE_CHAIN.md](architecture/EVIDENCE_CHAIN.md) | Cryptographic hash chaining, streams, and cold store daemon |
+| [EVIDENCE_CHAIN.md](architecture/EVIDENCE_CHAIN.md) | Cryptographic hash chaining, streams, and compliance-bridge custody |
 | [CRYPTOGRAPHIC_SIGNER_ENGINE.md](architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution |
 | [AGENT_STATE_SCHEMA_ENFORCEMENT.md](architecture/AGENT_STATE_SCHEMA_ENFORCEMENT.md) | **Specification (GAP-3, Planned)** — AgentState schema enforcement at API and node boundaries |
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |

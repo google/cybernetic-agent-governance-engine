@@ -126,7 +126,7 @@ deployment. Key security controls are documented in:
 
 ### Evidence Stream Precondition Hardening
 
-> **Audit Durability Guarantee:** `validate_evidence_stream_preconditions()` halts startup in production if `EVIDENCE_CHAIN_BLOCKING=false`, ensuring no routing seal is issued without durable evidence commitment to the tamper-evident log.
+> **Audit Durability Guarantee:** `validate_evidence_stream_preconditions()` is posture-based: under an enforcing posture (anything but dev/test/ci; an unset `CAGE_ENV` is production) it halts startup if `EVIDENCE_STREAM_ENABLED=false`, or if `EVIDENCE_CHAIN_BLOCKING=false` without an explicit `CAGE_ALLOW_NONBLOCKING_PROD=true`. The gateway lifespan also starts the sink via `start_evidence_sink()` and fails closed, so no routing seal is issued without durable evidence commitment to the tamper-evident log.
 
 ### Zero-Trust Caller Identity
 

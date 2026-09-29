@@ -158,9 +158,9 @@ sequenceDiagram
 - **Atomic Single-Use Consumption**: Atomically consumes the authority record in Redis (`SETNX` / Lua) to prevent replay and substitution attacks.
 - **Fail-Closed Guarantees**: Cryptographic failures, parameter mismatches, or store connectivity errors collapse to `BLOCK`.
 
-### 2.4 EvidenceStreamSink & Cold Storage Chain
+### 2.4 EvidenceStreamSink & Evidence Custody
 
-The Evidence Chain ([`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py), [`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)) maintains an immutable, tamper-evident audit ledger complying with ISO 42001 and CSA AARM mandates.
+The Evidence Chain ([`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py), with custody in [`evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py)) maintains an immutable, tamper-evident audit ledger complying with ISO 42001 and CSA AARM mandates.
 
 ```mermaid
 flowchart TD
@@ -169,20 +169,21 @@ flowchart TD
     subgraph Hot Path (Sub-millisecond)
         Ingest --> JCS[JCS Normalization]
         JCS --> Hash[SHA-256 Hash Chaining]
-        Hash --> KMS[Optional KMS Signing]
-        KMS --> Redis[(Redis Streams\ndb=1, noeviction)]
+        Hash --> CAS[Lua Compare-and-Append]
+        CAS --> Redis[(Redis Streams\ndb=1, noeviction)]
     end
     
-    subgraph Cold Path (Async 60s Interval)
-        Redis --> Flush[Cold Store Flush Daemon]
-        Flush --> Protocol[EvidenceColdStore Protocol]
+    subgraph Custody (Compliance Bridge, default 60s)
+        Redis --> Custodian[EvidenceCustodian\nre-verify chain]
+        Custodian --> Attest[KMS Batch Attestation\nEVIDENCE_KMS_KEY]
+        Attest --> Protocol[EvidenceColdStore.put_if_absent]
     end
     
-    Protocol --> Integrations[Layer 3 Integrations\n(GCS / S3)]
+    Protocol --> Integrations[Layer 3 Integrations\n(GCS WORM / S3)]
 ```
 
-- **Hot Path (Sub-millisecond)**: Ingests normalized JCS events, computes SHA-256 hash chains linking each record to its predecessor (`prev_hash`), optionally signs via Cloud KMS HSM, and appends to Redis Streams (`cage:evidence:stream`, `db=1`, `noeviction`).
-- **Cold Path (Background Daemon)**: Wakes every 60 seconds, reads unacknowledged stream entries, persists them in bulk via the vendor-neutral `EvidenceColdStore` protocol to durable object storage (Layer 3 GCS/S3), verifies the `ColdStoreReceipt`, and truncates acknowledged stream entries.
+- **Hot Path (Sub-millisecond)**: Ingests normalized JCS events, computes SHA-256 hash chains linking each record to its predecessor (`prev_hash`), and appends to Redis Streams (`cage:evidence:stream`, `db=1`, `noeviction`) through a Lua compare-and-append script that rejects a stale chain head. The gateway holds no evidence-signing key; it is started by the server lifespan via `start_evidence_sink()` and fails closed if the stream is unavailable under an enforcing posture.
+- **Custody (Compliance Bridge)**: The `EvidenceCustodian` reads new entries from a durable cursor, re-verifies the hash chain, signs a `cage-evidence-batch/1` attestation over the batch with `EVIDENCE_KMS_KEY`, and writes batch and attestation via `EvidenceColdStore.put_if_absent` to WORM object storage. It never trims the stream. Without a KMS key (dev/test/ci only) attestations are written as `.attestation.unsigned.json`, marked non-evidentiary, and rejected by `assert_citable()`.
 
 ### 2.5 OTLP Telemetry & Distributed Observability
 
@@ -219,7 +220,7 @@ flowchart TD
     SymGov -->|DENY| Deny[[Terminal Block\n(Saga LIFO Rollback)]]
     
     ConsGate --> Actuator[Execution Actuator\n(Registered Action)]
-    Actuator --> Evidence[[Evidence Stream Sink\n(Redis Streams -> Cold Store)]]
+    Actuator --> Evidence[[Evidence Stream Sink\n(Redis Streams -> Bridge Custody)]]
 ```
 
 ### Request Lifecycle Phases
@@ -514,7 +515,7 @@ src/gateway/
 ├── governance/             # STERA Admissibility Engine & symbolic governance tiers
 │   ├── causal/             # Causal gatekeeper (DoWhy linear regression refutation)
 │   ├── consensus/          # Multi-model consensus engine & critic registry
-│   ├── evidence/           # Tamper-evident evidence stream sink & cold store
+│   ├── evidence/           # Tamper-evident evidence stream producer & cold-store protocol
 │   ├── ftra/               # Forward-Looking Trajectory Reachability Analyzer
 │   ├── ingress/            # Normalization adapters (AAIF, ACS, OSCAL, Lula, AGP)
 │   ├── langgraph_harness/  # Reusable OPA and NeMo graph node factories
@@ -561,8 +562,8 @@ src/gateway/
 | `src/gateway/governance/governor/governor.py` | Governor Loop | Immutable `SymbolicGovernor` exposing `validate_action`, `govern`, `revalidate_post_hitl` and `verify` over one staged pipeline. |
 | `src/gateway/governance/consequence_gateway.py` | Execution Gate | Atomic single-use `ConsequenceToken` verification and TOCTOU defense before execution. |
 | `src/gateway/governance/execution_actuator.py` | Actuator Registry | Registration and invocation boundary for concrete domain execution actuators. |
-| `src/gateway/governance/evidence/stream.py` | Evidence Stream | Hot-path Redis Stream append with SHA-256 hash chaining and optional KMS signing. |
-| `src/gateway/governance/evidence/cold_store.py` | Cold Storage | Background flush daemon persisting evidence records to immutable object stores. |
+| `src/gateway/governance/evidence/stream.py` | Evidence Stream | Hot-path Redis Stream append with SHA-256 hash chaining via Lua compare-and-append; posture-based startup preconditions. No signing. |
+| `src/gateway/governance/evidence/cold_store.py` | Cold Storage | Vendor-neutral `EvidenceColdStore` protocol (incl. `put_if_absent`). The custody loop lives in `src/compliance_bridge/evidence_custodian.py`. |
 | `src/gateway/governance/kms_signer.py` | Cryptographic Signer | Governance JWS signing and kid-resolved verification; cloud KMS providers are loaded from `src/integrations/` by `signer_factory.py`, with software fallbacks only in dev/test/CI. |
 | `src/gateway/governance/routing_seal.py` | Routing Seal | KMS-signed JWT routing seal generation and verification (HMAC form for dev/test/CI only). |
 | `src/gateway/governance/contracts.py` | Subsystem Protocols | Structural subtyping contracts (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, etc.). |
