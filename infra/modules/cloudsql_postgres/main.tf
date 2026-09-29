@@ -24,6 +24,7 @@ terraform {
 
 locals {
   instance_name = var.instance_name != "" ? var.instance_name : "cage-postgres-${var.environment}"
+  network_link  = can(regex("^projects/", var.authorized_network)) ? var.authorized_network : "projects/${var.project_id}/global/networks/${var.authorized_network}"
 }
 
 resource "google_sql_database_instance" "postgres" {
@@ -53,7 +54,7 @@ resource "google_sql_database_instance" "postgres" {
 
     ip_configuration {
       ipv4_enabled    = false
-      private_network = var.authorized_network
+      private_network = local.network_link
       ssl_mode        = "ENCRYPTED_ONLY"
     }
 

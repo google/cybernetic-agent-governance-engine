@@ -176,6 +176,12 @@ variable "kms_key_id" {
   default     = ""
 }
 
+variable "database_encryption_state" {
+  description = "Database encryption state (ENCRYPTED or ALL_OBJECTS_ENCRYPTION_ENABLED). If null, defaults based on current state or ENCRYPTED."
+  type        = string
+  default     = null
+}
+
 variable "enable_gcs_fuse_csi" {
   description = "Enable GCS Fuse CSI driver for GCS bucket mounting"
   type        = bool

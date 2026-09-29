@@ -74,17 +74,22 @@ async def verify_memorystore_wait(
 
     password = None if credential_provider is not None else os.environ.get("REDIS_PASSWORD")
 
-    client = aioredis.Redis(
-        host=host,
-        port=port,
-        password=password,
-        credential_provider=credential_provider,
-        ssl=enable_tls,
-        ssl_ca_certs=ca_cert_path,
-        decode_responses=True,
-        socket_connect_timeout=3.0,
-        socket_timeout=3.0,
-    )
+    redis_kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "password": password,
+        "credential_provider": credential_provider,
+        "ssl": enable_tls,
+        "ssl_ca_certs": ca_cert_path,
+        "decode_responses": True,
+        "socket_connect_timeout": 3.0,
+        "socket_timeout": 3.0,
+    }
+    cage_env = os.environ.get("CAGE_ENV", "prod").lower()
+    if enable_tls and not ca_cert_path and cage_env in ("dev", "development", "test", "ci", "staging"):
+        redis_kwargs["ssl_cert_reqs"] = "none"
+
+    client = aioredis.Redis(**redis_kwargs)
 
     test_key = f"smoke:memorystore:wait:{int(time.time() * 1000)}"
     try:

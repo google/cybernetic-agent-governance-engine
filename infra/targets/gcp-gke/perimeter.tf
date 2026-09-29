@@ -110,6 +110,19 @@ resource "google_binary_authorization_policy" "cluster_policy" {
   admission_whitelist_patterns {
     name_pattern = "gke.gcr.io/*"
   }
+  # Service mesh infrastructure (cert-manager and Linkerd - POAM-2026-080)
+  admission_whitelist_patterns {
+    name_pattern = "quay.io/jetstack/*"
+  }
+  admission_whitelist_patterns {
+    name_pattern = "cr.l5d.io/*"
+  }
+  admission_whitelist_patterns {
+    name_pattern = "cr.l5d.io/linkerd/*"
+  }
+  admission_whitelist_patterns {
+    name_pattern = "ghcr.io/linkerd/*"
+  }
 
   default_admission_rule {
     evaluation_mode         = "REQUIRE_ATTESTATION"

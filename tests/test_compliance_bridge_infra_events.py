@@ -42,8 +42,10 @@ AUTH_TOKEN = "test-internal-token-secret"
 
 @pytest.fixture
 def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    monkeypatch.delenv("CAGE_INTERNAL_TOKEN", raising=False)
     monkeypatch.setenv("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", AUTH_TOKEN)
     return {"Authorization": f"Bearer {AUTH_TOKEN}"}
+
 
 
 @pytest.fixture

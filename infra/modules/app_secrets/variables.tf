@@ -164,3 +164,18 @@ variable "governance_salt" {
   type        = string
   sensitive   = true
 }
+
+variable "cage_api_key" {
+  description = "Bearer API key for governed-financial-advisor in non-dev environments (defaults to governance_salt when empty)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "cage_internal_token" {
+  description = "Internal bearer token for compliance-bridge endpoints in non-dev environments (defaults to governance_salt when empty)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+

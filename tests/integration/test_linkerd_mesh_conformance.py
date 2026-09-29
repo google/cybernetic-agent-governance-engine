@@ -103,27 +103,69 @@ def _require_linkerd_cluster() -> None:
 
 @pytest.fixture(scope="module")
 def linkerd_mesh_fixture():
-    """Apply CAGE Linkerd policy manifests and deploy meshed probe workloads."""
+    """Apply CAGE Linkerd policy manifests (when absent) and deploy meshed probe workloads."""
     _require_linkerd_cluster()
 
-    namespaces_yaml = textwrap.dedent(
-        f"""\
-        apiVersion: v1
-        kind: Namespace
-        metadata:
-          name: {NAMESPACE}
-          annotations:
-            linkerd.io/inject: enabled
-        ---
-        apiVersion: v1
-        kind: Namespace
-        metadata:
-          name: {VLLM_NAMESPACE}
-        """
+    for ns in (NAMESPACE, VLLM_NAMESPACE):
+        if _kubectl("get", "namespace", ns, check=False).returncode != 0:
+            ns_yaml = textwrap.dedent(
+                f"""\
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {ns}
+                  annotations:
+                    linkerd.io/inject: enabled
+                """
+            )
+            _kubectl("apply", "-f", "-", input_text=ns_yaml)
+
+    # Only apply static manifests when the cluster does not already have them
+    # (e.g., bare kind in CI). On live GKE clusters, Terraform manages KSA
+    # Workload Identity annotations and Linkerd policy resources.
+    if (
+        _kubectl(
+            "get",
+            "sa",
+            "cage-gateway-sa",
+            "cage-advisor-sa",
+            "cage-vllm-sa",
+            "-n",
+            NAMESPACE,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        _kubectl("apply", "-f", str(SERVICE_ACCOUNT_MANIFEST))
+
+    if (
+        _kubectl(
+            "get",
+            "server.policy.linkerd.io/gateway-http",
+            "authorizationpolicy.policy.linkerd.io/gateway-gated",
+            "-n",
+            NAMESPACE,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        _kubectl("apply", "-f", str(LINKERD_POLICY_MANIFEST))
+
+    gw_img_res = _kubectl(
+        "get",
+        "deploy",
+        "gateway",
+        "-n",
+        NAMESPACE,
+        "-o",
+        "jsonpath={.spec.template.spec.containers[0].image}",
+        check=False,
     )
-    _kubectl("apply", "-f", "-", input_text=namespaces_yaml)
-    _kubectl("apply", "-f", str(SERVICE_ACCOUNT_MANIFEST))
-    _kubectl("apply", "-f", str(LINKERD_POLICY_MANIFEST))
+    probe_image = (
+        gw_img_res.stdout.strip()
+        if gw_img_res.returncode == 0 and gw_img_res.stdout.strip()
+        else "python:3.11-slim"
+    )
 
     probe_workloads_yaml = textwrap.dedent(
         f"""\
@@ -134,22 +176,41 @@ def linkerd_mesh_fixture():
           namespace: {NAMESPACE}
           labels:
             app: gateway
+            probe: linkerd-mesh-conformance
         spec:
           replicas: 1
           selector:
             matchLabels:
               app: gateway
+              probe: linkerd-mesh-conformance
           template:
             metadata:
               annotations:
                 linkerd.io/inject: enabled
               labels:
                 app: gateway
+                probe: linkerd-mesh-conformance
             spec:
               serviceAccountName: cage-gateway-sa
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
               containers:
                 - name: gateway
-                  image: python:3.11-slim
+                  image: {probe_image}
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    capabilities:
+                      drop:
+                        - ALL
+                    privileged: false
+                    readOnlyRootFilesystem: false
+                    runAsNonRoot: true
+                    runAsUser: 1000
+                    seccompProfile:
+                      type: RuntimeDefault
                   ports:
                     - name: http
                       containerPort: 8080
@@ -187,6 +248,7 @@ def linkerd_mesh_fixture():
         spec:
           selector:
             app: gateway
+            probe: linkerd-mesh-conformance
           ports:
             - name: http
               port: 8080
@@ -201,10 +263,26 @@ def linkerd_mesh_fixture():
             linkerd.io/inject: enabled
         spec:
           serviceAccountName: cage-advisor-sa
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: client
-              image: python:3.11-slim
-              command: ["sleep", "3600"]
+              image: {probe_image}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                privileged: false
+                readOnlyRootFilesystem: false
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              command: ["python3", "-c", "import time; time.sleep(3600)"]
         ---
         apiVersion: v1
         kind: Pod
@@ -215,47 +293,64 @@ def linkerd_mesh_fixture():
             linkerd.io/inject: enabled
         spec:
           serviceAccountName: cage-vllm-sa
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: client
-              image: python:3.11-slim
-              command: ["sleep", "3600"]
+              image: {probe_image}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                privileged: false
+                readOnlyRootFilesystem: false
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              command: ["python3", "-c", "import time; time.sleep(3600)"]
         """
     )
-    _kubectl("apply", "-f", "-", input_text=probe_workloads_yaml)
+    try:
+        _kubectl("apply", "-f", "-", input_text=probe_workloads_yaml)
 
-    _kubectl(
-        "rollout",
-        "status",
-        "deployment/gateway-mesh-probe",
-        "-n",
-        NAMESPACE,
-        "--timeout=180s",
-        timeout=200,
-    )
-    _kubectl(
-        "wait",
-        "--for=condition=Ready",
-        "pod/advisor-mesh-client",
-        "pod/vllm-mesh-client",
-        "-n",
-        NAMESPACE,
-        "--timeout=180s",
-        timeout=200,
-    )
+        _kubectl(
+            "rollout",
+            "status",
+            "deployment/gateway-mesh-probe",
+            "-n",
+            NAMESPACE,
+            "--timeout=180s",
+            timeout=200,
+        )
+        _kubectl(
+            "wait",
+            "--for=condition=Ready",
+            "pod/advisor-mesh-client",
+            "pod/vllm-mesh-client",
+            "-n",
+            NAMESPACE,
+            "--timeout=180s",
+            timeout=200,
+        )
 
-    yield
-
-    _kubectl(
-        "delete",
-        "deployment/gateway-mesh-probe",
-        "service/gateway-mesh-probe",
-        "pod/advisor-mesh-client",
-        "pod/vllm-mesh-client",
-        "-n",
-        NAMESPACE,
-        "--ignore-not-found=true",
-        check=False,
-    )
+        yield
+    finally:
+        _kubectl(
+            "delete",
+            "deployment/gateway-mesh-probe",
+            "service/gateway-mesh-probe",
+            "pod/advisor-mesh-client",
+            "pod/vllm-mesh-client",
+            "-n",
+            NAMESPACE,
+            "--ignore-not-found=true",
+            check=False,
+        )
 
 
 def _exec_http_get(

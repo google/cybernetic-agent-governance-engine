@@ -113,6 +113,12 @@ variable "enable_binary_authorization" {
   default     = false
 }
 
+variable "binary_authorization_enforcement_mode" {
+  description = "Binary authorization enforcement mode: ENFORCED_BLOCK_AND_AUDIT_LOG or DRYRUN_AUDIT_LOG_ONLY"
+  type        = string
+  default     = "ENFORCED_BLOCK_AND_AUDIT_LOG"
+}
+
 variable "enable_audit_logging" {
   description = "Enable comprehensive audit logging (AU-2, AU-3, AU-9)"
   type        = bool
@@ -123,6 +129,12 @@ variable "enable_cmek" {
   description = "Enable Customer-Managed Encryption Keys (SC-12, SC-13)"
   type        = bool
   default     = false
+}
+
+variable "database_encryption_state" {
+  description = "Database encryption state (ENCRYPTED or ALL_OBJECTS_ENCRYPTION_ENABLED). If null, defaults to ENCRYPTED."
+  type        = string
+  default     = null
 }
 
 variable "enable_private_master_endpoint" {
@@ -1010,6 +1022,18 @@ variable "enable_memorystore_tls" {
   default     = true
 }
 
+variable "memorystore_governance_instance_id" {
+  description = "Optional override for governance Memorystore instance ID"
+  type        = string
+  default     = ""
+}
+
+variable "memorystore_app_instance_id" {
+  description = "Optional override for application Memorystore instance ID"
+  type        = string
+  default     = ""
+}
+
 # ─── Track 6f VPC & Perimeter Configuration (§5.4) ────────────────────────────
 
 variable "network" {
@@ -1091,6 +1115,18 @@ variable "memorystore_app_psc_cidr" {
   description = "PSC endpoint CIDR block for the app Memorystore instance on TLS port 6379 (§5.3)"
   type        = string
   default     = "10.0.16.16/28"
+}
+
+variable "cloud_sql_cidr" {
+  description = "VPC peering CIDR block for Cloud SQL private IP connection (§5.3)"
+  type        = string
+  default     = "10.6.80.0/20"
+}
+
+variable "cage_domain" {
+  description = "CAGE domain configuration (e.g. 'finance')"
+  type        = string
+  default     = "finance"
 }
 
 variable "kube_dns_cidr" {

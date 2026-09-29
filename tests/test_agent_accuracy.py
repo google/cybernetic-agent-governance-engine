@@ -30,23 +30,51 @@ pytestmark = pytest.mark.integration
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:18080")
 
 
+def _resolve_backend_url() -> str:
+    """Return the active backend URL, preferring os.environ['BACKEND_URL'] or :8081 fallback."""
+    candidates = [
+        os.environ.get("BACKEND_URL", BACKEND_URL),
+        "http://localhost:8081",
+        "http://localhost:18080",
+    ]
+    seen = set()
+    for url in candidates:
+        url = url.rstrip("/")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        try:
+            from tests.conftest import get_cloudrun_auth_headers
+
+            headers = get_cloudrun_auth_headers(url)
+            timeout = 15 if ".run.app" in url else 2
+            resp = requests.get(f"{url}/health", headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                return url
+        except Exception:
+            continue
+    return os.environ.get("BACKEND_URL", BACKEND_URL).rstrip("/")
+
+
 def _backend_reachable() -> bool:
     """Return True if the backend HTTP server is reachable."""
+    url = _resolve_backend_url()
     try:
         from tests.conftest import get_cloudrun_auth_headers
 
-        headers = get_cloudrun_auth_headers(BACKEND_URL)
-        timeout = 15 if ".run.app" in BACKEND_URL else 2
-        resp = requests.get(f"{BACKEND_URL.rstrip('/')}/health", headers=headers, timeout=timeout)
+        headers = get_cloudrun_auth_headers(url)
+        timeout = 15 if ".run.app" in url else 2
+        resp = requests.get(f"{url}/health", headers=headers, timeout=timeout)
         if resp.status_code == 200:
             return True
     except Exception:
         pass
     try:
-        requests.get(BACKEND_URL, timeout=2)
+        requests.get(url, timeout=2)
         return True
     except Exception:
         return False
+
 
 
 # Test Data Pools
@@ -178,22 +206,24 @@ def query_agent(prompt: str):
     before adding the application-layer CAGE_API_KEY to Authorization.
     """
     from tests.conftest import get_cloudrun_auth_headers
-    
+
+    backend_url = _resolve_backend_url()
     user_id = str(uuid.uuid4())
-    url = f"{BACKEND_URL}/agent/query"
-    payload = {"prompt": prompt, "user_id": user_id}
-    
+    url = f"{backend_url}/agent/query"
+    payload = {"prompt": prompt, "user_id": user_id, "thread_id": user_id}
+
     # Dual-layer auth for Cloud Run:
     # - X-Serverless-Authorization: Cloud Run ID token (IAM layer)
     # - Authorization: CAGE_API_KEY (application layer)
     cage_api_key = os.environ.get("CAGE_API_KEY", "")
     if cage_api_key:
         # Signal dual-layer mode by passing app_auth
-        headers = get_cloudrun_auth_headers(BACKEND_URL, app_auth=("ignored", "ignored"))
+        headers = get_cloudrun_auth_headers(backend_url, app_auth=("ignored", "ignored"))
         headers["Authorization"] = f"Bearer {cage_api_key}"
     else:
         # Single-layer mode: ID token in Authorization (dev mode bypass)
-        headers = get_cloudrun_auth_headers(BACKEND_URL)
+        headers = get_cloudrun_auth_headers(backend_url)
+
 
     max_retries = 3
     for attempt in range(max_retries):

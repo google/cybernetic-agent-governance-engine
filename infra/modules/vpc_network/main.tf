@@ -94,7 +94,7 @@ resource "google_compute_router_nat" "nat" {
 
 resource "google_compute_firewall" "default_deny_ingress" {
   count   = var.enable_default_deny ? 1 : 0
-  name    = "${local.network_name}-default-deny-ingress"
+  name    = "${local.network_name}-default-deny-all-ingress"
   network = google_compute_network.vpc.id
   project = var.project_id
 
