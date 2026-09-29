@@ -3,8 +3,8 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-09-28T15:52:22Z'
-    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
+    last-modified: '2026-09-29T00:06:06Z'
+    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
       for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
@@ -1249,7 +1249,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-09-28T15:52:22Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-09-29T00:06:06Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1292,7 +1292,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-09-28T15:52:22Z'
+        value: '2026-09-29T00:06:06Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
@@ -1537,20 +1537,30 @@ system-security-plan:
         true` in their securityContext, preventing runtime modification of container
         image layers. Writable data is isolated to explicitly-mounted emptyDir volumes
         (tmpfs-backed, ephemeral). This immutability boundary prevents malware persistence,
-        fileless attack staging, and post-compromise binary implantation. Combined
-        with Binary Authorization admission policy (only signed images may execute)
-        and Artifact Registry vulnerability scanning (block on CRITICAL/HIGH CVEs),
-        this defense-in-depth posture satisfies SI-3 requirements for high-assurance
-        AI governance workloads.'
+        fileless attack staging, and post-compromise binary implantation. Container
+        supply-chain integrity is enforced via `var.image_digests` (`@sha256:` digest
+        pinning in `infra/targets/gcp-gke/variables.tf` with fail-closed validation
+        rejecting tag-only or `:latest` references when `enable_binary_authorization
+        = true`), Cloud KMS asymmetric signing (`google_kms_crypto_key.binauthz_attestor`
+        wired as `pkix_public_key` into `google_binary_authorization_attestor.build_attestor`
+        in `infra/targets/gcp-gke/perimeter.tf`), Cloud Build digest attestation (`gcloud
+        container binauthz attestations sign-and-create` across `deployment/docker/cloudbuild.*.yaml`,
+        `scripts/build_images.sh`, and `scripts/mirror_and_attest_images.sh`), and
+        Artifact Registry vulnerability scanning (block on CRITICAL/HIGH CVEs). Note:
+        Live staging cluster verification of mirrored third-party digests and Binary
+        Authorization admission enforcement is tracked under POAM-2026-083 (referencing
+        POAM-2026-013).'
       props:
       - name: implementation-status
         value: implemented
       - name: deployment-platform
         value: gcp-gke
       - name: evidence-file
-        value: 'deployment/k8s/*-deployment.yaml (readOnlyRootFilesystem: true)'
+        value: 'infra/targets/gcp-gke/perimeter.tf; infra/targets/gcp-gke/kms_signing.tf;
+          infra/targets/gcp-gke/variables.tf; compliance/lula/lula-validation-si2.yaml;
+          deployment/k8s/*-deployment.yaml (readOnlyRootFilesystem: true)'
       - name: poam-refs
-        value: POAM-010 (SI-3)
+        value: POAM-010 (SI-3), POAM-2026-013 (SI-2), POAM-2026-083 (SI-3/SI-7)
       responsible-roles:
       - role-id: system-administrator
   back-matter:

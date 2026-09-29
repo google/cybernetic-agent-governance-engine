@@ -32,7 +32,7 @@ variable "service_name" {
 variable "image" {
   description = "vLLM container image"
   type        = string
-  default     = "vllm/vllm-openai:latest"
+  default     = "vllm/vllm-openai:v0.7.3@sha256:9bd4d87aa1e1650d5f5b9e0ca2bb070a32404f8b92f3b85e8d8ca30fc04ab6a3"
 }
 
 variable "image_pull_policy" {

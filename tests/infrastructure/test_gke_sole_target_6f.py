@@ -978,3 +978,237 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
 
 
 
+# ============================================================================
+# 8. Image Digest Pinning & Binary Authorization Attestation Chain (WP6)
+# ============================================================================
+
+
+def _extract_image_digests_block(variables_tf: str) -> str:
+    """Return the HCL block for `variable "image_digests"` in `variables.tf`."""
+    marker = 'variable "image_digests"'
+    assert marker in variables_tf, "variable \"image_digests\" missing from variables.tf"
+    start = variables_tf.index(marker)
+    next_var = variables_tf.find('\nvariable "', start + len(marker))
+    return variables_tf[start:] if next_var == -1 else variables_tf[start:next_var]
+
+
+def _evaluate_image_digests_validation(
+    variables_tf: str,
+    image_digests: dict[str, str],
+    *,
+    enable_binary_authorization: bool = True,
+) -> bool:
+    """Evaluate the `variable "image_digests"` validation rules from `variables.tf`."""
+    block = _extract_image_digests_block(variables_tf)
+    regex_matches = re.findall(r'regex\("([^"]+)",\s*ref\)', block)
+    assert len(regex_matches) >= 2, (
+        "Expected digest and :latest regex(..., ref) in variable \"image_digests\" validation"
+    )
+    # Unescape HCL string double-backslashes (e.g. `\\s` -> `\s`)
+    digest_regex = re.compile(regex_matches[0].replace(r"\\", "\\"))
+    latest_regex = re.compile(regex_matches[1].replace(r"\\", "\\"))
+
+    # Rule 1: when enable_binary_authorization = true, every image must match @sha256:<64-hex> and not :latest
+    if enable_binary_authorization:
+        if not all(
+            bool(digest_regex.match(ref)) and not bool(latest_regex.search(ref))
+            for ref in image_digests.values()
+        ):
+            return False
+
+    # Rule 2: unconditional digest + no-:latest check
+    for ref in image_digests.values():
+        if not digest_regex.match(ref) or latest_regex.search(ref):
+            return False
+
+    return True
+
+
+class TestImageSupplyChainAndAttestation:
+    """Verify WP6: digest pinning, KMS-backed Binary Authorization attestor, and build signing."""
+
+    def test_no_latest_tags_in_gke_main_tf_or_deployment_docker(self) -> None:
+        main_tf = GKE_TARGET_DIR / "main.tf"
+        docker_dir = REPO_ROOT / "deployment" / "docker"
+        offending: list[str] = []
+
+        for path in [main_tf, *sorted(docker_dir.rglob("*"))]:
+            if not path.is_file():
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if ":latest" in line:
+                    offending.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+
+        assert not offending, f"Mutable :latest image references found:\n" + "\n".join(offending)
+
+    def test_image_digests_validation_rejects_tag_only_reference_when_binauthz_enabled(
+        self,
+    ) -> None:
+        variables_tf = (GKE_TARGET_DIR / "variables.tf").read_text(encoding="utf-8")
+        block = _extract_image_digests_block(variables_tf)
+
+        assert "!var.enable_binary_authorization" in block
+        assert ':latest(@|$)' in block
+
+        # Extract default map entries from variable "image_digests"
+        default_entries = dict(
+            re.findall(r'"([^"]+)"\s*=\s*"([^"]+)"', block.split("validation {", 1)[0])
+        )
+        expected_keys = {
+            "gateway",
+            "governed-financial-advisor",
+            "vllm-streamer",
+            "nemo-guardrails",
+            "compliance-bridge",
+            "agentsight-ui",
+            "presidio-analyzer",
+            "presidio-anonymizer",
+            "opa",
+            "langfuse",
+            "langfuse-worker",
+            "cloud-sql-proxy",
+            "clickhouse-server",
+            "clickhouse-keeper",
+            "redis",
+        }
+        assert expected_keys.issubset(default_entries.keys()), (
+            f"Missing required keys in image_digests default map: "
+            f"{expected_keys - set(default_entries.keys())}"
+        )
+
+        # 1. Default digest-pinned map passes validation when enable_binary_authorization = True
+        assert (
+            _evaluate_image_digests_validation(
+                variables_tf, default_entries, enable_binary_authorization=True
+            )
+            is True
+        )
+
+        # 2. Fail-closed: a tag-only reference (even a version tag like :v1.2.3) is rejected
+        with_version_tag = dict(default_entries)
+        with_version_tag["gateway"] = (
+            "us-central1-docker.pkg.dev/project/cage-images/cage-gateway:v1.2.3"
+        )
+        assert (
+            _evaluate_image_digests_validation(
+                variables_tf, with_version_tag, enable_binary_authorization=True
+            )
+            is False
+        )
+
+        # 3. Fail-closed: a :latest tag reference is rejected
+        with_latest_tag = dict(default_entries)
+        with_latest_tag["gateway"] = (
+            "us-central1-docker.pkg.dev/project/cage-images/cage-gateway:latest"
+        )
+        assert (
+            _evaluate_image_digests_validation(
+                variables_tf, with_latest_tag, enable_binary_authorization=True
+            )
+            is False
+        )
+
+        # 4. Fail-closed: a malformed/truncated sha256 digest is rejected
+        with_short_digest = dict(default_entries)
+        with_short_digest["gateway"] = (
+            "us-central1-docker.pkg.dev/project/cage-images/cage-gateway@sha256:deadbeef"
+        )
+        assert (
+            _evaluate_image_digests_validation(
+                variables_tf, with_short_digest, enable_binary_authorization=True
+            )
+            is False
+        )
+
+    def test_gke_main_tf_wires_image_digests_across_all_workloads(self) -> None:
+        main_tf = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
+        for key in (
+            'var.image_digests["gateway"]',
+            'var.image_digests["governed-financial-advisor"]',
+            'var.image_digests["agentsight-ui"]',
+            'var.image_digests["nemo-guardrails"]',
+            'var.image_digests["presidio-analyzer"]',
+            'var.image_digests["presidio-anonymizer"]',
+            'var.image_digests["vllm-streamer"]',
+            'var.image_digests["opa"]',
+            'var.image_digests["compliance-bridge"]',
+            'var.image_digests["clickhouse-server"]',
+            'var.image_digests["clickhouse-keeper"]',
+            'var.image_digests["langfuse"]',
+            'var.image_digests["langfuse-worker"]',
+            'var.image_digests["cloud-sql-proxy"]',
+        ):
+            assert key in main_tf, f"Expected {key} to be wired in infra/targets/gcp-gke/main.tf"
+
+    def test_binauthz_attestor_wired_to_asymmetric_kms_key_without_third_party_whitelists(
+        self,
+    ) -> None:
+        kms_tf = (GKE_TARGET_DIR / "kms_signing.tf").read_text(encoding="utf-8")
+        perimeter_tf = (GKE_TARGET_DIR / "perimeter.tf").read_text(encoding="utf-8")
+
+        assert 'resource "google_kms_crypto_key" "binauthz_attestor"' in kms_tf
+        assert 'data "google_kms_crypto_key_version" "binauthz_attestor"' in perimeter_tf
+        assert "pkix_public_key" in perimeter_tf
+        assert (
+            "data.google_kms_crypto_key_version.binauthz_attestor[0].public_key[0].pem"
+            in perimeter_tf
+        )
+        assert (
+            'resource "google_binary_authorization_attestor_iam_member" "cloudbuild_attestor_viewer"'
+            in perimeter_tf
+        )
+        assert (
+            'resource "google_container_analysis_note_iam_member" "cloudbuild_note_attacher"'
+            in perimeter_tf
+        )
+
+        # No third-party docker.io / gcr.io/cloud-marketplace admission_whitelist_patterns
+        assert "docker.io/" not in perimeter_tf
+        assert "gcr.io/cloud-marketplace/" not in perimeter_tf
+
+    def test_cloudbuild_configs_and_scripts_sign_digests(self) -> None:
+        docker_dir = REPO_ROOT / "deployment" / "docker"
+        cloudbuild_files = sorted(docker_dir.glob("cloudbuild.*.yaml"))
+        assert len(cloudbuild_files) == 8
+
+        for cb_path in cloudbuild_files:
+            text = cb_path.read_text(encoding="utf-8")
+            assert "gcloud container binauthz attestations sign-and-create" in text, (
+                f"{cb_path.name} must sign and create a Binary Authorization attestation"
+            )
+            assert "@$${DIGEST}" in text, (
+                f"{cb_path.name} must attest the pushed @sha256 digest"
+            )
+
+        build_script = (REPO_ROOT / "scripts" / "build_images.sh").read_text(encoding="utf-8")
+        assert "gcloud container binauthz attestations sign-and-create" in build_script
+        assert ":latest" not in build_script
+
+        mirror_script = (REPO_ROOT / "scripts" / "mirror_and_attest_images.sh").read_text(
+            encoding="utf-8"
+        )
+        assert "gcloud container binauthz attestations sign-and-create" in mirror_script
+        assert "THIRD_PARTY_IMAGES=(" in mirror_script
+
+    def test_lula_si2_validates_actual_terraform_deployments_and_digests(self) -> None:
+        lula_si2_path = REPO_ROOT / "compliance" / "lula" / "lula-validation-si2.yaml"
+        doc = yaml.safe_load(lula_si2_path.read_text(encoding="utf-8"))
+        lula_desc = doc["component-definition"]["back-matter"]["resources"][0]["description"]
+        lula_spec = yaml.safe_load(lula_desc)
+        rego = lula_spec["provider"]["opa-spec"]["rego"]
+
+        for expected_deployment in (
+            '"gateway"',
+            '"governed-financial-advisor"',
+            '"vllm-inference"',
+            '"vllm-reasoning"',
+            '"nemo-guardrails"',
+            '"agentsight-ui"',
+            '"compliance-bridge"',
+        ):
+            assert expected_deployment in rego, (
+                f"lula-validation-si2.yaml must validate {expected_deployment}"
+            )
+        assert '"@sha256:"' in rego
+        assert '"IfNotPresent"' in rego
+        assert "advisor-deployment" not in rego

@@ -165,9 +165,9 @@ vllm_replicas          = 1
 # Override via TF_VAR_nemo_image if you want a specific tag
 nemo_image = ""
 
-# Presidio — use Microsoft public images
-presidio_analyzer_image   = "mcr.microsoft.com/presidio-analyzer:latest"
-presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
+# Presidio — mirrored into Artifact Registry and pinned by @sha256: digest via var.image_digests
+presidio_analyzer_image   = ""
+presidio_anonymizer_image = ""
 
 # ─── Langfuse (US: NextAuth URL reflects US cluster endpoint) ─────────────────
 # Update langfuse_nextauth_url to the actual US cluster ingress URL after deploy

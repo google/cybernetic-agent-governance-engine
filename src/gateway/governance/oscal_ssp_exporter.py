@@ -283,20 +283,28 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
         "si-3": {
             "uuid": _PLATFORM_SI3_IMPL_UUID,
             "control-id": "si-3",
-            "title": "Malicious Code Protection — Immutable Root Filesystem",
+            "title": "Malicious Code Protection — Immutable Root Filesystem & Signed Digest Pinning",
             "status": "implemented",
             "narrative": (
                 "All governance-stack containers enforce `readOnlyRootFilesystem: true` in their "
                 "securityContext, preventing runtime modification of container image layers. Writable "
                 "data is isolated to explicitly-mounted emptyDir volumes (tmpfs-backed, ephemeral). "
                 "This immutability boundary prevents malware persistence, fileless attack staging, "
-                "and post-compromise binary implantation. Combined with Binary Authorization admission "
-                "policy (only signed images may execute) and Artifact Registry vulnerability scanning "
-                "(block on CRITICAL/HIGH CVEs), this defense-in-depth posture satisfies SI-3 requirements "
-                "for high-assurance AI governance workloads."
+                "and post-compromise binary implantation. Container supply-chain integrity is enforced "
+                "via `var.image_digests` (`@sha256:` digest pinning in `infra/targets/gcp-gke/variables.tf` "
+                "with fail-closed validation rejecting tag-only or `:latest` references when "
+                "`enable_binary_authorization = true`), Cloud KMS asymmetric signing "
+                "(`google_kms_crypto_key.binauthz_attestor` wired as `pkix_public_key` into "
+                "`google_binary_authorization_attestor.build_attestor` in `infra/targets/gcp-gke/perimeter.tf`), "
+                "Cloud Build digest attestation (`gcloud container binauthz attestations sign-and-create` across "
+                "`deployment/docker/cloudbuild.*.yaml`, `scripts/build_images.sh`, and "
+                "`scripts/mirror_and_attest_images.sh`), and Artifact Registry vulnerability scanning "
+                "(block on CRITICAL/HIGH CVEs). Note: Live staging cluster verification of mirrored "
+                "third-party digests and Binary Authorization admission enforcement is tracked under "
+                "POAM-2026-083 (referencing POAM-2026-013)."
             ),
-            "evidence": "deployment/k8s/*-deployment.yaml (readOnlyRootFilesystem: true)",
-            "poam_refs": "POAM-010 (SI-3)",
+            "evidence": "infra/targets/gcp-gke/perimeter.tf; infra/targets/gcp-gke/kms_signing.tf; infra/targets/gcp-gke/variables.tf; compliance/lula/lula-validation-si2.yaml; deployment/k8s/*-deployment.yaml (readOnlyRootFilesystem: true)",
+            "poam_refs": "POAM-010 (SI-3), POAM-2026-013 (SI-2), POAM-2026-083 (SI-3/SI-7)",
         },
     },
 }

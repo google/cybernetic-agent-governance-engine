@@ -13,7 +13,10 @@
 # limitations under the License.
 
 substitutions:
-  _SHORT_SHA: "latest"
+  _SHORT_SHA: "v1"
+  _ENVIRONMENT: "staging"
+  _KMS_LOCATION: "us-central1"
+  _KMS_KEY_VERSION: "1"
 
 steps:
   # Build the compliance-bridge image using its dedicated Dockerfile.
@@ -29,16 +32,31 @@ steps:
       - 'build'
       - '--file=src/compliance_bridge/Dockerfile'
       - '--no-cache'
-      - '--tag=gcr.io/$PROJECT_ID/compliance-bridge:latest'
       - '--tag=gcr.io/$PROJECT_ID/compliance-bridge:$_SHORT_SHA'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     id: push-compliance-bridge
-    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/compliance-bridge']
+    args: ['push', 'gcr.io/$PROJECT_ID/compliance-bridge:$_SHORT_SHA']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: attest-compliance-bridge
+    entrypoint: 'bash'
+    args:
+      - '-ceu'
+      - |
+        DIGEST=$$(gcloud container images describe "gcr.io/${PROJECT_ID}/compliance-bridge:${_SHORT_SHA}" --format='get(image_summary.digest)')
+        gcloud container binauthz attestations sign-and-create \
+          --project="${PROJECT_ID}" \
+          --artifact-url="gcr.io/${PROJECT_ID}/compliance-bridge@$${DIGEST}" \
+          --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
+          --keyversion-project="${PROJECT_ID}" \
+          --keyversion-location="${_KMS_LOCATION}" \
+          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
+          --keyversion-key="binauthz-attestor" \
+          --keyversion="${_KMS_KEY_VERSION}"
 
 images:
-  - 'gcr.io/$PROJECT_ID/compliance-bridge:latest'
   - 'gcr.io/$PROJECT_ID/compliance-bridge:$_SHORT_SHA'
 
 timeout: '1200s'

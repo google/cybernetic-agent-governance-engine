@@ -28,10 +28,16 @@
 #   reconciler-snapshot  reconciler                reconciler, gateway
 #   compliance-evidence  compliance bridge         compliance bridge
 #   benchmark-signing    benchmark job             benchmark job
+#   binauthz-attestor    cloudbuild                cloudbuild
 #
 # benchmark-signing exists only to measure KMS signing latency. It is not a
 # trust anchor: no verifier loads its public key, so its signatures carry no
 # authority.
+#
+# binauthz-attestor backs the Binary Authorization build attestor
+# (google_binary_authorization_attestor.build_attestor in perimeter.tf); only
+# Cloud Build holds roles/cloudkms.signer on this key to sign image digests at
+# build/mirror time (SI-7 / CM-7 / POAM-2026-083).
 #
 # The advisor appears nowhere: it hosts no SymbolicGovernor, verifies no
 # seals and has no Google service account (POAM-2026-079). Seals are issued
@@ -124,11 +130,31 @@ resource "google_kms_crypto_key" "benchmark_signing" {
   }
 }
 
+resource "google_kms_crypto_key" "binauthz_attestor" {
+  name     = "binauthz-attestor"
+  key_ring = google_kms_key_ring.signing.id
+  purpose  = "ASYMMETRIC_SIGN"
+
+  version_template {
+    algorithm        = "EC_SIGN_P256_SHA256"
+    protection_level = var.kms_signing_protection_level
+  }
+
+  labels = {
+    "cage-signer" = "cloudbuild"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 locals {
   gateway_member           = "serviceAccount:${google_service_account.gateway.email}"
   reconciler_member        = "serviceAccount:${google_service_account.reconciler.email}"
   compliance_bridge_member = "serviceAccount:${google_service_account.compliance_bridge.email}"
   benchmark_member         = "serviceAccount:${google_service_account.benchmark.email}"
+  cloudbuild_member        = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
 
   signing_key_access = {
     gateway_seal = {
@@ -151,6 +177,11 @@ locals {
       signers = [local.benchmark_member]
       readers = [local.benchmark_member]
     }
+    binauthz_attestor = {
+      key     = google_kms_crypto_key.binauthz_attestor.id
+      signers = [local.cloudbuild_member]
+      readers = [local.cloudbuild_member]
+    }
   }
 
   # Initial version created with each asymmetric key. Workloads pin a version
@@ -159,6 +190,7 @@ locals {
   reconciler_snapshot_key_version = "${google_kms_crypto_key.reconciler_snapshot.id}/cryptoKeyVersions/1"
   compliance_evidence_key_version = "${google_kms_crypto_key.compliance_evidence.id}/cryptoKeyVersions/1"
   benchmark_signing_key_version   = "${google_kms_crypto_key.benchmark_signing.id}/cryptoKeyVersions/1"
+  binauthz_attestor_key_version   = "${google_kms_crypto_key.binauthz_attestor.id}/cryptoKeyVersions/1"
 }
 
 data "google_iam_policy" "signing_key" {

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM vllm/vllm-openai:latest
+ARG VLLM_BASE_IMAGE="vllm/vllm-openai:v0.7.3@sha256:9bd4d87aa1e1650d5f5b9e0ca2bb070a32404f8b92f3b85e8d8ca30fc04ab6a3"
+FROM ${VLLM_BASE_IMAGE}
 
 # Model weights are mirrored to GCS out-of-band by operators and streamed at
 # runtime via GKE Workload Identity (`runai_streamer`). Never pass or bake
@@ -25,6 +26,6 @@ RUN pip install --no-cache-dir \
     runai-model-streamer-gcs \
     google-cloud-storage
 
-# The entrypoint is inherited from vllm/vllm-openai:latest:
+# The entrypoint is inherited from the vllm/vllm-openai base image:
 #   python3 -m vllm.entrypoints.openai.api_server
 # Model path, port, and other flags are passed via Kubernetes args/command.
