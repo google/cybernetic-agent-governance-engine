@@ -34,7 +34,12 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import datetime, timezone
 
-from .cold_store import ColdStoreHealth, ColdStoreReceipt, EvidenceColdStore
+from .cold_store import (
+    ColdStoreHealth,
+    ColdStoreNotFoundError,
+    ColdStoreReceipt,
+    EvidenceColdStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +69,7 @@ class NullColdStore(EvidenceColdStore):
             )
 
         self._max_entries = max_entries
-        self._entries: OrderedDict[str, str] = OrderedDict()  # key -> sha256
+        self._entries: OrderedDict[str, bytes] = OrderedDict()  # key -> content
         logger.warning(
             "[NullColdStore] Initialized with in-memory storage (max_entries=%d). "
             "No durable off-cluster cold storage is active.",
@@ -85,7 +90,7 @@ class NullColdStore(EvidenceColdStore):
         digest = hashlib.sha256(content).hexdigest()
         if len(self._entries) >= self._max_entries:
             self._entries.popitem(last=False)
-        self._entries[key] = digest
+        self._entries[key] = bytes(content)
 
         logger.debug(
             "[NullColdStore] Stored key '%s' (%d bytes, sha256=%s...)",
@@ -113,7 +118,7 @@ class NullColdStore(EvidenceColdStore):
     ) -> tuple[ColdStoreReceipt, bool]:
         """Atomic put-if-absent simulation against in-memory key buffer."""
         if key in self._entries:
-            existing_digest = self._entries[key]
+            existing_digest = hashlib.sha256(self._entries[key]).hexdigest()
             receipt = ColdStoreReceipt(
                 uri=f"null://{key}",
                 key=key,
@@ -125,6 +130,19 @@ class NullColdStore(EvidenceColdStore):
 
         receipt = await self.put_batch(key, content, metadata)
         return receipt, True
+
+    async def get(self, key: str) -> bytes:
+        """Return the buffered bytes for key."""
+        try:
+            return self._entries[key]
+        except KeyError:
+            raise ColdStoreNotFoundError(
+                f"No object under key '{key}'", backend_id="null"
+            ) from None
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        """Return buffered keys starting with prefix, sorted."""
+        return sorted(k for k in self._entries if k.startswith(prefix))
 
     def health(self) -> ColdStoreHealth:
         """Return operational health of the in-memory cold store."""

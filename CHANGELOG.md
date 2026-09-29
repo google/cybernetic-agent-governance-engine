@@ -11,6 +11,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Custodied evidence verifier** (`src/compliance_bridge/evidence_verifier.py`): `CustodyVerifier` reads the WORM archive back, verifies each attestation's signature against kid-resolved out-of-band trust anchors (`EVIDENCE_KMS_KEY` provider, optional `EVIDENCE_TRUST_ANCHORS_FILE`), binds it to its data object, re-verifies every record and checks cross-batch continuity (only self-declared gaps are tolerated). CLI: `uv run python -m src.compliance_bridge.evidence_verifier`.
+- **`EvidenceColdStore` read seam**: `get()` (raises `ColdStoreNotFoundError` when missing) and `list_keys()` on the protocol and the GCS, S3 and null backends. `NullColdStore` now retains content, not just digests.
 - **GKE Sole Cloud Target, Regional Prod, Dataplane V2 FQDN NetworkPolicy & Perimeter Hardening (Step 6f)** (`infra/targets/gcp-gke/`, `infra/modules/gcp_gke_cluster/`, `deployment/k8s/cilium/`):
   Retired `gcp-cloudrun` as a deployment target so `gcp-gke` is the sole cloud deployment target alongside `agnostic`.
   Made GKE clusters regional in `prod` (`location = var.region`) and zonal in `dev`/`staging` (`location = var.zone`),

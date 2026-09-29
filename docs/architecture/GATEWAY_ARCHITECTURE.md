@@ -563,7 +563,7 @@ src/gateway/
 | `src/gateway/governance/consequence_gateway.py` | Execution Gate | Atomic single-use `ConsequenceToken` verification and TOCTOU defense before execution. |
 | `src/gateway/governance/execution_actuator.py` | Actuator Registry | Registration and invocation boundary for concrete domain execution actuators. |
 | `src/gateway/governance/evidence/stream.py` | Evidence Stream | Hot-path Redis Stream append with SHA-256 hash chaining via Lua compare-and-append; posture-based startup preconditions. No signing. |
-| `src/gateway/governance/evidence/cold_store.py` | Cold Storage | Vendor-neutral `EvidenceColdStore` protocol (incl. `put_if_absent`). The custody loop lives in `src/compliance_bridge/evidence_custodian.py`. |
+| `src/gateway/governance/evidence/cold_store.py` | Cold Storage | Vendor-neutral `EvidenceColdStore` protocol (`put_if_absent`, plus `get` / `list_keys` for read-back verification). The custody loop lives in `src/compliance_bridge/evidence_custodian.py`. |
 | `src/gateway/governance/kms_signer.py` | Cryptographic Signer | Governance JWS signing and kid-resolved verification; cloud KMS providers are loaded from `src/integrations/` by `signer_factory.py`, with software fallbacks only in dev/test/CI. |
 | `src/gateway/governance/routing_seal.py` | Routing Seal | KMS-signed JWT routing seal generation and verification (HMAC form for dev/test/CI only). |
 | `src/gateway/governance/contracts.py` | Subsystem Protocols | Structural subtyping contracts (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, etc.). |
