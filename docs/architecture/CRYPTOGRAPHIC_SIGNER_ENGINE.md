@@ -77,7 +77,7 @@ The signer lifecycle handles initialization, payload transformation, and verific
   |---|---|---|---|
   | `KMS_GOVERNANCE_KEY` | gateway (routing seals) | `gateway-seal` | — |
   | `RECONCILER_KMS_KEY` | reconciliation worker (ground-truth snapshots) | `reconciler-snapshot` | `verify_snapshot_signature()` rejects any gateway `kid`; posture check `reconciler_trust_anchor` |
-  | `EVIDENCE_KMS_KEY` | compliance bridge (evidence batches) | `compliance-evidence` | `build_evidence_signer()` refuses a key matching `KMS_GOVERNANCE_KEY` or `RECONCILER_KMS_KEY` |
+  | `EVIDENCE_KMS_KEY` | compliance bridge (evidence batches) | `compliance-evidence` | `build_evidence_signer()` and `load_evidence_trust_anchors()` ([`evidence_verifier.py`](../../src/compliance_bridge/evidence_verifier.py)) refuse any key or `kid` matching `KMS_GOVERNANCE_KEY` or `RECONCILER_KMS_KEY` |
 
   In the `gcp-gke` target ([`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf)) every key has an authoritative key-level IAM policy and no role is granted on the keyring. The advisor holds no signing key and no Google service account. Symmetric CMEK encryption-at-rest keys live in a separate `cage-keyring-<env>` keyring provisioned by `module.kms`.
 - **Dual-Operator Security Boundaries**: The reference implementation uses one key per signing workload, not per operator. A "Per-Ceremony OIDC Downscoping" model (short-lived, ~30s tokens that temporarily acquire per-operator Workload Identity signing credentials) is a proposed design for production adopters; it is **not implemented** in this repository.
@@ -87,5 +87,6 @@ The signer lifecycle handles initialization, payload transformation, and verific
 - `KMS_PROVIDER` / `CAGE_KMS_PROVIDER`: Selects the provider (`gcp` default, `aws`, `azure`; `ed25519` / `hmac` only in DEV/TEST/CI). Provider selection is explicit — it is not inferred from the key name.
 - `KMS_GOVERNANCE_KEY`: Gateway signing key; for GCP, the full key version resource name (`projects/*/locations/*/keyRings/*/cryptoKeys/*/cryptoKeyVersions/*`).
 - `RECONCILER_KMS_KEY` / `EVIDENCE_KMS_KEY`: Reconciler and compliance-bridge signing keys (see the isolation table above).
+- `EVIDENCE_TRUST_ANCHORS_FILE`: Optional operator-mounted JSON manifest (`{kid: pem}`) of retired `EVIDENCE_KMS_KEY` public-key versions loaded out-of-band by `load_evidence_trust_anchors()` so [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) can verify historical batches across key rotations.
 - `AWS_KMS_KEY_ID`, `AZURE_KEYVAULT_URL`, `AZURE_KMS_KEY_NAME`: Provider-specific key selectors read by `build_kms_provider()`.
 - `KMS_GOVERNANCE_PUBLIC_PEM`: Optional local path to the public key PEM. When set, `from_env()` loads it and compares it with the provider's key, logging an error on mismatch.

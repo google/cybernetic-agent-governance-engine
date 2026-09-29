@@ -4,18 +4,18 @@
 
 The Evidence Chain is a core component of the Layer 1 Kernel responsible for maintaining a cryptographically verifiable, durable ledger of all governance and compliance events. It elevates standard application logging into a tamper-evident, hash-chained evidence sequence required by ISO 42001 and AARM compliance mandates.
 
-**Trust Boundaries (producer / custodian split)**:
-- **Producer — gateway (Layer 1)**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) sanitizes, canonicalizes and hash-chains each governance event and appends it to a Redis Stream. The gateway holds **no evidence signing key and no cold store**; it cannot attest to or archive its own evidence.
-- **Custodian — compliance bridge (Layer 3)**: [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) independently re-verifies the chain, signs a per-batch attestation with the dedicated `EVIDENCE_KMS_KEY`, writes batch + attestation to the WORM cold store, and advances a durable cursor.
-- **Downstream (Storage Adapters)**: The custodian writes through the abstract `EvidenceColdStore` protocol ([`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)). Concrete backends (`GcsColdStore` in [`src/integrations/storage_gcs/cold_store.py`](../../src/integrations/storage_gcs/cold_store.py), `S3ColdStore` in [`src/integrations/storage_s3/cold_store.py`](../../src/integrations/storage_s3/cold_store.py)) are lazy-imported from Layer 3 by [`factory.py`](../../src/gateway/governance/evidence/factory.py).
+**Trust Boundaries (producer / custodian / verifier split)**:
+- **Producer — gateway (Layer 1)**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) sanitizes, canonicalizes and hash-chains each governance event (from [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py), [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py), [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py), and [`GovernanceEventBus`](../../src/compliance_bridge/sse_events.py)) and appends it to a Redis Stream. The gateway holds **no evidence signing key and no cold store**; it cannot attest to or archive its own evidence.
+- **Custodian & Verifier — compliance bridge (Layer 3)**: [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) independently re-verifies the chain, signs a per-batch attestation with the dedicated `EVIDENCE_KMS_KEY`, writes batch + attestation to the WORM cold store, and advances a durable cursor. [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) reads the archive back on `EVIDENCE_VERIFY_INTERVAL_S`, verifies signatures against out-of-band `kid`-resolved trust anchors, re-checks every record and batch link, and gates OSCAL assessment citations (`assert_citable()`).
+- **Downstream (Storage Adapters)**: The custodian and verifier operate through the abstract `EvidenceColdStore` protocol ([`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)). Concrete backends (`GcsColdStore` in [`src/integrations/storage_gcs/cold_store.py`](../../src/integrations/storage_gcs/cold_store.py), `S3ColdStore` in [`src/integrations/storage_s3/cold_store.py`](../../src/integrations/storage_s3/cold_store.py)) are lazy-imported from Layer 3 by [`factory.py`](../../src/gateway/governance/evidence/factory.py).
 
 ## 2. Data & Execution Flow
 
-The hot path (gateway) only hashes and appends. Signing and archival run out of band in a separate workload with a separate identity.
+The hot path (gateway) only hashes and appends. Signing, archival, and read-back verification run out of band in a separate workload with a separate identity.
 
 ```mermaid
 flowchart TD
-    EventBus["GovernanceEventBus.publish()"] --> Ingest["EvidenceStreamSink.ingest()"]
+    EventBus["GovernanceEventBus / ConsequenceGateway /\ningest_actuation_receipt()"] --> Ingest["EvidenceStreamSink.ingest()"]
 
     subgraph Producer["Gateway (producer, no key)"]
         Ingest --> PII[PIISanitizer.sanitize_dict]
@@ -26,14 +26,16 @@ flowchart TD
 
     CAS --> Redis[("Redis Stream\ndb=1, noeviction")]
 
-    subgraph Custodian["Compliance bridge (custodian)"]
+    subgraph Custodian["Compliance bridge (custodian + verifier)"]
         Redis --> Verify["Re-verify chain after cursor"]
         Verify --> Sign["Sign batch attestation (EVIDENCE_KMS_KEY)"]
         Sign --> Put["put_if_absent batch + attestation"]
         Put --> Cursor["Advance durable cursor"]
+        VerifyArchive["CustodyVerifier.run_forever() /\nverify_for_citation()"] --> OSCAL["OSCAL /v1/oscal/assessment-results\n(assert_citable)"]
     end
 
     Put --> Integrations["WORM cold store\n(GCS / S3)"]
+    Integrations --> VerifyArchive
 ```
 
 ## 3. State Machine & Lifecycle

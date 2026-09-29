@@ -158,13 +158,13 @@ sequenceDiagram
 - **Atomic Single-Use Consumption**: Atomically consumes the authority record in Redis (`SETNX` / Lua) to prevent replay and substitution attacks.
 - **Fail-Closed Guarantees**: Cryptographic failures, parameter mismatches, or store connectivity errors collapse to `BLOCK`.
 
-### 2.4 EvidenceStreamSink & Evidence Custody
+### 2.4 EvidenceStreamSink, Evidence Custody & Read-Back Verification
 
-The Evidence Chain ([`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py), with custody in [`evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py)) maintains an immutable, tamper-evident audit ledger complying with ISO 42001 and CSA AARM mandates.
+The Evidence Chain ([`src/gateway/governance/evidence/stream.py`](../../src/gateway/governance/evidence/stream.py), with custody in [`evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py) and read-back verification in [`evidence_verifier.py`](../../src/compliance_bridge/evidence_verifier.py)) maintains an immutable, tamper-evident audit ledger complying with ISO 42001 and CSA AARM mandates.
 
 ```mermaid
 flowchart TD
-    EventBus[GovernanceEventBus.publish()] --> Ingest[EvidenceStreamSink.ingest()]
+    EventBus["GovernanceEventBus / ConsequenceGateway /\ningest_actuation_receipt()"] --> Ingest[EvidenceStreamSink.ingest()]
     
     subgraph Hot Path (Sub-millisecond)
         Ingest --> JCS[JCS Normalization]
@@ -173,17 +173,20 @@ flowchart TD
         CAS --> Redis[(Redis Streams\ndb=1, noeviction)]
     end
     
-    subgraph Custody (Compliance Bridge, default 60s)
-        Redis --> Custodian[EvidenceCustodian\nre-verify chain]
+    subgraph Custody & Verification (Compliance Bridge)
+        Redis --> Custodian[EvidenceCustodian\nre-verify chain, 60s]
         Custodian --> Attest[KMS Batch Attestation\nEVIDENCE_KMS_KEY]
         Attest --> Protocol[EvidenceColdStore.put_if_absent]
+        Verifier[CustodyVerifier\nread-back & kid verify, 300s] --> OSCAL[OSCAL Citation Gate\nassert_citable]
     end
     
     Protocol --> Integrations[Layer 3 Integrations\n(GCS WORM / S3)]
+    Integrations --> Verifier
 ```
 
-- **Hot Path (Sub-millisecond)**: Ingests normalized JCS events, computes SHA-256 hash chains linking each record to its predecessor (`prev_hash`), and appends to Redis Streams (`cage:evidence:stream`, `db=1`, `noeviction`) through a Lua compare-and-append script that rejects a stale chain head. The gateway holds no evidence-signing key; it is started by the server lifespan via `start_evidence_sink()` and fails closed if the stream is unavailable under an enforcing posture.
+- **Hot Path (Sub-millisecond)**: Ingests normalized JCS events (governance decisions, `ConsequenceGateway` evaluations, and actuator receipts/refusals via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), computes SHA-256 hash chains linking each record to its predecessor (`prev_hash`), and appends to Redis Streams (`cage:evidence:stream`, `db=1`, `noeviction`) through a Lua compare-and-append script that rejects a stale chain head. The gateway holds no evidence-signing key; it is started by the server lifespan via `start_evidence_sink()` and fails closed if the stream is unavailable under an enforcing posture.
 - **Custody (Compliance Bridge)**: The `EvidenceCustodian` reads new entries from a durable cursor, re-verifies the hash chain, signs a `cage-evidence-batch/1` attestation over the batch with `EVIDENCE_KMS_KEY`, and writes batch and attestation via `EvidenceColdStore.put_if_absent` to WORM object storage. It never trims the stream. Without a KMS key (dev/test/ci only) attestations are written as `.attestation.unsigned.json`, marked non-evidentiary, and rejected by `assert_citable()`.
+- **Read-Back Verification & Citation Gating (Compliance Bridge)**: `CustodyVerifier` runs on `EVIDENCE_VERIFY_INTERVAL_S` (default 300s) and via `GET /v1/evidence/verify`, verifying every signed batch against `kid`-resolved trust anchors (`EVIDENCE_KMS_KEY` + optional `EVIDENCE_TRUST_ANCHORS_FILE`), re-checking object SHA-256 digests, record hashes, and cross-batch sequence continuity, and gating `GET /v1/oscal/assessment-results` when `verify_custody=true` or `OSCAL_REQUIRE_VERIFIED_CUSTODY=true`.
 
 ### 2.5 OTLP Telemetry & Distributed Observability
 

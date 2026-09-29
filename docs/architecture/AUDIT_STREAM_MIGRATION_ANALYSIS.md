@@ -145,17 +145,19 @@ field. See [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2.
   - Line 215: `await self._evidence_sink.ingest(event)`; `ingest()` runs `PIISanitizer.sanitize_dict()` before hashing (§10.3)
 - Gateway producers also call `get_evidence_sink()` directly:
   [`governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
-  [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py) (`publish_refusal()`), and
+  [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py) (`publish_refusal()`),
+  [`consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py) (`_emit_evaluation()`),
+  [`execution_actuator.py`](../../src/gateway/governance/execution_actuator.py) (`ingest_actuation_receipt()`), and
   [`routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
 **Integration Points:**
-- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py:320) — SSE `/v1/events/stream` endpoint
+- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py:320) — SSE `/v1/events/stream` endpoint and `GET /v1/evidence/verify` read-back verification endpoint
 - [`src/compliance_bridge/audit_workflow.py`](../../src/compliance_bridge/audit_workflow.py) — Publishes `AUDIT_FINDING`, `GOVERNANCE_VIOLATION`, `REMEDIATION_GENERATED` events (lines 869, 927, 635)
 - [`src/gateway/governance/routing_seal.py:generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py:456) — Commits evidence before seal issuance (blocking mode)
 
 **Storage:** 
 - **Hot tier:** Redis Streams (`cage:evidence:stream` key, db=1, noeviction)
-- **Cold tier:** pluggable via `EVIDENCE_COLD_STORE` (`gcs` | `s3` | `null`, default `null`; [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:46)); the GCS backend supports CMEK and is written only by the compliance bridge's `EvidenceCustodian` (default 60s cycle, re-verified chain, KMS batch attestation, put-if-absent). In the `gcp-gke` target the retention-locked WORM bucket (`module.worm_bucket`) is wired as `EVIDENCE_COLD_STORE=gcs` for the compliance bridge only; the gateway is a producer and never writes the cold tier
+- **Cold tier:** pluggable via `EVIDENCE_COLD_STORE` (`gcs` | `s3` | `null`, default `null`; [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:46)); the GCS backend supports CMEK, is written only by the compliance bridge's `EvidenceCustodian` (default 60s cycle, re-verified chain, KMS batch attestation, put-if-absent), and is verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) (default 300s cycle, `kid`-resolved trust anchors, `assert_citable()` gating OSCAL assessment exports). In the `gcp-gke` target the retention-locked WORM bucket (`module.worm_bucket`) is wired as `EVIDENCE_COLD_STORE=gcs` for the compliance bridge only; the gateway is a producer and never writes the cold tier
 
 **Payload Schema (v3.0 Breaking Changes):**
 
