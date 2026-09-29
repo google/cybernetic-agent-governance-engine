@@ -6,7 +6,7 @@
 > **Status:** Draft for review
 > **Author context:** CAGE-SEC-009 / Terry Snyder burden-of-proof extension (Part 5)
 > **Scope:** Extends the existing 5-part `RefusalReceipt` (schema v2) in
-> [`contracts.py`](../../src/gateway/governance/contracts.py:52) to a formal
+> [`contracts.py`](../../src/gateway/governance/contracts.py:60) to a formal
 > **9-part non-formation proof** — a cryptographic artifact that proves a
 > blocked action **never mathematically existed**, as distinct from an action
 > that occurred and was later rolled back.
@@ -16,9 +16,13 @@
 ## 1. Framing: Non-Formation vs. Rollback
 
 CAGE already implements **rollback** correctly — e.g.
-[`ControlBarrierFunction.rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py:1230)
-compensates a committed Redis balance debit when a downstream tier fails
-*after* the CBF commit succeeded (Saga pattern, §7.3 of the CAGE paper). That is
+[`ControlBarrierFunction.rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py:1307)
+compensates a committed Redis state debit when a later Phase 2 commit fails,
+or the routing seal is not issued, *after* the CBF commit succeeded. The
+request's `ReservationScope`
+([`reservation.py`](../../src/gateway/governance/governor/reservation.py))
+rolls back LIFO from the `CommitReceipt` each Phase 2 tier returned (Saga
+pattern, §7.3 of the CAGE paper). That is
 "X happened, then X was undone."
 
 **Non-formation is a different, stronger claim.** It says: for actions blocked
@@ -29,7 +33,7 @@ transiently. The proof obligation is therefore not "we reversed it" but
 "it was cryptographically impossible for it to have formed."
 
 This maps directly onto CAGE's existing **No-Direct-Bind invariant**
-(proved exhaustively in [`proof/model.py`](../../proof/model.py:42)):
+(proved exhaustively in [`proof/model.py`](../../proof/model.py:51)):
 
 ```
 NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
@@ -53,9 +57,10 @@ auditable ten years after issuance.
 
 ### 2.1 `contracts.py` — the current 5-part proof chain (schema v2)
 
-[`RefusalReceipt`](../../src/gateway/governance/contracts.py:52) already
-implements a **5-part causal chain** (schema v2, `__post_init__` at
-[`contracts.py:83`](../../src/gateway/governance/contracts.py:83)):
+[`RefusalReceipt`](../../src/gateway/governance/contracts.py:60) already
+implements a **5-part causal chain** (introduced in schema v2; the current
+default `schema_version` is `v3`, which adds `tier_failures`; `__post_init__` at
+[`contracts.py:91`](../../src/gateway/governance/contracts.py:91)):
 
 | Terry (5-part, existing) | `RefusalReceipt` field |
 |---|---|
@@ -63,21 +68,25 @@ implements a **5-part causal chain** (schema v2, `__post_init__` at
 | 2. Standing | `standing_snapshot` (per-tier `governing_state`) |
 | 3. Governing condition | `control_id` + `violated_rule` + `tier_failures[].rule_description` |
 | 4. Protected consequence | `protected_consequence` |
-| 5. Non-formation | `non_formation_proof` (currently a fixed string constant `"action_blocked_pre_commit"`) |
+| 5. Non-formation | `non_formation_proof` (currently the list of failing tier names, set in [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py)) |
 
 The receipt is SHA-256 hashed over its **JCS-canonicalized** payload
 (`jcs_canonicalize_plan()`, imported at
-[`contracts.py:114`](../../src/gateway/governance/contracts.py:114)), giving
-it `proof_hash` — but the receipt is **never KMS-signed**, never persisted to
-WORM storage, and `non_formation_proof` is a **string label**, not a
+[`contracts.py:135`](../../src/gateway/governance/contracts.py:135)), giving
+it `proof_hash`. `publish_refusal()` in
+[`verdicts.py`](../../src/gateway/governance/governor/verdicts.py) ingests the
+receipt into the hash-chained evidence stream as a `GOVERNANCE_REFUSAL` event.
+That publication is best-effort: a failure is logged, not fatal. The receipt
+itself carries **no KMS signature** over `proof_hash`, and
+`non_formation_proof` is a **label** (failing tier names), not a
 cryptographic proof object. This is the exact gap Part 5 must close: turn
-`non_formation_proof: str` into a verifiable cryptographic sub-claim with its
+the `non_formation_proof` label into a verifiable cryptographic sub-claim with its
 own evidence.
 
-[`GovernanceTierFailure`](../../src/gateway/governance/contracts.py:28) is
+[`GovernanceTierFailure`](../../src/gateway/governance/contracts.py:36) is
 the structured per-tier failure record — one is emitted per failing tier
 (CBF, OPA, NEURAL_CONFIDENCE, FISCAL, FTRA, etc.) inside
-[`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
+[`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)
 (`run_pipeline()`), and the first failing tier's record seeds the receipt's
 `control_id` / `standing_snapshot` / `protected_consequence` in
 [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py).
@@ -94,19 +103,19 @@ Part 5 receipts apply only to terminal `DENY` outcomes.
 
 ### 2.3 `provenance_chain.py` — hash-chain precedent (link-list pattern)
 
-[`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:98)
+[`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:94)
 already demonstrates the hash-chain-of-custody pattern the new receipt reuses:
 `parent_hash` links each node to its predecessor,
-[`compute_hash()`](../../src/gateway/governance/provenance_chain.py:146) uses
+[`compute_hash()`](../../src/gateway/governance/provenance_chain.py:140) uses
 JCS canonicalization, and
-[`verify_chain_integrity()`](../../src/gateway/governance/provenance_chain.py:227)
+[`verify_chain_integrity()`](../../src/gateway/governance/provenance_chain.py:219)
 walks the chain re-deriving each `parent_hash`. The new receipt's **rule
 snapshot chain** (§6.4) follows this exact pattern rather than inventing a
 new one.
 
 ### 2.4 `jcs_canonicalizer.py` — deterministic byte representation
 
-[`jcs_canonicalize_plan()`](../../src/gateway/governance/jcs_canonicalizer.py:24)
+[`jcs_canonicalize_plan()`](../../src/gateway/governance/jcs_canonicalizer.py:48)
 wraps an RFC 8785 JCS implementation and is the **single canonicalization
 primitive** the receipt must use for every hashed/signed sub-structure. RFC
 8785 fixes: key ordering (lexicographic), number formatting (no
@@ -119,20 +128,24 @@ due to platform float/locale formatting differences.
 
 ### 2.5 `kms_signer.py` — non-repudiation via asymmetric HSM signing
 
-[`KMSGovernanceSigner`](../../src/gateway/governance/kms_signer.py:391)
-provides multi-cloud (GCP/AWS/Azure) asymmetric signing with:
-- [`sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:624) —
+[`KMSGovernanceSigner`](../../src/gateway/governance/kms_signer.py:350)
+provides provider-agnostic asymmetric signing. The GCP, AWS and Azure KMS
+providers live in Layer 3 (`src/integrations/{gcp,aws,azure}/kms_provider.py`)
+and are loaded lazily by
+[`signer_factory.py`](../../src/gateway/governance/signer_factory.py). The
+signer offers:
+- [`sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:648) —
   signs a pre-computed digest directly (used by
   `GovernanceEnvelope.compute_digest()` today); this is the method the new
   receipt's signing step reuses.
-- [`verify()`](../../src/gateway/governance/kms_signer.py:762) — independent
+- [`verify()`](../../src/gateway/governance/kms_signer.py:753) — independent
   signature verification against the loaded public key PEM, with a **replay
   staleness check** (`MAX_KMS_PAYLOAD_AGE_SECONDS`, default 300s) that is
   **not applicable** to refusal receipts (a receipt must remain verifiable
   indefinitely, not just for 5 minutes — see §7.1 for how the receipt design
   avoids this staleness gate).
-- Fail-closed guarantee: [`_kms_sign()`](../../src/gateway/governance/kms_signer.py:654)
-  has **no HMAC fallback** in production — the startup posture check
+- Fail-closed guarantee: [`_kms_sign()`](../../src/gateway/governance/kms_signer.py:668)
+  has **no HMAC fallback** — the startup posture check
   `kms_signing_mode` ([`governor/posture.py`](../../src/gateway/governance/governor/posture.py))
   refuses to start an enforcing posture if KMS is not active. This is the exact non-repudiation
   guarantee Terry's proof element 7 (Evidence/Receipt) requires: a receipt
@@ -154,11 +167,11 @@ period which is intentionally short).
 
 ### 2.7 `constants.py` — the rule-snapshot precedent
 
-[`ControlRegistry`](../../src/gateway/governance/constants.py:197) already
+[`ControlRegistry`](../../src/gateway/governance/constants.py:233) already
 computes and caches an `active_hash` — a SHA-256 over the canonicalized
 active regional compliance baseline JSON
-([`_load_registry()`](../../src/gateway/governance/constants.py:276), lines
-322-331). This is the **exact precedent** for the receipt's `rule_snapshot`
+([`_load_registry()`](../../src/gateway/governance/constants.py:310), lines
+373-380). This is the **exact precedent** for the receipt's `rule_snapshot`
 field (§6.4): a content-addressed hash of the compiled rule-set in effect at
 refusal time, decoupled from the receipt's own signature so that the rule
 can be independently versioned, audited, and diffed without invalidating
@@ -166,12 +179,12 @@ past receipts (§7.2).
 
 ### 2.8 `governance_envelope.py` — the attestation-embedding precedent
 
-[`GovernanceEnvelope`](../../src/gateway/governance/governance_envelope.py:231)
+[`GovernanceEnvelope`](../../src/gateway/governance/governance_envelope.py:201)
 already demonstrates every architectural pattern the new receipt needs:
-JCS-canonicalized digest ([`compute_digest()`](../../src/gateway/governance/governance_envelope.py:277)),
+JCS-canonicalized digest ([`compute_digest()`](../../src/gateway/governance/governance_envelope.py:246)),
 KMS-signed via `sign_precomputed_digest()`, and an
 `external_attestations[]` array
-([`ExternalAttestation`](../../src/gateway/governance/governance_envelope.py:198))
+([`ExternalAttestation`](../../src/gateway/governance/seams/attestation.py:59))
 for embedding third-party proof objects that are covered by the *same*
 signature as the rest of the envelope. **Design decision (§5):** rather than
 inventing a parallel envelope, `GovernanceRefusalReceipt` is emitted as a new
@@ -181,30 +194,38 @@ and the verification code path unchanged.
 
 ### 2.9 `routing_seal.py` — the affirmative counterpart (No-Bind evidence)
 
-[`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py:620)
-and [`verify_seal()`](../../src/gateway/governance/routing_seal.py:435) prove
+[`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py:941)
+and [`verify_seal()`](../../src/gateway/governance/routing_seal.py:620) prove
 the **positive** claim ("this seal was issued, is unexpired, matches this
 action_hash, and has not been replayed"). The non-formation receipt needs the
 **negative mirror**: cryptographic proof that **no seal was ever issued** for
 the attempted action/params combination. Because seal issuance
-([`generate_seal_with_evidence()`](../../src/gateway/governance/governor/governor.py))
-only happens after `run_pipeline()` returns zero violations
-([`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)),
+(`issue_seal()` → `routing_seal.generate_seal_with_evidence()`) only happens
+inside [`sealing.run_sealed()`](../../src/gateway/governance/governor/sealing.py)
+after `run_pipeline()` returns zero violations,
 the **absence of a seal record** for a given `action_hash` + `thread_id` in
 the evidence stream is itself the "no-bind" evidence (§6.5, §4 proof element
 4).
 
 ### 2.10 `cbf.py` — the atomicity boundary the receipt must reference
 
-[`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1230)
-collapses the CBF safety check and the Redis balance debit into a single Lua
-script — eliminating the TOCTOU window between "checked safe" and
-"committed". For non-formation to hold, the receipt must record which side
+[`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1414)
+collapses the fence-epoch check, the CBF safety check, the Redis state debit
+and the `cbf:local_debits` record into a single Lua script — eliminating the
+TOCTOU window between "checked safe" and "committed". The state it checks
+against is reconciler-signed ground truth, accepted only after
+`verify_snapshot_signature()`
+([`reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py))
+resolves the snapshot's `kid` against reconciler-only trust anchors. It
+returns the magnitude it deducted, which the CBF tier records in a
+`CommitReceipt`. For non-formation to hold, the receipt must record which side
 of this atomic boundary the refusal occurred on:
 - **Pre-commit refusal** (the common case — Phase 1 read-only violation before Phase 2
   mutation): non-formation is total; nothing was ever written.
-- **Post-commit-but-pre-seal refusal** (rare — e.g. fiscal guard fails after
-  CBF commit succeeded): this is a **rollback** case, not non-formation, and
+- **Post-commit-but-pre-seal refusal** (rare — e.g. fiscal guard fails, or
+  seal issuance fails, after the CBF commit succeeded): `ReservationScope`
+  rolls back every outstanding `CommitReceipt` LIFO, and a failed rollback
+  raises `[ROLLBACK_FAILED]` rather than ALLOW. This is a **rollback** case, not non-formation, and
   must be labeled as such (see `formation_boundary` field, §6.3) — a Terry
   Snyder receipt issued here documents that a compensating transaction
   restored state, which is a different (weaker but still valid) evidentiary
@@ -219,7 +240,7 @@ establish the pattern of mapping internal control IDs to external
 machine-readable compliance schemas consumable by Lula and `oscal-cli`. The
 new receipt's `control_id` and `tier_failures[].control_id` fields are
 designed to resolve through the same
-[`ControlRegistry.get_mapping()`](../../src/gateway/governance/constants.py:356)
+[`ControlRegistry.get_mapping()`](../../src/gateway/governance/constants.py:402)
 lookup used elsewhere, so a receipt can be cross-referenced to its OSCAL
 control entry (e.g. `CTRL_CBF_002` → SP 800-53 `SC-4`) without a new mapping
 table.
@@ -250,14 +271,14 @@ in §5-§8 is justified by exactly one row below.
 | # | Proof Element | Question Answered | Primary CAGE Mechanism (existing) | Gap Closed By (new, §5) |
 |---|---|---|---|---|
 | 1 | **Intent (Movement)** | What action did the agent attempt? | `attempted_params` field, already captured in `RefusalReceipt` v2 ([`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py)) | `intent` sub-object with full pre-normalization params + `action_hash` (JCS) |
-| 2 | **Baseline (Present standing)** | By what authority did it claim permission? | `standing_snapshot` from `GovernanceTierFailure.governing_state` ([`contracts.py:48`](../../src/gateway/governance/contracts.py:48)) + `agent_catalog.rego` SPIFFE scope check | `baseline` sub-object: agent identity, claimed scope, `policy_version` hash at evaluation time |
-| 3 | **Failure (Lost standing)** | Which specific rule/threshold caused refusal? | `control_id` + `violated_rule` + `tier_failures[]` ([`contracts.py:69-81`](../../src/gateway/governance/contracts.py:69)) | `failure` sub-object: full `tier_failures[]` array (not just first), each resolved through `ControlRegistry.get_mapping()` to external citation |
-| 4 | **Block (No-bind)** | Cryptographic proof governance seal was rejected/never issued | Implicit: `govern()` raises `GovernanceError` **before** `generate_seal_with_evidence()` is reached ([`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)) | Explicit `no_bind_proof` sub-object: signed attestation that no `routing_seal` record exists for this `action_hash`+`thread_id` in the evidence stream (§6.5) |
-| 5 | **Protection (Unformed consequence)** | Proof external API/consequence was never touched | `protected_consequence` string field (human-readable only) ([`contracts.py:79`](../../src/gateway/governance/contracts.py:79)) | `protection_proof` sub-object: `formation_boundary` enum (§6.3) + reference to CBF/actuator state showing no mutation occurred, or rollback evidence if it did (Saga case) |
+| 2 | **Baseline (Present standing)** | By what authority did it claim permission? | `standing_snapshot` from `GovernanceTierFailure.governing_state` ([`contracts.py:55`](../../src/gateway/governance/contracts.py:55)) + `agent_catalog.rego` SPIFFE scope check | `baseline` sub-object: agent identity, claimed scope, `policy_version` hash at evaluation time |
+| 3 | **Failure (Lost standing)** | Which specific rule/threshold caused refusal? | `control_id` + `violated_rule` + `tier_failures[]` ([`contracts.py:77-89`](../../src/gateway/governance/contracts.py:77)) | `failure` sub-object: full `tier_failures[]` array (not just first), each resolved through `ControlRegistry.get_mapping()` to external citation |
+| 4 | **Block (No-bind)** | Cryptographic proof governance seal was rejected/never issued | Implicit: `run_sealed()` returns without calling `issue_seal()` when the pipeline has violations, and `govern()` then raises `GovernanceError` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)) | Explicit `no_bind_proof` sub-object: signed attestation that no `routing_seal` record exists for this `action_hash`+`thread_id` in the evidence stream (§6.5) |
+| 5 | **Protection (Unformed consequence)** | Proof external API/consequence was never touched | `protected_consequence` string field (human-readable only) ([`contracts.py:87`](../../src/gateway/governance/contracts.py:87)) | `protection_proof` sub-object: `formation_boundary` enum (§6.3) + reference to CBF/actuator state showing no mutation occurred, or rollback evidence if it did (Saga case) |
 | 6 | **Containment (Route closure)** | Proof no backdoors or alternate routes existed | `proof/model.py` BFS exhaustive state-space proof (all reachable states satisfy `NoDirectBind`) — a **static, system-wide** proof, not per-transaction | `containment_attestation` sub-object: per-receipt reference to the pinned proof artifact hash (`proof/model.py` output digest) + confirmation the deployed commit matches the proved commit (§6.6) |
-| 7 | **Evidence (Receipt)** | Immutable signed hash proving all above | `proof_hash` (SHA-256 over JCS bytes) — **computed but never KMS-signed or persisted to WORM** ([`contracts.py:83-117`](../../src/gateway/governance/contracts.py:83)) | Full `GovernanceEnvelope`-wrapped, KMS-signed, WORM-persisted receipt (§5, §6) |
-| 8 | **Same-condition immutability** | Receipt replays to same refusal in 10 years | JCS canonicalization guarantees deterministic bytes ([`jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py:24)); KMS public key retained via JWKS rotation history | Formal **replay procedure** (§7.1): re-run `run_pipeline()` against the frozen `rule_snapshot` + `attempted_params` and assert identical `tier_failures[]` |
-| 9 | **Changed-condition immutability** | Rule changes create new receipts, original untouched | `ControlRegistry.active_hash` changes on `reconfigure()` ([`constants.py:398`](../../src/gateway/governance/constants.py:398)), decoupled from any receipt already issued | `rule_snapshot` field frozen at issuance + separate `rule_lineage` chain (§6.4, §7.2) so old receipts are never mutated when policy changes |
+| 7 | **Evidence (Receipt)** | Immutable signed hash proving all above | `proof_hash` (SHA-256 over JCS bytes), published best-effort to the evidence stream as `GOVERNANCE_REFUSAL` — **no KMS signature over the receipt itself** ([`contracts.py:91-138`](../../src/gateway/governance/contracts.py:91)) | Full `GovernanceEnvelope`-wrapped, KMS-signed, WORM-persisted receipt (§5, §6) |
+| 8 | **Same-condition immutability** | Receipt replays to same refusal in 10 years | JCS canonicalization guarantees deterministic bytes ([`jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py:48)); KMS public key retained via JWKS rotation history | Formal **replay procedure** (§7.1): re-run `run_pipeline()` against the frozen `rule_snapshot` + `attempted_params` and assert identical `tier_failures[]` |
+| 9 | **Changed-condition immutability** | Rule changes create new receipts, original untouched | `ControlRegistry.active_hash` changes on `reconfigure()` ([`constants.py:445`](../../src/gateway/governance/constants.py:445)), decoupled from any receipt already issued | `rule_snapshot` field frozen at issuance + separate `rule_lineage` chain (§6.4, §7.2) so old receipts are never mutated when policy changes |
 
 ---
 
@@ -265,14 +286,14 @@ in §5-§8 is justified by exactly one row below.
 
 | Component | Status | Role in Non-Formation Proof |
 |---|---|---|
-| [`RefusalReceipt`](../../src/gateway/governance/contracts.py:52) (schema v2) | ✅ Existing | Base structure; becomes the `failure` + `intent` core of v3 (renamed/extended, not replaced) |
-| [`GovernanceTierFailure`](../../src/gateway/governance/contracts.py:28) | ✅ Existing | Populates `failure.tier_failures[]` unchanged |
-| [`jcs_canonicalize_plan()`](../../src/gateway/governance/jcs_canonicalizer.py:24) | ✅ Existing | Canonicalization primitive for every hashed sub-object |
-| [`KMSGovernanceSigner.sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:624) | ✅ Existing | Signing primitive — reused verbatim |
+| [`RefusalReceipt`](../../src/gateway/governance/contracts.py:60) (schema v2) | ✅ Existing | Base structure; becomes the `failure` + `intent` core of v3 (renamed/extended, not replaced) |
+| [`GovernanceTierFailure`](../../src/gateway/governance/contracts.py:36) | ✅ Existing | Populates `failure.tier_failures[]` unchanged |
+| [`jcs_canonicalize_plan()`](../../src/gateway/governance/jcs_canonicalizer.py:48) | ✅ Existing | Canonicalization primitive for every hashed sub-object |
+| [`KMSGovernanceSigner.sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:648) | ✅ Existing | Signing primitive — reused verbatim |
 | [`JWKSet`](../../src/gateway/governance/jwks.py:168) / `/jwks` endpoint | ✅ Existing | Public-key distribution for external replay verification |
-| [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:290) | ✅ Existing | Envelope wrapper — receipt becomes envelope `payload` |
-| [`ControlRegistry.active_hash`](../../src/gateway/governance/constants.py:253) | ✅ Existing | Direct precedent for `rule_snapshot.rule_digest` |
-| [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:98) hash-chain pattern | ✅ Existing (pattern reused) | Template for `rule_lineage` chain (§6.4) |
+| [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:259) | ✅ Existing | Envelope wrapper — receipt becomes envelope `payload` |
+| [`ControlRegistry.active_hash`](../../src/gateway/governance/constants.py:287) | ✅ Existing | Direct precedent for `rule_snapshot.rule_digest` |
+| [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:94) hash-chain pattern | ✅ Existing (pattern reused) | Template for `rule_lineage` chain (§6.4) |
 | `GovernanceDecision.DENY` ([`decisions.py:99`](../../src/gateway/governance/decisions.py:99)) | ✅ Existing | Trigger condition for receipt issuance |
 | `evidence_stream.py` hash-chained Redis→GCS WORM pipeline | ✅ Existing (repurposed) | Persistence layer for `GovernanceRefusalReceipt` records (§6.7) |
 | `proof/model.py` BFS state-space proof | ✅ Existing (referenced, not modified) | Source of the `containment_attestation.proof_artifact_digest` (§6.6) |
@@ -282,7 +303,7 @@ in §5-§8 is justified by exactly one row below.
 | **`formation_boundary` enum + protection-proof binding** | 🆕 New | Closes proof element 5 — new enum + CBF-state reference (§6.3) |
 | **`containment_attestation` sub-object** | 🆕 New | Closes proof element 6 — new field referencing pinned `proof/model.py` digest + deployed commit SHA (§6.6) |
 | **`rule_snapshot` + `rule_lineage` chain** | 🆕 New | Closes proof element 9 — new chained structure mirroring `ProvenanceRecord` (§6.4) |
-| **Receipt WORM persistence path** (`refusal-receipts/<date>/<receipt_id>.json`) | 🆕 New | Closes proof element 7 fully — extends existing GCS CMEK bucket convention from `provenance_chain.py`/`evidence_stream.py` docstrings |
+| **Receipt WORM persistence path** (`refusal-receipts/<date>/<receipt_id>.json`) | 🆕 New | Closes proof element 7 fully — a new object-key prefix in the existing retention-locked, CMEK-encrypted WORM bucket (`infra/modules/worm_bucket`) that the evidence cold store already writes to |
 | **Replay verification procedure/tool** | 🆕 New | Closes proof element 8 — a new `scripts/replay_refusal_receipt.py`-class utility (design only, §7.1) |
 | **`GovernanceRefusalReceipt` OSCAL cross-reference emitter** | 🆕 New (optional) | Feeds `oscal_ssp_exporter.py`-style ingestion for regulator-facing evidence bundles |
 
@@ -379,7 +400,7 @@ and signing (§2.4).
 `proof_hash` is the SHA-256 digest of the JCS-canonical bytes of every field
 above it (i.e. everything except `proof_hash` and `envelope_signature`
 itself) — directly mirroring
-[`GovernanceEnvelope.compute_digest()`](../../src/gateway/governance/governance_envelope.py:277).
+[`GovernanceEnvelope.compute_digest()`](../../src/gateway/governance/governance_envelope.py:246).
 `envelope_signature` is populated by wrapping this receipt as a
 `GovernanceEnvelope` payload and calling
 `GovernanceEnvelopeBuilder.build()` (§5 decision 2) — the field shown inline
@@ -404,12 +425,12 @@ here for readability is, in the actual wire format, the envelope's own
 ```
 
 - `attempted_params` — direct carry-forward of `RefusalReceipt.attempted_params`
-  ([`contracts.py:76`](../../src/gateway/governance/contracts.py:76)).
+  ([`contracts.py:84`](../../src/gateway/governance/contracts.py:84)).
 - `action_hash` — **new**, computed with the same
   `jcs_canonicalize_plan({"action": action, **safe_params})` recipe already
   used by
-  [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:322)
-  and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:496) —
+  [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:291)
+  and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:687) —
   reusing the identical hash lets a verifier confirm the receipt's `intent`
   matches what a *would-be* seal's `action_hash` claim would have been, had
   one been issued.
@@ -433,10 +454,10 @@ here for readability is, in the actual wire format, the envelope's own
 - `standing_snapshot` — direct carry-forward of
   `RefusalReceipt.standing_snapshot` /
   `GovernanceTierFailure.governing_state`
-  ([`contracts.py:48`](../../src/gateway/governance/contracts.py:48)).
+  ([`contracts.py:55`](../../src/gateway/governance/contracts.py:55)).
 - `policy_version` — **new**, but trivially sourced: identical value to
   `GovernanceContext.policy_version`
-  ([`governance_envelope.py:168`](../../src/gateway/governance/governance_envelope.py:168)),
+  ([`governance_envelope.py:167`](../../src/gateway/governance/governance_envelope.py:167)),
   which already calls `ControlRegistry().active_hash`. This is the field
   that binds "what standing was claimed" to "under which compiled rule-set,"
   closing the traceability gap between proof elements 2 and 9.
@@ -466,9 +487,9 @@ here for readability is, in the actual wire format, the envelope's own
 
 - `control_id`, `violated_rule`, `tier_failures[]` — direct carry-forward of
   `RefusalReceipt` v2 fields
-  ([`contracts.py:69-81`](../../src/gateway/governance/contracts.py:69)).
+  ([`contracts.py:77-89`](../../src/gateway/governance/contracts.py:77)).
 - `tier_failures[].external_citation` — **new**, resolved via
-  [`ControlRegistry.get_mapping(control)`](../../src/gateway/governance/constants.py:356)
+  [`ControlRegistry.get_mapping(control)`](../../src/gateway/governance/constants.py:402)
   at receipt-build time (`primary_framework` field), giving each internal
   `CTRL_*` ID an external regulatory citation without embedding volatile
   strings in Python source (§2.11).
@@ -496,21 +517,25 @@ here for readability is, in the actual wire format, the envelope's own
 
 - `formation_boundary` — **new** enum (§5 decision 5):
   - `NEVER_FORMED` — refusal occurred in Phase 1 (read-only checks: FTRA,
-    STPA, OPA, confidence, consensus, causal, FRIA) — see
+    STPA, OPA, confidence, and Phase-1 domain tiers such as consensus and
+    causal; there is no live FRIA stage at HEAD — the confidence stage
+    applies the FRIA zone defer threshold) — see
     [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)
     Phase 1 read-only evaluation. No state was ever written.
   - `FORMED_AND_ROLLED_BACK` — refusal occurred in Phase 2 *after*
     `atomic_verify_and_commit()` succeeded but a later tier (e.g. Fiscal)
-    failed, triggering
-    [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py:1230). The
+    failed or the seal was not issued, triggering
+    [`rollback_state()`](../../src/gateway/governance/safety/cbf_engine.py:1307). The
     `rollback_reference` field then points to the Redis
     `audit:state_ledger` entry proving the compensating transaction
     completed (§2.10).
 - `cbf_commit_occurred` / `fiscal_reservation_occurred` — **new** booleans,
   directly derivable from which Phase 2 sub-step (if any) executed before
-  the failure — this information is tracked by `ReservationScope` in `run_pipeline()`
-  ([`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py))
-  and can be recorded into the receipt.
+  the failure. Each Phase 2 commit yields a `CommitReceipt` (tier, magnitude,
+  token) that the request's `ReservationScope` holds and `run_pipeline()`
+  exposes as `PipelineResult.commits`
+  ([`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)),
+  so the receipt can record exactly what was committed and rolled back.
 - `external_api_calls_made` — **new**, always `[]` for a true non-formation
   receipt; a non-empty list here would itself be evidence the claim does
   not hold (fail-loud design: the field exists specifically so its emptiness
@@ -532,16 +557,16 @@ here for readability is, in the actual wire format, the envelope's own
 ```
 
 - `rule_digest` — **new**, but a **direct read** of
-  [`ControlRegistry().active_hash`](../../src/gateway/governance/constants.py:253),
+  [`ControlRegistry().active_hash`](../../src/gateway/governance/constants.py:287),
   already computed and cached at every registry load
-  ([`constants.py:328`](../../src/gateway/governance/constants.py:328)). No
+  ([`constants.py:376`](../../src/gateway/governance/constants.py:376)). No
   new hashing logic — only a new call site copying the existing value into
   the receipt.
 - `rule_lineage` — **new** structure, modeled directly on
-  [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:98)'s
+  [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:94)'s
   `parent_hash` / `chain_hash()` pattern (§2.3). Each time
   `ControlRegistry.reconfigure()`
-  ([`constants.py:398`](../../src/gateway/governance/constants.py:398)) loads
+  ([`constants.py:445`](../../src/gateway/governance/constants.py:445)) loads
   a new baseline, a new `rule_lineage` entry is appended to a
   **separate, independently-persisted rule-lineage log** (not part of any
   individual receipt) — receipts reference a lineage entry by
@@ -553,7 +578,7 @@ here for readability is, in the actual wire format, the envelope's own
   **structurally incapable of being affected**, because the receipt only
   ever embedded a frozen digest value, never a live reference.
 - `compliance_baseline_source` — the literal file path
-  ([`constants.py:301`](../../src/gateway/governance/constants.py:301),
+  ([`constants.py:335`](../../src/gateway/governance/constants.py:335),
   `config/compliance/{REGION}_BASELINE.json`) for direct auditor
   cross-reference against the version-controlled Git history of that file.
 
@@ -574,21 +599,21 @@ here for readability is, in the actual wire format, the envelope's own
 ```
 
 - **Design rationale (§5 decision 4):** `verify_seal()`
-  ([`routing_seal.py:435`](../../src/gateway/governance/routing_seal.py:435))
-  and `verify_and_consume_seal()`
   ([`routing_seal.py:620`](../../src/gateway/governance/routing_seal.py:620))
+  and `verify_and_consume_seal()`
+  ([`routing_seal.py:941`](../../src/gateway/governance/routing_seal.py:941))
   prove a seal **exists and is valid**. There is no existing negative-proof
   mechanism. The new `no_bind_proof` is built by querying the same
   hash-chained evidence stream
   ([`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py))
   that `routing_seal.py`'s
-  [evidence-binding call](../../src/gateway/governance/routing_seal.py:334)
+  [evidence-binding call](../../src/gateway/governance/routing_seal.py:544)
   writes to on **successful** seal issuance — for a refusal, the equivalent
   write **never happens**, so a range-scan between the last known-good
   `prev_hash` immediately before the refused request and the next
   chronological `record_hash` after it (which necessarily chains through
   the *unbroken* hash sequence, per
-  [`verify_chain_integrity()`-style validation](../../src/gateway/governance/provenance_chain.py:227))
+  [`verify_chain_integrity()`-style validation](../../src/gateway/governance/provenance_chain.py:219))
   constitutes cryptographic proof that no seal-issuance record was inserted
   in that window. Because the stream is append-only and hash-chained, an
   attacker cannot retroactively insert a seal record into this range without
@@ -607,7 +632,7 @@ here for readability is, in the actual wire format, the envelope's own
   "proof_artifact": "proof/model.py",
   "proof_artifact_digest": "sha256:<hash of proof output text>",
   "invariant": "NoDirectBind == (phase = \"EXECUTED\") => (resolvedAllow = TRUE)",
-  "reachable_states_verified": 66,
+  "reachable_states_verified": 52,
   "deployed_commit_sha": "88fa9d7...",
   "proof_last_run_at": "2026-08-20T00:00:00.000Z",
   "distributed_proof_artifact": "proof/distributed_cbf_model.py",
@@ -618,12 +643,12 @@ here for readability is, in the actual wire format, the envelope's own
 - This sub-object does **not** vary per-transaction — it is a **constant
   reference block** stamped onto every receipt issued while a given commit
   is deployed, analogous to how
-  [`GovernanceContext.policy_version`](../../src/gateway/governance/governance_envelope.py:168)
+  [`GovernanceContext.policy_version`](../../src/gateway/governance/governance_envelope.py:167)
   is constant across all envelopes issued under one active `ControlRegistry`
   load.
 - `proof_artifact_digest` — **new**, computed once at CI/release time by
   hashing the deterministic textual output of
-  [`proof/model.py`](../../proof/model.py:61) (`python proof/model.py`
+  [`proof/model.py`](../../proof/model.py:66) (`python proof/model.py`
   produces a fixed string per the module's own docstring:
   `"[gated] No-Direct-Bind holds over all N reachable states: True"`).
   Stored as a release artifact (e.g. alongside the SBOM,
@@ -638,7 +663,7 @@ here for readability is, in the actual wire format, the envelope's own
   because Terry's "no backdoors or alternate routes" claim must cover
   distributed race conditions, not just single-request interleavings (see
   the model-scope caveat at
-  [`proof/model.py:13-36`](../../proof/model.py:13)).
+  [`proof/model.py:13-38`](../../proof/model.py:13)).
 - **Honesty constraint (mirrors §5.4 of the Provider 05 specification precedent):**
   this sub-object must **not** claim exhaustive coverage of the actuator
   seal-verification boundary itself — `proof/model.py`'s own docstring
@@ -667,9 +692,9 @@ envelope = await builder.build(
 )
 ```
 
-This reuses [`GovernanceEnvelopeBuilder.build()`](../../src/gateway/governance/governance_envelope.py:437)
+This reuses [`GovernanceEnvelopeBuilder.build()`](../../src/gateway/governance/governance_envelope.py:415)
 unmodified — the same KMS-signing path
-([`sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:624))
+([`sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:648))
 used for ALLOW decisions today also signs DENY receipts, satisfying the
 "immutable signed hash proving all above" requirement with **zero new
 signing code**.
@@ -680,14 +705,15 @@ CMEK-encrypted GCS WORM bucket at
 exact convention already documented for provenance records
 (`provenance/<date>/<trace_id>.json`, see
 [`provenance_chain.py:22`](../../src/gateway/governance/provenance_chain.py:22))
-and evidence-stream batches
-([`evidence_stream.py`'s `_upload_to_gcs()`](../../src/gateway/governance/evidence/stream.py:1282)).
+and evidence-stream batches (the cold-store `put_batch()` seam in
+[`evidence/cold_store.py`](../../src/gateway/governance/evidence/cold_store.py:100)).
 No new storage backend is introduced — this is a new object-key prefix
-within the existing `src/compliance_bridge/storage.py` GCS/S3 abstraction
-([`upload_artifact()`](../../src/compliance_bridge/storage.py:281)), giving
-the receipt the same CMEK guarantee already verified by
-[`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:29) for OSCAL
-artifacts.
+in the retention-locked WORM bucket (`infra/modules/worm_bucket`) that is
+already the evidence system of record. The existing
+`src/compliance_bridge/storage.py` GCS/S3 abstraction
+([`put_oscal_artifact()`](../../src/compliance_bridge/storage.py:117)) and
+[`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:97) give the
+receipt the same CMEK guarantee already verified for OSCAL artifacts.
 
 ---
 
@@ -702,8 +728,8 @@ artifacts.
 └───────────────────────────────┬───────────────────────────────────────┘
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 2. SymbolicGovernor.run_pipeline()  (Tiers 0.5 → 7, two-phase)          │
-│    Phase 1: FTRA → STPA → OPA → confidence → consensus → causal → FRIA  │
+│ 2. SymbolicGovernor.run_pipeline()  (Tiers 0.5 → 6, two-phase)          │
+│    Phase 1: FTRA → STPA → OPA → confidence → consensus → causal         │
 │    Phase 2 (if Phase 1 passes): CBF → fiscal                            │
 │    Each failing tier emits GovernanceTierFailure(tier, control_id,      │
 │      rule_description, governing_state, protected_consequence)          │
@@ -711,10 +737,10 @@ artifacts.
                                  │ violations non-empty
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 3. GovernanceError raised BEFORE generate_seal_with_evidence() reached   │
-│    (src/gateway/governance/governor/governor.py — structural ordering   │
-│    IS the no-bind guarantee: seal issuance code is textually unreachable │
-│    on this path)                                                         │
+│ 3. run_sealed() returns BEFORE issue_seal() is reached; govern() raises  │
+│    GovernanceError (src/gateway/governance/governor/sealing.py —         │
+│    structural ordering IS the no-bind guarantee: seal issuance code is   │
+│    unreachable on this path; any Phase 2 commits are rolled back LIFO)   │
 └───────────────────────────────┬───────────────────────────────────────┘
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -748,7 +774,7 @@ artifacts.
 │    Private key NEVER leaves HSM (GCP KMS / AWS KMS / Azure Managed HSM)  │
 │    signature = HSM.asymmetric_sign(digest)                              │
 │    envelope.signature = {algorithm, kid, value}                         │
-│    (fail-closed: no HMAC fallback in production — kms_signer.py:851)    │
+│    (fail-closed: no HMAC fallback — kms_signer.py _kms_sign())          │
 └───────────────────────────────┬───────────────────────────────────────┘
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -764,7 +790,7 @@ artifacts.
 │    c. Recompute canonical_bytes = JCS(receipt payload)                   │
 │    d. Recompute digest = SHA-256(canonical_bytes + envelope fields)      │
 │    e. Verify signature against public key (ECDSA/RSA/Ed25519)            │
-│    f. [OPTIONAL] Replay: re-run _run_checks() against rule_snapshot +    │
+│    f. [OPTIONAL] Replay: re-run verify() (DRY_RUN) with rule_snapshot +  │
 │       intent.attempted_params → assert identical tier_failures[]         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -773,14 +799,14 @@ artifacts.
 
 | Layer | Guarantee | Mechanism |
 |---|---|---|
-| Canonicalization | Deterministic bytes regardless of platform/language | RFC 8785 JCS ([`jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py:24)) |
+| Canonicalization | Deterministic bytes regardless of platform/language | RFC 8785 JCS ([`jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py:48)) |
 | Hashing | Tamper-evidence — any field change invalidates `proof_hash` | SHA-256 over JCS bytes |
-| Signing | Non-repudiation — CAGE application code cannot forge a valid signature | Asymmetric HSM signing, private key never exported ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py:391)) |
+| Signing | Non-repudiation — CAGE application code cannot forge a valid signature | Asymmetric HSM signing, private key never exported ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py:350)) |
 | Key distribution | Any external party can independently verify without trusting CAGE's runtime | Public JWKS endpoint ([`jwks.py`](../../src/gateway/governance/jwks.py:363)) |
-| Persistence | Immutability — receipt cannot be altered or deleted post-write | CMEK-encrypted GCS WORM bucket ([`storage.py`](../../src/compliance_bridge/storage.py:281), [`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:29)) |
+| Persistence | Immutability — receipt cannot be altered or deleted post-write | CMEK-encrypted GCS WORM bucket ([`storage.py`](../../src/compliance_bridge/storage.py:117), [`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:97)) |
 | No-bind evidence | Absence of a seal is itself cryptographically provable | Hash-chained append-only evidence stream range-scan ([`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py)) |
-| Rule provenance | Rule value at refusal time is frozen and independently auditable | Content-addressed `rule_digest` decoupled from receipt signature ([`constants.py`](../../src/gateway/governance/constants.py:253)) |
-| Containment | System-wide absence of alternate execution routes | Static BFS exhaustive proof, referenced by digest ([`proof/model.py`](../../proof/model.py:42)) |
+| Rule provenance | Rule value at refusal time is frozen and independently auditable | Content-addressed `rule_digest` decoupled from receipt signature ([`constants.py`](../../src/gateway/governance/constants.py:287)) |
+| Containment | System-wide absence of alternate execution routes | Static BFS exhaustive proof, referenced by digest ([`proof/model.py`](../../proof/model.py:51)) |
 
 ---
 
@@ -803,8 +829,9 @@ outcome ten years from now, assuming the same rule-set and inputs.
    (`ControlRegistry.reconfigure()` accepts an explicit region/path in the
    design — see §9 open question on a `from_file()` override) rather than
    the live environment's active registry.
-4. Re-run `SymbolicGovernor._run_checks(action, attempted_params)` against
-   this frozen registry.
+4. Re-run the side-effect-free `DRY_RUN` profile
+   (`SymbolicGovernor.verify(action, attempted_params)`) on a governor built
+   by `assemble_governor()` against this frozen registry.
 5. Assert the newly-produced `tier_failures[]` array is **structurally
    identical** (same `control_id`, `tier`, `rule_description` per entry —
    `governing_state` values may legitimately differ if they reference
@@ -857,22 +884,22 @@ convention:
 
 1. `rule_snapshot.rule_digest` is computed **once**, at receipt-assembly
    time, by reading `ControlRegistry().active_hash`
-   ([`constants.py:253`](../../src/gateway/governance/constants.py:253)) —
+   ([`constants.py:287`](../../src/gateway/governance/constants.py:287)) —
    a plain value copy, not a live reference or pointer.
 2. This value is included in the JCS-canonicalized bytes that produce
    `proof_hash` (§6.0) — meaning **the digest is baked into the very hash
    that the KMS signature covers**. Any subsequent change to the live
    `ControlRegistry` (via
-   [`ControlRegistry.reconfigure()`](../../src/gateway/governance/constants.py:398))
+   [`ControlRegistry.reconfigure()`](../../src/gateway/governance/constants.py:445))
    has **zero causal path** back to an already-signed receipt's bytes — the
    receipt object is immutable Python (`frozen=True` dataclass pattern,
-   matching [`RefusalReceipt`](../../src/gateway/governance/contracts.py:52)),
+   matching [`RefusalReceipt`](../../src/gateway/governance/contracts.py:60)),
    and the WORM storage layer (§6.7) additionally enforces this at the
    infrastructure level (object-lock / retention policy on the GCS bucket).
 3. When a rule changes, `ControlRegistry.reconfigure(region)` performs an
-   **atomic swap** ([`constants.py:439-443`](../../src/gateway/governance/constants.py:439))
-   of the singleton's `_mappings` and `_active_hash` — this affects only
-   **future** `_run_checks()` invocations and future receipts' `rule_digest`
+   **atomic swap** ([`constants.py:485-489`](../../src/gateway/governance/constants.py:485))
+   of the singleton instance — this affects only
+   **future** pipeline runs and future receipts' `rule_digest`
    values. No existing receipt object is touched, because receipts are never
    re-serialized or re-hashed after issuance; they are write-once artifacts
    in WORM storage.
@@ -890,7 +917,7 @@ convention:
 | Attack / Failure Mode | Why It Cannot Succeed |
 |---|---|
 | Operator edits `config/compliance/US_FED_BASELINE.json` after a receipt was issued, hoping to retroactively "justify" the receipt under new rules | The receipt's `rule_digest` is a **frozen hash of the file's old content**, embedded in a KMS-signed, WORM-stored artifact. The edited file produces a *different* hash; the receipt's signature does not change to match, so re-verification via the replay procedure (§8.1) would either fail (if compared against the *new* file) or succeed (if compared against the *archived* historical file, retrieved via Git history) — either way, the discrepancy is externally detectable, not silently absorbed. |
-| Operator attempts to "patch" an already-issued receipt in WORM storage to reflect a rule change | GCS object-lock / WORM retention policy (§6.7, extending [`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:29)'s existing CMEK verification pattern) makes the object immutable at the storage layer for its retention period; even with write access, any byte change invalidates `proof_hash` and the KMS `envelope_signature`, which any verifier (§7.1 step 9) would immediately detect. |
+| Operator attempts to "patch" an already-issued receipt in WORM storage to reflect a rule change | GCS object-lock / WORM retention policy (§6.7, extending [`cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:97)'s existing CMEK verification pattern) makes the object immutable at the storage layer for its retention period; even with write access, any byte change invalidates `proof_hash` and the KMS `envelope_signature`, which any verifier (§7.1 step 9) would immediately detect. |
 | A new rule is deployed, and old receipts are expected to be "upgraded" to reflect it | This is a **conceptual non-goal** — receipts are point-in-time facts, not live policy statements. The `rule_lineage` chain (§6.4) is the correct mechanism for representing "the rule changed on date X"; individual receipts are never mutated to match. |
 
 ### 8.3 Summary Table — Immutability Requirements per Proof Element
@@ -906,7 +933,7 @@ convention:
 
 | # | Question / Risk | Discussion |
 |---|---|---|
-| 1 | Should `GovernanceRefusalReceipt` be a new `EnvelopeType.REFUSAL_RECEIPT` or reuse `GOVERNANCE_DECISION`? | Reuse minimizes code paths but conflates ALLOW/DENY envelope semantics in downstream consumers (e.g. dashboards) that filter by `envelope_type`. A new sibling type is cleaner but touches the `EnvelopeType` enum ([`governance_envelope.py:104`](../../src/gateway/governance/governance_envelope.py:104)) and any code that pattern-matches on it. Recommend the new-type approach for clarity, deferred to implementation phase. |
+| 1 | Should `GovernanceRefusalReceipt` be a new `EnvelopeType.REFUSAL_RECEIPT` or reuse `GOVERNANCE_DECISION`? | Reuse minimizes code paths but conflates ALLOW/DENY envelope semantics in downstream consumers (e.g. dashboards) that filter by `envelope_type`. A new sibling type is cleaner but touches the `EnvelopeType` enum ([`governance_envelope.py:108`](../../src/gateway/governance/governance_envelope.py:108)) and any code that pattern-matches on it. Recommend the new-type approach for clarity, deferred to implementation phase. |
 | 2 | Where does the "archival JWKS" (indefinite key retention, §8.1) live? | Not addressed by existing `JWKSet` (which is designed for short-lived rotation). Likely a new, append-only, WORM-stored key-history artifact, separate from the live `/jwks` endpoint. Needs a dedicated design pass — flagged, not resolved, here. |
 | 3 | Does `ControlRegistry` need a `from_file(path)` classmethod for offline replay (§8.1 step 3)? | Currently `_load_registry()` resolves paths internally from `CAGE_DEPLOYMENT_REGION`; replay tooling run outside a live CAGE deployment (e.g. by an external auditor) needs a way to instantiate a registry against an arbitrary historical file without environment-variable coupling. This is a small, additive API surface change — design only, not scoped for this document. |
 | 4 | Performance impact of `no_bind_proof`'s evidence-stream range-scan on every DENY? | The evidence stream is already hash-chained and append-only; a range-scan between two known sequence numbers is O(1) lookups (both boundary hashes are already known — the request itself brackets them), not a full-stream scan. Should be validated empirically during implementation, not assumed here. |
@@ -929,7 +956,7 @@ and a structural (not merely policy-based) No-Direct-Bind invariant
 ([`proof/model.py`](../../proof/model.py)). Five of the nine proof elements
 (1, 2, 3, 7-partial, 8-partial) already have direct field-level analogues in
 the existing `RefusalReceipt` schema v2
-([`contracts.py`](../../src/gateway/governance/contracts.py:52)); the
+([`contracts.py`](../../src/gateway/governance/contracts.py:60)); the
 remaining work is compositional — wrapping the existing receipt as a signed,
 WORM-persisted `GovernanceEnvelope`, and adding four genuinely new
 sub-objects (`no_bind_proof`, `protection_proof.formation_boundary`,

@@ -23,8 +23,8 @@ CAGE enforces strict separation between the universal governance kernel, domain-
 
 | Layer | Path | Responsibilities | Boundary & Dependency Invariants |
 |---|---|---|---|
-| **Layer 1: Governance Kernel** | `src/gateway/` | Universal dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing seals, and audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from Layer 2 (`src/cage_*`), Layer 3 (`src/compliance_bridge/`), or Layer 4 (`src/governed_financial_advisor/`). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `azure`, `langfuse`). Enforced in CI by Gate G3 (`scripts/check_import_boundaries.py`). |
-| **Layer 2: Domain Plugins** | `src/cage_{domain}/` (e.g. `src/cage_finance/`, `src/cage_healthcare/`) | Domain-specific tiers (`GovernanceTierPlugin`), domain action registries, ontologies, policies, and causal graphs. | Registers into the kernel via `SymbolicGovernor.register_tier()`. Encapsulates domain vocabulary and semantics without polluting kernel code. |
+| **Layer 1: Governance Kernel** | `src/gateway/` | Universal dispatch loop, composition root (`assemble_governor()` / `bootstrap_governor()`), consensus engine, CBF engine, evidence accumulator, routing seals, and audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from Layer 2 (`src/cage_*`), Layer 3 (`src/compliance_bridge/`), or Layer 4 (`src/governed_financial_advisor/`). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `botocore`, `azure`, `langfuse`); only allowlisted factories (e.g. [`signer_factory.py`](../../src/gateway/governance/signer_factory.py)) may lazily import `src/integrations/` inside a function. Enforced in CI by Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)), which also enforces kernel AST purity: no domain path literals, no domain action/field literals (`FORBIDDEN_DOMAIN_LITERALS`), and no domain or vendor class definitions (`FORBIDDEN_KERNEL_DEFINITIONS`, e.g. `FiscalLimitGuard`, `TradingKnowledgeGraph`, `GCPKMSProvider`). |
+| **Layer 2: Domain Plugins** | `src/cage_{domain}/` (`src/cage_finance/`, `src/cage_healthcare/`, `src/cage_physical_ai/`) | Domain-specific tiers (`GovernanceTierPlugin`), CBF invariants, STPA UCA rules and saga compensators, `domains.<domain>` threshold schemas, action registries, ontologies, policies, and causal graphs. | Each process runs exactly one domain, selected by `CAGE_DOMAIN`. The plugin returns a frozen `PluginContribution` from `CagePlugin.contribute()` ([`contracts.py`](../../src/gateway/governance/contracts.py)); the kernel validates it and builds an immutable `SymbolicGovernor` in [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py). Plugins never mutate the governor. Encapsulates domain vocabulary and semantics without polluting kernel code. |
 | **Layer 3: Integrations & Rails** | `src/compliance_bridge/`, `src/integrations/` | External vendor normative/attestation adapters, durable sinks (ClickHouse, GCS, S3), NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture. Communicates with the kernel exclusively via canonical data structures and contracts. |
 
 ---
@@ -34,8 +34,10 @@ CAGE enforces strict separation between the universal governance kernel, domain-
 ### 2.1 Zero-Vendor-SDK Kernel
 The core governance kernel (`src/gateway/`) has zero runtime requirements on proprietary cloud SDKs (`google-cloud-storage`, `boto3`, `azure-storage-blob`, `langfuse`).
 - The kernel boots and runs in bare environments (e.g. local developer machine, edge nodes, offline CI).
-- Governance decisions, routing seal generation, and CBF state checks execute hermetically without establishing network sockets.
-- Cloud-specific capabilities (such as GCP KMS HSM signing or GCS cold storage) are implemented via decoupled adapter interfaces (`KMSGovernanceSigner`, `EvidenceColdStore`) and loaded lazily only when configured.
+- Kernel code paths need no vendor SDK: in development and CI postures, governance decisions and routing seals run against software signers and local backends. Enforcing postures additionally require a Cloud KMS provider and Redis, which the startup posture check ([`posture.py`](../../src/gateway/governance/governor/posture.py)) verifies before serving.
+- Cloud-specific capabilities are implemented behind decoupled kernel contracts and loaded lazily only when configured:
+  - **Signing:** `KMSGovernanceSigner` and the `BaseKMSProvider` contract live in [`kms_signer.py`](../../src/gateway/governance/kms_signer.py), together with the vendor-free software providers (`SoftwareEd25519Provider`, `SoftwareHMACProvider`). The cloud providers (`GCPKMSProvider`, `AWSKMSProvider`, `AzureKMSProvider`) live in `src/integrations/{gcp,aws,azure}/kms_provider.py` and are imported inside [`signer_factory.py`](../../src/gateway/governance/signer_factory.py) according to `KMS_PROVIDER`. Software providers are refused under an enforcing posture.
+  - **Cold storage:** `EvidenceColdStore` backends are selected by `EVIDENCE_COLD_STORE` in [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py); the GCS and S3 backends live in `src/integrations/storage_gcs/` and `src/integrations/storage_s3/`.
 
 ### 2.2 Telemetry Neutrality (OTLP Standard)
 All telemetry emitted by the kernel conforms strictly to the OpenTelemetry (OTEL) standard wire protocol:
@@ -55,7 +57,8 @@ Every boundary at which CAGE could otherwise acquire a vendor dependency is expr
 | Downstream execution | `ExecutionActuator`, `ExecutionClearance`, `ActuationReceipt` | [`seams/actuation.py`](../../src/gateway/governance/seams/actuation.py) | `src/integrations/actuator_01/` |
 | Graph topology inspection | `GraphTopology` | [`seams/graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | Domain agent workflows (Layer 2/4) |
 | **Outbound tool credentials** | `CredentialBrokerAdapter` plus `CredentialBrokerError` / `CredentialNotFound` / `CredentialAccessDenied` | [`seams/credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) | Deployment-supplied (vault, workload-identity exchange, cloud secret manager); injected into the actuator as `credential_broker` |
-| Evidence cold storage | `EvidenceColdStore`, `ColdStoreReceipt`, `ColdStoreHealth` | [`evidence/cold_store.py`](../../src/gateway/governance/evidence/cold_store.py) | GCS / S3 / null backends (§3) |
+| Evidence cold storage | `EvidenceColdStore`, `ColdStoreReceipt`, `ColdStoreHealth` | [`evidence/cold_store.py`](../../src/gateway/governance/evidence/cold_store.py) | `GcsColdStore` (`src/integrations/storage_gcs/`), `S3ColdStore` (`src/integrations/storage_s3/`), `NullColdStore` ([`evidence/null_cold_store.py`](../../src/gateway/governance/evidence/null_cold_store.py)) (§3) |
+| Asymmetric signing (KMS/HSM) | `BaseKMSProvider`, `KMSGovernanceSigner` | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py), [`signer_factory.py`](../../src/gateway/governance/signer_factory.py) | `src/integrations/gcp/kms_provider.py`, `src/integrations/aws/kms_provider.py`, `src/integrations/azure/kms_provider.py`; software Ed25519/HMAC providers for non-enforcing postures only |
 
 #### Credential Broker: Protocol in Layer 1, Secrets Client in Layer 3
 
@@ -71,11 +74,14 @@ The credential broker seam is the newest entry and the one most exposed to vendo
 
 ## 3. Evidence Cold Store Contract
 
-Off-cluster durability for the tamper-evident evidence stream (`src/gateway/governance/evidence/`) is abstracted behind the `EvidenceColdStore` interface:
+Off-cluster durability for the tamper-evident evidence stream (`src/gateway/governance/evidence/`) is abstracted behind the runtime-checkable `EvidenceColdStore` protocol ([`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)):
 
 ```python
-class EvidenceColdStore(abc.ABC):
-    @abc.abstractmethod
+@runtime_checkable
+class EvidenceColdStore(Protocol):
+    @property
+    def backend_id(self) -> str: ...  # 'gcs', 's3', 'null'
+
     async def put_batch(
         self,
         key: str,
@@ -83,7 +89,8 @@ class EvidenceColdStore(abc.ABC):
         metadata: Mapping[str, str] | None = None,
     ) -> ColdStoreReceipt: ...
 
-    @abc.abstractmethod
+    async def exists(self, key: str) -> bool: ...
+
     async def put_if_absent(
         self,
         key: str,
@@ -91,9 +98,10 @@ class EvidenceColdStore(abc.ABC):
         metadata: Mapping[str, str] | None = None,
     ) -> tuple[ColdStoreReceipt, bool]: ...
 
-    @abc.abstractmethod
     def health(self) -> ColdStoreHealth: ...
 ```
+
+On the GKE reference target the GCS backend writes to the retention-locked WORM bucket (`infra/modules/worm_bucket`), which is the evidence system of record.
 
 ### Atomicity & Consistency Model (Atomicity Honesty Table)
 
@@ -103,7 +111,7 @@ Different storage backends offer varying concurrency and atomicity semantics. De
 |---|---|---|---|
 | **Google Cloud Storage (GCS)** | Native atomic compare-and-swap via generation preconditions (`if_generation_match=0`). | Strong consistency globally for object creation and metadata reads. | Requires Workload Identity / ADC and GCP project configuration (`google-cloud-storage`). |
 | **AWS S3 / S3-Compatible** | Conditional write via `If-None-Match: *` header (S3 conditional write API). | Strong read-after-write consistency (for all new S3 objects since Dec 2020). | MinIO and S3-compatible endpoints must support `If-None-Match` conditional writes (supported in modern MinIO). Requires `boto3`. |
-| **Null Cold Store (Local/Dev)** | In-memory atomic dictionary operations within a single process. | Process-local memory only. | Ephemeral: all data is lost upon process termination. Permitted in dev/test only (`CAGE_ENV=dev`); production requires explicit override. |
+| **Null Cold Store (Local/Dev)** | In-memory atomic dictionary operations within a single process. | Process-local memory only. | Ephemeral: all data is lost upon process termination. Default when `EVIDENCE_COLD_STORE` is unset. Refuses to construct when `CAGE_ENV=prod` unless `CAGE_ALLOW_NONBLOCKING_PROD=true`. |
 
 ---
 
@@ -111,12 +119,14 @@ Different storage backends offer varying concurrency and atomicity semantics. De
 
 CAGE packaging in `pyproject.toml` isolates optional cloud and sink dependencies into explicit extras:
 
-- `cybernetic-governance-engine[gateway]`: Core gateway execution requirements.
+- `cybernetic-governance-engine[gateway]`: Core gateway execution requirements (including `google-cloud-kms`, used only by the lazily loaded GCP KMS provider).
 - `cybernetic-governance-engine[gcs]`: Google Cloud Storage SDK (`google-cloud-storage`).
 - `cybernetic-governance-engine[s3]`: AWS S3 SDK (`boto3`).
 - `cybernetic-governance-engine[clickhouse]`: ClickHouse client (`clickhouse-connect`).
 - `cybernetic-governance-engine[compliance]`: Full compliance bridge dependencies including storage backends and causal validation (`dowhy`).
-- `cybernetic-governance-engine[advisor]`: LangGraph agent and financial advisor tools.
+- `cybernetic-governance-engine[langfuse]`: Langfuse SDK for the compliance bridge.
+- `cybernetic-governance-engine[finance]`: Finance domain market-data dependency (`yfinance`).
+- `cybernetic-governance-engine[advisor]`: LangGraph agent and financial advisor tools (pulls in `[finance]`).
 
 CI enforces that the bare kernel imports and executes without any of the cloud extras installed via the `bare-kernel-smoke` workflow job.
 

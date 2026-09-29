@@ -1,31 +1,28 @@
 # Extensibility Architecture: Domain-Agnostic Core & Declarative Schema Ingestion
-# Extensibility Architecture
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
-| **Date**           | 2026-06-03                |
+| **Date**           | 2026-09-29                |
 | **Version**        | v3.0.1                    |
-| **Status**         | Current State + Roadmap (GKE deployment verified 2026-06-03; see `CHANGELOG.md` for v2.1.0 additions) |
-## 1. Architectural Role & Domain Boundary
+| **Status**         | Current State + Roadmap   |
 
 ---
-The CAGE runtime execution engine operates as a domain-agnostic, invariant state-space controller. It models all governance criteria as mathematical boundaries mapped to an immutable constraint ($h(x) \ge 0$), completely decoupled from the underlying regulatory or domain semantics (e.g., finance vs. healthcare).
 
 ## Executive Summary
-**Trust Boundaries**:
-- **Upstream (Domain Configurations)**: The kernel treats all declarative JSON profiles and threshold configurations as trusted regulatory parameterizations.
-- **Internal (Control Registry)**: Python source code strictly references stable internal control IDs (`CTRL_*`). The `ControlRegistry` maps these to dynamic domain citations without kernel coupling.
 
 The CAGE runtime execution engine is a **domain-agnostic, invariant state-space controller**. The underlying kernel does not maintain programmatic awareness of specific statutory codes, clinical trial phases, or industrial automation rules. Instead, it models all governance criteria as mathematical boundaries mapped to an immutable state-space constraint:
-## 2. Data & Execution Flow
 
 $$h(x) \geq 0$$
-To onboard a new domain or jurisdiction, the system ingests declarative JSON compliance profiles. The `ControlRegistry` intercepts internal assertions and enriches them with external regulatory metadata.
 
 Where $h(x)$ represents the Control Barrier Function (CBF) defining the boundary of the admissible operational space.
 
-By separating the deterministic execution engine from the compliance payload it enforces, the architecture enables domain extensibility without kernel modification. New regulatory domains (pharmaceutical GxP, industrial NIST 800-82, defense ITAR) can be onboarded by authoring a declarative JSON compliance profile — the runtime invariants remain unchanged.
+By separating the deterministic execution engine from the compliance payload it enforces, the architecture enables domain extensibility without kernel modification. Domain semantics (actions, invariants, thresholds, STPA hazards, critics, causal graphs) are contributed by a Layer 2 domain plugin (`src/cage_finance/`, `src/cage_healthcare/`, `src/cage_physical_ai/`); regulatory citations are supplied by declarative JSON compliance profiles. New regulatory domains (pharmaceutical GxP, industrial NIST 800-82, defense ITAR) are onboarded by authoring a plugin and a profile — the kernel invariants remain unchanged.
+
+**Trust Boundaries**:
+- **Upstream (Domain Configurations)**: The kernel treats all declarative JSON profiles and threshold configurations as trusted regulatory parameterizations.
+- **Internal (Control Registry)**: Python source code strictly references stable internal control IDs (`CTRL_*`). The `ControlRegistry` maps these to dynamic domain citations without kernel coupling.
+- **Kernel purity (Gate G3)**: [`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py) fails CI if `src/gateway/` imports a domain plugin or vendor SDK, contains a domain path or action/field literal (`FORBIDDEN_DOMAIN_LITERALS`), or defines a domain or vendor class (`FORBIDDEN_KERNEL_DEFINITIONS`).
 
 This document describes both the **current implementation** (grounded in source code) and the **architecture roadmap** for multi-domain extensibility.
 
@@ -37,7 +34,61 @@ The following capabilities are implemented, tested, and operational in the CAGE 
 
 ### 1.1 The Domain-Agnostic Kernel
 
-The CBF engine ([`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) implements a pure mathematical invariant with no domain-specific logic. The barrier function is:
+The CBF engine ([`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) implements a pure mathematical invariant with no domain-specific logic. `ControlBarrierFunction` is invariant-parametric: it must be constructed with an explicit declarative `InvariantModel` (`invariant_id`, `state_key`, `threshold_key`, `gamma`) and a domain `cost_resolver`, and has no finance defaults. The finance plugin's reference barrier is `CashBarrier` ([`src/cage_finance/invariants.py`](../../src/cage_finance/invariants.py)):
+
+```
+h(x) = cash_balance - min_cash_balance
+```
+
+where `min_cash_balance = 1000.0` and `gamma = 0.5` are read from the `domains.finance.cbf` section of [`config/governance_thresholds.json`](../../config/governance_thresholds.json).
+
+The enforcement boundary:
+
+$$h(x_{t+1}) \geq (1 - \gamma) \cdot h(x_t) \quad \text{and} \quad h(x_{t+1}) \geq 0$$
+
+Where:
+- $x$ = continuous state variable named by the invariant's `state_key`
+- $\gamma$ = decay coefficient named by the invariant (and matched to its threshold section)
+- $h(x) = 0$ defines the critical safety boundary
+
+**Domain substitution** (barrier declarations at HEAD):
+- *Finance*: $x$ = `cash_balance` (`CashBarrier`, state key `safety:current_cash`)
+- *Healthcare*: $x$ = serum drug concentration (`SerumConcentrationBarrier`, state key `safety:serum_concentration`, threshold `domains.healthcare.min_therapeutic_concentration`)
+- *Physical AI*: $x$ = human separation distance, end-effector velocity, joint torque (`domains.physical_ai.*`; see [PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md](PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md))
+
+The barrier condition `h(x) >= 0` accepts any continuous scalar ([`evaluate_barrier()`](../../src/gateway/governance/safety/cbf_engine.py)). The financial semantics are injected by the finance plugin and its `domains.finance` threshold section, not hardcoded in the kernel. This is the structural property that enables domain generalization.
+
+**Operational guarantees:**
+- **Fail-Closed Substrate**: If the CBF state source (e.g., Redis) is unreachable, the evaluation defaults to `BLOCKED`; there is no fail-open override. This fail-safe property is invariant across all applied domains.
+- **TOCTOU Resolution via Safe Set**: The post-HITL re-validation phase ensures that execution remains within the mathematical Safe Set by strictly re-evaluating both physical thresholds (CBF) and logical policies (OPA) on a fresh state snapshot immediately prior to actuation.
+- **External Provider Determinism**: All integrations with external normative data providers are structurally constrained. Network calls cannot block the hot-path; external validations are strictly asynchronous or handled via the DeferQueue, preserving sub-millisecond local invariant enforcement.
+
+### 1.2 The ControlRegistry: Decoupled Compliance Metadata
+
+The [`ControlRegistry`](../../src/gateway/governance/constants.py) singleton is a thread-safe, region-switchable resolver that translates stable internal control IDs (`CTRL_*` enum members) to external regulatory metadata at runtime.
+
+**Key design principle:** Python source code references *only* stable `GovernanceControl` enum members. All framework citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`, `MAS FEAT Principle 4.2`) live exclusively in declarative JSON profiles loaded at container initialization.
+
+```
+src/gateway/governance/constants.py
+├── GovernanceControl(Enum)        # Stable internal IDs — never change
+│   ├── CTRL_AGT_001               # Agentic confidence threshold
+│   ├── CTRL_WAL_002               # Write-Ahead Log atomicity
+│   ├── CTRL_TEL_003               # Telemetry live validation
+│   ├── CTRL_MRM_004               # Traditional MRM validation
+│   ├── CTRL_OPA_005               # OPA policy enforcement
+│   ├── CTRL_FRIA_006              # EU AI Act FRIA (EU_ECB only)
+│   ├── CTRL_TQP_007               # Token quota enforcement
+│   └── CTRL_FTRA_001              # FTRA reachability gate
+│
+└── ControlRegistry (singleton)    # Resolves CTRL_* → regulatory metadata
+    ├── _load_registry()           # Reads JSON from config/compliance/
+    ├── get_mapping(control)       # Returns {primary_framework, co_frameworks, ...}
+    ├── get_mapping_safe(control)  # Returns None for region-absent controls
+    └── reconfigure(region)        # Hot-swap regional profile at runtime
+```
+
+The `ControlRegistry` intercepts internal assertions and enriches them with external regulatory metadata:
 
 ```mermaid
 flowchart TD
@@ -54,59 +105,8 @@ flowchart TD
     Meta --> Telemetry[Langfuse OTel Span]
     Meta --> SIEM[Audit Log Sink]
 ```
-h(x) = cash_balance - min_cash_balance
-```
 
-where `min_cash_balance = 1000.0` (sourced from `THRESHOLDS.cbf.min_cash_balance` in `config/governance_thresholds.json`).
-## 3. State Machine & Lifecycle
-
-**v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py).
-The core extensibility mechanic relies on generalizing the Control Barrier Function (CBF) and policy tiers:
-
-The enforcement boundary:
-- **Mathematical Invariant**: The CBF engine enforces $h(x_{t+1}) \ge (1 - \gamma) \cdot h(x_t)$ and $h(x_{t+1}) \ge 0$.
-- **Domain Substitution**:
-  - *Finance*: $x$ = `cash_balance`
-  - *Pharmaceutical*: $x$ = `active_ingredient_concentration`
-  - *Industrial*: $x$ = `actuator_position`
-- **Runtime Swap**: Setting `CAGE_DEPLOYMENT_REGION` causes the `ControlRegistry` to dynamically hot-swap the active compliance profile at container startup, seamlessly redirecting audit trails to the appropriate legal framework (e.g., EU AI Act instead of MAS FEAT).
-
-$$h(x_{t+1}) \geq (1 - \gamma) \cdot h(x_t) \quad \text{and} \quad h(x_{t+1}) \geq 0$$
-## 4. Operational Guarantees & Edge Cases
-
-Where:
-- $x$ = continuous state variable (currently: `cash_balance`)
-- $\gamma$ = decay coefficient (sourced from `THRESHOLDS.cbf.gamma`)
-- $h(x) = 0$ defines the critical safety boundary
-- **Fail-Closed Substrate**: If the CBF state source (e.g., Redis) is unreachable, the evaluation defaults to `BLOCKED`; there is no fail-open override. This fail-safe property is invariant across all applied domains.
-- **TOCTOU Resolution via Safe Set**: The post-HITL re-validation phase ensures that execution remains within the mathematical Safe Set by strictly re-evaluating both physical thresholds (CBF) and logical policies (OPA) on a fresh state snapshot immediately prior to actuation.
-- **External Provider Determinism**: All integrations with external normative data providers are structurally constrained. Network calls cannot block the hot-path; external validations are strictly asynchronous or handled via the DeferQueue, preserving sub-millisecond local invariant enforcement.
-
-The barrier condition `h(x) >= 0` accepts any continuous scalar. The financial semantics (`cash_balance`, `min_cash_balance=1000.0`, `gamma=0.5`) are injected via the threshold configuration singleton ([`governance_thresholds.json`](../../config/governance_thresholds.json)), not hardcoded in the kernel. This is the structural property that enables domain generalization.
-## 5. Configuration Contracts & Runtime Matrix
-
-### 1.2 The ControlRegistry: Decoupled Compliance Metadata
-
-The [`ControlRegistry`](../../src/gateway/governance/constants.py) singleton is a thread-safe, region-switchable resolver that translates stable internal control IDs (`CTRL_*` enum members) to external regulatory metadata at runtime.
-
-**Key design principle:** Python source code references *only* stable `GovernanceControl` enum members. All framework citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`, `MAS FEAT Principle 4.2`) live exclusively in declarative JSON profiles loaded at container initialization.
-
-```
-src/gateway/governance/constants.py
-├── GovernanceControl(Enum)        # Stable internal IDs — never change
-│   ├── CTRL_AGT_001               # Agentic confidence threshold
-│   ├── CTRL_WAL_002               # Write-Ahead Log atomicity
-│   ├── CTRL_TEL_003               # Telemetry live validation
-│   ├── CTRL_MRM_004               # Traditional MRM validation
-│   ├── CTRL_OPA_005               # OPA policy enforcement
-│   └── CTRL_FRIA_006              # EU AI Act FRIA (EU_ECB only)
-│
-└── ControlRegistry (singleton)    # Resolves CTRL_* → regulatory metadata
-    ├── _load_registry()           # Reads JSON from config/compliance/
-    ├── get_mapping(control)       # Returns {primary_framework, co_frameworks, ...}
-    ├── get_mapping_safe(control)  # Returns None for region-absent controls
-    └── reconfigure(region)        # Hot-swap regional profile at runtime
-```
+Domain plugins can add controls on top of the regional baseline: each `PluginContribution.compliance_overlay_dirs` entry (e.g. [`src/cage_physical_ai/config/compliance/`](../../src/cage_physical_ai/config/compliance/)) is registered by `bootstrap_governor()` at startup.
 
 ### 1.3 Active Regional Compliance Profiles
 
@@ -122,28 +122,37 @@ Three production profiles are implemented and loadable via `CAGE_DEPLOYMENT_REGI
 
 ### 1.4 The SymbolicGovernor Pipeline
 
-The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) orchestrates an ordered interceptor chain. Each tier is domain-agnostic — it evaluates a mathematical or logical predicate, not a domain-specific business rule:
+The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) runs a two-phase pipeline ([`pipeline.py`](../../src/gateway/governance/governor/pipeline.py)): Phase 1 read-only stages, then Phase 2 mutating tiers whose commits are held in a `ReservationScope` and rolled back unless a seal is issued. The kernel owns four domain-agnostic stages ([`kernel_stages()`](../../src/gateway/governance/governor/assembly.py)); everything else is a `GovernanceTierPlugin` contributed by the active domain plugin. Tier labels follow `TIER_LABELS` in [`proof/model.py`](../../proof/model.py):
 
-| Tier | Interceptor                | Invariant                                              | Domain Coupling |
-| ---- | -------------------------- | ------------------------------------------------------ | --------------- |
-| 0    | STPA/UCA Validator         | Hazard analysis predicates from YAML control structure  | None            |
-| 1    | Agentic Confidence Check   | `confidence_score ≥ threshold`                          | None            |
-| 2    | Control Barrier Function   | `h(x) ≥ 0` (state-space boundary); concurrent with Tier 4 | None            |
-| 3    | Fiscal Limit Pre-Reservation | Atomic Redis `WATCH`/`MULTI`/`EXEC` reservation against daily fiscal cap | None |
-| 4    | OPA Rego Policy            | Declarative policy rules (externalized); concurrent with Tier 2 | None            |
-| 5    | Multi-Model Consensus      | Heterogeneous critic agreement                          | None            |
-| 6    | DoWhy Causal Gatekeeper    | Placebo refutation `p-value ≥ 0.05`                     | None            |
-| 6b   | Adaptive FRIA Gate         | Confidence-mapped external validation (§2.5)            | None            |
+| Tier | Interceptor                | Invariant                                              | Owner |
+| ---- | -------------------------- | ------------------------------------------------------ | ----- |
+| 0.5  | FTRA Reachability Gate     | Irreversible-terminal classification from the domain's FTRA registry | Kernel stage (registry from the domain's `DomainConfig`) |
+| 1    | STPA/UCA Validator         | Hazard predicates compiled from STPA YAML               | Kernel stage (UCA rules from `PluginContribution.uca_rules`) |
+| 2    | Agentic Confidence Check   | `confidence_score ≥ threshold` (`confidence.agent_threshold`) | Kernel stage |
+| 3a   | Control Barrier Function   | `h(x) ≥ 0` (state-space boundary)                       | Domain tier (finance `cbf`; healthcare dose barrier; physical-AI kinematic barrier) |
+| 3b   | OPA Rego Policy            | Declarative policy rules in the domain's OPA package    | Kernel stage (package from `DomainConfig.opa_package`) |
+| 4    | Fiscal Limit Reservation   | Atomic Redis reservation against the daily fiscal cap   | Finance tier (`FiscalLimitGuard`, [`src/cage_finance/safety/`](../../src/cage_finance/safety/)) |
+| 5    | Multi-Model Consensus      | Heterogeneous critic agreement (kernel `ConsensusGate`, domain-injected critics) | Domain tier |
+| 6    | DoWhy Causal Gatekeeper    | Placebo refutation `p-value ≥ 0.05` (kernel engine, domain-injected `CausalSpec`) | Finance tier |
 
-Every tier's decision boundary is parameterized through [`governance_thresholds.json`](../../config/governance_thresholds.json) and the regional compliance profile — not through imperative code branches.
+The FULL profile reserves a Tier 7 `fria` slot, but no FRIA stage or tier is registered at HEAD (see §2.5.2). Kernel stages carry no domain vocabulary; domain tiers live in `src/cage_{domain}/tiers/` and reach the kernel only through `PluginContribution`. Decision boundaries are parameterized through [`governance_thresholds.json`](../../config/governance_thresholds.json) — kernel sections at the top level, domain sections under `domains.<domain>` — and the regional compliance profile, not through imperative code branches.
 
 #### Composition root
 
-A governor is built in exactly one place. The active domain plugin (`CAGE_DOMAIN`) returns its seams as data from `CagePlugin.contribute()` — a frozen [`PluginContribution`](../../src/gateway/governance/contracts.py) holding its tiers, CBF invariants, safety filter, consensus provider, tool provider, compliance overlays, rails and background tasks. [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py) validates all contributions together and refuses startup on a slot collision (two tiers claiming one action at the same phase and order), a duplicate domain or threshold section, an IRREVERSIBLE_TERMINAL action in the domain's FTRA registry that no tier claims, two contributions filling one engine slot, or an invariant failing V1-V4. It then builds an immutable `SymbolicGovernor`; engine slots no plugin fills keep deny-by-default null objects. [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py) wraps assembly with the startup posture check ([`posture.py`](../../src/gateway/governance/governor/posture.py)); servers store the result on `app.state.governor` and pass it explicitly to every caller. There is no process-wide governor and nothing runs at import time.
+A governor is built in exactly one place. The active domain plugin (`CAGE_DOMAIN`) returns its seams as data from `CagePlugin.contribute()` — a frozen [`PluginContribution`](../../src/gateway/governance/contracts.py) holding its tiers, CBF invariants, STPA UCA rules and saga compensators, narrowers, `domains.<domain>` threshold schemas, ground-truth providers, safety filter, consensus provider or `ConsensusContribution`, tool provider, compliance overlays, rails and background tasks. [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py) validates all contributions together and refuses startup on:
+
+- a contribution whose `domain` differs from the plugin `name`, or a duplicate domain;
+- a duplicate threshold section, or a contributed section missing from `domains.*` in `governance_thresholds.json` or failing its schema;
+- a slot collision (two tiers claiming one action at the same phase and order);
+- an IRREVERSIBLE_TERMINAL action in the domain's FTRA registry that no tier claims;
+- two contributions filling one engine slot (`safety_filter`, `consensus`, `standing_projector`), or a duplicate UCA rule or ground-truth provider;
+- an invariant failing V1-V4.
+
+It then builds an immutable `SymbolicGovernor`; engine slots no plugin fills keep deny-by-default null objects (`NullSafetyFilter`, `NullConsensusProvider`). [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py) wraps assembly with the startup posture check ([`posture.py`](../../src/gateway/governance/governor/posture.py)); servers store the result on `app.state.governor` and pass it explicitly to every caller. There is no process-wide governor and nothing runs at import time.
 
 ### 1.5 Fail-Closed Posture
 
-The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This fail-closed enforcement (now unconditional: the former `CBF_FAIL_OPEN` override has been removed) was verified in the v2.0.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).
+The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This fail-closed enforcement is unconditional: the former `CBF_FAIL_OPEN` override has been removed.
 
 The system will not permit an action it cannot independently verify as safe. This property is invariant across all domains.
 
@@ -185,7 +194,7 @@ This property is invariant across all domains that extend the compliance bridge.
 
 ## Part 2 — Architecture Roadmap (Partial Implementation)
 
-> **Note:** The following sections describe the target extensibility architecture. §2.5 (External Normative Provider Interface) is **implemented** as of v2.1.0. All other sections remain architecture designs illustrating the generalization path enabled by the domain-agnostic kernel described in Part 1.
+> **Note:** The following sections describe the target extensibility architecture. §2.5 (External Normative Provider Interface) and §2.6 (Vendor-Isolated Integrations) are **implemented**; the §2.5.2 adaptive FRIA gate is implemented but not wired into the governor pipeline. §2.3 and §2.4 record which generalization steps have landed. The remaining sections are architecture designs illustrating the generalization path enabled by the domain-agnostic kernel described in Part 1.
 
 ### 2.1 Domain Profile Schema
 
@@ -232,19 +241,21 @@ The existing `ControlRegistry` JSON profile format generalizes naturally to non-
 
 ### 2.3 CBF Generalization Pattern
 
-The CBF kernel requires no modification to support new domains. The generalization is purely configurational:
+The CBF kernel requires no modification to support new domains. A domain declares an `InvariantModel`, a cost resolver, and a `domains.<domain>` threshold section in its plugin:
 
 ```
-Current (Finance):     h(x) = cash_balance - min_cash_balance
-Pharma (Proposed):     h(x) = API_concentration - min_therapeutic_threshold
-Industrial (Proposed): h(x) = actuator_position - min_safe_position
+Finance (implemented):      h(x) = cash_balance - min_cash_balance
+Healthcare (implemented):   h(x) = serum_concentration - min_therapeutic_concentration
+Physical AI (implemented):  h(x) = separation_distance - min_separation_distance (plus velocity, torque)
+Pharma (Proposed):          h(x) = API_concentration - min_therapeutic_threshold
+Industrial (Proposed):      h(x) = actuator_position - min_safe_position
 ```
 
 In all cases, the runtime enforcement is identical:
 - If `h(x_next) < (1 - γ) · h(x_t)` → **BLOCK**
 - If `h(x_next) < 0` → **BLOCK** (critical boundary violation)
 
-The decay coefficient `γ`, the state variable source, and the minimum threshold are all configurable through the threshold JSON and a pluggable state provider interface.
+The decay coefficient `γ`, the state key, and the minimum threshold come from the plugin's invariant and its threshold section; external ground truth comes from the `GroundTruthProvider` the plugin registers for that `invariant_id`. Healthcare and physical-AI domains cannot yet be activated (no `DomainConfig`; POAM-2026-077 in [`docs/POAM.md`](../POAM.md)).
 
 #### Formal Mathematical Invariant & TOCTOU Resolution
 
@@ -260,12 +271,13 @@ To fully realize the multi-domain architecture, the following engineering work i
 
 | Requirement                          | Current State                                        | Target State                                                  |
 | ------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------- |
-| **Profile Loading**                  | JSON read from `config/compliance/` at startup        | Same mechanism, extended schema with `_domain` field          |
-| **CBF State Provider Interface**     | Hardcoded to Redis `safety:current_cash` key          | Pluggable `StateProvider` interface with domain-specific impls |
-| **Domain-Specific Validators**       | Not implemented                                       | Optional pre-tier validators (e.g., `MedDRACodingValidator`)  |
-| **Threshold Profile Generalization** | `governance_thresholds.json` uses financial terms      | Domain-neutral threshold schema with per-profile overrides    |
+| **Profile Loading**                  | JSON read from `config/compliance/` at startup, plus plugin compliance overlays | Same mechanism, extended schema with `_domain` field          |
+| **CBF State Provider Interface**     | Implemented: the CBF takes the plugin's `InvariantModel.state_key`; external ground truth comes through `GroundTruthProvider` and `GroundTruthReconciler` ([`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py)) | Real (non-simulated) ground-truth sources per domain |
+| **Domain-Specific Validators**       | Implemented for STPA: each plugin compiles its own UCA rules and contributes them via `PluginContribution.uca_rules` | Optional pre-tier validators (e.g., `MedDRACodingValidator`)  |
+| **Threshold Profile Generalization** | Implemented: domain thresholds live under `domains.<domain>` in `governance_thresholds.json`, validated against each plugin's schema at assembly | Per-profile (regional) overrides                              |
+| **Domain Activation**                | Only `finance` declares a `DomainConfig`; `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start | FTRA registry and OPA package for every domain                |
 | **Telemetry Isolation**              | Dual Langfuse project (main / compliance)             | Configurable telemetry isolation modes per domain requirement |
-| **Network Isolation**                | Kubernetes NetworkPolicy + namespace segregation       | Same mechanism, domain-specific policy templates              |
+| **Network Isolation**                | Kubernetes NetworkPolicy + GKE FQDNNetworkPolicy + namespace segregation | Same mechanism, domain-specific policy templates              |
 
 ### 2.5 External Normative Provider Interface ✅ IMPLEMENTED
 
@@ -283,7 +295,7 @@ All external provider interactions fall into three categories, each with a disti
 | **Attestation Logging**   | None (async fire-and-forget)              | CAGE → Provider           | Background; no acknowledgment wait                  |
 | **External Validation**   | **Adaptive** (confidence-dependent)       | CAGE ↔ Provider           | Async at ≥0.95; sync gate at [0.70, 0.95); deny <0.70 |
 
-**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py)) executes in sub-microseconds (**v3.0.1:** `safety.py` removed). The full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) includes the OPA query (~10-50ms). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
+**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) executes in sub-microseconds. The full two-phase governance pipeline (kernel stages plus the domain's tiers, §1.4) includes the OPA query (~10-50ms). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
 
 #### 2.5.2 Reference Handshake: 3-Endpoint External Provider
 
@@ -300,7 +312,7 @@ The following 3-endpoint HTTP contract defines the standard integration surface 
 │           │                                │                     │
 │           │                    ┌───────────▼───────────┐         │
 │           │                    │ SymbolicGovernor      │         │
-│           │                    │ 7-Tier Pipeline       │         │
+│           │                    │ Two-Phase Pipeline    │         │
 │           │                    │ (HOT PATH: no network)│         │
 │           │                    └───────────┬───────────┘         │
 │           │                                │                     │
@@ -327,7 +339,7 @@ The following 3-endpoint HTTP contract defines the standard integration surface 
 
 **Integration pattern:** Boot-time initialization + periodic background refresh.
 
-- **At container startup**, the FastAPI lifespan hook ([`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) L57-62) fetches the baseline via HTTP and writes it to `config/compliance/{REGION}_BASELINE.json`.
+- **At container startup**, the gateway lifespan in [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) starts `NormativeProviderDaemon` ([`normative_provider.py`](../../src/gateway/governance/normative_provider.py)), which fetches the baseline and writes it to `config/compliance/{REGION}_BASELINE.json`.
 - `ControlRegistry._load_registry()` then loads the profile identically to the current static-file path — no changes to the singleton.
 - A background `asyncio.Task` polls the endpoint at a configurable interval (default: 6 hours) and calls `ControlRegistry.reconfigure()` if the baseline has changed.
 - **The hot path never touches the network.** All lookups resolve against the in-memory singleton.
@@ -375,13 +387,13 @@ The binary async-vs-sync choice has been rejected. Instead, [`enforce_fria_bound
 
 | Confidence Zone | Score Range | Execution Path | Hot-Path Impact |
 | --- | --- | --- | --- |
-| **HIGH** | ≥ 0.95 (`THRESHOLDS.confidence.min_trade_confidence`) | `ASYNC_ATTESTATION` — fire-and-forget | 0ms |
+| **HIGH** | ≥ 0.95 (`THRESHOLDS.confidence.agent_threshold`) | `ASYNC_ATTESTATION` — fire-and-forget | 0ms |
 | **AMBIGUOUS** | [0.70, 0.95) (`DEFER_CONFIDENCE_THRESHOLD`) | `SYNC_GATE` — transaction frozen in DEFER queue until provider responds | Up to 5s (configurable) |
 | **LOW** | < 0.70 | `LOCAL_HARD_DENY` — no external call | 0ms |
 
-This anchors to the existing `DEFER` state machine ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)) via the new `DeferReason.EXTERNAL_VALIDATION` enum member. The adaptive gate is positioned after all 7 local tiers — if local governance already DENY'd, the external provider is never contacted.
+This anchors to the existing `DEFER` state machine ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)) via the `DeferReason.EXTERNAL_VALIDATION` enum member. The adaptive gate is designed to run after all local tiers — if local governance already DENY'd, the external provider is never contacted.
 
-The gate runs as Tier 7 in [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py), activated only when `CAGE_NORMATIVE_PROVIDER != "static"`.
+**Wiring status at HEAD:** `enforce_fria_boundary()` is implemented and tested, but the governor pipeline does not call it. The FULL profile in [`pipeline.py`](../../src/gateway/governance/governor/pipeline.py) reserves a Tier 7 `fria` slot, yet no stage or tier fills it. The only FRIA-related behaviour in the live pipeline is the FRIA-zone defer threshold applied by the confidence stage ([`confidence.py`](../../src/gateway/governance/governor/stages/confidence.py)).
 
 ##### Endpoint 3: `GET /evidence-chain/{thread_id}` — Attestation Logging
 
@@ -394,20 +406,20 @@ The gate runs as Tier 7 in [`src/gateway/governance/governor/governor.py`](../..
 - When the provider returns the external seal, it is appended to the audit record.
 - **Zero blocking on the transaction path.** If the provider is unreachable, the local evidence chain remains intact and the external seal is retried on a backoff schedule.
 
-#### 2.5.3 Architectural Precedent: `reconciliation_worker.py`
+#### 2.5.3 Architectural Precedent: the Ground-Truth Reconciler
 
 This async-fetch-sign-cache-and-fail-closed pattern is not a design proposal — it is already implemented in the CAGE codebase.
 
-The [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py) (697 lines) implements exactly this architecture for the CBF external balance reconciliation:
+The reconciliation daemon ([`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py)) implements exactly this architecture for CBF ground-truth reconciliation. It signs snapshots with its own reconciler key (`RECONCILER_KMS_KEY`), and the CBF verifies them only against reconciler trust anchors ([`reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py)):
 
 | Reconciliation Worker Pattern                | External Normative Provider Equivalent         |
 | -------------------------------------------- | ---------------------------------------------- |
-| `LedgerProvider.fetch_balance()` → HTTP/gRPC  | `GET /legal-baseline/{region}` → HTTP          |
+| Domain `GroundTruthProvider` read (per `invariant_id`) | `GET /legal-baseline/{region}` → HTTP          |
 | KMS-sign payload before Redis write            | KMS-sign baseline before ControlRegistry load  |
-| `ExternalLedgerReconciler.run_loop()` polling  | Background cron polling `/legal-baseline`      |
-| `read_verified_balance()` → returns `None` if stale | `ControlRegistry` → fails if no profile loaded |
+| `GroundTruthReconciler` polling (or `RECONCILIATION_SINGLE_SHOT` CronJob pass) | Background cron polling `/legal-baseline`      |
+| `read_verified_state()` → returns `None` if stale or signature invalid | `ControlRegistry` → fails if no profile loaded |
 | CBF fails closed on stale/absent balance       | ControlRegistry raises `RuntimeError` on missing profile |
-| `StubLedgerProvider` for dev/CI               | Static JSON profiles for dev/CI                |
+| Simulated ground-truth sources with fault injection for dev/CI | Static JSON profiles for dev/CI                |
 
 The reconciliation worker proves the pattern is operationally sound: async external fetch, cryptographic signing, local cache with TTL, fail-closed on stale data.
 
@@ -548,26 +560,28 @@ This ensures zero external network dependencies during local development and CI 
 
 > **Status:** Implemented in v2.1.0. See `src/integrations/`.
 
-All third-party compliance and attestation provider adapters are consolidated under `src/integrations/{vendor}/`, each with its own `__init__.py`, provider module, and test directory. This boundary prevents vendor SDK code from leaking into the governance kernel or gateway packages.
+All third-party compliance and attestation provider adapters, cloud KMS providers, and storage/telemetry backends are consolidated under `src/integrations/{vendor}/`. This boundary prevents vendor SDK code from leaking into the governance kernel or gateway packages. Partner adapter tests live under `tests/integrations/`.
 
 ```
 src/integrations/
 ├── __init__.py                # Provider factory (lazy-loading)
 ├── provider_01/
-│   ├── __init__.py
 │   └── provider.py            # Provider01 (3-endpoint normative provider adapter)
 ├── provider_02/
-│   ├── __init__.py
 │   ├── adapter.py             # AttestationCallback (LangGraph callback handler) + Client
-│   ├── provider.py            # Provider02 (NormativeProvider interface, JWK-verifiable CERs)
-│   └── tests/
-│       ├── __init__.py
-│       ├── test_adapter.py
-│       └── test_provider.py
+│   └── provider.py            # Provider02 (NormativeProvider interface, JWK-verifiable CERs)
+├── provider_03/, provider_05/ … provider_08/, actuator_01/
+├── gcp/kms_provider.py        # GCPKMSProvider (Cloud KMS)
+├── aws/kms_provider.py        # AWSKMSProvider (AWS KMS)
+├── azure/kms_provider.py      # AzureKMSProvider (Azure Key Vault)
+├── storage_gcs/cold_store.py  # GcsColdStore
+├── storage_s3/cold_store.py   # S3ColdStore
+├── telemetry_langfuse/        # Langfuse telemetry provider
+└── nemo/                      # NeMo Guardrails (§4.3)
 ```
 
 **Key architectural rules:**
-- Cloud KMS (`kms_signer.py`) and Redis (`evidence_stream.py`) are **NOT** vendor adapters — they are substrate infrastructure invariants and remain in `src/gateway/governance/`.
+- The signing *contract* and vendor-free software providers stay in the kernel ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py)); the cloud KMS providers are vendor adapters in `src/integrations/{gcp,aws,azure}/kms_provider.py`, imported only inside [`signer_factory.py`](../../src/gateway/governance/signer_factory.py). The Redis evidence stream ([`evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)) remains kernel substrate.
 - Each vendor directory is an optional dependency group in `pyproject.toml` (roadmap: PEP 508 extras).
 - The provider factory in `src/integrations/__init__.py` uses lazy imports — vendor SDKs are not loaded unless explicitly configured via environment variables.
 
@@ -575,13 +589,13 @@ src/integrations/
 
 The following components are domain-invariant by design and require **zero modification** for new domain onboarding:
 
-- `ControlBarrierFunction.get_h()` — pure mathematical predicate
+- `ControlBarrierFunction.evaluate_barrier()` — pure mathematical predicate over the invariant a plugin supplies
 - `ControlRegistry` singleton — already reads arbitrary JSON profiles
-- `SymbolicGovernor` 9-tier two-phase pipeline (`Tiers 0.5–7`) — evaluates mathematical/logical predicates only
+- `SymbolicGovernor` two-phase pipeline and its kernel stages (FTRA, STPA, confidence, OPA) — evaluates mathematical/logical predicates only; domain tiers are contributed, not edited in
 - `GovernanceControl` enum — stable internal IDs, independent of external frameworks
 - OPA Rego policy structure — declarative rules parameterized by profile metadata
 - Cloud KMS HSM signing — domain-agnostic cryptographic attestation
-- STPA-to-Policy Compiler — ingests YAML hazard definitions, not domain logic
+- STPA-to-Policy Compiler — ingests YAML hazard definitions, not domain logic; each domain's source compiles into that plugin's own package (e.g. `src/cage_finance/stpa/`)
 - LangGraph Saga engine — atomic transaction guarantees independent of payload semantics
 
 ---
@@ -594,22 +608,21 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 
 | Capability                         | Source                                                                                   | Status       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------- | ------------ |
-| CBF with `h(x) = cash - floor`    | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) (Lua atomic script `LUA_ATOMIC_CBF`)  | ✅ Production |
-| ControlRegistry (3 regions)        | [`constants.py`](../../src/gateway/governance/constants.py) L121-308                  | ✅ Production |
-| 9-Tier SymbolicGovernor            | [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)            | ✅ Production |
-| Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)                         | ✅ Production |
+| CBF with `h(x) = cash - floor`    | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) (atomic Lua script) + `CashBarrier` in [`src/cage_finance/invariants.py`](../../src/cage_finance/invariants.py) | ✅ Production |
+| ControlRegistry (3 regions)        | [`constants.py`](../../src/gateway/governance/constants.py) (`ControlRegistry`)       | ✅ Production |
+| Two-phase SymbolicGovernor + finance tiers | [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)            | ✅ Production |
+| Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py), [`src/integrations/gcp/kms_provider.py`](../../src/integrations/gcp/kms_provider.py) | ✅ Production |
 | Heterogeneous multi-model consensus | [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
 | Fail-closed CBF enforcement        | Unconditional (no `CBF_FAIL_OPEN` override exists)                                       | ✅ Verified   |
 | DoWhy causal gatekeeper            | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)            | ✅ Production |
-| STPA-to-Policy Compiler            | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)                    | ✅ Production |
-| External CBF reconciliation        | [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py)         | ✅ Production |
+| STPA-to-Policy Compiler            | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) → [`src/cage_finance/stpa/`](../../src/cage_finance/stpa/) | ✅ Production |
+| External CBF reconciliation        | [`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py) (`GroundTruthReconciler`) | ✅ Production (simulated ground-truth source) |
 | External Normative Provider (§2.5)| [`normative_provider.py`](../../src/gateway/governance/normative_provider.py)          | ✅ Production |
 | Provider 01 normative provider     | [`src/integrations/provider_01/provider.py`](../../src/integrations/provider_01/provider.py) | ✅ Production |
 | Provider 02 attestation provider   | [`src/integrations/provider_02/provider.py`](../../src/integrations/provider_02/provider.py) | ✅ Production |
 | OPA policy enforcement             | `config/opa/`                                                     | ✅ Production |
 | NeMo input/output rails            | `config/rails/`                                                 | ✅ Production |
 | LangGraph Saga engine              | `src/governed_financial_advisor/agents/`                                                   | ✅ Production |
-| Automated test suite (844 passing, 0 failed, 24 skipped) | `tests/`                                                   | ✅ Passing    |
 
 ### Architecture Insight: Why Financial Services First
 
@@ -653,7 +666,7 @@ The ingress adapter layer (`src/gateway/governance/ingress/`) provides a uniform
 | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Lula validation manifests | `ControlRegistry` entries |
 | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | AGP compiled policy bundles | OPA bundle push |
 | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Multi-format policy detection | Normalized policy object |
-| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway (Phase B) | Envoy ext_authz gRPC bridge |
+| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway request format (Phase B absorption) | Governance pipeline inputs (OIDC-validated agent identity) |
 | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | CAGE-003 Agent Registry | SPIFFE trust-domain catalog |
 
 **Extension pattern**: A new external framework is integrated by implementing the `IngressAdapter` protocol (translate foreign schema → `ControlRegistry` entry) and registering the adapter in the ingress `__init__.py`. The kernel's `ControlRegistry` and `SymbolicGovernor` pipeline are unaffected.
@@ -703,13 +716,13 @@ CAGE's driver-based extensibility model ensures the governance kernel is not tie
 
 | Extension Point | GCP Driver | AWS Driver | Azure Driver | On-Prem / Agnostic |
 |---|---|---|---|---|
-| **KMS / Audit Signing** | `GCPKMSProvider` (Cloud KMS) | `AWSKMSProvider` (AWS KMS) | `AzureKMSProvider` (Azure Key Vault) | HashiCorp Vault |
-| **Evidence Storage** | `GCSStorageBackend` (Cloud Storage) | `S3StorageBackend` (S3-compatible) | `S3StorageBackend` (Azure Blob via S3 interop) | `LocalStorageBackend` (filesystem / MinIO) |
+| **KMS / Audit Signing** | `GCPKMSProvider` (Cloud KMS, `src/integrations/gcp/`) | `AWSKMSProvider` (AWS KMS, `src/integrations/aws/`) | `AzureKMSProvider` (Azure Key Vault, `src/integrations/azure/`) | `SoftwareEd25519Provider` (development/CI postures only; no on-prem HSM driver ships) |
+| **Evidence Storage** | `GcsColdStore` (Cloud Storage, `src/integrations/storage_gcs/`) | `S3ColdStore` (S3-compatible, `src/integrations/storage_s3/`) | `S3ColdStore` against an S3-compatible endpoint | `S3ColdStore` against MinIO, or `NullColdStore` (dev only) |
 | **Ingress / TLS** | GCE L7 + ManagedCertificate (`deployment/k8s/gcp/`) | AWS ALB Ingress Controller | Azure Application Gateway | nginx ingress (`deployment/k8s/ingress.yaml`) |
 
-All three extension points are selected at runtime via environment variables (`KMS_PROVIDER`, `STORAGE_BACKEND`, `ingressClassName`) — no code changes are required to switch between providers.
+All three extension points are selected at runtime via configuration (`KMS_PROVIDER` read by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py), `EVIDENCE_COLD_STORE` read by [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py), and the Ingress `ingressClassName`) — no code changes are required to switch between providers. Enforcing postures refuse the software signers.
 
-> **For PA Lead reviewers:** This architecture is consistent with the Kubernetes extension NonProduct classification: CAGE works with any Kubernetes 1.24+ cluster. GCP integrations are optional drivers, not core dependencies. See [`infra/targets/agnostic/`](../../infra/targets/agnostic/) for the cloud-agnostic Terraform deployment target.
+> **For PA Lead reviewers:** This architecture is consistent with the Kubernetes extension NonProduct classification: CAGE works with any Kubernetes 1.24+ cluster. GCP integrations are optional drivers, not core dependencies. The repository ships two Terraform targets: [`infra/targets/agnostic/`](../../infra/targets/agnostic/) (cloud-agnostic) and [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/) (the GKE + Linkerd mTLS reference deployment).
 
 ---
 
@@ -849,8 +862,10 @@ For any private partner integration:
 | [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md)                 | Full inference gateway architecture                     |
 | [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
 | [FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md)                      | Formal verification and completeness proofs             |
-| [config/compliance/README.md](../../README.md)   | Regional profile specification and authoring guide      |
+| [config/compliance/README.md](../../config/compliance/README.md)   | Regional profile specification and authoring guide      |
 | [DUAL_PROJECT_ARCHITECTURE.md](DUAL_PROJECT_ARCHITECTURE.md)         | Dual-project telemetry isolation design and threat model |
+| [PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md](PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md) | Physical-AI domain plugin (barriers, tiers, overlays)   |
+
 - **Compliance Baselines**: Profiles (`US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) dictate the active normative overlay.
-- **Threshold Toggles**: The `governance_thresholds.json` singleton dictates limits like `min_cash_balance` or `gamma` without requiring code recompilation.
-- **External Normative Constraints**: When `CAGE_NORMATIVE_PROVIDER` is set, jurisdiction-specific constraints (e.g., Adaptive FRIA gating per EU AI Act Art. 29a) are activated at runtime without modifying the universal ISO 42001 core.
+- **Threshold Toggles**: `governance_thresholds.json` holds kernel sections at the top level and domain sections under `domains.<domain>` (e.g. `domains.finance.cbf.min_cash_balance` and `gamma`), so limits change without code recompilation.
+- **External Normative Constraints**: When `CAGE_NORMATIVE_PROVIDER` is set, the configured provider supplies jurisdiction-specific baselines at runtime without modifying the universal ISO 42001 core. (The Adaptive FRIA gate, §2.5.2, is implemented but not yet wired into the pipeline.)

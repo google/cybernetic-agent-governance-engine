@@ -3,7 +3,7 @@
 **Document type:** Architectural Analysis & Strategic Positioning
 **Status:** INTERNAL — For engineering and executive review
 **Date:** 2026-07-18
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 **Authority:** Supplements `docs/architecture/SUBSTRATE_MOAT_STRATEGY.md` and
 `docs/project/CAGE_ONE_PAGER.md`
 
@@ -50,7 +50,7 @@ committed code.
 
 | Substrate property | CAGE implementation | File |
 |---|---|---|
-| Compiled hazard model (not interpreted at runtime) | STPA UCAs compiled to OPA Rego AST at build time via `stpa_compiler.py`; the compiled artifact is immutable at runtime — an agent cannot modify its own invariants even during a full container compromise | [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
+| Compiled hazard model (not interpreted at runtime) | STPA UCAs are compiled at build time by `stpa_compiler.py` into OPA Rego, NeMo Colang, Python UCA rules, LangGraph saga compensators and an FTRA terminal registry. Compilation is per domain: the kernel source is [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml), and each domain plugin's source compiles into its own package (finance: [`trade_hazards.yaml`](../../src/cage_finance/config/stpa/trade_hazards.yaml) → [`src/cage_finance/stpa/`](../../src/cage_finance/stpa/)). The plugin hands the generated rules to the kernel as `PluginContribution.uca_rules`, and `assemble_governor()` passes them to the `STPAValidator` behind the STPA stage. The compiled artifacts are immutable at runtime — an agent cannot modify its own invariants even during a full container compromise | [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | Math-backed safety certificate | Discrete-time CBF: `h(S(t+1)) >= (1-γ)*h(S(t))` — a theorem, not a policy rule | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | Out-of-process policy engine | OPA runs as a separate process; CAGE calls it over HTTP — the agent cannot tamper with the policy evaluator | [`src/gateway/governance/governor/stages/opa.py`](../../src/gateway/governance/governor/stages/opa.py) |
 | Multi-jurisdiction compliance registry | `ControlRegistry` resolves `CTRL_*` IDs to jurisdiction-specific regulatory citations at runtime from `config/compliance/{REGION}_BASELINE.json` | [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) |
@@ -60,8 +60,8 @@ committed code.
 | Substrate property | CAGE implementation | File |
 |---|---|---|
 | Zero-TOCTOU database commit gate | `atomic_verify_and_commit()` collapses CBF check and state commit into a single Redis Lua script — no Python round-trip between check and write | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) |
-| Cryptographic routing seal | HMAC-SHA256 seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers); downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
-| Fail-closed startup assertion | `PostureViolation` at startup under an enforcing posture if the causal tier's `dowhy` dependency is absent, `RECONCILIATION_PROVIDER=stub`, or the governance signer is in HMAC fallback — the container fails to start rather than degrading to an unguarded state. The CBF tier has no bypass flag to guard. | [`src/gateway/governance/governor/posture.py`](../../src/gateway/governance/governor/posture.py) |
+| Cryptographic routing seal | Asymmetric KMS-signed JWT seal (with a `kid` header) issued only after a clean governor run, inside that run's `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)); an HMAC-SHA256 seal is used only when no KMS signer is active (development and tests). Downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
+| Fail-closed startup assertion | `bootstrap_governor()` runs the table-driven posture check. Under an enforcing posture the gateway refuses to start if, among other checks, a tier's runtime requirement (e.g. the causal tier's `dowhy`) is missing, `RECONCILIATION_PROVIDER=stub`, an invariant that needs external ground truth has no provider, the governance signer is in HMAC fallback mode (no KMS signer active), or `RECONCILER_KMS_KEY` does not resolve to a reconciler trust anchor. The CBF tier has no bypass flag to guard. | [`src/gateway/governance/governor/posture.py`](../../src/gateway/governance/governor/posture.py) |
 | DEFER state machine | 4-state machine (PARK → HYDRATE → REPLAY) prevents binary forced decisions on incomplete context; parked in Redis `db=1` with 4-hour TTL | [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) |
 | Human-gated HITL interrupt | `approval_node` calls the LangGraph dynamic `interrupt()` primitive, suspending the graph; it resumes only on an explicit `Command(resume=...)` carrying reviewer identity and rationale | [`src/governed_financial_advisor/graph/nodes/approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) |
 
@@ -78,15 +78,15 @@ Current state of the handshake:
 ```
 [OSCAL/Lula policy-as-code]
         │
-        │  ← GAP: no machine-readable ingestion path (Phase A, Gap 1)
+        │  ← GAP: ingress adapters exist; no CI/CD-callable ingestion endpoint (Gap 1)
         ▼
-[CAGE stpa_control_structure.yaml]  ← manual authoring today
+[config/stpa/core_system.yaml + per-domain STPA YAML]  ← manual authoring today
         │
-        │  stpa_compiler.py  ← IMPLEMENTED
+        │  stpa_compiler.py (per domain)  ← IMPLEMENTED
         ▼
-[OPA Rego AST + NeMo Colang + CBF + LangGraph Saga nodes]
+[OPA Rego + NeMo Colang + UCA rules + LangGraph saga compensators + FTRA registry]
         │
-        │  SymbolicGovernor._run_checks()  ← IMPLEMENTED
+        │  PluginContribution → assemble_governor() → SymbolicGovernor  ← IMPLEMENTED
         ▼
 [Redis atomic Lua commit gate]  ← IMPLEMENTED
         │
@@ -244,9 +244,9 @@ its technical substantiation in the CAGE codebase:
 
 | Suggested response claim | Technical substantiation | File |
 |---|---|---|
-| "machine-readable, out-of-process invariants" | OPA Rego AST compiled from STPA UCAs; OPA runs out-of-process | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
-| "physically gate the runtime" | Redis atomic Lua CBF check+commit; HMAC routing seal | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
-| "policy-as-code feeds into infrastructure-as-code" | Ingress adapters proposed but not yet implemented; `stpa_compiler.py` already compiles CAGE YAML to enforcement artifacts | See §9 action items |
+| "machine-readable, out-of-process invariants" | OPA Rego compiled from STPA UCAs; OPA runs out-of-process | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
+| "physically gate the runtime" | Redis atomic Lua CBF check+commit; KMS-signed routing seal | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
+| "policy-as-code feeds into infrastructure-as-code" | OSCAL, Lula, ACS and AAIF ingress adapters are implemented in `src/gateway/governance/ingress/`; `stpa_compiler.py` compiles STPA YAML to enforcement artifacts; the CI/CD-callable ingestion endpoint is not yet exposed | See §9 action items |
 | "governance frameworks to manage the logic of risk" | `ControlRegistry` resolves CTRL_* IDs to NIST SP 800-53 / ISO 42001 / SR 26-2 citations | [`constants.py`](../../src/gateway/governance/constants.py) |
 | "substrate engines to enforce the physics of compliance" | Discrete-time CBF (Ames et al. IEEE TAC 2017) — a mathematical theorem, not a policy rule | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) |
 | "at the commit boundary" | `atomic_verify_and_commit()` — single Lua hop, zero TOCTOU | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) |
@@ -262,7 +262,7 @@ proprietary "how" that should not be disclosed in external positioning:
 | Redis Lua script for atomic CBF check+commit | The specific Lua implementation of `h(S(t+1)) >= (1-γ)*h(S(t))` at the database commit tier is the core substrate moat — it is not replicable without understanding the CBF formulation and the Redis WATCH/MULTI/EXEC interaction |
 | 4-state DEFER router thresholds (0.95 / 0.70) | The specific FRIA zone thresholds and the PARK → HYDRATE → REPLAY state machine are implementation IP |
 | DoWhy causal gatekeeper (placebo refutation, 50 sims, p < 0.05) | The causal world-model validation is a unique capability with no competitor equivalent |
-| Production startup assertions | The specific fail-closed mechanism at module import time is an implementation detail that should not be disclosed to adversaries |
+| Production startup assertions | The specific fail-closed posture checks run by `bootstrap_governor()` before the gateway serves are an implementation detail that should not be disclosed to adversaries |
 | `ControlRegistry.active_hash` policy version pinning | The version pinning mechanism that detects runtime policy drift is implementation IP |
 
 The framing correctly keeps the public narrative at the architectural level:
@@ -282,17 +282,18 @@ fully implemented in CAGE. These are ordered by strategic priority.
 **What the framing implies:** "policy-as-code (OSCAL/Lula) feeds directly into
 infrastructure-as-code (CAGE-style substrate boundaries)"
 
-**What is missing:** CAGE has no native parser for OSCAL component definitions
-or Lula validation manifests as policy ingestion inputs. The Phase A ingress
-adapters (`acs_adapter.py`, `aaif_adapter.py`, `policy_translator.py`) address
-ACS and AAIF formats but not OSCAL/Lula directly.
+**What is missing:** The OSCAL and Lula ingress adapters now exist alongside
+the ACS and AAIF adapters (§3.1, §3.2), and
+[`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py)
+provides the multi-format entry point. What is missing is the CI/CD-callable
+HTTP endpoint that exposes it.
 
 **New work implied:**
 
 | New module | Purpose | Proposed location |
 |---|---|---|
-| `oscal_adapter.py` | Parse OSCAL component definitions → CAGE UCA YAML | `src/gateway/governance/ingress/oscal_adapter.py` |
-| `lula_adapter.py` | Parse Lula validation manifests → OPA constraints | `src/gateway/governance/ingress/lula_adapter.py` |
+| ~~`oscal_adapter.py`~~ | ✅ Implemented — parse OSCAL component definitions → CAGE UCA YAML | [`src/gateway/governance/ingress/oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) |
+| ~~`lula_adapter.py`~~ | ✅ Implemented — parse Lula validation manifests → OPA constraints | [`src/gateway/governance/ingress/lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) |
 | `POST /governance/ingest-policy` | CI/CD-callable policy ingestion endpoint | Extend `src/gateway/server/hybrid_server.py` |
 
 **Change category:** Cat-N (Normal) — Python modules only, no new
@@ -363,7 +364,7 @@ document (and corresponding OpenAPI schema) that defines:
 | [`SUBSTRATE_MOAT_STRATEGY.md`](SUBSTRATE_MOAT_STRATEGY.md) | Parent document — this analysis extends the substrate moat framing with the Governance Layer / Enforcement Substrate vocabulary and maps it to new functionality |
 | [`CAGE_OPEN_INTEROP_SPEC.md`](../CAGE_OPEN_INTEROP_SPEC.md) | The external API surface that exposes the substrate contract; needs §11 (Policy Ingestion API) and §12 (Governance Webhook) added |
 | [`CAGE_ONE_PAGER.md`](../project/CAGE_ONE_PAGER.md) | The CISO-facing summary; the "Governance Layer vs. Enforcement Substrate" vocabulary should be incorporated into the Problem/Solution framing |
-| [`SUBSTRATE_MOAT_STRATEGY.md` §9.6](SUBSTRATE_MOAT_STRATEGY.md#96-gap-6-no-agw-service-extension-integration-high--strategic-opportunity) | The AGW Service Extension (Phase B) is the network-layer instantiation of the substrate — AGW owns the identity and network moat; CAGE owns the state and invariant moat; the two-layer model maps directly onto the AGW + CAGE defense-in-depth stack |
+| [`SUBSTRATE_MOAT_STRATEGY.md` §9.6](SUBSTRATE_MOAT_STRATEGY.md#96-gap-6-no-agw-service-extension-integration-high--strategic-opportunity) | *Historical.* This section proposed an AGW Service Extension (Phase B) as the network-layer instantiation of the substrate. The Envoy ext_authz Agent Gateway adapter and the AGW/Cloud Run targets have since been deleted; the sole reference deployment is GKE with Linkerd mTLS workload identity, where the mesh owns caller identity and CAGE owns the state and invariant boundary |
 
 ---
 
@@ -383,7 +384,7 @@ that physically gate the runtime at three distinct commit boundaries:
 
 1. **The database commit boundary** — Redis atomic Lua CBF check+commit
    ([`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py))
-2. **The actuator call boundary** — HMAC-SHA256 routing seal
+2. **The actuator call boundary** — KMS-signed routing seal (HMAC only in development and tests)
    ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py))
 3. **The human approval boundary** — LangGraph HITL interrupt
    ([`graph.py`](../../src/governed_financial_advisor/graph/graph.py))
@@ -412,7 +413,7 @@ infrastructure-as-code" claim end-to-end.
 
 | Action | Priority |
 |---|---|
-| Implement `oscal_adapter.py` and `lula_adapter.py` OSCAL/Lula policy ingestion adapters | HIGH |
+| Expose `policy_translator.py` as the `POST /governance/ingest-policy` endpoint on the gateway (the OSCAL/Lula adapters are implemented) | HIGH |
 | Add `POST /governance/ingest-policy` to `CAGE_OPEN_INTEROP_SPEC.md` §11 | HIGH |
 | Incorporate "Governance Layer vs. Enforcement Substrate" vocabulary into `CAGE_ONE_PAGER.md` Problem/Solution framing | MEDIUM |
 | Add `governance_webhook.py` and `POST /v1/webhooks/register` | MEDIUM |

@@ -3,14 +3,14 @@
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
 | **Document Version** | 3.0.1                                                                             |
-| **Date**             | 2026-09-09                                                                        |
+| **Date**             | 2026-09-29                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Architecture Specification                                                   |
-| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; baseline: 2,553 passing core unit tests; 4,148 tests collected / 3,921 passed, 0 failed) |
+| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified)                                  |
 | **Canonical Path**   | `docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`                                  |
 | **References**       | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/`, [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md) |
 
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 ---
 
@@ -54,7 +54,7 @@ The agent system is governed under **SR 26-2** (Federal Reserve Supervisory Guid
 | `doer_node`             | `src/governed_financial_advisor/graph/nodes/supervisor_node.py`     | `MODEL_FAST`                                 | LangGraph node                                 | Decomposed instructions                          |
 | `DataAnalystAgent`      | `src/governed_financial_advisor/agents/data_analyst/agent.py`      | yfinance (deterministic, no LLM)             | yfinance direct                                | `data_analyst_ticker`; price history; top 3 news |
 | `ExecutionAnalystAgent` | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | `MODEL_REASONING`; guided JSON               | `ChatOpenAI` on `GATEWAY_API_BASE`             | `ExecutionPlan` (`PlanStep` list)                |
-| `EvaluatorAgent`        | `src/governed_financial_advisor/agents/evaluator/agent.py`         | `Qwen/Qwen2.5-1.5B-Instruct` via `VLLM_FAST`  | `create_tool_calling_agent`; 5 async MCP tools | `evaluation_result`, `opa_results`               |
+| `EvaluatorAgent`        | `src/governed_financial_advisor/agents/evaluator/agent.py`         | `MODEL_FAST` via `VLLM_FAST_API_BASE`        | `create_react_agent`; 4 async tools            | `evaluation_result`, `opa_results`               |
 | `ExplainerAgent`        | `src/governed_financial_advisor/agents/explainer/agent.py`         | `MODEL_FAST`                                 | LangGraph node                                 | Compliance narrative                             |
 | `GovernedTrader`        | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | `MODEL_FAST` (execution)                     | LangGraph subgraph; `gateway_tool_guard` on tool executor | `execution_result`                               |
 | `RiskAnalystAgent`      | `src/governed_financial_advisor/agents/risk_analyst/agent.py`      | STAMP hazards from GCS; fallback H-1/H-2/H-3 | LangGraph node                                 | `ProposedUCA` structs                            |
@@ -76,7 +76,7 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `risk_feedback`         | Risk loop feedback text from evaluator             | Yes               | `EvaluatorAgent`              |
 | `loop_count`            | Recursion depth counter (safety breaker cap: 3)    | Yes               | `execution_analyst_node`      |
 | `safety_status`         | NeMo Guardrails / OPA combined status              | Yes               | `EvaluatorAgent`              |
-| `governance_signature`  | HMAC-SHA256 signature over `execution_plan_output` | Yes               | `EvaluatorAgent`              |
+| `governance_signature`  | Gateway-signed envelope signature returned to `safety_check` (the advisor signs nothing) | Yes | `safety_node`         |
 | `risk_attitude`         | User-declared risk tolerance                       | Yes               | Input                         |
 | `investment_period`     | User-declared investment horizon                   | Yes               | Input                         |
 | `reasoning_output`      | DeepSeek chain-of-thought text                     | Yes               | `thinker_node`                |
@@ -123,7 +123,7 @@ While `ExecutionAnalystAgent` defines the structural steps of the trade, `Evalua
 
 ## 4. Graph Topology & Routing
 
-The `StateGraph` topology is assembled by `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`, which is shared by `create_graph(redis_url)` (Redis-checkpointed) and `create_uncheckpointed_graph()` (LangGraph SDK delegated state). **Thirteen named nodes** are registered with fail-closed routing:
+The `StateGraph` topology is assembled by `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`, which is shared by `create_graph(redis_url)` (Redis-checkpointed) and `create_uncheckpointed_graph()` (LangGraph SDK delegated state). Neither factory (nor `build_governed_trader_graph()`) takes a governor argument: the advisor hosts no `SymbolicGovernor` (POAM-2026-079). **Thirteen named nodes** are registered with fail-closed routing:
 
 ```mermaid
 flowchart TD
@@ -168,7 +168,7 @@ flowchart TD
 - **`route_after_ftra(state)`**: Emitted by the FTRA node factory. `CLEAR` $\to$ `safety_check`; `BLOCKED` and `HITL_REQUIRED` fall back to `explainer`.
 - **`route_after_safety(state)`**: Reads `state["safety_status"]`:
   - `APPROVED` or `SKIPPED` $\to$ `approval_node` when `evaluation_result.risk_score` $> 0.7$ **or** any `execution_plan_output` step `amount` $> \$10{,}000$; otherwise directly to `governed_trader`
-  - `DEFERRED`, `ESCALATED` or `MANUAL_REVIEW` $\to$ `defer_node` (park in the DeferQueue)
+  - `DEFERRED`, `ESCALATED` or `MANUAL_REVIEW` $\to$ `defer_node`, which only packages the gateway-issued `deferral_ticket_id` for checkpointing (the gateway owns the DeferQueue; a missing ticket raises and fails closed)
   - `BLOCKED` or rejected $\to$ `explainer` (compliance narrative; no trade executed)
 
 ---
@@ -188,7 +188,7 @@ The `execute_tool` node is the subgraph's `tool_executor_node` wrapped by `gatew
 Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is conditional via `route_approval`: high-risk/high-value threads enter the `approval` node (the dynamic `interrupt()` gate of §7), all others go straight to `executor`.
 1. **HITL Gate (`approval`)**: `approval_node` suspends the subgraph via `interrupt()`; on resume it issues `Command(goto="post_hitl_rehydrate")` when approved or `Command(goto="rejection")` when refused.
 2. **State Rehydration (`post_hitl_rehydrate`)**: Restores the parked execution context after resume.
-3. **Continuous State Revalidation (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift, asserts drift $\le$ `max_slippage_pct`, and re-runs governance with fresh prices. On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`.
+3. **Continuous State Revalidation (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift, asserts drift $\le$ `max_slippage_pct`, and re-runs governance with fresh prices through the gateway's `POST /governance/revalidate-post-hitl` (`GatewayClient().revalidate_post_hitl()`). On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`.
 4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an explicit `APPROVED` verdict from the gateway's `POST /governance/validate-action`. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
 5. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
 
@@ -202,7 +202,7 @@ Extends the decision envelope to **four states** (`ALLOW`, `DENY`, `MANUAL_REVIE
 | Confidence Score | Decision | Routing & Behavior |
 | ---------------- | -------- | ------------------ |
 | $\ge 0.95$       | `ALLOW` / `DENY` | Autonomous clearance |
-| $0.70 - 0.95$    | **`DEFER`** | Context parked in Redis `db=1` (`noeviction`) with 4-hour TTL; resolved via `/v1/defer/{id}/inject` or `/v1/defer/{id}/escalate` |
+| $0.70 - 0.95$    | **`DEFER`** | Context parked by the gateway's DeferQueue (`src/gateway/governance/defer_queue.py`) in Redis `db=1` (`noeviction`) with 4-hour TTL; resolved via the compliance bridge's `/v1/defer/{id}/inject` or `/v1/defer/{id}/escalate` |
 | $< 0.70$         | `DENY` | Confidence-Starvation Boundary; request blocked |
 
 ### 6.2 Context Accumulator (AARM-V1)
@@ -218,11 +218,13 @@ The External Normative Provider (`src/gateway/governance/normative_provider.py`)
 - $[0.70, 0.95)$: Synchronous blocking gate; awaits external FRIA response.
 - $< 0.70$: Hard denial.
 
+> **Not on the live path:** `enforce_fria_boundary()` is not invoked by `run_pipeline()` (`src/gateway/governance/governor/pipeline.py`); "fria" appears only as a stage label in `PROFILE_STAGES`. The only live FRIA-adjacent behaviour is the confidence stage (`src/gateway/governance/governor/stages/confidence.py`), which types a below-threshold score as `DEFERRABLE` or `HITL` using the `fria.zone_defer` boundary.
+
 ### 6.4 Heterogeneous Consensus (AARM-V9)
 For trades $\ge \$10,000\text{ USD}$, `ConsensusModelRegistry` queries two heterogeneous models concurrently via `asyncio.gather()`:
 - **Risk Manager**: `DeepSeek-R1-Distill-Llama-8B`
 - **Compliance Officer**: `Meta-Llama-3.1-8B-Instruct`
-Split votes or errors trigger HITL escalation, eliminating single-model blind spots.
+Split votes or errors trigger HITL escalation, eliminating single-model blind spots. Critic personas and prompt templates are domain-owned (`src/cage_finance/config/critics.yaml`). Each critic is asked for a strict JSON-schema `{decision, reason}` response, and `_parse_critic_vote()` in `src/gateway/governance/consensus/engine.py` parses it strictly: anything other than a well-formed `APPROVE` / `REJECT` / `ESCALATE` (including leftover `<think>` tags) becomes `ERROR`, and an `APPROVE` whose reason contains the whole word `REJECT` counts as `REJECT`. Each critic call is bounded by `CONSENSUS_CRITIC_TIMEOUT_S` (default 10 s).
 
 ---
 
@@ -312,14 +314,13 @@ The reviewer may supply `max_slippage_pct` in the resume payload to tighten slip
 
 ## 8. EvaluatorAgent & EvaluatorAuditor
 
-`EvaluatorAgent` binds 5 async MCP tools:
-1. `simulate_governance_check`: NeMo Guardrails constraints.
-2. `evaluate_policy`: OPA Rego `trade.governance` policy.
-3. `check_market_status`: Verifies market open and ticker tradability.
-4. `get_market_sentiment`: Ticker sentiment signal.
-5. `verify_content_safety`: PII and content moderation scan.
+`EvaluatorAgent` (`build_evaluator_agent()`) binds 4 async tools:
+1. `check_market_status`: Verifies market open and ticker tradability (gateway MCP tool).
+2. `verify_policy_opa`: Direct HTTP call to OPA's REST API at `OPA_URL`; any error returns `DENY`.
+3. `simulate_governance_check`: Dry-run preview in the gateway's governor (gateway MCP tool); it does not enforce.
+4. `safety_intervention`: Calls the gateway's `trigger_safety_intervention` tool.
 
-After tool evaluation, `EvaluatorAgent` generates the HMAC-SHA256 `governance_signature`. Post-hoc trace auditing is performed by `EvaluatorAuditor.audit_trace()` in `src/governed_financial_advisor/agents/evaluator/auditor.py`.
+The advisor's `POST /tools/execute` endpoint (`src/governed_financial_advisor/tools/api.py`) forwards `simulate_governance_check`, `verify_content_safety`, `evaluate_policy` and `execute_trade` to the gateway through `GatewayClient.execute_tool()`; the advisor does not run NeMo content-safety checks for these tools in-process. The evaluator's verdict is advisory and unsigned — the only signature in state (`governance_signature`) comes from the gateway via `safety_check`. Post-hoc trace auditing is performed by `EvaluatorAuditor.audit_trace()` in `src/governed_financial_advisor/agents/evaluator/auditor.py`.
 
 ---
 
@@ -340,8 +341,8 @@ Resilience against adversarial inputs is validated through:
 
 ## 11. Agent Governance Integration (STERA Pipeline)
 
-All agent actions traverse the **STERA Runtime Pipeline** enforced by `SymbolicGovernor._run_checks()`:
+All agent actions traverse the **STERA Runtime Pipeline** enforced in the gateway process by the governor's two-phase `run_pipeline()` (`src/gateway/governance/governor/pipeline.py`); the governor is built by `bootstrap_governor()` and read from `app.state.governor`:
 1. **NoDirectBind Invariant**: Direct execution bypassing `POST /governance/validate-action` and `verify_seal()` is structurally impossible.
-2. **Two-Phase Decoupling**: Phase 1 read-only gates (FTRA, STPA, Confidence, Bounding, Consensus, Causal, OPA) must ALL emit `ALLOW` before Phase 2 atomic mutations (CBF Lua debit, FiscalLimitGuard reserve) execute.
-3. **Cryptographic Seal Issuance**: Successful traversal emits an asymmetric JWT seal signed by Cloud KMS HSM (HMAC fallback in dev/test) with a 30s TTL.
+2. **Two-Phase Decoupling**: Phase 1 read-only gates (FTRA, STPA, OPA, Confidence, then read-only domain tiers such as Bounding, Consensus, Causal) must produce zero violations before Phase 2 atomic mutations (CBF Lua debit, the finance plugin's fiscal reservation in `src/cage_finance/`) commit inside a `ReservationScope`, which rolls every commit back if no seal is issued.
+3. **Cryptographic Seal Issuance**: Successful traversal emits an asymmetric JWT seal signed by Cloud KMS HSM (software Ed25519 in dev/test/CI; enforcing postures refuse software or HMAC signatures) with a 30s TTL (`GOVERNANCE_SEAL_TTL_S`).
 4. **Execution Actuator**: Downstream actuators verify the seal and evidence hash binding prior to firing.

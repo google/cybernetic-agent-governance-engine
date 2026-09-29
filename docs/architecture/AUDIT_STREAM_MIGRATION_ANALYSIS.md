@@ -1,7 +1,7 @@
 # CAGE Audit Stream Migration Analysis
 
 **Analysis Date:** 2026-09-05  
-**Last Updated:** 2026-09-22  
+**Last Updated:** 2026-09-29  
 **CAGE Version:** v3.0+  
 **Status:** ✅ Complete  
 
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This document analyzes the legacy audit stream schemas ([`cage-context-accumulator/2.0`](../../src/compliance_bridge/context_accumulator.py:70), [`cage-intent/1.0`](../../examples/telemetry.py:147)) and their relationship to the unified evidence stream schema ([`stream.py`](../../src/gateway/governance/evidence/stream.py:422)). 
+This document analyzes the legacy audit stream schemas ([`cage-context-accumulator/2.0`](../../src/compliance_bridge/context_accumulator.py:70), [`cage-intent/1.0`](../../examples/telemetry.py:147)) and their relationship to the unified evidence stream schema ([`stream.py`](../../src/gateway/governance/evidence/stream.py:471)). 
 
 **Key Finding:** No migration is required. The legacy schemas serve distinct, non-overlapping purposes:
 - **Context accumulator** (`cage-context-accumulator/2.0`): File-based OSCAL audit session chain for Lula compliance validation
@@ -33,7 +33,7 @@ All three systems coexist and serve different architectural layers as specified 
 **Wire Format:** NDJSON (newline-delimited JSON), file-based
 
 **Producers:**
-- [`src/compliance_bridge/audit_workflow.py:796`](../../src/compliance_bridge/audit_workflow.py:796) — Creates `ContextAccumulator` instance during Lula validation runs
+- [`src/compliance_bridge/audit_workflow.py:804`](../../src/compliance_bridge/audit_workflow.py:804) — Creates `ContextAccumulator` instance during Lula validation runs
 - Usage: `acc = ContextAccumulator(audit_id=audit_id)` → `acc.append_finding(finding)` → `acc.seal()`
 
 **Storage:** Local filesystem (GCS for cold storage)
@@ -128,71 +128,75 @@ Every record includes a machine-readable disclaimer (line 155-163):
 
 **Purpose:** Evidence-grade streaming sink for real-time governance events. Promotes the SSE event bus from fire-and-forget UI notifications to a cryptographically hash-chained, durable evidence stream.
 
-**Schema Version:** `_SCHEMA = "cage-evidence-stream/2.0"`
-([`stream.py:422`](../../src/gateway/governance/evidence/stream.py:422)). The
-`cage-audit/3.0` label used throughout this document is the *intended* unified
-contract — it is what
+**Schema Version:** `_SCHEMA = f"cage-audit/{_SCHEMA_VERSION}"` with
+`_SCHEMA_VERSION = "3.0"`
+([`stream.py:471`](../../src/gateway/governance/evidence/stream.py:471)). The
+kernel producer emits the same `cage-audit/3.0` contract that
 [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
-and [`clickhouse_sink.py`](../../src/compliance_bridge/clickhouse_sink.py) encode
-— but the kernel producer does not emit it yet. See
-[`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2 and §12.2 open
-question 6.
+and [`clickhouse_sink.py`](../../src/compliance_bridge/clickhouse_sink.py) encode;
+`_link_hash()` mirrors the DDL's `mv_evidence_hash_verification` view field for
+field. See [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2.
 
 **Wire Format:** Redis Streams (`XADD`)
 
 **Producers:**
 - [`src/compliance_bridge/sse_events.py:GovernanceEventBus.publish()`](../../src/compliance_bridge/sse_events.py:203) — All governance events flow through the event bus
-  - Calls [`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py:877)
-  - Line 215: `await self._evidence_sink.ingest(event)` — note that no PII sanitization runs before this call at HEAD (§10.3)
+  - Calls [`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py:1228)
+  - Line 215: `await self._evidence_sink.ingest(event)`; `ingest()` runs `PIISanitizer.sanitize_dict()` before hashing (§10.3)
+- Gateway producers also call `get_evidence_sink()` directly:
+  [`governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
+  [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py) (`publish_refusal()`), and
+  [`routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
 **Integration Points:**
-- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py:335) — SSE `/v1/events/stream` endpoint
+- [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py:320) — SSE `/v1/events/stream` endpoint
 - [`src/compliance_bridge/audit_workflow.py`](../../src/compliance_bridge/audit_workflow.py) — Publishes `AUDIT_FINDING`, `GOVERNANCE_VIOLATION`, `REMEDIATION_GENERATED` events (lines 869, 927, 635)
 - [`src/gateway/governance/routing_seal.py:generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py:456) — Commits evidence before seal issuance (blocking mode)
 
 **Storage:** 
 - **Hot tier:** Redis Streams (`cage:evidence:stream` key, db=1, noeviction)
-- **Cold tier:** pluggable via `EVIDENCE_COLD_STORE` (`gcs` | `s3` | `null`, default `null`; [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:43)); the GCS backend uses CMEK with a 60s flush daemon
+- **Cold tier:** pluggable via `EVIDENCE_COLD_STORE` (`gcs` | `s3` | `null`, default `null`; [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:46)); the GCS backend supports CMEK and is fed by a 60s flush daemon. In the `gcp-gke` target the retention-locked WORM bucket (`module.worm_bucket`) is wired as `EVIDENCE_COLD_STORE=gcs` for the compliance bridge only; the gateway manifests do not set `EVIDENCE_COLD_STORE`, so the gateway's stream flush uses `NullColdStore` by default
 
 **Payload Schema (v3.0 Breaking Changes):**
 
 ```json
 {
   "schema": "cage-audit/3.0",
+  "chain_id": "<uuid4>",                  // REQUIRED v3.0
   "sequence": "42",
+  "timestamp_utc": "2026-09-05T14:00:00+00:00",
   "event_type": "GOVERNANCE_DECISION" | "AUDIT_FINDING" | "context_update" | "intent_dispatch",
   "control_id": "A.5.3",
   "trace_id": "<32-char W3C trace ID>",  // REQUIRED v3.0
   "hash_algorithm": "SHA-256",            // REQUIRED v3.0
   "canonicalization": "RFC8785",          // REQUIRED v3.0
-  "chain_id": "cage-evidence-20260905",   // REQUIRED v3.0
-  "prev_hash": "<sha256 hex>",
+  "evidence_class": "GOVERNANCE",
+  "prev_hash": "<sha256 hex, empty at sequence 0>",
   "record_hash": "<sha256 hex>",
-  "payload_json": "<JCS-canonicalized event payload>",
-  "timestamp_utc": "2026-09-05T14:00:00Z",
-  "kms_signature": "",                    // Populated async when enabled
-  "kms_signature_algorithm": "KMS_ASYMMETRIC"
+  "payload_json": "<JCS-canonicalized event payload>"
+  // Sparse, only when set: classification_reason, narrowing_applied, pause_token
 }
 ```
 
 **Hash Chain Algorithm (v3.0):**
 ```python
-# Genesis: SHA-256("EVIDENCE_STREAM_GENESIS")
+# Genesis: prev_hash = "" at sequence 0 (stored NULL by the ClickHouse sink)
 # Header (JCS-canonicalized):
 header = {
-    "schema": "cage-audit/3.0",
-    "sequence": int,
-    "event_type": str,
-    "control_id": str,
-    "trace_id": str,  # v3.0 REQUIRED
-    "hash_algorithm": str,  # v3.0 REQUIRED
     "canonicalization": str,  # v3.0 REQUIRED
     "chain_id": str,  # v3.0 REQUIRED
+    "control_id": str,
+    "event_type": str,
+    "hash_algorithm": str,  # v3.0 REQUIRED
+    "schema": "cage-audit/3.0",
+    "sequence": int,
+    "trace_id": str,  # v3.0 REQUIRED
+    # sparse: classification_reason, narrowing_applied, pause_token
 }
 # Link: SHA-256(prev_hash + jcs_canonicalize(header) + payload_json_bytes)
 ```
 
-**Breaking Changes (v4.0.0 / cage-audit/3.0):**
+**Breaking Changes (v3.2.0 / cage-audit/3.0):**
 1. Added **REQUIRED** fields: `trace_id`, `hash_algorithm`, `canonicalization`, `chain_id`
 2. All fields are now inside the hash computation (no defaults allowed)
 3. Migrated to RFC 8785 JCS canonicalization (from `json.dumps(sort_keys=True)`)
@@ -200,15 +204,16 @@ header = {
 **Multi-Writer Safety:**
 - Python `asyncio.Lock` (`_chain_lock`) guards chain state within a single process
 - No `_LUA_ATOMIC_APPEND` script exists at HEAD; the write is a plain
-  [`XADD`](../../src/gateway/governance/evidence/stream.py:935) with `maxlen` trimming
-- Sequence numbers are monotonic but **process-local**, not Redis-derived, so
-  concurrent replicas writing the same stream key would interleave sequences
+  [`XADD`](../../src/gateway/governance/evidence/stream.py:1296) with `maxlen` trimming
+- Sequence numbers are restored from the stream head once, then allocated
+  **in-process**, so concurrent replicas writing the same stream key would
+  interleave sequences
 
 **Chain Restoration:**
-- Not implemented at HEAD. There is no `_restore_chain_state()`;
-  [`EvidenceStreamSink.__init__`](../../src/gateway/governance/evidence/stream.py:782)
-  seeds `_prev_hash = SHA-256("EVIDENCE_STREAM_GENESIS")` and `_sequence = 0` on
-  every start, so continuity across restarts is not preserved (see §9.2)
+- `_restore_chain_state()`
+  ([`stream.py:1066`](../../src/gateway/governance/evidence/stream.py:1066)) reads
+  the stream head with `XREVRANGE … COUNT 1` and resumes the same `chain_id` at
+  `sequence + 1` (see §9.2)
 
 ---
 
@@ -265,7 +270,7 @@ header = {
 | `provenance_disclaimer` | `payload_json["provenance_disclaimer"]` | Embed (optional) |
 | — | `trace_id` | **NEW (v3.0 REQUIRED)** |
 | — | `control_id` | **NEW:** Derive from event context (e.g., `"A.8.4"`) |
-| — | `sequence` | **NEW:** Redis-derived monotonic counter |
+| — | `sequence` | **NEW:** Monotonic counter restored from the stream head |
 | — | `chain_id` | **NEW:** Chain instance identifier |
 
 ---
@@ -341,6 +346,7 @@ header = {
 
 **Evidence Stream Producers:**
 - [`src/compliance_bridge/sse_events.py:215`](../../src/compliance_bridge/sse_events.py:215) — `GovernanceEventBus.publish()` → `EvidenceStreamSink.ingest()`
+- Gateway: `governance_middleware.py`, `verdicts.publish_refusal()`, and `routing_seal.generate_seal_with_evidence()` via `get_evidence_sink()`
 - **Concurrency:** guarded by an in-process `asyncio.Lock` (`_chain_lock`); there is no Lua atomic append, so the chain is safe within one process but not across replicas
 - Redis Streams, production-grade
 
@@ -392,12 +398,12 @@ header = {
 ## 9. Open Questions & Future Work
 
 ### 9.1 Per-Record KMS Signing
-**Status:** Implemented via `AsyncBatchSigner` but **disabled by default** (`EVIDENCE_STREAM_KMS_SIGN=false`)
+**Status:** Implemented via `AsyncBatchSigner` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)) but **disabled by default** (`EVIDENCE_STREAM_KMS_SIGN=false`). When enabled it signs with the dedicated compliance-evidence key `EVIDENCE_KMS_KEY`; `build_evidence_signer()` refuses a key that matches the gateway (`KMS_GOVERNANCE_KEY`) or reconciler (`RECONCILER_KMS_KEY`) key.
 
 **Current Limitation:**
-- Evidence stream records are hash-chained (integrity) but not individually KMS-signed (provenance)
+- By default, evidence stream records are hash-chained (integrity) but not individually KMS-signed (provenance)
 - Governance plan signatures use KMS asymmetric signing ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py))
-- Per-record signing is roadmap item
+- The signing callback sets `kms_signature` on the in-process entry dict after `XADD`; the signature is not written back to the Redis Stream entry
 
 **Impact on Migration:**
 - If per-record signing is enabled post-migration, legacy records will lack signatures
@@ -405,12 +411,13 @@ header = {
 
 ### 9.2 Chain Restoration Across Schema Versions
 **Current Behavior:**
-- There is **no** chain restoration at HEAD. No `_restore_chain_state()` exists, and
-  [`EvidenceStreamSink.start()`](../../src/gateway/governance/evidence/stream.py:805)
-  only connects to Redis and launches the cold-flush daemon.
-- [`__init__`](../../src/gateway/governance/evidence/stream.py:782) resets
-  `_prev_hash` to `SHA-256("EVIDENCE_STREAM_GENESIS")` and `_sequence` to `0`, so
-  every process restart begins a fresh chain segment against the same stream key.
+- [`EvidenceStreamSink.start()`](../../src/gateway/governance/evidence/stream.py:967)
+  and both ingest paths call `_ensure_chain_restored()`, which runs
+  `_restore_chain_state()` once. An empty stream mints a new `chain_id` at
+  sequence 0 with `prev_hash = ""`; a well-formed head resumes at `sequence + 1`
+  under the same `chain_id`.
+- A head that is missing `chain_id`, `record_hash`, or `sequence` raises
+  `EvidenceChainCorruptError` instead of re-genesising over existing evidence.
 
 **Risk if Migration Occurs:**
 - Mixed-schema chains (v2.0 + v3.0 records) would break restoration
@@ -418,11 +425,11 @@ header = {
 
 ### 9.3 GCS Cold Storage Format
 **Current:** 
-- NDJSON blobs flushed every 60s
-- File naming: `evidence_stream_<chain_id>_<last_msg_id>.ndjson`
+- NDJSON blobs flushed every 60s via `put_if_absent()` (idempotent on key)
+- Object key: `evidence-stream/<YYYY>/<MM>/<DD>/batch-<last_msg_id>.ndjson`; the batch's `last-id` and `entries-count` travel as object metadata
 
 **Question:** Should cold storage preserve Redis Stream message IDs for idempotent replay?
-- **Recommendation:** Yes. Include `msg_id` in each NDJSON line for replayability.
+- **Recommendation:** Yes. Include `msg_id` in each NDJSON line for replayability (today only the batch's last ID is recorded).
 
 ---
 
@@ -438,7 +445,7 @@ header = {
 - **Trace ID:** ✅ W3C trace correlation satisfies AU-3 (Content of Audit Records)
 
 ### 10.3 GDPR Art. 30 (Records of Processing Activities)
-- **PII Sanitization:** ⚠️ [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207) exists but is imported only by [`uca_logger.py`](../../src/gateway/governance/uca_logger.py); evidence stream ingestion performs **no** sanitization at HEAD
+- **PII Sanitization:** ✅ `EvidenceStreamSink` runs [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207) `sanitize_dict()` on every event before hashing, in both ingest paths
 - **View-Access Logging:** ✅ Intent chain includes `view_access_log_<date>.ndjson` for read tracking
 
 ### 10.4 MiFID II Article 25 (Recording of Communications)
@@ -494,9 +501,9 @@ storage sink** for `cage-audit/3.0`.
 Sections 1–12 establish that no *stream consolidation* is required. They leave a
 separate gap unaddressed: neither existing tier is **queryable**.
 
-- Redis Streams is the source of truth but is bounded (`EVIDENCE_STREAM_MAX_LEN`,
+- Redis Streams is the chain head but is bounded (`EVIDENCE_STREAM_MAX_LEN`,
   default `100000` entries) and supports only sequential range reads.
-- GCS is durable for 7 years but stores opaque NDJSON objects; answering
+- The GCS WORM bucket is durable (7-year lock in prod) but stores opaque NDJSON objects; answering
   "every `request_denied` on tier `tier1_reversible_trades` correlated to trace
   `00-…-01` during Q3" requires bulk rehydration.
 
@@ -508,8 +515,8 @@ ClickHouse tier removes that cost **without** altering the authority model.
 
 | Tier | Store | Role | Retention | Authority |
 |---|---|---|---|---|
-| **Hot** | Redis Streams `cage:evidence:stream` | Source of truth; chain head. Sequence is allocated in-process under `asyncio.Lock` — there is no Lua allocator and no `XREVRANGE` chain restoration at HEAD (see §9.2) | Bounded by `EVIDENCE_STREAM_MAX_LEN` (default 100,000 entries) | **Authoritative** |
-| **Cold** | GCS + CMEK, region-partitioned | Immutable archival evidence; independent witness for tamper *proof* | **7 years** | **Archival authority** |
+| **Hot** | Redis Streams `cage:evidence:stream` | Chain head. Sequence is allocated in-process under `asyncio.Lock` after `XREVRANGE` chain restoration — there is no Lua allocator (see §9.2) | Bounded by `EVIDENCE_STREAM_MAX_LEN` (default 100,000 entries) | **Authoritative inside the Redis window** |
+| **Cold** | Retention-locked GCS WORM bucket + CMEK (`module.worm_bucket`), region-partitioned | Immutable archival evidence and system of record; independent witness for tamper *proof* | **7 years** (prod lock) | **Archival authority** |
 | **Query** | ClickHouse `cage_evidence.evidence_stream` | Analytical mirror; continuous tamper detection; Prometheus metrics | **7 years** | **Derived — never authoritative** |
 
 **Authority rule.** ClickHouse never feeds chain restoration, never allocates
@@ -521,10 +528,10 @@ make disagreement *cheap to discover*, not to arbitrate it.
 
 ```mermaid
 flowchart LR
-    A[Gateway + Compliance Bridge producers] -.PII sanitization not wired.-> B[PIISanitizer]
-    B --> C[EvidenceStreamSink.ingest]
-    C --> D[Redis Streams XADD, source of truth]
-    D --> E[GCS flush daemon, 60s, CMEK, 7 years]
+    A[Gateway + Compliance Bridge producers] --> C[EvidenceStreamSink.ingest]
+    C --> B[PIISanitizer.sanitize_dict]
+    B --> D[Redis Streams XADD, chain head]
+    D --> E[GCS flush daemon, 60s, WORM bucket]
     D -.not wired at HEAD.-> F[ClickHouse sink, 100 rec or 5s batch, 7 years]
     F --> G[MV gap detector]
     F --> H[MV hash verifier]
@@ -575,15 +582,15 @@ re-deriving them:
 - Three verification tiers with explicit conclusiveness boundaries: structural
   linkage (conclusive), in-database recomputation (conclusive only for
   escape-safe rows), and authoritative Python re-verification via
-  [`verify_record()`](../../src/gateway/governance/evidence/stream.py:651) against
+  [`verify_record()`](../../src/gateway/governance/evidence/stream.py:788) against
   GCS. Only the third tier may declare `CONFIRMED` tampering.
 
 ### 13.6 Retention and erasure
 
 | Tier | Retention | Erasure primitive |
 |---|---|---|
-| Redis | 7 days | `XADD MAXLEN` trimming |
-| GCS | 7 years | Object lifecycle policy; crypto-shred via CMEK |
+| Redis | Bounded by `EVIDENCE_STREAM_MAX_LEN` | `XADD MAXLEN` trimming |
+| GCS | 7 years (prod retention lock) | Retention policy expiry; crypto-shred via CMEK |
 | ClickHouse | 7 years | `ALTER TABLE … DROP PARTITION` (monthly) |
 
 `TTL … SETTINGS ttl_only_drop_parts = 1` ensures expiry drops whole parts rather
@@ -593,13 +600,11 @@ simultaneously.
 
 **GDPR position.** Row-level erasure is impossible by design. The Art. 17
 obligation is intended to be discharged **upstream** by scrubbing payloads before
-ingestion so no personal data reaches any cold tier. The repository's sanitizer is
-[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207), but at HEAD it
-is imported only by [`uca_logger.py`](../../src/gateway/governance/uca_logger.py)
-and is **not** invoked on the evidence ingestion path. Residual risk is handled by
-partition `DROP` or CMEK crypto-shredding. This trades granular erasure for
-immutability and makes sanitizer coverage a load-bearing — and currently
-unimplemented — GDPR control.
+ingestion so no personal data reaches any cold tier.
+[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207) runs inside
+`EvidenceStreamSink.ingest()` before the record hash is computed. Residual risk is
+handled by partition `DROP` or CMEK crypto-shredding. This trades granular erasure
+for immutability and makes sanitizer coverage a load-bearing GDPR control.
 
 ### 13.7 Architectural boundaries
 
@@ -609,14 +614,14 @@ Consistent with §6.1, the ClickHouse tier introduces **no Layer 1 changes**:
 |---|---|
 | Layer 1 — Kernel (`src/gateway/`) | **None.** The kernel remains unaware that ClickHouse exists. Gate G3 import boundaries are unaffected. |
 | Layer 2 — Domain plugins (`src/cage_*`) | **None.** The schema is domain-agnostic; domain vocabulary stays inside the opaque `payload`. |
-| Layer 3 — Integrations | Adapter [`ClickHouseSink`](../../src/compliance_bridge/clickhouse_sink.py:125) in `src/compliance_bridge/clickhouse_sink.py`, reached through the `get_clickhouse_sink()` singleton. There is no shared `EvidenceSink` protocol at HEAD; the cold store and the ClickHouse sink are independent surfaces. |
+| Layer 3 — Integrations | Adapter [`ClickHouseSink`](../../src/compliance_bridge/clickhouse_sink.py:135) in `src/compliance_bridge/clickhouse_sink.py`, reached through the `get_clickhouse_sink()` singleton. There is no shared `EvidenceSink` protocol at HEAD; the cold store and the ClickHouse sink are independent surfaces. |
 
 ### 13.8 Decision record
 
 | Question | Decision | Rationale |
 |---|---|---|
 | Replace GCS with ClickHouse? | **No** | GCS is the independent witness that makes tamper *proof* possible; a mirror cannot verify itself |
-| Replace Redis with ClickHouse? | **No** | Redis provides atomic Lua sequence allocation and chain-head restoration; ClickHouse offers no equivalent |
+| Replace Redis with ClickHouse? | **No** | Redis provides the low-latency append path and the stream head used for chain restoration; ClickHouse offers no equivalent |
 | Is ClickHouse in the request hot path? | **No** | Asynchronous, best-effort, cannot add decision latency |
 | Table engine | `MergeTree` | Deduplicating/collapsing engines can silently delete rows — disqualifying for an audit mirror |
 | Retention | 7 years | Financial-services baseline; aligns with the GCS tier |
@@ -653,5 +658,5 @@ Consistent with §6.1, the ClickHouse tier introduces **no Layer 1 changes**:
 ---
 
 **Document Maintainer:** CAGE Architecture Team  
-**Last Updated:** 2026-09-22  
+**Last Updated:** 2026-09-29  
 **Next Review:** Post-v4.0 release  

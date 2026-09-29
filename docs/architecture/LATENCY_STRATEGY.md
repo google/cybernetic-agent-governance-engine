@@ -1,6 +1,6 @@
 # Latency as Currency: Funding Governance with Inference Speed
 
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 > **Universal Baseline:** Audit logging latency requirements are governed by **ISO 42001 §A.9.2** (evidence integrity) universally across all `CAGE_DEPLOYMENT_REGION` values. Jurisdiction-specific SLA authorities are listed in the table below.
 >
@@ -27,10 +27,10 @@ To maintain a responsive user experience (Total Response Time < 2s for simple qu
 
 We utilize a dedicated, self-hosted inference node for structure enforcement, optimized for speed and cost.
 
-### Hardware: NVIDIA L4 (24GB VRAM) on Spot Instances
+### Hardware: NVIDIA L4 (24GB VRAM) on On-Demand `g2-standard-8`
 
-- **Why:** The L4 is the most cost-effective GPU for models < 20B parameters, and using Spot/preemptible GPU instances (e.g., GKE Spot, AWS Spot, Azure Spot) reduces costs by ~60%.
-- **Capacity:** A single L4 can comfortably host `Qwen/Qwen2.5-7B-Instruct` (~14GB VRAM in float16) with room for KV cache.
+- **Why:** The L4 is the most cost-effective GPU for models < 20B parameters. The `gcp-gke` target runs the `gpu-l4` pool on on-demand `g2-standard-8` nodes (1× L4) — Spot is not used for inference — and saves cost by scaling the pool to zero when idle (0–2 nodes by default).
+- **Capacity:** A single L4 comfortably hosts the default fast model `Qwen/Qwen2.5-1.5B-Instruct` (`served_model_fast`), and has room for models up to ~7B in float16 with KV cache.
 - **Throughput:** Capable of high token-per-second generation for JSON structures.
 
 ### Software: vLLM + Guided Decoding
@@ -52,10 +52,10 @@ We use **vLLM** with its **native JSON-mode API** for structured output enforcem
 | Component      | Model                              | Hosted On            | Optimization                        |
 | -------------- | ---------------------------------- | -------------------- | ----------------------------------- |
 | **Reasoning**  | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | GPU (NVIDIA L4) | Deep semantic understanding.        |
-| **Fast / Governance** | `Qwen/Qwen2.5-7B-Instruct` | GPU (NVIDIA L4) | Structured JSON (vLLM native JSON-mode API). |
+| **Fast / Governance** | `Qwen/Qwen2.5-1.5B-Instruct` (default `served_model_fast`) | GPU (NVIDIA L4) | Structured JSON (vLLM native JSON-mode API). |
 | **Guardrails** | NeMo Guardrails service            | CPU pod (0.5–1 vCPU, 1–2Gi RAM) | In-cluster, no GPU required.  |
 
-The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by `create_nemo_manager()` via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. Both fast (`Qwen/Qwen2.5-7B-Instruct`) and reasoning vLLM deployments are provisioned via Terraform ([`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)); raw static vLLM manifests under `deployment/k8s/` have been retired.
+The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by `create_nemo_manager()` via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. Both fast and reasoning vLLM deployments are provisioned via Terraform ([`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)); the served model IDs default to `served_model_fast` / `served_model_reasoning` in `infra/targets/gcp-gke/variables.tf`. Raw static vLLM manifests under `deployment/k8s/` have been retired.
 
 ## Latency Budget Example
 
@@ -97,7 +97,7 @@ The following mechanisms are implemented in code and actively reduce governance 
 [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) pre-warms both NeMo Rails and OPA at pod startup via the `_gateway_lifespan` async context manager:
 
 - **NeMo Rails:** `initialize_rails()` is called once at boot; the resulting `LLMRails` instance is shared across all sub-apps (`inference_app`, `mcp_app`) via `app.state.nemo_rails`, eliminating per-request JIT compilation overhead.
-- **OPA:** A synthetic `execute_trade` evaluation is fired at startup to warm the Rego schema and HTTP connection pool.
+- **OPA:** After `_activate_domain()` builds the governor (including the OPA package/rule handshake), a synthetic dry-run `system_warmup_test` evaluation is fired through `governor.components.opa` to warm the Rego schema and HTTP connection pool.
 
 ### 4. Pooled HTTP Connections
 
@@ -146,48 +146,40 @@ Both Redis clients enforce strict connection timeouts to prevent governance hang
 
 ## Model Weight Loading — Cold-Start Latency
 
-vLLM cold-start time is a critical secondary latency factor. The table below compares the three viable strategies:
+vLLM cold-start time is a critical secondary latency factor, especially because the `gpu-l4` pool scales to zero when idle. The `gcp-gke` target combines three mechanisms:
 
-| Strategy                                    | Cold-Start Time    | Cloud-Agnostic | Notes                                                                                   |
-| ------------------------------------------- | ------------------ | -------------- | --------------------------------------------------------------------------------------- |
-| **Full HuggingFace Download** (baseline)    | ~20 minutes        | ✅             | Downloads all shards; blocked by HF rate limits                                         |
-| **GCS Fuse GCFS Image Streaming** (removed) | ~2–5 minutes       | ❌ GKE-only    | Lazy-pull from GCS via GKE-proprietary CSI driver; no longer used                       |
-| **MinIO + vLLM Tensorizer** (current)       | **~60–90 seconds** | ✅             | vLLM native `--load-format tensorizer`; streams serialized shards from in-cluster MinIO |
+| Mechanism | Where | Effect |
+| --------- | ----- | ------ |
+| **GCS weight streaming** (`runai_streamer`) | `module.vllm` / `module.vllm_reasoning` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) | When `model_fast` / `model_reasoning` is a `gs://` path, vLLM runs with `--load-format runai_streamer` and streams weights from the project's model bucket (`${project_id}-models` by default); no Hugging Face download at startup |
+| **GKE image streaming** (`gcfs_config`) | `gpu-l4` node pool in [`infra/modules/gcp_gke_cluster/main.tf`](../../infra/modules/gcp_gke_cluster/main.tf) | Lazy-pulls the large `vllm-streamer` container image so the pod starts before the full image is downloaded |
+| **Non-blocking rollout** (`wait_for_rollout = false`) | [`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf) | `terraform apply` does not block on a GPU node scaling up from zero; the autoscaler uses `location_policy = "ANY"` to find L4 capacity in any zone |
 
-### Current Approach: vLLM Native Tensorizer from MinIO
+### Weight Source and Egress
 
-Model weights are pre-serialized to TensorSerializer format via a one-time GPU Job ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) and stored in a MinIO bucket (S3-compatible, already deployed in the cluster). The bucket name is parameterized via `${MINIO_BUCKET}` at apply time.
+- Weights are staged once in the model bucket; the vLLM workload identity holds only bucket-scoped `roles/storage.objectViewer` and `roles/storage.legacyBucketReader` (the latter for `storage.buckets.get`, required by `runai_model_streamer_gcs`), defined in [`infra/targets/gcp-gke/iam.tf`](../../infra/targets/gcp-gke/iam.tf).
+- `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` forbid runtime egress to `huggingface.co`, and no Hugging Face token is baked into the vLLM image or passed to the pods.
+- A non-`gs://` model path falls back to vLLM's `auto` load format (used by the `agnostic` target via `var.vllm_model_path`).
 
-At pod startup, vLLM streams individual tensor shards on demand via the S3 API — no POSIX filesystem mount, no GKE-proprietary CSI sidecar injector required.
+> [!NOTE]
+> The older MinIO + Tensorizer path ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) is not wired into either Terraform target; the `gcp-gke` target streams from GCS as described above.
 
-The tensorize job ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)):
-- Runs on an NVIDIA L4 GPU node (same node class as inference pods)
-- Downloads from HuggingFace Hub → serializes via `TensorSerializer` → uploads to MinIO at `s3://${MINIO_BUCKET}/${MODEL_NAME_SANITIZED}/model.tensors`
-- MinIO endpoint: `http://minio.governance-stack.svc.cluster.local:9000`
-- Auto-cleans up 1 hour after completion (`ttlSecondsAfterFinished: 3600`)
+## Governor Pipeline Ordering (Two-Phase)
 
-**Why this is preferable to GCS Fuse:**
+`run_pipeline()` ([`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)) runs stages **sequentially**, not concurrently, so governance latency is the sum of the stages that actually run:
 
-- **~60–90s vs ~2–5min** cold-start vs GCFS (shards are serialized and compact — no per-shard conversion overhead at runtime).
-- **Cloud-agnostic:** MinIO works on EKS, AKS, bare-metal, or any Kubernetes distribution.
-- **Eliminates** the `gcsfuse.csi.storage.gke.io` CSI driver and `gke-gcsfuse/volumes: "true"` annotation dependency.
-- **No extra pip packages:** `--load-format tensorizer` is vLLM native.
-
-## SymbolicGovernor CBF+OPA Concurrency
-
-Within the `SymbolicGovernor._run_checks()` pipeline, **CBF (`verify_action()`) and OPA run concurrently** via `asyncio.gather` (Steps 2+4). Combined latency is `max(CBF_ms, OPA_ms)` rather than `CBF_ms + OPA_ms`. This is intentional design:
-
-- `ControlBarrierFunction.verify_action()` is **read-only** — it reads `safety:current_cash` from Redis but does not modify state.
-- The TOCTOU race between the CBF balance check and actual trade execution is closed by **FiscalLimitGuard** (Step 3) using atomic `WATCH/MULTI/EXEC` pre-reservation against `fiscal:daily_limit:{YYYY-MM-DD}`, **not** by making CBF+OPA sequential.
+- **Phase 1 (read-only):** `ftra` → `stpa` → `opa` → `confidence` → read-only domain tiers, stopping at the first HARD violation. Ungoverned actions (no domain tier claims them) run only `ftra`, `stpa` and `opa`.
+- **Phase 2 (mutating):** runs only if Phase 1 produced zero violations. Commits (e.g. the CBF debit and the finance plugin's fiscal reservation) go through a `ReservationScope` and are rolled back LIFO if the pipeline or seal issuance fails, which is what closes the TOCTOU window between check and commit. The `DRY_RUN` profile calls each mutating stage's side-effect-free `preview()` instead.
 
 ## Governance Pipeline Ordering (Inference Proxy)
 
 The `/inference/v1/chat/completions` endpoint applies governance checks in this fixed order:
 
-1. **Tier-1 Aho-Corasick keyword scan** — synchronous, sub-millisecond; blocks on keyword match before any network call
-2. **NeMo Guardrails input verification** (`verify_input()`) — semantic input rail; ~150–300ms
-3. **Forward to vLLM backend** — pooled `httpx.AsyncClient`; supports streaming SSE (`stream=True`) with per-chunk TTFT capture on OTel spans (`gen_ai.ttft_ms`)
-4. **NeMo output verification + PII masking** (`verify_and_mask_output()`) — Presidio-backed; skipped in `CAGE_SEAL_ENFORCEMENT != enforce` (dev) mode
+1. **Tier-1 Aho-Corasick keyword scan** — synchronous, sub-millisecond; applied to all messages; blocks on keyword match before any network call
+2. **Caller identity** — `extract_client_identity()` reads the Linkerd `l5d-client-id`; failure returns HTTP 401
+3. **Token/step quota** — `check_and_increment()` on the token quota proxy; exceeding it returns HTTP 429
+4. **NeMo Guardrails input verification** (`verify_input()`) — semantic input rail; ~150–300ms; any downstream failure rolls back the quota step
+5. **Forward to vLLM backend** — pooled `httpx.AsyncClient`; supports streaming SSE (`stream=True`) with per-chunk TTFT capture on OTel spans (`gen_ai.ttft_ms`)
+6. **NeMo output verification + PII masking** (`verify_and_mask_output()`) — Presidio-backed; applied to message content and tool-call arguments in every environment (NeMo rails always fail closed)
 
 Backend routing is model-aware: requests with `"deepseek"` or `"reasoning"` in the model ID route to `VLLM_REASONING_API_BASE`; all others route to `VLLM_FAST_API_BASE` (see `_resolve_backend_url()`).
 

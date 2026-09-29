@@ -1,14 +1,15 @@
 # Deferral Queue State Machine
 
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 ## 1. Architectural Role & Domain Boundary
 
-The Deferral Queue (`DeferQueue`) implements the "Deferral Service" mandate from the CSA AARM specification. It provides a formal parking state for executions suffering from situational ambiguity or data starvation, preventing the brittle constraint of forcing a binary ALLOW/DENY decision under uncertainty.
+The Deferral Queue ([`DeferQueue`](../../src/gateway/governance/defer_queue.py)) implements the "Deferral Service" mandate from the CSA AARM specification. It provides a formal parking state for executions suffering from situational ambiguity or data starvation, preventing the brittle constraint of forcing a binary ALLOW/DENY decision under uncertainty.
 
 **Trust Boundaries**:
-- **Upstream (Symbolic Governor)**: Determines when a context is confidence-starved (e.g., confidence `< 0.70`).
-- **Downstream (Operators/Systems)**: External systems or human operators resolve the deferral via data injection or dual-control escalation.
+- **Upstream (Gateway `SymbolicGovernor`)**: `ConfidenceStage` emits a `DEFERRABLE` violation when the self-reported confidence is below `FRIA_ZONE_DEFER` (default 0.70). `ClassificationEngine` then returns `DEFER`, and `handle_defer()` ([`governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py)) parks a `DeferToken` via `DeferQueue.park()` on Redis `db=1` (from `REDIS_URL`). The gateway is the only component that parks tokens.
+- **Downstream (Operators/Systems)**: External systems or human operators resolve the deferral via data injection or dual-control escalation. The resolution API is served by the compliance bridge ([`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py)), which opens its own `DeferQueue` on the same Redis database.
+- **Governed advisor (client)**: The advisor owns no `DeferQueue`. Its [`defer_node`](../../src/governed_financial_advisor/graph/nodes/defer_node.py) only checkpoints the gateway-issued `deferral_ticket_id`, and fails closed (raises) when that ticket is missing.
 
 ## 2. Data & Execution Flow
 
@@ -16,7 +17,7 @@ When an execution enters the DEFER state, the context is parked as an immutable 
 
 ```mermaid
 flowchart TD
-    Governor[Symbolic Governor] -->|Confidence < FRIA_ZONE_DEFER| Queue[DeferQueue]
+    Governor[Gateway SymbolicGovernor] -->|Confidence < FRIA_ZONE_DEFER| Queue[DeferQueue]
     
     subgraph Redis db=1 (noeviction)
         Queue --> Hash[Redis Hash\nDEFER:defer_id]
@@ -26,9 +27,9 @@ flowchart TD
     Hash --> Resolution
     
     subgraph Resolution Paths
-        Resolution --> Inject[Automated Data Injection\nPOST /v1/defer/id/inject]
-        Resolution --> Escalate[HITL Dual-Control\nPOST /v1/defer/id/escalate]
-        ZSet -->|TTL Expiry| Expire[Auto-Escalate to MANUAL_REVIEW]
+        Resolution --> Inject[Automated Data Injection\ncompliance bridge POST /v1/defer/id/inject]
+        Resolution --> Escalate[HITL Dual-Control\ncompliance bridge POST /v1/defer/id/escalate]
+        ZSet -->|TTL Expiry via expire_stale| Expire[Auto-Escalate to MANUAL_REVIEW]
     end
     
     Inject --> Resume[Resume LangGraph Thread]
@@ -39,23 +40,23 @@ flowchart TD
 
 A `DeferToken` represents the parked execution context and progresses through a strict lifecycle:
 
-- **Parking**: Token is minted with an initial TTL (default: 4 hours) and a `DeferReason` (e.g., `CONFIDENCE_BELOW_THRESHOLD`, `DATA_STARVATION`, `EXTERNAL_HOLD`).
-- **Dual-Control Approval (Schema v2/v3)**: Human-in-the-loop escalation supports quorum-based approvals. The token tracks `approvals` containing durable operator URNs, timestamps, and WebAuthn cryptographic challenge bindings.
+- **Parking**: Token is minted with an initial TTL (default: 4 hours) and a `DeferReason` (e.g., `CONFIDENCE_BELOW_THRESHOLD`, `DATA_STARVATION`, `EXTERNAL_HOLD`). If the Redis park fails, `handle_defer()` logs a warning and still returns `DEFER` with a local `defer_id`. The action is not executed, but the token is not persisted, so the resolution API cannot find it.
+- **Dual-Control Approval (Schema v2/v3)**: Human-in-the-loop escalation goes through `DeferQueue.approve()`, which enforces a per-reason quorum (`get_required_quorum()`: 2 for baseline dual control, 3 for irreversible terminals and external escalations). The token tracks `approvals` containing durable operator URNs, timestamps, and WebAuthn cryptographic challenge bindings.
 - **Resolution**:
-  - `INJECTED`: An automated system supplies missing context, resuming execution.
-  - `ESCALATED`: A human operator cryptographically signs the clearance.
-  - `EXPIRED`: The TTL lapses, auto-escalating the decision to an explicit `MANUAL_REVIEW`.
+  - `INJECTED`: An automated system supplies missing context; `replay_evaluate()` admits the token only if the enriched confidence reaches `DEFER_CONFIDENCE_THRESHOLD`, otherwise it stays `PARKED`.
+  - `ESCALATED`: The approval quorum is met by distinct operators.
+  - `EXPIRED`: The TTL lapses and `DeferQueue.expire_stale()` marks the token expired, escalating it to an explicit `MANUAL_REVIEW` (`EXTERNAL_HOLD` tokens can also be routed to a DLQ publisher). At HEAD no background task in `src/` calls `expire_stale()`, so an operator job must schedule the sweep.
   - Zero-Authority Parking: If `upstream_permit_id` is set, the token is bound to an external authority and cannot be resumed locally.
 
 ## 4. Operational Guarantees & Edge Cases
 
 - **Eviction Immunity**: The tokens are stored in Redis `db=1` configured with a `noeviction` maxmemory policy. This guarantees that a sudden burst of unrelated cache traffic will never prematurely evict a pending deferral context.
-- **Atomicity via Watch/Multi/Exec**: `DeferQueue._resolve()` uses Redis optimistic locking (`WATCH DEFER:{id}`) to ensure that a token cannot be simultaneously resolved by both an automated injection and a human operator. Per ADR-008 the resolution path is **strictly private** — there is no public `resolve()`; callers reach it only through the vetted `inject` / `escalate` / TTL-expiry paths, and `atomic_resolve()` provides the idempotency claim used by ticket holders.
+- **Atomicity via Revision CAS**: Token mutations use a revision-based compare-and-swap Lua script (`DeferQueue._cas_update()`), with bounded retry in `_resolve()`. A token therefore cannot be resolved concurrently by both an automated injection and a human operator. Per ADR-008 the resolution path is **strictly private**: there is no public `resolve()`. Callers reach it only through `replay_evaluate()` (inject), `approve()` (escalate) or `expire_stale()` (TTL), and `atomic_resolve()` provides the idempotency claim used by ticket holders.
 - **WebAuthn Cryptographic Binding**: Phase 5 fixes require operators to bind approvals using WebAuthn. The queue validates the raw `client_data_json` against the signed `challenge_binding` to mathematically prove human intent at resolution time.
 
 ## 5. Configuration Contracts & Runtime Matrix
 
 - **Confidence Boundaries**: Limits are configured via `config/governance_thresholds.json`. By default, executions below `FRIA_ZONE_DEFER` (0.70) are deferred.
-- **Redis Isolation**: Deferral operations depend strictly on `db=1`, isolating them from the LangGraph checkpointer at `db=0`.
-- **Feature Flagging**: Controlled by `CAGE_DEFER_ENABLED` (default: `true`). If disabled, all deferrable events fallback directly to a terminal `DENY` to ensure fail-closed safety.
+- **Redis Isolation**: Deferral operations depend strictly on `db=1`, isolating them from the LangGraph checkpointer at `db=0`. In the `gcp-gke` target this is the governance Memorystore instance, and Redis runs with `noeviction` in every environment.
+- **Feature Flagging**: Controlled by `CAGE_DEFER_ENABLED` (default: `true`), read once at assembly into the governor's `ClassificationEngine`. If disabled, all deferrable events fall back directly to a terminal `DENY` to ensure fail-closed safety.
 

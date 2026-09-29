@@ -8,17 +8,17 @@ This document analyzes the feasibility and impact of migrating the current "Sove
 
 > **US_FED Only:** SR 26-2 (Federal Reserve supervisory guidance, April 17, 2026) applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. SR 26-2 has no legal force outside the US Federal Reserve system (see `.roo/rules` §12.4). References to SR 26-2 in this document are scoped to US_FED deployments only.
 
-Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance.
+The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer when `VLLM_GATEWAY_URL` is set, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance. When it is unset — the default in the `gcp-gke` Terraform target (`vllm_gateway_url = ""`) — the client connects directly to the two vLLM Services.
 
-**Status:** **IMPLEMENTED** (Production) / **DIRECT** (Local Dev)
+**Status:** **OPTIONAL** — client-side Gateway Mode implemented; the `deployment/k8s/inference-gateway/` manifests are applied manually and are not provisioned by the `gcp-gke` Terraform target, which runs **DIRECT** mode by default
 **Version:** v3.0.1
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 > **Update 2026-03-03:** The GatewayClass has been migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (see `deployment/k8s/inference-gateway/gateway.yaml`). Gateway API CRDs are now installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving all routing, priority, and autoscaling capabilities.
 
-> **Update 2026-05-31:** The OTel Collector sidecar has been **deprecated**. All telemetry now flows via direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`. Remove any `OTEL_EXPORTER_OTLP_ENDPOINT` references pointing to a collector.
+> **Update 2026-05-31:** The OTel Collector sidecar has been **deprecated**. All telemetry now flows via direct Langfuse OTLP ingestion; the gateway manifests set `OTEL_EXPORTER_OTLP_ENDPOINT` to `http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces`. Remove any `OTEL_EXPORTER_OTLP_ENDPOINT` references pointing to a collector.
 
-> **Update 2026-09-22 (BREAKING):** Caller identity at the inference edge is now derived exclusively from the SPIFFE URI in the verified mTLS client certificate. The `X-Agent-ID` header, any body-supplied `agent_id`, and the anonymous fallback have been removed; unauthenticated requests receive HTTP 401. See [§6](#6-agent-identity-at-the-inference-edge-mtls-spiffe) and the canonical [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
+> **Update (BREAKING, #300):** Caller identity at the gateway edge is derived exclusively from the Linkerd mTLS workload identity (`l5d-client-id`) matched against `CAGE_TRUSTED_CLIENT_IDENTITIES`. The `X-Agent-ID` header, any body-supplied `agent_id`, SPIFFE-style headers and the anonymous fallback have been removed; unauthenticated requests are refused. See [§6](#6-agent-identity-at-the-inference-edge-linkerd-mtls-workload-identity) and the canonical [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
 
 
 ---
@@ -28,8 +28,11 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 ### Current State (Application-Side Routing)
 
 - **Logic:** `src/gateway/core/llm.py` (`GatewayClient`) contains if/else logic to select the backend based on `mode` (e.g., `planner` -> `vllm-reasoning`, `fast` -> `vllm-service`).
-- **Infrastructure:** Two separate Kubernetes Services (`vllm-reasoning`, `vllm-service`) provisioned via `infra/modules/vllm_inference/main.tf`.
-- **Scaling:** Standard HPA based on CPU/Memory (reactive).
+- **Infrastructure:** Two separate Kubernetes Services (`vllm-reasoning`, `vllm-service`) provisioned via `infra/modules/vllm_inference/main.tf` (instantiated as `module.vllm` and `module.vllm_reasoning` in `infra/targets/gcp-gke/main.tf`).
+  - **Weights:** Loaded from the GCS model bucket with vLLM's `runai_streamer` load format when the model path is `gs://…`; `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` forbid runtime egress to Hugging Face, and no HF token is baked into images.
+  - **Nodes:** The `gpu-l4` pool (`g2-standard-8`, 1× NVIDIA L4, on-demand — no Spot) scales 0–2 by default with image streaming (`gcfs_config`) enabled and autoscaler `location_policy = "ANY"`; vLLM CPU/memory defaults are sized to `g2-standard-8` allocatable. Terraform does not wait for vLLM rollout (`wait_for_rollout = false`), so GPU cold starts do not block `terraform apply`.
+  - **Images:** The `vllm-streamer` image is referenced by digest from `var.image_digests`.
+- **Scaling:** No vLLM HPA; each deployment runs `var.vllm_replicas` (default `1`) and GPU capacity comes from cluster-autoscaler on the `gpu-l4` pool (reactive).
 
 ### Proposed State (Kubernetes Inference Gateway)
 
@@ -88,18 +91,20 @@ To adopt this without disrupting the current workflow, we recommend a phased app
 2.  Define `InferencePool` resources for `vllm-reasoning` and `vllm-service`.
 3.  Deploy the `InferenceGateway` with `gatewayClassName: nginx`.
 
-### Phase 2: Application Update (Code)
+### Phase 2: Application Update (Code) — done
 
-1.  Update `src/gateway/core/llm.py`:
-    - Introduce `VLLM_GATEWAY_URL` env var.
-    - If `VLLM_GATEWAY_URL` is set: Use single client, routing by `model` name.
-    - If not set (Local/Legacy): Use existing dual-client logic.
+`src/gateway/core/llm.py` reads `VLLM_GATEWAY_URL` (`config/settings.py`):
+- If `VLLM_GATEWAY_URL` is set: a single `AsyncOpenAI` client, routing by `model` name (`MODEL_REASONING` / `MODEL_FAST`).
+- If not set (Local / default GKE): dual-client logic against `VLLM_REASONING_API_BASE` and `VLLM_FAST_API_BASE`.
 
 ### Phase 3: Traffic Cutover
 
 1.  Deploy updated Gateway Service to Prod.
 2.  Set `VLLM_GATEWAY_URL` to the internal IP of the Inference Gateway.
 3.  Verify routing and priority handling.
+
+> [!WARNING]
+> The manifests in `deployment/k8s/inference-gateway/` have not been realigned with the Terraform-provisioned vLLM pools. `http-route.yaml` routes on an `x-model-id` header (which `GatewayClient` does not send) to model IDs (`deepseek-ai/DeepSeek-R1-Distill-Qwen-32B`, `Qwen/Qwen2.5-7B-Instruct`) and a `vllm-inference` Service that differ from the `gcp-gke` defaults (`served_model_reasoning`, `served_model_fast`, Service `vllm-service`), and the `pool-governance` InferencePool selects `app: vllm-governance`. Align them before cutover.
 
 ---
 
@@ -122,8 +127,8 @@ The Inference Gateway works in conjunction with the DEFER queue (AARM-V7) to han
 
 **Next Steps:**
 
-1.  Update `GatewayClient` to support a unified endpoint configuration.
-2.  Create Kubernetes manifests (`infra/inference-gateway/`) for the new resources.
+1.  Align `deployment/k8s/inference-gateway/` with the Terraform-provisioned Services and served model names (see the warning in §3).
+2.  Provision the Gateway resources from the `gcp-gke` Terraform target instead of a manual `kubectl apply`.
 
 ## 5. Deployment & Configuration Guide
 
@@ -161,15 +166,13 @@ Update your `.env` file to set the `VLLM_GATEWAY_URL` environment variable using
 VLLM_GATEWAY_URL=http://<GATEWAY_IP>/v1
 ```
 
-Then, redeploy the application stack using the deployment script. This will inject the new environment variable into the Gateway Service container.
+Then, redeploy the application stack using the deployment script. `deploy_all.sh` reads `VLLM_GATEWAY_URL` from `.env` and passes it to Terraform (`vllm_gateway_url`), which injects it into the gateway and advisor containers.
 
 ```bash
-python3 deployment/deploy_sw.py --project-id <YOUR_PROJECT_ID> --skip-build
+./deploy_all.sh --target gcp-gke --env dev
 ```
 
-> **Note:** The `--project-id` flag is GCP-specific and can be omitted for non-GCP Kubernetes deployments.
-
-Once this variable is set, the `GatewayService` will automatically switch to **Gateway Mode**, routing all LLM requests through this single endpoint.
+Once this variable is set, `GatewayClient` automatically switches to **Gateway Mode**, routing all LLM requests through this single endpoint.
 
 ---
 

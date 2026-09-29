@@ -6,7 +6,7 @@
 
 **Status:** Partially Implemented — see the component matrix below
 **Date:** 2026-07-05
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 **Author:** Architecture Review
 **Implements:** GAP-3 (Schema Enforcement at API and Node Boundaries)
 
@@ -15,7 +15,7 @@
 | Component | Specified in | Status at HEAD | Evidence |
 | --------- | ------------ | -------------- | -------- |
 | `QueryResponse` Pydantic model | §3 | **Implemented** | [`src/governed_financial_advisor/models/query.py`](../../src/governed_financial_advisor/models/query.py) — `response`, `trace_id` (32-hex pattern), `frozen=True` |
-| `response_model` on `/agent/query` | §5.1 | **Implemented** | [`server.py:323`](../../src/governed_financial_advisor/server.py#L323) — `@app.post("/agent/query", response_model=QueryResponse)` |
+| `response_model` on `/agent/query` | §5.1 | **Implemented** | [`server.py:230`](../../src/governed_financial_advisor/server.py#L230) — `@app.post("/agent/query", response_model=QueryResponse)` |
 | `agent_state_schema.json` artifact | §4 | **Implemented, auto-generated** | [`compliance/schemas/agent_state_schema.json`](../../compliance/schemas/agent_state_schema.json) — 40 properties, Draft 2020-12 |
 | Schema drift detection in CI | §6 | **Implemented** | `make check-agent-state-schema` → `uv run python scripts/generate_agent_state_schema.py --check` |
 | Kernel state-contract validator | §5.2 | **Implemented but not wired** | [`src/gateway/governance/state_contract.py`](../../src/gateway/governance/state_contract.py) — `CompiledStateValidator` / `StateContractViolation`. Unit-tested in [`tests/test_runtime_schema_enforcement.py`](../../tests/test_runtime_schema_enforcement.py); **no importer exists in `src/`** |
@@ -23,6 +23,9 @@
 
 > [!WARNING]
 > Sections 5.2, 5.3 and 5.4 below describe a `validate_state` helper gated by a `CAGE_SCHEMA_STRICT` environment variable. **That design was not the one adopted.** The kernel instead ships `CompiledStateValidator`, which takes an explicit `enforcing: bool = True` constructor argument rather than reading an env var. Read those sections as historical design intent, not as a description of runtime behaviour.
+
+> [!NOTE]
+> **Advisor graph context at HEAD.** The advisor graph holds no governance state. [`create_graph(redis_url)`](../../src/governed_financial_advisor/graph/graph.py) and `create_uncheckpointed_graph()` take no governor argument; state is persisted by the Redis-backed checkpointer from [`get_checkpointer()`](../../src/governed_financial_advisor/graph/checkpointer.py) (with a `MemorySaver` fallback). Trade execution and post-HITL revalidation are not performed in-process: the `governed_trader` subgraph ([`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py)) and advisor tools forward to the gateway's `POST /tools/execute` and `POST /governance/revalidate-post-hitl` through [`gateway_client.py`](../../src/governed_financial_advisor/infrastructure/gateway_client.py). Schema validation at advisor node boundaries therefore protects the forwarded request payload, not a local actuator.
 
 **Affected files:**
 - `src/governed_financial_advisor/server.py`
@@ -48,19 +51,19 @@ This document specifies the exact models, schemas, enforcement strategy, drift d
 
 ## 2. Source of Truth — Fields Observed in `server.py`
 
-The `/agent/query` handler at line 423 of `server.py` returns:
+The `/agent/query` handler at [line 396 of `server.py`](../../src/governed_financial_advisor/server.py#L396) returns:
 
 ```python
 return {"response": final_response_text, "trace_id": trace_id}
 ```
 
-The cache-hit path at line 317 returns the same two fields:
+The cache-hit path at [line 308](../../src/governed_financial_advisor/server.py#L308) returns the same two fields (as a plain dict at HEAD; the original design reviewed a `JSONResponse` return here, see §3.3):
 
 ```python
-return JSONResponse(content={"response": final_response_text, "trace_id": trace_id})
+return {"response": final_response_text, "trace_id": trace_id}
 ```
 
-`trace_id` is set to `None` when `ENABLE_TRACING=false` or when the current span is not sampled (line 287: `trace_id = f"{ctx.trace_id:032x}"` only executes inside `if ctx.trace_flags.sampled`). Therefore `trace_id` is `str | None`.
+`trace_id` is set to `None` when `ENABLE_TRACING=false` or when the current span is not sampled ([line 268](../../src/governed_financial_advisor/server.py#L268): `trace_id = f"{ctx.trace_id:032x}"` only executes inside `if ctx.trace_flags.sampled`). Therefore `trace_id` is `str | None`.
 
 No other fields are present in the `/agent/query` return dict. The governance metadata (guardrail status, safety status, etc.) lives in the graph state and is **not** surfaced in the HTTP response — this is intentional (PII/audit hygiene).
 
@@ -128,7 +131,7 @@ Change the `@app.post("/agent/query")` decorator to:
 
 Both return sites must return a `QueryResponse`-compatible dict (FastAPI serialises it automatically when `response_model` is set):
 
-**Line 317 (cache-hit path)** — change `JSONResponse` to a plain dict return so FastAPI applies the `response_model`:
+**Line 317 (cache-hit path, line number at original review; now [line 308](../../src/governed_financial_advisor/server.py#L308) and already a plain dict)** — change `JSONResponse` to a plain dict return so FastAPI applies the `response_model`:
 
 ```python
 # BEFORE
@@ -138,7 +141,7 @@ return JSONResponse(content={"response": final_response_text, "trace_id": trace_
 return {"response": final_response_text, "trace_id": trace_id}
 ```
 
-**Line 423 (normal path)** — already returns a plain dict; no change needed:
+**Line 423 (normal path, now [line 396](../../src/governed_financial_advisor/server.py#L396))** — already returns a plain dict; no change needed:
 
 ```python
 return {"response": final_response_text, "trace_id": trace_id}
@@ -314,7 +317,7 @@ This location is under `compliance/` (not `src/`) so it is treated as a complian
 
 ### 5.1 API Boundary — `response_model` on `/agent/query`
 
-**Location:** [`src/governed_financial_advisor/server.py:323`](../../src/governed_financial_advisor/server.py#L323)
+**Location:** [`src/governed_financial_advisor/server.py:230`](../../src/governed_financial_advisor/server.py#L230)
 
 **Status: Implemented.** The decorator reads `@app.post("/agent/query", response_model=QueryResponse)` at HEAD.
 
@@ -423,7 +426,7 @@ The following table specifies the exact call sites. "Entry" means the first line
 | `nemo_output_rail_node` | ✅ | ❌ | Entry validates the full state before output screening. Exit is skipped: the node only returns `{"messages": [...], "output_rail_applied": True}` — a partial update dict, not a full state. |
 | `evaluator_node` | ✅ | ❌ | Entry validates state before OPA policy evaluation. Exit skipped: partial update. |
 | `safety_check_node` | ✅ | ❌ | Entry validates state before OPA pre-trade gate. Exit skipped: partial update. |
-| `governed_trader_node` | ✅ | ❌ | Entry validates state before trade execution. This is the highest-risk node — schema validation here catches any upstream corruption before actuation. |
+| `governed_trader_node` | ✅ | ❌ | Entry validates state before the trade request is forwarded to the gateway (`POST /tools/execute`, where the governor runs and `ActuatorRegistry` dispatches). This is the highest-risk node — schema validation here catches upstream corruption before it reaches the gateway. |
 | `data_analyst_node` | ❌ | ❌ | Skipped: data analyst is a read-only subgraph with no governance actuation. Adding validation here would add latency to the hot path without safety benefit. |
 | `execution_analyst_node` | ❌ | ❌ | Skipped: planning node, no actuation. |
 | `explainer_node` | ❌ | ❌ | Skipped: terminal display node, no actuation. |

@@ -3,7 +3,7 @@
 > **Document Type:** System Macro-Architecture & Trust Boundaries
 > **Status:** Current at HEAD (v3.0.1+)
 > **Target Scope:** Universal Governance Substrate, Seam Contracts, Cryptographic Trust Boundaries, and Layer Topology
-> **Last Updated:** 2026-09-22
+> **Last Updated:** 2026-09-29
 
 ---
 
@@ -22,7 +22,7 @@ The Cybernetic Governance Engine (CAGE) is a domain-agnostic, fail-closed runtim
 | Layer 2: Optional Domain Plugins                                        |
 | cage_finance · cage_healthcare · Adopter Plugins                        |
 +-------------------------------------------------------------------------+
-                               | registers tiers & models
+                               | contribute() -> PluginContribution
                                v
 +-------------------------------------------------------------------------+
 | Layer 1: Domain-Agnostic Governance Kernel                              |
@@ -37,9 +37,9 @@ The Cybernetic Governance Engine (CAGE) is a domain-agnostic, fail-closed runtim
 ```
 
 ### Trust Boundaries & Layered Separation
-- **Layer 1: Governance Kernel (`src/gateway/`)**: Always present and domain-blind. Owns all safety enforcement mechanisms: finite-time reachability analysis (FTRA), two-phase tier execution, atomic barrier hops, consensus arbitration, causal counterfactual checks, JWS token consumption, cryptographic evidence hashing, and LIFO rollbacks. It operates strictly on abstract action primitives (`claimed_action`, `actor_id`, `resource_delta`). **Caller identity is never accepted from application-layer metadata**: the kernel derives `agent_id` / `caller_principal` exclusively from the SPIFFE URI carried in the verified mTLS peer certificate (see [Transport-Layer Agent Identity](#transport-layer-agent-identity-spiffe) below).
-- **Layer 2: Domain Plugins (`src/cage_<domain>/`)**: Optional, interchangeable packages (e.g., `cage_finance`, `cage_healthcare`). Owns nomenclature, watched invariant scalars, threshold definitions, semantic critics, and domain Rego policies. Plugins hook into the kernel through structural subtyping protocols (`GovernanceTierPlugin`, `InvariantModel`). A `SymbolicGovernor` constructed with no plugin installed is a pure substrate with every generic safety invariant fully functional; a server process runs exactly one domain, named by `CAGE_DOMAIN`.
-- **Layer 3: Integrations & Rails (`src/integrations/`, `src/compliance_bridge/`)**: External adapters (external banking/clinical ledgers, storage backends, OPA servers, and notification bridges). These are physically decoupled from the kernel by strict zero-kernel-import Seam Contracts.
+- **Layer 1: Governance Kernel (`src/gateway/`)**: Always present and domain-blind. Owns all safety enforcement mechanisms: finite-time reachability analysis (FTRA), two-phase tier execution, atomic barrier hops, consensus arbitration, causal counterfactual checks, JWS token consumption, cryptographic evidence hashing, and LIFO rollbacks. It operates strictly on abstract action primitives (`claimed_action`, `actor_id`, `resource_delta`). **Caller identity is never accepted from application-layer metadata**: the kernel derives `agent_id` / `caller_principal` exclusively from the Linkerd-verified mTLS workload identity (`l5d-client-id`) (see [Transport-Layer Agent Identity](#transport-layer-agent-identity-linkerd-mtls) below).
+- **Layer 2: Domain Plugins (`src/cage_<domain>/`)**: Optional, interchangeable packages (e.g., `cage_finance`, `cage_healthcare`). Owns nomenclature, watched invariant scalars, threshold definitions, semantic critics, and domain Rego policies. Plugins hand the kernel data, not mutations: `CagePlugin.contribute()` returns a frozen `PluginContribution` (tiers, invariants, UCA rules, narrowers, ground-truth providers, safety filter, consensus contribution, threshold sections) built on structural subtyping protocols (`GovernanceTierPlugin`, `InvariantModel`). The composition root [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py) validates every contribution together and builds an immutable `SymbolicGovernor`. Engine slots no plugin fills get the deny-by-default `NullSafetyFilter` / `NullConsensusProvider` ([`null_components.py`](../../src/gateway/governance/null_components.py)), so a governor assembled with no plugins denies by construction, and [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py) refuses to serve traffic with an unfilled slot. A server process runs exactly one domain, named by `CAGE_DOMAIN`.
+- **Layer 3: Integrations & Rails (`src/integrations/`, `src/compliance_bridge/`)**: External adapters (external banking/clinical ledgers, storage backends, OPA servers, notification bridges, and the cloud KMS providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`, loaded lazily by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py)). These are physically decoupled from the kernel by strict zero-kernel-import Seam Contracts.
 - **Configuration Layer (`config/compliance/`, `config/thresholds/`)**: Dynamically loaded at deploy time via `CAGE_DEPLOYMENT_REGION`. Overlays regional regulatory profiles (NIST/SR 26-2, EU AI Act, MAS FEAT) onto the runtime without requiring source changes.
 
 ### Layer 1 Kernel Module Inventory (Identity & Seam Contracts)
@@ -87,14 +87,14 @@ graph TB
         FTRA["FTRA Reachability Gate<br/>Irreversibility Classifier"]
         SYM["SymbolicGovernor<br/>Two-Phase Tier Dispatch"]
 
-        subgraph TIERS["Dynamically Registered Tier Pipeline"]
+        subgraph TIERS["Assembled Tier Pipeline (immutable)"]
             direction LR
-            P1["Phase 1: Read-Only<br/>STPA · OPA · Consensus · Causal"]
+            P1["Phase 1: Read-Only<br/>STPA · OPA · Confidence · Consensus · Causal"]
             P2["Phase 2: Atomic Mutate<br/>CBF Lua · Fiscal Pre-Reservation"]
             P1 -->|All Pass| P2
         end
 
-        CQG["ConsequenceGateway<br/>6-Step Atomic Verification"]
+        CQG["Routing Seal / ConsequenceGateway<br/>Actuation Clearance"]
         EVID["Evidence Stream<br/>Redis Streams db=1 + KMS Signature"]
     end
 
@@ -120,11 +120,11 @@ graph TB
 
 ### Hot-Path Execution Steps
 1. **Ingress, Identity Extraction & Content-Addressing**: The Linkerd-verified peer workload identity is checked first — [`workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`) verifies and resolves the caller's `l5d-client-id` from the ASGI scope, and requests without a trusted identity are rejected before any governance work (403 at `WorkloadIdentityMiddleware`, 401 on `extract_client_identity` failure). Admitted payloads are then normalized and content-addressed via RFC 8785 JSON Canonicalization Scheme (JCS) producing an invariant payload digest.
-2. **FTRA Reachability Boundary**: The request hits the Finite-Time Reachability Analysis gate. Actions classified as terminal or irreversible undergo strict reachability path checks before entering the governance pipeline.
-3. **SymbolicGovernor Two-Phase Dispatch**:
-   - **Phase 1 (Read-Only Inspection)**: Concurrently runs non-mutating checks: deterministic STPA invariants, declarative OPA rules, multi-agent consensus debate, and DoWhy causal counterfactual refutations.
-   - **Phase 2 (Atomic Mutation)**: If Phase 1 passes cleanly, the governor initiates atomic state reservations (e.g., discrete-time Control Barrier Functions via Redis Lua scripts and fiscal limit locks). Any Phase 2 failure triggers an immediate LIFO compensating rollback.
-4. **Post-FRIA Consequence Gateway**: Upon successful governance dispatch, a short-lived, KMS-signed ConsequenceToken (JWS) is minted. Downstream actuators verify the token's signature, TTL, and content digest against the ConsequenceAuthorityStore before firing the physical side effect.
+2. **FTRA Reachability Boundary**: The first pipeline stage (`FtraStage`) classifies the action against the active domain's FTRA terminal registry. Irreversible actions, and unregistered ones (which fail closed to `IRREVERSIBLE_TERMINAL`), emit a `HITL` violation and are routed to human approval.
+3. **SymbolicGovernor Two-Phase Dispatch** ([`pipeline.py`](../../src/gateway/governance/governor/pipeline.py)):
+   - **Phase 1 (Read-Only Inspection)**: Runs the non-mutating stages sequentially — FTRA, STPA, OPA, confidence, then the domain's read-only tiers by `(phase, order)` (e.g. bounding, consensus, causal) — and stops at the first `HARD` violation.
+   - **Phase 2 (Atomic Mutation)**: Only if Phase 1 produced zero violations do the mutating tiers commit (e.g. discrete-time Control Barrier Functions via Redis Lua scripts and fiscal reservations). Each commit returns a `CommitReceipt` held by the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)); any Phase 2 failure rolls back exactly the recorded receipts in LIFO order.
+4. **Seal & Actuation Clearance**: On a clean run the governor issues a routing seal inside the same `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)). Commits stay in force only once the seal is issued; a failing or cancelled seal rolls them all back. The seal is a KMS-signed JWT bound to a durable evidence record ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)). When an external normative provider admits an action, a short-lived KMS-signed ConsequenceToken (JWS) is also minted ([`consequence_token_service.py`](../../src/gateway/governance/consequence_token_service.py)) for single-use verification by the [`ConsequenceGateway`](CONSEQUENCE_GATEWAY.md).
 5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, PauseReceipt), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1) and asynchronously drained to durable cold storage.
 
 ---
@@ -142,11 +142,11 @@ stateDiagram-v2
 
     state FTRA_Evaluation {
         [*] --> ClassifyReachability
-        ClassifyReachability --> Irreversible: Reachability Exceeded
+        ClassifyReachability --> Irreversible: IRREVERSIBLE or unregistered
         ClassifyReachability --> Reversible: Valid Target
     }
 
-    Irreversible --> BLOCKED: Immediate Fail-Closed
+    Irreversible --> REQUIRE_APPROVAL: HITL violation
     Reversible --> Phase1_Validation
 
     state Phase1_Validation {
@@ -157,8 +157,9 @@ stateDiagram-v2
     }
 
     Phase1_Validation --> Phase2_AtomicCommit: Pass (Confidence >= 0.95)
-    Phase1_Validation --> DEFERRED: Starvation / Review (0.70 <= Conf < 0.95)
-    Phase1_Validation --> BLOCKED: Invariant Violation (Conf < 0.70)
+    Phase1_Validation --> REQUIRE_APPROVAL: Review (0.70 <= Conf < 0.95)
+    Phase1_Validation --> DEFERRED: Confidence Starvation (Conf < 0.70)
+    Phase1_Validation --> BLOCKED: HARD Invariant Violation
 
     state Phase2_AtomicCommit {
         [*] --> ReserveBarrier
@@ -168,6 +169,7 @@ stateDiagram-v2
     }
 
     LIFO_Rollback --> BLOCKED
+    REQUIRE_APPROVAL --> [*]: Route to HITL
     DEFERRED --> ParkedInRedis: 4-Hour TTL / Dual Review
     CommitState --> Consequence_Verification
 
@@ -185,12 +187,13 @@ stateDiagram-v2
 ```
 
 ### Component State Partitions
+- **Deployment**: In the `gcp-gke` target the gateway's Redis is the dedicated governance Memorystore (Valkey) instance (`module.memorystore_governance` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)); application caches use a separate `memorystore_app` instance.
 - **Hot Ephemeral State (Redis db=0)**: Execution checkpoints, transient session quotas, and local barrier metrics.
 - **Durable Compliance State (Redis db=1)**: Dedicated `noeviction` database storing:
   - `DEFER:{id}`: Hashed deferral payloads parked for human-in-the-loop (HITL) resolution.
   - `DEFER:expiry_index`: Sorted set (ZSET) tracking TTL expiration timestamps.
   - `evidence:stream`: Monotonically increasing, hash-chained transaction log.
-- **Long-Term Cold Archive (ClickHouse / Object Storage)**: Long-term immutable sink ingesting batched evidence blocks from the flush daemon every 60 seconds.
+- **Long-Term Cold Archive (ClickHouse / Object Storage)**: Long-term immutable sink ingesting batched evidence blocks from the flush daemon every 60 seconds. In the `gcp-gke` target the retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../../infra/modules/worm_bucket/)) is the system of record.
 
 ---
 
@@ -198,10 +201,10 @@ stateDiagram-v2
 
 - **No-Direct-Bind Safety Invariant**: The engine enforces physical and structural isolation between callers and execution sinks. Downstream actuators reject any direct parameter binding. Actuation requires presenting an authenticated ConsequenceToken validated against the payload digest at the moment of execution, closing Time-of-Check to Time-of-Use (TOCTOU) windows.
 - **Fail-Closed Default**: Any unhandled exception, network partition across OPA/Redis, missing token authority, or timeout across tier plugins immediately causes the SymbolicGovernor to transition to a BLOCK or DEFER state. System components never default to ALLOW or NOT_APPLICABLE.
-- **Atomic Phase 2 Rollbacks**: Phase 1 plugins must remain completely read-only. If any Phase 2 mutator fails after partial reservations have been committed, prior steps are reverted in strict Last-In, First-Out (LIFO) order using registered compensators.
+- **Atomic Phase 2 Rollbacks**: Phase 1 plugins must remain completely read-only. Every Phase 2 `commit()` returns a `CommitReceipt`, and `rollback()` undoes exactly what that receipt records. If any Phase 2 mutator fails, or the seal is not issued, the `ReservationScope` rolls back every outstanding receipt in strict Last-In, First-Out (LIFO) order in a shielded task; a failed rollback raises `[ROLLBACK_FAILED]`.
 - **Non-Repudiation & Cryptographic Chains**: Every state transition produces a record linked to the previous record via SHA-256 hash chaining (`record_hash = SHA256(prev_hash + canonical_payload)`). Critical compliance boundaries (such as ledger reconciliations and external receipts) are signed by Google Cloud KMS or HSM-backed hardware keys using RFC 8785 canonical JSON formatting.
-- **Zero-Trust Network Hardening (Z3N)**: The substrate assumes an adversarial internal network. Pods communicate strictly through mTLS with cryptographic SPIFFE/SVID identities. Pod egress is locked down to explicit domain and IP allowlists via eBPF network security policies.
-- **Transport-Bound Caller Identity (Fail-Closed)**: The governance pipeline never runs for an unidentified caller. `agent_id` / `caller_principal` is derived solely from the SPIFFE URI in the verified mTLS peer certificate; header- and body-supplied identity claims and the former anonymous fallback were removed in v3.1.0. Extraction failure is terminal: HTTP ingress answers 401 and the `ext_authz` gRPC path answers with a denied response. See [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
+- **Zero-Trust Network Hardening (Z3N)**: The substrate assumes an adversarial internal network. Pods communicate strictly through Linkerd mTLS with workload identities chained to a Google CAS trust anchor ([`infra/modules/service_mesh`](../../infra/modules/service_mesh/)). Pod egress is locked down with Kubernetes `NetworkPolicy` plus GKE `FQDNNetworkPolicy` on Dataplane V2.
+- **Transport-Bound Caller Identity (Fail-Closed)**: The governance pipeline never runs for an unidentified caller. `agent_id` / `caller_principal` is derived solely from the Linkerd-verified `l5d-client-id`; header- and body-supplied identity claims and the former anonymous fallback were removed in v3.1.0. Extraction failure is terminal: `WorkloadIdentityMiddleware` answers 403 and an `extract_client_identity` failure answers 401. See [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md).
 
 ---
 
@@ -213,14 +216,14 @@ System initialization and regional behavior are driven by environmental flags an
 
 | Variable | Type | Default | Operational Guarantee / Purpose |
 |---|---|---|---|
-| `CAGE_ENV` | str | `production` | When set to production, disables all memory fallbacks and mandates active evidence streams. |
+| `CAGE_ENV` | str | `production` | Resolves the deployment posture. Anything but dev/test/CI (unknown values included) is enforcing: [`assert_production_posture()`](../../src/gateway/governance/governor/posture.py) refuses startup on any failed check. |
 | `CAGE_DEPLOYMENT_REGION` | enum | `US_FED` | Selects active compliance profile: `US_FED`, `EU_ECB`, or `APAC_MAS`. |
 | `CAGE_DOMAIN` | str | *(required)* | Names the single domain plugin this process runs (`cage.plugins` entry-point name, e.g. `finance`). Unset, multi-valued, unknown, or `DomainConfig`-less values abort startup. |
 | `OPA_URL` | str | *(required)* | OPA base URL with no path. The decision path is `/v1/data/<DomainConfig.opa_package>`; startup aborts unless OPA has that package and its `opa_required_rules` loaded. |
 | `CAGE_DEFER_ENABLED` | bool | `true` | Enables the 4-state AARM deferral primitive and Redis parking queue. |
 | `CAGE_PAUSE_ENABLED` | bool | `true` | Enables transient execution suspension and resume-token lifecycle. |
 | `REDIS_URL` | str | Required | Connection URI for the primary Redis cluster (db=0 and db=1). |
-| `KMS_KEY_NAME` | str | Optional | Cloud KMS resource name used for hardware-backed evidence and token signing. |
+| `KMS_GOVERNANCE_KEY` | str | Required when enforcing | Cloud KMS key the gateway signs seals and tokens with. The reconciler signs with `RECONCILER_KMS_KEY` and the compliance bridge with `EVIDENCE_KMS_KEY`; each must be a separate key. |
 
 ### Regional Configuration Profile Matrix
 
@@ -253,4 +256,4 @@ For deep-dive architectural specifications, refer to the corresponding canonical
 | 13 | **Dual-Project Architecture** | Sovereign Regional Langfuse Telemetry & Operational Isolation | [`DUAL_PROJECT_ARCHITECTURE.md`](DUAL_PROJECT_ARCHITECTURE.md) |
 | 14 | **Inference Gateway** | Split-Brain vLLM Serving Topology & Model Router | [`INFERENCE_GATEWAY_ARCHITECTURE.md`](INFERENCE_GATEWAY_ARCHITECTURE.md) |
 | 15 | **ClickHouse Evidence Sink** | High-Throughput WORM Audit Ingestion & Schema Contracts | [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) |
-| 16 | **Agent Identity Binding** | Canonical SPIFFE/mTLS Identity Extraction, DPoP Binding & A2A Prefix Authorization | [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md) |
+| 16 | **Agent Identity Binding** | Canonical Linkerd mTLS Identity Extraction, DPoP Binding & A2A Prefix Authorization | [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md) |

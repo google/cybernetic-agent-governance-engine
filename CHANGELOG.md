@@ -28,16 +28,55 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (refuse a seal whose Rekor anchor is deferred), factory aliases `verdict`/`p08`,
   conformance-suite registration, hermetic respx tests, live over-the-wire test suite,
   and partner specification (`docs/partners/provider_08/`).
+- **Linkerd mesh conformance and live CAS issuer tests** (#303) and a `mesh-conformance` CI job.
+- **Binary Authorization image signing** (#319): `scripts/build_images.sh` and the per-service `cloudbuild.*.yaml` files tag images by git SHA only (no `:latest`) and sign each pushed digest with the `binauthz-attestor` key; `scripts/mirror_and_attest_images.sh` mirrors and attests third-party images.
+- **GPU node pool image streaming** (#318) and GPU cold-start handling in the GKE test runbook (#323).
+- **Per-tier governance spans** (#279): `DomainTierStage` wraps every tier hook in a `cage.tier.<tier_name>` span; the FRIA row is dropped from `TIER_SPAN_MAP`.
+- **Shared Terraform modules** (#306) extracted under `infra/modules/`; google provider floor raised to 6.43.
 
 ### Fixed
 - **[CRITICAL]** Eliminated lost-update concurrency defect in DEFER dual-control approval flows. Concurrent approvals on `required_quorum >= 2` tokens no longer silently overwrite each other. Replaced broken WATCH-on-pool pattern with monotonic revision CAS primitive. Retries are bounded to 3 attempts with 5ms exponential jitter; exhaustion returns HTTP 409 Conflict.
 - Removed unreachable `TransactionAbortedError` exception handlers in `defer_queue.py` (dead code since v2.0).
+- **CBF durability** (#307): atomic debits and a shared fence-epoch high-water mark (`safety:fence_epoch_hwm`).
+- **Redis `noeviction` in every environment** (#295): the `maxmemory_policy` variable is removed; `tests/infrastructure/test_redis_noeviction_policy.py` guards it.
+- **Phase-2 rollback on pre-seal failure** (#281): `ReservationScope` (`governor/reservation.py`) rolls back every commit LIFO unless the seal is issued.
+- **Strict critic vote parsing** (#314) with pinned prompt fields.
+- **vLLM** (#315, #317): the HF token is no longer baked into images, weights load from GCS, and defaults fit `g2-standard-8` without Spot affinity. Undeployed vLLM manifests and dead scripts are retired (#316).
+- **Gate G9** (#321) validates line anchors; critic confidence rejects `bool` values.
 
 ### Changed
 - **[BREAKING]** `DeferQueue.approve()` now returns `ApprovalStatus.CONTENTION_ABORTED` on CAS retry exhaustion (previously would raise unhandled exception). Callers must map this to HTTP 409.
 - Redis schema for defer tokens now includes a `rev` (revision) field. Existing tokens are migrated transparently (absent `rev` treated as `0`).
+- `cage-client` SDK bumped to v0.2.0 (#313).
 
 ### Breaking Changes
+
+#### Governor refactor — composition root, single domain, receipts (#277–#294)
+
+- **Composition root** (#285): `SymbolicGovernor` is built only via `assemble_governor()` / `bootstrap_governor()` from `GovernorComponents` and is immutable. `CagePlugin.register()` is replaced by `contribute() -> PluginContribution`. `singletons.py`, `register_invariant`, `add_domain_tiers`, and `assert_kms_active_in_production` are removed; servers read the governor from `app.state.governor` and pass it explicitly. Startup guards run once via `assert_production_posture()` (`governor/posture.py`).
+- **Single domain** (#278): `CAGE_DOMAIN` is required (one value); `CAGE_ACTIVE_PLUGINS` and `discover_plugins()` are removed. `DomainConfig` owns the FTRA registry, causal graph, and OPA package; `OPA_URL` must be a base URL and `CAGE_OPA_DEFAULT_PATH` is removed. Gateway startup fails if OPA lacks the domain's package or rules.
+- **Required classification engine** (#282, #277): `SymbolicGovernor` requires `classification_engine`.
+- **Commit receipts** (#280): `GovernanceTierPlugin.commit()` returns `(list[Violation], CommitReceipt | None)` and `rollback()` takes the receipt; `SafetyFilter.atomic_verify_and_commit()` returns `(bool, str, float)`.
+- **NARROW re-verification** (#283): narrowed params are re-run through FULL in a new `ReservationScope` before sealing; `CAGE_NARROW_ENABLED` unset now disables NARROW.
+- **Finance out of the kernel** (#288, #289, #291, #293): `FiscalLimitGuard`, `TradingKnowledgeGraph`, and `BoundingContractEnforcer` move to `src/cage_finance/`; consensus, causal gatekeeper, and narrower take domain-injected specs; domain thresholds move under `domains.<domain>` in `config/governance_thresholds.json`; generated STPA validators and saga nodes move into each domain plugin (RBAC fields `trade_limits` → `limits`, `currency_denylist` → `denylist`).
+- **Invariant-parametric CBF** (#290): `ControlBarrierFunction` requires an explicit `InvariantModel` and `cost_resolver`; legacy ledger providers are replaced by `GroundTruthReconciler` and domain `GroundTruthProvider` implementations.
+- **KMS providers in Layer 3** (#287): `GCPKMSProvider` / `AWSKMSProvider` / `AzureKMSProvider` move to `src/integrations/{gcp,aws,azure}/kms_provider.py`, loaded via `signer_factory.py`; software/HMAC signatures are refused under an enforcing posture.
+- **Reconciler trust anchor** (#294): the reconciler signs with `RECONCILER_KMS_KEY`; the CBF verifies snapshots by reconciler `kid` only and rejects snapshots without `kms_key_id` / `signing_algorithm`.
+- **Kernel AST purity** (#292): Gate G3 rejects domain literals and domain/vendor class definitions in `src/gateway/`, and vendor SDK imports anywhere in `src/gateway/`.
+
+#### Security model — mesh identity, advisor behind the gateway (#298–#305)
+
+- **Linkerd mTLS ingress** (#300): gateway callers must present an `l5d-client-id` matching `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment. `RoutingSealIngressMiddleware`, `verify_incoming_routing_seal`, and `spiffe_extractor.py` are removed; `CageClient` no longer takes `routing_seal_secret`. Linkerd and a Google CAS trust anchor are provisioned via `infra/modules/service_mesh`.
+- **Advisor behind the gateway** (#305, #302): the advisor hosts no `SymbolicGovernor`, `DeferQueue`, in-process NeMo, signing key, or GSA. Trades and post-HITL revalidation (`POST /governance/revalidate-post-hitl`) go through the gateway; `/v1/nemo/*` moves to the gateway. `CAGE_SEAL_ENFORCEMENT` is removed (NeMo always fails closed). Unknown seal/envelope `kid`s fail closed.
+- **Partitioned identities and keys** (#298, #310): one KSA/GSA per workload; signing keys live in the `cage-signing` keyring with key-level grants. The compliance bridge signs with `EVIDENCE_KMS_KEY` (was `KMS_GOVERNANCE_KEY`) and refuses the gateway or reconciler key. CMEK uses a dedicated keyring with key-scoped grants.
+- **Cloud Run and AGW removed** (#304): the `gcp-cloudrun` target and `src/gateway/server/agent_gateway_adapter.py` are deleted; `infra/targets/` holds only `agnostic` and `gcp-gke`. STERA PAUSE HTTP helpers move to `src/gateway/governance/pause_primitive.py`.
+
+#### GKE managed services (#308–#312)
+
+- **Dual Memorystore** (#308): in-cluster Redis and Sentinel stubs are replaced by Memorystore (Valkey) over PSC with IAM auth.
+- **Cloud SQL for Langfuse** (#309): in-cluster PostgreSQL is replaced by Cloud SQL (private IP, IAM auth via the Cloud SQL Auth Proxy).
+- **WORM bucket and ClickHouse operator** (#311): `infra/modules/clickhouse` is replaced by `infra/modules/clickhouse_operator`; a retention-locked GCS bucket (`infra/modules/worm_bucket`) is the evidence system of record.
+- **FQDN policy and perimeter** (#312): `CiliumNetworkPolicy` L7 rules and open DNS egress are replaced by `NetworkPolicy` + `FQDNNetworkPolicy` with DNS restricted to kube-dns and Cloud DNS.
 
 #### refactor(deps)! — LangGraph & Dependency Decoupling (v4.0.0 track)
 
@@ -64,7 +103,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Cloud Run L4 GPU Inference & In-VPC ClickHouse VM** — 100% in-project serverless deployment target for Google Cloud Run featuring serverless accelerated NVIDIA L4 GPU inference for vLLM (Qwen2.5-7B, DeepSeek-R1-14B) with scale-to-zero economics, alongside a private in-VPC Compute Engine ClickHouse VM with daily automated snapshots for Langfuse v3 OLAP trace analytics (`feat(infra)`).
+- ~~**Cloud Run L4 GPU Inference & In-VPC ClickHouse VM**~~ — *Superseded: the `gcp-cloudrun` target was removed in #304 (see Breaking Changes above).* 100% in-project serverless deployment target for Google Cloud Run featuring serverless accelerated NVIDIA L4 GPU inference for vLLM (Qwen2.5-7B, DeepSeek-R1-14B) with scale-to-zero economics, alongside a private in-VPC Compute Engine ClickHouse VM with daily automated snapshots for Langfuse v3 OLAP trace analytics (`feat(infra)`).
 - **Hermetic Test CI Gate** — New `.github/workflows/test-hermetic.yml` workflow installing ONLY core governance dependencies (excludes `sentence-transformers`, `torch`, all ML packages) and running governance pipeline tests to prove Stage 2.5 is truly optional (`ci(governance)`).
 
 ### Changed

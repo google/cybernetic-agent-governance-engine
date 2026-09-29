@@ -2,14 +2,16 @@
 
 **Version:** 1.1.0  
 **Status:** CANONICAL — IMPLEMENTED  
-**Last Updated:** 2026-09-22  
+**Last Updated:** 2026-09-29  
 **Applies To:** CAGE Gateway v3.1.0+
 
 ---
 
 ## Executive Summary
 
-This specification defines the cryptographic binding mechanism between agent identities and governance decisions in the Cybernetic Agentic Governance Engine (CAGE). It establishes SPIFFE Verifiable Identity Documents (SVIDs) extracted from mTLS transport layer certificates as the canonical source of truth for agent authentication, eliminating reliance on spoofable HTTP headers and request bodies.
+This specification defines the cryptographic binding mechanism between agent identities and governance decisions in the Cybernetic Agentic Governance Engine (CAGE). It establishes the mesh workload identity verified from mTLS transport-layer certificates as the canonical source of truth for agent authentication, eliminating reliance on spoofable HTTP headers and request bodies. At HEAD that identity is Linkerd's DNS-style client identity (`l5d-client-id`, issued under a Google CAS trust anchor), not a `spiffe://` URI; the `spiffe://` examples in §3–§4 describe the target naming convention for catalog and delegation policy.
+
+The gateway's ingress authentication is this workload identity alone. The former HMAC routing-seal ingress check (`X-CAGE-Routing-Seal`, `CAGE_ROUTING_SEAL_SECRET`) is removed; the routing seal remains only an internal artifact of `/tools/execute` and `ConsequenceGateway`. The only workload admitted to gated gateway routes is the advisor (`cage-advisor-sa`), which itself holds no signing key or Google Cloud identity.
 
 **Core Principle:** *"Secure the consequence, not the identity."* Authentication happens at the transport layer; authorization happens at the governance gate.
 
@@ -76,8 +78,10 @@ except WorkloadIdentityError as identity_exc:
     )
 ```
 
+`WorkloadIdentityMiddleware` is installed on the gateway root app in [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py). It is the application half of a two-layer control; the mesh half is the Linkerd `Server` / `HTTPRoute` / `MeshTLSAuthentication` / `AuthorizationPolicy` set in [`deployment/k8s/linkerd-mtls-policy.yaml`](../../deployment/k8s/linkerd-mtls-policy.yaml) (Terraform: [`infra/modules/gateway/mesh-policy/`](../../infra/modules/gateway/mesh-policy)), which admits only the advisor identity to gated routes. The Linkerd control plane and CAS trust anchor are provisioned by [`infra/modules/service_mesh/`](../../infra/modules/service_mesh).
+
 **Security Boundary:**
-- **Trust Anchor:** Linkerd inbound mTLS termination proxy validates certificate chains against the mesh trust anchor before forwarding to the gateway and setting `l5d-client-id`.
+- **Trust Anchor:** Linkerd inbound mTLS termination proxy validates certificate chains against the mesh trust anchor (Google CAS) before forwarding to the gateway and setting `l5d-client-id`.
 - **Zero Trust Assumption:** CAGE Layer 1 code MUST NOT accept identity claims from client-controlled application-layer headers or bodies. `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and the gateway always enforces workload identity.
 
 ---
@@ -317,7 +321,10 @@ Writing policies against exact UUIDs causes `POLICY_DRIFT_VIOLATION` errors when
 
 ### 3.2 OPA Rego Input Contract
 
-The gateway constructs the OPA policy evaluation input as:
+> [!NOTE]
+> Target state. At HEAD the gateway does not build this input: the verified identity is a Linkerd name, the governor records the caller as `_caller_principal`, and [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) keys on `input.caller_identity.sub` (populated by the optional OIDC middleware in [`governance_middleware.py`](../../src/gateway/server/governance_middleware.py)). The contract below is the intended shape once SPIFFE-style names reach OPA.
+
+The target OPA policy evaluation input is:
 
 ```json
 {
@@ -471,13 +478,13 @@ deny[msg] if {
 
 ### 4.4 Runtime Delegation Assertion
 
-Parent agents inject delegation metadata into subagent invocations:
+Parent agents inject delegation metadata into subagent invocations. This is a proposed API (Phase 4, not started): `GovernanceEnvelopeBuilder.build()` is an async instance method and has no `delegation` parameter at HEAD.
 
 ```python
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-# Parent agent initiates subagent call
-envelope = GovernanceEnvelopeBuilder.build(
+# Parent agent initiates subagent call (proposed signature)
+envelope = await builder.build(
     agent_id=request.state.verified_spiffe_id,  # Parent's SPIFFE ID
     action="ftra.market.analyze_volatility",
     consequence={"target_market": "NASDAQ", "timeframe": "30d"},
@@ -520,7 +527,7 @@ deny[msg] if {
 
 ## §5 Implementation Status
 
-Shipped in `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extraction` (v3.1.0).
+Header-based identity was first removed in `feat(gateway)!: replace X-Agent-ID header with native SPIFFE extraction`. The SPIFFE extractor (`spiffe_extractor.py`) and the HMAC routing-seal ingress check were later replaced by Linkerd mTLS workload identity (`fix(security)!: replace gateway ingress HMAC check with Linkerd mTLS workload identity`, POAM-2026-080).
 
 ### Phase 1 — Transport-Layer Identity Extraction ✅ SHIPPED
 - [x] [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`) enforces `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment and extracts verified Linkerd `l5d-client-id` identities from the ASGI scope

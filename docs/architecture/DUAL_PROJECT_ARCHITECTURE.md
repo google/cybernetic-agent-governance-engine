@@ -4,7 +4,7 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
-| **Last Updated**   | 2026-09-22                |
+| **Last Updated**   | 2026-09-29                |
 | **Version**        | 0.1.0-rc.1                |
 | **Status**         | Implemented & Verified (GKE deployment confirmed 2026-06-03) |
 
@@ -101,9 +101,9 @@ Two distinct Kubernetes secrets are provisioned by Terraform ([`app_secrets/main
 | `advisor-secrets`                | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`      | governed-financial-advisor |
 | `langfuse-compliance-secrets`    | `LANGFUSE_COMPLIANCE_PUBLIC_KEY`, `LANGFUSE_COMPLIANCE_SECRET_KEY` | compliance-bridge only  |
 
-Source: [`app_secrets/main.tf` L42-68](../../infra/modules/app_secrets/main.tf) (advisor-secrets) and [`app_secrets/main.tf` L80-93](../../infra/modules/app_secrets/main.tf) (compliance-secrets).
+Source: [`app_secrets/main.tf` L42-69](../../infra/modules/app_secrets/main.tf#L42-L69) (advisor-secrets) and [`app_secrets/main.tf` L71-84](../../infra/modules/app_secrets/main.tf#L71-L84) (compliance-secrets).
 
-> **Note:** the compliance bridge does not read the application-project keys from `advisor-secrets`. Its deployment resolves `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` from a separate `langfuse-secrets` object, which the `app_secrets` Terraform module does not provision — see [`compliance-bridge.yaml` L61-73](../../deployment/k8s/compliance-bridge.yaml).
+> **Note:** the compliance bridge does not read the application-project keys from `advisor-secrets`. Its deployment resolves `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` from a separate `langfuse-secrets` object, which the `app_secrets` Terraform module does not provision — see [`compliance-bridge.yaml` L61-73](../../deployment/k8s/compliance-bridge.yaml#L61-L73) and the GKE target's [`compliance_bridge` module](../../infra/modules/compliance_bridge/main.tf#L112-L130).
 
 ### 3.2 Compliance Bridge Pod (Dual Credential Mount)
 
@@ -125,7 +125,7 @@ The compliance bridge K8s deployment ([`compliance-bridge.yaml`](../../deploymen
       key: public-key
 ```
 
-Source: [`compliance-bridge.yaml` L61-85](../../deployment/k8s/compliance-bridge.yaml).
+Source: [`compliance-bridge.yaml` L61-85](../../deployment/k8s/compliance-bridge.yaml#L61-L85).
 
 ### 3.3 Python Client Factories (Explicit Separation)
 
@@ -208,7 +208,7 @@ Step 5 is the only cross-project operation: it reads failing traces from the app
 
 | Gap | Description | Status |
 |-----|-------------|--------|
-| **Shared Langfuse Host** | Both projects may be hosted on the same Langfuse instance (`LANGFUSE_HOST`). A Langfuse-level compromise affects both projects. | Accepted risk — mitigated by self-hosted Langfuse on GKE with dedicated namespace |
+| **Shared Langfuse Host** | Both projects may be hosted on the same Langfuse instance (`LANGFUSE_HOST`). A Langfuse-level compromise affects both projects. | Accepted risk — mitigated by self-hosted Langfuse on GKE with dedicated namespace; on the GKE target its metadata store is Cloud SQL PostgreSQL reached through the Cloud SQL Auth Proxy with IAM database authentication (no static database password) |
 | **Compliance Bridge Compromise** | The compliance bridge pod has credentials for both projects. A full pod compromise gives read access to app telemetry AND write access to compliance evidence. | Mitigated by minimal attack surface (no public endpoint, no user input parsing, CPU/memory-limited), but remains the single point of credential aggregation |
 | **Same GCP Project** | Both Langfuse projects currently run within the same GCP project. No GCP-level IAM boundary separates them. | Future: Move compliance Langfuse to a dedicated GCP project with separate IAM policy |
 
@@ -229,7 +229,7 @@ Step 5 is the only cross-project operation: it reads failing traces from the app
 
 ### 5.2 Silent Failure Warning (POAM-018 — Open)
 
-> ⚠️ **POAM-018 (AU-9) — partially remediated, still tracked Open:** The startup guard now exists. [`_validate_langfuse_credentials()` L117-L161](../../src/compliance_bridge/audit_workflow.py) runs at module import (invoked at L164) and raises `RuntimeError` in non-development environments when `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` — or the application-project keys — are absent; under `dev` / `development` / `test` / `ci` it logs a `[POAM-018]` warning instead. Without that guard the compliance client would initialize with empty credentials and the Langfuse SDK would drop every audit trace silently.
+> ⚠️ **POAM-018 (AU-9) — partially remediated, still tracked Open:** The startup guard now exists. [`_validate_langfuse_credentials()` L117-L161](../../src/compliance_bridge/audit_workflow.py) runs at module import (invoked at L162) and raises `RuntimeError` in non-development environments when `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` — or the application-project keys — are absent; under `dev` / `development` / `test` / `ci` it logs a `[POAM-018]` warning instead. Without that guard the compliance client would initialize with empty credentials and the Langfuse SDK would drop every audit trace silently.
 >
 > **Remaining work:** the `/health` check reporting compliance Langfuse connectivity status is not implemented, so POAM-018 remains Open in [`POAM_US_FED.md`](../compliance/us_fed/POAM_US_FED.md) and [`POAM_ISO42001.md`](../compliance/universal/POAM_ISO42001.md).
 
@@ -268,7 +268,7 @@ kubectl exec -n governance-stack deploy/governed-financial-advisor -- env | grep
 >
 > **Historical impact:** while the fallback existed, a `prod.tfvars` without compliance credentials would deploy with no telemetry isolation — all audit evidence flowing to the same Langfuse project as application metrics. This is no longer reachable: the apply now fails closed.
 >
-> **Remediation — ✅ delivered in `fd5e28b` (verified 2026-09-22):** The fallback was removed. A `lifecycle.precondition` on the `app_secrets` module call (`infra/targets/gcp-gke/main.tf:730`) now rejects an apply when either compliance key is empty **or** equal to its application-project counterpart, and `infra/targets/gcp-gke/variables.tf:495-519` declares both variables `nullable = false` with validation blocks. See [`POAM_ISO42001.md` POAM-019](../compliance/universal/POAM_ISO42001.md).
+> **Remediation — ✅ delivered in `fd5e28b` (verified 2026-09-22):** The fallback was removed. Because `lifecycle.precondition` is not valid on a module block, the guard lives on [`terraform_data.poam_019_compliance_key_guard`](../../infra/targets/gcp-gke/main.tf#L904-L927), which rejects a plan with `enable_nist_compliance = true` when either compliance key is empty **or** equal to its application-project counterpart. [`variables.tf` L821-853](../../infra/targets/gcp-gke/variables.tf#L821-L853) declares both variables `nullable = false` with validation blocks. See [`POAM_ISO42001.md` POAM-019](../compliance/universal/POAM_ISO42001.md).
 
 ---
 

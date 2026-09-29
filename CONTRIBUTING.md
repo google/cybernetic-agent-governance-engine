@@ -249,14 +249,15 @@ This repo uses **two complementary build paths**. Understanding which to use pre
 | File | Service | GCP trigger |
 |---|---|---|
 | [`cloudbuild.compliance.yaml`](deployment/docker/cloudbuild.compliance.yaml) | `compliance-bridge` | `compliance-bridge-main` — fires on every push to `main` |
+| [`cloudbuild.gateway.yaml`](deployment/docker/cloudbuild.gateway.yaml) | `gateway` | Create a trigger pointing at this file if needed |
 | [`cloudbuild.ui.yaml`](deployment/docker/cloudbuild.ui.yaml) | `agentsight-ui` | Create a trigger pointing at this file if needed |
 
 These files are the **canonical build specification** for their service. They are designed to be attached to GCP Cloud Build triggers and run under a dedicated least-privilege service account (e.g. `compliance-bridge-sa@<project>.iam.gserviceaccount.com`).
 
 Every per-service file enforces:
 - `--no-cache` — prevents stale Docker layer cache from masking dependency changes
-- Dual tagging: `:latest` **and** `:<SHORT_SHA>` — `:latest` is mutable convenience; the SHA tag is the immutable, audit-traceable reference required by NIST RMF and ISO 42001
-- `--all-tags` push — both tags are pushed atomically
+- A single immutable `:<_SHORT_SHA>` tag — no mutable `:latest` tag; the SHA tag is the audit-traceable reference required by NIST RMF and ISO 42001
+- A Binary Authorization attestation step — the pushed digest is signed with the `binauthz-attestor` key in the `cage-signing-<env>` keyring for the `cage-build-attestor-<env>` attestor
 - `machineType: E2_HIGHCPU_8` — consistent build performance
 - `timeout: 1200s` — 20-minute ceiling prevents runaway builds
 - `logging: CLOUD_LOGGING_ONLY` — structured log routing to Cloud Logging
@@ -275,9 +276,9 @@ gcloud builds submit --config=deployment/docker/cloudbuild.ui.yaml \
 
 ### Path B — `scripts/build_images.sh` (full-stack fan-out, pre-deploy)
 
-[`scripts/build_images.sh`](scripts/build_images.sh) builds **all six services in parallel** using ephemeral inline Cloud Build configs that mirror the same standards as Path A (`--no-cache`, dual SHA/latest tags, `E2_HIGHCPU_8`, 20-minute timeout). It captures the short git SHA from `git rev-parse --short HEAD` and passes it as the immutable tag.
+[`scripts/build_images.sh`](scripts/build_images.sh) builds **all first-party services in parallel** (advisor, vLLM streamer, gateway, AgentSight UI, compliance bridge, NeMo Guardrails) using ephemeral inline Cloud Build configs that mirror the same standards as Path A (`--no-cache`, a single SHA tag, Binary Authorization attestation, `E2_HIGHCPU_8`, 20-minute timeout). It captures the short git SHA from `git rev-parse --short HEAD` and passes it as the immutable tag. Set `MIRROR_THIRD_PARTY_IMAGES=true` to also mirror and attest third-party images via `scripts/mirror_and_attest_images.sh`.
 
-[`deploy_all.sh`](deploy_all.sh) calls this script automatically as a pre-build step before every `gcloud-gke` Terraform apply, ensuring images exist before Kubernetes deployments reference them.
+[`deploy_all.sh`](deploy_all.sh) calls this script automatically as a pre-build step before every `gcp-gke` Terraform apply, ensuring images exist before Kubernetes deployments reference them.
 
 **When to use:** Full-stack deploys, CI pre-deploy steps, or when you need all services rebuilt from a clean state.
 
@@ -295,7 +296,7 @@ They are **not in conflict** — they serve different scopes:
 | Trigger | GCP Console push trigger | Developer / `deploy_all.sh` |
 | Scope | One service | All services |
 | Service account | Dedicated least-privilege SA | Caller's identity / Cloud Build default SA |
-| SHA source | Cloud Build `$SHORT_SHA` built-in | `git rev-parse --short HEAD` |
+| SHA source | `_SHORT_SHA` substitution (defaults to `v1`; set it from the trigger) | `git rev-parse --short HEAD` |
 | Use case | Automated CD on `main` push | Full-stack pre-deploy fan-out |
 
 ### Adding a new service
@@ -481,17 +482,18 @@ CAGE provides a domain-agnostic governance kernel (Layer 1) and delegates all do
 
 ### Implementing `GovernanceTierPlugin`
 
-New plugins extending the 8-tier symbolic governor must implement the `GovernanceTierPlugin` protocol. The execution model enforces a rigid 2-phase boundary to guarantee atomicity and prevent partial state mutations.
+New domain tiers must implement the `GovernanceTierPlugin` protocol in [`contracts.py`](src/gateway/governance/contracts.py) and are handed to the kernel in `PluginContribution.tiers` from `CagePlugin.contribute()`; `assemble_governor()` fixes them into the immutable governor. Each tier declares `phase` (1 or 2) and an integer `order`, and runs in `(phase, order, tier_name)` order. Tier numbering follows `TIER_LABELS` in [`proof/model.py`](proof/model.py) (Tier 0.5 FTRA through Tier 7 FRIA). The execution model enforces a rigid 2-phase boundary to guarantee atomicity and prevent partial state mutations.
 
 #### Phase 1: Read-Only Inspection
-Phase 1 tiers (`Tier 0` through `Tier 6b`) must be **strictly read-only**. They may inspect the request, query external systems, execute causal refutations, or require human approval, but they **must not** mutate state.
-- `GovernanceTierPlugin.evaluate()` and `commit()` return `list[Violation]`. An empty list represents allowance; non-empty lists contain structured `Violation` objects. The `SymbolicGovernor` evaluates violations and determines the terminal governance decision.
+Phase 1 tiers (`phase == 1`, e.g. finance's consensus, causal and bounding tiers) must be **strictly read-only**. They may inspect the request, query external systems, execute causal refutations, or require human approval, but they **must not** mutate state.
+- `GovernanceTierPlugin.evaluate()` returns `list[Violation]`. An empty list represents allowance; non-empty lists contain structured `Violation` objects. The `SymbolicGovernor` evaluates violations and determines the terminal governance decision.
 - Rejections in Phase 1 halt the pipeline immediately, ensuring no Phase 2 mutations occur.
 
 #### Phase 2: Atomic Mutation
-Phase 2 tiers (e.g., `Tier 2a` Control Barrier Functions, `Tier 3` Fiscal Limits) perform state mutations.
+Phase 2 tiers (`phase == 2`, e.g. finance's CBF and fiscal tiers) perform state mutations.
 - Phase 2 executes **only after** all Phase 1 tiers have passed.
-- Any state-mutating tier in Phase 2 must provide a **LIFO compensating rollback** mechanism. If a subsequent Phase 2 tier fails, earlier mutations must be reversed cleanly to preserve the Saga transaction boundary.
+- `commit()` returns `(list[Violation], CommitReceipt | None)`; the receipt is non-`None` if and only if state was mutated.
+- `rollback(action, params, receipt)` must undo exactly what the receipt records. On any later failure (including a failed or cancelled seal), the governor's `ReservationScope` rolls back every outstanding receipt in LIFO order.
 
 ### Seam Contracts Interface
 
