@@ -99,6 +99,39 @@ spec:
                   name: compliance-bridge-secrets
                   key: EVIDENCE_KMS_KEY
                   optional: true
+
+            # EvidenceCustodian: reads the gateway's evidence stream on the
+            # governance Redis/Memorystore instance (same URL/db/key as the
+            # gateway), re-verifies the chain, signs per-batch attestations with
+            # EVIDENCE_KMS_KEY and writes batches to the evidence cold store.
+            # The custody cursor lives in "<EVIDENCE_STREAM_KEY>:custody".
+            - name: EVIDENCE_STREAM_ENABLED
+              value: "true"
+            - name: EVIDENCE_STREAM_REDIS_URL
+              value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+            - name: EVIDENCE_STREAM_REDIS_DB
+              value: "1"
+            - name: EVIDENCE_STREAM_KEY
+              value: "cage:evidence:stream"
+            - name: EVIDENCE_CUSTODY_INTERVAL_S
+              value: "60"
+
+            # ClickHouse query-plane sink (src/compliance_bridge/clickhouse_sink.py)
+            - name: CLICKHOUSE_ENABLED
+              value: "true"
+            - name: CLICKHOUSE_HOST
+              value: "clickhouse.${NAMESPACE}.svc.cluster.local"
+            - name: CLICKHOUSE_PORT
+              value: "8123"
+            - name: CLICKHOUSE_DATABASE
+              value: "cage_evidence"
+            - name: CLICKHOUSE_USERNAME
+              value: "default"
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: CLICKHOUSE_PASSWORD
           livenessProbe:
             httpGet:
               path: /health

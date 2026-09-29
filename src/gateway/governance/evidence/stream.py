@@ -23,52 +23,65 @@ Architecture
 ------------
 ::
 
-    GovernanceEventBus.publish()
+    GovernanceEventBus.publish() / routing seal / refusal receipts
         │
-        ├──→ SSE subscribers (existing — UI events)
-        │
-        └──→ EvidenceStreamSink.ingest()
+        └──→ EvidenceStreamSink.ingest() / ingest_sync()      (gateway, L1)
                │
-               ├── SHA-256 hash chain (same algorithm as context_accumulator.py)
-               ├── Optional KMS signing (AsyncBatchSigner integration)
+               ├── PII sanitization, RFC 8785 JCS payload
+               ├── SHA-256 hash chain (cage-audit/3.0 header + payload)
+               ├── compare-and-append Lua script: XADD only if the stream
+               │   head is still the head this record was sealed against,
+               │   so replicas sharing the stream cannot fork the chain
                │
-               └──→ Redis Streams (db=1, noeviction policy)
+               └──→ Redis Stream on the governance instance (noeviction)
                       │
-                      └──→ Cold Store Flush Daemon (background, 60s interval)
+                      └──→ EvidenceCustodian                   (compliance bridge, L3)
+                             re-verifies the chain, signs a batch attestation
+                             with EVIDENCE_KMS_KEY, writes WORM batches, and
+                             advances a durable cursor only after the write.
 
-Durability strategy
--------------------
-Redis Streams (db=1, noeviction) provides sub-millisecond ingestion speed.
-The Cold Store Flush Daemon asynchronously persists hash-chained Redis logs to
-the configured EvidenceColdStore (GCS, S3, or Null) every 60 seconds.
+Responsibilities
+----------------
+This module is the **producer** only. It holds no signing key and no cold-store
+credentials: signing and cold-store custody live in
+``src/compliance_bridge/evidence_custodian.py``. Keeping the evidence key out of
+the kernel workload preserves the per-workload key partition, and the
+custodian's independent re-verification means a compromised producer cannot
+get a broken chain signed.
 
-This gives: real-time processing speed at the edge + cold, immutable
-compliance storage at rest.
+Wire format (Redis Stream entries, ``cage-audit/3.0``)
+------------------------------------------------------
+Each Redis Stream entry is a flat dict of strings (Redis Streams limitation)::
 
-Wire format (Redis Stream entries)
-----------------------------------
-Each Redis Stream entry is a flat dict (Redis Streams limitation):
-  {
-    "schema":        "cage-evidence-stream/1.0",
-    "sequence":      "42",
-    "event_type":    "AUDIT_FINDING",
-    "control_id":    "A.5.3",
-    "prev_hash":     "<sha256 hex>",
-    "record_hash":   "<sha256 hex>",
-    "payload_json":  "<JSON-serialized event payload>",
-    "timestamp_utc": "2026-05-29T14:00:00Z",
-    "kms_signature": ""  // populated async when KMS signing enabled
-  }
+    {
+      "schema":           "cage-audit/3.0",
+      "chain_id":         "<uuid4>",
+      "sequence":         "42",
+      "timestamp_utc":    "2026-05-29T14:00:00+00:00",
+      "event_type":       "GOVERNANCE_DECISION",
+      "control_id":       "A.5.3",
+      "trace_id":         "<32 hex>",
+      "hash_algorithm":   "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class":   "GOVERNANCE",
+      "prev_hash":        "<sha256 hex, empty at genesis>",
+      "record_hash":      "<sha256 hex>",
+      "payload_json":     "<JCS-canonical payload>",
+      # sparse, only when present (inside the hash):
+      "classification_reason", "narrowing_applied", "pause_token"
+    }
 
 Environment variables
 ---------------------
-  EVIDENCE_STREAM_ENABLED           — "true" to enable (default: "false")
-  EVIDENCE_STREAM_REDIS_URL         — Redis URL (default: uses REDIS_URL)
-  EVIDENCE_STREAM_REDIS_DB          — Redis DB number (default: 1)
-  EVIDENCE_STREAM_KEY               — Redis Stream key name (default: "cage:evidence:stream")
-  EVIDENCE_STREAM_MAX_LEN           — Max stream entries (default: 100000)
-  EVIDENCE_COLD_STORE_FLUSH_SECONDS — Cold store flush interval (default: 60)
-  EVIDENCE_STREAM_KMS_SIGN          — "true" for per-record KMS signing
+  EVIDENCE_STREAM_ENABLED    — "true" to enable (default: "false")
+  EVIDENCE_STREAM_REDIS_URL  — Redis URL (default: uses REDIS_URL)
+  EVIDENCE_STREAM_REDIS_DB   — Redis DB number (default: 1)
+  EVIDENCE_STREAM_KEY        — Redis Stream key name (default: "cage:evidence:stream")
+  EVIDENCE_STREAM_MAX_LEN    — Exact stream cap (default: 100000). The
+                               custodian reports records trimmed before custody
+                               as a gap.
+  EVIDENCE_CHAIN_BLOCKING    — "true" (default): seals wait for the XADD ack
+  EVIDENCE_COMMIT_TIMEOUT_S  — Blocking commit timeout (default: 5.0)
 """
 
 from __future__ import annotations
@@ -82,10 +95,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from src.gateway.governance.evidence.cold_store import EvidenceColdStore
+from typing import Any
 
 from opentelemetry import trace
 
@@ -124,8 +134,6 @@ tracer = trace.get_tracer(__name__)
 
 # Prometheus metrics (lazy import to avoid dependency in tests)
 _PROM_AVAILABLE = False
-EVIDENCE_COLD_STORE_WRITES_TOTAL = None
-EVIDENCE_COLD_STORE_AVAILABLE = None
 
 try:
     from prometheus_client import REGISTRY, Counter, Gauge, Histogram
@@ -175,25 +183,13 @@ try:
         )  # type: ignore[assignment]
 
     try:
-        EVIDENCE_COLD_STORE_WRITES_TOTAL = Counter(
-            "cage_evidence_cold_store_writes_total",
-            "Total cold store write operations",
-            ["backend", "outcome"],
+        EVIDENCE_APPEND_CONFLICTS_TOTAL = Counter(
+            "cage_evidence_append_conflicts_total",
+            "Compare-and-append attempts that lost the chain head to another writer",
         )
     except ValueError:
-        EVIDENCE_COLD_STORE_WRITES_TOTAL = REGISTRY._names_to_collectors.get(
-            "cage_evidence_cold_store_writes_total"
-        )  # type: ignore[assignment]
-
-    try:
-        EVIDENCE_COLD_STORE_AVAILABLE = Gauge(
-            "cage_evidence_cold_store_available",
-            "Cold store backend availability (1=available, 0=unavailable)",
-            ["backend"],
-        )
-    except ValueError:
-        EVIDENCE_COLD_STORE_AVAILABLE = REGISTRY._names_to_collectors.get(
-            "cage_evidence_cold_store_available"
+        EVIDENCE_APPEND_CONFLICTS_TOTAL = REGISTRY._names_to_collectors.get(
+            "cage_evidence_append_conflicts_total"
         )  # type: ignore[assignment]
 
     _PROM_AVAILABLE = True
@@ -403,21 +399,6 @@ class VerifyResult:
     error: str | None = None
 
 
-def _get_signing_algorithm() -> str:
-    """Return the active signing algorithm identifier for evidence stream tagging.
-
-    Returns 'KMS_ASYMMETRIC', 'HMAC_SHA256_FALLBACK', or 'UNKNOWN'.
-    Wrapped in try/except to handle cases where the gateway package is not
-    available in the compliance bridge's import context.
-    """
-    try:
-        from src.gateway.governance.kms_signer import get_governance_signer
-
-        return get_governance_signer().signing_algorithm
-    except Exception:
-        return "UNKNOWN"
-
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -430,10 +411,6 @@ _REDIS_URL: str = os.environ.get(
 _REDIS_DB: int = int(os.environ.get("EVIDENCE_STREAM_REDIS_DB", "1"))
 _STREAM_KEY: str = os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream")
 _MAX_LEN: int = int(os.environ.get("EVIDENCE_STREAM_MAX_LEN", "100000"))
-_COLD_STORE_FLUSH_SECONDS: int = int(
-    os.environ.get("EVIDENCE_COLD_STORE_FLUSH_SECONDS", "60")
-)
-_KMS_SIGN: bool = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
 
 # EVIDENCE_CHAIN_BLOCKING: When "true", seal issuance blocks until evidence commit
 # succeeds. When "false", fire-and-forget behavior is used (lower latency, weaker guarantee).
@@ -481,59 +458,44 @@ _EVIDENCE_CLASS = "GOVERNANCE"
 
 
 def validate_evidence_stream_preconditions() -> None:
-    """Validates evidence stream configuration at startup.
+    """Validate the gateway's evidence-stream configuration at startup.
 
-    B4 Enhancement: Extended validation with three checks:
+    The gateway is the evidence *producer*: it hash-chains records into the
+    Redis Stream. Signing and WORM custody belong to the compliance bridge
+    (``src/compliance_bridge/evidence_custodian.py``), which validates its own
+    preconditions. This function therefore checks only producer-side config:
 
-    1. **Contradictory config (existing)**: Raises ConfigurationError if
-       EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
-       This is an invalid configuration because the blocking gate will
-       always fail when the evidence stream is disabled.
-
-    2. **Production non-blocking (new)**: When CAGE_ENV=prod and
-       EVIDENCE_CHAIN_BLOCKING=false, logs a critical warning and fails
-       startup unless CAGE_ALLOW_NONBLOCKING_PROD=true is set. This prevents
-       operators from accidentally running production without evidence
-       guarantees.
-
-    3. **Stream disabled warning (new)**: When EVIDENCE_STREAM_ENABLED=false
-       in any environment, logs a warning that evidence chain is not active.
-       This is informational - does not fail startup.
-
-    This function should be called during service startup (gateway and
-    compliance bridge) to fail fast rather than at runtime.
-
-    Environment Variables:
-        EVIDENCE_STREAM_ENABLED: Enable the evidence stream (default: "false")
-        EVIDENCE_CHAIN_BLOCKING: Block seal issuance until evidence commit
-            succeeds (default: "true")
-        CAGE_ENV: Deployment environment ("dev", "staging", "prod")
-        CAGE_ALLOW_NONBLOCKING_PROD: Override to allow non-blocking mode in
-            production (default: "false")
+    1. **Contradictory config**: ``EVIDENCE_CHAIN_BLOCKING=true`` with
+       ``EVIDENCE_STREAM_ENABLED=false`` is always an error, because the
+       blocking gate could never succeed.
+    2. **Non-blocking under an enforcing posture**: when
+       :func:`~src.gateway.governance.env_posture.is_enforcing` is true and
+       ``EVIDENCE_CHAIN_BLOCKING=false``, startup fails unless
+       ``CAGE_ALLOW_NONBLOCKING_PROD=true`` acknowledges the override.
+    3. **Stream disabled under an enforcing posture**: an enforcing posture
+       with ``EVIDENCE_STREAM_ENABLED=false`` fails startup; refusals and
+       pause receipts would otherwise be silently dropped. Permissive
+       postures (dev/test/ci) only log a warning.
 
     Raises:
-        ConfigurationError: If EVIDENCE_CHAIN_BLOCKING=true and
-            EVIDENCE_STREAM_ENABLED=false (contradictory config).
-        ConfigurationError: If CAGE_ENV=prod and EVIDENCE_CHAIN_BLOCKING=false
-            without CAGE_ALLOW_NONBLOCKING_PROD=true (unsafe production config).
+        ConfigurationError: On any of the failing conditions above.
     """
-    # Read configuration from environment
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
     stream_enabled = (
         os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
     )
-    # Note: Default matches module-level _EVIDENCE_CHAIN_BLOCKING (line ~320)
+    # Default matches module-level _EVIDENCE_CHAIN_BLOCKING.
     blocking_enabled = (
         os.environ.get("EVIDENCE_CHAIN_BLOCKING", "true").lower() == "true"
     )
-    cage_env = os.environ.get("CAGE_ENV", "dev").lower()
+    posture = resolve_posture()
+    enforcing = is_enforcing(posture)
     allow_nonblocking_prod = (
         os.environ.get("CAGE_ALLOW_NONBLOCKING_PROD", "false").lower() == "true"
     )
 
-    # -------------------------------------------------------------------------
-    # Check 1: Contradictory config (blocking=true but stream=false)
-    # This is always an error - the blocking gate will always fail.
-    # -------------------------------------------------------------------------
+    # Check 1: contradictory config.
     if blocking_enabled and not stream_enabled:
         raise ConfigurationError(
             "EVIDENCE_CHAIN_BLOCKING=true requires EVIDENCE_STREAM_ENABLED=true. "
@@ -542,86 +504,54 @@ def validate_evidence_stream_preconditions() -> None:
             "Either enable the evidence stream or disable blocking mode."
         )
 
-    # -------------------------------------------------------------------------
-    # Check 2: Production non-blocking (B4 Enhancement)
-    # When CAGE_ENV=prod and blocking is disabled, seals are issued regardless
-    # of whether evidence writes succeed. This is dangerous in production.
-    # -------------------------------------------------------------------------
-    if cage_env == "prod" and not blocking_enabled:
+    # Check 2: non-blocking mode under an enforcing posture.
+    if enforcing and not blocking_enabled:
         logger.critical(
-            "[EvidenceStream] CRITICAL: EVIDENCE_CHAIN_BLOCKING=false in production! "
-            "Seals will be issued without evidence durability guarantee. "
-            "This violates compliance requirements for audit trail integrity. "
-            "Set CAGE_ALLOW_NONBLOCKING_PROD=true to acknowledge and override.",
-            extra={"env": cage_env, "blocking_enabled": blocking_enabled},
+            "[EvidenceStream] CRITICAL: EVIDENCE_CHAIN_BLOCKING=false under "
+            "enforcing posture %s. Seals would be issued without an evidence "
+            "durability guarantee.",
+            posture.value,
+            extra={"env": posture.value, "blocking_enabled": blocking_enabled},
         )
-
-        # Emit Prometheus metric for monitoring/alerting
         if _PROM_AVAILABLE and EVIDENCE_BLOCKING_DISABLED is not None:
-            EVIDENCE_BLOCKING_DISABLED.labels(env=cage_env).set(1)
+            EVIDENCE_BLOCKING_DISABLED.labels(env=posture.value).set(1)
 
-        # Fail startup unless explicitly overridden
         if not allow_nonblocking_prod:
             raise ConfigurationError(
-                "Non-blocking evidence mode is forbidden in production. "
-                "EVIDENCE_CHAIN_BLOCKING=false means seals are issued without "
-                "waiting for evidence to be durably committed, which violates "
-                "audit trail integrity requirements. "
-                "Set CAGE_ALLOW_NONBLOCKING_PROD=true to explicitly acknowledge "
-                "and override this safety check."
+                "Non-blocking evidence mode is forbidden under an enforcing "
+                f"posture ({posture.value}). EVIDENCE_CHAIN_BLOCKING=false means "
+                "seals are issued without waiting for evidence to be durably "
+                "committed. Set CAGE_ALLOW_NONBLOCKING_PROD=true to explicitly "
+                "acknowledge and override this safety check."
             )
-        else:
-            logger.warning(
-                "[EvidenceStream] CAGE_ALLOW_NONBLOCKING_PROD=true override active. "
-                "Production is running without evidence blocking. "
-                "Audit trail integrity is NOT guaranteed.",
-                extra={"env": cage_env},
-            )
-
-    # -------------------------------------------------------------------------
-    # Check 3: Production KMS signing (A4)
-    # When CAGE_ENV=prod and the stream is enabled, require KMS signing.
-    # An unsigned evidence chain in production is an integrity violation.
-    # -------------------------------------------------------------------------
-    kms_sign_enabled = (
-        os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
-    )
-    if cage_env == "prod" and stream_enabled and not kms_sign_enabled:
-        raise ConfigurationError(
-            "KMS signing is required in production. "
-            "EVIDENCE_STREAM_KMS_SIGN=false means evidence records are not "
-            "individually signed, which violates audit trail integrity requirements. "
-            f"Current configuration: CAGE_ENV={cage_env}, "
-            f"EVIDENCE_STREAM_ENABLED={stream_enabled}, "
-            f"EVIDENCE_STREAM_KMS_SIGN={kms_sign_enabled}. "
-            "Set EVIDENCE_STREAM_KMS_SIGN=true to enable per-record signing."
-        )
-
-    # -------------------------------------------------------------------------
-    # Check 4: Stream disabled warning (B4 Enhancement)
-    # When evidence stream is disabled, log a warning for visibility.
-    # This is informational and does not fail startup.
-    # -------------------------------------------------------------------------
-    if not stream_enabled:
         logger.warning(
-            "[EvidenceStream] EVIDENCE_STREAM_ENABLED=false - evidence chain is not active. "
-            "Governance decisions will NOT be hash-chained or durably persisted. "
-            "This is acceptable for local development but not recommended for "
-            "staging or production environments.",
-            extra={"env": cage_env, "stream_enabled": stream_enabled},
+            "[EvidenceStream] CAGE_ALLOW_NONBLOCKING_PROD=true override active. "
+            "Audit trail integrity is NOT guaranteed.",
+            extra={"env": posture.value},
         )
 
-        # Emit Prometheus metric for monitoring
+    # Check 3: stream disabled.
+    if not stream_enabled:
         if _PROM_AVAILABLE and EVIDENCE_STREAM_DISABLED is not None:
-            EVIDENCE_STREAM_DISABLED.labels(env=cage_env).set(1)
+            EVIDENCE_STREAM_DISABLED.labels(env=posture.value).set(1)
+        if enforcing:
+            raise ConfigurationError(
+                "EVIDENCE_STREAM_ENABLED=false is forbidden under an enforcing "
+                f"posture ({posture.value}): refusal and pause receipts would "
+                "be dropped instead of entering the tamper-evident chain."
+            )
+        logger.warning(
+            "[EvidenceStream] EVIDENCE_STREAM_ENABLED=false - evidence chain is "
+            "not active. Acceptable only for local development.",
+            extra={"env": posture.value, "stream_enabled": stream_enabled},
+        )
 
-    # Log final configuration state
     logger.info(
         "[EvidenceStream] Precondition check passed: "
-        "EVIDENCE_CHAIN_BLOCKING=%s, EVIDENCE_STREAM_ENABLED=%s, CAGE_ENV=%s",
+        "EVIDENCE_CHAIN_BLOCKING=%s, EVIDENCE_STREAM_ENABLED=%s, posture=%s",
         blocking_enabled,
         stream_enabled,
-        cage_env,
+        posture.value,
     )
 
 
@@ -912,6 +842,56 @@ def verify_record(
 
 
 # ---------------------------------------------------------------------------
+# Compare-and-append
+# ---------------------------------------------------------------------------
+
+# The head check and the XADD run atomically inside Redis. Each gateway
+# replica keeps its chain head in memory, and HA deployments run more than
+# one replica against the same stream; a plain XADD would let two replicas
+# seal against the same head and fork the chain. The script appends only if
+# the stream's newest entry is still (chain_id, sequence - 1, prev_hash), or
+# the stream is empty and the record is a genesis record.
+#
+# KEYS[1] = stream key
+# ARGV[1] = chain_id, ARGV[2] = sequence, ARGV[3] = prev_hash,
+# ARGV[4] = MAXLEN, ARGV[5..] = flattened entry field/value pairs.
+_APPEND_SCRIPT = """
+local head = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+if #head == 0 then
+  if ARGV[2] ~= '0' or ARGV[3] ~= '' then
+    return {'CONFLICT'}
+  end
+else
+  local fields = head[1][2]
+  local h = {}
+  for i = 1, #fields, 2 do
+    h[fields[i]] = fields[i + 1]
+  end
+  if h['chain_id'] ~= ARGV[1] or h['record_hash'] ~= ARGV[3]
+      or tonumber(h['sequence']) + 1 ~= tonumber(ARGV[2]) then
+    return {'CONFLICT'}
+  end
+end
+local id = redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[4], '*', unpack(ARGV, 5))
+return {'OK', id}
+"""
+
+# Bound on re-seal attempts when another writer keeps winning the head.
+_MAX_APPEND_ATTEMPTS = 8
+
+
+@dataclass(frozen=True)
+class _AppendedRecord:
+    """A record Redis has acknowledged, with the chain position it took."""
+
+    entry: dict[str, str]
+    record_hash: str
+    msg_id: str
+    sequence: int
+    timestamp: datetime
+
+
+# ---------------------------------------------------------------------------
 # EvidenceStreamSink — the core streaming sink
 # ---------------------------------------------------------------------------
 
@@ -940,15 +920,11 @@ class EvidenceStreamSink:
         redis_db: int = _REDIS_DB,
         stream_key: str = _STREAM_KEY,
         max_len: int = _MAX_LEN,
-        kms_sign: bool = _KMS_SIGN,
-        cold_store: EvidenceColdStore | None = None,
     ) -> None:
         self._redis_url = redis_url
         self._redis_db = redis_db
         self._stream_key = stream_key
         self._max_len = max_len
-        self._kms_sign = kms_sign
-        self._cold_store = cold_store
 
         self._redis = None  # Lazy-loaded redis.asyncio client
         # Chain state is NOT seeded here. Seeding genesis in __init__ meant
@@ -961,27 +937,25 @@ class EvidenceStreamSink:
         self._sequence: int = 0
         self._chain_restored = False
         self._running = False
-        self._flush_task: asyncio.Task | None = None
         self._chain_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        """Connect to Redis and start the cold store flush daemon."""
+        """Connect to Redis and restore chain state.
+
+        The sink is a producer only. Signing and WORM custody of the stream
+        are the compliance bridge's job (``EvidenceCustodian``).
+        """
         if self._running:
             return
 
         try:
-            import redis.asyncio as aioredis
+            from src.gateway.infrastructure.redis_client import build_async_redis
 
-            self._redis = aioredis.from_url(  # type: ignore[assignment]
-                self._redis_url,
-                db=self._redis_db,
-                decode_responses=True,
-            )
+            self._redis = build_async_redis(self._redis_url, db=self._redis_db)
             # Verify connectivity
             await self._redis.ping()  # type: ignore[attr-defined]
             logger.info(
-                "[EvidenceStream] Connected to Redis: %s db=%d stream=%s",
-                self._redis_url,
+                "[EvidenceStream] Connected to Redis: db=%d stream=%s",
                 self._redis_db,
                 self._stream_key,
             )
@@ -1007,41 +981,15 @@ class EvidenceStreamSink:
             raise
 
         self._running = True
-
-        # Resolve cold store via factory if not injected
-        if self._cold_store is None:
-            from src.gateway.governance.evidence.factory import get_cold_store
-
-            self._cold_store = get_cold_store()
-
-        # Update cold store availability metric
-        if _PROM_AVAILABLE and EVIDENCE_COLD_STORE_AVAILABLE is not None:
-            health = self._cold_store.health()
-            EVIDENCE_COLD_STORE_AVAILABLE.labels(
-                backend=self._cold_store.backend_id
-            ).set(1 if health.available else 0)
-
-        # Start cold store flush daemon
-        self._flush_task = asyncio.create_task(
-            self._cold_flush_loop(),
-            name="evidence-cold-flush",
-        )
-
         logger.info("[EvidenceStream] Started.")
 
     async def stop(self) -> None:
-        """Stop the evidence stream and flush remaining records."""
+        """Stop the evidence stream and close the Redis connection."""
         self._running = False
-
-        if self._flush_task and not self._flush_task.done():
-            self._flush_task.cancel()
-            try:
-                await self._flush_task
-            except asyncio.CancelledError:
-                pass
 
         if self._redis:
             await self._redis.aclose()
+            self._redis = None
 
         logger.info(
             "[EvidenceStream] Stopped. Total records: %d",
@@ -1165,9 +1113,8 @@ class EvidenceStreamSink:
         """Build one ``cage-audit/3.0`` wire entry and its record hash.
 
         Callers must hold ``self._chain_lock`` and must have restored chain
-        state first. This does **not** advance the chain: ``ingest()`` advances
-        eagerly while ``_ingest_with_result()`` advances only after Redis has
-        acknowledged the write, and that difference is theirs to keep.
+        state first. This does **not** advance the chain: ``_append()`` does
+        that, and only after Redis has acknowledged the write.
 
         Every field here is a string because Redis Streams store nothing else.
 
@@ -1226,91 +1173,48 @@ class EvidenceStreamSink:
         return entry, record_hash
 
     async def ingest(self, event: dict) -> str | None:
-        """Ingest a governance event into the evidence stream.
+        """Ingest a governance event into the evidence stream (best effort).
 
-        The event is hash-chained, optionally KMS-signed, and persisted
-        to Redis Streams.
-
-        This is the fire-and-forget path: it advances chain state *before* the
-        Redis write, so a failed write leaves a sequence number consumed. Use
-        ``ingest_sync()`` wherever the commit must gate a downstream decision.
+        The event is hash-chained and appended to the Redis Stream with a
+        compare-and-append (see :meth:`_append`). Chain state only advances
+        after Redis acknowledges the write, so a failed write never consumes
+        a sequence number or forks the chain. Use ``ingest_sync()`` wherever
+        the commit must gate a downstream decision.
 
         Args:
             event: GovernanceEvent dict from the SSE event bus.
 
         Returns:
-            The Redis Stream message ID, or None if Redis is unavailable.
+            The Redis Stream message ID, or None if Redis is unavailable or
+            the write failed.
 
         Raises:
-            EvidenceChainUnavailableError: Chain state could not be restored.
+            EvidenceChainUnavailableError: Chain state could not be restored,
+                or the head stayed contended for every append attempt.
                 Emitting into an unrestored chain would fork it, so this fails
                 closed rather than returning None.
         """
         if self._redis is None:
             return None
 
-        # Wire PIISanitizer into the evidence path before the hash is computed.
-        # This prevents un-verifiable records if the sink applies masking later.
-        from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
-
-        pii = _get_pii_sanitizer()
-
-        # PII sanitization mutates the event in place or returns a new dict?
-        # sanitize_dict returns a new dict. We only want to sanitize the 'payload' field
-        # (and possibly 'tool_input', etc, but sanitize_dict is safe on the whole event)
-        sanitized_event = pii.sanitize_dict(event)
-
-        # v2.0: Migrated to RFC 8785 JCS with pre-normalization
-        normalized_event = _normalize_for_jcs(sanitized_event)
-        payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
-
-        event_type = event.get("type", "UNKNOWN")
-        control_id = event.get("controlId", "")
-
-        async with self._chain_lock:
-            await self._ensure_chain_restored()
-
-            entry, record_hash = self._seal_record(
-                event=event,
-                payload_json=payload_json,
-                event_type=event_type,
-                control_id=control_id,
-                timestamp=datetime.now(tz=timezone.utc),
-            )
-
-            # Only include KMS signature fields when signing is enabled
-            if self._kms_sign:
-                entry["kms_signature"] = ""
-                entry["kms_signature_algorithm"] = _get_signing_algorithm()
-
-            # Advance chain state
-            self._prev_hash = record_hash
-            self._sequence += 1
-
-        # Optional KMS signing (async, non-blocking)
-        if self._kms_sign:
-            self._enqueue_signing(entry)
-
-        # Persist to Redis Stream
         try:
-            msg_id = await self._redis.xadd(
-                self._stream_key,
-                entry,
-                maxlen=self._max_len,
-            )
-            logger.debug(
-                "[EvidenceStream] Ingested: seq=%s hash=%s… msg_id=%s",
-                entry["sequence"],
-                record_hash[:16],
-                msg_id,
-            )
-            return msg_id
+            appended = await self._append(event)
+        except EvidenceChainUnavailableError:
+            raise
         except Exception as exc:
             logger.error(
                 "[EvidenceStream] Failed to write to Redis Stream: %s",
                 exc,
             )
             return None
+
+        logger.debug(
+            "[EvidenceStream] Ingested: seq=%d hash=%s… msg_id=%s",
+            appended.sequence,
+            appended.record_hash[:16],
+            appended.msg_id,
+        )
+        return appended.msg_id
 
     async def ingest_sync(
         self,
@@ -1442,21 +1346,73 @@ class EvidenceStreamSink:
                 raise EvidenceChainUnavailableError(error_msg, exc) from exc
 
     async def _ingest_with_result(self, event: dict[str, Any]) -> EvidenceCommitResult:
-        """Internal helper that performs ingest and returns structured result.
+        """Append ``event`` and return a structured commit proof.
 
-        This method is used by ``ingest_sync()`` to get detailed commit information
-        including the hash and sequence number for the commit proof.
+        Used by ``ingest_sync()``. A Redis write failure yields
+        ``success=False``; chain state is untouched in that case.
         """
-        # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
+        if self._redis is None:
+            logger.error("[EvidenceStream] Redis not connected in _ingest_with_result")
+            return EvidenceCommitResult(
+                success=False,
+                evidence_id="",
+                commit_timestamp=datetime.now(tz=timezone.utc),
+                hash="",
+                sequence=self._sequence,
+            )
+
+        try:
+            appended = await self._append(event)
+        except EvidenceChainUnavailableError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "[EvidenceStream] Redis write failed in _ingest_with_result: %s",
+                exc,
+            )
+            return EvidenceCommitResult(
+                success=False,
+                evidence_id="",
+                commit_timestamp=datetime.now(tz=timezone.utc),
+                hash="",
+                sequence=self._sequence,
+            )
+
+        logger.debug(
+            "[EvidenceStream] _ingest_with_result: seq=%d hash=%s… msg_id=%s",
+            appended.sequence,
+            appended.record_hash[:16],
+            appended.msg_id,
+        )
+        return EvidenceCommitResult(
+            success=True,
+            evidence_id=appended.msg_id,
+            commit_timestamp=appended.timestamp,
+            hash=appended.record_hash,
+            sequence=appended.sequence,
+        )
+
+    async def _append(self, event: dict[str, Any]) -> _AppendedRecord:
+        """Hash-chain ``event`` and compare-and-append it to the stream.
+
+        The head check and the ``XADD`` run as one Lua script
+        (:data:`_APPEND_SCRIPT`), so the record lands only if the stream's
+        newest entry is still the head this process sealed against. On a
+        conflict (another gateway replica appended first) the head is
+        re-read and the record re-sealed, up to
+        :data:`_MAX_APPEND_ATTEMPTS` times. Chain state advances only after
+        Redis acknowledges the write.
+
+        Raises:
+            EvidenceChainUnavailableError: Chain state could not be restored,
+                or every attempt lost the race for the head.
+            Exception: Whatever the Redis client raised for the write itself.
+        """
         # Wire PIISanitizer into the evidence path before the hash is computed.
         # This prevents un-verifiable records if the sink applies masking later.
         from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
 
-        pii = _get_pii_sanitizer()
-
-        sanitized_event = pii.sanitize_dict(event)
-
-        # v2.0: Migrated to RFC 8785 JCS with pre-normalization
+        sanitized_event = _get_pii_sanitizer().sanitize_dict(event)
         normalized_event = _normalize_for_jcs(sanitized_event)
         payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
@@ -1464,196 +1420,55 @@ class EvidenceStreamSink:
         control_id = event.get("controlId", "")
 
         async with self._chain_lock:
-            await self._ensure_chain_restored()
+            for _attempt in range(_MAX_APPEND_ATTEMPTS):
+                await self._ensure_chain_restored()
 
-            current_sequence = self._sequence
-            commit_timestamp = datetime.now(tz=timezone.utc)
-
-            entry, record_hash = self._seal_record(
-                event=event,
-                payload_json=payload_json,
-                event_type=event_type,
-                control_id=control_id,
-                timestamp=commit_timestamp,
-            )
-
-            # Only include KMS signature fields when signing is enabled
-            if _KMS_SIGN:
-                entry["kms_signature"] = ""
-                entry["kms_signature_algorithm"] = _get_signing_algorithm()
-
-            # Persist to Redis Stream BEFORE advancing chain state
-            # This ensures we don't advance the chain if Redis write fails
-            if self._redis is None:
-                logger.error(
-                    "[EvidenceStream] Redis not connected in _ingest_with_result"
-                )
-                return EvidenceCommitResult(
-                    success=False,
-                    evidence_id="",
-                    commit_timestamp=commit_timestamp,
-                    hash=record_hash,
-                    sequence=current_sequence,
+                sequence = self._sequence
+                timestamp = datetime.now(tz=timezone.utc)
+                entry, record_hash = self._seal_record(
+                    event=event,
+                    payload_json=payload_json,
+                    event_type=event_type,
+                    control_id=control_id,
+                    timestamp=timestamp,
                 )
 
-            try:
-                msg_id = await self._redis.xadd(
-                    self._stream_key,
-                    entry,
-                    maxlen=self._max_len,
+                args: list[str] = [
+                    self._chain_id,
+                    str(sequence),
+                    self._prev_hash,
+                    str(self._max_len),
+                ]
+                for name, value in entry.items():
+                    args.extend((name, value))
+
+                result = await self._redis.eval(  # type: ignore[attr-defined]
+                    _APPEND_SCRIPT, 1, self._stream_key, *args
                 )
-            except Exception as exc:
-                # Don't advance chain state — commit failed
-                logger.error(
-                    "[EvidenceStream] Redis write failed in _ingest_with_result: %s",
-                    exc,
-                )
-                return EvidenceCommitResult(
-                    success=False,
-                    evidence_id="",
-                    commit_timestamp=commit_timestamp,
-                    hash=record_hash,
-                    sequence=current_sequence,
-                )
-
-            # Advance chain state only after successful Redis write
-            self._prev_hash = record_hash
-            self._sequence += 1
-
-        # Optional KMS signing (async, non-blocking) — best effort
-        if self._kms_sign:
-            self._enqueue_signing(entry)
-
-        logger.debug(
-            "[EvidenceStream] _ingest_with_result: seq=%s hash=%s… msg_id=%s",
-            entry["sequence"],
-            record_hash[:16],
-            msg_id,
-        )
-
-        return EvidenceCommitResult(
-            success=True,
-            evidence_id=str(msg_id),
-            commit_timestamp=commit_timestamp,
-            hash=record_hash,
-            sequence=current_sequence,
-        )
-
-    def _enqueue_signing(self, entry: dict) -> None:
-        """Enqueue an evidence stream entry for async KMS signing."""
-        try:
-            from .factory import get_evidence_signer
-
-            def _on_signed(record_hash: str, signature: str) -> None:
-                entry["kms_signature"] = signature
-
-            signer = get_evidence_signer()
-            signer.enqueue(
-                record_hash=entry["record_hash"],
-                payload=json.loads(entry["payload_json"]),
-                callback=_on_signed,
-            )
-        except Exception as exc:
-            # If the factory raises ValueError (unsupported backend or missing config),
-            # let it crash rather than silently bypassing non-repudiation.
-            raise RuntimeError(f"KMS evidence signing enqueue failed: {exc}") from exc
-
-    async def _cold_flush_loop(self) -> None:
-        """Background daemon that flushes Redis Stream entries to cold store.
-
-        Runs every ``_COLD_STORE_FLUSH_SECONDS`` seconds. Reads all entries since
-        the last flush and writes them as a hash-chained NDJSON blob to
-        the configured EvidenceColdStore.
-        """
-        last_id = "0-0"
-
-        while self._running:
-            try:
-                await asyncio.sleep(_COLD_STORE_FLUSH_SECONDS)
-
-                if self._redis is None:
-                    continue
-
-                # Read new entries since last flush
-                entries = await self._redis.xrange(
-                    self._stream_key,
-                    min=f"({last_id}",  # exclusive
-                    count=5000,
-                )
-
-                if not entries:
-                    continue
-
-                # Build NDJSON payload
-                lines = []
-                for msg_id, fields in entries:
-                    lines.append(json.dumps(fields, default=str))
-                    last_id = msg_id
-
-                ndjson_content = "\n".join(lines) + "\n"
-                ndjson_bytes = ndjson_content.encode("utf-8")
-
-                if self._cold_store is None:
-                    from src.gateway.governance.evidence.factory import get_cold_store
-
-                    self._cold_store = get_cold_store()
-
-                batch_key = (
-                    f"evidence-stream/"
-                    f"{datetime.now(tz=timezone.utc).strftime('%Y/%m/%d')}/"
-                    f"batch-{last_id.replace(':', '-')}.ndjson"
-                )
-
-                receipt, created = await self._cold_store.put_if_absent(
-                    key=batch_key,
-                    content=ndjson_bytes,
-                    metadata={
-                        "content-type": "application/x-ndjson",
-                        "entries-count": str(len(entries)),
-                        "last-id": last_id,
-                    },
-                )
-
-                if _PROM_AVAILABLE and EVIDENCE_COLD_STORE_WRITES_TOTAL is not None:
-                    EVIDENCE_COLD_STORE_WRITES_TOTAL.labels(
-                        backend=self._cold_store.backend_id,
-                        outcome="success",
-                    ).inc()
-
-                if created:
-                    logger.info(
-                        "[EvidenceStream] Cold store flush: %d entries → %s (backend=%s, last_id=%s, sha256=%s…)",
-                        len(entries),
-                        receipt.uri,
-                        receipt.backend_id,
-                        last_id,
-                        receipt.content_sha256[:12],
-                    )
-                else:
-                    logger.debug(
-                        "[EvidenceStream] Cold store batch already exists (idempotent skip): %s (sha256=%s…, last_id=%s)",
-                        receipt.uri,
-                        receipt.content_sha256[:12],
-                        last_id,
+                if result and result[0] == "OK":
+                    self._prev_hash = record_hash
+                    self._sequence += 1
+                    return _AppendedRecord(
+                        entry=entry,
+                        record_hash=record_hash,
+                        msg_id=str(result[1]),
+                        sequence=sequence,
+                        timestamp=timestamp,
                     )
 
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                if (
-                    self._cold_store
-                    and _PROM_AVAILABLE
-                    and EVIDENCE_COLD_STORE_WRITES_TOTAL is not None
-                ):
-                    EVIDENCE_COLD_STORE_WRITES_TOTAL.labels(
-                        backend=self._cold_store.backend_id,
-                        outcome="error",
-                    ).inc()
-                logger.error("[EvidenceStream] Cold store flush error: %s", exc)
-                try:
-                    await asyncio.sleep(5.0)
-                except asyncio.CancelledError:
-                    break
+                # Another writer moved the head. Re-read it and re-seal.
+                logger.info(
+                    "[EvidenceStream] Chain head moved under seq=%d; re-reading.",
+                    sequence,
+                )
+                if _PROM_AVAILABLE and EVIDENCE_APPEND_CONFLICTS_TOTAL is not None:
+                    EVIDENCE_APPEND_CONFLICTS_TOTAL.inc()
+                self._chain_restored = False
+
+        raise EvidenceChainUnavailableError(
+            f"Evidence append lost the chain head race {_MAX_APPEND_ATTEMPTS} "
+            f"times on {self._stream_key}; refusing to fork the chain."
+        )
 
     @property
     def chain_root(self) -> str:
@@ -1703,3 +1518,39 @@ def get_evidence_sink() -> EvidenceStreamSink:
     if _evidence_sink is None:
         _evidence_sink = EvidenceStreamSink()
     return _evidence_sink
+
+
+async def start_evidence_sink() -> EvidenceStreamSink | None:
+    """Start the gateway's evidence sink for the process lifetime.
+
+    Called from the gateway lifespan after
+    :func:`validate_evidence_stream_preconditions`. Returns ``None`` when
+    ``EVIDENCE_STREAM_ENABLED`` is false (only reachable under a permissive
+    posture, since the preconditions forbid it otherwise).
+
+    Under an enforcing posture the sink must actually be connected: a sink
+    that failed to reach Redis silently drops refusal and pause receipts and
+    fails every blocking seal, so startup fails instead.
+
+    Raises:
+        EvidenceChainUnavailableError: Enforcing posture and the sink did not
+            connect, or chain state could not be restored.
+    """
+    from src.gateway.governance.env_posture import is_enforcing
+
+    if os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() != "true":
+        return None
+
+    sink = get_evidence_sink()
+    await sink.start()
+    if not sink.is_running:
+        if is_enforcing():
+            raise EvidenceChainUnavailableError(
+                "Evidence stream sink failed to connect to Redis under an "
+                "enforcing posture; refusing to serve without an evidence chain."
+            )
+        logger.warning(
+            "[EvidenceStream] Sink not connected; evidence will be dropped "
+            "(permissive posture only)."
+        )
+    return sink

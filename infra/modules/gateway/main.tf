@@ -319,6 +319,30 @@ resource "kubernetes_deployment" "gateway" {
               value = var.redis_auth_mode
             }
           }
+          # Evidence stream producer. The gateway appends unsigned hash-chained
+          # records only; custody (chain re-verification, batch signing with
+          # EVIDENCE_KMS_KEY, WORM writes) is the compliance bridge's job, so no
+          # EVIDENCE_COLD_STORE*, EVIDENCE_KMS_KEY or WORM IAM reaches this pod.
+          env {
+            name  = "EVIDENCE_STREAM_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "EVIDENCE_CHAIN_BLOCKING"
+            value = "true"
+          }
+          env {
+            name  = "EVIDENCE_STREAM_REDIS_URL"
+            value = var.evidence_stream_redis_url
+          }
+          env {
+            name  = "EVIDENCE_STREAM_REDIS_DB"
+            value = tostring(var.evidence_stream_redis_db)
+          }
+          env {
+            name  = "EVIDENCE_STREAM_KEY"
+            value = var.evidence_stream_key
+          }
           resources {
             requests = {
               cpu    = "1000m"

@@ -110,6 +110,20 @@ spec:
               value: "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
             - name: EVIDENCE_STREAM_ENABLED
               value: "true"
+            # Evidence producer only: custody (chain re-verification, batch
+            # signing with EVIDENCE_KMS_KEY, WORM writes) runs in the compliance
+            # bridge. URL/db/key must match compliance-bridge exactly.
+            - name: EVIDENCE_CHAIN_BLOCKING
+              value: "true"
+            - name: EVIDENCE_STREAM_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
+            - name: EVIDENCE_STREAM_REDIS_DB
+              value: "1"
+            - name: EVIDENCE_STREAM_KEY
+              value: "cage:evidence:stream"
             # BLOCKER-06: the startup posture check refuses production when
             # RECONCILIATION_PROVIDER is unset or "stub". The reconciler runs the
             # simulated Tier 2 provider (the ledger providers were removed), so the

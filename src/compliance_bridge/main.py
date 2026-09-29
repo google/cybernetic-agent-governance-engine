@@ -165,23 +165,43 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     logger.info("🔄 compliance-bridge starting up…")
 
     # ------------------------------------------------------------------
-    # Evidence Stream Precondition Check (R-06): Fail fast if
-    # EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
-    # This invalid configuration would cause all seal issuances to fail.
+    # Evidence custody: the bridge is the custodian of the gateway's
+    # evidence stream (re-verify → sign batch attestation with
+    # EVIDENCE_KMS_KEY → WORM → durable cursor). Under an enforcing posture
+    # the stream must be enabled and the custodian must build (real cold
+    # store, active KMS signer); otherwise startup fails.
     # ------------------------------------------------------------------
-    from src.gateway.governance.evidence.stream import (
-        ConfigurationError,
-        validate_evidence_stream_preconditions,
-    )
+    from src.gateway.governance.env_posture import is_enforcing
 
-    try:
-        validate_evidence_stream_preconditions()
-    except ConfigurationError as cfg_err:
-        logger.critical(
-            "🚨 STARTUP FAILURE: Evidence stream precondition check failed: %s",
-            cfg_err,
+    from .evidence_custodian import EvidenceCustodian, EvidenceCustodyConfigError
+
+    _custodian: EvidenceCustodian | None = None
+    _custody_task: asyncio.Task | None = None
+    if os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true":
+        try:
+            _custodian = EvidenceCustodian.from_env()
+        except EvidenceCustodyConfigError as cfg_err:
+            if is_enforcing():
+                logger.critical("🚨 STARTUP FAILURE: evidence custody: %s", cfg_err)
+                raise RuntimeError(str(cfg_err)) from cfg_err
+            logger.warning(
+                "Evidence custody disabled (permissive posture): %s", cfg_err
+            )
+    elif is_enforcing():
+        raise RuntimeError(
+            "EVIDENCE_STREAM_ENABLED=false under an enforcing posture: the "
+            "compliance bridge must take custody of the evidence stream."
         )
-        raise RuntimeError(str(cfg_err)) from cfg_err
+    else:
+        logger.warning(
+            "Evidence custody disabled (EVIDENCE_STREAM_ENABLED != true, "
+            "permissive posture)."
+        )
+    if _custodian is not None:
+        _custody_task = asyncio.create_task(
+            _custodian.run_forever(), name="evidence-custodian"
+        )
+        logger.info("✅ Evidence custodian started")
 
     # ------------------------------------------------------------------
     # POAM-014 / NIST SC-28: CMEK validation for evidence artifact storage.
@@ -235,12 +255,16 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     try:
         yield
     finally:
-        for _task in (_sla_task, _lula_task):
+        for _task in (_sla_task, _lula_task, _custody_task):
+            if _task is None:
+                continue
             _task.cancel()
             try:
                 await _task
             except asyncio.CancelledError:
                 pass
+        if _custodian is not None:
+            await _custodian.aclose()
         logger.info("🛑 compliance-bridge shutting down.")
         if _app_langfuse is not None:
             _app_langfuse.flush()
@@ -771,7 +795,9 @@ def _build_cer_index() -> CERIndex | None:
                 )
 
         disclosure_policies: dict[str, Disclosure] = {}
-        raw_policies = os.environ.get("PROVIDER_02_DISCLOSURE_POLICIES_JSON", "").strip()
+        raw_policies = os.environ.get(
+            "PROVIDER_02_DISCLOSURE_POLICIES_JSON", ""
+        ).strip()
         if raw_policies:
             try:
                 parsed_policies = json.loads(raw_policies)

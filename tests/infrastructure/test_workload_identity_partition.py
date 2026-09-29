@@ -262,11 +262,11 @@ def test_symmetric_cmek_and_signing_keyrings_are_separate() -> None:
 
 
 def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
-    """§5.1: Gateway, reconciler, and langfuse GSAs hold roles/memorystore.dbConnectionUser when IAM auth is enabled."""
+    """§5.1: Gateway, reconciler, compliance bridge (EvidenceCustodian) and langfuse GSAs hold roles/memorystore.dbConnectionUser when IAM auth is enabled."""
     iam_tf = (_GKE / "iam.tf").read_text()
-    for gsa in ("gateway", "reconciler", "langfuse"):
+    for gsa in ("gateway", "reconciler", "compliance_bridge", "langfuse"):
         assert f'resource "google_project_iam_member" "{gsa}_memorystore_user"' in iam_tf
-    assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 3
+    assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 4
 
 
 def test_signing_key_policies_are_authoritative() -> None:

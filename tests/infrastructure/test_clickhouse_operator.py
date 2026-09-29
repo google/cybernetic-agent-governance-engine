@@ -30,7 +30,8 @@ Enforces:
    - Dedicated `clickhouse-node-pool` tainted `workload=clickhouse:NoSchedule` with local NVMe SSD and `spot = false`
    - ClickHouse and Keeper pods carry toleration `workload=clickhouse:NoSchedule` and node affinity requiring `workload=clickhouse` and `cloud.google.com/gke-spot NotIn ["true"]`
 6. Exit criteria fault-injection test (§6):
-   - Complete ClickHouse node loss while `EvidenceStreamSink` and `ClickHouseSink` are active causes zero evidence loss in the retention-locked WORM bucket.
+   - Complete ClickHouse node loss while `EvidenceStreamSink` (gateway producer), `EvidenceCustodian` (compliance-bridge custody) and `ClickHouseSink` are active causes zero evidence loss in the retention-locked WORM bucket.
+7. ClickHouse's `cold_gcs` tier uses a dedicated, non-retention-locked, CMEK-encrypted bucket whose IAM is scoped to the ClickHouse GSA only (never the WORM bucket).
 """
 
 from __future__ import annotations
@@ -38,12 +39,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import fakeredis.aioredis
 import pytest
 import yaml
 
@@ -186,7 +189,8 @@ def test_clickhouse_operator_module_posture_matrix() -> None:
     gke_main = _GKE_MAIN.read_text()
     ch_block = _extract_module_block("clickhouse_operator", gke_main)
     assert 'source = "../../modules/clickhouse_operator"' in ch_block
-    assert "cold_tier_bucket         = module.worm_bucket.bucket_name" in ch_block
+    assert "google_storage_bucket.clickhouse_tiering[0].name" in ch_block
+    assert "module.worm_bucket" not in ch_block
 
     ch_op_main = _CH_OP_MAIN.read_text()
     ch_op_vars = _CH_OP_VARS.read_text()
@@ -212,6 +216,91 @@ def test_clickhouse_operator_module_posture_matrix() -> None:
     assert "<hot_local_ssd>" in ch_op_main
     assert "<cold_gcs>" in ch_op_main
     assert "<hot_to_cold>" in ch_op_main
+
+
+def _extract_resource_block(rtype: str, name: str, text: str) -> str:
+    start_str = f'resource "{rtype}" "{name}" {{'
+    start = text.find(start_str)
+    assert start != -1, f"resource {rtype}.{name} not found"
+    pos = start + len(start_str)
+    depth = 1
+    while pos < len(text) and depth > 0:
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+        pos += 1
+    return text[start:pos]
+
+
+def test_clickhouse_tiering_bucket_is_dedicated_unlocked_and_cmek() -> None:
+    """§2.6: ClickHouse deletes S3-disk objects on merge/TTL, so its cold tier is NOT the WORM bucket."""
+    gke_main = _GKE_MAIN.read_text()
+    bucket = _extract_resource_block("google_storage_bucket", "clickhouse_tiering", gke_main)
+    bucket = "\n".join(line for line in bucket.splitlines() if not line.lstrip().startswith("#"))
+    worm = _extract_module_block("worm_bucket", gke_main)
+
+    # Distinct name from the WORM bucket (and a guard precondition).
+    assert '"${var.project_id}-clickhouse-tiering-${var.environment}"' in bucket
+    assert '"${var.project_id}-evidence-worm-${var.environment}"' in worm
+    assert "!= module.worm_bucket.bucket_name" in bucket
+
+    # Not retention-locked: no retention policy and no lock at all.
+    assert "retention_policy" not in bucket
+    assert "is_locked" not in bucket
+
+    # CMEK-encrypted with the shared symmetric key, private, residency-guarded.
+    assert "default_kms_key_name = local.cmek_key_id" in bucket
+    assert "uniform_bucket_level_access = true" in bucket
+    assert 'public_access_prevention    = "enforced"' in bucket
+    assert 'var.cage_deployment_region == "EU_ECB"' in bucket
+
+
+def test_clickhouse_tiering_bucket_iam_scoped_to_clickhouse_identity_only() -> None:
+    """§2.6 / AC-6: only the ClickHouse GSA holds IAM on the tiering bucket; it holds none on WORM."""
+    gke_main = _GKE_MAIN.read_text()
+    iam_text = _GKE_IAM.read_text()
+    combined = gke_main + "\n" + iam_text
+
+    tiering_bindings = [
+        m.group(0)
+        for m in re.finditer(r'resource "google_storage_bucket_iam_[a-z]+" "\w+" \{[^}]*\}', combined, re.S)
+        if "clickhouse_tiering" in m.group(0)
+    ]
+    assert tiering_bindings, "no IAM binding on the ClickHouse tiering bucket"
+    for binding in tiering_bindings:
+        assert "google_service_account.clickhouse.email" in binding
+        assert 'role   = "roles/storage.objectAdmin"' in binding
+
+    # ClickHouse GSA never touches the WORM bucket.
+    for m in re.finditer(r'resource "google_storage_bucket_iam_[a-z]+" "\w+" \{[^}]*\}', combined, re.S):
+        if "module.worm_bucket" in m.group(0):
+            assert "google_service_account.clickhouse" not in m.group(0)
+
+    # No project-wide storage role that would also reach the tiering bucket.
+    for m in re.finditer(r'resource "google_project_iam_member" "\w+" \{.*?\n\}', iam_text, re.S):
+        assert "roles/storage.object" not in m.group(0) or "condition {" in m.group(0), (
+            f"Unconditioned project-wide storage role: {m.group(0)[:80]}"
+        )
+
+    # ClickHouse runs as its own KSA bound 1:1 to its own GSA; HMAC key is that GSA's.
+    assert 'sa_clickhouse        = "cage-clickhouse"' in iam_text
+    assert 'ksa_clickhouse        = "cage-clickhouse-sa"' in iam_text
+    assert 'resource "google_service_account_iam_binding" "clickhouse_workload_identity"' in iam_text
+    hmac = _extract_resource_block("google_storage_hmac_key", "clickhouse_tiering", gke_main)
+    assert "google_service_account.clickhouse.email" in hmac
+    ch_block = _extract_module_block("clickhouse_operator", gke_main)
+    assert 'kubernetes_service_account.workload["clickhouse"]' in ch_block
+
+
+def test_clickhouse_cold_tier_credentials_come_from_secret() -> None:
+    """cold_gcs uses use_environment_credentials; creds must be secretKeyRef and required when active."""
+    ch_op_main = _CH_OP_MAIN.read_text()
+    assert "<use_environment_credentials>true</use_environment_credentials>" in ch_op_main
+    assert '["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]' in ch_op_main
+    assert "name = var.cold_tier_credentials_secret_name" in ch_op_main
+    # Fail closed at plan time when the cold tier is on without credentials.
+    assert "!local.cold_tier_on || var.cold_tier_credentials_secret_name != \"\"" in ch_op_main
 
 
 # ---------------------------------------------------------------------------
@@ -343,70 +432,23 @@ class _LockedWormColdStore(EvidenceColdStore):
         )
 
 
-class _InMemoryRedisStream:
-    """Minimal async Redis Streams fake supporting xadd, xrange, xrevrange, ping, aclose."""
-
-    def __init__(self) -> None:
-        self._streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
-        self._seq = 0
-
-    async def ping(self) -> bool:
-        return True
-
-    async def aclose(self) -> None:
-        return None
-
-    async def xadd(
-        self,
-        stream_key: str,
-        fields: dict[str, str],
-        maxlen: int | None = None,
-    ) -> str:
-        self._seq += 1
-        msg_id = f"1700000000000-{self._seq}"
-        bucket = self._streams.setdefault(stream_key, [])
-        bucket.append((msg_id, dict(fields)))
-        return msg_id
-
-    async def xrevrange(
-        self,
-        stream_key: str,
-        max: str = "+",
-        min: str = "-",
-        count: int | None = None,
-    ) -> list[tuple[str, dict[str, str]]]:
-        bucket = list(reversed(self._streams.get(stream_key, [])))
-        return bucket[:count] if count is not None else bucket
-
-    async def xrange(
-        self,
-        stream_key: str,
-        min: str = "-",
-        max: str = "+",
-        count: int | None = None,
-    ) -> list[tuple[str, dict[str, str]]]:
-        bucket = self._streams.get(stream_key, [])
-        exclusive_min = min[1:] if min.startswith("(") else None
-        out = []
-        for msg_id, fields in bucket:
-            if exclusive_min is not None and msg_id <= exclusive_min:
-                continue
-            out.append((msg_id, fields))
-        return out[:count] if count is not None else out
-
-
 @pytest.mark.asyncio
 async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_bucket() -> None:
-    """§6 Exit Criteria: Evidence reaches the locked bucket; ClickHouse node loss causes no evidence loss."""
-    worm_bucket = _LockedWormColdStore()
-    fake_redis = _InMemoryRedisStream()
+    """§6 Exit Criteria: Evidence reaches the locked bucket; ClickHouse node loss causes no evidence loss.
 
-    # 1. Start EvidenceStreamSink wired to the locked WORM bucket
-    evidence_sink = EvidenceStreamSink(
-        stream_key="cage:evidence:stream",
-        kms_sign=False,
-        cold_store=worm_bucket,
-    )
+    Option A custody: the gateway's EvidenceStreamSink only hash-chains and
+    XADDs to the governance Redis stream; the compliance bridge's
+    EvidenceCustodian re-verifies the chain and writes the batch to the WORM
+    bucket. The ClickHouse query plane is down for the whole run.
+    """
+    from src.compliance_bridge.evidence_custodian import EvidenceCustodian
+
+    stream_key = "cage:evidence:stream"
+    worm_bucket = _LockedWormColdStore()
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+    # 1. Gateway producer: EvidenceStreamSink appends to the Redis stream only.
+    evidence_sink = EvidenceStreamSink(stream_key=stream_key)
     evidence_sink._redis = fake_redis  # type: ignore[assignment]
     async with evidence_sink._chain_lock:
         await evidence_sink._ensure_chain_restored()
@@ -436,7 +478,7 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
         await ch_sink.start()
         try:
             for ev in events:
-                # Commit to primary evidence stream (Redis Streams -> WORM bucket)
+                # Commit to the primary evidence stream (gateway -> Redis Streams)
                 commit = await evidence_sink.ingest_sync(ev)
                 assert commit.success is True
 
@@ -461,26 +503,34 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
         finally:
             await ch_sink.close()
 
-
-
-    # 3. Run one cold-store flush cycle from Redis Streams into the locked WORM bucket
-    with patch("src.gateway.governance.evidence.stream._COLD_STORE_FLUSH_SECONDS", 0.01):
-        flush_task = asyncio.create_task(evidence_sink._cold_flush_loop())
-        await asyncio.sleep(0.05)
-        evidence_sink._running = False
-        flush_task.cancel()
-        try:
-            await flush_task
-        except asyncio.CancelledError:
-            pass
+    # 3. Compliance-bridge custodian: one custody cycle Redis stream -> locked WORM bucket
+    custodian = EvidenceCustodian(
+        redis=fake_redis,
+        cold_store=worm_bucket,
+        signer=None,
+        stream_key=stream_key,
+        batch_size=5000,
+        require_signature=False,
+    )
+    outcome = await custodian.flush_once()
+    assert outcome.entries == len(events)
+    assert outcome.gap is False
+    assert outcome.data_key is not None
 
     # 4. Verify 100% of evidence records reached the locked WORM bucket intact
     assert worm_bucket.is_locked is True
-    assert len(worm_bucket.objects) == 1, (
-        f"Expected 1 NDJSON batch in locked WORM bucket, found {len(worm_bucket.objects)}"
+    expected_objects = {outcome.data_key}
+    if outcome.attestation_key is not None:
+        assert outcome.attestation_key == (
+            outcome.data_key.removesuffix(".ndjson") + ".attestation.json"
+        )
+        expected_objects.add(outcome.attestation_key)
+    assert set(worm_bucket.objects) == expected_objects, (
+        f"Unexpected objects in locked WORM bucket: {sorted(worm_bucket.objects)}"
     )
 
-    batch_key, batch_bytes = next(iter(worm_bucket.objects.items()))
+    batch_key = outcome.data_key
+    batch_bytes = worm_bucket.objects[batch_key]
     assert batch_key.startswith("evidence-stream/")
     assert batch_key.endswith(".ndjson")
 
@@ -496,9 +546,15 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
     # Verify cryptographic hash chain continuity and RFC 8785 record hashes
     prev_hash = ""
     for expected_seq, record in enumerate(persisted_records):
+        assert record.pop("stream_id")
         assert int(record["sequence"]) == expected_seq
         assert record["prev_hash"] == prev_hash
         verification = verify_record(record, prev_hash)
         assert verification.valid is True, f"Hash verification failed at seq {expected_seq}: {verification.error}"
         prev_hash = record["record_hash"]
 
+    # 5. Durable cursor lives in "<stream_key>:custody"; a second cycle writes nothing new.
+    assert await fake_redis.hgetall(f"{stream_key}:custody")
+    again = await custodian.flush_once()
+    assert again.entries == 0
+    assert set(worm_bucket.objects) == expected_objects

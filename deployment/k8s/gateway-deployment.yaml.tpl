@@ -72,6 +72,18 @@ spec:
               value: "${REDIS_HOST}"
             - name: REDIS_URL
               value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+            # Evidence producer only: custody runs in the compliance bridge,
+            # which reads the same URL/db/key.
+            - name: EVIDENCE_STREAM_ENABLED
+              value: "true"
+            - name: EVIDENCE_CHAIN_BLOCKING
+              value: "true"
+            - name: EVIDENCE_STREAM_REDIS_URL
+              value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+            - name: EVIDENCE_STREAM_REDIS_DB
+              value: "1"
+            - name: EVIDENCE_STREAM_KEY
+              value: "cage:evidence:stream"
             - name: VLLM_BASE_URL
               value: "${VLLM_BASE_URL}"
             - name: VLLM_GATEWAY_URL

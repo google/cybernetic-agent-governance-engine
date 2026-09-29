@@ -173,7 +173,7 @@ class TestIngestSync:
 
         # Mock Redis client
         mock_redis = AsyncMock()
-        mock_redis.xadd = AsyncMock(return_value="1234567890-0")
+        mock_redis.eval = AsyncMock(return_value=["OK", "1234567890-0"])
         mock_redis.xrevrange = AsyncMock(return_value=[])
         sink._redis = mock_redis
 
@@ -196,12 +196,12 @@ class TestIngestSync:
         sink = EvidenceStreamSink(redis_url="redis://localhost:6379")
 
         # Mock Redis client that hangs forever
-        async def slow_xadd(*args, **kwargs):
+        async def slow_append(*args, **kwargs):
             await asyncio.sleep(10.0)  # Much longer than timeout
-            return "never-reached"
+            return ["OK", "never-reached"]
 
         mock_redis = AsyncMock()
-        mock_redis.xadd = slow_xadd
+        mock_redis.eval = slow_append
         mock_redis.xrevrange = AsyncMock(return_value=[])
         sink._redis = mock_redis
 
@@ -217,7 +217,7 @@ class TestIngestSync:
     async def test_ingest_sync_redis_error_raises_unavailable(self):
         """Verify ingest_sync raises EvidenceChainUnavailableError on Redis error.
 
-        When Redis xadd fails, _ingest_with_result returns a failure result
+        When the Redis append fails, _ingest_with_result returns a failure result
         (success=False), and ingest_sync raises EvidenceChainUnavailableError.
         The original_error is only preserved for timeout and unexpected exceptions,
         not for graceful failure results.
@@ -231,7 +231,7 @@ class TestIngestSync:
 
         # Mock Redis client that raises
         mock_redis = AsyncMock()
-        mock_redis.xadd = AsyncMock(side_effect=ConnectionError("Connection refused"))
+        mock_redis.eval = AsyncMock(side_effect=ConnectionError("Connection refused"))
         mock_redis.xrevrange = AsyncMock(return_value=[])
         sink._redis = mock_redis
 

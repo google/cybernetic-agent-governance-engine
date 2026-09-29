@@ -73,6 +73,47 @@ locals {
       }
     }
 
+    compliance_bridge_egress_fqdn = {
+      apiVersion = "networking.gke.io/v1alpha1"
+      kind       = "FQDNNetworkPolicy"
+      metadata = {
+        name      = "compliance-bridge-egress-fqdn"
+        namespace = module.namespace.name
+        labels = {
+          "app.kubernetes.io/managed-by" = "terraform"
+          "cage.io/component"            = "z3n-egress"
+        }
+        annotations = {
+          "compliance.nist.gov/control"  = "SC-7,AC-4,AU-9"
+          "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+        }
+      }
+      spec = {
+        podSelector = {
+          matchLabels = {
+            app = "compliance-bridge"
+          }
+        }
+        egress = [
+          {
+            matches = [
+              for fqdn in var.compliance_bridge_egress_allowed_fqdns : (
+                can(regex("[*]", fqdn))
+                ? { pattern = fqdn, name = null }
+                : { name = fqdn, pattern = null }
+              )
+            ]
+            ports = [
+              {
+                protocol = "TCP"
+                port     = 443
+              }
+            ]
+          }
+        ]
+      }
+    }
+
     reconciliation_worker_egress_fqdn = {
       apiVersion = "networking.gke.io/v1alpha1"
       kind       = "FQDNNetworkPolicy"
@@ -595,6 +636,49 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
   }
 }
 
+# ─── 2b. Compliance Bridge L3/L4 Egress (Governance Memorystore PSC) ──────────
+# The EvidenceCustodian reads the gateway's evidence stream and persists its
+# custody cursor on the GOVERNANCE Memorystore instance, so the bridge needs the
+# same governance PSC egress on 6379 as the gateway. GCS / Cloud KMS on 443 come
+# from compliance_bridge_egress_fqdn.
+
+resource "kubernetes_network_policy_v1" "compliance_bridge_egress_l3_l4" {
+  metadata {
+    name      = "compliance-bridge-egress-l3-l4"
+    namespace = module.namespace.name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-egress"
+    }
+    annotations = {
+      "compliance.nist.gov/control"  = "SC-7,AC-4,AU-9"
+      "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+    }
+  }
+
+  spec {
+    pod_selector {
+      match_labels = {
+        app = "compliance-bridge"
+      }
+    }
+    policy_types = ["Egress"]
+
+    # §5.3: Memorystore governance PSC endpoint CIDR on TLS port 6379
+    egress {
+      to {
+        ip_block {
+          cidr = var.memorystore_governance_psc_cidr
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "6379"
+      }
+    }
+  }
+}
+
 # ─── 3. Financial Advisor Internal-Only Egress (§5.3) ─────────────────────────
 
 resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only" {
@@ -1108,13 +1192,14 @@ resource "terraform_data" "network_policy_workload_rollout" {
   input = {
     namespace           = module.namespace.name
     policy_hash         = local.network_policy_spec_hash
-    rollout_command     = "kubectl rollout restart deployment/gateway deployment/governed-financial-advisor -n ${module.namespace.name}"
+    rollout_command     = "kubectl rollout restart deployment/gateway deployment/governed-financial-advisor deployment/compliance-bridge -n ${module.namespace.name}"
     fqdn_policy_objects = local.fqdn_network_policies
   }
 
   depends_on = [
     kubernetes_network_policy_v1.default_deny_external_egress,
     kubernetes_network_policy_v1.gateway_egress_l3_l4,
+    kubernetes_network_policy_v1.compliance_bridge_egress_l3_l4,
     kubernetes_network_policy_v1.financial_advisor_egress_internal_only,
     kubernetes_network_policy_v1.agent_egress_internal_only,
     kubernetes_network_policy_v1.reconciliation_worker_egress,

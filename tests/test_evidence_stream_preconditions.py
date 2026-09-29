@@ -226,21 +226,22 @@ class TestConfigurationErrorException:
         )
 
 
-class TestProductionNonBlockingCheck:
-    """B4 Enhancement: Test production non-blocking configuration check.
+class TestEnforcingPostureNonBlockingCheck:
+    """Non-blocking evidence mode under an enforcing posture.
 
-    When CAGE_ENV=prod and EVIDENCE_CHAIN_BLOCKING=false, startup should fail
-    unless CAGE_ALLOW_NONBLOCKING_PROD=true is set as an explicit override.
+    Posture comes from ``env_posture.resolve_posture()``: only dev/test/ci are
+    permissive; staging, production, local and unknown values all enforce.
+    Startup fails unless CAGE_ALLOW_NONBLOCKING_PROD=true is set explicitly.
     """
 
-    def test_prod_nonblocking_fails_without_override(self) -> None:
-        """In production, non-blocking mode should fail startup by default."""
+    @pytest.mark.parametrize("cage_env", ["prod", "production", "staging", "local"])
+    def test_enforcing_nonblocking_fails_without_override(self, cage_env: str) -> None:
         with mock.patch.dict(
             os.environ,
             {
-                "CAGE_ENV": "prod",
+                "CAGE_ENV": cage_env,
                 "EVIDENCE_CHAIN_BLOCKING": "false",
-                "EVIDENCE_STREAM_ENABLED": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
                 "CAGE_ALLOW_NONBLOCKING_PROD": "false",
             },
             clear=False,
@@ -248,27 +249,37 @@ class TestProductionNonBlockingCheck:
             with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
                 evidence_stream.validate_evidence_stream_preconditions()
 
-            error_msg = str(exc_info.value)
-            assert "production" in error_msg.lower() or "prod" in error_msg.lower()
-            assert "CAGE_ALLOW_NONBLOCKING_PROD" in error_msg
+        assert "CAGE_ALLOW_NONBLOCKING_PROD" in str(exc_info.value)
 
-    def test_prod_nonblocking_succeeds_with_override(self) -> None:
-        """In production, non-blocking mode succeeds with explicit override."""
+    def test_unknown_env_is_enforcing(self) -> None:
+        """An unrecognised CAGE_ENV resolves to PRODUCTION (fail secure)."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CAGE_ENV": "qa-typo",
+                "EVIDENCE_CHAIN_BLOCKING": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "CAGE_ALLOW_NONBLOCKING_PROD": "false",
+            },
+            clear=False,
+        ):
+            with pytest.raises(evidence_stream.ConfigurationError):
+                evidence_stream.validate_evidence_stream_preconditions()
+
+    def test_enforcing_nonblocking_succeeds_with_override(self) -> None:
         with mock.patch.dict(
             os.environ,
             {
                 "CAGE_ENV": "prod",
                 "EVIDENCE_CHAIN_BLOCKING": "false",
-                "EVIDENCE_STREAM_ENABLED": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
                 "CAGE_ALLOW_NONBLOCKING_PROD": "true",
             },
             clear=False,
         ):
-            # Should not raise - override acknowledged
             evidence_stream.validate_evidence_stream_preconditions()
 
-    def test_prod_nonblocking_fails_without_explicit_override_env(self) -> None:
-        """When CAGE_ALLOW_NONBLOCKING_PROD is not set, default to failing."""
+    def test_nonblocking_fails_when_override_env_absent(self) -> None:
         env_copy = {
             k: v for k, v in os.environ.items() if k != "CAGE_ALLOW_NONBLOCKING_PROD"
         }
@@ -276,217 +287,77 @@ class TestProductionNonBlockingCheck:
             {
                 "CAGE_ENV": "prod",
                 "EVIDENCE_CHAIN_BLOCKING": "false",
-                "EVIDENCE_STREAM_ENABLED": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
             }
         )
         with mock.patch.dict(os.environ, env_copy, clear=True):
             with pytest.raises(evidence_stream.ConfigurationError):
                 evidence_stream.validate_evidence_stream_preconditions()
 
-    def test_dev_nonblocking_does_not_fail(self) -> None:
-        """In dev environment, non-blocking mode should not fail."""
+    @pytest.mark.parametrize("cage_env", ["dev", "test", "ci"])
+    def test_permissive_nonblocking_does_not_fail(self, cage_env: str) -> None:
         with mock.patch.dict(
             os.environ,
             {
-                "CAGE_ENV": "dev",
+                "CAGE_ENV": cage_env,
                 "EVIDENCE_CHAIN_BLOCKING": "false",
                 "EVIDENCE_STREAM_ENABLED": "false",
             },
             clear=False,
         ):
-            # Should not raise - dev environment
             evidence_stream.validate_evidence_stream_preconditions()
 
-    def test_staging_nonblocking_does_not_fail(self) -> None:
-        """In staging environment, non-blocking mode should not fail."""
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "staging",
-                "EVIDENCE_CHAIN_BLOCKING": "false",
-                "EVIDENCE_STREAM_ENABLED": "false",
-            },
-            clear=False,
-        ):
-            # Should not raise - staging environment
-            evidence_stream.validate_evidence_stream_preconditions()
-
-    def test_prod_blocking_enabled_does_not_fail(self) -> None:
-        """In production with blocking enabled, should not fail (normal config)."""
+    def test_enforcing_blocking_enabled_does_not_fail(self) -> None:
+        """Normal production config: stream on, blocking on. No signing flag."""
         with mock.patch.dict(
             os.environ,
             {
                 "CAGE_ENV": "prod",
                 "EVIDENCE_CHAIN_BLOCKING": "true",
                 "EVIDENCE_STREAM_ENABLED": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "true",  # A4: Required in prod
             },
             clear=False,
         ):
-            # Should not raise - blocking enabled with stream and KMS signing
             evidence_stream.validate_evidence_stream_preconditions()
 
 
-class TestProductionKmsSigningCheck:
-    """A4: Test production KMS signing configuration check.
+class TestEnforcingPostureStreamDisabled:
+    """An enforcing posture must never run with the evidence stream off.
 
-    When CAGE_ENV=prod and the evidence stream is enabled, KMS signing
-    must be enabled. An unsigned evidence chain in production violates
-    audit trail integrity requirements.
+    Refusal and pause receipts write through the stream; with it disabled they
+    would be dropped, so startup fails even with the non-blocking override.
     """
 
-    def test_prod_stream_enabled_kms_disabled_fails(self) -> None:
-        """In production with stream enabled, KMS signing disabled should fail startup."""
+    @pytest.mark.parametrize("cage_env", ["prod", "staging"])
+    def test_stream_disabled_fails_even_with_override(self, cage_env: str) -> None:
         with mock.patch.dict(
             os.environ,
             {
-                "CAGE_ENV": "prod",
-                "EVIDENCE_STREAM_ENABLED": "true",
-                "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "false",
-            },
-            clear=False,
-        ):
-            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
-                evidence_stream.validate_evidence_stream_preconditions()
-
-            error_msg = str(exc_info.value)
-            assert "KMS signing" in error_msg or "KMS" in error_msg
-            assert "production" in error_msg.lower() or "prod" in error_msg.lower()
-            assert "EVIDENCE_STREAM_KMS_SIGN" in error_msg
-
-    def test_prod_stream_enabled_kms_enabled_succeeds(self) -> None:
-        """In production with stream and KMS signing enabled, should pass."""
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "prod",
-                "EVIDENCE_STREAM_ENABLED": "true",
-                "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "true",
-            },
-            clear=False,
-        ):
-            # Should not raise - valid production configuration
-            evidence_stream.validate_evidence_stream_preconditions()
-
-    def test_prod_stream_disabled_kms_check_skipped(self) -> None:
-        """When stream is disabled in prod, KMS check should not apply.
-
-        This test verifies the interaction: if stream is disabled, the
-        blocking-mode clause already fails first, so the KMS check is
-        not reached. This is the correct fail-fast order.
-        """
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "prod",
+                "CAGE_ENV": cage_env,
+                "EVIDENCE_CHAIN_BLOCKING": "false",
                 "EVIDENCE_STREAM_ENABLED": "false",
-                "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "false",
+                "CAGE_ALLOW_NONBLOCKING_PROD": "true",
             },
             clear=False,
         ):
-            # Should raise due to blocking=true + stream=false,
-            # NOT due to missing KMS signing
             with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
                 evidence_stream.validate_evidence_stream_preconditions()
 
-            error_msg = str(exc_info.value)
-            # Should be the blocking-mode error, not KMS error
-            assert "EVIDENCE_CHAIN_BLOCKING" in error_msg
+        assert "EVIDENCE_STREAM_ENABLED=false" in str(exc_info.value)
 
-    def test_dev_stream_enabled_kms_disabled_succeeds(self) -> None:
-        """In dev environment, KMS signing is not required."""
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "dev",
-                "EVIDENCE_STREAM_ENABLED": "true",
-                "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "false",
-            },
-            clear=False,
-        ):
-            # Should not raise - dev environment doesn't require KMS signing
-            evidence_stream.validate_evidence_stream_preconditions()
-
-    def test_staging_stream_enabled_kms_disabled_succeeds(self) -> None:
-        """In staging environment, KMS signing is not required."""
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "staging",
-                "EVIDENCE_STREAM_ENABLED": "true",
-                "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "false",
-            },
-            clear=False,
-        ):
-            # Should not raise - staging environment doesn't require KMS signing
-            evidence_stream.validate_evidence_stream_preconditions()
-
-    def test_prod_kms_check_case_insensitive(self) -> None:
-        """KMS signing check should handle various capitalizations."""
-        # Test that "TRUE" is recognized as enabled
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "PROD",
-                "EVIDENCE_STREAM_ENABLED": "TRUE",
-                "EVIDENCE_CHAIN_BLOCKING": "TRUE",
-                "EVIDENCE_STREAM_KMS_SIGN": "TRUE",
-            },
-            clear=False,
-        ):
-            # Should not raise
-            evidence_stream.validate_evidence_stream_preconditions()
-
-    def test_error_message_contains_current_values(self) -> None:
-        """Error message should display current configuration values."""
+    def test_no_kms_signing_flag_is_consulted(self) -> None:
+        """Signing moved to the compliance bridge; the gateway ignores the old flag."""
         with mock.patch.dict(
             os.environ,
             {
                 "CAGE_ENV": "prod",
-                "EVIDENCE_STREAM_ENABLED": "true",
                 "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
+                "EVIDENCE_KMS_KEY": "",
             },
             clear=False,
         ):
-            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
-                evidence_stream.validate_evidence_stream_preconditions()
-
-            error_msg = str(exc_info.value)
-            # Should show current config values
-            assert "CAGE_ENV=prod" in error_msg
-            assert (
-                "EVIDENCE_STREAM_ENABLED=true" in error_msg
-                or "EVIDENCE_STREAM_ENABLED=True" in error_msg
-            )
-            assert (
-                "EVIDENCE_STREAM_KMS_SIGN=false" in error_msg
-                or "EVIDENCE_STREAM_KMS_SIGN=False" in error_msg
-            )
-
-    def test_error_message_explains_remedy(self) -> None:
-        """Error message should explain how to fix the issue."""
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CAGE_ENV": "prod",
-                "EVIDENCE_STREAM_ENABLED": "true",
-                "EVIDENCE_CHAIN_BLOCKING": "true",
-                "EVIDENCE_STREAM_KMS_SIGN": "false",
-            },
-            clear=False,
-        ):
-            with pytest.raises(evidence_stream.ConfigurationError) as exc_info:
-                evidence_stream.validate_evidence_stream_preconditions()
-
-            error_msg = str(exc_info.value)
-            # Should explain the fix
-            assert "EVIDENCE_STREAM_KMS_SIGN=true" in error_msg
+            evidence_stream.validate_evidence_stream_preconditions()
 
 
 class TestStreamDisabledWarning:
@@ -557,7 +428,7 @@ class TestProductionNonBlockingLogging:
             {
                 "CAGE_ENV": "prod",
                 "EVIDENCE_CHAIN_BLOCKING": "false",
-                "EVIDENCE_STREAM_ENABLED": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
                 "CAGE_ALLOW_NONBLOCKING_PROD": "true",
             },
             clear=False,
@@ -572,7 +443,7 @@ class TestProductionNonBlockingLogging:
                 if record.levelno == logging.CRITICAL
             ]
             assert any(
-                "EVIDENCE_CHAIN_BLOCKING=false" in msg and "production" in msg.lower()
+                "EVIDENCE_CHAIN_BLOCKING=false" in msg and "enforcing posture" in msg
                 for msg in critical_msgs
             ), (
                 f"Expected critical warning about non-blocking in prod, got: {critical_msgs}"
@@ -597,7 +468,7 @@ class TestPrometheusMetricsEmission:
             for metric in REGISTRY.collect():
                 if metric.name == "cage_evidence_blocking_disabled":
                     for sample in metric.samples:
-                        if sample.labels.get("env") == "prod":
+                        if sample.labels.get("env") == "production":
                             _initial_value = sample.value
         except Exception:
             pass
@@ -607,7 +478,7 @@ class TestPrometheusMetricsEmission:
             {
                 "CAGE_ENV": "prod",
                 "EVIDENCE_CHAIN_BLOCKING": "false",
-                "EVIDENCE_STREAM_ENABLED": "false",
+                "EVIDENCE_STREAM_ENABLED": "true",
                 "CAGE_ALLOW_NONBLOCKING_PROD": "true",
             },
             clear=False,
@@ -619,7 +490,7 @@ class TestPrometheusMetricsEmission:
         for metric in REGISTRY.collect():
             if metric.name == "cage_evidence_blocking_disabled":
                 for sample in metric.samples:
-                    if sample.labels.get("env") == "prod":
+                    if sample.labels.get("env") == "production":
                         metric_value = sample.value
                         break
 

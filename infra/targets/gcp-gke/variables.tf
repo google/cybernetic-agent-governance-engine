@@ -474,7 +474,7 @@ variable "image_digests" {
       alltrue([
         for name, ref in var.image_digests :
         can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", ref)) && !can(regex(":latest(@|$)", ref))
-      ]) && alltrue([
+        ]) && alltrue([
         for req in [
           "gateway",
           "governed-financial-advisor",
@@ -1175,6 +1175,16 @@ variable "vllm_egress_allowed_fqdns" {
   type        = list(string)
   default = [
     "storage.googleapis.com",
+    "oauth2.googleapis.com",
+  ]
+}
+
+variable "compliance_bridge_egress_allowed_fqdns" {
+  description = "FQDNs allowed for compliance-bridge HTTPS (443) egress via GKE FQDNNetworkPolicy: WORM bucket writes (GCS), per-batch evidence attestation signing (Cloud KMS) and Workload Identity token exchange (§5.3)"
+  type        = list(string)
+  default = [
+    "storage.googleapis.com",
+    "cloudkms.googleapis.com",
     "oauth2.googleapis.com",
   ]
 }

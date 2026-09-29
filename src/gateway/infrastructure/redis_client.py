@@ -62,7 +62,6 @@ try:
     _REDIS_URL = os.environ.get("REDIS_URL", "")
     _REDIS_DB = int(os.environ.get("REDIS_DB", "0"))
 
-
     # Parse defaults from REDIS_URL if present, then allow REDIS_HOST/REDIS_PORT overrides
     if _REDIS_URL:
         _parsed_url = _urlparse(_REDIS_URL)
@@ -114,7 +113,9 @@ try:
     _CAGE_ENV_REDIS: str = os.environ.get("CAGE_ENV", "prod").lower()
     if _REDIS_TLS:
         _custom_ca_path = os.environ.get("REDIS_CA_CERT_PATH")
-        if _CAGE_ENV_REDIS in ("dev", "development", "test", "ci", "staging") and (not _custom_ca_path or not os.path.exists(_custom_ca_path)):
+        if _CAGE_ENV_REDIS in ("dev", "development", "test", "ci", "staging") and (
+            not _custom_ca_path or not os.path.exists(_custom_ca_path)
+        ):
             _REDIS_SSL_CERT_REQS = ssl.CERT_NONE
             _REDIS_CA_CERT_PATH: str | None = None
             logger.warning(
@@ -124,7 +125,9 @@ try:
             )
         else:
             _REDIS_SSL_CERT_REQS = ssl.CERT_REQUIRED
-            _REDIS_CA_CERT_PATH = _custom_ca_path or "/etc/ssl/certs/ca-certificates.crt"
+            _REDIS_CA_CERT_PATH = (
+                _custom_ca_path or "/etc/ssl/certs/ca-certificates.crt"
+            )
             logger.info(
                 "🔒 Gateway Redis TLS: ssl_cert_reqs=REQUIRED, ca_certs=%s",
                 _REDIS_CA_CERT_PATH,
@@ -487,3 +490,68 @@ def get_redis_client() -> "_SyncRedisClient":  # type: ignore[name-defined]
             "Install with: pip install redis[asyncio]"
         )
     return sync_redis_client  # type: ignore[return-value]
+
+
+def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any:
+    """Build a ``redis.asyncio.Redis`` for ``url`` with the deployment's TLS and auth.
+
+    ``redis.asyncio.from_url(url)`` alone ignores ``REDIS_TLS``,
+    ``REDIS_CA_CERT_PATH`` and the Memorystore IAM credential provider, so it
+    cannot reach a TLS- or IAM-protected instance. The evidence stream
+    producer (gateway) and custodian (compliance bridge) both connect through
+    here so they share one connection contract.
+
+    TLS is on when ``REDIS_TLS`` is truthy or the URL scheme is ``rediss://``.
+    Certificates are verified (``CERT_REQUIRED``) under every enforcing
+    posture; only dev/test/ci without a readable ``REDIS_CA_CERT_PATH`` skip
+    verification. When an IAM credential provider is configured, any URL
+    password is ignored.
+    """
+    from urllib.parse import unquote, urlparse
+
+    import redis.asyncio as aioredis_mod
+
+    from src.gateway.governance.env_posture import is_enforcing
+    from src.gateway.infrastructure.redis_credential_factory import (
+        get_redis_credential_provider,
+    )
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("redis", "rediss"):
+        raise ValueError(f"Unsupported Redis URL scheme: {parsed.scheme!r}")
+
+    use_tls = parsed.scheme == "rediss" or os.environ.get("REDIS_TLS", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    cert_reqs = ssl.CERT_NONE
+    ca_certs: str | None = None
+    if use_tls:
+        ca_path = os.environ.get("REDIS_CA_CERT_PATH")
+        if is_enforcing() or (ca_path and os.path.exists(ca_path)):
+            cert_reqs = ssl.CERT_REQUIRED
+            ca_certs = ca_path or "/etc/ssl/certs/ca-certificates.crt"
+
+    cred_provider = get_redis_credential_provider()
+    password = None
+    if cred_provider is None:
+        password = (
+            unquote(parsed.password)
+            if parsed.password
+            else os.environ.get("REDIS_PASSWORD") or None
+        )
+
+    return aioredis_mod.Redis(
+        host=parsed.hostname or "localhost",
+        port=parsed.port or 6379,
+        db=db,
+        password=password,
+        credential_provider=cred_provider,
+        decode_responses=True,
+        socket_connect_timeout=3.0,
+        socket_timeout=socket_timeout,
+        ssl=use_tls,
+        ssl_cert_reqs=cert_reqs,
+        ssl_ca_certs=ca_certs,
+    )

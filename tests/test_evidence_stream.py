@@ -15,37 +15,32 @@
 """
 tests/test_evidence_stream.py
 =============================
-Unit tests for src/compliance_bridge/evidence_stream.py.
+Unit tests for src/gateway/governance/evidence/stream.py (the producer).
 
 Covers:
   - SHA-256 helpers (_sha256, _link_hash)
   - EvidenceStreamSink ingestion, hash chaining, ordering
+  - Compare-and-append: replicas sharing a stream never fork the chain, and a
+    failed write never consumes a sequence number
   - Redis-unavailable graceful no-op path
-  - start() / stop() lifecycle
-  - GCS flush loop (mocked asyncio.sleep)
+  - start() / stop() lifecycle and start_evidence_sink() posture handling
+  - Fail-closed chain state restoration
   - get_evidence_sink() singleton
-  - Backpressure / maxlen behaviour (delegated to Redis; tested via mock)
 
-All tests are hermetic — no live Redis, no GCS, no KMS.
+Signing and cold-store custody are the compliance bridge's job and are tested
+in tests/test_evidence_custodian.py. All tests here are hermetic: Redis is
+fakeredis (with Lua), no GCS, no KMS.
 """
 
 import ast
-import asyncio
-import hashlib
-import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import fakeredis
 import pytest
 
-from src.gateway.governance.evidence.cold_store import (
-    ColdStoreError,
-    ColdStoreHealth,
-    ColdStoreReceipt,
-)
-from src.gateway.governance.evidence.null_cold_store import NullColdStore
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-pytestmark = pytest.mark.local
+STREAM_KEY = "cage:evidence:test"
 
 
 # ---------------------------------------------------------------------------
@@ -60,23 +55,22 @@ def _make_sink(**kwargs):
     defaults = {
         "redis_url": "redis://localhost:6379",
         "redis_db": 1,
-        "stream_key": "cage:evidence:test",
+        "stream_key": STREAM_KEY,
         "max_len": 1000,
-        "kms_sign": False,
     }
     defaults.update(kwargs)
     return EvidenceStreamSink(**defaults)
 
 
-def _make_redis_mock(xadd_return="1234567890-0"):
-    """Return a minimal async Redis mock."""
-    mock = AsyncMock()
-    mock.ping = AsyncMock(return_value=True)
-    mock.xadd = AsyncMock(return_value=xadd_return)
-    mock.xrange = AsyncMock(return_value=[])
-    mock.xrevrange = AsyncMock(return_value=[])
-    mock.aclose = AsyncMock()
-    return mock
+def _fake_redis(server=None):
+    """A fakeredis asyncio client (Lua-capable) on ``server``."""
+    return fakeredis.FakeAsyncRedis(
+        server=server or fakeredis.FakeServer(), decode_responses=True
+    )
+
+
+async def _entries(redis):
+    return await redis.xrange(STREAM_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -149,37 +143,33 @@ class TestSha256Helpers:
 class TestEvidenceStreamSinkProperties:
     """Tests for EvidenceStreamSink properties and initial state."""
 
-    def test_chain_root_is_genesis_hash(self):
+    def test_chain_root_is_empty_before_restore(self):
         """Initial chain_root must be empty string before state restoration."""
-        from src.gateway.governance.evidence.stream import EvidenceStreamSink, _sha256
-
-        sink = _make_sink()
-        expected = ""
-        assert sink.chain_root == expected
+        assert _make_sink().chain_root == ""
 
     def test_total_records_starts_at_zero(self):
-        """total_records must start at 0."""
-        sink = _make_sink()
-        assert sink.total_records == 0
+        assert _make_sink().total_records == 0
 
     def test_is_running_starts_false(self):
-        """is_running must start as False before start() is called."""
-        sink = _make_sink()
-        assert sink.is_running is False
+        assert _make_sink().is_running is False
+
+    def test_sink_has_no_signing_or_cold_store_parameters(self):
+        """The producer takes no signer or cold store: custody is the bridge's."""
+        from src.gateway.governance.evidence.stream import EvidenceStreamSink
+
+        with pytest.raises(TypeError):
+            EvidenceStreamSink(kms_sign=True)  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            EvidenceStreamSink(cold_store=object())  # type: ignore[call-arg]
 
     def test_singleton_returns_same_instance(self):
         """get_evidence_sink() must return the same instance on repeated calls."""
         import src.gateway.governance.evidence.stream as mod
 
-        # Temporarily reset singleton for test isolation
         original = mod._evidence_sink
         try:
             mod._evidence_sink = None
-            from src.gateway.governance.evidence.stream import get_evidence_sink
-
-            s1 = get_evidence_sink()
-            s2 = get_evidence_sink()
-            assert s1 is s2
+            assert mod.get_evidence_sink() is mod.get_evidence_sink()
         finally:
             mod._evidence_sink = original
 
@@ -194,21 +184,15 @@ class TestIngestWithNoRedis:
 
     @pytest.mark.asyncio
     async def test_ingest_returns_none_when_redis_unavailable(self):
-        """ingest() must return None when _redis is None (no-op path)."""
         sink = _make_sink()
-        # Don't call start() — _redis stays None
         result = await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
         assert result is None
 
     @pytest.mark.asyncio
     async def test_ingest_does_not_advance_chain_when_redis_unavailable(self):
-        """Chain state must not change when Redis is unavailable."""
-        from src.gateway.governance.evidence.stream import _sha256
-
         sink = _make_sink()
-        initial_hash = sink.chain_root
         await sink.ingest({"type": "AUDIT_FINDING"})
-        assert sink.chain_root == initial_hash
+        assert sink.chain_root == ""
         assert sink.total_records == 0
 
     @pytest.mark.asyncio
@@ -216,11 +200,12 @@ class TestIngestWithNoRedis:
         """start() must not set _running if Redis connection fails."""
         sink = _make_sink(redis_url="redis://invalid-host:9999")
 
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_from_url:
             mock_client = AsyncMock()
             mock_client.ping = AsyncMock(side_effect=ConnectionRefusedError("no redis"))
             mock_from_url.return_value = mock_client
-
             await sink.start()
 
         assert sink.is_running is False
@@ -232,114 +217,185 @@ class TestIngestWithNoRedis:
 
 
 class TestIngestHashChain:
-    """Tests for hash-chaining and event ordering over a mocked Redis."""
+    """Hash-chaining and event ordering over fakeredis."""
 
     @pytest.mark.asyncio
     async def test_ingest_three_events_advances_sequence(self):
-        """Ingesting 3 events must increment sequence to 3."""
         sink = _make_sink()
-        sink._redis = _make_redis_mock()
-
-        events = [
-            {"type": "AUDIT_FINDING", "controlId": "A.5.3"},
-            {"type": "AUDIT_FINDING", "controlId": "A.9.2"},
-            {"type": "AUDIT_FINDING", "controlId": "SC-4"},
-        ]
-        for ev in events:
-            await sink.ingest(ev)
-
+        sink._redis = _fake_redis()
+        for control in ("A.5.3", "A.9.2", "SC-4"):
+            await sink.ingest({"type": "AUDIT_FINDING", "controlId": control})
         assert sink.total_records == 3
 
     @pytest.mark.asyncio
-    async def test_ingest_events_have_distinct_hashes(self):
-        """Each ingested event must produce a distinct record_hash (chain advances)."""
+    async def test_ingest_events_have_distinct_hashes_and_link(self):
+        from src.gateway.governance.evidence.stream import verify_record
+
         sink = _make_sink()
-        sink._redis = _make_redis_mock()
+        sink._redis = _fake_redis()
+        for i in range(3):
+            await sink.ingest({"type": f"E{i}", "controlId": "A.5.3"})
 
-        captured_entries = []
-
-        async def _capture_xadd(key, entry, **kwargs):
-            captured_entries.append(dict(entry))
-            return "1234-0"
-
-        sink._redis.xadd = _capture_xadd
-
-        await sink.ingest({"type": "E1", "controlId": "A.5.3"})
-        await sink.ingest({"type": "E2", "controlId": "A.9.2"})
-        await sink.ingest({"type": "E3", "controlId": "SC-4"})
-
-        record_hashes = [e["record_hash"] for e in captured_entries]
-        assert len(set(record_hashes)) == 3, "All record_hashes must be distinct"
+        entries = await _entries(sink._redis)
+        assert len({f["record_hash"] for _, f in entries}) == 3
+        prev = ""
+        for i, (_id, fields) in enumerate(entries):
+            assert fields["sequence"] == str(i)
+            assert fields["prev_hash"] == prev
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
 
     @pytest.mark.asyncio
     async def test_ingest_entry_schema_fields_present(self):
-        """Every ingested entry must contain all required wire-format fields.
-
-        A4: kms_signature is only present when KMS signing is enabled.
-        """
-        sink = _make_sink(kms_sign=False)  # Signing disabled by default
-        sink._redis = _make_redis_mock()
-
-        captured = {}
-
-        async def _capture_xadd(key, entry, **kwargs):
-            captured.update(entry)
-            return "1234-0"
-
-        sink._redis.xadd = _capture_xadd
+        """Every entry carries the wire fields and no signature placeholder."""
+        sink = _make_sink()
+        sink._redis = _fake_redis()
         await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
 
-        # Required schema fields (when KMS signing disabled)
-        required_fields = {
+        (_id, fields) = (await _entries(sink._redis))[0]
+        required = {
             "schema",
+            "chain_id",
             "sequence",
             "event_type",
             "control_id",
+            "trace_id",
             "prev_hash",
             "record_hash",
             "payload_json",
             "timestamp_utc",
         }
-        assert required_fields.issubset(captured.keys()), (
-            f"Missing fields: {required_fields - set(captured.keys())}"
-        )
-
-        # kms_signature should NOT be present when signing is disabled
-        assert "kms_signature" not in captured
+        assert required.issubset(fields.keys())
+        assert "kms_signature" not in fields
+        assert "kms_signature_algorithm" not in fields
 
     @pytest.mark.asyncio
-    async def test_ingest_links_previous_hash(self):
-        """Each entry's prev_hash must equal the previous entry's record_hash."""
+    async def test_ingest_returns_stream_message_id(self):
         sink = _make_sink()
-        sink._redis = _make_redis_mock()
-
-        captured_entries = []
-
-        async def _capture_xadd(key, entry, **kwargs):
-            captured_entries.append(dict(entry))
-            return "1234-0"
-
-        sink._redis.xadd = _capture_xadd
-
-        await sink.ingest({"type": "E1", "controlId": "A.5.3"})
-        await sink.ingest({"type": "E2", "controlId": "A.9.2"})
-
-        # Entry 0's record_hash must equal entry 1's prev_hash
-        assert captured_entries[0]["record_hash"] == captured_entries[1]["prev_hash"]
+        sink._redis = _fake_redis()
+        msg_id = await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
+        (stored_id, _fields) = (await _entries(sink._redis))[0]
+        assert msg_id == stored_id
 
     @pytest.mark.asyncio
-    async def test_ingest_returns_msg_id_from_redis(self):
-        """ingest() must return the message ID returned by Redis xadd."""
-        sink = _make_sink()
-        expected_id = "9876543210-1"
-        sink._redis = _make_redis_mock(xadd_return=expected_id)
-
-        result = await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
-        assert result == expected_id
+    async def test_max_len_trims_stream(self):
+        sink = _make_sink(max_len=2)
+        sink._redis = _fake_redis()
+        for i in range(4):
+            await sink.ingest({"type": f"E{i}"})
+        entries = await _entries(sink._redis)
+        assert [f["sequence"] for _, f in entries] == ["2", "3"]
 
 
 # ---------------------------------------------------------------------------
-# 5. Lifecycle — start / stop
+# 5. Compare-and-append
+# ---------------------------------------------------------------------------
+
+
+class TestCompareAndAppend:
+    """The head check and XADD are atomic, so writers cannot fork the chain."""
+
+    @pytest.mark.asyncio
+    async def test_two_replicas_share_one_linear_chain(self):
+        """Interleaved writes from two sinks on one stream form one chain."""
+        from src.gateway.governance.evidence.stream import verify_record
+
+        server = fakeredis.FakeServer()
+        a, b = _make_sink(), _make_sink()
+        a._redis, b._redis = _fake_redis(server), _fake_redis(server)
+
+        await a.ingest({"type": "X", "n": 1})
+        await b.ingest({"type": "X", "n": 2})
+        await a.ingest({"type": "X", "n": 3})  # a's in-memory head is stale
+        await b.ingest({"type": "X", "n": 4})
+
+        entries = await _entries(a._redis)
+        assert len({f["chain_id"] for _, f in entries}) == 1
+        prev = ""
+        for i, (_id, fields) in enumerate(entries):
+            assert int(fields["sequence"]) == i
+            assert fields["prev_hash"] == prev
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
+
+    @pytest.mark.asyncio
+    async def test_stale_head_is_rejected_by_script(self):
+        """The script refuses an append whose expected head is not the head."""
+        from src.gateway.governance.evidence.stream import _APPEND_SCRIPT
+
+        redis = _fake_redis()
+        sink = _make_sink()
+        sink._redis = redis
+        await sink.ingest({"type": "X"})
+
+        result = await redis.eval(
+            _APPEND_SCRIPT,
+            1,
+            STREAM_KEY,
+            sink.chain_id,
+            "1",
+            "f" * 64,
+            "1000",
+            "k",
+            "v",
+        )
+        assert result == ["CONFLICT"]
+        assert len(await _entries(redis)) == 1
+
+    @pytest.mark.asyncio
+    async def test_non_genesis_append_to_empty_stream_is_rejected(self):
+        from src.gateway.governance.evidence.stream import _APPEND_SCRIPT
+
+        redis = _fake_redis()
+        result = await redis.eval(
+            _APPEND_SCRIPT, 1, STREAM_KEY, "c", "5", "a" * 64, "1000", "k", "v"
+        )
+        assert result == ["CONFLICT"]
+        assert await _entries(redis) == []
+
+    @pytest.mark.asyncio
+    async def test_failed_write_does_not_advance_chain(self):
+        """A Redis error returns None and leaves chain state untouched."""
+        sink = _make_sink()
+        sink._redis = _fake_redis()
+        await sink.ingest({"type": "X"})
+        head = (sink.chain_root, sink.total_records)
+
+        with patch.object(
+            sink._redis, "eval", AsyncMock(side_effect=ConnectionError("redis gone"))
+        ):
+            result = await sink.ingest({"type": "Y"})
+
+        assert result is None
+        assert (sink.chain_root, sink.total_records) == head
+        # The next successful write continues the chain without a gap.
+        await sink.ingest({"type": "Z"})
+        entries = await _entries(sink._redis)
+        assert [f["sequence"] for _, f in entries] == ["0", "1"]
+        assert entries[1][1]["prev_hash"] == entries[0][1]["record_hash"]
+
+    @pytest.mark.asyncio
+    async def test_persistent_contention_fails_closed(self):
+        """If every attempt loses the head, ingest raises instead of forking."""
+        from src.gateway.governance.evidence.stream import (
+            _MAX_APPEND_ATTEMPTS,
+            EvidenceChainUnavailableError,
+        )
+
+        sink = _make_sink()
+        sink._redis = _fake_redis()
+        await sink.ingest({"type": "X"})
+
+        conflict = AsyncMock(return_value=["CONFLICT"])
+        with patch.object(sink._redis, "eval", conflict):
+            with pytest.raises(EvidenceChainUnavailableError, match="head race"):
+                await sink.ingest({"type": "Y"})
+        assert conflict.await_count == _MAX_APPEND_ATTEMPTS
+        assert sink.total_records == 1
+
+
+# ---------------------------------------------------------------------------
+# 6. Lifecycle — start / stop / start_evidence_sink
 # ---------------------------------------------------------------------------
 
 
@@ -348,395 +404,143 @@ class TestEvidenceStreamSinkLifecycle:
 
     @pytest.mark.asyncio
     async def test_start_sets_running(self):
-        """After a successful start(), is_running must be True."""
         sink = _make_sink()
-
-        with patch("redis.asyncio.from_url", return_value=_make_redis_mock()):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=_fake_redis(),
+        ):
             await sink.start()
-
         assert sink.is_running is True
         await sink.stop()
 
     @pytest.mark.asyncio
     async def test_start_twice_is_idempotent(self):
-        """Calling start() twice must not raise and must stay running."""
         sink = _make_sink()
-
-        mock_redis = _make_redis_mock()
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        redis = _fake_redis()
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=redis,
+        ) as from_url:
             await sink.start()
-            await sink.start()  # second call is a no-op
-
+            await sink.start()
         assert sink.is_running is True
-        # ping should have been called only once (start() returns early on second call)
-        assert mock_redis.ping.call_count == 1
+        assert from_url.call_count == 1
         await sink.stop()
 
     @pytest.mark.asyncio
-    async def test_stop_sets_not_running(self):
-        """After stop(), is_running must be False."""
+    async def test_stop_sets_not_running_and_drops_client(self):
         sink = _make_sink()
-
-        with patch("redis.asyncio.from_url", return_value=_make_redis_mock()):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=_fake_redis(),
+        ):
             await sink.start()
-
         await sink.stop()
         assert sink.is_running is False
+        assert await sink.ingest({"type": "AUDIT_FINDING"}) is None
 
     @pytest.mark.asyncio
     async def test_stop_without_start_does_not_raise(self):
-        """Calling stop() before start() must not raise an exception."""
-        sink = _make_sink()
-        await sink.stop()  # should be a no-op
+        await _make_sink().stop()
+
+
+class TestStartEvidenceSink:
+    """start_evidence_sink() is what the gateway lifespan calls."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_singleton(self, monkeypatch):
+        import src.gateway.governance.evidence.stream as mod
+
+        monkeypatch.setattr(mod, "_evidence_sink", None)
 
     @pytest.mark.asyncio
-    async def test_ingest_returns_none_after_stop(self):
-        """After stop(), _redis is closed; ingest() must gracefully return None."""
-        sink = _make_sink()
+    async def test_disabled_stream_returns_none(self, monkeypatch):
+        from src.gateway.governance.evidence.stream import start_evidence_sink
 
-        with patch("redis.asyncio.from_url", return_value=_make_redis_mock()):
-            await sink.start()
+        monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "false")
+        assert await start_evidence_sink() is None
 
+    @pytest.mark.asyncio
+    async def test_starts_the_singleton(self, monkeypatch):
+        from src.gateway.governance.evidence.stream import (
+            get_evidence_sink,
+            start_evidence_sink,
+        )
+
+        monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=_fake_redis(),
+        ):
+            sink = await start_evidence_sink()
+        assert sink is get_evidence_sink()
+        assert sink.is_running
         await sink.stop()
-        # After stop, _redis.aclose() has been called — but sink._redis is still set.
-        # Force it to None to simulate the closed state properly.
-        sink._redis = None
-        result = await sink.ingest({"type": "AUDIT_FINDING"})
-        assert result is None
 
     @pytest.mark.asyncio
-    async def test_ingest_redis_error_returns_none_and_does_not_raise(self):
-        """If Redis xadd raises, ingest() must return None (not propagate exception)."""
-        sink = _make_sink()
-        sink._redis = _make_redis_mock()
-        sink._redis.xadd = AsyncMock(side_effect=ConnectionError("redis gone"))
+    async def test_unreachable_redis_fails_startup_when_enforcing(self, monkeypatch):
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+            start_evidence_sink,
+        )
 
-        result = await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
-        assert result is None
-        # Chain must still have advanced (lock was held before xadd)
-        assert sink.total_records == 1
+        monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+        monkeypatch.setenv("CAGE_ENV", "production")
+        broken = AsyncMock()
+        broken.ping = AsyncMock(side_effect=ConnectionRefusedError("no redis"))
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=broken,
+        ):
+            with pytest.raises(EvidenceChainUnavailableError, match="enforcing"):
+                await start_evidence_sink()
+
+    @pytest.mark.asyncio
+    async def test_unreachable_redis_is_tolerated_when_permissive(self, monkeypatch):
+        from src.gateway.governance.evidence.stream import start_evidence_sink
+
+        monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+        monkeypatch.setenv("CAGE_ENV", "test")
+        broken = AsyncMock()
+        broken.ping = AsyncMock(side_effect=ConnectionRefusedError("no redis"))
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=broken,
+        ):
+            sink = await start_evidence_sink()
+        assert sink is not None and not sink.is_running
 
 
 # ---------------------------------------------------------------------------
-# 6. Cold store flush loop & seam integration
+# 7. Layer purity
 # ---------------------------------------------------------------------------
 
 
-class FakeColdStore:
-    """In-memory EvidenceColdStore test double for evidence stream tests."""
-
-    def __init__(self, should_fail: bool = False, backend_id: str = "fake") -> None:
-        self.should_fail = should_fail
-        self._backend_id = backend_id
-        self.batches: list[tuple[str, bytes, dict]] = []
-
-    @property
-    def backend_id(self) -> str:
-        return self._backend_id
-
-    async def put_batch(
-        self, key: str, content: bytes, metadata: dict | None = None
-    ) -> ColdStoreReceipt:
-        if self.should_fail:
-            raise ColdStoreError("Simulated cold store failure")
-
-        digest = hashlib.sha256(content).hexdigest()
-        self.batches.append((key, content, metadata or {}))
-        return ColdStoreReceipt(
-            uri=f"fake://bucket/{key}",
-            key=key,
-            content_sha256=digest,
-            backend_id=self._backend_id,
-            written_at=datetime.now(tz=timezone.utc),
-        )
-
-    async def exists(self, key: str) -> bool:
-        return any(k == key for k, _, _ in self.batches)
-
-    async def put_if_absent(
-        self, key: str, content: bytes, metadata: dict | None = None
-    ) -> tuple[ColdStoreReceipt, bool]:
-        if await self.exists(key):
-            digest = hashlib.sha256(content).hexdigest()
-            return (
-                ColdStoreReceipt(
-                    uri=f"fake://bucket/{key}",
-                    key=key,
-                    content_sha256=digest,
-                    backend_id=self._backend_id,
-                    written_at=datetime.now(tz=timezone.utc),
-                ),
-                False,
-            )
-        receipt = await self.put_batch(key, content, metadata)
-        return receipt, True
-
-    def health(self) -> ColdStoreHealth:
-        return ColdStoreHealth(
-            available=not self.should_fail,
-            backend_id=self._backend_id,
-            detail="Fake cold store operational",
-        )
-
-
-class TestColdFlushLoop:
-    """Tests for the EvidenceColdStore flush daemon background task."""
-
-    @pytest.mark.asyncio
-    async def test_cold_flush_loop_exits_on_cancelled_error(self):
-        """_cold_flush_loop must exit cleanly on CancelledError (stop() path)."""
-        sink = _make_sink(cold_store=FakeColdStore())
-        sink._running = True
-        sink._redis = _make_redis_mock()
-
-        # Patch asyncio.sleep to immediately raise CancelledError
-        with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
-            await sink._cold_flush_loop()
-
-    @pytest.mark.asyncio
-    async def test_stop_cancels_flush_task(self):
-        """stop() must cancel the cold flush task if it is running."""
-        sink = _make_sink(cold_store=FakeColdStore())
-
-        async def _forever():
-            await asyncio.sleep(10000)
-
-        sink._flush_task = asyncio.create_task(_forever(), name="test-flush")
-        sink._running = True
-        sink._redis = _make_redis_mock()
-
-        await sink.stop()
-
-        assert sink._flush_task.cancelled() or sink._flush_task.done()
-
-    @pytest.mark.asyncio
-    async def test_cold_flush_loop_persists_entries_to_cold_store(self):
-        """_cold_flush_loop reads entries from Redis and writes them to cold store."""
-        fake_store = FakeColdStore()
-        sink = _make_sink(cold_store=fake_store)
-        sink._running = True
-
-        redis_mock = _make_redis_mock()
-        redis_mock.xrange.return_value = [
-            ("100-0", {"event_type": "GOVERNANCE_DECISION", "rule": "US_FED_CAS"}),
-            ("101-0", {"event_type": "AUDIT_FINDING", "status": "PASS"}),
-        ]
-        sink._redis = redis_mock
-
-        # First sleep succeeds (run one flush pass), second sleep cancels
-        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
-            await sink._cold_flush_loop()
-
-        assert len(fake_store.batches) == 1
-        key, content, metadata = fake_store.batches[0]
-        assert key.startswith("evidence-stream/")
-        assert key.endswith(".ndjson")
-        assert b"GOVERNANCE_DECISION" in content
-        assert b"AUDIT_FINDING" in content
-        assert metadata["content-type"] == "application/x-ndjson"
-        assert metadata["entries-count"] == "2"
-
-    @pytest.mark.asyncio
-    async def test_cold_flush_loop_survives_cold_store_error(self):
-        """ColdStoreError during flush is logged, backs off, and loop survives."""
-        failing_store = FakeColdStore(should_fail=True)
-        sink = _make_sink(cold_store=failing_store)
-        sink._running = True
-
-        redis_mock = _make_redis_mock()
-        redis_mock.xrange.return_value = [("100-0", {"event_type": "FAULT"})]
-        sink._redis = redis_mock
-
-        # First sleep triggers flush (raises error), error handler sleeps 5s which cancels
-        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
-            await sink._cold_flush_loop()
-
-    @pytest.mark.asyncio
-    async def test_cold_flush_loop_idempotent_on_replay(self):
-        """Replayed flush of the same batch must not duplicate (put_if_absent atomic guarantee)."""
-        fake_store = FakeColdStore()
-        sink = _make_sink(cold_store=fake_store)
-        sink._running = True
-
-        redis_mock = _make_redis_mock()
-        redis_mock.xrange.return_value = [
-            ("200-0", {"event_type": "GOVERNANCE_DECISION", "rule": "ISO_42001"}),
-            ("201-0", {"event_type": "AUDIT_TRAIL", "status": "LOGGED"}),
-        ]
-        sink._redis = redis_mock
-
-        # First flush pass
-        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
-            await sink._cold_flush_loop()
-
-        assert len(fake_store.batches) == 1
-        first_key, first_content, first_metadata = fake_store.batches[0]
-
-        # Reset sink state and replay flush with identical entries
-        sink2 = _make_sink(cold_store=fake_store)
-        sink2._running = True
-        sink2._redis = redis_mock
-
-        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
-            await sink2._cold_flush_loop()
-
-        # Assert exactly one batch exists (no duplication)
-        assert len(fake_store.batches) == 1
-        second_key, second_content, second_metadata = fake_store.batches[0]
-
-        # Assert the batch is byte-identical
-        assert second_key == first_key
-        assert second_content == first_content
-        assert second_metadata == first_metadata
-
+class TestLayerPurity:
     def test_sink_imports_no_vendor_module(self):
-        """AST check: evidence_stream.py must not import vendor storage SDKs."""
+        """AST check: stream.py must not import vendor storage SDKs."""
         import inspect
 
         from src.gateway.governance.evidence import stream as evidence_stream
 
-        source = inspect.getsource(evidence_stream)
-        tree = ast.parse(source)
-
+        tree = ast.parse(inspect.getsource(evidence_stream))
         forbidden_prefixes = ("google.cloud", "boto3", "botocore", "azure")
-        imported_modules: list[str] = []
-
+        imported: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                for alias in node.names:
-                    imported_modules.append(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    imported_modules.append(node.module)
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
 
-        for mod in imported_modules:
-            for forbidden in forbidden_prefixes:
-                assert not mod.startswith(forbidden), (
-                    f"Forbidden vendor import '{mod}' found in evidence_stream.py"
-                )
-
-    def test_null_cold_store_opens_no_socket(self):
-        """NullColdStore integration requires no credentials and opens no network sockets."""
-        null_store = NullColdStore()
-        sink = _make_sink(cold_store=null_store)
-        health = null_store.health()
-        assert health.available is True
-        assert health.backend_id == "null"
-        assert sink._cold_store.backend_id == "null"
+        for mod in imported:
+            assert not mod.startswith(forbidden_prefixes), mod
+            assert "compliance_bridge" not in mod, mod
+            assert "kms_signer" not in mod, mod
 
 
-class TestKmsSignatureFieldOmission:
-    """A4: Test that kms_signature field is omitted when KMS signing is disabled.
-
-    When EVIDENCE_STREAM_KMS_SIGN=false, the kms_signature field should not
-    be present in stream entries. An empty string in a signature field is
-    misleading; omitting the field clearly indicates signing is disabled.
-    """
-
-    @pytest.mark.asyncio
-    async def test_unsigned_entry_omits_kms_signature_field(self):
-        """When KMS signing is disabled, kms_signature field should be absent."""
-        redis_mock = _make_redis_mock()
-        sink = _make_sink(kms_sign=False)  # KMS signing disabled
-        sink._redis = redis_mock
-
-        event = {"type": "ALLOW", "controlId": "AC-1"}
-        await sink.ingest(event)
-
-        # Verify xadd was called once
-        assert redis_mock.xadd.call_count == 1
-        call_args = redis_mock.xadd.call_args
-        entry = call_args[0][1]  # Second positional arg is the entry dict
-
-        # kms_signature and kms_signature_algorithm should NOT be present
-        assert "kms_signature" not in entry, (
-            "kms_signature field should be omitted when signing is disabled"
-        )
-        assert "kms_signature_algorithm" not in entry, (
-            "kms_signature_algorithm field should be omitted when signing is disabled"
-        )
-
-        # Other fields should still be present
-        assert "record_hash" in entry
-        assert "payload_json" in entry
-        assert "sequence" in entry
-
-    @pytest.mark.asyncio
-    async def test_signed_entry_includes_kms_signature_field(self):
-        """When KMS signing is enabled, kms_signature field should be present."""
-        redis_mock = _make_redis_mock()
-        sink = _make_sink(kms_sign=True)  # KMS signing enabled
-        sink._redis = redis_mock
-
-        event = {"type": "ALLOW", "controlId": "AC-1"}
-        await sink.ingest(event)
-
-        # Verify xadd was called once
-        assert redis_mock.xadd.call_count == 1
-        call_args = redis_mock.xadd.call_args
-        entry = call_args[0][1]  # Second positional arg is the entry dict
-
-        # kms_signature should be present (initially empty, filled async)
-        assert "kms_signature" in entry, (
-            "kms_signature field should be present when signing is enabled"
-        )
-        assert entry["kms_signature"] == "", (
-            "kms_signature should start as empty string (filled asynchronously)"
-        )
-        assert "kms_signature_algorithm" in entry
-
-    @pytest.mark.asyncio
-    async def test_verify_record_succeeds_without_kms_signature_field(self):
-        """verify_record should succeed when kms_signature field is absent.
-
-        The hash chain computation does not include kms_signature, so
-        omitting it should not affect verification.
-        """
-        from src.gateway.governance.evidence.stream import verify_record
-
-        # Create a record without kms_signature field
-        record = {
-            "schema": "cage-evidence-stream/2.0",
-            "sequence": "1",
-            "event_type": "ALLOW",
-            "control_id": "AC-1",
-            "prev_hash": "0" * 64,
-            "record_hash": "abc123def456",  # Placeholder - will fail verification but not due to missing field
-            "payload_json": '{"type":"ALLOW"}',
-            "timestamp_utc": "2026-09-09T12:00:00Z",
-            # kms_signature ABSENT
-        }
-
-        # Should not raise - verify_record handles missing kms_signature
-        result = verify_record(record, "0" * 64)
-        # Result will be invalid due to wrong hash, but not due to missing field
-        assert isinstance(result.error, str) or result.error is None
-
-    @pytest.mark.asyncio
-    async def test_verify_record_succeeds_with_kms_signature_field(self):
-        """verify_record should succeed when kms_signature field is present.
-
-        This confirms backward compatibility - existing signed records still verify.
-        """
-        from src.gateway.governance.evidence.stream import verify_record
-
-        # Create a record with kms_signature field
-        record = {
-            "schema": "cage-evidence-stream/2.0",
-            "sequence": "1",
-            "event_type": "ALLOW",
-            "control_id": "AC-1",
-            "prev_hash": "0" * 64,
-            "record_hash": "abc123def456",  # Placeholder
-            "payload_json": '{"type":"ALLOW"}',
-            "timestamp_utc": "2026-09-09T12:00:00Z",
-            "kms_signature": "sig_placeholder",
-            "kms_signature_algorithm": "RSA_SIGN_PKCS1_2048_SHA256",
-        }
-
-        # Should not raise - kms_signature is ignored by hash verification
-        result = verify_record(record, "0" * 64)
-        assert isinstance(result.error, str) or result.error is None
+# ---------------------------------------------------------------------------
+# 8. Fail-closed chain state restoration
+# ---------------------------------------------------------------------------
 
 
 class TestEvidenceChainRestoration:
@@ -745,45 +549,59 @@ class TestEvidenceChainRestoration:
     @pytest.mark.asyncio
     async def test_restore_from_non_empty_stream_resumes_chain(self):
         """Restart with a non-empty stream -> chain_id preserved, resumes at seq+1."""
+        redis = _fake_redis()
+        await redis.xadd(
+            STREAM_KEY,
+            {"chain_id": "test-chain-123", "record_hash": "a" * 64, "sequence": "42"},
+        )
         sink = _make_sink()
-        redis_mock = _make_redis_mock()
-        redis_mock.xrevrange.return_value = [
-            (
-                "12345-0",
-                {
-                    "chain_id": "test-chain-123",
-                    "record_hash": "a" * 64,
-                    "sequence": "42",
-                },
-            )
-        ]
-
-        with patch("redis.asyncio.from_url", return_value=redis_mock):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=redis,
+        ):
             await sink.start()
 
-        assert sink._chain_id == "test-chain-123"
+        assert sink.chain_id == "test-chain-123"
         assert sink.chain_root == "a" * 64
-        assert sink._sequence == 43
+        assert sink.total_records == 43
+
+    @pytest.mark.asyncio
+    async def test_restart_continues_chain_across_processes(self):
+        server = fakeredis.FakeServer()
+        first = _make_sink()
+        first._redis = _fake_redis(server)
+        await first.ingest({"type": "X"})
+
+        second = _make_sink()
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=_fake_redis(server),
+        ):
+            await second.start()
+        await second.ingest({"type": "Y"})
+
+        entries = await _entries(second._redis)
+        assert entries[1][1]["chain_id"] == entries[0][1]["chain_id"]
+        assert entries[1][1]["prev_hash"] == entries[0][1]["record_hash"]
 
     @pytest.mark.asyncio
     async def test_corrupted_last_entry_raises_does_not_regenesis(self):
-        """Corrupted last entry -> init raises EvidenceChainCorruptError, does not re-genesis."""
         from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
 
+        redis = _fake_redis()
+        await redis.xadd(
+            STREAM_KEY,
+            {
+                "chain_id": "test-chain-123",
+                "record_hash": "short-hash",
+                "sequence": "42",
+            },
+        )
         sink = _make_sink()
-        redis_mock = _make_redis_mock()
-        redis_mock.xrevrange.return_value = [
-            (
-                "12345-0",
-                {
-                    "chain_id": "test-chain-123",
-                    "record_hash": "short-hash",  # invalid length
-                    "sequence": "42",
-                },
-            )
-        ]
-
-        with patch("redis.asyncio.from_url", return_value=redis_mock):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=redis,
+        ):
             with pytest.raises(
                 EvidenceChainCorruptError,
                 match="record_hash is not 64 lowercase hex chars",
@@ -792,47 +610,29 @@ class TestEvidenceChainRestoration:
 
     @pytest.mark.asyncio
     async def test_genesis_record_has_empty_prev_hash(self):
-        """Genesis record has prev_hash == '' (NULL in DB)."""
         sink = _make_sink()
-        redis_mock = _make_redis_mock()
-
-        captured_entries = []
-
-        async def _capture_xadd(key, entry, **kwargs):
-            captured_entries.append(dict(entry))
-            return "1234-0"
-
-        redis_mock.xadd = _capture_xadd
-
-        with patch("redis.asyncio.from_url", return_value=redis_mock):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=_fake_redis(),
+        ):
             await sink.start()
-
         await sink.ingest({"type": "TEST", "controlId": "A.5.3"})
-
-        assert captured_entries[0]["prev_hash"] == ""
+        (_id, fields) = (await _entries(sink._redis))[0]
+        assert fields["prev_hash"] == ""
+        assert fields["sequence"] == "0"
 
     @pytest.mark.asyncio
     async def test_kernel_emitted_record_satisfies_constraints(self):
         """A kernel-emitted record satisfies chk_schema_version and chk_trace_id_present."""
         sink = _make_sink()
-        redis_mock = _make_redis_mock()
-
-        captured_entries = []
-
-        async def _capture_xadd(key, entry, **kwargs):
-            captured_entries.append(dict(entry))
-            return "1234-0"
-
-        redis_mock.xadd = _capture_xadd
-
-        with patch("redis.asyncio.from_url", return_value=redis_mock):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=_fake_redis(),
+        ):
             await sink.start()
-
         await sink.ingest({"type": "TEST", "controlId": "A.5.3"})
-
-        entry = captured_entries[0]
+        (_id, entry) = (await _entries(sink._redis))[0]
         assert entry["schema"].startswith("cage-audit/")
-        assert "trace_id" in entry
         assert len(entry["trace_id"]) == 32
 
 
@@ -876,3 +676,26 @@ class TestEvidenceStreamCanonicalization:
         expected_hash = _sha256(b"a" * 64 + header_bytes + b'{"test": 1}')
 
         assert actual_hash == expected_hash
+
+
+class TestLifespanWiring:
+    """E1 regression: the gateway must start the sink; the bridge must custody."""
+
+    def test_gateway_lifespan_starts_and_stops_the_sink(self):
+        import inspect
+
+        from src.gateway.server import hybrid_server
+
+        source = inspect.getsource(hybrid_server._gateway_lifespan)
+        assert "await start_evidence_sink()" in source
+        assert "await evidence_sink.stop()" in source
+
+    def test_bridge_lifespan_runs_the_custodian(self):
+        import inspect
+
+        from src.compliance_bridge import main as bridge_main
+
+        source = inspect.getsource(bridge_main.lifespan)
+        assert "EvidenceCustodian.from_env()" in source
+        assert "run_forever()" in source
+        assert "validate_evidence_stream_preconditions" not in source

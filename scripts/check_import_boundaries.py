@@ -134,7 +134,6 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
 COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST = frozenset(
     [
         "src/gateway/governance/oscal_ssp_exporter.py",  # lazy-loads AssurancePosture for SSP metadata
-        "src/gateway/governance/evidence/factory.py",  # lazy-loads KmsBatchSigner for evidence signing
     ]
 )
 

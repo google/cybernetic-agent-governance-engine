@@ -120,6 +120,26 @@ spec:
       ports:
         - port: 8181
           protocol: TCP
+    # Governance Memorystore PSC endpoint (or in-cluster Redis) on 6379:
+    # the EvidenceCustodian reads the gateway's evidence stream and keeps its
+    # custody cursor there.
+    - to:
+        - ipBlock:
+            cidr: 10.128.0.0/20
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    # ClickHouse query plane (clickhouse_sink.py, HTTP interface)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: clickhouse
+      ports:
+        - port: 8123
+          protocol: TCP
     # Minio (OSCAL artifact storage — GCS S3-compatible endpoint via in-cluster Minio)
     - to:
         - podSelector:

@@ -22,6 +22,7 @@ locals {
   sa_agentsight        = "cage-agentsight"
   sa_benchmark         = "cage-benchmark"
   sa_langfuse          = "langfuse"
+  sa_clickhouse        = "cage-clickhouse"
 
   # Kubernetes ServiceAccount names (KSAs), one per workload (POAM-2026-079).
   # The "-sa" suffix matches the Linkerd mesh identities in
@@ -35,6 +36,7 @@ locals {
   ksa_lula              = "cage-lula-sa"
   ksa_benchmark         = "cage-benchmark-sa"
   ksa_langfuse          = "langfuse-sa"
+  ksa_clickhouse        = "cage-clickhouse-sa"
 
   # vLLM runs in var.namespace when deployed by Terraform and in
   # "vllm-inference" when deployed from deployment/k8s/ manifests.
@@ -94,6 +96,13 @@ resource "google_service_account" "agentsight" {
   account_id   = local.sa_agentsight
   display_name = "CAGE AgentSight Service Account"
   description  = "Least-privilege SA for AgentSight eBPF monitoring. Writes telemetry to Cloud Logging and Monitoring. (POAM-002 / AC-6)"
+  project      = var.project_id
+}
+
+resource "google_service_account" "clickhouse" {
+  account_id   = local.sa_clickhouse
+  display_name = "CAGE ClickHouse Query-Plane Service Account"
+  description  = "Sole identity with IAM on the dedicated, non-retention-locked ClickHouse cold-tier bucket. No access to the evidence WORM bucket. (§2.6 / AC-6)"
   project      = var.project_id
 }
 
@@ -157,7 +166,11 @@ resource "google_project_iam_member" "reconciler_memorystore_user" {
 # ---------------------------------------------------------------------------
 # IAM Role Bindings — Compliance Bridge
 # Roles: WORM bucket Storage Object Creator (append-only evidence & OSCAL artifacts),
-#        Storage Object Viewer (reads), Secret Manager Accessor (§5.1)
+#        WORM bucket Storage Object Viewer (reads), Secret Manager Accessor (§5.1),
+#        Memorystore DB Connection User (EvidenceCustodian reads the gateway's
+#        evidence stream and keeps its cursor on the governance instance).
+# Storage roles are bucket-scoped only: a project-wide grant would also reach
+# the ClickHouse tiering bucket, which only the ClickHouse GSA may touch.
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_member" "compliance_bridge_worm_creator" {
@@ -172,15 +185,10 @@ resource "google_storage_bucket_iam_member" "compliance_bridge_worm_viewer" {
   member = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
-resource "google_project_iam_member" "compliance_bridge_storage_creator" {
+resource "google_project_iam_member" "compliance_bridge_memorystore_user" {
+  count   = var.enable_memorystore_iam_auth ? 1 : 0
   project = var.project_id
-  role    = "roles/storage.objectCreator"
-  member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
-}
-
-resource "google_project_iam_member" "compliance_bridge_storage_viewer" {
-  project = var.project_id
-  role    = "roles/storage.objectViewer"
+  role    = "roles/memorystore.dbConnectionUser"
   member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
@@ -311,6 +319,11 @@ locals {
       gsa     = google_service_account.langfuse.email
       purpose = "telemetry"
     }
+    clickhouse = {
+      name    = local.ksa_clickhouse
+      gsa     = google_service_account.clickhouse.email
+      purpose = "query-plane"
+    }
   }
 }
 
@@ -400,5 +413,14 @@ resource "google_service_account_iam_binding" "langfuse_workload_identity" {
 
   members = [
     "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_langfuse}]",
+  ]
+}
+
+resource "google_service_account_iam_binding" "clickhouse_workload_identity" {
+  service_account_id = google_service_account.clickhouse.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${local.ksa_clickhouse}]",
   ]
 }
