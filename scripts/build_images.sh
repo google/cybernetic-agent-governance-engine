@@ -24,8 +24,11 @@ fi
 # $SHORT_SHA is a Cloud Build built-in substitution that only exists inside a
 # Cloud Build execution context; when submitting via gcloud we must supply it
 # ourselves from the local git state.
-SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
-echo "📌 Short SHA: ${SHORT_SHA}"
+SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo "v1")"
+ENVIRONMENT="${ENVIRONMENT:-staging}"
+KMS_LOCATION="${KMS_LOCATION:-us-central1}"
+KMS_KEY_VERSION="${KMS_KEY_VERSION:-1}"
+echo "📌 Short SHA: ${SHORT_SHA} | Environment: ${ENVIRONMENT} | KMS Location: ${KMS_LOCATION}"
 
 wait_for_pids=()
 
@@ -33,8 +36,8 @@ wait_for_pids=()
 #
 # Generates an ephemeral Cloud Build config that:
 #   - Builds with --no-cache (prevents stale-layer cache poisoning)
-#   - Tags both :latest and :<short-sha> (immutable, audit-traceable)
-#   - Pushes all tags atomically with --all-tags
+#   - Tags with :<short-sha> (never mutable floating tags — SI-7 / CM-7 / POAM-2026-083)
+#   - Pushes the immutable digest and signs it via Binary Authorization
 #   - Uses E2_HIGHCPU_8 and a 20-minute timeout (matches cloudbuild.compliance.yaml)
 #   - Routes logs to Cloud Logging only
 build_image() {
@@ -43,10 +46,9 @@ build_image() {
   local context_dir=$3
 
   local registry="gcr.io/${PROJECT_ID}"
-  local full_image_latest="${registry}/${image_name}:latest"
   local full_image_sha="${registry}/${image_name}:${SHORT_SHA}"
 
-  echo "🏗️  Starting build for ${image_name} (${SHORT_SHA}) using ${dockerfile}..."
+  echo "🏗️  Starting build & attestation for ${image_name} (${SHORT_SHA}) using ${dockerfile}..."
 
   local cb_file
   cb_file=$(mktemp -t cloudbuild.XXXXXX)
@@ -59,14 +61,28 @@ steps:
     - 'build'
     - '--no-cache'
     - '--file=${dockerfile}'
-    - '--tag=${full_image_latest}'
     - '--tag=${full_image_sha}'
     - '${context_dir}'
 - name: 'gcr.io/cloud-builders/docker'
   id: push-${image_name}
-  args: ['push', '--all-tags', '${registry}/${image_name}']
+  args: ['push', '${full_image_sha}']
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+  id: attest-${image_name}
+  entrypoint: 'bash'
+  args:
+    - '-ceu'
+    - |
+      DIGEST=\$\$(gcloud container images describe "${full_image_sha}" --format='get(image_summary.digest)')
+      gcloud container binauthz attestations sign-and-create \\
+        --project="${PROJECT_ID}" \\
+        --artifact-url="${registry}/${image_name}@\$\${DIGEST}" \\
+        --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${ENVIRONMENT}" \\
+        --keyversion-project="${PROJECT_ID}" \\
+        --keyversion-location="${KMS_LOCATION}" \\
+        --keyversion-keyring="cage-signing-${ENVIRONMENT}" \\
+        --keyversion-key="binauthz-attestor" \\
+        --keyversion="${KMS_KEY_VERSION}"
 images:
-  - '${full_image_latest}'
   - '${full_image_sha}'
 timeout: '1200s'
 options:
@@ -84,36 +100,40 @@ EOF
 }
 
 # 1. Backend / Governed Financial Advisor
-echo "🏗️  Starting build for governed-financial-advisor (${SHORT_SHA})..."
+echo "🏗️  Starting build & attestation for governed-financial-advisor (${SHORT_SHA})..."
 cb_backend=$(mktemp -t cloudbuild_backend.XXXXXX)
 cat <<EOF > "$cb_backend"
 steps:
 - name: 'gcr.io/cloud-builders/docker'
-  id: build-financial-advisor
+  id: build-governed-financial-advisor
   args:
     - 'build'
     - '--no-cache'
-    - '-t'
-    - 'gcr.io/${PROJECT_ID}/financial-advisor:latest'
-    - '-t'
-    - 'gcr.io/${PROJECT_ID}/financial-advisor:${SHORT_SHA}'
-    - '-t'
-    - 'gcr.io/${PROJECT_ID}/governed-financial-advisor:latest'
     - '-t'
     - 'gcr.io/${PROJECT_ID}/governed-financial-advisor:${SHORT_SHA}'
     - '-f'
     - 'Dockerfile'
     - '.'
 - name: 'gcr.io/cloud-builders/docker'
-  id: push-financial-advisor
-  args: ['push', '--all-tags', 'gcr.io/${PROJECT_ID}/financial-advisor']
-- name: 'gcr.io/cloud-builders/docker'
   id: push-governed-financial-advisor
-  args: ['push', '--all-tags', 'gcr.io/${PROJECT_ID}/governed-financial-advisor']
+  args: ['push', 'gcr.io/${PROJECT_ID}/governed-financial-advisor:${SHORT_SHA}']
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+  id: attest-governed-financial-advisor
+  entrypoint: 'bash'
+  args:
+    - '-ceu'
+    - |
+      DIGEST=\$\$(gcloud container images describe "gcr.io/${PROJECT_ID}/governed-financial-advisor:${SHORT_SHA}" --format='get(image_summary.digest)')
+      gcloud container binauthz attestations sign-and-create \\
+        --project="${PROJECT_ID}" \\
+        --artifact-url="gcr.io/${PROJECT_ID}/governed-financial-advisor@\$\${DIGEST}" \\
+        --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${ENVIRONMENT}" \\
+        --keyversion-project="${PROJECT_ID}" \\
+        --keyversion-location="${KMS_LOCATION}" \\
+        --keyversion-keyring="cage-signing-${ENVIRONMENT}" \\
+        --keyversion-key="binauthz-attestor" \\
+        --keyversion="${KMS_KEY_VERSION}"
 images:
-  - 'gcr.io/${PROJECT_ID}/financial-advisor:latest'
-  - 'gcr.io/${PROJECT_ID}/financial-advisor:${SHORT_SHA}'
-  - 'gcr.io/${PROJECT_ID}/governed-financial-advisor:latest'
   - 'gcr.io/${PROJECT_ID}/governed-financial-advisor:${SHORT_SHA}'
 timeout: '1200s'
 options:
@@ -128,10 +148,10 @@ trap 'rm -f "$cb_backend"' EXIT
 if [[ "${SKIP_VLLM:-false}" == "true" ]]; then
   echo "⏩ Skipping vLLM Streamer build (SKIP_VLLM=true)."
 elif [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
-  echo "🏗️  Starting build for vllm-streamer..."
-  # vLLM has its own cloudbuild yaml file (no HF token needed; build only runs pip)
+  echo "🏗️  Starting build & attestation for vllm-streamer..."
   gcloud builds submit --config "deployment/docker/cloudbuild.vllm.yaml" \
-    --project "$PROJECT_ID" --substitutions="_SHORT_SHA=${SHORT_SHA}" . > "/tmp/build_vllm.log" 2>&1 &
+    --project "$PROJECT_ID" \
+    --substitutions="_SHORT_SHA=${SHORT_SHA},_ENVIRONMENT=${ENVIRONMENT},_KMS_LOCATION=${KMS_LOCATION},_KMS_KEY_VERSION=${KMS_KEY_VERSION}" . > "/tmp/build_vllm.log" 2>&1 &
   wait_for_pids+=("$!")
 else
   echo "⚠️  deployment/docker/cloudbuild.vllm.yaml not found. Skipping vLLM Streamer build."
@@ -157,6 +177,14 @@ fi
 # 6. NeMo Guardrails
 build_image "nemo-guardrails" "deployment/docker/Dockerfile.nemo" "."
 
+# 7. Third-party images (Presidio, vLLM base, OPA, Redis, ClickHouse, Langfuse, Cloud SQL Proxy)
+if [[ "${MIRROR_THIRD_PARTY_IMAGES:-false}" == "true" ]]; then
+  echo "🪞 Mirroring and attesting third-party images into gcr.io/${PROJECT_ID}..."
+  PROJECT_ID="$PROJECT_ID" ENVIRONMENT="$ENVIRONMENT" KMS_LOCATION="$KMS_LOCATION" KMS_KEY_VERSION="$KMS_KEY_VERSION" \
+    bash scripts/mirror_and_attest_images.sh &
+  wait_for_pids+=("$!")
+fi
+
 echo "⏳ Waiting for all Cloud Build jobs to finish..."
 fail=0
 for pid in "${wait_for_pids[@]}"; do
@@ -171,4 +199,4 @@ if [[ $fail -eq 1 ]]; then
   exit 1
 fi
 
-echo "✅ All images built successfully! SHA: ${SHORT_SHA}"
+echo "✅ All images built and attested successfully! SHA: ${SHORT_SHA}"

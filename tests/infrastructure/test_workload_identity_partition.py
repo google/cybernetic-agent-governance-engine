@@ -67,6 +67,7 @@ _EXPECTED_SIGNERS = {
     "reconciler_snapshot": {"reconciler"},
     "compliance_evidence": {"compliance_bridge"},
     "benchmark_signing": {"benchmark"},
+    "binauthz_attestor": {"cloudbuild"},
 }
 
 

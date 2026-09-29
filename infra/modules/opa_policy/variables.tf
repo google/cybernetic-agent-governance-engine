@@ -20,7 +20,7 @@ variable "namespace" {
 variable "image" {
   description = "OPA container image"
   type        = string
-  default     = "openpolicyagent/opa:latest-static"
+  default     = "openpolicyagent/opa:1.2.0-static@sha256:cc4efcabce6d6ebfa2dc8efdb2edaf4dbdeaa4e11f2be5a4a01a6661c82fc1b8"
 }
 
 variable "replicas" {

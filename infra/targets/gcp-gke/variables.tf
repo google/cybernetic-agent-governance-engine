@@ -436,22 +436,103 @@ variable "enable_nemo_guardrails" {
   default     = true
 }
 
+variable "image_digests" {
+  description = "Immutable container image references pinned by @sha256: digest (name -> repo@sha256:<64-hex>). Required for Binary Authorization enforcement (CM-7, SI-7, POAM-2026-083)."
+  type        = map(string)
+  default = {
+    "gateway"                    = "gcr.io/cage-reference/gateway@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "governed-financial-advisor" = "gcr.io/cage-reference/governed-financial-advisor@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "vllm-streamer"              = "gcr.io/cage-reference/vllm-streamer@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "nemo-guardrails"            = "gcr.io/cage-reference/nemo-guardrails@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "compliance-bridge"          = "gcr.io/cage-reference/compliance-bridge@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "agentsight-ui"              = "gcr.io/cage-reference/agentsight-ui@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "presidio-analyzer"          = "gcr.io/cage-reference/presidio-analyzer@sha256:7d3c6513bc188a92c67ca068346bf2ef042d3726c243217ce9fb3a57960d3234"
+    "presidio-anonymizer"        = "gcr.io/cage-reference/presidio-anonymizer@sha256:562be3cb2e5c15f17c10935721459ef0d10cc2f28209f1f925b86dc7d40a2146"
+    "opa"                        = "gcr.io/cage-reference/opa@sha256:cc4efcabce6d6ebfa2dc8efdb2edaf4dbdeaa4e11f2be5a4a01a6661c82fc1b8"
+    "langfuse"                   = "gcr.io/cage-reference/langfuse@sha256:6b21a5086a07d9df332f7ecfc46778b3eb098b34df602ab80a0cd32a5f6c1134"
+    "langfuse-worker"            = "gcr.io/cage-reference/langfuse-worker@sha256:41f5785e862bf7e114cdbd8342be524c78dc8c88f6df5bd2c7debb3de98ec43b"
+    "cloud-sql-proxy"            = "gcr.io/cage-reference/cloud-sql-proxy@sha256:a77c72c56747cf2f431a4ed5e4a45e62003ca0fb94dc9f0c9cd390e84be2fa0e"
+    "clickhouse-server"          = "gcr.io/cage-reference/clickhouse-server@sha256:93f94e0c86d78c1ef8be33339d7dc8dc8c8e27c1b30d828ffab3893bf950d895"
+    "clickhouse-keeper"          = "gcr.io/cage-reference/clickhouse-keeper@sha256:77026fa37cc6922d10a25a8cd827cf3682e3fb0942dc162e490fa991bdbf0224"
+    "redis"                      = "gcr.io/cage-reference/redis@sha256:1f885a1088573222b2b34614878726658c71ff7f68db3b8ef07bd0ca57a2909e"
+  }
+
+  validation {
+    condition = !var.enable_binary_authorization || (
+      alltrue([
+        for name, ref in var.image_digests :
+        can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", ref)) && !can(regex(":latest(@|$)", ref))
+      ]) && alltrue([
+        for req in [
+          "gateway",
+          "governed-financial-advisor",
+          "vllm-streamer",
+          "nemo-guardrails",
+          "compliance-bridge",
+          "agentsight-ui",
+          "presidio-analyzer",
+          "presidio-anonymizer",
+          "opa",
+          "langfuse",
+          "langfuse-worker",
+          "cloud-sql-proxy",
+          "clickhouse-server",
+          "clickhouse-keeper",
+        ] : contains(keys(var.image_digests), req)
+      ])
+    )
+    error_message = "When enable_binary_authorization = true, image_digests must include all workload images and every reference must be pinned by an immutable @sha256:<64-hex> digest (tag-only and :latest references are rejected — CM-7, SI-7, POAM-2026-083)."
+  }
+
+  validation {
+    condition = alltrue([
+      for name, ref in var.image_digests :
+      can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", ref)) && !can(regex(":latest(@|$)", ref))
+    ])
+    error_message = "Every entry in image_digests must be a digest-pinned image reference (repo@sha256:<64-hex>); tag-only and :latest references are prohibited."
+  }
+}
+
 variable "nemo_image" {
-  description = "NeMo Guardrails container image (defaults to custom Cloud Build image)"
+  description = "NeMo Guardrails container image override (defaults to var.image_digests[\"nemo-guardrails\"])"
   type        = string
   default     = ""
+
+  validation {
+    condition = var.nemo_image == "" || (
+      !can(regex(":latest(@|$)", var.nemo_image)) &&
+      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.nemo_image)))
+    )
+    error_message = "nemo_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
+  }
 }
 
 variable "presidio_analyzer_image" {
-  description = "Microsoft Presidio Analyzer container image"
+  description = "Microsoft Presidio Analyzer container image override (defaults to var.image_digests[\"presidio-analyzer\"])"
   type        = string
-  default     = "mcr.microsoft.com/presidio-analyzer:latest"
+  default     = ""
+
+  validation {
+    condition = var.presidio_analyzer_image == "" || (
+      !can(regex(":latest(@|$)", var.presidio_analyzer_image)) &&
+      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.presidio_analyzer_image)))
+    )
+    error_message = "presidio_analyzer_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
+  }
 }
 
 variable "presidio_anonymizer_image" {
-  description = "Microsoft Presidio Anonymizer container image"
+  description = "Microsoft Presidio Anonymizer container image override (defaults to var.image_digests[\"presidio-anonymizer\"])"
   type        = string
-  default     = "mcr.microsoft.com/presidio-anonymizer:latest"
+  default     = ""
+
+  validation {
+    condition = var.presidio_anonymizer_image == "" || (
+      !can(regex(":latest(@|$)", var.presidio_anonymizer_image)) &&
+      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.presidio_anonymizer_image)))
+    )
+    error_message = "presidio_anonymizer_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
+  }
 }
 
 # ─── vLLM Configuration ───────────────────────────────────────────────────────
@@ -469,9 +550,17 @@ variable "vllm_model_path" {
 }
 
 variable "vllm_image" {
-  description = "vLLM container image (defaults to custom built vllm-streamer)"
+  description = "vLLM container image override (defaults to var.image_digests[\"vllm-streamer\"])"
   type        = string
   default     = ""
+
+  validation {
+    condition = var.vllm_image == "" || (
+      !can(regex(":latest(@|$)", var.vllm_image)) &&
+      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.vllm_image)))
+    )
+    error_message = "vllm_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
+  }
 }
 
 variable "vllm_gpu_count" {
@@ -656,9 +745,17 @@ variable "enable_compliance_bridge" {
 }
 
 variable "compliance_bridge_image" {
-  description = "Compliance bridge container image"
+  description = "Compliance bridge container image override (defaults to var.image_digests[\"compliance-bridge\"])"
   type        = string
   default     = ""
+
+  validation {
+    condition = var.compliance_bridge_image == "" || (
+      !can(regex(":latest(@|$)", var.compliance_bridge_image)) &&
+      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.compliance_bridge_image)))
+    )
+    error_message = "compliance_bridge_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
+  }
 }
 
 # ─── OPA Configuration ────────────────────────────────────────────────────────

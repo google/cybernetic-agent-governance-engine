@@ -12,8 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+substitutions:
+  _GCP_PROJECT_ID: ""  # Set via --substitutions or GCP trigger substitution variable
+  _ENVIRONMENT: "staging"
+  _KMS_LOCATION: "us-central1"
+  _KMS_KEY_VERSION: "1"
+
 steps:
   - name: 'gcr.io/cloud-builders/docker'
+    id: build-lula
     args:
       - build
       - -t
@@ -21,8 +28,30 @@ steps:
       - -f
       - deployment/docker/Dockerfile.lula
       - .
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-lula
+    args:
+      - push
+      - us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: attest-lula
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        DIGEST=$$(gcloud artifacts docker images describe "us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5" --format='get(image_summary.digest)')
+        gcloud container binauthz attestations sign-and-create \
+          --project="${_GCP_PROJECT_ID}" \
+          --artifact-url="us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula@$${DIGEST}" \
+          --attestor="projects/${_GCP_PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
+          --keyversion-project="${_GCP_PROJECT_ID}" \
+          --keyversion-location="${_KMS_LOCATION}" \
+          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
+          --keyversion-key="binauthz-attestor" \
+          --keyversion="${_KMS_KEY_VERSION}"
+
 images:
   - us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5
-substitutions:
-  _GCP_PROJECT_ID: ""  # Set via --substitutions or GCP trigger substitution variable
 timeout: 1200s

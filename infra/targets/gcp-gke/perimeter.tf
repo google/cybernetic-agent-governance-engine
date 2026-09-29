@@ -39,6 +39,12 @@ module "vpc_network" {
 
 # ─── 2. Binary Authorization Cluster Policy (CM-7, SI-7, §1.1, §5.4) ──────────
 
+data "google_kms_crypto_key_version" "binauthz_attestor" {
+  count      = var.enable_binary_authorization ? 1 : 0
+  crypto_key = google_kms_crypto_key.binauthz_attestor.id
+  version    = 1
+}
+
 resource "google_container_analysis_note" "build_attestor_note" {
   count   = var.enable_binary_authorization ? 1 : 0
   name    = "cage-build-attestor-note-${var.environment}"
@@ -58,7 +64,31 @@ resource "google_binary_authorization_attestor" "build_attestor" {
 
   attestation_authority_note {
     note_reference = google_container_analysis_note.build_attestor_note[0].name
+
+    public_keys {
+      id = data.google_kms_crypto_key_version.binauthz_attestor[0].id
+      pkix_public_key {
+        public_key_pem      = data.google_kms_crypto_key_version.binauthz_attestor[0].public_key[0].pem
+        signature_algorithm = data.google_kms_crypto_key_version.binauthz_attestor[0].public_key[0].algorithm
+      }
+    }
   }
+}
+
+resource "google_binary_authorization_attestor_iam_member" "cloudbuild_attestor_viewer" {
+  count    = var.enable_binary_authorization ? 1 : 0
+  project  = var.project_id
+  attestor = google_binary_authorization_attestor.build_attestor[0].name
+  role     = "roles/binaryauthorization.attestorsViewer"
+  member   = local.cloudbuild_member
+}
+
+resource "google_container_analysis_note_iam_member" "cloudbuild_note_attacher" {
+  count   = var.enable_binary_authorization ? 1 : 0
+  project = var.project_id
+  note    = google_container_analysis_note.build_attestor_note[0].name
+  role    = "roles/containeranalysis.notes.attacher"
+  member  = local.cloudbuild_member
 }
 
 resource "google_binary_authorization_policy" "cluster_policy" {

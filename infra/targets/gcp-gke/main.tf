@@ -443,6 +443,8 @@ module "clickhouse_operator" {
   namespace                = module.namespace.name
   environment              = var.environment
   enable_high_availability = var.environment == "prod" || var.enable_high_availability
+  image                    = var.image_digests["clickhouse-server"]
+  keeper_image             = var.image_digests["clickhouse-keeper"]
   storage_size             = var.clickhouse_storage_size
   storage_class            = var.storage_class
   cold_tier_bucket         = module.worm_bucket.bucket_name
@@ -470,12 +472,12 @@ module "nemo_guardrails" {
   enable_pdb      = var.enable_high_availability
   environment     = var.environment
 
-  # NeMo container image (custom-built via Cloud Build or upstream NVIDIA)
-  nemo_image = var.nemo_image != "" ? var.nemo_image : "gcr.io/${var.project_id}/nemo-guardrails:latest"
+  # NeMo container image pinned by @sha256: digest via var.image_digests
+  nemo_image = var.nemo_image != "" ? var.nemo_image : var.image_digests["nemo-guardrails"]
 
-  # Presidio images (Microsoft public registry)
-  presidio_analyzer_image   = var.presidio_analyzer_image
-  presidio_anonymizer_image = var.presidio_anonymizer_image
+  # Presidio images mirrored into Artifact Registry and pinned by @sha256: digest
+  presidio_analyzer_image   = var.presidio_analyzer_image != "" ? var.presidio_analyzer_image : var.image_digests["presidio-analyzer"]
+  presidio_anonymizer_image = var.presidio_anonymizer_image != "" ? var.presidio_anonymizer_image : var.image_digests["presidio-anonymizer"]
 
   # LLM backend: NeMo rails call vLLM fast service for rail evaluation
   llm_api_base   = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
@@ -511,7 +513,7 @@ module "vllm" {
   namespace            = module.namespace.name
   deployment_name      = "vllm-inference"
   service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
-  image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
+  image                = var.vllm_image != "" ? var.vllm_image : var.image_digests["vllm-streamer"]
   # model_path loads weights from GCS model bucket via runai_streamer
   model_path         = var.model_fast
   served_model_name  = var.served_model_name != "" ? var.served_model_name : var.served_model_fast
@@ -580,7 +582,7 @@ module "vllm_reasoning" {
   deployment_name      = "vllm-reasoning"
   service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   service_name         = "vllm-reasoning"
-  image                = var.vllm_image != "" ? var.vllm_image : "gcr.io/${var.project_id}/vllm-streamer:latest"
+  image                = var.vllm_image != "" ? var.vllm_image : var.image_digests["vllm-streamer"]
   # model_path loads weights from GCS model bucket via runai_streamer
   model_path         = var.model_reasoning
   served_model_name  = var.served_model_name != "" ? var.served_model_name : var.served_model_reasoning
@@ -634,6 +636,9 @@ module "langfuse" {
 
   namespace                = module.namespace.name
   service_account_name     = kubernetes_service_account.workload["langfuse"].metadata[0].name
+  langfuse_image           = var.image_digests["langfuse"]
+  langfuse_worker_image    = var.image_digests["langfuse-worker"]
+  cloudsql_proxy_image     = var.image_digests["cloud-sql-proxy"]
   enable_cloudsql_proxy    = true
   cloudsql_connection_name = module.cloudsql_postgres.connection_name
   cloudsql_iam_user        = module.cloudsql_postgres.iam_user_name
@@ -681,7 +686,7 @@ module "compliance_bridge" {
   source = "../../modules/compliance_bridge"
 
   namespace     = module.namespace.name
-  image         = var.compliance_bridge_image != "" ? var.compliance_bridge_image : "gcr.io/${var.project_id}/compliance-bridge:latest"
+  image         = var.compliance_bridge_image != "" ? var.compliance_bridge_image : var.image_digests["compliance-bridge"]
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   replicas      = var.enable_high_availability ? 2 : 1
 
@@ -716,6 +721,7 @@ module "opa" {
   source = "../../modules/opa_policy"
 
   namespace = module.namespace.name
+  image     = var.image_digests["opa"]
   replicas  = var.enable_high_availability ? 2 : 1
 
   # Optional: Add custom policies
@@ -732,7 +738,7 @@ module "gateway" {
   source = "../../modules/gateway"
 
   namespace               = module.namespace.name
-  image                   = "gcr.io/${var.project_id}/gateway:latest"
+  image                   = var.image_digests["gateway"]
   replicas                = var.enable_high_availability ? 2 : 1
   project_id              = var.project_id
   region                  = var.region
@@ -785,7 +791,7 @@ module "governed_advisor" {
   source = "../../modules/governed_advisor"
 
   namespace               = module.namespace.name
-  image                   = "gcr.io/${var.project_id}/governed-financial-advisor:latest"
+  image                   = var.image_digests["governed-financial-advisor"]
   replicas                = var.enable_high_availability ? 2 : 1
   project_id              = var.project_id
   region                  = var.region
@@ -824,7 +830,7 @@ module "agentsight_ui" {
   source = "../../modules/agentsight_ui"
 
   namespace = module.namespace.name
-  image     = "gcr.io/${var.project_id}/agentsight-ui:latest"
+  image     = var.image_digests["agentsight-ui"]
   replicas  = 1
 
   depends_on = [module.gke]

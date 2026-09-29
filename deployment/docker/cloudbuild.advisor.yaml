@@ -14,7 +14,10 @@
 
 substitutions:
   _GCP_PROJECT_ID: ""  # Set via --substitutions or GCP trigger substitution variable
-  _SHORT_SHA: "latest"
+  _SHORT_SHA: "v1"
+  _ENVIRONMENT: "staging"
+  _KMS_LOCATION: "us-central1"
+  _KMS_KEY_VERSION: "1"
 
 steps:
   - name: "gcr.io/cloud-builders/docker"
@@ -23,17 +26,32 @@ steps:
       - "build"
       - "--no-cache"
       - "--file=Dockerfile"
-      - "--tag=gcr.io/${_GCP_PROJECT_ID}/governed-financial-advisor:latest"
-      - "--tag=gcr.io/${_GCP_PROJECT_ID}/governed-financial-advisor:${_SHORT_SHA}"
+      - "--tag=gcr.io/${PROJECT_ID}/governed-financial-advisor:${_SHORT_SHA}"
       - "."
 
   - name: "gcr.io/cloud-builders/docker"
     id: push-governed-financial-advisor
-    args: ["push", "--all-tags", "gcr.io/${_GCP_PROJECT_ID}/governed-financial-advisor"]
+    args: ["push", "gcr.io/${PROJECT_ID}/governed-financial-advisor:${_SHORT_SHA}"]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    id: attest-governed-financial-advisor
+    entrypoint: "bash"
+    args:
+      - "-ceu"
+      - |
+        DIGEST=$$(gcloud container images describe "gcr.io/${PROJECT_ID}/governed-financial-advisor:${_SHORT_SHA}" --format='get(image_summary.digest)')
+        gcloud container binauthz attestations sign-and-create \
+          --project="${PROJECT_ID}" \
+          --artifact-url="gcr.io/${PROJECT_ID}/governed-financial-advisor@$${DIGEST}" \
+          --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
+          --keyversion-project="${PROJECT_ID}" \
+          --keyversion-location="${_KMS_LOCATION}" \
+          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
+          --keyversion-key="binauthz-attestor" \
+          --keyversion="${_KMS_KEY_VERSION}"
 
 images:
-  - "gcr.io/${_GCP_PROJECT_ID}/governed-financial-advisor:latest"
-  - "gcr.io/${_GCP_PROJECT_ID}/governed-financial-advisor:${_SHORT_SHA}"
+  - "gcr.io/${PROJECT_ID}/governed-financial-advisor:${_SHORT_SHA}"
 
 timeout: "1200s"
 options:

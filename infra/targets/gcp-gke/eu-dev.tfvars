@@ -150,8 +150,8 @@ vllm_replicas          = 1
 
 nemo_image = ""
 
-presidio_analyzer_image   = "mcr.microsoft.com/presidio-analyzer:latest"
-presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
+presidio_analyzer_image   = ""
+presidio_anonymizer_image = ""
 
 # ─── Langfuse (EU: NextAuth URL reflects EU cluster endpoint) ─────────────────
 # Update langfuse_nextauth_url to the actual EU cluster ingress URL after deploy

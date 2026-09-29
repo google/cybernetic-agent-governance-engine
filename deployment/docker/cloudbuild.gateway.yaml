@@ -14,7 +14,10 @@
 
 substitutions:
   _GCP_PROJECT_ID: ""  # Pass via --substitutions=_GCP_PROJECT_ID=<project> or set in Cloud Build trigger
-  _SHORT_SHA: "latest"
+  _SHORT_SHA: "v1"
+  _ENVIRONMENT: "staging"
+  _KMS_LOCATION: "us-central1"
+  _KMS_KEY_VERSION: "1"
 
 steps:
   - name: "gcr.io/cloud-builders/docker"
@@ -23,17 +26,32 @@ steps:
       - "build"
       - "--no-cache"
       - "--file=src/gateway/Dockerfile"
-      - "--tag=gcr.io/${_GCP_PROJECT_ID}/gateway:latest"
-      - "--tag=gcr.io/${_GCP_PROJECT_ID}/gateway:${_SHORT_SHA}"
+      - "--tag=gcr.io/${PROJECT_ID}/gateway:${_SHORT_SHA}"
       - "."
 
   - name: "gcr.io/cloud-builders/docker"
     id: push-gateway
-    args: ["push", "--all-tags", "gcr.io/${_GCP_PROJECT_ID}/gateway"]
+    args: ["push", "gcr.io/${PROJECT_ID}/gateway:${_SHORT_SHA}"]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    id: attest-gateway
+    entrypoint: "bash"
+    args:
+      - "-ceu"
+      - |
+        DIGEST=$$(gcloud container images describe "gcr.io/${PROJECT_ID}/gateway:${_SHORT_SHA}" --format='get(image_summary.digest)')
+        gcloud container binauthz attestations sign-and-create \
+          --project="${PROJECT_ID}" \
+          --artifact-url="gcr.io/${PROJECT_ID}/gateway@$${DIGEST}" \
+          --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
+          --keyversion-project="${PROJECT_ID}" \
+          --keyversion-location="${_KMS_LOCATION}" \
+          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
+          --keyversion-key="binauthz-attestor" \
+          --keyversion="${_KMS_KEY_VERSION}"
 
 images:
-  - "gcr.io/${_GCP_PROJECT_ID}/gateway:latest"
-  - "gcr.io/${_GCP_PROJECT_ID}/gateway:${_SHORT_SHA}"
+  - "gcr.io/${PROJECT_ID}/gateway:${_SHORT_SHA}"
 
 timeout: "1200s"
 options:

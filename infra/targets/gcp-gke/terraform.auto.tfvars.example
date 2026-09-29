@@ -164,8 +164,8 @@ langfuse_nextauth_url = "http://localhost:3000"
 # Enable compliance bridge (Langfuse → Lula integration)
 enable_compliance_bridge = false
 
-# Compliance bridge container image
-# compliance_bridge_image = "gcr.io/your-project/compliance-bridge:latest"
+# Compliance bridge container image (must be pinned by @sha256: digest when Binary Authorization is enabled)
+# compliance_bridge_image = "gcr.io/your-project/compliance-bridge@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OPA Policy Engine

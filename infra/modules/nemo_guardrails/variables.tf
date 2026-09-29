@@ -111,13 +111,13 @@ variable "llm_model_name" {
 variable "presidio_analyzer_image" {
   description = "Microsoft Presidio Analyzer container image"
   type        = string
-  default     = "mcr.microsoft.com/presidio-analyzer:latest"
+  default     = "mcr.microsoft.com/presidio-analyzer:2.2.357@sha256:7d3c6513bc188a92c67ca068346bf2ef042d3726c243217ce9fb3a57960d3234"
 }
 
 variable "presidio_anonymizer_image" {
   description = "Microsoft Presidio Anonymizer container image"
   type        = string
-  default     = "mcr.microsoft.com/presidio-anonymizer:latest"
+  default     = "mcr.microsoft.com/presidio-anonymizer:2.2.357@sha256:562be3cb2e5c15f17c10935721459ef0d10cc2f28209f1f925b86dc7d40a2146"
 }
 
 variable "presidio_recognizers" {

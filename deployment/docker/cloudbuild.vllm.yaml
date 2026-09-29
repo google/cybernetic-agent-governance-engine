@@ -13,7 +13,10 @@
 # limitations under the License.
 
 substitutions:
-  _SHORT_SHA: "latest"  # Override via --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
+  _SHORT_SHA: "v1"   # Override via --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
+  _ENVIRONMENT: "staging"
+  _KMS_LOCATION: "us-central1"
+  _KMS_KEY_VERSION: "1"
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
@@ -22,16 +25,31 @@ steps:
       - 'build'
       - '--file=deployment/docker/Dockerfile.vllm'
       - '--no-cache'
-      - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:latest'
       - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     id: push-vllm-streamer
-    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/vllm-streamer']
+    args: ['push', 'gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: attest-vllm-streamer
+    entrypoint: 'bash'
+    args:
+      - '-ceu'
+      - |
+        DIGEST=$$(gcloud container images describe "gcr.io/${PROJECT_ID}/vllm-streamer:${_SHORT_SHA}" --format='get(image_summary.digest)')
+        gcloud container binauthz attestations sign-and-create \
+          --project="${PROJECT_ID}" \
+          --artifact-url="gcr.io/${PROJECT_ID}/vllm-streamer@$${DIGEST}" \
+          --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
+          --keyversion-project="${PROJECT_ID}" \
+          --keyversion-location="${_KMS_LOCATION}" \
+          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
+          --keyversion-key="binauthz-attestor" \
+          --keyversion="${_KMS_KEY_VERSION}"
 
 images:
-  - 'gcr.io/$PROJECT_ID/vllm-streamer:latest'
   - 'gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
 
 # vLLM base image is large (~10 GB); allow up to 40 minutes.
