@@ -35,10 +35,20 @@ from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.governance.classification_engine import ClassificationContext
 from src.gateway.governance.constants import ControlRegistry
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    GovernanceTierPlugin,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
-from src.gateway.governance.governor.pipeline import PipelineResult, Profile, Stage, StageContext, run_pipeline
+from src.gateway.governance.governor.pipeline import (
+    PipelineResult,
+    Profile,
+    Stage,
+    StageContext,
+    run_pipeline,
+)
 from src.gateway.governance.governor.sealing import run_sealed
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.verdicts import (
@@ -89,7 +99,12 @@ class SymbolicGovernor:
 
     @property
     def domain_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
-        return tuple(sorted(self._components.domain_tiers, key=lambda t: (t.phase, t.order, t.tier_name)))
+        return tuple(
+            sorted(
+                self._components.domain_tiers,
+                key=lambda t: (t.phase, t.order, t.tier_name),
+            )
+        )
 
     def registered_tier_names(self) -> list[str]:
         return [t.tier_name for t in self.domain_tiers]
@@ -103,13 +118,17 @@ class SymbolicGovernor:
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
-            span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": action, "params": params}))
+            span.set_attribute(
+                OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
+            )
 
             _check_policy_pin(policy_version_id)
 
             t0 = time.perf_counter()
             ctx = StageContext(action=action, params=params, profile=Profile.FULL)
-            result, seal = await run_sealed(self.stages, ctx, params, path="validate_action")
+            result, seal = await run_sealed(
+                self.stages, ctx, params, path="validate_action"
+            )
             latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
@@ -130,15 +149,22 @@ class SymbolicGovernor:
                 ClassificationContext(
                     violations=violations,
                     confidence=_reported_confidence(params),
-                    opa_decision=result.opa_verdict.value if result.opa_verdict else None,
+                    opa_decision=result.opa_verdict.value
+                    if result.opa_verdict
+                    else None,
                     policy_ambiguous=False,
                     params=params,
                 ),
                 action,
             )
             meta = {**_ftra_meta(result), **classification.metadata}
-            span.set_attribute("cage.governance.classification_decision", classification.decision.value)
-            span.set_attribute("cage.governance.classification_reason", str(meta.get("classification_reason", ""))[:200])
+            span.set_attribute(
+                "cage.governance.classification_decision", classification.decision.value
+            )
+            span.set_attribute(
+                "cage.governance.classification_reason",
+                str(meta.get("classification_reason", ""))[:200],
+            )
 
             if classification.decision == GovernanceDecision.NARROW:
                 return await self._narrow(action, params, result, meta, t0)
@@ -156,11 +182,18 @@ class SymbolicGovernor:
 
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
-            verdict = handler(action, params, violations, list(result.tier_failures), meta, latency_ms)
+            verdict = handler(
+                action, params, violations, list(result.tier_failures), meta, latency_ms
+            )
             return await verdict if inspect.isawaitable(verdict) else verdict
 
     async def _narrow(
-        self, action: str, params: dict[str, Any], result: PipelineResult, meta: dict[str, Any], t0: float
+        self,
+        action: str,
+        params: dict[str, Any],
+        result: PipelineResult,
+        meta: dict[str, Any],
+        t0: float,
     ) -> dict[str, Any]:
         """Seal a narrower's proposal only if the FULL profile passes on it.
 
@@ -172,24 +205,48 @@ class SymbolicGovernor:
         if not isinstance(proposal, dict):
             await _deny(action, params, result)
         verified = copy.deepcopy(proposal)  # the exact params that get sealed
-        ctx = StageContext(action=action, params=copy.deepcopy(verified), profile=Profile.FULL)
+        ctx = StageContext(
+            action=action, params=copy.deepcopy(verified), profile=Profile.FULL
+        )
         rerun, seal = await run_sealed(self.stages, ctx, verified, path="narrow")
         latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-        trace.get_current_span().set_attribute("cage.governance.narrow_reverified", seal is not None)
+        trace.get_current_span().set_attribute(
+            "cage.governance.narrow_reverified", seal is not None
+        )
         if seal is None:
-            deny_meta = {**meta, **_ftra_meta(rerun), "classification_reason": "narrow_reverification_failed"}
-            await handle_deny(action, verified, list(rerun.violations), list(rerun.tier_failures), deny_meta, latency_ms)
-            raise GovernanceError(f"handle_deny returned without raising; refusing {action}")  # fail closed
+            deny_meta = {
+                **meta,
+                **_ftra_meta(rerun),
+                "classification_reason": "narrow_reverification_failed",
+            }
+            await handle_deny(
+                action,
+                verified,
+                list(rerun.violations),
+                list(rerun.tier_failures),
+                deny_meta,
+                latency_ms,
+            )
+            raise GovernanceError(
+                f"handle_deny returned without raising; refusing {action}"
+            )  # fail closed
         return handle_narrow(
-            action, params, verified,
-            seal=seal, violations=list(result.violations), classification_meta=meta, latency_ms=latency_ms,
+            action,
+            params,
+            verified,
+            seal=seal,
+            violations=list(result.violations),
+            classification_meta=meta,
+            latency_ms=latency_ms,
         )
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
-            span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
+            span.set_attribute(
+                OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params})
+            )
 
             ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
             result, seal = await run_sealed(self.stages, ctx, params, path="govern")
@@ -199,11 +256,17 @@ class SymbolicGovernor:
             span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
             return seal
 
-    async def revalidate_post_hitl(self, action: str, params: dict[str, Any], *, trace_id: str | None = None) -> str:
-        with tracer.start_as_current_span("symbolic_governor.revalidate_post_hitl") as span:
+    async def revalidate_post_hitl(
+        self, action: str, params: dict[str, Any], *, trace_id: str | None = None
+    ) -> str:
+        with tracer.start_as_current_span(
+            "symbolic_governor.revalidate_post_hitl"
+        ) as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_revalidate_post_hitl")
-            span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": action, "params": params}))
+            span.set_attribute(
+                OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
+            )
             span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
             if trace_id is not None:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
@@ -211,9 +274,13 @@ class SymbolicGovernor:
                 # POST_HITL re-runs only claimed barriers; with none there is
                 # nothing to re-verify, so the approval cannot be honoured.
                 await handle_deny(action, params, [_UNGOVERNED_POST_HITL], [], {})
-                raise GovernanceError(f"no tier governs {action}; post-HITL re-validation refused")
+                raise GovernanceError(
+                    f"no tier governs {action}; post-HITL re-validation refused"
+                )
             ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
-            result, seal = await run_sealed(self.stages, ctx, params, path="revalidate_post_hitl")
+            result, seal = await run_sealed(
+                self.stages, ctx, params, path="revalidate_post_hitl"
+            )
             if seal is None:
                 await _deny(action, params, result)
             return seal
@@ -222,7 +289,9 @@ class SymbolicGovernor:
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")
-            span.set_attribute(OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params}))
+            span.set_attribute(
+                OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params})
+            )
 
             # DRY_RUN never commits, so no ReservationScope: run_pipeline refuses one.
             ctx = StageContext(action=tool_name, params=params, profile=Profile.DRY_RUN)
@@ -231,7 +300,19 @@ class SymbolicGovernor:
             violations = list(result.violations)
             span.set_attribute(
                 OBSERVATION_OUTPUT,
-                json.dumps([{'tier': v.tier, 'code': v.code, 'message': v.message, 'kind': v.kind.value} for v in violations]) if violations else "APPROVED"
+                json.dumps(
+                    [
+                        {
+                            "tier": v.tier,
+                            "code": v.code,
+                            "message": v.message,
+                            "kind": v.kind.value,
+                        }
+                        for v in violations
+                    ]
+                )
+                if violations
+                else "APPROVED",
             )
             return {
                 "violations": violations,
@@ -243,7 +324,13 @@ class SymbolicGovernor:
                 "tier_violations": violations,
             }
 
-    async def _run_checks(self, tool_name: str, params: dict[str, Any], sim_mode: bool = False, policy_version_id: str | None = None) -> dict[str, Any]:
+    async def _run_checks(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        sim_mode: bool = False,
+        policy_version_id: str | None = None,
+    ) -> dict[str, Any]:
         """Legacy test compat."""
         return await self.verify(tool_name, params)
 
@@ -253,7 +340,9 @@ class SymbolicGovernor:
 
 
 _UNGOVERNED_POST_HITL = Violation(
-    tier="kernel", code="UNGOVERNED_POST_HITL", kind=ViolationKind.HARD,
+    tier="kernel",
+    code="UNGOVERNED_POST_HITL",
+    kind=ViolationKind.HARD,
     message="post-HITL re-validation requested for an action no domain tier claims",
 )
 
@@ -266,9 +355,19 @@ _VERDICT_HANDLERS = {
 }
 
 
-async def _deny(action: str, params: dict[str, Any], result: PipelineResult) -> NoReturn:
-    await handle_deny(action, params, list(result.violations), list(result.tier_failures), _ftra_meta(result))
-    raise GovernanceError(f"handle_deny returned without raising; refusing {action}")  # fail closed
+async def _deny(
+    action: str, params: dict[str, Any], result: PipelineResult
+) -> NoReturn:
+    await handle_deny(
+        action,
+        params,
+        list(result.violations),
+        list(result.tier_failures),
+        _ftra_meta(result),
+    )
+    raise GovernanceError(
+        f"handle_deny returned without raising; refusing {action}"
+    )  # fail closed
 
 
 def _check_policy_pin(policy_version_id: str | None) -> None:
@@ -289,8 +388,11 @@ def _reported_confidence(params: dict[str, Any]) -> float:
     ConfidenceStage already emits a HARD violation for invalid values, so this
     only feeds classification and can never widen a verdict.
     """
+    raw = params.get("confidence", 0.0)
+    if isinstance(raw, bool):
+        return 0.0
     try:
-        value = float(params.get("confidence", 0.0))
+        value = float(raw)
     except (TypeError, ValueError):
         return 0.0
     return value if math.isfinite(value) else 0.0

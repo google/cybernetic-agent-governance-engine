@@ -262,6 +262,10 @@ class Issue:
     reason: str
 
 
+# Markdown link line anchor: #L<start> or #L<start>-L<end>
+LINE_ANCHOR_PATTERN = re.compile(r"#L(\d+)(?:-L(\d+))?$")
+
+
 def find_markdown_files() -> list[Path]:
     """Collect all target Markdown files as resolved paths."""
     files: list[Path] = []
@@ -272,6 +276,29 @@ def find_markdown_files() -> list[Path]:
         elif resolved.is_dir():
             files.extend(p.resolve() for p in resolved.rglob("*.md"))
     return sorted(set(files))
+
+
+def resolve_scoped_markdown_files(path_args: list[str]) -> list[Path]:
+    """Resolve explicit --path arguments, allowing .md files or directories outside DOC_ROOTS."""
+    default_files = find_markdown_files()
+    matched: list[Path] = []
+    for raw_path in path_args:
+        candidate = Path(raw_path)
+        prefix = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (REPO_ROOT / candidate).resolve()
+        )
+        prefix_matches = [
+            f for f in default_files if f == prefix or prefix in f.parents
+        ]
+        if prefix_matches:
+            matched.extend(prefix_matches)
+        elif prefix.is_file() and prefix.suffix == ".md":
+            matched.append(prefix)
+        elif prefix.is_dir():
+            matched.extend(p.resolve() for p in prefix.rglob("*.md"))
+    return sorted(set(matched))
 
 
 def is_template_or_pattern(text: str) -> bool:
@@ -285,9 +312,50 @@ def is_template_or_pattern(text: str) -> bool:
     return False
 
 
+def _validate_line_anchor(
+    resolved_path: Path, target_path_str: str
+) -> tuple[bool, str]:
+    """Validate optional #L<start> or #L<start>-L<end> line anchor against resolved file."""
+    stripped = target_path_str.strip().strip("'\"`")
+    match = LINE_ANCHOR_PATTERN.search(stripped)
+    if not match:
+        return True, ""
+    if not resolved_path.is_file():
+        return (
+            False,
+            f"Line anchor '{match.group(0)}' targets directory '{resolved_path.name}', not a file",
+        )
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) is not None else None
+    if start < 1:
+        return False, f"Line anchor '{match.group(0)}' has start line {start} < 1"
+    if end is not None and end < start:
+        return (
+            False,
+            f"Line anchor '{match.group(0)}' has inverted range ({end} < {start})",
+        )
+    try:
+        total_lines = len(
+            resolved_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        )
+    except Exception as err:
+        return (
+            False,
+            f"Failed to read '{resolved_path.name}' for line anchor check: {err}",
+        )
+    last_line = end if end is not None else start
+    if last_line > total_lines:
+        return (
+            False,
+            f"Line anchor '{match.group(0)}' exceeds file length ({total_lines} lines)",
+        )
+    return True, ""
+
+
 def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
-    """Verify if a relative or repo-root path exists on disk."""
-    clean_target = re.split(r"[:#]", target_path_str)[0].strip().strip("'\"`")
+    """Verify if a relative or repo-root path exists on disk and validate any #L line anchor."""
+    stripped_target = target_path_str.strip().strip("'\"`")
+    clean_target = re.split(r"[:#]", stripped_target)[0].strip()
     if not clean_target or clean_target.lower() in IGNORED_TOKENS:
         return True, ""
 
@@ -365,10 +433,14 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
     if norm.startswith("compliance/"):
         candidates.append(REPO_ROOT / "docs" / norm)
 
+    has_line_anchor = bool(LINE_ANCHOR_PATTERN.search(stripped_target))
     for cand in candidates:
         try:
-            if cand.resolve().exists():
-                return True, ""
+            resolved = cand.resolve()
+            if resolved.exists():
+                if has_line_anchor and not resolved.is_file():
+                    continue
+                return _validate_line_anchor(resolved, target_path_str)
         except Exception:
             continue
 
@@ -509,7 +581,7 @@ def audit_markdown_file(path: Path) -> list[Issue]:
     return issues
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Verify doc references against repo code."
     )
@@ -527,22 +599,26 @@ def main() -> int:
             "Repeatable. Omit to audit every discovered document."
         ),
     )
-    args = parser.parse_args()
-
-    files = find_markdown_files()
+    args = parser.parse_args(argv)
 
     if args.path:
-        prefixes = [(REPO_ROOT / p).resolve() for p in args.path]
-        files = [
-            f
-            for f in files
-            if any(f == prefix or prefix in f.parents for prefix in prefixes)
-        ]
+        files = resolve_scoped_markdown_files(args.path)
         print("Scoped to: " + ", ".join(args.path))
+    else:
+        files = find_markdown_files()
 
     all_issues: list[Issue] = []
 
     print(f"Auditing {len(files)} documentation files...")
+    if len(files) == 0:
+        msg = "No documentation files matched the requested scope.\n"
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(msg, encoding="utf-8")
+        else:
+            print(msg)
+        return 1
+
     for f in files:
         file_issues = audit_markdown_file(f)
         all_issues.extend(file_issues)
