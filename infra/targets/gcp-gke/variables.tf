@@ -487,27 +487,118 @@ variable "vllm_replicas" {
 }
 
 variable "vllm_cpu_limit" {
-  description = "vLLM CPU limit"
+  description = "vLLM CPU limit on g2-standard-8 (8 vCPU / 7910m GKE allocatable)"
   type        = string
-  default     = "16000m"
+  default     = "6000m"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.vllm_cpu_limit)) &&
+      (
+        endswith(var.vllm_cpu_limit, "m")
+        ? tonumber(trimsuffix(var.vllm_cpu_limit, "m"))
+        : tonumber(var.vllm_cpu_limit) * 1000
+      ) > 0 &&
+      (
+        endswith(var.vllm_cpu_limit, "m")
+        ? tonumber(trimsuffix(var.vllm_cpu_limit, "m"))
+        : tonumber(var.vllm_cpu_limit) * 1000
+      ) <= 7910
+    )
+    error_message = "vllm_cpu_limit must be a valid CPU quantity (e.g. '6000m' or '6') and must not exceed g2-standard-8 GKE allocatable CPU (7910m)."
+  }
 }
 
 variable "vllm_memory_limit" {
-  description = "vLLM memory limit"
+  description = "vLLM memory limit on g2-standard-8 (32 GB RAM / 28928Mi GKE allocatable)"
   type        = string
-  default     = "64Gi"
+  default     = "24Gi"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(Mi|Gi)$", var.vllm_memory_limit)) &&
+      (
+        endswith(var.vllm_memory_limit, "Gi")
+        ? tonumber(trimsuffix(var.vllm_memory_limit, "Gi")) * 1024
+        : tonumber(trimsuffix(var.vllm_memory_limit, "Mi"))
+      ) > 0 &&
+      (
+        endswith(var.vllm_memory_limit, "Gi")
+        ? tonumber(trimsuffix(var.vllm_memory_limit, "Gi")) * 1024
+        : tonumber(trimsuffix(var.vllm_memory_limit, "Mi"))
+      ) <= 28928
+    )
+    error_message = "vllm_memory_limit must be a valid Mi/Gi quantity (e.g. '24Gi') and must not exceed g2-standard-8 GKE allocatable memory (28928Mi / ~28.25Gi)."
+  }
 }
 
 variable "vllm_cpu_request" {
-  description = "vLLM CPU request"
+  description = "vLLM CPU request on g2-standard-8 (8 vCPU / 7910m GKE allocatable)"
   type        = string
   default     = "3000m"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.vllm_cpu_request)) &&
+      (
+        endswith(var.vllm_cpu_request, "m")
+        ? tonumber(trimsuffix(var.vllm_cpu_request, "m"))
+        : tonumber(var.vllm_cpu_request) * 1000
+      ) > 0 &&
+      (
+        endswith(var.vllm_cpu_request, "m")
+        ? tonumber(trimsuffix(var.vllm_cpu_request, "m"))
+        : tonumber(var.vllm_cpu_request) * 1000
+      ) <= 7910
+    )
+    error_message = "vllm_cpu_request must be a valid CPU quantity (e.g. '3000m' or '3') and must not exceed g2-standard-8 GKE allocatable CPU (7910m)."
+  }
 }
 
 variable "vllm_memory_request" {
-  description = "vLLM memory request"
+  description = "vLLM memory request on g2-standard-8 (32 GB RAM / 28928Mi GKE allocatable)"
   type        = string
   default     = "10Gi"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(Mi|Gi)$", var.vllm_memory_request)) &&
+      (
+        endswith(var.vllm_memory_request, "Gi")
+        ? tonumber(trimsuffix(var.vllm_memory_request, "Gi")) * 1024
+        : tonumber(trimsuffix(var.vllm_memory_request, "Mi"))
+      ) > 0 &&
+      (
+        endswith(var.vllm_memory_request, "Gi")
+        ? tonumber(trimsuffix(var.vllm_memory_request, "Gi")) * 1024
+        : tonumber(trimsuffix(var.vllm_memory_request, "Mi"))
+      ) <= 28928
+    )
+    error_message = "vllm_memory_request must be a valid Mi/Gi quantity (e.g. '10Gi') and must not exceed g2-standard-8 GKE allocatable memory (28928Mi / ~28.25Gi)."
+  }
+}
+
+variable "vllm_shared_memory_size" {
+  description = "Shared memory size for /dev/shm on g2-standard-8 (32 GB RAM / 28928Mi GKE allocatable)"
+  type        = string
+  default     = "2Gi"
+
+  validation {
+    condition = (
+      can(regex("^[0-9]+(Mi|Gi)$", var.vllm_shared_memory_size)) &&
+      (
+        endswith(var.vllm_shared_memory_size, "Gi")
+        ? tonumber(trimsuffix(var.vllm_shared_memory_size, "Gi")) * 1024
+        : tonumber(trimsuffix(var.vllm_shared_memory_size, "Mi"))
+      ) > 0 &&
+      (
+        endswith(var.vllm_shared_memory_size, "Gi")
+        ? tonumber(trimsuffix(var.vllm_shared_memory_size, "Gi")) * 1024
+        : tonumber(trimsuffix(var.vllm_shared_memory_size, "Mi"))
+      ) <= 28928
+    )
+    error_message = "vllm_shared_memory_size must be a valid Mi/Gi quantity (e.g. '2Gi') and must not exceed g2-standard-8 GKE allocatable memory (28928Mi / ~28.25Gi)."
+  }
 }
 
 # ─── Langfuse Configuration ───────────────────────────────────────────────────

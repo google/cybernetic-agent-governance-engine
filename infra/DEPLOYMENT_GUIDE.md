@@ -235,7 +235,7 @@ docker compose up
 | `minio_storage` | MinIO S3-compatible object storage |
 | `postgres_db` | PostgreSQL database with automated init scripts |
 | `redis_cache` | High-Availability Redis with Sentinel support |
-| `vllm_inference` | vLLM deployments with dedicated Spot GPU node pools (NVIDIA L4, multi-zone across `us-central1-a/b/c`) |
+| `vllm_inference` | vLLM deployments with dedicated on-demand GPU node pools (`g2-standard-8`, NVIDIA L4, multi-zone across `us-central1-a/b/c`) |
 | `langfuse_stack` | Self-hosted Langfuse stack (observability, UI, database) |
 | `compliance_bridge` | Langfuse-to-Lula compliance audit bridge with dynamic project key bootstrapping |
 | `opa_policy` | Open Policy Agent engine |

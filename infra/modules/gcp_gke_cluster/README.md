@@ -58,11 +58,11 @@ module "gke_dev" {
   primary_node_pool_min_count    = 1
   primary_node_pool_max_count    = 3
 
-  # GPU: T4 for dev testing; scale to zero when idle
+  # GPU: L4 on g2-standard-8 (32 GB RAM); scale to zero when idle
   gpu_type                   = "nvidia-l4"
-  gpu_node_pool_machine_type = "g2-standard-4"
+  gpu_node_pool_machine_type = "g2-standard-8"
   gpu_node_pool_min_count    = 0
-  gpu_node_pool_spot         = true
+  gpu_node_pool_spot         = false
 }
 ```
 
@@ -108,7 +108,7 @@ module "gke_prod" {
   gpu_node_pool_min_count     = 2
   gpu_node_pool_max_count     = 5
   gpu_node_pool_initial_count = 2
-  gpu_node_pool_spot          = true
+  gpu_node_pool_spot          = false
   gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 }
 ```
@@ -193,13 +193,13 @@ Use `infra/targets/gcp-gke/apac-prod.tfvars`:
 | `enable_gpu_node_pool` | Enable GPU node pool | bool | `true` |
 | `gpu_type` | GPU type (`nvidia-l4`, `nvidia-t4`, `nvidia-a100-80gb`) | string | `"nvidia-l4"` |
 | `gpu_count` | GPUs per node | number | `1` |
-| `gpu_node_pool_machine_type` | GPU pool machine type | string | `"g2-standard-4"` |
+| `gpu_node_pool_machine_type` | GPU pool machine type | string | `"g2-standard-8"` |
 | `gpu_node_pool_min_count` | Minimum GPU nodes | number | `0` |
 | `gpu_node_pool_max_count` | Maximum GPU nodes | number | `2` |
 | `gpu_node_pool_initial_count` | Initial GPU node count | number | `1` |
 | `gpu_node_pool_disk_size` | Disk size in GB for GPU nodes | number | `200` |
 | `gpu_node_pool_disk_type` | Disk type for GPU nodes | string | `"pd-balanced"` |
-| `gpu_node_pool_spot` | Use Spot VMs for GPU pool | bool | `true` |
+| `gpu_node_pool_spot` | Use Spot VMs for GPU pool (must stay false) | bool | `false` |
 | `gpu_node_locations` | Zones for GPU node pool (multi-zonal sourcing) | list(string) | `["us-central1-a","us-central1-b","us-central1-c"]` |
 
 ### Additional options

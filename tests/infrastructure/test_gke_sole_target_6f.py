@@ -33,6 +33,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GKE_CLUSTER_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gcp_gke_cluster"
 GATEWAY_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gateway"
+VLLM_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "vllm_inference"
 GKE_TARGET_DIR = REPO_ROOT / "infra" / "targets" / "gcp-gke"
 K8S_DIR = REPO_ROOT / "deployment" / "k8s"
 CILIUM_DIR = K8S_DIR / "cilium"
@@ -280,6 +281,101 @@ class TestNodePoolsAndAntiSpotAffinity:
         assert 'key      = "cloud.google.com/gke-spot"' in gateway_tf
         assert 'operator = "NotIn"' in gateway_tf
         assert 'values   = ["true"]' in gateway_tf
+
+    def test_vllm_inference_enforces_anti_spot_affinity_and_drops_spot_tolerations(
+        self,
+    ) -> None:
+        vllm_tf = (VLLM_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        assert "required_during_scheduling_ignored_during_execution" in vllm_tf
+        assert 'key      = "cloud.google.com/gke-spot"' in vllm_tf
+        assert 'operator = "NotIn"' in vllm_tf
+        assert 'values   = ["true"]' in vllm_tf
+        assert "cloud.google.com/gke-provisioning" not in vllm_tf
+        assert "preferred_during_scheduling_ignored_during_execution" not in vllm_tf
+
+        gke_main_tf = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
+        assert "cloud.google.com/gke-spot" not in gke_main_tf
+
+    def test_vllm_resource_defaults_and_validations_fit_g2_standard_8(self) -> None:
+        expected_module_vars = {
+            "memory_limit": ("24Gi", "28928"),
+            "cpu_limit": ("6000m", "7910"),
+            "memory_request": ("10Gi", "28928"),
+            "cpu_request": ("3000m", "7910"),
+            "shared_memory_size": ("2Gi", "28928"),
+        }
+        expected_target_vars = {
+            "vllm_memory_limit": ("24Gi", "28928"),
+            "vllm_cpu_limit": ("6000m", "7910"),
+            "vllm_memory_request": ("10Gi", "28928"),
+            "vllm_cpu_request": ("3000m", "7910"),
+            "vllm_shared_memory_size": ("2Gi", "28928"),
+        }
+
+        for vars_path, expected in (
+            (VLLM_MODULE_DIR / "variables.tf", expected_module_vars),
+            (GKE_TARGET_DIR / "variables.tf", expected_target_vars),
+        ):
+            text = vars_path.read_text(encoding="utf-8")
+            for var_name, (default_val, max_bound) in expected.items():
+                match = re.search(
+                    rf'variable\s+"{var_name}"\s*\{{(.*?)\n\}}',
+                    text,
+                    re.DOTALL,
+                )
+                assert match is not None, f"Missing variable {var_name} in {vars_path}"
+                block = match.group(1)
+                assert "g2-standard-8" in block, (
+                    f"{var_name} description in {vars_path} must record g2-standard-8"
+                )
+                assert re.search(rf'default\s*=\s*"{default_val}"', block), (
+                    f"{var_name} in {vars_path} must default to {default_val}"
+                )
+                assert "validation {" in block and f"<= {max_bound}" in block, (
+                    f"{var_name} in {vars_path} must validate <= {max_bound}"
+                )
+
+        example_tfvars = (
+            GKE_TARGET_DIR / "terraform.auto.tfvars.example"
+        ).read_text(encoding="utf-8")
+        assert 'gpu_node_pool_machine_type = "g2-standard-8"' in example_tfvars
+        assert "g2-standard-4" not in example_tfvars
+
+        def _eval_cpu_valid(val: str) -> bool:
+            if not re.match(r"^[0-9]+(\.[0-9]+)?m?$", val):
+                return False
+            millicores = (
+                float(val[:-1]) if val.endswith("m") else float(val) * 1000.0
+            )
+            return 0 < millicores <= 7910
+
+        def _eval_mem_valid(val: str) -> bool:
+            if not re.match(r"^[0-9]+(Mi|Gi)$", val):
+                return False
+            mib = (
+                int(val[:-2]) * 1024 if val.endswith("Gi") else int(val[:-2])
+            )
+            return 0 < mib <= 28928
+
+        # Valid g2-standard-8 quantities pass
+        assert _eval_cpu_valid("6000m") is True
+        assert _eval_cpu_valid("6") is True
+        assert _eval_cpu_valid("3000m") is True
+        assert _eval_cpu_valid("7910m") is True
+        assert _eval_mem_valid("24Gi") is True
+        assert _eval_mem_valid("10Gi") is True
+        assert _eval_mem_valid("2Gi") is True
+        assert _eval_mem_valid("28Gi") is True
+
+        # Oversized / invalid quantities fail closed
+        assert _eval_cpu_valid("16000m") is False
+        assert _eval_cpu_valid("8") is False
+        assert _eval_cpu_valid("7911m") is False
+        assert _eval_cpu_valid("0m") is False
+        assert _eval_mem_valid("64Gi") is False
+        assert _eval_mem_valid("32Gi") is False
+        assert _eval_mem_valid("29Gi") is False
+        assert _eval_mem_valid("0Gi") is False
 
 
 # ============================================================================
