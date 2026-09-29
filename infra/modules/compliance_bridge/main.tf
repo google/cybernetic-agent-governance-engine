@@ -32,6 +32,8 @@ resource "kubernetes_deployment" "compliance_bridge" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 

@@ -88,6 +88,13 @@ resource "google_kms_crypto_key_iam_member" "redis_agent" {
   member        = "serviceAccount:service-${data.google_project.current.number}@cloud-redis.iam.gserviceaccount.com"
 }
 
+resource "google_kms_crypto_key_iam_member" "gke_agent" {
+  count         = var.grant_service_agents ? 1 : 0
+  crypto_key_id = google_kms_crypto_key.cmek_key.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:service-${data.google_project.current.number}@container-engine-robot.iam.gserviceaccount.com"
+}
+
 resource "google_kms_crypto_key_iam_member" "additional_members" {
   for_each      = toset(var.additional_encrypter_decrypter_members)
   crypto_key_id = google_kms_crypto_key.cmek_key.id

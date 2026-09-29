@@ -99,14 +99,37 @@ resource "kubernetes_deployment" "langfuse_web" {
         labels = {
           app = "langfuse-web"
         }
+        annotations = {
+          "config.linkerd.io/skip-outbound-ports" = "9000,5432,6379,3307"
+        }
       }
 
       spec {
         service_account_name = var.service_account_name != "" ? var.service_account_name : null
 
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 1001
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         container {
           name  = "langfuse-web"
           image = var.langfuse_image
+
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 1001
+            capabilities {
+              drop = ["ALL"]
+            }
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+          }
 
           port {
             container_port = 3000
@@ -426,6 +449,7 @@ resource "kubernetes_deployment" "langfuse_web" {
             args = [
               "--structured-logs",
               "--port=5432",
+              "--private-ip",
               "--auto-iam-authn",
               var.cloudsql_connection_name,
             ]
@@ -509,14 +533,37 @@ resource "kubernetes_deployment" "langfuse_worker" {
         labels = {
           app = "langfuse-worker"
         }
+        annotations = {
+          "config.linkerd.io/skip-outbound-ports" = "9000,5432,6379,3307"
+        }
       }
 
       spec {
         service_account_name = var.service_account_name != "" ? var.service_account_name : null
 
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 1001
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         container {
           name  = "langfuse-worker"
           image = var.langfuse_worker_image
+
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 1001
+            capabilities {
+              drop = ["ALL"]
+            }
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+          }
 
           env {
             name  = "DATABASE_URL"
@@ -712,6 +759,7 @@ resource "kubernetes_deployment" "langfuse_worker" {
             args = [
               "--structured-logs",
               "--port=5432",
+              "--private-ip",
               "--auto-iam-authn",
               var.cloudsql_connection_name,
             ]

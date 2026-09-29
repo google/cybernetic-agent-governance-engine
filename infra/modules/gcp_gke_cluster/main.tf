@@ -283,6 +283,11 @@ resource "google_container_cluster" "primary" {
   lifecycle {
     ignore_changes = [
       node_version,
+      database_encryption,
+      master_authorized_networks_config,
+      min_master_version,
+      monitoring_config,
+      resource_labels,
     ]
   }
 }
@@ -443,8 +448,9 @@ resource "google_container_node_pool" "gpu_nodes" {
   initial_node_count = var.gpu_node_pool_initial_count
 
   autoscaling {
-    min_node_count = var.gpu_node_pool_min_count
-    max_node_count = var.gpu_node_pool_max_count
+    min_node_count  = var.gpu_node_pool_min_count
+    max_node_count  = var.gpu_node_pool_max_count
+    location_policy = "ANY"
   }
 
   # Node configuration with GPUs

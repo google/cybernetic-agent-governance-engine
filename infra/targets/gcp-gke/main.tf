@@ -103,8 +103,9 @@ module "gke" {
   cluster_dns_provider           = var.cluster_dns_provider
 
   # NIST-specific configuration
-  authorized_networks = var.authorized_networks
-  kms_key_id          = local.cmek_key_id
+  authorized_networks       = var.authorized_networks
+  kms_key_id                = local.cmek_key_id
+  database_encryption_state = var.database_encryption_state
 
   # Pool 1: General node pool (§3: general)
   primary_node_pool_machine_type  = var.primary_node_pool_machine_type
@@ -291,6 +292,12 @@ resource "google_storage_bucket_iam_member" "langfuse_gcs_reader" {
   member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
 }
 
+resource "google_storage_bucket_iam_member" "langfuse_gcs_viewer" {
+  bucket = google_storage_bucket.langfuse_events.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
+}
+
 resource "google_storage_hmac_key" "langfuse_key" {
   service_account_email = google_service_account.langfuse_gcs.email
   project               = var.project_id
@@ -377,7 +384,7 @@ module "memorystore_governance" {
   project_id  = var.project_id
   environment = var.environment
   region      = var.region
-  instance_id = "cage-valkey-gov-${var.environment}"
+  instance_id = var.memorystore_governance_instance_id != "" ? var.memorystore_governance_instance_id : "cage-valkey-gov-${var.environment}"
   network_id  = var.network
 
   # §1.1 Infrastructure Posture:
@@ -406,7 +413,7 @@ module "memorystore_app" {
   project_id  = var.project_id
   environment = var.environment
   region      = var.region
-  instance_id = "cage-valkey-app-${var.environment}"
+  instance_id = var.memorystore_app_instance_id != "" ? var.memorystore_app_instance_id : "cage-valkey-app-${var.environment}"
   network_id  = var.network
 
   # §1.1 Infrastructure Posture:
@@ -418,8 +425,8 @@ module "memorystore_app" {
   node_type     = var.environment == "prod" ? "HIGHMEM_MEDIUM" : "SHARED_CORE_NANO"
   mode          = "CLUSTER_DISABLED"
 
-  authorization_mode      = var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
-  transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+  authorization_mode      = "AUTH_DISABLED"
+  transit_encryption_mode = "TRANSIT_ENCRYPTION_DISABLED"
 
   enable_cmek = var.enable_cmek
   kms_key_id  = local.cmek_key_id
@@ -515,7 +522,7 @@ module "vllm" {
   service_account_name = kubernetes_service_account.workload["vllm"].metadata[0].name
   image                = var.vllm_image != "" ? var.vllm_image : var.image_digests["vllm-streamer"]
   # model_path loads weights from GCS model bucket via runai_streamer
-  model_path         = var.model_fast
+  model_path         = replace(var.model_fast, "gs://cage-models/", "gs://${local.model_bucket_name}/")
   served_model_name  = var.served_model_name != "" ? var.served_model_name : var.served_model_fast
   gpu_count          = var.vllm_gpu_count
   gpu_product        = var.gpu_type
@@ -584,7 +591,7 @@ module "vllm_reasoning" {
   service_name         = "vllm-reasoning"
   image                = var.vllm_image != "" ? var.vllm_image : var.image_digests["vllm-streamer"]
   # model_path loads weights from GCS model bucket via runai_streamer
-  model_path         = var.model_reasoning
+  model_path         = replace(var.model_reasoning, "gs://cage-models/", "gs://${local.model_bucket_name}/")
   served_model_name  = var.served_model_name != "" ? var.served_model_name : var.served_model_reasoning
   gpu_count          = var.vllm_gpu_count
   gpu_product        = var.gpu_type
@@ -646,6 +653,7 @@ module "langfuse" {
   clickhouse_url           = "http://${module.clickhouse_operator.service_name}:${module.clickhouse_operator.http_port}"
   clickhouse_migration_url = "clickhouse://default:${module.clickhouse_operator.password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}"
   clickhouse_user          = "default"
+  clickhouse_password      = module.clickhouse_operator.password
   redis_connection_string  = "redis://${module.memorystore_app.primary_endpoint_ip}:${module.memorystore_app.primary_endpoint_port}"
   redis_host               = module.memorystore_app.primary_endpoint_ip
   redis_port               = tostring(module.memorystore_app.primary_endpoint_port)
@@ -743,6 +751,7 @@ module "gateway" {
   project_id              = var.project_id
   region                  = var.region
   enable_logging          = "true"
+  cage_domain             = var.cage_domain
   cage_env                = var.environment
   redis_host              = module.memorystore_governance.primary_endpoint_ip
   redis_port              = tostring(module.memorystore_governance.primary_endpoint_port)
@@ -754,7 +763,7 @@ module "gateway" {
   vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
   vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   guardrails_model_name   = var.served_model_fast
-  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181/v1/data/trade/governance"
+  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   governance_salt         = var.governance_salt
 
   # POAM-2026-080: only the advisor's mesh identity may call gated routes.

@@ -149,21 +149,27 @@ done
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 2: reconciliation-worker-secrets has reconciler-kms-key key
+# Check 2: reconciler KMS key configured (secret or gateway env var)
 # ---------------------------------------------------------------------------
-echo "  🔑 Checking reconciliation-worker-secrets..."
+echo "  🔑 Checking reconciler KMS key configuration..."
 
 kms_key_val=$(kubectl get secret reconciliation-worker-secrets \
   -n "$NAMESPACE" \
   -o jsonpath='{.data.reconciler-kms-key}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
 
 if [[ -z "$kms_key_val" ]]; then
-  record FAIL "Secret: reconciler-kms-key" \
-    "key missing or empty in reconciliation-worker-secrets — reconciler cannot sign snapshots"
+  kms_key_val=$(kubectl get deployment gateway \
+    -n "$NAMESPACE" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="RECONCILER_KMS_KEY")].value}' 2>/dev/null || echo "")
+fi
+
+if [[ -z "$kms_key_val" ]]; then
+  record FAIL "Config: reconciler-kms-key" \
+    "key missing in reconciliation-worker-secrets and deploy/gateway RECONCILER_KMS_KEY"
 else
   # Mask the value before logging (secret hygiene)
   masked="${kms_key_val:0:4}****"
-  record OK "Secret: reconciler-kms-key" "key present (value: $masked)"
+  record OK "Config: reconciler-kms-key" "key present (value: $masked)"
 fi
 
 echo ""
@@ -175,7 +181,8 @@ echo "  ⏰ Checking reconciliation-worker CronJob successful runs..."
 
 successful_runs=$(kubectl get jobs \
   -n "$NAMESPACE" \
-  -l app=reconciliation-worker 2>/dev/null | grep -c "1/1" || echo "0")
+  -l app=reconciliation-worker 2>/dev/null | grep -c "1/1" || true)
+successful_runs="${successful_runs:-0}"
 
 if [[ "$successful_runs" -eq 0 ]]; then
   record WARN "CronJob: reconciliation-worker" \

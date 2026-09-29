@@ -54,6 +54,8 @@ resource "kubernetes_deployment" "gateway" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 
@@ -235,6 +237,10 @@ resource "kubernetes_deployment" "gateway" {
           env {
             name  = "SERVICE_NAME"
             value = "hybrid-gateway"
+          }
+          env {
+            name  = "CAGE_DOMAIN"
+            value = var.cage_domain
           }
           env {
             name  = "CAGE_ENV"

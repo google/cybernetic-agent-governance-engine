@@ -90,6 +90,8 @@ resource "kubernetes_deployment" "nemo_guardrails" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 
@@ -112,6 +114,17 @@ resource "kubernetes_deployment" "nemo_guardrails" {
       }
 
       spec {
+        dynamic "security_context" {
+          for_each = var.enable_security_context ? [1] : []
+          content {
+            run_as_user     = 1000
+            run_as_non_root = true
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+          }
+        }
+
         # ── Volume: NeMo Colang config ──────────────────────────────────────
         volume {
           name = "nemo-config"

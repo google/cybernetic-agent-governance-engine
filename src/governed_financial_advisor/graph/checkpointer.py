@@ -136,6 +136,19 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
                             password = parsed_url.password
                     except Exception:
                         pass
+                from redis.sentinel import Sentinel as SyncSentinel
+
+                sync_sentinel = SyncSentinel(
+                    [(host, 26379)],
+                    sentinel_kwargs={"password": password} if password else None,
+                    socket_connect_timeout=2.0,
+                    socket_timeout=2.0,
+                )
+                # Verify Sentinel actually speaks the Sentinel protocol and knows 'mymaster'.
+                # Under Linkerd/Istio transparent iptables redirection, socket.connect_ex((host, 26379))
+                # always succeeds (returns 0) against the local sidecar proxy even when no Sentinel exists.
+                sync_sentinel.discover_master("mymaster")
+
                 sentinel = Sentinel(
                     [(host, 26379)],
                     sentinel_kwargs={"password": password} if password else None,

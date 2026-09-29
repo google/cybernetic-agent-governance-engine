@@ -59,9 +59,12 @@ resource "kubernetes_secret" "advisor_secrets" {
     "DATABASE_URL"             = var.database_url
     "NEXTAUTH_SECRET"          = var.nextauth_secret
     "NEXTAUTH_URL"             = var.nextauth_url
-    "CAGE_DEPLOYMENT_REGION"   = var.cage_deployment_region
-    "GOVERNANCE_SALT"          = var.governance_salt
-    "EVIDENCE_STREAM_ENABLED"  = "true"
+    "CAGE_DEPLOYMENT_REGION"           = var.cage_deployment_region
+    "GOVERNANCE_SALT"                  = var.governance_salt
+    "CAGE_API_KEY"                     = var.cage_api_key != "" ? var.cage_api_key : var.governance_salt
+    "CAGE_INTERNAL_TOKEN"              = var.cage_internal_token != "" ? var.cage_internal_token : var.governance_salt
+    "COMPLIANCE_BRIDGE_INTERNAL_TOKEN" = var.cage_internal_token != "" ? var.cage_internal_token : var.governance_salt
+    "EVIDENCE_STREAM_ENABLED"          = "true"
   }
 }
 

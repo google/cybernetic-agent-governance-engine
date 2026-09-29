@@ -164,6 +164,8 @@ resource "kubernetes_stateful_set" "clickhouse_keeper" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     service_name          = "clickhouse-keeper"
     replicas              = local.keeper_replicas
@@ -334,7 +336,7 @@ resource "kubernetes_config_map" "clickhouse_config" {
         <storage_configuration>
           <disks>
             <hot_local_ssd>
-              <path>/var/lib/clickhouse/</path>
+              <path>/var/lib/clickhouse/data/</path>
             </hot_local_ssd>
             %{if local.is_ha && var.cold_tier_bucket != ""}
             <cold_gcs>
@@ -465,6 +467,8 @@ resource "kubernetes_stateful_set" "clickhouse" {
       posture   = var.environment
     }
   }
+
+  wait_for_rollout = false
 
   spec {
     service_name          = "clickhouse"

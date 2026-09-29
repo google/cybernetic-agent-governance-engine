@@ -184,10 +184,17 @@ start_pf() {
   echo "[port-forward]   $name loop pid: ${loop_pid}"
 }
 
-# ── Endpoint Check Helper ──────────────────────────────────────────────────
+# ── Endpoint / Cold-Start Check Helper ─────────────────────────────────────
 has_endpoints() {
   local svc="$1"
   kubectl get endpointslice -n "$NS" -l kubernetes.io/service-name="$svc" --request-timeout=15s -o json 2>/dev/null | jq -e '.items[].endpoints | select(. != null) | length > 0' &>/dev/null
+}
+
+has_desired_replicas() {
+  local deploy="$1"
+  local reps
+  reps=$(kubectl get deploy "$deploy" -n "$NS" --request-timeout=15s -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+  [[ "${reps:-0}" -gt 0 ]]
 }
 
 # ── Core Services Required by Tests ──────────────────────────────────────────
@@ -201,21 +208,29 @@ start_pf langfuse     langfuse-web              3001  3000  # Langfuse API (LLM 
 start_pf langfuse-web langfuse-web              3000  3000  # Langfuse UI (NextAuth)
 
 HAS_VLLM_FAST=false
-if has_endpoints vllm-service; then
-  start_pf vllm-fast    vllm-service              8001  8000  # Fast vLLM (Qwen2.5-7B) — primary (:8001)
+if has_endpoints vllm-service || has_desired_replicas vllm-inference; then
+  start_pf vllm-fast    vllm-service              8001  8000  # Fast vLLM (Qwen2.5) — primary (:8001)
   start_pf vllm-fast2   vllm-service             18081  8000  # Fast vLLM — VLLM_FAST_API_BASE (:18081)
-  HAS_VLLM_FAST=true
+  if has_endpoints vllm-service; then
+    HAS_VLLM_FAST=true
+  else
+    echo "[port-forward]   vllm-service is cold-starting (replicas>0) — background forward loop started and will connect when Ready"
+  fi
 else
-  echo "[port-forward]   vllm-service has no active endpoints (GPU disabled) — skipping"
+  echo "[port-forward]   vllm-service has 0 desired replicas (GPU scaled to zero) — skipping"
 fi
 
 HAS_VLLM_REASON=false
-if has_endpoints vllm-reasoning; then
+if has_endpoints vllm-reasoning || has_desired_replicas vllm-reasoning; then
   start_pf vllm-reason  vllm-reasoning            8000  8000  # Reasoning vLLM (DeepSeek R1) — primary (:8000)
   start_pf vllm-reason2 vllm-reasoning           18082  8000  # Reasoning vLLM — VLLM_REASONING_API_BASE (:18082)
-  HAS_VLLM_REASON=true
+  if has_endpoints vllm-reasoning; then
+    HAS_VLLM_REASON=true
+  else
+    echo "[port-forward]   vllm-reasoning is cold-starting (replicas>0) — background forward loop started and will connect when Ready"
+  fi
 else
-  echo "[port-forward]   vllm-reasoning has no active endpoints (GPU disabled) — skipping"
+  echo "[port-forward]   vllm-reasoning has 0 desired replicas (GPU scaled to zero) — skipping"
 fi
 
 start_pf gateway      gateway                   8080  8080  # Gateway gRPC/HTTP

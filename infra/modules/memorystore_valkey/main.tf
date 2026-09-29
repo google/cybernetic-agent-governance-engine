@@ -55,4 +55,11 @@ resource "google_memorystore_instance" "instance" {
     network    = local.network_link
     project_id = var.project_id
   }
+
+  lifecycle {
+    ignore_changes = [
+      desired_psc_auto_connections,
+      desired_auto_created_endpoints,
+    ]
+  }
 }

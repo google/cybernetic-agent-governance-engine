@@ -30,6 +30,8 @@ resource "kubernetes_deployment" "governed_advisor" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 
@@ -48,6 +50,14 @@ resource "kubernetes_deployment" "governed_advisor" {
 
       spec {
         service_account_name = var.service_account_name
+
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 1000
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
 
         container {
           name              = "ingress-agent"

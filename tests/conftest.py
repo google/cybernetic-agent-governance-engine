@@ -1055,6 +1055,7 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
                         "jsonpath={.data.redis-password}",
                     ],
                     text=True,
+                    stderr=subprocess.DEVNULL,
                     timeout=5,
                 )
                 if secret_out:
@@ -1087,84 +1088,124 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
             "LANGFUSE_COMPLIANCE_SECRET_KEY", "REDACTED_LANGFUSE_COMPLIANCE_SK"
         )
 
-        # 1. PostgreSQL DB Seeding via kubectl exec
-        # Generate a fresh bcrypt hash of the secret key (11 rounds, matches Langfuse default)
-        hashed_secret = bcrypt.hashpw(sk_comp.encode(), bcrypt.gensalt(11)).decode(
-            "utf-8"
+        # Check if in-cluster postgresql-0 exists (legacy StatefulSet) vs Cloud SQL (Track 6c)
+        has_incluster_pg = (
+            subprocess.run(
+                [
+                    "kubectl",
+                    "get",
+                    "pod",
+                    "postgresql-0",
+                    "-n",
+                    "governance-stack",
+                ],
+                capture_output=True,
+                timeout=5,
+            ).returncode
+            == 0
         )
-        display_secret = "sk-lf-...3162"
 
-        sql_script = f"""
-        -- Ensure cage-compliance project exists
-        INSERT INTO projects (id, name, org_id, created_at, updated_at, has_traces)
-        VALUES ('cage-compliance', 'cage-compliance', 'CAGE', NOW(), NOW(), false)
-        ON CONFLICT (id) DO NOTHING;
+        if has_incluster_pg:
+            # 1. PostgreSQL DB Seeding via kubectl exec
+            # Generate a fresh bcrypt hash of the secret key (11 rounds, matches Langfuse default)
+            hashed_secret = bcrypt.hashpw(sk_comp.encode(), bcrypt.gensalt(11)).decode(
+                "utf-8"
+            )
+            display_secret = "sk-lf-...3162"
 
-        -- Upsert compliance api key.
-        -- fast_hashed_secret_key is intentionally NULL: Langfuse's apiAuth.ts lazily
-        -- populates it via bcrypt fallback on the first successful authentication.
-        INSERT INTO api_keys (id, note, public_key, hashed_secret_key, display_secret_key, project_id, fast_hashed_secret_key, scope)
-        VALUES (
-          'cmpa7dkag0001zt07e609comp',
-          'Provisioned Compliance Key',
-          '{pk_comp}',
-          '{hashed_secret}',
-          '{display_secret}',
-          'cage-compliance',
-          NULL,
-          'PROJECT'::"ApiKeyScope"
-        )
-        ON CONFLICT (public_key) DO UPDATE SET
-          hashed_secret_key     = EXCLUDED.hashed_secret_key,
-          fast_hashed_secret_key = NULL;
-        """
+            sql_script = f"""
+            -- Ensure cage-compliance project exists
+            INSERT INTO projects (id, name, org_id, created_at, updated_at, has_traces)
+            VALUES ('cage-compliance', 'cage-compliance', 'CAGE', NOW(), NOW(), false)
+            ON CONFLICT (id) DO NOTHING;
 
-        print(
-            "🗄️ [pytest bootstrap] Seeding Langfuse compliance project in GKE PostgreSQL..."
-        )
-        pg_password = os.environ.get("PGPASSWORD", "")
-        if not pg_password:
+            -- Upsert compliance api key.
+            -- fast_hashed_secret_key is intentionally NULL: Langfuse's apiAuth.ts lazily
+            -- populates it via bcrypt fallback on the first successful authentication.
+            INSERT INTO api_keys (id, note, public_key, hashed_secret_key, display_secret_key, project_id, fast_hashed_secret_key, scope)
+            VALUES (
+              'cmpa7dkag0001zt07e609comp',
+              'Provisioned Compliance Key',
+              '{pk_comp}',
+              '{hashed_secret}',
+              '{display_secret}',
+              'cage-compliance',
+              NULL,
+              'PROJECT'::"ApiKeyScope"
+            )
+            ON CONFLICT (public_key) DO UPDATE SET
+              hashed_secret_key     = EXCLUDED.hashed_secret_key,
+              fast_hashed_secret_key = NULL;
+            """
+
+            print(
+                "🗄️ [pytest bootstrap] Seeding Langfuse compliance project in GKE PostgreSQL..."
+            )
+            pg_password = os.environ.get("PGPASSWORD", "")
+            if not pg_password:
+                try:
+                    secret_out = subprocess.check_output(
+                        [
+                            "kubectl",
+                            "get",
+                            "secret",
+                            "postgresql",
+                            "-n",
+                            "governance-stack",
+                            "-o",
+                            "jsonpath={.data.password}",
+                        ],
+                        text=True,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    )
+                    if secret_out:
+                        pg_password = base64.b64decode(secret_out.strip()).decode()
+                except Exception:
+                    pass
+            env_vars = f"PGPASSWORD={pg_password}"
+            subprocess.run(
+                [
+                    "kubectl",
+                    "exec",
+                    "-i",
+                    "postgresql-0",
+                    "-n",
+                    "governance-stack",
+                    "--",
+                    "sh",
+                    "-c",
+                    f"env {env_vars} psql -U langfuse -d langfuse",
+                ],
+                input=sql_script,
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+            print(
+                "✅ [pytest bootstrap] GKE PostgreSQL Langfuse compliance project and keys seeded successfully."
+            )
+        else:
+            # Cloud SQL posture: verify if pk_comp/sk_comp works; if 401, fall back to
+            # LANGFUSE_INIT_PROJECT_PUBLIC_KEY / LANGFUSE_PUBLIC_KEY provisioned in Cloud SQL.
             try:
-                secret_out = subprocess.check_output(
-                    [
-                        "kubectl",
-                        "get",
-                        "secret",
-                        "postgresql",
-                        "-n",
-                        "governance-stack",
-                        "-o",
-                        "jsonpath={.data.password}",
-                    ],
-                    text=True,
+                probe = requests.get(
+                    f"{langfuse_host.rstrip('/')}/api/public/projects",
+                    auth=(pk_comp, sk_comp),
                     timeout=5,
                 )
-                if secret_out:
-                    pg_password = base64.b64decode(secret_out.strip()).decode()
+                if probe.status_code == 401:
+                    init_pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+                    init_sk = os.environ.get("LANGFUSE_SECRET_KEY", "")
+                    if init_pk and init_sk:
+                        pk_comp, sk_comp = init_pk, init_sk
+                        os.environ["LANGFUSE_COMPLIANCE_PUBLIC_KEY"] = pk_comp
+                        os.environ["LANGFUSE_COMPLIANCE_SECRET_KEY"] = sk_comp
+                        print(
+                            "🗄️ [pytest bootstrap] Cloud SQL posture: aligned LANGFUSE_COMPLIANCE_* keys with initialized project keys."
+                        )
             except Exception:
                 pass
-        env_vars = f"PGPASSWORD={pg_password}"
-        subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-i",
-                "postgresql-0",
-                "-n",
-                "governance-stack",
-                "--",
-                "sh",
-                "-c",
-                f"env {env_vars} psql -U langfuse -d langfuse",
-            ],
-            input=sql_script,
-            text=True,
-            check=True,
-            capture_output=True,
-        )
-        print(
-            "✅ [pytest bootstrap] GKE PostgreSQL Langfuse compliance project and keys seeded successfully."
-        )
 
         # 2. Update Kubernetes Secret if out of date
         try:
@@ -1211,7 +1252,7 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
                         sk_comp.encode()
                     ).decode(),
                     "LANGFUSE_HOST": base64.b64encode(
-                        b"http://langfuse-web.governance-stack.svc.cluster.local"
+                        b"http://langfuse-web.governance-stack.svc.cluster.local:3000"
                     ).decode(),
                     "public-key": base64.b64encode(pk_comp.encode()).decode(),
                     "secret-key": base64.b64encode(sk_comp.encode()).decode(),

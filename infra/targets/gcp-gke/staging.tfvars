@@ -52,10 +52,12 @@
 #   (or use the staged wrapper once implemented in step 15)
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-# project_id is intentionally omitted here — it is injected via TF_VAR_project_id
-# which deploy_all.sh reads from GOOGLE_CLOUD_PROJECT in .env (DEP-22).
-# region is also injected via TF_VAR_region from GOOGLE_CLOUD_LOCATION in .env.
-zone = "us-central1-a"
+project_id = "laah-cybernetics"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# ─── Jurisdiction (DEP-12) ───────────────────────────────────────────────────
+cage_deployment_region = "US_FED"
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
 environment  = "staging"
@@ -96,7 +98,8 @@ enable_deletion_protection = false
 
 # Cluster-scoped security controls (§1.1 staging posture: full security, 1-replica scale)
 regional_cluster               = false
-enable_binary_authorization    = true
+enable_binary_authorization           = true
+binary_authorization_enforcement_mode = "DRYRUN_AUDIT_LOG_ONLY"
 enable_audit_logging           = true
 enable_cmek                    = true
 enable_pod_security_standards  = true
@@ -128,11 +131,11 @@ primary_node_pool_initial_count = 1
 primary_node_pool_disk_type     = "pd-standard" # Cheaper than prod (pd-ssd)
 
 # §3 General-spot pool: c3-highcpu-4, Spot, 0-5 in staging only, tainted cloud.google.com/gke-spot=true:NoSchedule
-enable_general_spot_node_pool        = true
-general_spot_node_pool_machine_type  = "c3-highcpu-4"
-general_spot_node_pool_min_count     = 0
-general_spot_node_pool_max_count     = 5
-general_spot_node_pool_initial_count = 0
+enable_general_spot_node_pool = true
+general_spot_machine_type     = "c3-highcpu-4"
+general_spot_min_count        = 0
+general_spot_max_count        = 5
+general_spot_initial_count    = 0
 
 # §3 GPU pool: L4 (24 GiB VRAM) — required for 7B+ models, Spot OFF in every posture.
 enable_gpu_node_pool        = true
@@ -183,8 +186,8 @@ enable_compliance_bridge = true
 enable_nemo_guardrails   = true
 
 # vLLM configuration — weights streamed from GCS model bucket via runai_streamer
-model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
-model_reasoning        = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+model_fast             = "gs://laah-cybernetics-models/Qwen/Qwen2.5-1.5B-Instruct"
+model_reasoning        = "gs://laah-cybernetics-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
 served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 vllm_gpu_count         = 1
@@ -197,6 +200,31 @@ nemo_image = ""
 # Presidio — mirrored into Artifact Registry and pinned by @sha256: digest via var.image_digests
 presidio_analyzer_image   = ""
 presidio_anonymizer_image = ""
+
+image_digests = {
+  "gateway"                    = "gcr.io/laah-cybernetics/gateway@sha256:e0aea0d53a3fae02358be2f0274d385a9aaa2a196261df1e4e9dceadb8a1e3aa"
+  "governed-financial-advisor" = "gcr.io/laah-cybernetics/governed-financial-advisor@sha256:bde04d076352cb32559015527a598b226973a8f2645859e15ce27746bb51b912"
+  "vllm-streamer"              = "gcr.io/laah-cybernetics/vllm-streamer@sha256:cb7aff0c3128493ffbfe2d73c9299974b981a4e46a3c13cc08c960739703f812"
+  "nemo-guardrails"            = "gcr.io/laah-cybernetics/nemo-guardrails@sha256:76d97fa6a8c656a354a30a9ea9ce265424a9a95a112a757e1a3e7cd9c9d727d0"
+  "compliance-bridge"          = "gcr.io/laah-cybernetics/compliance-bridge@sha256:4513056a4d29b3d2c3a613416f4833feefef91ec95d7582368dc9f71e2362466"
+  "agentsight-ui"              = "gcr.io/laah-cybernetics/agentsight-ui@sha256:d53204ff8ac821bd9a9baac4041168cf4f9f31bba1e27fc3e5616ddddcacabfb"
+  "presidio-analyzer"          = "gcr.io/laah-cybernetics/presidio-analyzer@sha256:7b7add0ea5d226f7f6c35f9e5a8927214e84cc7f5e84f67dee154b594b79e195"
+  "presidio-anonymizer"        = "gcr.io/laah-cybernetics/presidio-anonymizer@sha256:00ac4c3f6f85473de6c3120615c878310c14a07eeba9a4233705e6f8fab7c81d"
+  "opa"                        = "docker.io/openpolicyagent/opa@sha256:2de1e6619246955695b982d0bcb6c73bcee22aa34ff96f2455996616ec1d21c1"
+  "langfuse"                   = "docker.io/langfuse/langfuse@sha256:e22716569be810ed379e0d7d7472ba230ef94fb4b7543c87b2a12c95e68d2db2"
+  "langfuse-worker"            = "docker.io/langfuse/langfuse-worker@sha256:438b2aeaeb095260ab38b3d2fd2b0ccb6105ab120158b148634214a4273a104e"
+  "cloud-sql-proxy"            = "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:d3f195cb893f2abb2ce8f28a4d3eee9b5589750711b4fbf67c78ce215c520e96"
+  "clickhouse-server"          = "docker.io/clickhouse/clickhouse-server@sha256:c3f166f4a80098480463d897a63f6867d24e3a7661fc1fe72e889788115a25f1"
+  "clickhouse-keeper"          = "docker.io/clickhouse/clickhouse-keeper@sha256:32686ea04febc134113d1b61109d1e0d0d7dc02a2b3dc098c1f035daeec4ba57"
+  "redis"                      = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+}
+
+memorystore_governance_instance_id = "cage-valkey-gov-staging-v2"
+memorystore_app_instance_id        = "cage-valkey-app-staging-v3"
+
+memorystore_governance_psc_cidr = "10.128.0.0/20"
+memorystore_app_psc_cidr        = "10.128.0.0/20"
+cloud_sql_cidr                  = "10.6.80.0/20"
 
 # ─── Secrets (set in terraform.auto.tfvars — gitignored) ──────────────────────
 # K-2: KMS key for CMEK encryption (etcd + persistent volumes).

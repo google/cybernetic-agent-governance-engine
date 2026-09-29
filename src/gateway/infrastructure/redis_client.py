@@ -113,19 +113,18 @@ try:
     # connection vulnerable to MITM attacks even in production.
     _CAGE_ENV_REDIS: str = os.environ.get("CAGE_ENV", "prod").lower()
     if _REDIS_TLS:
-        if _CAGE_ENV_REDIS in ("dev", "development", "test", "ci"):
+        _custom_ca_path = os.environ.get("REDIS_CA_CERT_PATH")
+        if _CAGE_ENV_REDIS in ("dev", "development", "test", "ci", "staging") and (not _custom_ca_path or not os.path.exists(_custom_ca_path)):
             _REDIS_SSL_CERT_REQS = ssl.CERT_NONE
             _REDIS_CA_CERT_PATH: str | None = None
             logger.warning(
-                "⚠️ Gateway Redis TLS: ssl_cert_reqs=NONE in %s mode. "
-                "Set CAGE_ENV=prod to enforce certificate verification.",
+                "⚠️ Gateway Redis TLS: ssl_cert_reqs=NONE in %s mode (no custom CA configured). "
+                "Set CAGE_ENV=prod and REDIS_CA_CERT_PATH to enforce certificate verification.",
                 _CAGE_ENV_REDIS,
             )
         else:
             _REDIS_SSL_CERT_REQS = ssl.CERT_REQUIRED
-            _REDIS_CA_CERT_PATH = os.environ.get(
-                "REDIS_CA_CERT_PATH", "/etc/ssl/certs/ca-certificates.crt"
-            )
+            _REDIS_CA_CERT_PATH = _custom_ca_path or "/etc/ssl/certs/ca-certificates.crt"
             logger.info(
                 "🔒 Gateway Redis TLS: ssl_cert_reqs=REQUIRED, ca_certs=%s",
                 _REDIS_CA_CERT_PATH,
@@ -391,11 +390,20 @@ try:
 
         def _get(self) -> redis.Redis:  # type: ignore[type-arg]
             if self._client is None:
+                from src.gateway.infrastructure.redis_credential_factory import (
+                    get_redis_credential_provider,
+                )
+
+                cred_provider = get_redis_credential_provider()
+                effective_password = (
+                    None if cred_provider is not None else _REDIS_PASSWORD
+                )
                 self._client = redis.Redis(
                     host=_REDIS_HOST,
                     port=_REDIS_PORT,
                     db=_REDIS_DB,
-                    password=_REDIS_PASSWORD,
+                    password=effective_password,
+                    credential_provider=cred_provider,
                     decode_responses=True,
                     socket_connect_timeout=3.0,
                     socket_timeout=3.0,

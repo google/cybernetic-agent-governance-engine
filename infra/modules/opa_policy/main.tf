@@ -62,6 +62,8 @@ resource "kubernetes_deployment" "opa" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 
@@ -83,6 +85,14 @@ resource "kubernetes_deployment" "opa" {
       }
 
       spec {
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 65534
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         container {
           name  = "opa"
           image = var.image

@@ -32,6 +32,8 @@ resource "kubernetes_deployment" "vllm" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 
@@ -56,11 +58,11 @@ resource "kubernetes_deployment" "vllm" {
       spec {
         service_account_name = var.service_account_name
 
-        # Pod-level security context: seccomp profile satisfies baseline/restricted
-        # admission controllers. run_as_non_root is intentionally omitted here
-        # because vLLM GPU workloads require root for CUDA device access; the
-        # namespace policy is set to "baseline" (not "restricted") for GPU namespaces.
+        # Pod-level security context: satisfies PodSecurity "restricted:latest"
+        # admission policy enforced on governance-stack.
         security_context {
+          run_as_non_root = true
+          run_as_user     = 1000
           seccomp_profile {
             type = "RuntimeDefault"
           }
@@ -138,14 +140,11 @@ resource "kubernetes_deployment" "vllm" {
             }
           }
 
-          # Container-level security context.
-          # Satisfies pod-security "baseline" admission policy for GPU workloads.
-          # NOTE: run_as_non_root is intentionally NOT set here — vLLM requires
-          # root for CUDA/GPU device access. The namespace policy is therefore
-          # set to "baseline" (not "restricted") via kubectl label. The three
-          # fields below are still best-practice hardening even under baseline.
+          # Container-level security context satisfying PodSecurity "restricted:latest".
           security_context {
             allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 1000
             seccomp_profile {
               type = "RuntimeDefault"
             }
@@ -203,6 +202,27 @@ resource "kubernetes_deployment" "vllm" {
           env {
             name  = "TRANSFORMERS_OFFLINE"
             value = "1"
+          }
+
+          # Non-root UID 1000 writable cache paths for vLLM / Triton / HuggingFace
+          env {
+            name  = "HOME"
+            value = "/tmp"
+          }
+
+          env {
+            name  = "XDG_CACHE_HOME"
+            value = "/tmp/.cache"
+          }
+
+          env {
+            name  = "VLLM_CONFIG_ROOT"
+            value = "/tmp/.config/vllm"
+          }
+
+          env {
+            name  = "TRITON_CACHE_DIR"
+            value = "/tmp/.triton"
           }
 
           # S3/MinIO credentials (optional)

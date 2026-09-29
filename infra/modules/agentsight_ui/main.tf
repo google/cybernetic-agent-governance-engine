@@ -31,6 +31,8 @@ resource "kubernetes_deployment" "agentsight_ui" {
     }
   }
 
+  wait_for_rollout = false
+
   spec {
     replicas = var.replicas
 
@@ -49,10 +51,30 @@ resource "kubernetes_deployment" "agentsight_ui" {
       }
 
       spec {
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 1000
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         container {
           name              = "agentsight-ui"
           image             = var.image
           image_pull_policy = "Always"
+
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 1000
+            capabilities {
+              drop = ["ALL"]
+            }
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+          }
 
           port {
             container_port = 8080

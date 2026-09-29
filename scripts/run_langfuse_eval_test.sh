@@ -20,10 +20,13 @@ OUTPUT_FILE="${1:-/tmp/langfuse_eval_output.txt}"
 LOG_DIR=/tmp/cage-pf
 PF_PIDS_FILE=/tmp/pf_pids.txt
 
-# Maximum seconds to wait for pods / ports before aborting
-POD_WAIT_TIMEOUT=300   # 5 minutes — GPU pods can be slow to schedule
-PORT_WAIT_TIMEOUT=180  # 3 minutes — port-forwards need time to tunnel
-PORT_INTERVAL=3        # poll interval in seconds
+# Maximum seconds to wait for pods / ports before aborting.
+# GPU scale-from-zero cold start (GKE node provisioning + NVIDIA driver init +
+# Run:ai GCS model weight streaming + 120s readinessProbe) takes ~5-8 minutes.
+POD_WAIT_TIMEOUT="${POD_WAIT_TIMEOUT:-900}"   # 15 minutes — handles GPU scale-from-zero cold start
+PORT_WAIT_TIMEOUT="${PORT_WAIT_TIMEOUT:-300}" # 5 minutes — port-forwards need time to tunnel
+PORT_INTERVAL=3                               # poll interval in seconds
+CAGE_AUTO_SCALE_GPU="${CAGE_AUTO_SCALE_GPU:-1}"
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -42,30 +45,47 @@ else
   warn ".env not found — using defaults. LANGFUSE credentials may be missing."
 fi
 
-# ── Step 1: wait for required pods to be Running ──────────────────────────────
-echo ""
-info "=== STEP 1: Waiting for required GKE pods to be Running (timeout: ${POD_WAIT_TIMEOUT}s) ==="
+# ── Step 0: Auto-wake GPU deployments if scaled to zero ───────────────────────
+if [[ "${CAGE_AUTO_SCALE_GPU}" == "1" ]]; then
+  for gpu_deploy in vllm-inference vllm-reasoning; do
+    replicas=$(kubectl get deployment "$gpu_deploy" -n "$NS" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+    if [[ "${replicas:-0}" -eq 0 ]]; then
+      info "GPU deployment ${gpu_deploy} is scaled to 0 (scale-to-zero cost-saving mode) — scaling up to 1 replica …"
+      kubectl scale deployment "$gpu_deploy" -n "$NS" --replicas=1
+    fi
+  done
+fi
 
-# Pods that MUST be Running before the test can proceed.
-# vllm-fast (vllm-service) and gateway are optional/best-effort.
-# NOTE: otel-collector is deprecated — traces route directly to Langfuse's native
-# OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces). No separate collector pod.
+# ── Step 1: wait for required pods to be Running and Ready ────────────────────
+echo ""
+info "=== STEP 1: Waiting for required GKE pods to be Ready (timeout: ${POD_WAIT_TIMEOUT}s) ==="
+
+# Pods that MUST be Running and Ready before the test can proceed.
+# NOTE:
+#   - Redis is managed Memorystore for Valkey over PSC (no in-cluster redis pod).
+#   - otel-collector is deprecated — traces route directly to Langfuse's native
+#     OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces).
 REQUIRED_POD_SELECTORS=(
   "governed-financial-advisor"
+  "gateway"
+  "vllm-inference"
   "vllm-reasoning"
   "opa-service"
   "langfuse-web"
-  "redis"
 )
 
 wait_for_pod() {
   local selector="$1"
   local elapsed=0
   while true; do
-    # Match pods whose name starts with the selector (handles generated suffixes)
-    status=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null \
-      | awk -v sel="$selector" '$1 ~ "^"sel { print $3 }' | head -1)
-    if [[ "$status" == "Running" ]]; then
+    # Match non-terminating pods whose name starts with selector; check READY (col 2, e.g. 2/2) and STATUS (col 3)
+    read -r ready_col status_col < <(
+      kubectl get pods -n "$NS" --no-headers 2>/dev/null \
+        | awk -v sel="$selector" '$1 ~ "^"sel && $3 != "Terminating" { print $2, $3; exit }'
+    ) || true
+    ready_cur="${ready_col%/*}"
+    ready_tot="${ready_col#*/}"
+    if [[ "$status_col" == "Running" && -n "$ready_cur" && "$ready_cur" == "$ready_tot" && "$ready_tot" != "0" ]]; then
       return 0
     fi
     if [[ $elapsed -ge $POD_WAIT_TIMEOUT ]]; then
@@ -73,7 +93,7 @@ wait_for_pod() {
     fi
     sleep 5
     elapsed=$((elapsed + 5))
-    echo -ne "\r  Waiting for pod ${selector} … status=${status:-<none>} (${elapsed}s/${POD_WAIT_TIMEOUT}s)   "
+    echo -ne "\r  Waiting for pod ${selector} … status=${status_col:-<none>} ready=${ready_col:-0/0} (${elapsed}s/${POD_WAIT_TIMEOUT}s)   "
   done
 }
 
@@ -81,24 +101,24 @@ pod_failures=()
 for selector in "${REQUIRED_POD_SELECTORS[@]}"; do
   echo -n "  Checking pod: ${selector} … "
   if wait_for_pod "$selector"; then
-    echo -e "${GREEN}Running${NC}"
+    echo -e "${GREEN}Ready${NC}"
   else
     # Get actual status for the error message
     actual=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null \
-      | awk -v sel="$selector" '$1 ~ "^"sel { print $3 }' | head -1)
+      | awk -v sel="$selector" '$1 ~ "^"sel { print $2" "$3 }' | head -1)
     echo -e "${RED}TIMEOUT (status: ${actual:-not found})${NC}"
     pod_failures+=("$selector (${actual:-not found})")
   fi
 done
 
 if [[ ${#pod_failures[@]} -gt 0 ]]; then
-  err "The following required pods did not reach Running within ${POD_WAIT_TIMEOUT}s:"
+  err "The following required pods did not reach Ready within ${POD_WAIT_TIMEOUT}s:"
   for p in "${pod_failures[@]}"; do err "  - $p"; done
   err "Cannot proceed — fix the pods above and re-run."
   exit 1
 fi
 
-ok "All required pods are Running."
+ok "All required pods are Running and Ready."
 
 # Print full pod list for context
 echo ""
@@ -151,18 +171,22 @@ start_pf() {
 }
 
 # ── Required port-forwards (test will fail without these) ─────────────────
-# IMPORTANT: Langfuse on :3000 — test default is LANGFUSE_HOST=http://localhost:3000
-# NOTE: otel-collector port-forward removed — traces route directly to Langfuse's
-# native OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces).
-start_pf backend     governed-financial-advisor  8081 80     required
-start_pf vllm-reason vllm-reasoning              8000 8000   required
-start_pf langfuse    langfuse-web                3000 80     required
-start_pf opa         opa-service                 8181 8181   required
+# IMPORTANT:
+#   - svc/langfuse-web listens on port 3000 (forwarded to both :3000 for SDK
+#     and :3001 for OTLP trace export default in test_langfuse_evaluation.py).
+#   - svc/opa is the Kubernetes Service name for deployment/opa-service.
+start_pf backend      governed-financial-advisor  8081 80     required
+start_pf gateway      gateway                     8080 8080   required
+start_pf vllm-fast    vllm-service                8001 8000   required
+start_pf vllm-reason  vllm-reasoning              8000 8000   required
+start_pf langfuse     langfuse-web                3000 3000   required
+start_pf langfuse-otel langfuse-web               3001 3000   required
+start_pf opa          opa                         8181 8181   required
 
 # ── Best-effort port-forwards (test degrades gracefully without these) ─────
-start_pf gateway     gateway                     8080 8080   best-effort
-start_pf vllm-fast   vllm-service                8001 8000   best-effort
-start_pf redis       redis                       6379 6379   best-effort
+if kubectl get svc -n "$NS" redis &>/dev/null; then
+  start_pf redis      redis                       6379 6379   best-effort
+fi
 
 # ── Step 3: health-gate — wait for required services ─────────────────────────
 echo ""
@@ -233,9 +257,11 @@ check_service() {
 # NOTE: otel-collector health check removed — traces route directly to Langfuse's
 # native OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces).
 check_service 8081 "Backend (governed-financial-advisor)" "http://localhost:8081/health"
-check_service 8000 "vLLM reasoning (judge LLM)"          "http://localhost:8000/v1/models"
-check_service 8181 "OPA policy engine"                   "http://localhost:8181/health"
-check_service 3000 "Langfuse web"                        "http://localhost:3000"
+check_service 8080 "Gateway (governance engine)"          "http://localhost:8080/health"
+check_service 8001 "vLLM fast inference (Qwen)"           "http://localhost:8001/v1/models"
+check_service 8000 "vLLM reasoning (DeepSeek R1)"         "http://localhost:8000/v1/models"
+check_service 8181 "OPA policy engine"                    "http://localhost:8181/health"
+check_service 3000 "Langfuse web"                         "http://localhost:3000"
 
 if [[ ${#health_failures[@]} -gt 0 ]]; then
   err "One or more required services failed health checks:"
@@ -250,15 +276,25 @@ if [[ ${#health_failures[@]} -gt 0 ]]; then
   exit 1
 fi
 
-# Seed Redis CBF balance so the $200k senior-trade scenario passes
+# Seed Redis/Memorystore CBF balance so the $200k senior-trade scenario passes
 if command -v redis-cli &>/dev/null && nc -z localhost 6379 2>/dev/null; then
   if redis-cli -h localhost -p 6379 set safety:current_cash 10000000 &>/dev/null; then
-    ok "Redis CBF seed: safety:current_cash = 10000000"
+    ok "Redis CBF seed (local :6379): safety:current_cash = 10000000"
   else
     warn "Redis CBF seed failed — CBF will bootstrap from its own default."
   fi
+elif kubectl exec -n "$NS" deploy/gateway -c gateway -- python3 -c "
+import asyncio
+from src.gateway.infrastructure.redis_client import get_async_redis_client
+async def _seed():
+    c = await get_async_redis_client()
+    await c.set('safety:current_cash', '10000000')
+    await c.aclose()
+asyncio.run(_seed())
+" &>/dev/null; then
+  ok "Memorystore CBF seed (in-cluster gateway → memorystore_governance): safety:current_cash = 10000000"
 else
-  warn "redis-cli not available or Redis port-forward not up — skipping CBF seed."
+  warn "Redis/Memorystore CBF seed skipped — CBF will bootstrap from its own default."
 fi
 
 echo ""
@@ -271,12 +307,12 @@ echo ""
 info "=== STEP 5: Running test — output → ${OUTPUT_FILE} ==="
 echo ""
 
-# Explicitly pass --run-integration because the test is marked @pytest.mark.integration
-# and the default pytest.ini addopts does not include it.
+# Explicitly pass --run-integration and -n0 (single worker over port-forward tunnels)
 set +e
 uv run pytest \
   tests/test_langfuse_evaluation.py::test_langfuse_llm_judge_evaluation \
   --run-integration \
+  -n0 --no-cov -p no:langsmith -p no:langsmith_plugin \
   -v \
   --tb=short \
   -s \

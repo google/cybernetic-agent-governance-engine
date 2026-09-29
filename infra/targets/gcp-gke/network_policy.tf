@@ -53,13 +53,14 @@ locals {
             app = "gateway"
           }
         }
-        policyTypes = ["Egress"]
         egress = [
           {
-            to = [
-              {
-                fqdns = var.gateway_egress_allowed_fqdns
-              }
+            matches = [
+              for fqdn in var.gateway_egress_allowed_fqdns : (
+                can(regex("[*]", fqdn))
+                ? { pattern = fqdn, name = null }
+                : { name = fqdn, pattern = null }
+              )
             ]
             ports = [
               {
@@ -95,13 +96,14 @@ locals {
             "cage.io/account-purpose" = "ledger-reconciliation"
           }
         }
-        policyTypes = ["Egress"]
         egress = [
           {
-            to = [
-              {
-                fqdns = var.reconciler_egress_allowed_fqdns
-              }
+            matches = [
+              for fqdn in var.reconciler_egress_allowed_fqdns : (
+                can(regex("[*]", fqdn))
+                ? { pattern = fqdn, name = null }
+                : { name = fqdn, pattern = null }
+              )
             ]
             ports = [
               {
@@ -137,13 +139,14 @@ locals {
             app = "security-scanner"
           }
         }
-        policyTypes = ["Egress"]
         egress = [
           {
-            to = [
-              {
-                fqdns = var.trivy_egress_allowed_fqdns
-              }
+            matches = [
+              for fqdn in var.trivy_egress_allowed_fqdns : (
+                can(regex("[*]", fqdn))
+                ? { pattern = fqdn, name = null }
+                : { name = fqdn, pattern = null }
+              )
             ]
             ports = [
               {
@@ -182,13 +185,57 @@ locals {
             }
           ]
         }
-        policyTypes = ["Egress"]
         egress = [
           {
-            to = [
+            matches = [
+              for fqdn in var.vllm_egress_allowed_fqdns : (
+                can(regex("[*]", fqdn))
+                ? { pattern = fqdn, name = null }
+                : { name = fqdn, pattern = null }
+              )
+            ]
+            ports = [
               {
-                fqdns = var.vllm_egress_allowed_fqdns
+                protocol = "TCP"
+                port     = 443
               }
+            ]
+          }
+        ]
+      }
+    }
+
+    langfuse_egress_fqdn = {
+      apiVersion = "networking.gke.io/v1alpha1"
+      kind       = "FQDNNetworkPolicy"
+      metadata = {
+        name      = "langfuse-egress-fqdn"
+        namespace = module.namespace.name
+        labels = {
+          "app.kubernetes.io/managed-by" = "terraform"
+          "cage.io/component"            = "z3n-egress"
+        }
+        annotations = {
+          "compliance.nist.gov/control"  = "SC-7,AC-4,AU-9"
+          "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+        }
+      }
+      spec = {
+        podSelector = {
+          matchExpressions = [
+            {
+              key      = "app"
+              operator = "In"
+              values   = ["langfuse-web", "langfuse-worker"]
+            }
+          ]
+        }
+        egress = [
+          {
+            matches = [
+              { name = "storage.googleapis.com", pattern = null },
+              { name = "sqladmin.googleapis.com", pattern = null },
+              { name = "oauth2.googleapis.com", pattern = null },
             ]
             ports = [
               {
@@ -240,7 +287,7 @@ resource "kubernetes_network_policy_v1" "default_deny_external_egress" {
       }
     }
 
-    # §5.3, §7: DNS egress allowed ONLY to kube-dns and Cloud DNS (never 0.0.0.0/0)
+    # §5.3, §7: DNS egress allowed ONLY to kube-dns, node-local-dns, and Cloud DNS (never 0.0.0.0/0)
     egress {
       to {
         namespace_selector {
@@ -251,6 +298,18 @@ resource "kubernetes_network_policy_v1" "default_deny_external_egress" {
         pod_selector {
           match_labels = {
             "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
           }
         }
       }
@@ -266,6 +325,88 @@ resource "kubernetes_network_policy_v1" "default_deny_external_egress" {
       ports {
         protocol = "TCP"
         port     = "53"
+      }
+    }
+
+    # POAM-2026-080: Allow Linkerd sidecar proxies to reach Linkerd control plane in linkerd namespace
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "linkerd"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8086"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8090"
+      }
+    }
+
+    # Cloud SQL VPC peering egress (Cloud SQL Proxy and PostgreSQL)
+    egress {
+      to {
+        ip_block {
+          cidr = var.cloud_sql_cidr
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "3307"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "5432"
+      }
+    }
+
+    # Memorystore Valkey / Redis egress
+    egress {
+      dynamic "to" {
+        for_each = distinct([var.memorystore_governance_psc_cidr, var.memorystore_app_psc_cidr])
+        content {
+          ip_block {
+            cidr = to.value
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "6379"
+      }
+    }
+
+    # GKE compute metadata server (HTTP 80) for Workload Identity
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.254/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "80"
+      }
+    }
+
+    # GKE Workload Identity metadata server (TCP 988)
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.252/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "988"
       }
     }
   }
@@ -311,6 +452,18 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
         }
       }
       to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
         ip_block {
           cidr = var.kube_dns_cidr
         }
@@ -338,7 +491,7 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       }
     }
 
-    # Internal governance services (OPA, vLLM, NeMo, Langfuse OTLP)
+    # Internal governance services (OPA, vLLM, NeMo, Langfuse OTLP) + Linkerd inbound proxy (4143)
     egress {
       to {
         pod_selector {
@@ -350,6 +503,10 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       ports {
         protocol = "TCP"
         port     = "8181"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
       }
     }
 
@@ -386,6 +543,10 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
         protocol = "TCP"
         port     = "8000"
       }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
     }
 
     egress {
@@ -399,6 +560,36 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       ports {
         protocol = "TCP"
         port     = "3000"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
+    }
+
+    # GKE compute metadata server (HTTP 80) for Workload Identity
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.254/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "80"
+      }
+    }
+
+    # GKE Workload Identity metadata server (TCP 988)
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.252/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "988"
       }
     }
   }
@@ -444,6 +635,18 @@ resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only"
         }
       }
       to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
         ip_block {
           cidr = var.kube_dns_cidr
         }
@@ -471,6 +674,10 @@ resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only"
         protocol = "TCP"
         port     = "8080"
       }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
     }
 
     # Compliance bridge
@@ -485,6 +692,10 @@ resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only"
       ports {
         protocol = "TCP"
         port     = "8090"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
       }
     }
 
@@ -543,6 +754,18 @@ resource "kubernetes_network_policy_v1" "agent_egress_internal_only" {
         }
       }
       to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
         ip_block {
           cidr = var.kube_dns_cidr
         }
@@ -570,6 +793,10 @@ resource "kubernetes_network_policy_v1" "agent_egress_internal_only" {
         protocol = "TCP"
         port     = "8181"
       }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
     }
 
     # CAGE Gateway (orchestration return path)
@@ -584,6 +811,10 @@ resource "kubernetes_network_policy_v1" "agent_egress_internal_only" {
       ports {
         protocol = "TCP"
         port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
       }
     }
   }
@@ -633,6 +864,18 @@ resource "kubernetes_network_policy_v1" "reconciliation_worker_egress" {
         pod_selector {
           match_labels = {
             "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
           }
         }
       }
@@ -717,6 +960,18 @@ resource "kubernetes_network_policy_v1" "trivy_scanner_dns_egress" {
         }
       }
       to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
         ip_block {
           cidr = var.kube_dns_cidr
         }
@@ -771,6 +1026,18 @@ resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4" {
         pod_selector {
           match_labels = {
             "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
           }
         }
       }

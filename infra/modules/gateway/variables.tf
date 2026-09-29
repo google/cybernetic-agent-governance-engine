@@ -234,4 +234,10 @@ variable "network_policy_hash" {
   default     = ""
 }
 
+variable "cage_domain" {
+  description = "CAGE domain configuration (e.g. 'finance')"
+  type        = string
+  default     = "finance"
+}
+
 

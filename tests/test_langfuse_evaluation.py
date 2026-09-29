@@ -123,6 +123,29 @@ trace.set_tracer_provider(provider)
 tracer = trace.get_tracer("langfuse-eval-integration")
 
 
+def _resolve_served_model_id(base_url: str, configured_model: str) -> str:
+    """Resolve the served model ID from vLLM /v1/models if configured_model does not match."""
+    try:
+        resp = requests.get(f"{base_url.rstrip('/')}/models", timeout=5)
+        if resp.status_code == 200:
+            models = [
+                m.get("id")
+                for m in resp.json().get("data", [])
+                if isinstance(m, dict) and m.get("id")
+            ]
+            if models and configured_model not in models:
+                _eval_logger.info(
+                    "Resolved served vLLM judge model '%s' from %s/models (configured: '%s')",
+                    models[0],
+                    base_url,
+                    configured_model,
+                )
+                return models[0]
+    except requests.exceptions.RequestException:
+        pass
+    return configured_model
+
+
 # ── Judge LLM (vLLM OpenAI-compat endpoint) ──────────────────────────────────
 # Initialise lazily — actual connectivity check happens inside the test.
 def _make_judge_llm():
@@ -136,10 +159,11 @@ def _make_judge_llm():
         _default_max = int(_os.environ.get("JUDGE_MAX_TOKENS", "4096"))
     except ValueError:
         pass
+    resolved_model = _resolve_served_model_id(VLLM_BASE, JUDGE_MODEL)
     return ChatOpenAI(
         base_url=VLLM_BASE,
         api_key="none",
-        model=JUDGE_MODEL,
+        model=resolved_model,
         temperature=0.0,
         # DeepSeek R1 emits <think>...</think> reasoning blocks (up to ~2 K tokens)
         # before the final JSON answer.  512 was too small, causing truncated JSON
@@ -148,19 +172,73 @@ def _make_judge_llm():
     )
 
 
-def _vllm_judge_reachable() -> bool:
-    """Return True only when the vLLM judge endpoint is reachable."""
-    try:
-        # Strip the '/v1' path suffix properly — rstrip() strips individual
-        # chars, not substrings, so 'http://localhost:18081/v1'.rstrip('/v1')
-        # would produce 'http://localhost:1808' (strips trailing 1 from port).
-        base = VLLM_BASE
-        if base.endswith("/v1"):
-            base = base[:-3]
-        resp = requests.get(f"{base}/health", timeout=3)
-        return resp.status_code < 500
-    except requests.exceptions.RequestException:
+def _gpu_deployment_scaled_up() -> bool:
+    """Return True if vllm-inference or vllm-reasoning has desired replicas > 0 in GKE."""
+    if os.environ.get("CAGE_WAIT_FOR_GPU_COLD_START", "").strip() == "1":
+        return True
+    if os.environ.get("CAGE_WAIT_FOR_GPU_COLD_START", "").strip() == "0":
         return False
+    import subprocess
+
+    ns = os.environ.get("K8S_NAMESPACE", "governance-stack")
+    for deploy in ("vllm-inference", "vllm-reasoning"):
+        try:
+            out = subprocess.check_output(
+                [
+                    "kubectl",
+                    "get",
+                    "deployment",
+                    deploy,
+                    "-n",
+                    ns,
+                    "-o",
+                    "jsonpath={.spec.replicas}",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            ).strip()
+            if int(out or "0") > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _vllm_judge_reachable() -> bool:
+    """Return True when the vLLM judge endpoint is reachable, waiting for GPU cold start if scaled up."""
+    base = VLLM_BASE
+    if base.endswith("/v1"):
+        base = base[:-3]
+
+    def _probe() -> bool:
+        try:
+            resp = requests.get(f"{base}/health", timeout=3)
+            return resp.status_code < 500
+        except requests.exceptions.RequestException:
+            return False
+
+    if _probe():
+        return True
+
+    if not _gpu_deployment_scaled_up():
+        return False
+
+    cold_start_timeout = int(os.environ.get("GPU_COLD_START_TIMEOUT", "900"))
+    poll_interval = 5
+    elapsed = 0
+    print(
+        f"\n  [GPU cold-start] {base}/health not ready yet, but vLLM deployment has replicas > 0. "
+        f"Waiting up to {cold_start_timeout}s for GPU node provisioning & weight streaming..."
+    )
+    while elapsed < cold_start_timeout:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+        if _probe():
+            print(f"  [GPU cold-start] vLLM judge reachable after {elapsed}s.")
+            return True
+    return False
+
 
 
 # ── Langfuse client ───────────────────────────────────────────────────────────
@@ -301,6 +379,28 @@ SCORE_THRESHOLDS = {
 _EVAL_QUERY_TIMEOUT = float(os.environ.get("EVAL_QUERY_TIMEOUT", "180"))
 
 
+def _resolve_backend_url() -> str:
+    """Resolve the active backend URL, preferring os.environ['BACKEND_URL'] or :8081 fallback."""
+    candidates = [
+        os.environ.get("BACKEND_URL", BACKEND_URL),
+        "http://localhost:8081",
+        "http://localhost:18080",
+    ]
+    seen = set()
+    for url in candidates:
+        url = url.rstrip("/")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        try:
+            resp = requests.get(f"{url}/health", timeout=3)
+            if resp.status_code == 200:
+                return url
+        except requests.exceptions.RequestException:
+            continue
+    return os.environ.get("BACKEND_URL", BACKEND_URL).rstrip("/")
+
+
 def call_backend(query: str, session_id: str) -> str:
     """Call the governed financial advisor backend and return the response text.
 
@@ -313,6 +413,7 @@ def call_backend(query: str, session_id: str) -> str:
     # thread_id="default_thread" (the QueryRequest default) and the graph
     # resumes from the previous query's checkpoint — including any interrupted
     # state at interrupt_before=["governed_trader"] — causing HTTP 500 errors.
+    backend_url = _resolve_backend_url()
     payload = {"prompt": query, "user_id": session_id, "thread_id": session_id}
     headers = {"Content-Type": "application/json"}
     cage_api_key = os.environ.get("CAGE_API_KEY", "")
@@ -320,7 +421,7 @@ def call_backend(query: str, session_id: str) -> str:
         headers["Authorization"] = f"Bearer {cage_api_key}"
     try:
         resp = requests.post(
-            f"{BACKEND_URL}/agent/query",
+            f"{backend_url}/agent/query",
             json=payload,
             timeout=_EVAL_QUERY_TIMEOUT,
             headers=headers,
@@ -330,6 +431,7 @@ def call_backend(query: str, session_id: str) -> str:
         return data.get("response") or str(data)
     except requests.exceptions.RequestException as e:
         return f"[ERROR] Backend call failed: {e}"
+
 
 
 def judge_response(query: str, response: str, judge_llm) -> "dict[str, float] | None":
@@ -567,10 +669,12 @@ def test_langfuse_llm_judge_evaluation():
     judge_llm = _make_judge_llm()
 
     # Guard: skip when backend itself is down.
+    backend_url = _resolve_backend_url()
     try:
-        requests.get(f"{BACKEND_URL}/health", timeout=5).raise_for_status()
+        requests.get(f"{backend_url}/health", timeout=5).raise_for_status()
     except requests.exceptions.RequestException as exc:
-        pytest.skip(f"Backend {BACKEND_URL}/health unreachable: {exc}")
+        pytest.skip(f"Backend {backend_url}/health unreachable: {exc}")
+
 
     all_scores: list[dict[str, float]] = []
     results = []
