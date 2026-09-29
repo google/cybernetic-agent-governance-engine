@@ -191,18 +191,20 @@ output, and the audit-record test fails if it appears in `str(receipt)`,
 
 ### Governance Tier Index
 
-The governance pipeline is an **8-tier symbolic governor** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers: Tiers 0–6). Active backing verifiers are OPA, Control Barrier Functions (CBF), multi-agent consensus, and TLA+ formal models.
+The governance pipeline is a **9-tier two-phase symbolic governor** (`proof/model.py` `TIER_LABELS`: Tiers `0.5` through `7`). Active backing verifiers are OPA, Control Barrier Functions (CBF), multi-agent consensus, and TLA+ formal models.
 
-| Tier | Gate | Control | Source |
-|------|------|---------|--------|
+| Tier | Phase | Gate | Control | Source |
+|------|-------|------|---------|--------|
 > **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
-| 0 | STPA Unsafe Control Action validation | UCA-* (from `config/stpa_control_structure.yaml`) | `generated_stpa_validator.py` |
-| 1 | Agentic model confidence threshold (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `symbolic_governor.py` |
-| 2/4 | Control Barrier Function (CBF) + OPA concurrent (`asyncio.gather`) | CBF: `h(x)≥0`, γ=0.5; OPA: `CTRL_OPA_005` | `cbf.py`, `src/gateway/core/policy.py` |
-| 3 | Fiscal Limit Pre-Reservation (FiscalLimitGuard, daily cap $500k) | Redis atomic WATCH/MULTI/EXEC | `fiscal_limit_guard.py` |
-| 5 | Multi-agent consensus (≥$10,000 USD) | ISO 42001 A.8.4 | `consensus.py` |
-| 6 | DoWhy causal gatekeeper (placebo refutation, p<0.05) | `CTRL_MRM_004`, `CTRL_TEL_003` | `causal_gatekeeper.py` |
-| 6b | Adaptive FRIA gate (EU_ECB only) | `CTRL_FRIA_006` | `normative_provider.py` |
+| 0.5 | Phase 1 (read-only) | FTRA reachability & structural path boundary gate | `CTRL_FTRA_001` | `src/gateway/governance/governor/stages/ftra.py` |
+| 1 | Phase 1 (read-only) | STPA Unsafe Control Action validation | UCA-* (from `config/stpa_control_structure.yaml`) | `src/gateway/governance/stpa_validator.py` |
+| 3b | Phase 1 (read-only) | OPA policy engine | `CTRL_OPA_005` | `src/gateway/core/policy.py` |
+| 2 | Phase 1 (read-only) | Agentic model confidence threshold + structural corroboration (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `src/gateway/governance/governor/stages/confidence.py` |
+| 5 | Phase 1 (read-only) | Multi-agent consensus (≥$10,000 USD) | ISO 42001 A.8.4 | `src/gateway/governance/consensus/engine.py` |
+| 6 | Phase 1 (read-only) | DoWhy causal gatekeeper (placebo refutation, p<0.05) | `CTRL_MRM_004`, `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
+| 7 | Phase 1 (read-only) | Adaptive FRIA gate (EU_ECB only) | `CTRL_FRIA_006` | `src/gateway/governance/normative_provider.py` |
+| 3a | Phase 2 (mutating) | Control Barrier Function (CBF) | `CTRL_MRM_004` (`h(x)≥0`, γ=0.5) | `src/gateway/governance/safety/cbf_engine.py` |
+| 4 | Phase 2 (mutating) | Fiscal Limit Pre-Reservation (`FiscalLimitGuard`, daily cap $500k) | Redis atomic WATCH/MULTI/EXEC | `src/gateway/governance/safety/resource_guard.py` |
 
 ---
 > **v3.0.1 Update:** The schema now supports full `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream, preserving `tier_failures`, the 5-part proof chain, and byte-identical `proof_hash` calculation for non-repudiation.
@@ -270,7 +272,7 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 
 ## OTel Span Attribute Alignment
 
-The following OTel span attributes are emitted alongside every evidence record, using the same naming convention as `symbolic_governor.py` and `generated_stpa_validator.py`:
+The following OTel span attributes are emitted alongside every evidence record, using the same naming convention as `src/gateway/governance/governor/governor.py` and `src/gateway/governance/stpa_validator.py`:
 
 | OTel Attribute | Value | Notes |
 |----------------|-------|-------|
@@ -282,7 +284,7 @@ The following OTel span attributes are emitted alongside every evidence record, 
 | `langfuse.trace.metadata.iso.control_id` | `"A.8.4"` | |
 | `langfuse.trace.metadata.nist.control_id` | `"SC-4"` | |
 | `cage.governance.decision` | `"BLOCKED"` \| `"APPROVED"` | |
-| `cage.governance.blocking_tier` | `0`–`6` or `-1` | |
+| `cage.governance.blocking_tier` | `0.5`–`7` or `-1` | |
 | `cage.governance.violation_count` | `integer` | |
 | `cage.governance.elapsed_ms` | `float` | |
 | `cage.evidence.chain_hash` | SHA-256 hex | Links OTel span to the NDJSON evidence record |

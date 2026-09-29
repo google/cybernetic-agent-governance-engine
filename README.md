@@ -555,27 +555,27 @@ h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 
 This guarantees that the cash balance never drops below the minimum threshold in a single step — the decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External reconciliation is implemented via [`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py) (POAM-023 closed 2026-07-27).
 
-### 8-Tier Symbolic Governor Pipeline
+### 9-Tier Two-Phase Symbolic Governor Pipeline
 
-Sources: [`src/gateway/governance/governor/governor.py`](src/gateway/governance/governor/governor.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
+Sources: [`src/gateway/governance/governor/governor.py`](src/gateway/governance/governor/governor.py), [`src/gateway/governance/governor/pipeline.py`](src/gateway/governance/governor/pipeline.py), [`proof/model.py`](proof/model.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
 
-Every `execute_trade` action passes through the following two-phase pipeline before a routing seal is issued. Tier 0.5 (FTRA) executes at the LangGraph graph level before the first node fires; Tiers 0–6b run inside `SymbolicGovernor._run_checks()`:
+Every governed action passes through the following two-phase pipeline (`run_pipeline()`) before a routing seal is issued. Tier labels match `TIER_LABELS` in `proof/model.py` (`Tier 0.5` through `Tier 7`):
 
 | Phase | Tier | Name | Mechanism |
 |-------|------|------|-----------|
-| **Boundary** | **0.5** | FTRA — Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` builds a NetworkX directed graph from the `ExecutionPlan`, classifies terminal steps with `IrreversibilityClassifier`, and issues `CLEAR` / `HITL_REQUIRED` / `BLOCKED` before any tool call executes |
-| **Phase 1** | **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
-| **Phase 1** | **1** | Agent confidence pre-check | Fast-fail local check against `get_agent_confidence_threshold()` (default 0.95) before any network I/O |
-| **Phase 1** | **2b** | OPA policy evaluation | Evaluates `trade.governance` Rego policy prior to state mutation |
-| **Phase 1** | **5** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 10 s timeout |
-| **Phase 1** | **6** | Causal gatekeeper | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
-| **Phase 1** | **6b** | Adaptive FRIA enforcement | `get_fria_zone_allow()` = 0.95, `get_fria_zone_defer()` = 0.70; scores below 0.70 hard-deny locally |
-| **Phase 2** | **2a** | Control Barrier Function | Lua-atomic check+commit (`atomic_verify_and_commit()`) in Redis; runs only after all Phase 1 validation tiers pass |
-| **Phase 2** | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves daily fiscal cap in Redis |
+| **Phase 1** | **Tier 0.5** | FTRA — Forward-Looking Trajectory Reachability Analyzer | `FtraStage.run()` (`src/gateway/governance/governor/stages/ftra.py`) and `create_ftra_node()` classify terminal steps with `IrreversibilityClassifier` and `PlanGraphAnalyzer`, issuing `CLEAR` / `HITL_REQUIRED` / `BLOCKED` |
+| **Phase 1** | **Tier 1** | STPA/STAMP UCA validation | `StpaStage.run()` / `STPAValidator.validate()` (`src/gateway/governance/governor/stages/stpa.py`, `src/gateway/governance/stpa_validator.py`) checks Unsafe Control Actions defined in the STPA ontology |
+| **Phase 1** | **Tier 3b** | OPA policy evaluation | `OpaStage.run()` (`src/gateway/governance/governor/stages/opa.py`) evaluates `trade.governance` Rego policy prior to state mutation |
+| **Phase 1** | **Tier 2** | Agent confidence & structural corroboration | `ConfidenceStage.run()` (`src/gateway/governance/governor/stages/confidence.py`) checks `get_agent_confidence_threshold()` (default 0.95) and runs POAM-TIER2-001 structural corroboration against `stpa_violation_count` and `opa_verdict` |
+| **Phase 1** | **Tier 5** | Consensus gate | Heterogeneous multi-model consensus (`src/gateway/governance/consensus/engine.py`) required for trades ≥ $10k; 10-second per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s) |
+| **Phase 1** | **Tier 6** | Causal gatekeeper | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) in `src/gateway/governance/causal/gatekeeper.py` validates world-model integrity |
+| **Phase 1** | **Tier 7** | Adaptive FRIA enforcement | `enforce_fria_boundary()` (`src/gateway/governance/normative_provider.py`); `get_fria_zone_allow()` = 0.95, `get_fria_zone_defer()` = 0.70; scores below 0.70 hard-deny locally |
+| **Phase 2** | **Tier 3a** | Control Barrier Function | Lua-atomic check+commit (`atomic_verify_and_commit()` in `src/gateway/governance/safety/cbf_engine.py`) in Redis; runs only after all Phase 1 validation tiers pass with zero violations |
+| **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (`src/gateway/governance/safety/resource_guard.py`, `src/cage_finance/safety/fiscal_limit_guard.py`) atomically pre-reserves daily fiscal cap in Redis with `ReservationScope` LIFO rollback |
 
-> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation tiers emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
+> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation tiers emit zero violations. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
-The routing seal is issued only after all tiers pass. PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are separate, standalone components — PII sanitization runs on audit records immediately before WORM persistence (inside `uca_logger.py`), and confabulation scoring is a Langfuse observability metric — neither is a sequential tier of `_run_checks()`.
+The routing seal is issued only after all tiers pass. PII sanitization (`src/gateway/governance/pii_sanitizer.py`) and confabulation scoring (`src/gateway/governance/confabulation_scorer.py`) are separate, standalone components — PII sanitization runs on audit records immediately before WORM persistence (inside `src/gateway/governance/uca_logger.py`), and confabulation scoring is a Langfuse observability metric — neither is a sequential stage of `run_pipeline()`.
 
 ### Confabulation Risk Formula
 

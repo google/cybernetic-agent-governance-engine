@@ -41,7 +41,7 @@ response to the reviewer is grounded in code rather than in the analysis:
 | A2 | Gap 1 was "intended to be" `ungated_transitions()` | `proof/model.py` docstring line 46 defines Gap 1 as "machine-checked exhaustive proof (not just test coverage)". Code and paper must be reconciled explicitly, not assumed. |
 | A3 | `γ = 0.1` is the code default, overridden in config | No literal `0.1` gamma exists anywhere in `src/`. `cbf.py` reads `THRESHOLDS.cbf.gamma`; the only source is `config/governance_thresholds.json` (`0.5`). The paper's "default" is unsupported. |
 | A4 | Evidence chain is at schema `cage-context-accumulator/1.1` | `context_accumulator.py` line 71: `_SCHEMA = "cage-context-accumulator/1.0"`. The 1.1 bump described in §5.5 never landed. **Resolution: withdraw the claim** (the metadata binding the paper attributes to 1.1 is already present in the 1.0 `_link_hash` header). |
-| A5 | FRIA (Tier 7) always runs as a governance step | `symbolic_governor.py:615-620` gates `enforce_fria_boundary()` on `CAGE_NORMATIVE_PROVIDER != "static"`; that variable is set in no deployment manifest. The unconditional portion (lines 662-693) only stamps OTel attributes. Adding `fria` to the proof tuple without this caveat would over-claim. |
+| A5 | FRIA (Tier 7) always runs as a governance step | `src/gateway/governance/governor/governor.py` gates `enforce_fria_boundary()` on `CAGE_NORMATIVE_PROVIDER != "static"`; that variable is set in no deployment manifest. The unconditional portion only stamps OTel attributes. Adding `fria` to the proof tuple without this caveat would over-claim. |
 
 ---
 
@@ -67,8 +67,8 @@ response to the reviewer is grounded in code rather than in the analysis:
 | S3 | §6.5 arithmetic uses undisclosed γ and `min_cash_balance` | 4 | **FIXED** | §6.5 explicit parameter disclosure added (γ=0.5, min_cash=1000) |
 | S4 | STPA compiler mechanism undefined | 4 | **FIXED** | §4.5 compiler mechanism paragraph added (template-based, Pydantic, generate_opa/nemo/python/langgraph) |
 | S5 | Tier 2 confidence derivation unspecified | 4 | **FIXED** | §4.2 Tier 2 description updated (payload field, OPA uniform confidence threshold 0.95; `EU_ECB` 0.97) |
-| S6 | Tier 5 critic pool and aggregation logic unspecified | 4 | **FIXED** | §4.2 Tier 5 paragraph rewritten with `ConsensusModelRegistry`, per-persona model routing, 10 s timeout, and full aggregation lattice (unanimous/degraded-quorum/split/ERROR handling), sourced from `consensus.py` |
-| S7 | Tier 6 causal graph, treatment/outcome, thresholds unspecified | 4 | **FIXED** | §4.2 Tier 6 paragraph rewritten with the fixed causal graph, treatment/outcome variables, `PlaceboTreatmentRefuter` (n=50, p<0.05, effect>0.2), and the marginal-risk boundary formula, sourced from `causal_gatekeeper.py` |
+| S6 | Tier 5 critic pool and aggregation logic unspecified | 4 | **FIXED** | §4.2 Tier 5 paragraph rewritten with `ConsensusModelRegistry`, per-persona model routing, 10 s timeout, and full aggregation lattice (unanimous/degraded-quorum/split/ERROR handling), sourced from `src/gateway/governance/consensus/engine.py` |
+| S7 | Tier 6 causal graph, treatment/outcome, thresholds unspecified | 4 | **FIXED** | §4.2 Tier 6 paragraph rewritten with the fixed causal graph, treatment/outcome variables, `PlaceboTreatmentRefuter` (n=50, p<0.05, effect>0.2), and the marginal-risk boundary formula, sourced from `src/gateway/governance/causal/gatekeeper.py` |
 | S8 | §6.4 confounded read-path baseline (`pipeline()` vs `get()`) | 4 | **FIXED** | §6.4 now has an explicit "Limitation — confounded baseline" paragraph naming the confound and proposing an architecturally-equivalent re-measurement as future work |
 | S9 | Amortised background latency compared to a synchronous SLA | 4 | **FIXED** | §6.3 reframed as background amortisation note, not synchronous SLA comparison |
 | S10 | Plaid fetch proxy underestimates true fetch cost | 4 | **FIXED** | §6.3 now has an explicit "Limitation — Plaid fetch likely underestimated" paragraph stating the 62.0 ms P50 is a lower bound, with a sandbox/mock-provider re-measurement tracked as future work |
@@ -408,8 +408,8 @@ make previously optional security controls mandatory.
 | # | Change | Current paper framing | Updated framing | Files affected | Paper sections |
 |---|---|---|---|---|---|
 | G1 | **NARROW/PAUSE Governance Decisions** | "four-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER)" | "six-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER/NARROW/PAUSE)" | [`decisions.py`](../../src/gateway/governance/decisions.py), [`pause_primitive.py`](../../src/gateway/governance/pause_primitive.py) | Abstract (line 7), §3.1, §7.1 |
-| G2 | **`ClassificationEngine.classify()` Classification Helper** | No description of violation routing | New five-way classification routing (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) | [`symbolic_governor.py:227`](../../src/gateway/governance/governor/verdicts.py) | §4.2 (add explanation of violation routing) |
-| G3 | **FTRA Boundary Check Now Mandatory** | Gated by `CAGE_FTRA_BOUNDARY_ENABLED` flag (default false) | Runs unconditionally, flag removed per POAM-2026-030-B | [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/governor/stages/ftra.py) | §4.7 (update zero-trust controls description) |
+| G2 | **`ClassificationEngine.classify()` Classification Helper** | No description of violation routing | New five-way classification routing (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) | [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py) | §4.2 (add explanation of violation routing) |
+| G3 | **FTRA Boundary Check Now Mandatory** | Gated by `CAGE_FTRA_BOUNDARY_ENABLED` flag (default false) | Runs unconditionally, flag removed per POAM-2026-030-B | [`src/gateway/governance/governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py) | §4.7 (update zero-trust controls description) |
 | G4 | **Reconciliation Replay Defense Now Implemented** | §7.2/§7.3 describe this as "open, unmitigated vulnerability" | Now implemented as opt-in via `CAGE_RECONCILIATION_REPLAY_DEFENSE` | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py) | §7.2/§7.3 (update to reflect implemented status) |
 | G5 | **Evidence Chain Blocking Gate Default Changed** | `EVIDENCE_CHAIN_BLOCKING` default unspecified or false | Now defaults to `"true"` | [`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py) | Appendix C env-var table |
 
@@ -437,8 +437,8 @@ updated to reflect the six-state model.
 decision based on violation type, severity, and context.
 
 **Evidence:**
-- [`symbolic_governor.py:227`](../../src/gateway/governance/governor/governor.py) —
-  `_classify_violation()` implements five-way routing:
+- [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py) —
+  `ClassificationEngine.classify()` implements five-way routing:
   - `DENY`: Hard policy violations (e.g., PII in output, prohibited actions)
   - `DEFER`: Requires additional context or escalation
   - `NARROW`: Partial compliance possible with scope restriction
@@ -466,7 +466,7 @@ self._ftra_boundary_check(...)  # Always runs
 ```
 
 **Evidence:**
-- [`symbolic_governor.py:_ftra_boundary_check()`](../../src/gateway/governance/governor/stages/ftra.py) —
+- [`src/gateway/governance/governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py) —
   flag removed, method called unconditionally
 - POAM-2026-030-B (closed 2026-08-16) — tracked the flag removal as a security hardening item
 

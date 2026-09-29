@@ -21,14 +21,14 @@ Generative AI models can hallucinate or degrade in unstable environments. The Ga
 
 | Governance Control | Framework | Component | Notes |
 |---|---|---|---|
-| `CTRL_TEL_003` (THR-TEL-003) | **ISO 42001 §A.9.4** | DoWhy placebo refutation (`causal_gatekeeper.py` Phase 2), `telemetry_provider.py` | Agentic operational check: live Langfuse telemetry, 50 simulations per trade *(All Regions)* |
-| `CTRL_AGT_001` (THR-CONF-001) | **ISO 42001 §A.5.2** | `symbolic_governor.py` confidence threshold | Agentic AI bounding *(All Regions)* |
+| `CTRL_TEL_003` (THR-TEL-003) | **ISO 42001 §A.9.4** | DoWhy placebo refutation (`src/gateway/governance/causal/gatekeeper.py` Phase 2), `telemetry_provider.py` | Agentic operational check: live Langfuse telemetry, 50 simulations per trade *(All Regions)* |
+| `CTRL_AGT_001` (THR-CONF-001) | **ISO 42001 §A.5.2** | `src/gateway/governance/governor/stages/confidence.py` confidence threshold | Agentic AI bounding *(All Regions)* |
 
 ### US_FED Jurisdiction Controls (`CAGE_DEPLOYMENT_REGION=US_FED`)
 
 | Governance Control | Framework | Component | Notes |
 |---|---|---|---|
-| `CTRL_MRM_004` (THR-MRM-004) | **SR 26-2 §IV** — Model Risk Management (Federal Reserve, April 17, 2026) | CBF (`cbf.py`), DoWhy statistical kernel (`causal_gatekeeper.py` Phase 1) | Deterministic quantitative models: fixed formula + static γ decay; linear regression coefficient estimation — **US_FED only** |
+| `CTRL_MRM_004` (THR-MRM-004) | **SR 26-2 §IV** — Model Risk Management (Federal Reserve, April 17, 2026) | CBF (`src/gateway/governance/safety/cbf_engine.py`), DoWhy statistical kernel (`src/gateway/governance/causal/gatekeeper.py` Phase 1) | Deterministic quantitative models: fixed formula + static γ decay; linear regression coefficient estimation — **US_FED only** |
 | NIST AI RMF MEASURE-2.6 | **NIST AI RMF** | DoWhy refutation (both phases) | Continuous world-model validation against live production telemetry — **US_FED only** |
 
 ### EU_ECB Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
@@ -113,7 +113,7 @@ When `CAUSAL_GATEKEEPER_STRICT_MODE=true`, missing trace_id fields cause immedia
 
 The CBF layer (`src/gateway/governance/safety/cbf_engine.py`) provides a discrete-time, mathematically rigorous enforcement of safety limits (like budget caps and drawdown constraints), guaranteeing the agent cannot enter an unsafe state.
 
-> **v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` and `safety_filter` directly from [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), and `ac_keyword_scan` from [`text_filter.py`](../../src/gateway/governance/text_filter.py).
+> **v3.0.1:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` and `safety_filter` directly from [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py), and `ac_keyword_scan` from [`text_filter.py`](../../src/gateway/governance/text_filter.py).
 
 ### Purpose
 To provide deterministic, hard boundary guarantees on continuous state variables, ensuring that subsequent states resulting from an agent's actions remain within the defined "safe set."
@@ -162,13 +162,13 @@ where:
 1. **`reconciliation:verified_balance`** — written by the isolated reconciliation-worker daemon (`src/gateway/governance/reconciliation/daemon.py`), KMS-signed, TTL-gated. When present and KMS-signature-valid, this is the authoritative balance (source: `"reconciled"`).
 2. **`safety:current_cash`** — self-reported by the execution system. Used only as fallback when the reconciled balance is absent, unsigned in production, or has an invalid KMS signature. A `CRITICAL` audit log (`CBF_USING_SELF_REPORTED_BALANCE`) is emitted so the fallback is always visible in Langfuse and SIEM.
 
-In production, `RECONCILIATION_PROVIDER=stub` raises `RuntimeError` at startup (enforced by `symbolic_governor.py` CAGE-SEC-007 guard). Set `RECONCILIATION_PROVIDER` to `gcs`, `s3` (alias: `object-store`), `plaid`, or `anchorage` to enable external ground truth.
+In production, `RECONCILIATION_PROVIDER=stub` raises `RuntimeError` at startup (enforced by `src/gateway/governance/governor/governor.py` CAGE-SEC-007 guard). Set `RECONCILIATION_PROVIDER` to `gcs`, `s3` (alias: `object-store`), `plaid`, or `anchorage` to enable external ground truth.
 
 Every `verify_action()` decision is stamped with a `safety.balance.source` OTel span attribute (`"reconciled"` | `"reconciled_unsigned"` | `"self_reported"`) to make the balance provenance auditable.
 
 ### Lua Atomic Script (`atomic_verify_and_commit`)
 
-For the highest-assurance path, [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) provides `atomic_verify_and_commit()`, which collapses the CBF check and state commit into a **single Redis Lua hop** (`LUA_ATOMIC_CBF`), eliminating the TOCTOU window between `verify_action()` (read-only governance check) and `update_state()` (write, MCP tool handler):
+For the highest-assurance path, [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) provides `atomic_verify_and_commit()`, which collapses the CBF check and state commit into a **single Redis Lua hop** (`LUA_ATOMIC_CBF`), eliminating the TOCTOU window between `verify_action()` (read-only governance check) and `update_state()` (write, MCP tool handler):
 
 ```lua
 -- KEYS[1]: safety:current_cash   KEYS[2]: audit:state_ledger
@@ -196,13 +196,13 @@ The script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry
 
 > **Implementation note (intra-window double-spend prevention):** `verify_action()` uses `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved trades since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle.
 
-CBF (`atomic_verify_and_commit()`) and OPA run **concurrently** via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)`. The TOCTOU race between the CBF balance check and actual trade execution is closed by the **FiscalLimitGuard** (Tier 3) using atomic WATCH/MULTI/EXEC pre-reservation.
+In the two-phase `run_pipeline()` (`src/gateway/governance/governor/pipeline.py`), all read-only stages (including OPA at Tier 3b) execute sequentially in Phase 1 before any state mutation occurs. Only if Phase 1 produces zero violations does Phase 2 execute CBF (`Tier 3a`) and **FiscalLimitGuard** (`Tier 4`) sequentially inside a `ReservationScope`, closing the TOCTOU race between the CBF balance check and trade execution using atomic `WATCH/MULTI/EXEC` pre-reservation.
 
 ---
 
 ## 3. FiscalLimitGuard — Saga-Atomicity Gap Remediation
 
-`FiscalLimitGuard` (`src/gateway/governance/safety/resource_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit when a downstream tier fails after Tier 3a commitment.
+`FiscalLimitGuard` (`src/gateway/governance/safety/resource_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 4** in Phase 2 of the `SymbolicGovernor` pipeline — after all Phase 1 read-only stages (`ftra` Tier 0.5, `stpa` Tier 1, `opa` Tier 3b, `confidence` Tier 2, `consensus` Tier 5, `causal` Tier 6, `fria` Tier 7) have passed without violations, and immediately after CBF (`Tier 3a`). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit if a Phase 2 commit failure occurs after Tier 3a commitment.
 
 ### Key Implementation Details
 
@@ -227,7 +227,7 @@ With FiscalLimitGuard (TOCTOU closed):
 
 The `confirm()` method is a **semantic hook only** — the counter already reflects the spend at reservation time. `release(token)` is called by the Saga compensating node on rollback to restore fiscal capacity atomically.
 
-The fiscal reservation is released in `_run_checks()` if any tier after Tier 3 (consensus, causal, FRIA) produces a violation.
+Because Phase 2 (`cbf` Tier 3a → `fiscal` Tier 4) runs only after all Phase 1 read-only tiers (`consensus`, `causal`, `fria`) have passed with zero violations, read-only rejections never mutate Redis state; if a Phase 2 stage fails to commit, `ReservationScope` rolls back previously committed Phase 2 stages in reverse order.
 
 ---
 
@@ -237,7 +237,7 @@ The fiscal reservation is released in `_run_checks()` if any tier after Tier 3 (
 
 The Confabulation Scorer implements **CTRL_AGT_001** (AI 600-1 §2.1 confidence control). It records low-confidence events to Langfuse for audit purposes and provides a structured risk score for downstream governance decisions.
 
-> **Pipeline placement note:** The confabulation scorer is **not** a sequential tier of `SymbolicGovernor._run_checks()`. It is a standalone Langfuse observability metric computed independently of the governance decision path. Confidence enforcement in the pipeline is handled by the Tier 1 local pre-check in `symbolic_governor.py` + OPA `system_authz.rego`.
+> **Pipeline placement note:** The confabulation scorer is **not** a sequential tier of `SymbolicGovernor`. It is a standalone Langfuse observability metric computed independently of the governance decision path. Confidence enforcement in the pipeline is handled by Tier 2 in `src/gateway/governance/governor/stages/confidence.py` + OPA `system_authz.rego` (Tier 3b).
 
 ### Risk Score Formula
 
@@ -269,7 +269,7 @@ confidence < CONFIDENCE_THRESHOLD  # i.e. risk_score > 0.05
 
 ## 5. Consensus Protocol
 
-**Source:** [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py)
+**Source:** [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)
 
 The Consensus Engine implements a heterogeneous multi-model critic check for high-stakes financial decisions. It satisfies **AARM-V9** (Privilege Escalation neutralization) by ensuring that a single model cannot validate its own compliance decisions.
 
@@ -288,7 +288,7 @@ vote1, vote2 = await asyncio.gather(
 )
 ```
 
-Combined latency is `max(Risk_Manager_ms, Compliance_Officer_ms)` — parallel, not sequential. Each critic call has a **30-second hard timeout** (`timeout=30.0`).
+Combined latency is `max(Risk_Manager_ms, Compliance_Officer_ms)` — parallel, not sequential. Each critic call has a **10-second hard timeout** (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s).
 
 ### Consensus Decision Rules
 

@@ -530,7 +530,7 @@ src/gateway/
 │   ├── execution_actuator.py # ExecutionActuator protocol & ActuatorRegistry
 │   ├── kms_signer.py       # Cloud KMS HSM asymmetric governance signer
 │   ├── routing_seal.py     # Cryptographic routing seal generator & validator
-│   └── symbolic_governor.py # Neuro-symbolic governance dispatch loop
+│   └── governor/           # Neuro-symbolic governance dispatch loop (governor.py, pipeline.py, stages/)
 ├── infrastructure/         # Telemetry setup & OTel client configuration
 ├── observability/          # Distributed W3C MCP tracing context propagation
 └── server/                 # Composition root & protocol servicers

@@ -27,19 +27,9 @@ This document now serves two purposes:
 
 ## Overview
 
-The Forward-Looking Trajectory Reachability Analyzer (FTRA) is a **Pre-Pipeline
-Boundary Gate** that performs commencement-time reachability analysis on
-execution plans. Unlike Tiers 0–6b (which operate per tool call within
-`_run_checks()`), FTRA operates on the **whole execution graph** before
-per-tool-call checks begin — it is a **gateway precondition**, not a peer of the
-numbered tiers. FTRA identifies plans that can reach IRREVERSIBLE_TERMINAL
-actions (e.g., `execute_trade`, `delete_account`) and routes them for
-Human-In-The-Loop (HITL) review.
+The Forward-Looking Trajectory Reachability Analyzer (FTRA, **Tier 0.5** in [`proof/model.py`](../../proof/model.py)) performs both commencement-time reachability analysis on whole `ExecutionPlan` graphs (`create_ftra_node()` in [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)) and per-request boundary enforcement at the start of Phase 1 (`FtraStage` in [`src/gateway/governance/governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py)) before Tiers 1–7 execute in [`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py). FTRA identifies plans and tool calls that can reach `IRREVERSIBLE_TERMINAL` actions (e.g., `execute_trade`, `delete_account`) and routes them for Human-In-The-Loop (HITL) review.
 
-The FTRA boundary check runs unconditionally at the HTTP/controller boundary
-(`validate_action`, `ext_authz`) to catch any direct HTTP access that would
-bypass the in-graph `ftra_node`. This fully mitigates Risk R-03 at the
-controller level.
+The FTRA boundary check (`FtraStage`, Tier 0.5) runs unconditionally at the HTTP/controller boundary (`validate_action`, `ext_authz`) to catch any direct HTTP access that would bypass the in-graph `ftra_node`. This fully mitigates Risk R-03 at the controller level.
 
 ## Risk Context
 
