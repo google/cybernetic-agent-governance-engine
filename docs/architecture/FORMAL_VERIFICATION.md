@@ -246,7 +246,7 @@ The gated architecture has exactly **one** reachable `EXECUTED` state, and in th
 
 ### Concurrency: Order-Independence of the CBF ∥ OPA Gate
 
-`gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/governor/pipeline.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
+`gated_transitions()` advances tiers in a fixed order, whereas on the post-HITL revalidation path (`revalidate_post_hitl()` in [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)) the CBF and OPA checks can be evaluated in either order (while the primary `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py) runs OPA in Phase 1 and CBF in Phase 2). A sequential-only model could therefore mask an ordering-dependent violation across the `{cbf, opa}` pair.
 
 `concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 49 states versus 44 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
 

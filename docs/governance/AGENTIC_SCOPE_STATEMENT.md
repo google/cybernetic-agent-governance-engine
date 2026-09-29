@@ -64,7 +64,7 @@ Per `config/governance_thresholds.json` → `confidence.min_trade_confidence`:
 
 - **Threshold**: 0.95 (95%) — note: `min_trade_confidence` is deprecated in the schema;
   OPA `system_authz.rego` is the authoritative enforcer via `CTRL_AGT_001`.
-- **Enforcement**: Local pre-check in `symbolic_governor.py` (Tier 1 fast-fail) +
+- **Enforcement**: Local pre-check in `src/gateway/governance/governor/stages/confidence.py` (Tier 2 fast-fail) +
   OPA `system_authz.rego` for the three-zone model (ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70).
 - **Behavior**: Any LLM response with `confidence < 0.95` is blocked and the
   confabulation risk score (`1.0 - confidence`) is recorded via `confabulation_scorer.py`.
@@ -137,7 +137,7 @@ Any call from the `governed-financial-advisor` to an external service MUST:
 3. Have passed the CausalGatekeeper check
 4. Be within the authorized action space (§1 above)
 
-Calls that fail any of these checks raise `GovernanceError` (from `symbolic_governor.py`)
+Calls that fail any of these checks raise `GovernanceError` (from `src/gateway/governance/governor/verdicts.py`)
 and are logged to the UCA WORM ledger.
 
 ### 3.5 No Peer-to-Peer Agent Calls
@@ -161,7 +161,7 @@ of unverified inter-agent trust propagation.
 | Control Barrier Function | `src/gateway/governance/safety/cbf_engine.py` | §2.5.4 |
 | Confabulation scorer | `src/gateway/governance/confabulation_scorer.py` | §2.1 |
 | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` | §2.3 |
-| NeMo CBRN rails | `src/gateway/governance/nemo/colang/cbrn_rails.co` | §2.6 |
+| NeMo CBRN rails | `src/integrations/nemo/colang/cbrn_rails.co` | §2.6 |
 | FTRA Reachability Gate | `src/gateway/governance/ftra/node_factory.py` | §2.5.4 |
 
 ---
@@ -190,7 +190,7 @@ layer propagate to the governed system.
 
 ### 6.1 Mitigation
 
-The local confidence pre-check in `symbolic_governor.py` Tier 1 applies
+The local confidence pre-check in `src/gateway/governance/governor/stages/confidence.py` Tier 2 applies
 `AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable) to the ConsensusEngine's
 own LLM calls. If the governance LLM call has `confidence < 0.95`, the request is
 escalated to HITL rather than silently allowed. A **structural corroboration heuristic**

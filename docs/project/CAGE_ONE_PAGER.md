@@ -10,7 +10,7 @@ Any operator deploying high-reliability agentic AI faces a fundamental audit gap
 
 The cost of inaction is concrete: a single unchecked `execute_trade_action` call can bypass drawdown limits, leak PII in the response payload, and produce no evidence of the policy evaluation that should have blocked it. Automated red-team exercises against naive gateway implementations routinely achieve **100% adversarial success rates** on RBAC-002 (excessive permissions) and PII-004 (data leakage) attack classes.
 
-**CAGE v3.0.1** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, **8-tier policy enforcement pipeline** — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → **FTRA Pre-Pipeline Boundary Gate** (`src/gateway/governance/ftra/`, whole-graph reachability check before per-tool-call checks begin) → STPA hazard validator (Tier 0) → agent confidence pre-check (Tier 1) → Control Barrier Function + OPA policy engine (concurrent, Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → multi-agent consensus (Tier 5) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 6b). All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_ssp_exporter.py`), achieving sub-millisecond audit-trail generation.
+**CAGE v3.0.1** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, **9-tier, two-phase policy enforcement pipeline** — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → **Phase 1 read-only validation**: **FTRA Reachability & Boundary Gate** (Tier 0.5, `src/gateway/governance/ftra/` and `src/gateway/governance/governor/stages/ftra.py`) → STPA hazard validator (Tier 1) → OPA policy engine (Tier 3b) → agent confidence & structural corroboration (Tier 2) → multi-agent consensus (Tier 5, 10s per-critic timeout) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 7) → **Phase 2 mutating commit** (executed only when Phase 1 produces zero violations): Control Barrier Function (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4). All compliance mapping is performed by the Python OSCAL exporter (`src/gateway/governance/oscal_ssp_exporter.py`), achieving sub-millisecond audit-trail generation.
 
 **CAGE introduces evidentiary independence & fail-closed runtime safety:**
 
@@ -41,28 +41,23 @@ h(S(t+1)) ≥ (1−γ)·h(S(t))     where h(x) = cash_balance − min_cash_balan
 
 This discrete-time CBF condition ([`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed action that would violate the condition is denied before execution. State reads are atomic (Redis Lua script, monotonic fence epoch check, synchronous replica `WAIT` barrier). In the financial reference deployment `h(x) = cash_balance − min_cash_balance`; in other high-reliability deployments the same invariant structure applies to any continuous resource variable (API call budget, actuator torque envelope, drug-dosage ceiling, etc.).
 
-### Pre-Pipeline Boundary Gate
-
-| Gate | Control | Key Invariant |
-|------|---------|---------------|
-| **FTRA** | Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — pre-execution graph reachability; CLEAR / HITL_REQUIRED / BLOCKED **before any tool call**. Operates on the **whole execution graph** — NOT a peer of Tiers 0–6b. |
-
-### Two-Phase Eight-Tier Pipeline (`_run_checks()`)
+### Two-Phase Nine-Tier Pipeline (`run_pipeline()` / `proof/model.py`)
 
 | Phase | Tier | Control | Key Invariant |
 |-------|------|---------|---------------|
-| **Phase 1** | 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions |
-| **Phase 1** | 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
-| **Phase 1** | 2b | OPA policy engine | Declarative rule enforcement; validates structural policy prior to mutation |
-| **Phase 1** | 5 | Consensus | High-stakes actions (≥$10k trades in the financial deployment), 30s timeout, heterogeneous multi-model quorum |
-| **Phase 1** | 6 | Causal gatekeeper | SCM $\beta \le 0$ fail-closed guard + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); bounded risk score $\le 0.95$ |
-| **Phase 1** | 6b | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → DENY |
-| **Phase 2** | 2a | Control Barrier Function | Redis-backed cash balance invariant; Lua atomic check+commit; `WAIT` replication barrier |
-| **Phase 2** | 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC against daily cap |
+| **Phase 1** | **Tier 0.5** | FTRA (`ftra`) | `FtraStage.run()` / `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — whole-graph reachability and per-request semantic & irreversibility boundary check |
+| **Phase 1** | **Tier 1** | STPA/STAMP UCA validation (`stpa`) | `StpaStage.run()` / `STPAValidator.validate()` checks Unsafe Control Actions |
+| **Phase 1** | **Tier 3b** | OPA policy engine (`opa`) | `OpaStage.run()` — declarative rule enforcement; validates structural policy prior to mutation |
+| **Phase 1** | **Tier 2** | Agent confidence & corroboration (`confidence`) | `ConfidenceStage.run()` — checks `get_agent_confidence_threshold()` (default 0.95) and POAM-TIER2-001 structural corroboration |
+| **Phase 1** | **Tier 5** | Consensus (`consensus`) | High-stakes actions (≥$10k trades in the financial deployment), 10s per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`), heterogeneous multi-model unanimity |
+| **Phase 1** | **Tier 6** | Causal gatekeeper (`causal`) | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2); bounded risk score $\le 0.95$ |
+| **Phase 1** | **Tier 7** | FRIA zones (`fria`) | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → DENY |
+| **Phase 2** | **Tier 3a** | Control Barrier Function (`cbf`) | Redis-backed cash balance invariant; Lua atomic check+commit; `WAIT` replication barrier |
+| **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation (`fiscal`) | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC against daily cap with `ReservationScope` LIFO rollback |
 
-> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation checks emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
+> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation stages emit zero violations. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
-Source: [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
+Source: [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py), [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)
 
 ### FRIA Zone Thresholds (EU AI Act Art. 29a)
 

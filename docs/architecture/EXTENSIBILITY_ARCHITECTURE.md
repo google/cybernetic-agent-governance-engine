@@ -381,7 +381,7 @@ The binary async-vs-sync choice has been rejected. Instead, [`enforce_fria_bound
 
 This anchors to the existing `DEFER` state machine ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)) via the new `DeferReason.EXTERNAL_VALIDATION` enum member. The adaptive gate is positioned after all 7 local tiers — if local governance already DENY'd, the external provider is never contacted.
 
-The gate runs as tier 6b in [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py), activated only when `CAGE_NORMATIVE_PROVIDER != "static"`.
+The gate runs as Tier 7 in [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py), activated only when `CAGE_NORMATIVE_PROVIDER != "static"`.
 
 ##### Endpoint 3: `GET /evidence-chain/{thread_id}` — Attestation Logging
 
@@ -577,7 +577,7 @@ The following components are domain-invariant by design and require **zero modif
 
 - `ControlBarrierFunction.get_h()` — pure mathematical predicate
 - `ControlRegistry` singleton — already reads arbitrary JSON profiles
-- `SymbolicGovernor` 8-tier pipeline (FTRA + 7 in-pipeline tiers) — evaluates mathematical/logical predicates only
+- `SymbolicGovernor` 9-tier two-phase pipeline (`Tiers 0.5–7`) — evaluates mathematical/logical predicates only
 - `GovernanceControl` enum — stable internal IDs, independent of external frameworks
 - OPA Rego policy structure — declarative rules parameterized by profile metadata
 - Cloud KMS HSM signing — domain-agnostic cryptographic attestation
@@ -594,13 +594,13 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 
 | Capability                         | Source                                                                                   | Status       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------- | ------------ |
-| CBF with `h(x) = cash - floor`    | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py) (Lua atomic script `LUA_ATOMIC_CBF`)  | ✅ Production |
+| CBF with `h(x) = cash - floor`    | [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) (Lua atomic script `LUA_ATOMIC_CBF`)  | ✅ Production |
 | ControlRegistry (3 regions)        | [`constants.py`](../../src/gateway/governance/constants.py) L121-308                  | ✅ Production |
-| 7-Tier SymbolicGovernor            | [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py)            | ✅ Production |
+| 9-Tier SymbolicGovernor            | [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)            | ✅ Production |
 | Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)                         | ✅ Production |
-| Heterogeneous multi-model consensus | [`consensus.py`](../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
+| Heterogeneous multi-model consensus | [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)                           | ✅ Production |
 | Fail-closed CBF enforcement        | Unconditional (no `CBF_FAIL_OPEN` override exists)                                       | ✅ Verified   |
-| DoWhy causal gatekeeper            | [`causal_gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)            | ✅ Production |
+| DoWhy causal gatekeeper            | [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)            | ✅ Production |
 | STPA-to-Policy Compiler            | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)                    | ✅ Production |
 | External CBF reconciliation        | [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py)         | ✅ Production |
 | External Normative Provider (§2.5)| [`normative_provider.py`](../../src/gateway/governance/normative_provider.py)          | ✅ Production |

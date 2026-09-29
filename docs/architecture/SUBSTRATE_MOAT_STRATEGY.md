@@ -86,13 +86,13 @@ The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic 
 The matrix claims CAGE uses a **4-state asymmetric router** where high-confidence paths (c ≥ 0.95) bypass blocking gates via async routines, while lower confidence tiers freeze and park.
 
 **4-state routing:**  
-[`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py) defines three zones:
+[`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py) defines three zones:
 - `FRIA_ZONE_ALLOW` (≥ 0.95): async fire-and-forget attestation — zero blocking latency on hot path
 - `FRIA_ZONE_DEFER` (0.70–0.95): synchronous blocking gate via `enforce_fria_boundary()`
 - `< 0.70`: hard local deny, no external call
 
 **Two-phase read/mutate ordering:**  
-[`_run_checks()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (OPA, structural corroboration, consensus, causal gatekeeper, adaptive FRIA) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after OPA. The concurrent gather survives on the post-approval revalidation path only.
+[`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (FTRA, STPA, OPA, confidence & structural corroboration, consensus, causal gatekeeper, adaptive FRIA) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after Phase 1.
 
 **DeferQueue parking:**  
 [`DeferQueue`](../../src/gateway/governance/defer_queue.py:377) parks tokens in Redis `db=1` (isolated, `noeviction` policy) with a 4-hour TTL. The three-phase replay flow (PARK → HYDRATE → REPLAY) allows automated data-hydration to re-admit parked tokens without human intervention.
@@ -246,7 +246,7 @@ The following capabilities are **fully implemented** in v2.0.0 and constitute ge
 
 5. **Multi-Jurisdiction Compliance Registry** — [`ControlRegistry`](../../src/gateway/governance/constants.py:229) with `US_FED`, `EU_ECB`, and `APAC_MAS` profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. The registry is domain-agnostic: the same `CTRL_*` enum members and JSON profile mechanism extend to any regulated vertical (pharmaceutical GxP, critical infrastructure, autonomous systems). Neither competitor has a comparable multi-jurisdiction enforcement substrate.
 
-6. **Cryptographic Routing Seal** — [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) issues a short-lived HMAC-SHA256 seal after full 8-tier pipeline (FTRA + 7 in-pipeline tiers) approval. Downstream actuators cannot execute by ignoring the governance response — the seal must be verified before execution. This is a cryptographic enforcement contract that neither competitor implements.
+6. **Cryptographic Routing Seal** — [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) issues a short-lived HMAC-SHA256 seal after full 9-tier pipeline (`Tiers 0.5–7`) approval. Downstream actuators cannot execute by ignoring the governance response — the seal must be verified before execution. This is a cryptographic enforcement contract that neither competitor implements.
 
 ### 5.2 Where CAGE Is Vulnerable
 
@@ -266,7 +266,7 @@ The following claims from the competitive analysis are now technically substanti
 |---|---|---|
 | "Immune to Prompt Breakouts" | The CBF tier has no fail-open flag; missing `dowhy` or stub ground truth refuses startup in production | [`posture.py`](../../src/gateway/governance/governor/posture.py) |
 | "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf_engine.py:1632`](../../src/gateway/governance/safety/cbf_engine.py:1632) |
-| "Telco-Grade Velocity" | Asymmetric hot path — confidence ≥ `FRIA_ZONE_ALLOW` (0.95) contacts the normative provider fire-and-forget, never blocking the action | [`symbolic_governor.py:202`](../../src/gateway/governance/governor/stages/confidence.py) |
+| "Telco-Grade Velocity" | Asymmetric hot path — confidence ≥ `FRIA_ZONE_ALLOW` (0.95) contacts the normative provider fire-and-forget, never blocking the action | [`confidence.py`](../../src/gateway/governance/governor/stages/confidence.py) |
 | "Compiled AST Invariants" | STPA UCAs compiled to OPA Rego at build time | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf_engine.py:19`](../../src/gateway/governance/safety/cbf_engine.py:19) |
 | "Multi-Jurisdiction" | US_FED / EU_ECB / APAC_MAS regional profiles | [`constants.py:158`](../../src/gateway/governance/constants.py:158) |

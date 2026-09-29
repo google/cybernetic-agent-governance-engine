@@ -27,10 +27,10 @@ CAGE automatically escalates governance decisions to human review when any of th
 |---|---|---|
 | **Consensus threshold exceeded** | `hitl_escalator.py` `should_escalate_for_consensus()` | Trade amount > $10,000 USD (`consensus.threshold_usd` in `governance_thresholds.json`) |
 | **Model confidence low** | `hitl_escalator.py` `should_escalate_for_confidence()` | Confidence < 0.95 (CTRL_AGT_001) |
-| **CausalGatekeeper block** | `causal_gatekeeper.py` `causal_safety_check()` | World-model p-value < `get_causal_lock_p_value_threshold()` (0.05) or marginal risk boundary exceeded |
+| **CausalGatekeeper block** | `src/gateway/governance/causal/gatekeeper.py` `causal_safety_check()` | World-model p-value < `get_causal_lock_p_value_threshold()` (0.05) or marginal risk boundary exceeded |
 | **OPA MANUAL_REVIEW decision** | `src/cage_finance/opa/trade_governance.rego` | OPA policy (package `trade.governance`) returns `"MANUAL_REVIEW"` |
-| **Governance confidence low** | `consensus.py` `ConsensusEngine` | ConsensusEngine self-reported confidence < threshold |
-| **POAM-TIER2-001 structural flag** | `symbolic_governor.py` `_run_checks()` Tier 2 | Structural corroboration heuristic: STPA violation count ≥ 1 AND OPA margin < threshold; overrides the model-supplied confidence signal |
+| **Governance confidence low** | `src/gateway/governance/consensus/engine.py` `ConsensusEngine` | ConsensusEngine self-reported confidence < threshold |
+| **POAM-TIER2-001 structural flag** | `src/gateway/governance/governor/stages/confidence.py` `evaluate_confidence_stage()` Tier 2 | Structural corroboration heuristic: STPA violation count ≥ 1 AND OPA margin < threshold; overrides the model-supplied confidence signal |
 | **NeMo Policy Refinement Proposal (CR-2)** | `src/governed_financial_advisor/server.py` | `POST /v1/nemo/approve-refinement/{proposal_id}` requires human risk officer sign-off with rationale |
 
 ---
@@ -130,7 +130,7 @@ on the OTel span at override time.
 
 **Source:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
 
-The `SymbolicGovernor` Tier 6b FRIA zone classification determines whether a
+The `SymbolicGovernor` Tier 7 FRIA zone classification determines whether a
 governance decision is handled automatically or escalated to human review. The
 thresholds are env-overridable constants (`FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER`)
 enforced at runtime:
@@ -152,8 +152,8 @@ reviewer resolves it within the applicable SLA (see
 
 Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 5)
 before reaching the FRIA zone classifier. The consensus engine
-([`consensus.py`](../src/gateway/governance/consensus/engine.py)) invokes multiple
-LLM critics with a **30-second hard timeout** per critic call. Unanimity is
+([`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)) invokes multiple
+LLM critics with a **10-second hard timeout** (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s) per critic call. Unanimity is
 required; a single dissenting critic escalates the decision to human review via
 the DeferQueue. Background audit logging for consensus decisions is handled by
 `_AUDIT_QUEUE` (`asyncio.Queue(maxsize=1000)`) and a background audit worker
@@ -198,8 +198,8 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    - `UPHOLD` — confirm the block; decision is logged
    - `DEFER` — escalate to senior reviewer; re-queued with extended SLA
 6. **Post-HITL re-validation:** On human approval, `revalidate_post_hitl()` in
-   [`symbolic_governor.py`](../../src/gateway/governance/governor/governor.py)
-   re-runs **only Tiers 2 and 4** (CBF + OPA) — the tiers most likely to drift
+   [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
+   re-runs **only Tiers 3a and 3b** (CBF + OPA) — the tiers most likely to drift
    during a HITL review window (cash balance and policy state may have changed).
    STPA, consensus, causal, and FRIA tiers are **not** re-run.
 7. **Audit record persisted:** Override decision stored in Langfuse compliance project

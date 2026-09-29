@@ -174,8 +174,8 @@ blocking, but all are relevant to a complete performance picture:
    available in this environment, add an explicit, clearly-logged dev/test fallback (not a
    silent one) that is gated the same way other dev-only fallbacks in this codebase are gated
    (e.g. `CAGE_ENV in ("development", "test", "dev", "ci")`), consistent with the pattern
-   already used elsewhere in this codebase (see `cbf.py`'s `_IS_PRODUCTION` guard and
-   `causal_gatekeeper.py`'s mock-telemetry fallback, both of which log loudly and restrict the
+   already used elsewhere in this codebase (see `src/gateway/governance/safety/cbf_engine.py`'s `_IS_PRODUCTION` guard and
+   `src/gateway/governance/causal/gatekeeper.py`'s mock-telemetry fallback, both of which log loudly and restrict the
    fallback to non-production environments). The current state — no fallback, an unhandled
    crash, and a stale docstring claiming a fallback exists — is the worst of all options.
 2. **Update the `generate_governance_signature()` docstring** in `evaluator_node.py` to match
@@ -183,7 +183,7 @@ blocking, but all are relevant to a complete performance picture:
 3. **Add a startup health check** (or an explicit CI/deployment gate) that verifies
    `KMS_GOVERNANCE_KEY` resolves to a usable Cloud KMS key before the pod is marked ready,
    analogous to the existing `_IS_PRODUCTION` startup assertions for `CBF_FAIL_OPEN` and
-   `dowhy` availability in `symbolic_governor.py`. A pod that will 500 on every execution-path
+   `dowhy` availability in `src/gateway/governance/governor/posture.py`. A pod that will 500 on every execution-path
    request should never pass its readiness probe.
 
 ### P1 — Required before promoting any new deflection/FPR figure to CAGE_ARXIV.MD

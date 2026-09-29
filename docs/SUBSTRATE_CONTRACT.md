@@ -32,7 +32,7 @@ POST /governance/ingest-policy
 Content-Type: application/json
 ```
 
-> **Status: Specification Only.** This endpoint is not yet implemented in the gateway. The internal policy translation module exists at `src/gateway/governance/policy_translator.py` but no HTTP route has been created.
+> **Status: Specification Only.** This endpoint is not yet implemented in the gateway. The internal policy translation module exists at `src/gateway/governance/ingress/policy_translator.py` but no HTTP route has been created.
 
 Accepts any supported policy specification format and returns compiled enforcement
 artifacts plus a `policy_version_id` for pinning.
@@ -157,30 +157,31 @@ Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](
 
 ### 2.3 Governance Pipeline Tiers
 
-Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`), with Tiers 2 and 4 executing concurrently:
+Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 9-tier, two-phase governance pipeline (`run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../src/gateway/governance/governor/pipeline.py), matching `TIER_LABELS` in [`proof/model.py`](../proof/model.py)), where Phase 1 read-only stages execute sequentially first and Phase 2 mutating stages commit sequentially only when Phase 1 produces zero violations:
 
-| Stage | Name | Implementation |
-|---|---|---|
-| *(pre-pipeline)* | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`text_filter.py`](../src/gateway/governance/text_filter.py) |
-| *(pre-pipeline)* | NeMo Guardrails (incl. Presidio PII masking) | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
-| **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`src/gateway/governance/ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`src/gateway/governance/ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`src/gateway/governance/ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
-| Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
-| Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/governor/stages/confidence.py) |
-| Tier 2 / 4 | CBF + OPA (concurrent) | [`safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), OPA `system_authz.rego` |
-| Tier 3 | Fiscal Limit Pre-Reservation | [`safety/resource_guard.py`](../src/gateway/governance/safety/resource_guard.py) |
-| Tier 5 | Multi-Agent Consensus | [`consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
-| Tier 6 | DoWhy Causal Gatekeeper | [`causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
-| Tier 6b | Adaptive FRIA Enforcement | [`normative_provider.py`](../src/gateway/governance/normative_provider.py) |
+| Tier | Phase | Name | Implementation |
+|---|---|---|---|
+| *(pre-pipeline)* | Layer 0 | Aho-Corasick / Prompt Injection Detection | [`src/gateway/governance/prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`src/gateway/governance/text_filter.py`](../src/gateway/governance/text_filter.py) |
+| *(pre-pipeline)* | Layer 0 | NeMo Guardrails (incl. Presidio PII masking) | [`src/integrations/nemo/manager.py`](../src/integrations/nemo/manager.py) |
+| **Tier 0.5** | Phase 1 (Read-Only) | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (whole-graph pre-execution node + per-request `FtraStage` boundary check) | [`src/gateway/governance/governor/stages/ftra.py`](../src/gateway/governance/governor/stages/ftra.py), [`src/gateway/governance/ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`src/gateway/governance/ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`src/gateway/governance/ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py) |
+| **Tier 1** | Phase 1 (Read-Only) | STPA/STAMP UCA validation | [`src/gateway/governance/governor/stages/stpa.py`](../src/gateway/governance/governor/stages/stpa.py), [`src/gateway/governance/stpa_validator.py`](../src/gateway/governance/stpa_validator.py) |
+| **Tier 3b** | Phase 1 (Read-Only) | OPA policy evaluation | [`src/gateway/governance/governor/stages/opa.py`](../src/gateway/governance/governor/stages/opa.py), OPA `deployment/system_authz.rego` |
+| **Tier 2** | Phase 1 (Read-Only) | Agent confidence & structural corroboration | [`src/gateway/governance/governor/stages/confidence.py`](../src/gateway/governance/governor/stages/confidence.py) |
+| **Tier 5** | Phase 1 (Read-Only) | Multi-Agent Consensus (10 s per-critic timeout) | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
+| **Tier 6** | Phase 1 (Read-Only) | DoWhy Causal Gatekeeper | [`src/gateway/governance/causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
+| **Tier 7** | Phase 1 (Read-Only) | Adaptive FRIA Enforcement | [`src/gateway/governance/normative_provider.py`](../src/gateway/governance/normative_provider.py) |
+| **Tier 3a** | Phase 2 (Mutating) | Control Barrier Function (Lua atomic check+commit) | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) |
+| **Tier 4** | Phase 2 (Mutating) | Fiscal Limit Pre-Reservation | [`src/gateway/governance/safety/resource_guard.py`](../src/gateway/governance/safety/resource_guard.py), [`src/cage_finance/safety/fiscal_limit_guard.py`](../src/cage_finance/safety/fiscal_limit_guard.py) |
 
-> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules invoked outside `_run_checks()` — PII sanitization runs on audit records inside `uca_logger.py`, and confabulation scoring is a Langfuse observability metric.
+> PII sanitization (`src/gateway/governance/pii_sanitizer.py`) and confabulation scoring (`src/gateway/governance/confabulation_scorer.py`) are standalone modules invoked outside `run_pipeline()` — PII sanitization runs on audit records inside `src/gateway/governance/uca_logger.py`, and confabulation scoring is a Langfuse observability metric.
 
-> **Pre-Pipeline Boundary Gate — FTRA BFS-exclusion caveat:** FTRA (the Pre-Pipeline Boundary Gate) is **not** included in the 57-state BFS automaton used for NoDirectBind reachability verification. This is a documented under-approximation; the BFS covers the governance state machine only. Gap closure requires integrating FTRA into the state tuple or enforcing it at the controller boundary. TLA+/Alloy full-implementation modelling is future work.
+> **Tier 0.5 — FTRA formal-model coverage:** FTRA (`ftra`, Tier 0.5) is included in the 9-tier `TIERS` state tuple in [`proof/model.py`](../proof/model.py) for `NoDirectBind` BFS reachability verification.
 
-> **Tier 2/4 — CBF effective-balance note:** The CBF (`cbf.py`) tracks `_local_debits` intra-window. `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` for all threshold checks; `reset_local_debits()` is called by the reconciliation daemon on each KMS snapshot refresh. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
+> **Tier 3a / Tier 4 — CBF effective-balance & Phase 2 reservation note:** The CBF ([`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py)) tracks `_local_debits` intra-window. `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` for all threshold checks; `reset_local_debits()` is called by the reconciliation daemon on each KMS snapshot refresh. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
 
-> **Two-Phase Pipeline & Saga Rollback Semantics:** In CAGE v3.0.1, `SymbolicGovernor._run_checks()` decouples into Phase 1 (read-only validation) and Phase 2 (atomic state mutations). All validation checks run in Phase 1 before balance debits or daily limit reservations occur, eliminating downstream budget leakage. On compensating rollbacks, `FiscalLimitGuard.rollback_state()` and `release()` validate window-key existence to prevent negative counter underflow across TTL boundaries.
+> **Two-Phase Pipeline & Saga Rollback Semantics:** In CAGE v3.0.1, `run_pipeline()` decouples into Phase 1 (read-only validation) and Phase 2 (atomic state mutations via `ReservationScope`). All validation checks run in Phase 1 before balance debits (Tier 3a) or daily limit reservations (Tier 4) occur, eliminating downstream budget leakage. On compensating rollbacks, `FiscalLimitGuard.rollback_state()` and `release()` validate window-key existence to prevent negative counter underflow across TTL boundaries.
 
-> **Tier 5 — Consensus degraded-quorum routing:** The `ERROR + APPROVE` verdict combination is explicitly routed to `ESCALATE` (HITL) before the catch-all case in `consensus.py`.
+> **Tier 5 — Consensus degraded-quorum routing:** The `ERROR + APPROVE` verdict combination is explicitly routed to `ESCALATE` (HITL) before the catch-all case in [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s).
 
 > **KMS signing contract — `signed_at` staleness rejection:** `KmsSigner.sign()` embeds `"signed_at": int(time.time())` in every reconciliation payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s). Payloads missing `signed_at` are rejected as malformed.
 
@@ -235,7 +236,7 @@ The following may change without a major version bump:
 
 - AGP Semantic Policy output format (`config/agp/generated_semantic_policy.txt`)
 - Webhook payload schema (additive changes only; no field removals without notice)
-- Internal tier ordering within the 8-tier pipeline (FTRA + 7 in-pipeline tiers)
+- Internal tier ordering within the 9-tier pipeline (`Tier 0.5` through `Tier 7`)
 
 ### 4.3 Version Pinning
 
