@@ -17,8 +17,14 @@
 from src.gateway.governance.consensus.engine import (
     ConsensusGate,
     _background_audit_worker,
+    extract_field_magnitude,
     load_critic_specs,
 )
 
-__all__ = ["ConsensusGate", "_background_audit_worker", "load_critic_specs"]
+__all__ = [
+    "ConsensusGate",
+    "_background_audit_worker",
+    "extract_field_magnitude",
+    "load_critic_specs",
+]
 

@@ -37,7 +37,6 @@ critics:
       Format: [DECISION] - [Reason]
       Example: APPROVE - Standard equity purchase.
     context_keys:
-      - action
       - amount
       - symbol
     system_instruction: "You are a strict {role}."
@@ -59,7 +58,6 @@ critics:
       Format: [DECISION] - [Reason]
       Example: APPROVE - Standard equity purchase.
     context_keys:
-      - action
       - amount
       - symbol
     system_instruction: "You are a strict {role}."

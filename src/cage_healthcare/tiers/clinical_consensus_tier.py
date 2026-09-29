@@ -18,14 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
-from src.gateway.governance.consensus import ConsensusGate, load_critic_specs
+from src.gateway.governance.consensus import ConsensusGate, extract_field_magnitude, load_critic_specs
 from src.gateway.governance.contracts import (
-    CommitReceipt,
-    ConsensusContribution,
-    CriticSpec,
-    GovernanceTierPlugin,
-    Violation,
-    ViolationKind,
+    CommitReceipt, ConsensusContribution, CriticSpec, GovernanceTierPlugin, Violation, ViolationKind,
 )
 
 _CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
@@ -42,8 +37,7 @@ def build_healthcare_consensus_contribution() -> ConsensusContribution:
     return ConsensusContribution(
         critics=load_healthcare_critics(),
         threshold=100.0,
-        magnitude_extractor=lambda p: float(p.get("dose_mg", 0.0) or 0.0),
-        quorum=1.0,
+        magnitude_extractor=extract_field_magnitude("dose_mg"),
         high_stakes_actions=HIGH_STAKES_CLINICAL_ACTIONS,
     )
 
@@ -75,35 +69,31 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
         return 5
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return (
-            action in HEALTHCARE_GOVERNED_ACTIONS
-            or action in HIGH_STAKES_CLINICAL_ACTIONS
-        )
+        return action in HEALTHCARE_GOVERNED_ACTIONS or action in HIGH_STAKES_CLINICAL_ACTIONS
+
+    def _reject(self, message: str, kind: ViolationKind = ViolationKind.HARD) -> list[Violation]:
+        return [Violation(tier=self.tier_name, code="CLINICAL_CONSENSUS_REJECTED", message=message, kind=kind)]
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        result = await self.consensus_engine.check_consensus(
-            action_type=action,
-            params=params,
-        )
-        if result.get("status") not in ("APPROVE", "APPROVED", "SKIPPED"):
-            return [
-                Violation(
-                    tier=self.tier_name,
-                    code="CLINICAL_CONSENSUS_REJECTED",
-                    message=result.get("reason", "Multi-critic consensus not achieved"),
-                    kind=ViolationKind.HITL,
-                )
-            ]
-        return []
+        if self.consensus_engine is None:
+            return self._reject("Clinical consensus engine is not configured")
+        result = await self.consensus_engine.check_consensus(action_type=action, params=params)
+        if not isinstance(result, dict):
+            return self._reject("Invalid clinical consensus result payload")
+        status = result.get("status")
+        if status in ("APPROVE", "APPROVED", "SKIPPED"):
+            return []
+        reason = str(result.get("reason") or "Multi-critic consensus not achieved")
+        kind = ViolationKind.HITL if status == "ESCALATE" else ViolationKind.HARD
+        return self._reject(reason, kind=kind)
 
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        # Phase 2: no mutation (consensus is read-only)
         return [], None
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        # Consensus tier has no state to roll back
         pass
+

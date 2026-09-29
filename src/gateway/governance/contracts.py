@@ -719,11 +719,13 @@ class CriticSpec:
     model: str = "gemini-2.5-pro"
     temperature: float = 0.0
     system_instruction: str = "You are a strict {role}."
+    context_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         resolved = self.prompt or self.prompt_template
         object.__setattr__(self, "prompt", resolved)
         object.__setattr__(self, "prompt_template", resolved)
+        object.__setattr__(self, "context_keys", tuple(self.context_keys))
 
 
 @dataclass(frozen=True)
@@ -735,7 +737,6 @@ class ConsensusContribution:
     magnitude_extractor: Callable[[Mapping[str, Any]], float] = field(
         default=lambda _: 0.0
     )
-    quorum: int | float = 2
     high_stakes_actions: frozenset[str] = frozenset()
 
 

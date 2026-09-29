@@ -23,6 +23,12 @@ critics:
       Details: {params}
       Evaluate dose appropriateness, route safety, and drug-drug interactions.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
+    context_keys:
+      - patient_id
+      - medication
+      - dose_mg
+      - route
+      - indication
 
   "Attending Physician":
     model: gemini-2.5-flash
@@ -33,6 +39,12 @@ critics:
       Details: {params}
       Verify alignment with clinical protocols and patient indication.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
+    context_keys:
+      - patient_id
+      - medication
+      - dose_mg
+      - route
+      - indication
 
   "Clinical Ethics":
     model: gemini-2.5-flash
@@ -43,4 +55,10 @@ critics:
       Details: {params}
       Verify informed consent and absence of contraindication overrides without justification.
       Respond strictly in JSON: {{"decision": "APPROVE" | "REJECT", "reason": "brief explanation"}}
+    context_keys:
+      - patient_id
+      - medication
+      - dose_mg
+      - route
+      - indication
 
