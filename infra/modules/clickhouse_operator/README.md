@@ -15,6 +15,21 @@ Provisions the ClickHouse analytical query plane for CAGE (`evidence_stream` com
 | **`staging`** | 1 node, local SSD | `MergeTree()` | Hot local SSD (`hot_local_ssd`) |
 | **`prod`** | Altinity ClickHouse Operator + 3-node cluster + 3-node ClickHouse Keeper | `ReplicatedMergeTree` | Hot local SSD (`hot_local_ssd`) + GCS cold tier (`cold_gcs`, `hot_to_cold` policy) |
 
+## Least-Privilege Evidence Writer (§7.2, §7.3)
+
+The module renders `users.d/evidence_sink_user.xml`, a config-defined user
+(`evidence_sink_username`, default `cage_evidence_sink`) whose only privilege is
+`INSERT` on `<evidence_database>.evidence_stream`. Its profile pins
+`allow_ddl = 0` and `mutations_sync = 0` with `CONST` constraints, and it cannot
+manage access. Being config-defined, it cannot be widened or re-keyed through SQL.
+
+Its password is generated into a dedicated Secret (`evidence_sink_secret_name`,
+default `clickhouse-evidence-sink`, key `CLICKHOUSE_PASSWORD`) and injected into
+the server as `CLICKHOUSE_EVIDENCE_SINK_PASSWORD`. Wire the compliance bridge to
+the `evidence_sink_username`, `evidence_sink_password_secret_name` and
+`evidence_sink_password_secret_key` outputs; never hand it the admin (`default`)
+password. The module rejects `evidence_sink_username = "default"`.
+
 ## Node Isolation Invariant (§3, §7)
 
 All ClickHouse and ClickHouse Keeper pods carry:

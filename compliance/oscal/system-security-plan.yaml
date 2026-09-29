@@ -3,8 +3,8 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-09-29T00:06:06Z'
-    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
+    last-modified: '2026-09-29T18:35:18Z'
+    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
       for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
@@ -774,9 +774,11 @@ system-security-plan:
       remarks: AU-2 auditable event types — extended for AI governance events
     - param-id: au-9_prm_1
       values:
-      - OTel spans → Langfuse → GCS WORM-equivalent (object versioning + retention
-        policy)
-      remarks: AU-9 audit log protection mechanism
+      - Governance evidence hash-chained by the gateway into a Redis Stream; re-verified,
+        KMS-attested per batch (EVIDENCE_KMS_KEY) and written with put_if_absent to
+        the retention-locked CMEK GCS WORM bucket by the compliance-bridge EvidenceCustodian;
+        OTel spans → Langfuse for telemetry
+      remarks: AU-9 audit log protection mechanism (POAM-2026-084)
     - param-id: sc-8_prm_1
       values:
       - TLS 1.3 for all external communications; Linkerd mTLS + NetworkPolicy for
@@ -1249,7 +1251,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-09-29T00:06:06Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-09-29T18:35:18Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1292,7 +1294,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-09-29T00:06:06Z'
+        value: '2026-09-29T18:35:18Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

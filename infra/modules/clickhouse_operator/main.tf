@@ -63,6 +63,33 @@ resource "random_password" "clickhouse" {
   special = false
 }
 
+# Dedicated credential for the least-privilege evidence writer. Held in its own
+# Secret so the compliance bridge never receives the admin (`default`) password.
+resource "random_password" "evidence_sink" {
+  length  = 32
+  special = false
+}
+
+resource "kubernetes_secret" "evidence_sink" {
+  metadata {
+    name      = var.evidence_sink_secret_name
+    namespace = var.namespace
+    labels = {
+      app                         = "clickhouse"
+      component                   = "query-plane"
+      "cage.io/sensitivity-level" = "high"
+    }
+    annotations = {
+      "cage.io/rotation-schedule" = "90d"
+      "cage.io/rotation-owner"    = "platform-team"
+    }
+  }
+
+  data = {
+    "CLICKHOUSE_PASSWORD" = random_password.evidence_sink.result
+  }
+}
+
 locals {
   is_prod         = var.environment == "prod"
   is_ha           = local.is_prod || var.enable_high_availability
@@ -336,6 +363,44 @@ resource "kubernetes_config_map" "clickhouse_config" {
       </clickhouse>
     EOT
 
+    # §7.2 / §7.3: least-privilege writer for src/compliance_bridge/clickhouse_sink.py.
+    # INSERT on the evidence table only — no SELECT, ALTER, DROP, TRUNCATE or
+    # OPTIMIZE — and DDL forbidden by a CONST constraint. Materialized-view pushes
+    # run under the view's DEFINER, so the writer needs no grant on MV targets
+    # (and must not hold one on evidence_chain_divergence, or it could forge
+    # verdicts). The password comes from the pod env (secretKeyRef), never here.
+    "evidence_sink_user.xml" = <<-EOT
+      <clickhouse>
+        <profiles>
+          <evidence_writer_profile>
+            <readonly>0</readonly>
+            <allow_ddl>0</allow_ddl>
+            <mutations_sync>0</mutations_sync>
+            <max_partitions_per_insert_block>8</max_partitions_per_insert_block>
+            <max_execution_time>30</max_execution_time>
+            <constraints>
+              <allow_ddl><const/></allow_ddl>
+              <mutations_sync><const/></mutations_sync>
+            </constraints>
+          </evidence_writer_profile>
+        </profiles>
+        <users>
+          <${var.evidence_sink_username}>
+            <password from_env="CLICKHOUSE_EVIDENCE_SINK_PASSWORD"/>
+            <profile>evidence_writer_profile</profile>
+            <quota>default</quota>
+            <access_management>0</access_management>
+            <networks>
+              <ip>::/0</ip>
+            </networks>
+            <grants>
+              <query>GRANT INSERT ON ${var.evidence_database}.evidence_stream</query>
+            </grants>
+          </${var.evidence_sink_username}>
+        </users>
+      </clickhouse>
+    EOT
+
     # §1.1, §2.6: Local SSD for hot parts; GCS disk for cold tier in prod.
     "storage_configuration.xml" = <<-EOT
       <clickhouse>
@@ -569,6 +634,17 @@ resource "kubernetes_stateful_set" "clickhouse" {
             }
           }
 
+          # Read by users.d/evidence_sink_user.xml (<password from_env=...>).
+          env {
+            name = "CLICKHOUSE_EVIDENCE_SINK_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.evidence_sink.metadata[0].name
+                key  = "CLICKHOUSE_PASSWORD"
+              }
+            }
+          }
+
           # cold_gcs S3 disk credentials (use_environment_credentials): the HMAC
           # key of the ClickHouse service account, the only identity with IAM
           # on the dedicated tiering bucket.
@@ -638,6 +714,12 @@ resource "kubernetes_stateful_set" "clickhouse" {
             name       = "clickhouse-users-config"
             mount_path = "/etc/clickhouse-server/users.d/networks.xml"
             sub_path   = "networks.xml"
+          }
+
+          volume_mount {
+            name       = "clickhouse-users-config"
+            mount_path = "/etc/clickhouse-server/users.d/evidence_sink_user.xml"
+            sub_path   = "evidence_sink_user.xml"
           }
 
           volume_mount {

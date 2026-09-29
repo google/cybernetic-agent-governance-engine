@@ -378,17 +378,18 @@ GROUP BY chain_id;
 -- The "NOT granted" comments are normative and must survive future edits.
 -- ===========================================================================
 
-CREATE ROLE IF NOT EXISTS evidence_writer;
 CREATE ROLE IF NOT EXISTS evidence_reader;
 CREATE ROLE IF NOT EXISTS evidence_verifier;
 CREATE ROLE IF NOT EXISTS evidence_admin;
 
--- --- evidence_writer: INSERT only. The compliance-bridge sink identity. -----
-GRANT INSERT ON cage_evidence.evidence_stream          TO evidence_writer;
-GRANT INSERT ON cage_evidence.evidence_chain_divergence TO evidence_writer;
--- Deliberately NOT granted: SELECT, ALTER, DROP, TRUNCATE, OPTIMIZE.
--- A writer that cannot read cannot exfiltrate the audit trail, and cannot
--- discover which records exist in order to forge a convincing overwrite.
+-- --- Writer: the compliance-bridge sink identity `cage_evidence_sink` is a
+-- config-defined user (users.d/evidence_sink_user.xml) holding exactly
+--   GRANT INSERT ON cage_evidence.evidence_stream
+-- Deliberately NOT granted: SELECT, ALTER, DROP, TRUNCATE, OPTIMIZE, and any
+-- INSERT on evidence_chain_divergence (a writer that could insert verdict rows
+-- could mask a real divergence). A writer that cannot read cannot exfiltrate
+-- the audit trail, and cannot discover which records exist in order to forge
+-- a convincing overwrite. MV pushes run under the view DEFINER.
 
 -- --- evidence_reader: SELECT only, and not on raw payloads by default. ------
 GRANT SELECT ON cage_evidence.evidence_stream           TO evidence_reader;
@@ -426,16 +427,8 @@ GRANT CREATE TABLE, CREATE VIEW ON cage_evidence.*                    TO evidenc
 -- exists to leak.
 -- ===========================================================================
 
-CREATE SETTINGS PROFILE IF NOT EXISTS evidence_writer_profile SETTINGS
-    readonly                            = 0,
-    allow_experimental_lightweight_delete = 0 CONST,
-    mutations_sync                      = 0   CONST,
-    max_partitions_per_insert_block     = 8,
-    async_insert                        = 1,
-    wait_for_async_insert               = 1,
-    async_insert_busy_timeout_ms        = 5000,
-    async_insert_max_data_size          = 10485760,
-    max_execution_time                  = 30;
+-- evidence_writer_profile is config-defined alongside cage_evidence_sink
+-- (users.d/evidence_sink_user.xml): allow_ddl = 0 CONST, mutations_sync = 0 CONST.
 
 CREATE SETTINGS PROFILE IF NOT EXISTS evidence_reader_profile SETTINGS
     readonly                            = 1 CONST,
@@ -445,10 +438,11 @@ CREATE SETTINGS PROFILE IF NOT EXISTS evidence_reader_profile SETTINGS
     max_result_rows                     = 1000000,
     max_memory_usage                    = 8000000000;
 
-CREATE USER IF NOT EXISTS cage_evidence_sink
-    IDENTIFIED WITH sha256_password BY {password:String}
-    SETTINGS PROFILE evidence_writer_profile
-    DEFAULT ROLE evidence_writer;
+-- The sink identity `cage_evidence_sink` is NOT created here. It is provisioned
+-- declaratively as a config-defined user (users.d/evidence_sink_user.xml,
+-- rendered by infra/modules/clickhouse_operator and deployment/k8s/langfuse-db.yaml)
+-- with INSERT on evidence_stream only and a CONST allow_ddl=0 profile, so the
+-- credential never passes through this script and cannot be altered via SQL.
 
 CREATE USER IF NOT EXISTS cage_evidence_query
     IDENTIFIED WITH sha256_password BY {password:String}
