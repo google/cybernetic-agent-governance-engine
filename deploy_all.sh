@@ -155,8 +155,20 @@ load_env() {
     [[ -n "$_redis" ]]          && export TF_VAR_redis_url="$_redis"
     [[ -n "$_s3_ep" ]]          && export TF_VAR_minio_endpoint="$_s3_ep"
     [[ -n "$_s3_bkt" ]]         && export TF_VAR_minio_bucket="$_s3_bkt"
-    [[ -n "$_model_reasoning" ]] && export TF_VAR_model_reasoning="$_model_reasoning"
-    [[ -n "$_model_fast" ]]     && export TF_VAR_model_fast="$_model_fast"
+    if [[ -n "$_model_reasoning" ]]; then
+      if [[ "$_model_reasoning" == gs://* ]]; then
+        export TF_VAR_model_reasoning="$_model_reasoning"
+      else
+        export TF_VAR_served_model_reasoning="$_model_reasoning"
+      fi
+    fi
+    if [[ -n "$_model_fast" ]]; then
+      if [[ "$_model_fast" == gs://* ]]; then
+        export TF_VAR_model_fast="$_model_fast"
+      else
+        export TF_VAR_served_model_fast="$_model_fast"
+      fi
+    fi
     [[ -n "$_model_consensus" ]] && export TF_VAR_model_consensus="$_model_consensus"
     [[ -n "$_project" ]]        && export TF_VAR_project_id="$_project"
     [[ -n "$_region" ]]         && export TF_VAR_region="$_region"
@@ -207,10 +219,6 @@ load_env() {
 
     _secret_val=$(_read_env_var AWS_SECRET_ACCESS_KEY)
     [[ -n "$_secret_val" ]] && export TF_VAR_aws_secret_key="$_secret_val"
-    unset _secret_val
-
-    _secret_val=$(_read_env_var HUGGING_FACE_HUB_TOKEN)
-    [[ -n "$_secret_val" ]] && export TF_VAR_hf_token="$_secret_val"
     unset _secret_val
 
     _secret_val=$(_read_env_var GOVERNANCE_SALT)

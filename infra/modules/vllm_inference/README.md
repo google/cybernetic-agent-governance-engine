@@ -134,8 +134,9 @@ module "vllm" {
 | memory_request | Memory request | string | "10Gi" | no |
 | cpu_request | CPU request | string | "3" | no |
 | shared_memory_size | Shared memory size | string | "16Gi" | no |
-| model_path | Model path/HuggingFace ID | string | "meta-llama/Llama-3.2-3B-Instruct" | no |
-| vllm_load_format | Load format | string | "auto" | no |
+| model_path | Model GCS path or HuggingFace ID | string | "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct" | no |
+| served_model_name | Served model ID (--served-model-name) | string | "" | no |
+| vllm_load_format | Load format | string | "runai_streamer" | no |
 | enable_model_volume | Enable model PVC | bool | false | no |
 | model_pvc_name | PVC name | string | "model-storage" | no |
 | vllm_command | vLLM startup command | string | (default command) | no |

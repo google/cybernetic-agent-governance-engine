@@ -281,17 +281,6 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.alphavantage_api_key
           }
 
-          # Secrets
-          env {
-            name = "HUGGING_FACE_HUB_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = "hf-token-secret"
-                key  = "token"
-              }
-            }
-          }
-
           security_context {
             allow_privilege_escalation = false
             run_as_non_root            = true

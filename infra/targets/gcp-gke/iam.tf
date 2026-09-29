@@ -39,6 +39,9 @@ locals {
   # vLLM runs in var.namespace when deployed by Terraform and in
   # "vllm-inference" when deployed from deployment/k8s/ manifests.
   vllm_workload_namespaces = distinct([var.namespace, "vllm-inference"])
+
+  # Resolve default model bucket name when var.model_bucket_name is empty
+  model_bucket_name = var.model_bucket_name != "" ? var.model_bucket_name : "${var.project_id}-models"
 }
 
 # ---------------------------------------------------------------------------
@@ -114,7 +117,7 @@ resource "google_project_iam_member" "gateway_storage_viewer" {
   condition {
     title       = "cage-gateway-model-bucket-only"
     description = "Restrict storage.objectViewer to the CAGE model bucket only"
-    expression  = "resource.name.startsWith(\"projects/_/buckets/${var.model_bucket_name}\")"
+    expression  = "resource.name.startsWith(\"projects/_/buckets/${local.model_bucket_name}\")"
   }
 }
 
@@ -213,7 +216,7 @@ resource "google_project_iam_member" "vllm_storage_viewer" {
   condition {
     title       = "cage-vllm-model-bucket-only"
     description = "Restrict storage.objectViewer to the CAGE model bucket only"
-    expression  = "resource.name.startsWith(\"projects/_/buckets/${var.model_bucket_name}\")"
+    expression  = "resource.name.startsWith(\"projects/_/buckets/${local.model_bucket_name}\")"
   }
 }
 

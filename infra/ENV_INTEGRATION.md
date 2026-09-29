@@ -177,7 +177,6 @@ The following `.env` variables are automatically mapped to Terraform variables:
 |---------------|-------------------|-------------|
 | `AWS_ACCESS_KEY_ID` | `aws_access_key` | S3/MinIO access key |
 | `AWS_SECRET_ACCESS_KEY` | `aws_secret_key` | S3/MinIO secret key |
-| `HUGGING_FACE_HUB_TOKEN` | `hf_token` | HuggingFace token for model downloads |
 | `GOVERNANCE_SALT` | `governance_salt` | HMAC salt for governance |
 
 ### Langfuse Observability
@@ -194,8 +193,8 @@ The following `.env` variables are automatically mapped to Terraform variables:
 
 | .env Variable | Terraform Variable | Description |
 |---------------|-------------------|-------------|
-| `MODEL_REASONING` | `model_reasoning` | Reasoning model path |
-| `MODEL_FAST` | `model_fast` | Fast model path |
+| `MODEL_REASONING` | `model_reasoning` / `served_model_reasoning` | Reasoning model `gs://` path or served model ID |
+| `MODEL_FAST` | `model_fast` / `served_model_fast` | Fast model `gs://` path or served model ID |
 | `MODEL_CONSENSUS` | `model_consensus` | Consensus model path |
 
 ### Infrastructure Endpoints
@@ -391,7 +390,7 @@ If you only want to load specific variables, create a custom script:
 
 export TF_VAR_langfuse_public_key="${LANGFUSE_PUBLIC_KEY}"
 export TF_VAR_langfuse_secret_key="${LANGFUSE_SECRET_KEY}"
-export TF_VAR_hf_token="${HUGGING_FACE_HUB_TOKEN}"
+export TF_VAR_governance_salt="${GOVERNANCE_SALT}"
 
 echo "✅ Secrets loaded (non-sensitive config must be in .tfvars)"
 ```

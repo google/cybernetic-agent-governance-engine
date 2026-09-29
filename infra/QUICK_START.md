@@ -295,7 +295,6 @@ terraform destroy -var-file=dev.tfvars -auto-approve
 | `LANGFUSE_PUBLIC_KEY` | `TF_VAR_langfuse_public_key` |
 | `LANGFUSE_SECRET_KEY` | `TF_VAR_langfuse_secret_key` |
 | `GOVERNANCE_SALT` | `TF_VAR_governance_salt` |
-| `HUGGING_FACE_HUB_TOKEN` | `TF_VAR_hf_token` |
 | `KMS_GOVERNANCE_KEY` | `TF_VAR_kms_governance_key` |
 
 ---

@@ -171,7 +171,10 @@ resource "kubernetes_deployment" "vllm" {
 
           # Environment variables
           dynamic "env" {
-            for_each = var.env_vars
+            for_each = {
+              for k, v in var.env_vars : k => v
+              if !contains(["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"], k)
+            }
             content {
               name  = env.key
               value = env.value
@@ -184,8 +187,23 @@ resource "kubernetes_deployment" "vllm" {
           }
 
           env {
+            name  = "SERVED_MODEL_NAME"
+            value = var.served_model_name != "" ? var.served_model_name : var.model_path
+          }
+
+          env {
             name  = "VLLM_LOAD_FORMAT"
             value = var.vllm_load_format
+          }
+
+          env {
+            name  = "HF_HUB_OFFLINE"
+            value = "1"
+          }
+
+          env {
+            name  = "TRANSFORMERS_OFFLINE"
+            value = "1"
           }
 
           # S3/MinIO credentials (optional)

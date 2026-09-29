@@ -14,10 +14,9 @@
 
 FROM vllm/vllm-openai:latest
 
-# Optional: Hugging Face Hub token for gated model downloads.
-# Passed as a build-time ARG so it is not baked into any image layer.
-ARG HF_TOKEN=""
-ENV HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+# Model weights are mirrored to GCS out-of-band by operators and streamed at
+# runtime via GKE Workload Identity (`runai_streamer`). Never pass or bake
+# Hugging Face credentials into this image.
 
 # Install RunAI model streamer and GCS backend.
 # runai-model-streamer-gcs requires google-cloud-storage for ADC auth.

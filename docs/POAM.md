@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-09-27
+**Last Updated:** 2026-09-28
 
 ---
 
@@ -75,6 +75,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
 | POAM-2026-077 | CM-6 / SC-24 | Healthcare and physical-AI plugins declare no `DomainConfig` (no FTRA terminal registry), so `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start (fail closed); only `finance` is runnable | Moderate | 2026-12-31 |
 | POAM-2026-078 | SI-10 / SA-8 | Plugin-contributed CBF invariants (healthcare serum concentration, physical-AI separation/velocity/torque) are validated (V1-V4) at governor assembly and recorded on `GovernorComponents.invariants`, but not enforced until the CBF engine becomes invariant-parametric (PR 4b) | Moderate | 2026-12-31 |
+| POAM-2026-082 | IA-5 / SC-7 / SC-28 | Hugging Face token (`HUGGING_FACE_HUB_TOKEN`) was baked into `Dockerfile.vllm` image config (`ENV HUGGING_FACE_HUB_TOKEN`), passed as a plaintext Cloud Build substitution (`_HF_TOKEN`), and stored in Terraform state / `hf-token-secret`. Code and IaC remediated to remove all token references and stream weights from GCS (`gs://`) via `runai_streamer` under `HF_HUB_OFFLINE=1`; item remains Open pending manual token rotation on `huggingface.co` and deletion of historical `vllm-streamer` image digests | High | 2026-10-05 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -365,4 +366,26 @@ Domain plugins now hand their CBF barriers to the kernel as data (`PluginContrib
 2. Added `context_keys: tuple[str, ...] = ()` to [`CriticSpec`](../src/gateway/governance/contracts.py) and all three domain [`critics.yaml`](../src/cage_finance/config/critics.yaml) files, formatted non-reserved parameters as RFC 8785 canonical JSON inside `<params_json>...</params_json>`, and pinned `role`, `action`, `action_type`, and `magnitude` from gateway-owned values so caller parameters cannot overwrite trusted prompt placeholders.
 3. Hardened `ConsensusGate.check_consensus()` and [`ConsensusTierPlugin`](../src/cage_finance/tiers/consensus_tier.py), [`ClinicalConsensusTier`](../src/cage_healthcare/tiers/clinical_consensus_tier.py), and [`PhysicalSafetyConsensusTier`](../src/cage_physical_ai/tiers/physical_consensus_tier.py) to fail closed (`DENY` / `ViolationKind.HARD`) on invalid/bool/non-finite/negative magnitudes, non-dict results, unknown/`None` statuses, or missing consensus engines, and removed the unused `quorum` field.
 4. Verified by [`tests/cage_finance/test_consensus_gate.py`](../tests/cage_finance/test_consensus_gate.py), [`tests/test_consensus_config_failclosed.py`](../tests/test_consensus_config_failclosed.py), and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py). Remediation commit: `8bdd5b2`.
+
+### POAM-2026-082: Hugging Face Hub Token Exposure in vLLM Image Config, Cloud Build, and Terraform State
+
+**Control:** NIST IA-5, SC-7, SC-28
+**Risk Level:** High
+**Status:** Open
+**Date Opened:** 2026-09-28
+**Target Closure:** 2026-10-05
+
+**Description:**
+Five coupled defects exposed `HUGGING_FACE_HUB_TOKEN` and prevented vLLM from loading model weights on GKE:
+1. [`deployment/docker/Dockerfile.vllm`](../deployment/docker/Dockerfile.vllm) declared `ARG HF_TOKEN=""` and `ENV HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}`, persisting the token in the container image configuration despite a comment claiming it was not baked in.
+2. [`deployment/docker/cloudbuild.vllm.yaml`](../deployment/docker/cloudbuild.vllm.yaml) and [`scripts/build_images.sh`](../scripts/build_images.sh) passed `_HF_TOKEN` as a plaintext Cloud Build substitution visible to anyone with build-viewer permissions, even though the image build only runs `pip install`.
+3. [`infra/modules/app_secrets/main.tf`](../infra/modules/app_secrets/main.tf) stored `hf_token` in Terraform state and created `hf-token-secret`, which [`infra/modules/governed_advisor/main.tf`](../infra/modules/governed_advisor/main.tf) mounted into the advisor pod even though no code in `src/` reads it.
+4. `default-deny-external-egress` in [`infra/targets/gcp-gke/network_policy.tf`](../infra/targets/gcp-gke/network_policy.tf) blocked all external egress for `vllm-inference` and `vllm-reasoning` pods (including GKE Workload Identity metadata server `169.254.169.254:80` / `169.254.169.252:988` and GCS `storage.googleapis.com:443`), and `local.fqdn_network_policies` was only hashed into `terraform_data.network_policy_workload_rollout` without a `kubernetes_manifest` resource to materialize the `FQDNNetworkPolicy` objects in the cluster.
+5. [`infra/targets/gcp-gke/main.tf`](../infra/targets/gcp-gke/main.tf) set `vllm_load_format = "gcs_filesystem"` (an invalid vLLM loader name instead of `"runai_streamer"`), omitted `--load-format $VLLM_LOAD_FORMAT` and `--served-model-name $SERVED_MODEL_NAME` from `vllm_command`, and defaulted `model_fast` / `model_reasoning` to bare Hugging Face Hub IDs instead of `gs://` paths in the model bucket.
+
+**Remediation Plan:**
+1. **(Completed in code/IaC)** Removed `ARG HF_TOKEN` / `ENV HUGGING_FACE_HUB_TOKEN` from [`deployment/docker/Dockerfile.vllm`](../deployment/docker/Dockerfile.vllm), `_HF_TOKEN` from [`deployment/docker/cloudbuild.vllm.yaml`](../deployment/docker/cloudbuild.vllm.yaml) and [`scripts/build_images.sh`](../scripts/build_images.sh), and `hf_token` / `hf-token-secret` from [`infra/modules/app_secrets/`](../infra/modules/app_secrets/main.tf), [`infra/modules/governed_advisor/main.tf`](../infra/modules/governed_advisor/main.tf), [`infra/targets/gcp-gke/`](../infra/targets/gcp-gke/variables.tf), [`infra/targets/agnostic/`](../infra/targets/agnostic/variables.tf), [`deploy_all.sh`](../deploy_all.sh), and [`infra/load_env.sh`](../infra/load_env.sh).
+2. **(Completed in code/IaC)** Configured all GKE postures to load `model_fast` and `model_reasoning` from `gs://` paths in the model bucket via `vllm_load_format = "runai_streamer"`, passing `--load-format $VLLM_LOAD_FORMAT` and `--served-model-name $SERVED_MODEL_NAME` with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` in [`infra/modules/vllm_inference/`](../infra/modules/vllm_inference/main.tf) and [`infra/targets/gcp-gke/main.tf`](../infra/targets/gcp-gke/main.tf).
+3. **(Completed in code/IaC)** Added `kubernetes_network_policy_v1.vllm_egress_l3_l4` (DNS + GKE metadata server `169.254.169.254:80` and `169.254.169.252:988`), added `vllm_egress_fqdn` (`storage.googleapis.com` and `oauth2.googleapis.com` on TCP 443) to `local.fqdn_network_policies` and [`deployment/k8s/cilium/egress-lockdown.yaml`](../deployment/k8s/cilium/egress-lockdown.yaml), and materialized `local.fqdn_network_policies` via `kubernetes_manifest.fqdn_network_policy` in [`infra/targets/gcp-gke/network_policy.tf`](../infra/targets/gcp-gke/network_policy.tf).
+4. **(Pending operator action required before closure)** Rotate the exposed Hugging Face token on `huggingface.co` and delete all historical `gcr.io/$PROJECT_ID/vllm-streamer` image digests that contain `ENV HUGGING_FACE_HUB_TOKEN` in their image configuration.
 
