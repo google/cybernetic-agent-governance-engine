@@ -36,6 +36,8 @@ from src.gateway.client.exceptions import (
 )
 from src.gateway.client.transport import create_mtls_transport
 
+__version__ = "0.2.0"
+
 __all__ = [
     "CageClient",
     "CageGatewayError",
@@ -44,6 +46,7 @@ __all__ = [
     "GovernanceEnvelope",
     "PolicyViolationException",
     "RoutingSealVerificationError",
+    "__version__",
     "cage_guard",
     "create_mtls_transport",
     "generate_w3c_traceparent",

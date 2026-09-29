@@ -161,7 +161,7 @@ The decision semantics remain identical (`ALLOW`/`DENY`/`DEFER`).
 - **Quick Start Guide:** [`docs/guides/LANGGRAPH_QUICKSTART.md`](../../docs/guides/LANGGRAPH_QUICKSTART.md)
 - **Tutorial Notebook:** [`docs/guides/langgraph_governance_tutorial.ipynb`](../../docs/guides/langgraph_governance_tutorial.ipynb)
 - **LangGraph Harness (Advanced):** [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](../../docs/architecture/EXTENSIBILITY_ARCHITECTURE.md#41-langgraph-harness--governance-node-composition)
-- **Release Notes:** [client-v0.1.0](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.1.0)
+- **Release Notes:** [client-v0.2.0](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0)
 
 ## License
 

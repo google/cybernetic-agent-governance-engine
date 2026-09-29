@@ -430,7 +430,7 @@ app = graph.compile()
 **Benefits:**
 - **Zero boilerplate:** No manual REST calls, no envelope parsing
 - **Fail-closed by default:** Network errors → action blocked
-- **Cryptographic seals:** HMAC routing seals validated transparently
+- **KMS-signed envelopes:** Receives tamper-evident `GovernanceEnvelope` decisions signed by the CAGE Gateway KMS key over Linkerd mTLS
 - **W3C tracing:** Propagates `traceparent` for distributed traces
 - **Exception-driven:** Governance denials surface as typed Python exceptions for LangGraph error handlers
 
@@ -492,7 +492,7 @@ graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governa
 - **Client SDK Documentation:** [`packages/cage-client/README.md`](packages/cage-client/README.md)
 - **Quick Start Guide:** [`docs/guides/LANGGRAPH_QUICKSTART.md`](docs/guides/LANGGRAPH_QUICKSTART.md)
 - **Tutorial Notebook:** [`docs/guides/langgraph_governance_tutorial.ipynb`](docs/guides/langgraph_governance_tutorial.ipynb)
-- **Release Notes:** [client-v0.1.0](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.1.0)
+- **Release Notes:** [client-v0.2.0](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0)
 - **LangGraph Harness (Advanced):** [`docs/architecture/EXTENSIBILITY_ARCHITECTURE.md`](docs/architecture/EXTENSIBILITY_ARCHITECTURE.md#41-langgraph-harness--governance-node-composition)
 - **HITL Interrupt Pattern:** [`docs/security/HITL_TOCTOU_REMEDIATION.md`](docs/security/HITL_TOCTOU_REMEDIATION.md)
 

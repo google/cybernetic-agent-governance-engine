@@ -38,7 +38,7 @@ Fail-Closed Semantics:
     - Missing audit_id → Raise CageGatewayError (deny action)
 
 Usage:
-    from src.gateway.client.core import CageClient
+    from cage_client import CageClient
 
     async with CageClient(
         gateway_url="https://cage-gateway.example.com",
@@ -46,7 +46,7 @@ Usage:
     ) as client:
         try:
             envelope = await client.validate_action(
-                action="execute_trade",
+                action="execute_action",
                 parameters={"symbol": "AAPL", "amount": 1000},
                 agent_id="advisor-prod-v3",
                 context={"session_id": "abc123"}
@@ -174,7 +174,7 @@ class CageClient:
           - 202/409 (DEFER) → Parse ticket, raise DeferralPending
 
         Args:
-            action: Action name (e.g., "execute_trade", "access_pii")
+            action: Action name (e.g., "execute_action", "access_pii")
             parameters: Action parameters dictionary (will be canonicalized)
             agent_id: Identifier of the agent requesting the action
             context: Optional additional context (session metadata, etc.)

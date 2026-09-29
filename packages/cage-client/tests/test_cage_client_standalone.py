@@ -43,6 +43,7 @@ from cage_client import (
 
 def test_standalone_exports():
     """Verify all top-level symbols export correctly."""
+    assert cage_client.__version__ == "0.2.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.cage_guard is cage_guard
@@ -50,6 +51,15 @@ def test_standalone_exports():
     assert issubclass(DeferralPending, CageGatewayError)
     assert issubclass(RoutingSealVerificationError, Exception)
     assert "verify_routing_seal" not in cage_client.__all__
+
+
+def test_routing_seal_secret_rejected():
+    """Verify CageClient v0.2.0 rejects removed routing_seal_secret parameter."""
+    with pytest.raises(TypeError):
+        CageClient(
+            gateway_url="https://cage-gateway.example.com",
+            routing_seal_secret="legacy-secret",  # type: ignore[call-arg]
+        )
 
 
 def test_w3c_traceparent_format():
