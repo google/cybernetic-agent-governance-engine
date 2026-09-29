@@ -15,6 +15,7 @@ Provisions a Google Kubernetes Engine (GKE) cluster with security posture toggle
 - **Binary Authorization:** Enforce signed images (CM-7, SI-7)
 - **Vertical Pod Autoscaling:** Enabled by default
 - **GCS Fuse CSI driver:** Enabled by default (model weight streaming from GCS)
+- **GPU Image Streaming:** Enabled on the GPU node pool (`gcfs_config { enabled = true }`) via the Container File System API (`containerfilesystem.googleapis.com`)
 
 ---
 

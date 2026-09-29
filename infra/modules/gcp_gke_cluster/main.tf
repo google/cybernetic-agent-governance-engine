@@ -486,6 +486,11 @@ resource "google_container_node_pool" "gpu_nodes" {
       enable_integrity_monitoring = true
     }
 
+    # GKE Image Streaming (Container File System API) for multi-GB vLLM images
+    gcfs_config {
+      enabled = true
+    }
+
     # Labels for GPU workload scheduling
     labels = merge(
       {
