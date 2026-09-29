@@ -342,3 +342,81 @@ async def test_credential_headers_not_in_audit_record():
         "ultra-secret-token-should-not-leak" not in str(finding)
         for finding in receipt.findings
     )
+
+
+@pytest.mark.asyncio
+async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refused (CREDENTIAL_BROKER_FAILED) and accepted ActuationReceipts are ingested into EvidenceStreamSink."""
+    import json
+    import fakeredis.aioredis
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
+    from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    sink = EvidenceStreamSink()
+    sink._redis = fake_redis
+    sink._running = True
+    monkeypatch.setattr(
+        "src.gateway.governance.evidence.stream._evidence_sink", sink
+    )
+
+    mock_client = MagicMock(spec=ActuatorHttpClient)
+    mock_client.base_url = "https://test.actuator.example.com"
+    clearance = make_valid_clearance()
+
+    # 1. Refusal path: CREDENTIAL_BROKER_FAILED
+    denied_adapter = Actuator01Adapter(
+        client=mock_client,
+        signer=MockSigner(),
+        credential_broker=MockCredentialBroker(
+            raise_error=CredentialAccessDenied(
+                "SVID urn:cage:agent:advisor-prod not authorized for execute_trade"
+            )
+        ),
+    )
+    refusal_receipt = await denied_adapter.actuate(clearance)
+    assert refusal_receipt.accepted is False
+    assert getattr(refusal_receipt, "evidence_id", None)
+
+    # Calling ingest_actuation_receipt a second time on the same receipt is idempotent
+    second_id = await ingest_actuation_receipt(clearance, refusal_receipt)
+    assert second_id == getattr(refusal_receipt, "evidence_id", None)
+
+    # 2. Accepted path
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "status": "accepted",
+        "receipt_id": "receipt-005",
+        "session_uuid": "session-005",
+    }
+    mock_client.submit_envelope = AsyncMock(return_value=mock_response)
+    accepted_adapter = Actuator01Adapter(
+        client=mock_client,
+        signer=MockSigner(),
+        credential_broker=MockCredentialBroker(),
+    )
+    accepted_receipt = await accepted_adapter.actuate(clearance)
+    assert accepted_receipt.accepted is True
+    assert getattr(accepted_receipt, "evidence_id", None)
+
+    entries = await fake_redis.xrange(sink._stream_key)
+    assert len(entries) == 2
+
+    _, refusal_fields = entries[0]
+    assert refusal_fields["event_type"] == "ACTUATION_REFUSAL_RECEIPT"
+    assert refusal_fields["sequence"] == "0"
+    refusal_payload = json.loads(refusal_fields["payload_json"])
+    assert refusal_payload["accepted"] is False
+    assert refusal_payload["finding_codes"] == ["CREDENTIAL_BROKER_FAILED"]
+    assert refusal_payload["thread_id"] == clearance.thread_id
+
+    _, accepted_fields = entries[1]
+    assert accepted_fields["event_type"] == "ACTUATION_RECEIPT"
+    assert accepted_fields["sequence"] == "1"
+    assert accepted_fields["prev_hash"] == refusal_fields["record_hash"]
+    accepted_payload = json.loads(accepted_fields["payload_json"])
+    assert accepted_payload["accepted"] is True
+    assert accepted_payload["receipt_id"] == "receipt-005"

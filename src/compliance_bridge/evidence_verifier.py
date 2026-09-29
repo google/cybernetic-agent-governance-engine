@@ -60,9 +60,11 @@ key. With no anchors every signed attestation fails closed on unknown kid.
 
 Usage::
 
-    uv run python -m src.compliance_bridge.evidence_verifier [--prefix P] [--json]
+    uv run python -m src.compliance_bridge.evidence_verifier [--prefix P] [--require-citable] [--json]
 
-Exit status is 0 only when the report has no failures.
+Exit status is 0 only when the report has no failures (or, with
+``--require-citable``, when the archive verified cleanly with at least one
+signed batch and no declared gaps).
 """
 
 from __future__ import annotations
@@ -87,6 +89,7 @@ from src.gateway.governance.evidence.stream import verify_record
 from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
 from .evidence_custodian import (
+    EvidenceCustodyConfigError,
     NonEvidentiaryAttestationError,
     assert_citable,
 )
@@ -99,16 +102,61 @@ from .kms_batch_signer import (
 logger = logging.getLogger("cage.compliance_bridge.evidence_verifier")
 
 DEFAULT_PREFIX = "evidence-stream/"
+DEFAULT_INTERVAL_S = 300.0
 TRUST_ANCHORS_FILE_ENV = "EVIDENCE_TRUST_ANCHORS_FILE"
+VERIFY_INTERVAL_ENV = "EVIDENCE_VERIFY_INTERVAL_S"
+VERIFY_PREFIX_ENV = "EVIDENCE_VERIFY_PREFIX"
 
 _DATA_SUFFIX = ".ndjson"
 _SIGNED_SUFFIX = ".attestation.json"
 _UNSIGNED_SUFFIX = ".attestation.unsigned.json"
 _RANGE_RE = re.compile(r"/(?P<chain>[^/]+)/(?P<first>\d{12})-(?P<last>\d{12})\.ndjson$")
 
+_PROM_AVAILABLE = False
+try:
+    from prometheus_client import REGISTRY, Counter, Gauge
+
+    def _counter(name: str, doc: str, labels: list[str] | None = None) -> Any:
+        try:
+            return Counter(name, doc, labels or [])
+        except ValueError:
+            return REGISTRY._names_to_collectors.get(name)
+
+    def _gauge(name: str, doc: str) -> Any:
+        try:
+            return Gauge(name, doc)
+        except ValueError:
+            return REGISTRY._names_to_collectors.get(name)
+
+    VERIFICATION_RUNS_TOTAL = _counter(
+        "cage_evidence_verification_runs_total",
+        "Custodied evidence verification runs by outcome",
+        ["outcome"],
+    )
+    VERIFIED_BATCHES = _gauge(
+        "cage_evidence_verified_batches",
+        "Verified signed batches in the last completed verification run",
+    )
+    VERIFICATION_FAILURES = _gauge(
+        "cage_evidence_verification_failures",
+        "Verification failures in the last completed verification run",
+    )
+    DECLARED_GAPS = _gauge(
+        "cage_evidence_declared_gaps",
+        "Declared stream-trim gaps in the last completed verification run",
+    )
+    NON_EVIDENTIARY_BATCHES = _gauge(
+        "cage_evidence_non_evidentiary_batches",
+        "Unsigned non-evidentiary batches in the last completed verification run",
+    )
+    _PROM_AVAILABLE = True
+except ImportError:  # pragma: no cover - prometheus_client is a runtime dep
+    pass
+
 
 class EvidenceVerificationError(Exception):
     """A custodied batch failed verification and must not be cited."""
+
 
 
 # ---------------------------------------------------------------------------
@@ -252,10 +300,49 @@ class CustodyVerificationReport:
     def ok(self) -> bool:
         return not self.failures
 
+    @property
+    def citable(self) -> bool:
+        """True when the archive verified cleanly with at least one signed batch and no gaps."""
+        return self.ok and bool(self.verified) and not self.declared_gaps
+
+    def assert_citable(
+        self, *, allow_declared_gaps: bool = False
+    ) -> list[VerifiedBatch]:
+        """Fail closed unless this report's verified batches may be cited as evidence.
+
+        Raises:
+            EvidenceVerificationError: Any batch failed verification, the
+                archive has no signed verified batches, or (unless
+                ``allow_declared_gaps`` is true) the chain has declared gaps.
+        """
+        if self.failures:
+            reasons = "; ".join(f"{f.key}: {f.reason}" for f in self.failures)
+            raise EvidenceVerificationError(reasons)
+        if not self.verified:
+            if self.non_evidentiary:
+                raise EvidenceVerificationError(
+                    f"{self.prefix}: archive contains {len(self.non_evidentiary)} "
+                    "unsigned non-evidentiary batch(es) and no signed verified evidence"
+                )
+            raise EvidenceVerificationError(
+                f"{self.prefix}: archive contains no signed, verified evidence batches"
+            )
+        if self.declared_gaps and not allow_declared_gaps:
+            gaps = ", ".join(
+                f"{g.chain_id}[{g.missing_from}..{g.missing_to}]"
+                for g in self.declared_gaps
+            )
+            raise EvidenceVerificationError(
+                f"{self.prefix}: archive has declared stream-trim gap(s) ({gaps}); "
+                "chain is incomplete"
+            )
+        return list(self.verified)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "prefix": self.prefix,
             "ok": self.ok,
+            "citable": self.citable,
             "verified": [asdict(b) for b in self.verified],
             "failures": [asdict(f) for f in self.failures],
             "declared_gaps": [asdict(g) for g in self.declared_gaps],
@@ -295,13 +382,68 @@ class CustodyVerifier:
     Args:
         cold_store: Backend holding the custodied objects.
         verifier: Verify-only signer from :func:`build_attestation_verifier`.
+        prefix: Default object key prefix for :meth:`verify_all` and
+            :meth:`run_forever`.
+        interval_s: Sleep between cycles in :meth:`run_forever`.
     """
 
     def __init__(
-        self, cold_store: EvidenceColdStore, verifier: KMSGovernanceSigner
+        self,
+        cold_store: EvidenceColdStore,
+        verifier: KMSGovernanceSigner,
+        *,
+        prefix: str = DEFAULT_PREFIX,
+        interval_s: float = DEFAULT_INTERVAL_S,
     ) -> None:
+        if interval_s <= 0:
+            raise ValueError("interval_s must be > 0")
         self._cold_store = cold_store
         self._verifier = verifier
+        self._prefix = prefix
+        self._interval_s = interval_s
+        self._last_report: CustodyVerificationReport | None = None
+
+    @property
+    def last_report(self) -> CustodyVerificationReport | None:
+        """Report from the most recent completed :meth:`verify_all` call."""
+        return self._last_report
+
+    @classmethod
+    def from_env(cls) -> CustodyVerifier:
+        """Build a verifier from the environment, failing closed when enforcing.
+
+        Raises:
+            EvidenceCustodyConfigError: Enforcing posture with a ``null`` cold
+                store, without trust anchors, or with a malformed/foreign
+                trust-anchor manifest.
+        """
+        from src.gateway.governance.evidence.factory import get_cold_store
+
+        enforcing = is_enforcing()
+        cold_store = get_cold_store()
+        if enforcing and cold_store.backend_id == "null":
+            raise EvidenceCustodyConfigError(
+                "EVIDENCE_COLD_STORE=null is forbidden under an enforcing posture; "
+                "evidence verification needs a WORM backend (gcs or s3)."
+            )
+        try:
+            anchors = load_evidence_trust_anchors()
+        except Exception as exc:
+            raise EvidenceCustodyConfigError(str(exc)) from exc
+        if enforcing and not anchors:
+            raise EvidenceCustodyConfigError(
+                "Evidence verification requires at least one trust anchor "
+                f"({EVIDENCE_KMS_KEY_ENV} or {TRUST_ANCHORS_FILE_ENV}) under an "
+                "enforcing posture."
+            )
+        return cls(
+            cold_store,
+            build_attestation_verifier(anchors),
+            prefix=os.environ.get(VERIFY_PREFIX_ENV, DEFAULT_PREFIX),
+            interval_s=float(
+                os.environ.get(VERIFY_INTERVAL_ENV, str(DEFAULT_INTERVAL_S))
+            ),
+        )
 
     async def _read(self, key: str, *, what: str) -> bytes:
         try:
@@ -433,7 +575,7 @@ class CustodyVerifier:
         )
 
     async def verify_all(
-        self, prefix: str = DEFAULT_PREFIX
+        self, prefix: str | None = None
     ) -> CustodyVerificationReport:
         """Verify every custodied batch under ``prefix`` and chain continuity.
 
@@ -441,47 +583,102 @@ class CustodyVerifier:
             ColdStoreError: The backend could not be listed or read. A backend
                 outage is not a verdict about the evidence.
         """
-        report = CustodyVerificationReport(prefix=prefix)
-        keys = await self._cold_store.list_keys(prefix)
-        key_set = set(keys)
+        target_prefix = self._prefix if prefix is None else prefix
+        report = CustodyVerificationReport(prefix=target_prefix)
+        try:
+            keys = await self._cold_store.list_keys(target_prefix)
+            key_set = set(keys)
 
-        for key in keys:
-            if key.endswith(_DATA_SUFFIX):
-                base = key[: -len(_DATA_SUFFIX)]
-                if (
-                    base + _SIGNED_SUFFIX not in key_set
-                    and base + _UNSIGNED_SUFFIX not in key_set
-                ):
+            for key in keys:
+                if key.endswith(_DATA_SUFFIX):
+                    base = key[: -len(_DATA_SUFFIX)]
+                    if (
+                        base + _SIGNED_SUFFIX not in key_set
+                        and base + _UNSIGNED_SUFFIX not in key_set
+                    ):
+                        report.failures.append(
+                            VerificationFailure(key, "data object has no attestation")
+                        )
+                elif key.endswith(_UNSIGNED_SUFFIX):
+                    report.non_evidentiary.append(key)
+                elif key.endswith(_SIGNED_SUFFIX):
+                    try:
+                        report.verified.append(await self.verify_batch(key))
+                    except (
+                        EvidenceVerificationError,
+                        NonEvidentiaryAttestationError,
+                    ) as exc:
+                        report.failures.append(VerificationFailure(key, str(exc)))
+                else:
                     report.failures.append(
-                        VerificationFailure(key, "data object has no attestation")
+                        VerificationFailure(
+                            key, "unexpected object in the evidence archive"
+                        )
                     )
-            elif key.endswith(_UNSIGNED_SUFFIX):
-                report.non_evidentiary.append(key)
-            elif key.endswith(_SIGNED_SUFFIX):
-                try:
-                    report.verified.append(await self.verify_batch(key))
-                except (
-                    EvidenceVerificationError,
-                    NonEvidentiaryAttestationError,
-                ) as exc:
-                    report.failures.append(VerificationFailure(key, str(exc)))
-            else:
-                report.failures.append(
-                    VerificationFailure(
-                        key, "unexpected object in the evidence archive"
-                    )
-                )
+        except Exception:
+            if _PROM_AVAILABLE:
+                VERIFICATION_RUNS_TOTAL.labels(outcome="error").inc()
+            raise
 
         self._check_continuity(report)
+        self._last_report = report
+        if _PROM_AVAILABLE:
+            VERIFICATION_RUNS_TOTAL.labels(
+                outcome="ok" if report.ok else "failed"
+            ).inc()
+            VERIFIED_BATCHES.set(len(report.verified))
+            VERIFICATION_FAILURES.set(len(report.failures))
+            DECLARED_GAPS.set(len(report.declared_gaps))
+            NON_EVIDENTIARY_BATCHES.set(len(report.non_evidentiary))
         logger.info(
             "[EvidenceVerifier] prefix=%s verified=%d failures=%d gaps=%d unsigned=%d",
-            prefix,
+            target_prefix,
             len(report.verified),
             len(report.failures),
             len(report.declared_gaps),
             len(report.non_evidentiary),
         )
         return report
+
+    async def verify_for_citation(
+        self,
+        prefix: str | None = None,
+        *,
+        allow_declared_gaps: bool = False,
+    ) -> CustodyVerificationReport:
+        """Verify the archive and fail closed unless it is citable as evidence.
+
+        Raises:
+            EvidenceVerificationError: Any batch failed verification, the
+                archive has no signed verified batches, or (unless
+                ``allow_declared_gaps`` is true) the chain has declared gaps.
+            ColdStoreError: The backend could not be listed or read.
+        """
+        report = await self.verify_all(prefix)
+        report.assert_citable(allow_declared_gaps=allow_declared_gaps)
+        return report
+
+    async def run_forever(self) -> None:
+        """Run verification cycles on ``interval_s`` until cancelled."""
+        while True:
+            try:
+                report = await self.verify_all(self._prefix)
+                if not report.ok:
+                    logger.critical(
+                        "[EvidenceVerifier] Archive verification FAILED "
+                        "(prefix=%s failures=%d): %s",
+                        self._prefix,
+                        len(report.failures),
+                        "; ".join(f"{f.key}: {f.reason}" for f in report.failures),
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "[EvidenceVerifier] Verification cycle failed: %s",
+                    exc,
+                )
+            await asyncio.sleep(self._interval_s)
 
     @staticmethod
     def _check_continuity(report: CustodyVerificationReport) -> None:
@@ -550,6 +747,11 @@ async def _run(prefix: str) -> CustodyVerificationReport:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify custodied CAGE evidence.")
     parser.add_argument("--prefix", default=DEFAULT_PREFIX, help="object key prefix")
+    parser.add_argument(
+        "--require-citable",
+        action="store_true",
+        help="exit non-zero unless the archive has >=1 signed verified batch and no declared gaps",
+    )
     parser.add_argument("--json", action="store_true", help="print the full report")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -565,7 +767,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         for failure in report.failures:
             print(f"FAIL {failure.key}: {failure.reason}")
-    return 0 if report.ok else 1
+        if args.require_citable and report.ok and not report.citable:
+            try:
+                report.assert_citable()
+            except EvidenceVerificationError as exc:
+                print(f"NOT CITABLE {exc}")
+    passed = report.citable if args.require_citable else report.ok
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

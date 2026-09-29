@@ -264,11 +264,21 @@ def test_bridge_module_clickhouse_env_matches_sink_and_schema() -> None:
 
 def test_bridge_module_keeps_cold_store_and_custody_interval() -> None:
     env = _tf_env(_BRIDGE_MOD.read_text())
-    for name in ("EVIDENCE_COLD_STORE", "EVIDENCE_COLD_STORE_BUCKET", "EVIDENCE_KMS_KEY"):
+    for name in (
+        "EVIDENCE_COLD_STORE",
+        "EVIDENCE_COLD_STORE_BUCKET",
+        "EVIDENCE_KMS_KEY",
+        "EVIDENCE_VERIFY_INTERVAL_S",
+        "EVIDENCE_VERIFY_PREFIX",
+        "OSCAL_REQUIRE_VERIFIED_CUSTODY",
+    ):
         assert name in env
     assert env["EVIDENCE_CUSTODY_INTERVAL_S"] == "tostring(var.evidence_custody_interval_s)"
+    assert env["EVIDENCE_VERIFY_INTERVAL_S"] == "tostring(var.evidence_verify_interval_s)"
+    assert env["EVIDENCE_VERIFY_PREFIX"] == "var.evidence_verify_prefix"
     bridge = _block(_GKE_MAIN.read_text(), 'module "compliance_bridge"')
     assert _tf_attr(bridge, "evidence_cold_store_bucket") == "module.worm_bucket.bucket_name"
+    assert _tf_attr(bridge, "evidence_verify_interval_s") == "300"
 
 
 def test_evidence_kms_key_description_has_no_hmac_fallback() -> None:
@@ -289,6 +299,8 @@ def test_manifest_bridge_reads_the_gateway_stream(gateway_manifest: str, bridge_
         assert gw[name] == br[name], f"{name} drifts between {gateway_manifest} and {bridge_manifest}"
     assert br["EVIDENCE_STREAM_ENABLED"]["value"] == "true"
     assert br["EVIDENCE_CUSTODY_INTERVAL_S"]["value"] == "60"
+    assert br["EVIDENCE_VERIFY_INTERVAL_S"]["value"] == "300"
+    assert br["EVIDENCE_VERIFY_PREFIX"]["value"] == "evidence"
 
 
 @pytest.mark.parametrize("manifest", _BRIDGE_MANIFESTS)

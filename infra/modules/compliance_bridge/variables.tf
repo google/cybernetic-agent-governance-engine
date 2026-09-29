@@ -260,6 +260,31 @@ variable "evidence_custody_interval_s" {
   default     = 60
 }
 
+variable "evidence_verify_interval_s" {
+  description = "Seconds between CustodyVerifier read-back verification cycles (EVIDENCE_VERIFY_INTERVAL_S)."
+  type        = number
+  default     = 300
+}
+
+variable "evidence_verify_prefix" {
+  description = "Cold-store object prefix verified by CustodyVerifier (EVIDENCE_VERIFY_PREFIX)."
+  type        = string
+  default     = "evidence"
+}
+
+variable "oscal_require_verified_custody" {
+  description = "When true, GET /v1/oscal/assessment-results enforces CustodyVerifier.verify_for_citation() before emitting OSCAL artifacts (OSCAL_REQUIRE_VERIFIED_CUSTODY). Defaults to true when cage_env is staging, prod, or production."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
+variable "evidence_trust_anchors_file" {
+  description = "Optional path to a JSON file ({kid: pem}) containing additional public-key trust anchors for retired EVIDENCE_KMS_KEY versions (EVIDENCE_TRUST_ANCHORS_FILE)."
+  type        = string
+  default     = ""
+}
+
 variable "enable_redis_tls" {
   description = "Enable TLS for the governance Memorystore connection (REDIS_TLS). Must match the gateway module."
   type        = bool

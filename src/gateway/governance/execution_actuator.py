@@ -27,8 +27,10 @@ in the same PR per the C0 specification.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import os
+from typing import Any
 
 # Re-export seam contracts for backward compatibility during transition.
 # New code should import directly from seams.actuation.
@@ -48,8 +50,79 @@ __all__ = [
     "ExecutionActuator",
     "ExecutionClearance",
     "get_actuator_registry",
+    "ingest_actuation_receipt",
     "load_actuators_from_env",
 ]
+
+
+async def ingest_actuation_receipt(
+    clearance: ExecutionClearance,
+    receipt: ActuationReceipt,
+    *,
+    actuator_id: str | None = None,
+) -> str | None:
+    """Emit an ``ActuationReceipt`` (accepted or refused) to the evidence stream.
+
+    Idempotent per ``ActuationReceipt`` instance so calling this inside both an
+    actuator's ``actuate()`` implementation and a caller's dispatch wrapper
+    produces at most one hash-chained record. Refusal receipts (including
+    ``CREDENTIAL_BROKER_FAILED``, ``EXECUTOR_ID_MISMATCH``, and
+    ``TARGET_ROUTE_MISMATCH``) are recorded as ``ACTUATION_REFUSAL_RECEIPT``;
+    accepted receipts are recorded as ``ACTUATION_RECEIPT``.
+    """
+    if getattr(receipt, "_evidence_ingested", False):
+        return getattr(receipt, "evidence_id", None)
+
+    from src.gateway.governance.evidence.stream import get_evidence_sink
+
+    event_type = (
+        "ACTUATION_RECEIPT"
+        if receipt.accepted
+        else "ACTUATION_REFUSAL_RECEIPT"
+    )
+    finding_codes = [
+        str(f.get("code", ""))
+        for f in (receipt.findings or [])
+        if isinstance(f, dict) and f.get("code")
+    ]
+    event: dict[str, Any] = {
+        "type": event_type,
+        "controlId": "AC-3",
+        "accepted": bool(receipt.accepted),
+        "actuator_id": actuator_id or clearance.executor_id,
+        "thread_id": clearance.thread_id,
+        "action": clearance.action,
+        "target": clearance.target,
+        "operator_urn": clearance.operator_urn,
+        "executor_id": clearance.executor_id,
+        "target_route": clearance.target_route,
+        "correlation_id": clearance.correlation_id,
+        "governance_decision_digest": clearance.governance_decision_digest,
+        "receipt_id": receipt.receipt_id,
+        "session_uuid": receipt.session_uuid,
+        "findings": list(receipt.findings or []),
+        "finding_codes": finding_codes,
+        "retryable": bool(receipt.retryable),
+        "envelope_digest": receipt.envelope_digest,
+        "timestamp_utc": receipt.timestamp_utc
+        or datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+    try:
+        sink = get_evidence_sink()
+        msg_id = await sink.ingest(event)
+        object.__setattr__(receipt, "_evidence_ingested", True)
+        object.__setattr__(receipt, "evidence_id", msg_id)
+        return msg_id
+    except Exception as exc:
+        logger.error(
+            "[ExecutionActuator] Failed to ingest %s for action=%s thread_id=%s: %s",
+            event_type,
+            clearance.action,
+            clearance.thread_id,
+            exc,
+        )
+        return None
 
 
 def _load_actuator(name: str) -> ExecutionActuator:

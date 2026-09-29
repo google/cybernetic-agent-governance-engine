@@ -54,6 +54,10 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .evidence_verifier import CustodyVerificationReport
 
 try:
     from .cer_index import CERIndex
@@ -135,6 +139,7 @@ def build_oscal_assessment_results(
     chain_sealed_utc: str | None = None,
     cer_uris: dict[str, str] | None = None,
     cer_index: CERIndex | None = None,
+    custody_report: CustodyVerificationReport | None = None,
 ) -> dict:
     """
     Build an OSCAL Assessment Results document from a list of OscalFindings.
@@ -156,11 +161,19 @@ def build_oscal_assessment_results(
         cer_index:        Optional CERIndex for URI and disclosure policy lookups.
                           When provided, controls receive links[] and props according to
                           their disclosure policy (PUBLIC, REDACTED, PRIVATE, UNKNOWN).
+        custody_report:   Optional CustodyVerificationReport from CustodyVerifier.
+                          When provided, ``custody_report.assert_citable()`` is enforced
+                          (raising EvidenceVerificationError if any batch failed, if no
+                          signed batch verified, or if any declared stream gap exists) and
+                          verified custody batch provenance is attached to the result entry.
 
     Returns:
         A dict representing the OSCAL Assessment Results document.
         Serialise with json.dumps() or yaml.dump() depending on caller.
     """
+    verified_batches = (
+        custody_report.assert_citable() if custody_report is not None else None
+    )
     now_utc = datetime.now(tz=timezone.utc).isoformat()
     result_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cage-result-{audit_id}"))
     doc_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cage-ar-{audit_id}"))
@@ -394,9 +407,45 @@ def build_oscal_assessment_results(
                             if chain_sealed_utc
                             else None,
                             {"name": "aarm-spec-version", "value": "CSA-AARM-v1.0"},
+                            *(
+                                [
+                                    {
+                                        "name": "evidence-custody-verified-batches",
+                                        "value": str(len(verified_batches)),
+                                    },
+                                    {
+                                        "name": "evidence-custody-chain-head",
+                                        "value": verified_batches[-1].last_record_hash,
+                                    },
+                                    {
+                                        "name": "evidence-custody-key-id",
+                                        "value": verified_batches[-1].key_id,
+                                    },
+                                ]
+                                if verified_batches
+                                else []
+                            ),
                         ]
                         if p is not None
                     ],
+                    **(
+                        {
+                            "links": [
+                                {
+                                    "href": f"urn:cage:evidence-attestation:{b.attestation_key}",
+                                    "rel": "evidence-attestation",
+                                    "text": (
+                                        f"Verified custody attestation {b.attestation_key} "
+                                        f"(entries={b.entries}, key_id={b.key_id}, "
+                                        f"last_record_hash={b.last_record_hash})"
+                                    ),
+                                }
+                                for b in verified_batches
+                            ]
+                        }
+                        if verified_batches
+                        else {}
+                    ),
                     "findings": oscal_findings,
                 }
             ],

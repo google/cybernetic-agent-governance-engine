@@ -364,17 +364,26 @@ class TestAuditIngestAuth:
 
     @pytest.fixture(autouse=True)
     def _stub_evidence_custody(self):
-        """Staging enforces evidence custody (real WORM store + KMS signer).
+        """Staging enforces evidence custody (real WORM store + KMS signer + verifier).
 
-        Custody fail-closed paths are covered in tests/test_evidence_custodian.py;
-        here a stub custodian lets the lifespan reach the auth layer.
+        Custody fail-closed paths are covered in tests/test_evidence_custodian.py
+        and tests/test_evidence_verifier.py; here stub custodian/verifier let the
+        lifespan reach the auth layer.
         """
         custodian = MagicMock()
         custodian.run_forever = AsyncMock(return_value=None)
         custodian.aclose = AsyncMock(return_value=None)
-        with patch(
-            "src.compliance_bridge.evidence_custodian.EvidenceCustodian.from_env",
-            return_value=custodian,
+        verifier = MagicMock()
+        verifier.run_forever = AsyncMock(return_value=None)
+        with (
+            patch(
+                "src.compliance_bridge.evidence_custodian.EvidenceCustodian.from_env",
+                return_value=custodian,
+            ),
+            patch(
+                "src.compliance_bridge.evidence_verifier.CustodyVerifier.from_env",
+                return_value=verifier,
+            ),
         ):
             yield
 
