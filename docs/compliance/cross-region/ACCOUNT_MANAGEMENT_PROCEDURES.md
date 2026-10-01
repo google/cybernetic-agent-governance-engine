@@ -29,7 +29,7 @@ All GCP IAM service accounts for CAGE are managed via Terraform (`infra/targets/
 
 | Service Account | GCP Roles | Purpose |
 |---|---|---|
-| `cage-gateway-sa` | `roles/storage.objectViewer`, `roles/secretmanager.secretAccessor`, `roles/cloudkms.cryptoKeyEncrypterDecrypter` | Gateway: reads model weights, accesses secrets, signs audit evidence |
+| `cage-gateway-sa` | `roles/storage.objectViewer`, `roles/secretmanager.secretAccessor`, `roles/cloudkms.cryptoKeyEncrypterDecrypter` | Gateway: reads model weights, accesses secrets, signs governance seals (holds no evidence-signing key; evidence is attested by the compliance bridge) |
 | `cage-compliance-bridge-sa` | `roles/storage.objectCreator`, `roles/storage.objectViewer` | Compliance bridge: writes OSCAL artifacts to GCS |
 | `cage-lula-sa` | `roles/container.viewer` | Lula: read-only cluster inspection for validation manifests |
 | `cage-vllm-sa` | `roles/storage.objectViewer` | vLLM: reads model weights from GCS |

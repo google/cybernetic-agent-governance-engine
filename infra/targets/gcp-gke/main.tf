@@ -821,9 +821,12 @@ module "compliance_bridge" {
   clickhouse_port            = tostring(module.clickhouse_operator.http_port)
   clickhouse_database        = "cage_evidence"
   clickhouse_enabled         = true
-  clickhouse_username        = "default"
-  cage_env                   = var.environment
-  cage_deployment_region     = var.cage_deployment_region
+  # Least-privilege writer (INSERT on evidence_stream only), never `default`.
+  clickhouse_username             = module.clickhouse_operator.evidence_sink_username
+  clickhouse_password_secret_name = module.clickhouse_operator.evidence_sink_password_secret_name
+  clickhouse_password_secret_key  = module.clickhouse_operator.evidence_sink_password_secret_key
+  cage_env                        = var.environment
+  cage_deployment_region          = var.cage_deployment_region
 
   # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
   # IAM auth mode as the gateway producer (see local.evidence_stream_*).

@@ -91,6 +91,11 @@ spec:
             secretKeyRef:
               name: advisor-secrets
               key: CLICKHOUSE_PASSWORD
+        - name: CLICKHOUSE_EVIDENCE_SINK_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: clickhouse-evidence-sink
+              key: CLICKHOUSE_PASSWORD
         ports:
         - containerPort: 8123
           name: http
@@ -114,6 +119,9 @@ spec:
         - name: clickhouse-users-config
           mountPath: /etc/clickhouse-server/users.d/networks.xml
           subPath: networks.xml
+        - name: clickhouse-users-config
+          mountPath: /etc/clickhouse-server/users.d/evidence_sink_user.xml
+          subPath: evidence_sink_user.xml
         resources:
           requests:
             cpu: "1000m"
@@ -160,6 +168,39 @@ data:
             <ip>::/0</ip>
           </networks>
         </default>
+      </users>
+    </clickhouse>
+  # §7.2 / §7.3: least-privilege writer for src/compliance_bridge/clickhouse_sink.py.
+  # INSERT on cage_evidence.evidence_stream only; DDL forbidden by a CONST
+  # constraint. MV pushes run under the view DEFINER. Password from pod env.
+  evidence_sink_user.xml: |
+    <clickhouse>
+      <profiles>
+        <evidence_writer_profile>
+          <readonly>0</readonly>
+          <allow_ddl>0</allow_ddl>
+          <mutations_sync>0</mutations_sync>
+          <max_partitions_per_insert_block>8</max_partitions_per_insert_block>
+          <max_execution_time>30</max_execution_time>
+          <constraints>
+            <allow_ddl><const/></allow_ddl>
+            <mutations_sync><const/></mutations_sync>
+          </constraints>
+        </evidence_writer_profile>
+      </profiles>
+      <users>
+        <cage_evidence_sink>
+          <password from_env="CLICKHOUSE_EVIDENCE_SINK_PASSWORD"/>
+          <profile>evidence_writer_profile</profile>
+          <quota>default</quota>
+          <access_management>0</access_management>
+          <networks>
+            <ip>::/0</ip>
+          </networks>
+          <grants>
+            <query>GRANT INSERT ON cage_evidence.evidence_stream</query>
+          </grants>
+        </cage_evidence_sink>
       </users>
     </clickhouse>
 

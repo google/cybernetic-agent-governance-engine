@@ -40,7 +40,8 @@ Custody cycle (:meth:`EvidenceCustodian.flush_once`)
    :class:`EvidenceCustodyIntegrityError`: nothing is written and the cursor
    does not move, so custody stays stuck until an operator investigates.
 6. Sign the attestation. Under an enforcing posture a signing failure writes
-   nothing and does not advance.
+   nothing and does not advance. In a permissive posture without an active
+   signer the attestation is written **non-evidentiary** (see below).
 7. ``put_if_absent`` the NDJSON batch, then its attestation.
 8. Advance the cursor and clear ``pending_end_id``.
 
@@ -51,6 +52,17 @@ Object layout
 stream ID, and each NDJSON line is the entry's fields plus ``stream_id``
 serialized with sorted keys, so a retry produces identical bytes and the
 existing object is accepted as the idempotent result.
+
+Unsigned attestations are not evidence
+--------------------------------------
+Every attestation carries ``signature_status`` (``SIGNED`` | ``UNSIGNED``)
+and ``evidentiary`` (``true`` only when signed; the flag is inside the signed
+body). An unsigned attestation — only possible in dev/test/ci — is written
+under a distinct key, ``<same>.attestation.unsigned.json``, with object
+metadata ``evidentiary=false``, and counted as
+``cage_evidence_custody_batches_total{outcome="written_unsigned"}``. Anything
+that cites an attestation as evidence (OSCAL, POAM closure, audit export)
+must pass it through :func:`assert_citable`, which fails closed on it.
 
 Environment variables
 ---------------------
@@ -127,6 +139,45 @@ class EvidenceCustodyConfigError(Exception):
     """The custodian cannot run safely with the current configuration."""
 
 
+class NonEvidentiaryAttestationError(Exception):
+    """An attestation was offered as evidence but is unsigned or malformed."""
+
+
+SIGNED = "SIGNED"
+UNSIGNED = "UNSIGNED"
+
+
+def assert_citable(attestation: dict[str, Any]) -> None:
+    """Fail closed unless ``attestation`` may be cited as evidence.
+
+    Checks the structural markers only: schema, ``signature_status`` of
+    ``SIGNED``, ``evidentiary`` true, and a complete ``signature`` object.
+    Cryptographic verification is separate and must resolve the public key
+    by ``signature.key_id`` from an independently fetched key manifest,
+    never from the document itself.
+
+    Raises:
+        NonEvidentiaryAttestationError: The attestation is unsigned, marked
+            non-evidentiary, or missing signature fields.
+    """
+    if attestation.get("schema") != ATTESTATION_SCHEMA:
+        raise NonEvidentiaryAttestationError(
+            f"unknown attestation schema {attestation.get('schema')!r}"
+        )
+    if attestation.get("signature_status") != SIGNED:
+        raise NonEvidentiaryAttestationError(
+            "attestation is UNSIGNED (permissive posture); it is not evidence"
+        )
+    if attestation.get("evidentiary") is not True:
+        raise NonEvidentiaryAttestationError("attestation is marked non-evidentiary")
+    signature = attestation.get("signature")
+    if not isinstance(signature, dict) or not all(
+        isinstance(signature.get(k), str) and signature.get(k)
+        for k in ("algorithm", "key_id", "value")
+    ):
+        raise NonEvidentiaryAttestationError("attestation signature is incomplete")
+
+
 class AttestationSigner(Protocol):
     """The subset of ``KMSGovernanceSigner`` the custodian needs."""
 
@@ -160,6 +211,7 @@ class CustodyOutcome:
     first_sequence: int = -1
     last_sequence: int = -1
     gap: bool = False
+    evidentiary: bool = False
 
 
 def _cursor_key(stream_key: str) -> str:
@@ -323,8 +375,6 @@ class EvidenceCustodian:
             f"{first_seq:012d}-{last_seq:012d}"
         )
         data_key = f"{base}.ndjson"
-        attestation_key = f"{base}.attestation.json"
-
         attestation: dict[str, Any] = {
             "schema": ATTESTATION_SCHEMA,
             "chain_id": chain_id,
@@ -339,8 +389,19 @@ class EvidenceCustodian:
             "content_sha256": content_sha256,
             "data_key": data_key,
             "gap": {"detected": gap, **expected} if gap else {"detected": False},
+            # Signed body asserts it is evidence; flipped below if unsigned.
+            "signature_status": SIGNED,
+            "evidentiary": True,
         }
-        attestation["signature"] = await self._sign(attestation)
+        signature = await self._sign(attestation)
+        if signature is None:
+            attestation["signature_status"] = UNSIGNED
+            attestation["evidentiary"] = False
+            attestation_key = f"{base}.attestation.unsigned.json"
+        else:
+            attestation_key = f"{base}.attestation.json"
+        attestation["signature"] = signature
+        evidentiary = "true" if signature is not None else "false"
         attestation_bytes = json.dumps(
             attestation, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -359,12 +420,17 @@ class EvidenceCustodian:
                 "first-sequence": str(first_seq),
                 "last-sequence": str(last_seq),
                 "content-sha256": content_sha256,
+                "evidentiary": evidentiary,
             },
         )
         await self._put(
             attestation_key,
             attestation_bytes,
-            {"content-type": "application/json", "data-key": data_key},
+            {
+                "content-type": "application/json",
+                "data-key": data_key,
+                "evidentiary": evidentiary,
+            },
         )
 
         await self._redis.hset(
@@ -379,7 +445,9 @@ class EvidenceCustodian:
         await self._redis.hdel(self._cursor_key, "pending_end_id")
 
         if _PROM_AVAILABLE:
-            CUSTODY_BATCHES_TOTAL.labels(outcome="written").inc()
+            CUSTODY_BATCHES_TOTAL.labels(
+                outcome="written" if signature is not None else "written_unsigned"
+            ).inc()
         logger.info(
             "[EvidenceCustodian] Custodied %d records chain=%s seq=%d..%d → %s",
             len(batch),
@@ -396,6 +464,7 @@ class EvidenceCustodian:
             first_sequence=first_seq,
             last_sequence=last_seq,
             gap=gap,
+            evidentiary=signature is not None,
         )
 
     def _check_continuity(
@@ -499,7 +568,8 @@ class EvidenceCustodian:
             if self._require_signature:  # pragma: no cover - blocked in __init__
                 raise RuntimeError("Attestation signer is not active.")
             logger.warning(
-                "[EvidenceCustodian] Writing UNSIGNED attestation (permissive posture)."
+                "[EvidenceCustodian] Writing UNSIGNED, non-evidentiary attestation "
+                "(permissive posture, no active EVIDENCE_KMS_KEY signer)."
             )
             return None
         try:
@@ -512,8 +582,8 @@ class EvidenceCustodian:
                     f"Evidence attestation signing failed: {exc}. Nothing written."
                 ) from exc
             logger.warning(
-                "[EvidenceCustodian] Signing failed (%s); writing UNSIGNED "
-                "attestation (permissive posture).",
+                "[EvidenceCustodian] Signing failed (%s); writing UNSIGNED, "
+                "non-evidentiary attestation (permissive posture).",
                 exc,
             )
             return None
@@ -554,8 +624,9 @@ class EvidenceCustodian:
                     continue
             except asyncio.CancelledError:
                 raise
-            except EvidenceCustodyIntegrityError:
-                pass  # already logged CRITICAL in _integrity_failure
+            except EvidenceCustodyIntegrityError as exc:
+                # Already logged CRITICAL in _integrity_failure; stay halted.
+                logger.debug("[EvidenceCustodian] Custody still halted: %s", exc)
             except Exception as exc:
                 if _PROM_AVAILABLE:
                     CUSTODY_BATCHES_TOTAL.labels(outcome="error").inc()

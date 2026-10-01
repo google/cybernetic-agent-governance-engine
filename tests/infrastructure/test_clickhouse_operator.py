@@ -520,11 +520,12 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
     # 4. Verify 100% of evidence records reached the locked WORM bucket intact
     assert worm_bucket.is_locked is True
     expected_objects = {outcome.data_key}
-    if outcome.attestation_key is not None:
-        assert outcome.attestation_key == (
-            outcome.data_key.removesuffix(".ndjson") + ".attestation.json"
-        )
-        expected_objects.add(outcome.attestation_key)
+    # signer=None (permissive): the attestation is non-evidentiary and segregated.
+    assert outcome.evidentiary is False
+    assert outcome.attestation_key == (
+        outcome.data_key.removesuffix(".ndjson") + ".attestation.unsigned.json"
+    )
+    expected_objects.add(outcome.attestation_key)
     assert set(worm_bucket.objects) == expected_objects, (
         f"Unexpected objects in locked WORM bucket: {sorted(worm_bucket.objects)}"
     )

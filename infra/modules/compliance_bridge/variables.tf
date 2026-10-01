@@ -201,15 +201,20 @@ variable "clickhouse_enabled" {
 }
 
 variable "clickhouse_username" {
-  description = "ClickHouse user for the query-plane sink (CLICKHOUSE_USERNAME). The password is always taken from a Secret via secretKeyRef."
+  description = "Least-privilege ClickHouse user for the query-plane sink (CLICKHOUSE_USERNAME); INSERT on evidence_stream only, provisioned by the clickhouse_operator module. Never the admin user \"default\". The password is always taken from a Secret via secretKeyRef."
   type        = string
-  default     = "default"
+  default     = "cage_evidence_sink"
+
+  validation {
+    condition     = var.clickhouse_username != "default"
+    error_message = "clickhouse_username must not be the ClickHouse admin user \"default\"."
+  }
 }
 
 variable "clickhouse_password_secret_name" {
-  description = "Kubernetes Secret holding the ClickHouse password for clickhouse_username."
+  description = "Kubernetes Secret holding the ClickHouse password for clickhouse_username (never the admin password in advisor-secrets)."
   type        = string
-  default     = "advisor-secrets"
+  default     = "clickhouse-evidence-sink"
 }
 
 variable "clickhouse_password_secret_key" {

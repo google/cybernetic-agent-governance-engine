@@ -734,7 +734,8 @@ component-definition:
 
     # -----------------------------------------------------------------------
     # Component 4: Compliance Bridge (src/compliance_bridge/)
-    # Enforces: CA-7 (Continuous Monitoring), AU-9 (Protection of Audit Info),
+    # Enforces: CA-7 (Continuous Monitoring), AU-9 / AU-9(3) (Protection of Audit
+    #           Info), AU-10 (Non-Repudiation), AC-6 (Least Privilege),
     #           IR-6 (Incident Reporting)
     # -----------------------------------------------------------------------
     - uuid: "7acccab0-36a0-45d3-adbe-cf31d6cec458"
@@ -791,23 +792,148 @@ component-definition:
             - uuid: "80d95b3a-12ae-4dd4-8db4-b52661335fa4"
               control-id: au-9
               description: |
-                Protection of audit information is implemented via OSCAL Assessment Results
-                stored to MinIO/GCS through src/compliance_bridge/storage.py. S3 object
-                locking (COMPLIANCE mode) provides write-once protection of audit artifacts,
-                preventing modification or deletion for the retention period. Access to audit
-                buckets is restricted via IAM policies to the compliance-bridge service account
-                (principle of least privilege). NOTE: S3 object locking must be enabled at
-                bucket creation time — see POAM item IR-1 for current status and remediation
-                timeline. Audit files are encrypted at rest using GCS/MinIO server-side
-                encryption.
+                Protection of audit information separates the producer of governance
+                evidence from its custodian (POAM-2026-084). The gateway
+                (src/gateway/governance/evidence/stream.py, EvidenceStreamSink) only
+                hash-chains records into a Redis Stream through an atomic Lua
+                compare-and-append, so HA replicas share one linear chain; it holds no
+                evidence signing key, no cold store and no WORM bucket IAM.
+
+                The compliance bridge's EvidenceCustodian
+                (src/compliance_bridge/evidence_custodian.py) independently re-verifies
+                every record hash, prev_hash link and sequence before writing, halts
+                without advancing its durable cursor on any integrity violation, records
+                sequence gaps (entries trimmed before custody) in the batch attestation,
+                and writes NDJSON batches plus attestations with put_if_absent to the
+                retention-locked, CMEK-encrypted GCS WORM bucket (infra/modules/worm_bucket;
+                locked 1 day in staging, 7 years in prod). The cursor advances only after
+                both objects are durable, so a failed write is retried with identical
+                bytes. Under an enforcing posture the bridge refuses to start custody with
+                a null cold store (EvidenceCustodyConfigError). Bucket IAM is scoped to the
+                compliance-bridge service account (roles/storage.objectCreator /
+                objectViewer). OSCAL Assessment Results continue to be stored through
+                src/compliance_bridge/storage.py.
+
+                The ClickHouse query-plane mirror is written by a least-privilege,
+                config-defined user (cage_evidence_sink: INSERT on
+                cage_evidence.evidence_stream only, DDL pinned off by a CONST profile
+                constraint), never the admin user; see the AC-6 statement below.
+
+                Status remains partial until live staging verification of attestations in
+                the WORM bucket closes POAM-2026-084.
               props:
                 - name: implementation-status
                   value: partial
                 - name: control-origination
                   value: hybrid
+                - name: poam-reference
+                  value: "POAM-2026-084"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-9"
                   rel: reference
+                - href: "../../src/compliance_bridge/evidence_custodian.py"
+                  rel: implementation
+                  text: "EvidenceCustodian re-verification, WORM put_if_absent, durable cursor"
+                - href: "../../src/gateway/governance/evidence/stream.py"
+                  rel: implementation
+                  text: "EvidenceStreamSink producer-only compare-and-append"
+                - href: "../../tests/test_evidence_custodian.py"
+                  rel: test
+                  text: "Integrity halt, gap recording, retry-safe cursor, fail-closed config"
+
+            - uuid: "4bc5258d-a69c-4bdf-a40c-a12496cb279b"
+              control-id: au-9.3
+              description: |
+                Cryptographic protection of audit information combines a SHA-256 hash chain
+                over RFC 8785 JCS-canonicalized records (cage-audit/3.0 headers bind
+                chain_id, sequence, trace_id and event_type into each link) with a per-batch
+                cage-evidence-batch/1 attestation signed by the compliance bridge using the
+                dedicated asymmetric Cloud KMS key EVIDENCE_KMS_KEY
+                (infra/targets/gcp-gke/kms_signing.tf, compliance-evidence; signer IAM
+                granted to the compliance-bridge service account only). The attestation
+                covers the chain id, sequence range, first prev_hash, last record_hash,
+                NDJSON SHA-256 and any recorded gap. Under an enforcing posture custody
+                refuses to run without an active signer, and a signing failure writes
+                nothing. Attestations written in dev/test/ci without a signer carry
+                signature_status UNSIGNED and evidentiary false, are stored under a
+                distinct .attestation.unsigned.json key, and are rejected by
+                assert_citable(); they are never evidence for this control.
+              props:
+                - name: implementation-status
+                  value: partial
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-084"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-9"
+                  rel: reference
+                - href: "../../src/compliance_bridge/evidence_custodian.py"
+                  rel: implementation
+                  text: "Signed cage-evidence-batch/1 attestations; assert_citable()"
+                - href: "../../src/compliance_bridge/kms_batch_signer.py"
+                  rel: implementation
+                  text: "build_evidence_signer() resolves EVIDENCE_KMS_KEY"
+
+            - uuid: "3513ab15-d8d3-459e-8b2a-e979cfaa2efe"
+              control-id: au-10
+              description: |
+                Non-repudiation of recorded governance evidence rests on the KMS-signed batch
+                attestation. Each attestation binds a contiguous, re-verified range of the
+                hash chain (first/last sequence, first prev_hash, last record_hash, content
+                SHA-256) to the compliance-evidence key, whose private half never leaves
+                Cloud KMS and whose signer role is held only by the compliance-bridge
+                workload identity. Because the gateway that produces the records cannot
+                sign them, and the custodian that signs them cannot author gateway
+                decisions, neither workload alone can fabricate an attested record. The
+                signed body itself asserts evidentiary true; verifiers must resolve the
+                public key by signature.key_id from an independently fetched key manifest,
+                never from the attestation. Unsigned attestations are non-evidentiary by
+                construction (see AU-9(3)).
+              props:
+                - name: implementation-status
+                  value: partial
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-084"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-10"
+                  rel: reference
+                - href: "../../src/compliance_bridge/evidence_custodian.py"
+                  rel: implementation
+                  text: "Batch attestation signed with EVIDENCE_KMS_KEY"
+
+            - uuid: "bd0486b6-1a05-4f64-9784-752c72b2f843"
+              control-id: ac-6
+              description: |
+                The ClickHouse evidence sink (src/compliance_bridge/clickhouse_sink.py)
+                authenticates as cage_evidence_sink, a config-defined ClickHouse user
+                rendered by infra/modules/clickhouse_operator (users.d/evidence_sink_user.xml)
+                and mirrored in deployment/k8s/langfuse-db.yaml. Its only privilege is
+                INSERT on cage_evidence.evidence_stream: no SELECT, ALTER, DROP, TRUNCATE,
+                OPTIMIZE or access management, and no INSERT on evidence_chain_divergence
+                (which would let it mask a divergence verdict). Its settings profile pins
+                allow_ddl=0 and mutations_sync=0 with CONST constraints. Being config-defined,
+                the user cannot be widened or re-keyed through SQL. Its password is generated
+                into the dedicated clickhouse-evidence-sink Secret, mounted only by the
+                ClickHouse server and the compliance bridge; the bridge never receives the
+                admin password. Both Terraform modules reject clickhouse_username "default".
+                Enforced by tests/infrastructure/test_clickhouse_evidence_writer.py.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-6"
+                  rel: reference
+                - href: "../../infra/modules/clickhouse_operator/main.tf"
+                  rel: implementation
+                  text: "Config-defined INSERT-only writer and dedicated Secret"
+                - href: "../../tests/infrastructure/test_clickhouse_evidence_writer.py"
+                  rel: test
+                  text: "Least-privilege writer static gate"
 
             - uuid: "07769d00-7959-4cfe-86aa-972a537952d5"
               control-id: ir-6

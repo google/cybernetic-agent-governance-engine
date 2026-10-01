@@ -125,12 +125,14 @@ spec:
               value: "8123"
             - name: CLICKHOUSE_DATABASE
               value: "cage_evidence"
+            # Least-privilege writer (INSERT on evidence_stream only); never the
+            # admin `default` user or its password in advisor-secrets.
             - name: CLICKHOUSE_USERNAME
-              value: "default"
+              value: "cage_evidence_sink"
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: advisor-secrets
+                  name: clickhouse-evidence-sink
                   key: CLICKHOUSE_PASSWORD
           livenessProbe:
             httpGet:

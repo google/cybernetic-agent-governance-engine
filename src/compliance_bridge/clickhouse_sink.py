@@ -74,7 +74,7 @@ CLICKHOUSE_ENABLED = os.environ.get("CLICKHOUSE_ENABLED", "false").lower() == "t
 CLICKHOUSE_HOST = os.environ.get("CLICKHOUSE_HOST", "localhost")
 CLICKHOUSE_PORT = int(os.environ.get("CLICKHOUSE_PORT", "9000"))
 CLICKHOUSE_DATABASE = os.environ.get("CLICKHOUSE_DATABASE", "cage_evidence")
-CLICKHOUSE_USERNAME = os.environ.get("CLICKHOUSE_USERNAME", "evidence_writer")
+CLICKHOUSE_USERNAME = os.environ.get("CLICKHOUSE_USERNAME", "cage_evidence_sink")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 CLICKHOUSE_BATCH_SIZE = int(os.environ.get("CLICKHOUSE_SINK_BATCH_SIZE", "100"))
 CLICKHOUSE_FLUSH_SECONDS = float(os.environ.get("CLICKHOUSE_SINK_FLUSH_SECONDS", "5.0"))
@@ -161,7 +161,7 @@ class ClickHouseSink:
         Args:
             host: ClickHouse server hostname
             port: ClickHouse native protocol port (default: 9000)
-            username: ClickHouse username (default: evidence_writer)
+            username: ClickHouse username (default: cage_evidence_sink)
             password: ClickHouse password (required, no default)
             database: Target database (default: cage_evidence)
             batch_size: Records per batch (default: 100)

@@ -95,12 +95,12 @@ graph TB
         end
 
         CQG["Routing Seal / ConsequenceGateway<br/>Actuation Clearance"]
-        EVID["Evidence Stream<br/>Redis Streams db=1 + KMS Signature"]
+        EVID["Evidence Stream<br/>Redis Streams db=1, SHA-256 hash chain"]
     end
 
     subgraph STORAGE["Persistence & Sinks"]
         R_HOT[(Redis db=1<br/>Streams & Defer ZSET)]
-        CH_COLD[(ClickHouse / GCS<br/>Cold Store Evidence)]
+        CH_COLD[(GCS WORM Bucket<br/>KMS-attested Evidence Batches)]
         ACTUATOR["External Actuator / Ledger"]
     end
 
@@ -115,7 +115,7 @@ graph TB
     CQG -->|Verified Token| ACTUATOR
     CQG -->|Seal & Audit| EVID
     EVID --> R_HOT
-    R_HOT -->|60s Flush Daemon| CH_COLD
+    R_HOT -->|Compliance-bridge EvidenceCustodian<br/>re-verify, KMS attest, put-if-absent| CH_COLD
 ```
 
 ### Hot-Path Execution Steps
@@ -193,7 +193,7 @@ stateDiagram-v2
   - `DEFER:{id}`: Hashed deferral payloads parked for human-in-the-loop (HITL) resolution.
   - `DEFER:expiry_index`: Sorted set (ZSET) tracking TTL expiration timestamps.
   - `evidence:stream`: Monotonically increasing, hash-chained transaction log.
-- **Long-Term Cold Archive (ClickHouse / Object Storage)**: Long-term immutable sink ingesting batched evidence blocks from the flush daemon every 60 seconds. In the `gcp-gke` target the retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../../infra/modules/worm_bucket/)) is the system of record.
+- **Long-Term Cold Archive (Object Storage)**: The gateway only produces evidence. The compliance bridge's `EvidenceCustodian` ([`evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py)) reads the stream from a durable cursor (default every 60 seconds, `EVIDENCE_CUSTODY_INTERVAL_S`), re-verifies the hash chain, signs a `cage-evidence-batch/1` attestation with `EVIDENCE_KMS_KEY`, and writes each batch with put-if-absent semantics. In the `gcp-gke` target the retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../../infra/modules/worm_bucket/)) is the system of record.
 
 ---
 
@@ -250,7 +250,7 @@ For deep-dive architectural specifications, refer to the corresponding canonical
 | 7 | **Symbolic Governor** | Dispatch Loop, 2-Phase Commit & Interruption Taxonomy | [`SYMBOLIC_GOVERNOR_RUNTIME.md`](SYMBOLIC_GOVERNOR_RUNTIME.md) |
 | 8 | **FTRA Reachability** | Irreversibility Classification & Plan Graph Bounding | [`FTRA_REACHABILITY_ANALYZER.md`](FTRA_REACHABILITY_ANALYZER.md) |
 | 9 | **Deferral Queue** | AARM Deferral State Machine, Redis db=1 & Dual-Control Resolution | [`DEFERRAL_QUEUE.md`](DEFERRAL_QUEUE.md) |
-| 10 | **Evidence Chain** | Cryptographic Hash Chaining, Streams & Cold Store Daemon | [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) |
+| 10 | **Evidence Chain** | Cryptographic Hash Chaining, Streams & Compliance-Bridge Custody | [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) |
 | 11 | **Cryptographic Signer** | Cloud KMS HSM Provider, RFC 8785 JCS & Key Manifests | [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](CRYPTOGRAPHIC_SIGNER_ENGINE.md) |
 | 12 | **Extensibility Architecture** | GovernanceTierPlugin Contract, Seams & Vendor Neutrality | [`EXTENSIBILITY_ARCHITECTURE.md`](EXTENSIBILITY_ARCHITECTURE.md) |
 | 13 | **Dual-Project Architecture** | Sovereign Regional Langfuse Telemetry & Operational Isolation | [`DUAL_PROJECT_ARCHITECTURE.md`](DUAL_PROJECT_ARCHITECTURE.md) |

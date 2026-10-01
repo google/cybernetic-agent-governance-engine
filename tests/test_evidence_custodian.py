@@ -37,6 +37,8 @@ from src.compliance_bridge.evidence_custodian import (
     EvidenceCustodian,
     EvidenceCustodyConfigError,
     EvidenceCustodyIntegrityError,
+    NonEvidentiaryAttestationError,
+    assert_citable,
 )
 from src.gateway.governance.evidence.cold_store import ColdStoreError, ColdStoreReceipt
 from src.gateway.governance.evidence.stream import EvidenceStreamSink
@@ -61,6 +63,7 @@ class FakeColdStore:
         self.objects: dict[str, bytes] = {}
         self.fail_on: set[str] = set()  # key suffixes that raise
         self.put_calls: list[str] = []
+        self.metadata: dict[str, dict] = {}
 
     async def put_if_absent(self, key, content, metadata=None):
         self.put_calls.append(key)
@@ -69,6 +72,7 @@ class FakeColdStore:
         created = key not in self.objects
         if created:
             self.objects[key] = content
+            self.metadata[key] = dict(metadata or {})
         receipt = ColdStoreReceipt(
             uri=f"fake://{key}",
             key=key,
@@ -429,3 +433,102 @@ class TestFromEnv:
         monkeypatch.delenv("KMS_PROVIDER", raising=False)
         custodian = EvidenceCustodian.from_env()
         assert custodian._require_signature is False
+
+
+# ---------------------------------------------------------------------------
+# Unsigned attestations are never evidence
+# ---------------------------------------------------------------------------
+
+
+class TestNonEvidentiaryAttestations:
+    @pytest.mark.asyncio
+    async def test_signed_attestation_is_evidentiary_and_citable(self, server):
+        await _produce(server, 2)
+        store, signer = FakeColdStore(), FakeSigner()
+        outcome = await _custodian(server, store, signer).flush_once()
+
+        assert outcome.evidentiary is True
+        assert outcome.attestation_key.endswith(".attestation.json")
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert (att["signature_status"], att["evidentiary"]) == ("SIGNED", True)
+        # The evidentiary claim is inside the signed body.
+        assert signer.signed[0]["evidentiary"] is True
+        assert store.metadata[outcome.attestation_key]["evidentiary"] == "true"
+        assert store.metadata[outcome.data_key]["evidentiary"] == "true"
+        assert_citable(att)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "signer",
+        [None, FakeSigner(active=False), FakeSigner(fail=True)],
+        ids=["no-signer", "inactive-signer", "signing-failure"],
+    )
+    async def test_unsigned_attestation_is_marked_and_segregated(self, server, signer):
+        await _produce(server, 2)
+        store = FakeColdStore()
+        custodian = EvidenceCustodian(
+            _redis(server),
+            store,
+            signer,
+            stream_key=STREAM_KEY,
+            require_signature=False,
+        )
+        outcome = await custodian.flush_once()
+
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.evidentiary is False
+        assert outcome.attestation_key.endswith(".attestation.unsigned.json")
+        assert not any(k.endswith(".attestation.json") for k in store.objects)
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["signature"] is None
+        assert (att["signature_status"], att["evidentiary"]) == ("UNSIGNED", False)
+        assert store.metadata[outcome.attestation_key]["evidentiary"] == "false"
+        assert store.metadata[outcome.data_key]["evidentiary"] == "false"
+        with pytest.raises(NonEvidentiaryAttestationError, match="UNSIGNED"):
+            assert_citable(att)
+
+
+class TestAssertCitable:
+    def _signed(self) -> dict:
+        return {
+            "schema": ATTESTATION_SCHEMA,
+            "signature_status": "SIGNED",
+            "evidentiary": True,
+            "signature": {
+                "algorithm": "EC_SIGN_P256_SHA256",
+                "key_id": "k/1",
+                "value": "sig",
+            },
+        }
+
+    def test_accepts_signed(self):
+        assert_citable(self._signed())
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda a: a.update(schema="cage-evidence-batch/0"),
+            lambda a: a.update(signature_status="UNSIGNED"),
+            lambda a: a.pop("signature_status"),
+            lambda a: a.update(evidentiary=False),
+            lambda a: a.update(evidentiary="true"),
+            lambda a: a.update(signature=None),
+            lambda a: a["signature"].update(value=""),
+            lambda a: a["signature"].pop("key_id"),
+        ],
+        ids=[
+            "wrong-schema",
+            "unsigned-status",
+            "missing-status",
+            "non-evidentiary",
+            "string-flag",
+            "null-signature",
+            "empty-value",
+            "missing-kid",
+        ],
+    )
+    def test_rejects_non_evidentiary(self, mutate):
+        att = self._signed()
+        mutate(att)
+        with pytest.raises(NonEvidentiaryAttestationError):
+            assert_citable(att)

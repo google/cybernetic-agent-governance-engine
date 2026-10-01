@@ -58,6 +58,21 @@ output "password" {
   sensitive   = true
 }
 
+output "evidence_sink_username" {
+  description = "Least-privilege ClickHouse user for the compliance-bridge evidence sink"
+  value       = var.evidence_sink_username
+}
+
+output "evidence_sink_password_secret_name" {
+  description = "Kubernetes Secret holding the evidence sink password (key: evidence_sink_password_secret_key)"
+  value       = kubernetes_secret.evidence_sink.metadata[0].name
+}
+
+output "evidence_sink_password_secret_key" {
+  description = "Key within evidence_sink_password_secret_name for the evidence sink password"
+  value       = "CLICKHOUSE_PASSWORD"
+}
+
 output "replicas" {
   description = "Number of ClickHouse query-plane replicas (1 in dev/staging, 3 in prod)"
   value       = local.replicas

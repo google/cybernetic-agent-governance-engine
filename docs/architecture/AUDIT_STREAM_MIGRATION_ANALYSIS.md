@@ -155,7 +155,7 @@ field. See [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2.
 
 **Storage:** 
 - **Hot tier:** Redis Streams (`cage:evidence:stream` key, db=1, noeviction)
-- **Cold tier:** pluggable via `EVIDENCE_COLD_STORE` (`gcs` | `s3` | `null`, default `null`; [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:46)); the GCS backend supports CMEK and is fed by a 60s flush daemon. In the `gcp-gke` target the retention-locked WORM bucket (`module.worm_bucket`) is wired as `EVIDENCE_COLD_STORE=gcs` for the compliance bridge only; the gateway manifests do not set `EVIDENCE_COLD_STORE`, so the gateway's stream flush uses `NullColdStore` by default
+- **Cold tier:** pluggable via `EVIDENCE_COLD_STORE` (`gcs` | `s3` | `null`, default `null`; [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:46)); the GCS backend supports CMEK and is written only by the compliance bridge's `EvidenceCustodian` (default 60s cycle, re-verified chain, KMS batch attestation, put-if-absent). In the `gcp-gke` target the retention-locked WORM bucket (`module.worm_bucket`) is wired as `EVIDENCE_COLD_STORE=gcs` for the compliance bridge only; the gateway is a producer and never writes the cold tier
 
 **Payload Schema (v3.0 Breaking Changes):**
 
@@ -406,8 +406,8 @@ header = {
 - In permissive postures without `EVIDENCE_KMS_KEY`, attestations are written unsigned
 
 **Impact on Migration:**
-- If per-record signing is enabled post-migration, legacy records will lack signatures
-- **Mitigation:** Treat pre-signing-cutover records as "signed by chain root" (hash chain integrity still verifiable)
+- Batches custodied before `EVIDENCE_KMS_KEY` was configured carry only unsigned, non-evidentiary attestations
+- **Mitigation:** The hash chain remains verifiable end to end; re-custody those ranges under a signing key before citing them (`assert_citable()` rejects unsigned attestations)
 
 ### 9.2 Chain Restoration Across Schema Versions
 **Current Behavior:**
@@ -531,7 +531,7 @@ flowchart LR
     A[Gateway + Compliance Bridge producers] --> C[EvidenceStreamSink.ingest]
     C --> B[PIISanitizer.sanitize_dict]
     B --> D[Redis Streams XADD, chain head]
-    D --> E[GCS flush daemon, 60s, WORM bucket]
+    D --> E[Bridge EvidenceCustodian, 60s, KMS attestation, WORM bucket]
     D -.not wired at HEAD.-> F[ClickHouse sink, 100 rec or 5s batch, 7 years]
     F --> G[MV gap detector]
     F --> H[MV hash verifier]
