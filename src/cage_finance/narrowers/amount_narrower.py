@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Narrower for trade amounts that exceed configured domain thresholds."""
+"""Narrower for trade amounts that exceed what the refusing tier would admit."""
 
 from collections.abc import Callable
 import math
@@ -27,12 +27,21 @@ def _default_limit_resolver() -> float:
 
 
 class AmountNarrower:
-    """Narrows trade amounts that exceed the configured domain threshold.
+    """Clamps ``params["amount"]`` to the limit a NARROWABLE refusal names.
 
-    Uses structured violation classification (`violation.narrowable`) and an
-    explicit numeric `limit_resolver` (defaulting to
-    `THRESHOLDS.resolve("domains.finance.consensus.threshold_usd")`) rather than
-    parsing free-text violation messages.
+    The limit is ``violation.bound`` when the refusing tier reported one
+    (e.g. the fiscal tier's remaining daily headroom); the amount is clamped
+    to exactly that bound, floored to the cent so it never rounds above it.
+    A bound of 0 means nothing fits, so there is no proposal: the configured
+    threshold is never consulted in its place.
+
+    Only when the tier reported no bound does it fall back to the explicit
+    numeric ``limit_resolver`` (default
+    ``THRESHOLDS.resolve("domains.finance.consensus.threshold_usd")``),
+    clamping to 99% of it. Free-text violation messages are never parsed.
+
+    Either way the proposal is a candidate: the governor re-runs the
+    pipeline on it before anything is sealed.
     """
 
     def __init__(
@@ -55,6 +64,22 @@ class AmountNarrower:
             return None
         return limit
 
+    def _clamp(self, violation: Violation) -> tuple[float, float, str] | None:
+        """``(limit, clamp_to, source)`` for this violation, or ``None``.
+
+        An amount above ``limit`` is narrowed to ``clamp_to``.
+        """
+        if violation.bound is not None:
+            # round() first absorbs float noise (1234.57 * 100 == 123456.999...).
+            clamp_to = math.floor(round(violation.bound * 100, 6)) / 100
+            if clamp_to <= 0:
+                return None
+            return clamp_to, clamp_to, f"the {violation.tier} bound {violation.bound}"
+        limit = self._resolve_limit()
+        if limit is None:
+            return None
+        return limit, round(limit * 0.99, 2), f"99% of {limit}"
+
     @staticmethod
     def _extract_amount(params: dict[str, Any]) -> float | None:
         if "amount" not in params:
@@ -76,16 +101,14 @@ class AmountNarrower:
         action: str,
         params: dict[str, Any],
     ) -> bool:
-        """Return True iff violation is narrowable and amount exceeds resolved limit."""
+        """Return True iff the violation is narrowable and the amount exceeds its limit."""
         if not violation.narrowable:
             return False
-        limit = self._resolve_limit()
-        if limit is None:
-            return False
+        clamp = self._clamp(violation)
         amount = self._extract_amount(params)
-        if amount is None:
+        if clamp is None or amount is None:
             return False
-        return amount > limit
+        return amount > clamp[0]
 
     def narrow(
         self,
@@ -93,21 +116,18 @@ class AmountNarrower:
         action: str,
         params: dict[str, Any],
     ) -> NarrowingResult | None:
-        """Clamp ``params["amount"]`` to 99% of the resolved limit, or return ``None``."""
+        """Clamp ``params["amount"]`` to the violation's limit, or return ``None``."""
         if not self.can_narrow(violation, action, params):
             return None
-        limit = self._resolve_limit()
+        clamp = self._clamp(violation)
         amount = self._extract_amount(params)
-        if limit is None or amount is None:
+        if clamp is None or amount is None:
             return None
 
-        narrowed_amount = round(limit * 0.99, 2)
-        narrowed_params = {**params, "amount": narrowed_amount}
+        _, narrowed_amount, source = clamp
         return NarrowingResult(
             can_narrow=True,
-            narrowed_params=narrowed_params,
+            narrowed_params={**params, "amount": narrowed_amount},
             constraints_applied=[f"amount <= {narrowed_amount}"],
-            narrowing_reason=(
-                f"Clamped amount from {amount} to {narrowed_amount} (99% of {limit})"
-            ),
+            narrowing_reason=f"Clamped amount from {amount} to {narrowed_amount} ({source})",
         )

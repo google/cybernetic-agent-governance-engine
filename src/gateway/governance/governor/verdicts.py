@@ -155,6 +155,8 @@ async def _park_defer_context(
         # What the reviewer was told the approved request would hit (Phase-2 preview).
         "barrier_preview": classification_meta.get("barrier_preview"),
         "barrier_preview_violations": classification_meta.get("barrier_preview_violations", []),
+        # Re-verified clamped params that would leave only the approval to give.
+        "narrow_hint": classification_meta.get("narrow_hint"),
     }
 
     token = DeferToken(
@@ -197,6 +199,12 @@ async def handle_require_approval(
     ``barrier_preview`` (``PASS``/``FAIL``) with ``barrier_preview_violations``
     so the reviewer sees, e.g., that the trade would breach the daily cap. A
     HARD preview never reaches here: it is classified DENY first.
+
+    ``narrowed_params`` is the advisory clamp from ``classification_meta``'s
+    ``narrow_hint`` (``None`` without one): params a DRY_RUN found to clear
+    every barrier, leaving only the approval to give. An approval may cover
+    them because an approved trade may shrink; the committing run
+    re-verifies whatever is executed.
     """
     from src.gateway.governance.defer_queue import DeferReason
 
@@ -230,6 +238,7 @@ async def handle_require_approval(
         "latency_ms": latency_ms,
         "classification_reason": classification_meta.get("classification_reason", ""),
         "classification_meta": classification_meta,
+        "narrowed_params": (classification_meta.get("narrow_hint") or {}).get("narrowed_params"),
     }
 
 

@@ -623,17 +623,19 @@ async def test_s5_fiscal_breach_surfaces_before_human_review(gw: Gateway) -> Non
     await _assert_nothing_committed(gw)
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 3: AmountNarrower needs the fiscal bound hint")
 async def test_s10_autonomous_trade_is_narrowed_to_the_remaining_cap(gw: Gateway) -> None:
     gw.governor = _build_governor(gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True))
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
     result = await gw.execute(trade(4_000.0))
     assert result.startswith("EXECUTED: AAPL x 3000.0"), result
+    assert await gw.fiscal.current_spend_usd() == DAILY_CAP_USD
+    assert await _receipts(gw) == []  # the narrow receipt was fetched and burned
 
 
 # ---------------------------------------------------------------------------
 # Committing-path NARROW (govern): re-run sealed on clamped params + receipt.
-# A headroom-aware stub narrower stands in for Phase 3's bound hint.
+# A fixed-clamp stub narrower lets these tests propose params that do or do
+# not fit, independently of the bound the fiscal tier reports.
 # ---------------------------------------------------------------------------
 
 
@@ -713,8 +715,90 @@ async def test_committing_run_without_narrowing_enabled_denies(gw: Gateway) -> N
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: tiers report how much they would admit (Violation.bound)
+# ---------------------------------------------------------------------------
+
+
+async def test_s10_validate_offers_the_remaining_cap_as_a_narrow_candidate(gw: Gateway) -> None:
+    gw.governor = _build_governor(gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True))
+    governance_app.state.governor = gw.governor
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
+
+    body = _body(await gw.validate(trade(4_000.0)))
+
+    assert body["verdict"] == GovernanceDecision.NARROW
+    assert body["narrowed_params"]["amount"] == 3_000.0
+    assert [v["bound"] for v in body["violations"]] == [3_000.0]
+    assert await gw.fiscal.current_spend_usd() == 497_000.0  # nothing reserved
+    gw.actuate.assert_not_awaited()
+
+
+def _hinting(gw: Gateway, narrowers: list[Any] | None = None) -> None:
+    gw.governor = _build_governor(
+        gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True, narrowers=narrowers)
+    )
+    governance_app.state.governor = gw.governor
+
+
+async def test_require_approval_carries_a_reverified_narrow_hint(gw: Gateway) -> None:
+    # FTRA out of envelope (HITL) + fiscal preview over the cap (NARROWABLE,
+    # bound = $10,000 headroom): the reviewer is offered the trade that fits.
+    _hinting(gw)
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=490_000.0)
+    params = trade(20_000.0)
+
+    body = _body(await gw.validate(params))
+
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert body["narrowed_params"] == {**params, "amount": 10_000.0}
+    meta = body["classification_meta"]
+    assert [v["bound"] for v in meta["barrier_preview_violations"]] == [10_000.0]
+    token = await DeferQueue(gw.defer_redis).get(body["deferred_id"])
+    assert token is not None
+    assert token.opa_input_snapshot["narrow_hint"]["narrowed_params"]["amount"] == 10_000.0
+    assert await gw.fiscal.current_spend_usd() == 490_000.0
+
+    # Approving the hinted (shrunk) trade executes it in the committing run.
+    await gw.approve(body["deferred_id"], "urn:op:alice", "urn:op:bob")
+    result = await gw.execute(body["narrowed_params"], body["deferred_id"])
+    assert result.startswith("EXECUTED: AAPL x 10000.0"), result
+    assert await gw.fiscal.current_spend_usd() == DAILY_CAP_USD
+
+
+async def test_require_approval_drops_a_hint_that_still_breaches(gw: Gateway) -> None:
+    _hinting(gw, narrowers=[HeadroomNarrower(15_000.0)])  # over the $10,000 headroom
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=490_000.0)
+
+    body = _body(await gw.validate(trade(20_000.0)))
+
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert body["narrowed_params"] is None
+    assert "narrow_hint" not in body["classification_meta"]
+    token = await DeferQueue(gw.defer_redis).get(body["deferred_id"])
+    assert token is not None and token.opa_input_snapshot["narrow_hint"] is None
+
+
+async def test_require_approval_offers_no_hint_when_narrowing_is_disabled(gw: Gateway) -> None:
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=490_000.0)
+    body = _body(await gw.validate(trade(20_000.0)))
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert body["narrowed_params"] is None
+
+
+# ---------------------------------------------------------------------------
 # §0.5 mutation self-checks: each breaks one mechanism and observes a scenario fail
 # ---------------------------------------------------------------------------
+
+
+async def test_mutation_without_the_fiscal_bound_s10_is_not_narrowed_to_the_cap(
+    gw: Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _unknown(self: FiscalLimitGuard) -> None:
+        return None
+
+    monkeypatch.setattr(FiscalLimitGuard, "headroom_usd", _unknown)
+    with pytest.raises(AssertionError):
+        await test_s10_autonomous_trade_is_narrowed_to_the_remaining_cap(gw)
 
 
 async def test_mutation_flipped_seal_byte_is_refused(gw: Gateway) -> None:

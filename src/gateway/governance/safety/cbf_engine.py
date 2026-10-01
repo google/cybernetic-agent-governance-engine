@@ -1245,6 +1245,22 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
 
         return result
 
+    async def admissible_cost(self) -> float | None:
+        """Largest positive cost ``verify_action`` would admit right now.
+
+        Uses the same state and arithmetic as :meth:`_do_verify_action`: a
+        cost ``c > 0`` is safe iff ``h_t - c >= max((1 - gamma) * h_t, 0)``.
+        Read-only. ``None`` when the state is unavailable or the fence epoch
+        regressed (the barrier then refuses everything; there is no bound to
+        offer). A snapshot only: narrowed params are re-verified.
+        """
+        state = await self._read_cbf_state_atomic()
+        if state.get("current_cash") is None or state.get("source") == "epoch_regression":
+            return None
+        h_t = self.evaluate_barrier(float(state["current_cash"]) - self._local_debits)
+        bound = h_t - max((1.0 - self.gamma) * h_t, 0.0)
+        return bound if math.isfinite(bound) and bound > 0 else 0.0
+
     async def _update_state_unsafe(
         self, cost: float, governance_signature: str | None = None
     ) -> None:

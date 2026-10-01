@@ -170,3 +170,69 @@ class TestAmountNarrower:
         result = narrower.narrow(violation, "execute_trade", {"amount": limit * 2})
         assert result is not None
         assert result.narrowed_params["amount"] == round(limit * 0.99, 2)
+
+
+def _bounded(bound: float | None) -> Violation:
+    return Violation(
+        tier="fiscal",
+        code="FISCAL_LIMIT_EXCEEDED",
+        message="",
+        kind=ViolationKind.NARROWABLE,
+        bound=bound,
+    )
+
+
+class TestAmountNarrowerBoundHint:
+    """Phase 3: the refusing tier's ``bound`` beats the configured threshold."""
+
+    def test_clamps_exactly_to_the_bound_not_99_percent_of_the_threshold(self):
+        narrower = AmountNarrower(limit_resolver=25_000.0)
+        result = narrower.narrow(_bounded(3_000.0), "execute_trade", {"amount": 4_000.0})
+        assert result is not None
+        assert result.narrowed_params == {"amount": 3_000.0}
+        assert result.constraints_applied == ["amount <= 3000.0"]
+        assert "fiscal bound" in result.narrowing_reason
+
+    def test_bound_above_the_threshold_still_wins(self):
+        # The tier admits $40k; the threshold ($25k) is not consulted.
+        narrower = AmountNarrower(limit_resolver=25_000.0)
+        result = narrower.narrow(_bounded(40_000.0), "execute_trade", {"amount": 50_000.0})
+        assert result is not None and result.narrowed_params["amount"] == 40_000.0
+
+    @pytest.mark.parametrize(
+        ("bound", "expected"),
+        [(1234.57, 1234.57), (1234.579, 1234.57), (0.29, 0.29)],
+    )
+    def test_floors_to_the_cent_so_it_never_exceeds_the_bound(self, bound, expected):
+        result = AmountNarrower().narrow(_bounded(bound), "execute_trade", {"amount": 9_999.0})
+        assert result is not None
+        assert result.narrowed_params["amount"] == expected
+        assert result.narrowed_params["amount"] <= bound
+
+    @pytest.mark.parametrize("bound", [0.0, 0.004])
+    def test_a_bound_below_one_cent_means_nothing_fits_and_no_fallback(self, bound):
+        # Fail closed: the threshold ($25k) would "fit" $24,750 — never offered.
+        narrower = AmountNarrower(limit_resolver=25_000.0)
+        assert narrower.can_narrow(_bounded(bound), "execute_trade", {"amount": 50_000.0}) is False
+        assert narrower.narrow(_bounded(bound), "execute_trade", {"amount": 50_000.0}) is None
+
+    def test_amount_already_within_the_bound_is_not_narrowed(self):
+        narrower = AmountNarrower()
+        assert narrower.can_narrow(_bounded(3_000.0), "execute_trade", {"amount": 3_000.0}) is False
+
+    def test_no_bound_falls_back_to_the_threshold(self):
+        result = AmountNarrower(limit_resolver=25_000.0).narrow(
+            _bounded(None), "execute_trade", {"amount": 50_000.0}
+        )
+        assert result is not None and result.narrowed_params["amount"] == 24_750.0
+
+
+class TestViolationBound:
+    @pytest.mark.parametrize("bound", [float("nan"), float("inf"), -1.0, True, "10"])
+    def test_rejects_invalid_bounds(self, bound):
+        with pytest.raises(ValueError):
+            _bounded(bound)
+
+    def test_to_dict_carries_the_bound_only_when_known(self):
+        assert _bounded(5.0).to_dict()["bound"] == 5.0
+        assert "bound" not in _bounded(None).to_dict()

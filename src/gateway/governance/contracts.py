@@ -19,6 +19,7 @@ decoupling the Gateway from the specific application implementations.
 """
 
 import hashlib
+import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -201,6 +202,19 @@ class ViolationKind(StrEnum):
     NARROWABLE = "narrowable"
 
 
+def coerce_bound(value: object) -> float | None:
+    """``value`` as a valid :attr:`Violation.bound`, else ``None`` (never a guess).
+
+    Tiers read bounds from live state; an unreadable or malformed reading
+    means "unknown", not a refusal of its own, so it must not raise.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return float(value)
+
+
 @dataclass(frozen=True)
 class Violation:
     """Structured violation emitted by a GovernanceTierPlugin.
@@ -215,21 +229,50 @@ class Violation:
     and kind-based classification — removing dual sources of truth
     (recoverable + needs_human_review) and enabling fail-closed classification
     by construction.
+
+    ``bound`` is the largest magnitude, in the units of the tier's cost
+    resolver, that the emitting tier would admit at the moment it refused
+    (e.g. the fiscal tier's remaining daily headroom, a barrier's admissible
+    cost). ``None`` means the tier does not know. It is a hint for
+    narrowers, never an authorization: narrowed params are always re-run
+    through the pipeline before anything is sealed.
     """
 
     tier: str  # e.g. "cbf", "fiscal", "consensus", "causal"
     code: str  # machine-readable, e.g. "CBF_BARRIER_VIOLATED", "ROLLBACK_FAILED"
     message: str  # human-readable description (never parsed)
     kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
+    bound: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.bound is None:
+            return
+        if (
+            isinstance(self.bound, bool)
+            or not isinstance(self.bound, (int, float))
+            or not math.isfinite(self.bound)
+            or self.bound < 0
+        ):
+            raise ValueError(
+                f"Violation.bound must be a finite, non-negative number or None; got {self.bound!r}"
+            )
 
     @property
     def narrowable(self) -> bool:
         """Return True when this violation is classified as NARROWABLE."""
         return self.kind == ViolationKind.NARROWABLE
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         """JSON-safe form for API / MCP / agent-tool boundaries."""
-        return {"tier": self.tier, "code": self.code, "message": self.message, "kind": self.kind.value}
+        out: dict[str, Any] = {
+            "tier": self.tier,
+            "code": self.code,
+            "message": self.message,
+            "kind": self.kind.value,
+        }
+        if self.bound is not None:
+            out["bound"] = self.bound
+        return out
 
 
 @dataclass(frozen=True)

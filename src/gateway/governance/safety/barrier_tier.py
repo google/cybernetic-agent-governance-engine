@@ -23,13 +23,26 @@ Phase-2 barrier tiers delegate all three tier hooks here:
   records the magnitude the engine reports it deducted.
 * ``rollback_barrier`` — ``rollback()``: restores exactly that magnitude.
 
+Refusals carry ``Violation.bound`` (the engine's admissible cost) when the
+engine is a :class:`BoundedBarrier`; otherwise, or if reading it fails, the
+bound is ``None``. A barrier refusal is HARD, so the bound informs the
+reviewer and the refusal receipt; it never authorizes anything.
+
 Kept in the kernel so a fix to the fail-closed or receipt rules is applied once
 for every domain.
 """
 
-from typing import Any, Protocol
+import logging
+from typing import Any, Protocol, runtime_checkable
 
-from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    Violation,
+    ViolationKind,
+    coerce_bound,
+)
+
+logger = logging.getLogger(__name__)
 
 SAFE = "SAFE"
 
@@ -44,6 +57,34 @@ class BarrierEngine(BarrierReader, Protocol):
     ) -> tuple[bool, str, float]: ...
 
     async def rollback_state(self, magnitude: float, governance_signature: str | None = None) -> None: ...
+
+
+@runtime_checkable
+class BoundedBarrier(Protocol):
+    """An engine that can say how much cost it would still admit."""
+
+    async def admissible_cost(self) -> float | None: ...
+
+
+async def _admissible_bound(cbf: object) -> float | None:
+    """The engine's admissible cost, or ``None`` if it cannot say (never a guess)."""
+    if not isinstance(cbf, BoundedBarrier):
+        return None
+    try:
+        return coerce_bound(await cbf.admissible_cost())
+    except Exception as exc:
+        logger.warning("barrier bound unavailable: %s", exc)
+        return None
+
+
+async def _refusal(cbf: object, *, tier: str, code: str, message: str) -> Violation:
+    return Violation(
+        tier=tier,
+        code=code,
+        message=message,
+        kind=ViolationKind.HARD,
+        bound=await _admissible_bound(cbf),
+    )
 
 
 async def preview_barrier(
@@ -62,7 +103,7 @@ async def preview_barrier(
     verdict = await cbf.verify_action(action, params)
     if verdict == SAFE:
         return []
-    return [Violation(tier=tier, code=code, message=str(verdict), kind=ViolationKind.HARD)]
+    return [await _refusal(cbf, tier=tier, code=code, message=str(verdict))]
 
 
 async def commit_barrier(
@@ -81,7 +122,7 @@ async def commit_barrier(
     """
     committed, reason, magnitude = await cbf.atomic_verify_and_commit(action, params)
     if not committed:
-        return [Violation(tier=tier, code=code, message=reason, kind=ViolationKind.HARD)], None
+        return [await _refusal(cbf, tier=tier, code=code, message=reason)], None
     return [], CommitReceipt(tier=tier, magnitude=magnitude)
 
 

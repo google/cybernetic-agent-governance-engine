@@ -176,6 +176,9 @@ class SymbolicGovernor:
             if classification.decision == GovernanceDecision.NARROW:
                 return await self._narrow_candidate(action, params, result, meta, t0)
 
+            if classification.decision == GovernanceDecision.REQUIRE_APPROVAL:
+                meta = await self._reverified_narrow_hint(action, meta)
+
             if classification.decision == GovernanceDecision.PAUSE:
                 return await handle_pause(
                     action,
@@ -193,6 +196,37 @@ class SymbolicGovernor:
                 action, params, violations, list(result.tier_failures), meta, latency_ms
             )
             return await verdict if inspect.isawaitable(verdict) else verdict
+
+    async def _reverified_narrow_hint(
+        self, action: str, meta: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Keep the classifier's ``narrow_hint`` only if DRY_RUN vouches for it.
+
+        The hint tells the reviewer which clamped params would clear every
+        barrier, leaving only the approval to give. It is kept iff a DRY_RUN
+        over those params (phase 2 previewed, nothing reserved) reports only
+        HITL findings; otherwise it is dropped, never shown. It authorises
+        nothing: executing it is the committing run, after approval.
+        """
+        hint = meta.get("narrow_hint")
+        if not isinstance(hint, dict):
+            return meta
+        without = {k: v for k, v in meta.items() if k != "narrow_hint"}
+        proposal = hint.get("narrowed_params")
+        if not isinstance(proposal, dict):
+            return without
+        verified = copy.deepcopy(proposal)  # the exact params the response names
+        ctx = StageContext(
+            action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
+        )
+        rerun = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
+        kept = all(v.kind == ViolationKind.HITL for v in rerun.violations)
+        trace.get_current_span().set_attribute(
+            "cage.governance.narrow_hint_reverified", kept
+        )
+        if not kept:
+            return without
+        return {**without, "narrow_hint": {**hint, "narrowed_params": verified}}
 
     async def _narrow_candidate(
         self,
@@ -487,8 +521,5 @@ def _barrier_meta(result: PipelineResult) -> dict[str, Any]:
         return {}
     return {
         "barrier_preview": result.barrier_preview.value,
-        "barrier_preview_violations": [
-            {"tier": v.tier, "code": v.code, "kind": v.kind.value, "message": v.message}
-            for v in result.preview_violations
-        ],
+        "barrier_preview_violations": [v.to_dict() for v in result.preview_violations],
     }
