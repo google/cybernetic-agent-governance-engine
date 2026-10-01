@@ -55,6 +55,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Redis schema for defer tokens now includes a `rev` (revision) field. Existing tokens are migrated transparently (absent `rev` treated as `0`).
 - `cage-client` SDK bumped to v0.2.0 (#313).
 
+#### feat(governance)! — Preview phase-2 barriers before human approval (Phase 2)
+
+- **Phase 2 is gated by violation kind.** `phase2_mode(profile, phase1_kinds)` in `src/gateway/governance/governor/pipeline.py` returns `SKIP` (any HARD), `PREVIEW` (only non-HARD findings, or `DRY_RUN`) or `COMMIT` (clean phase 1 under `FULL` / `POST_HITL`). Under a pending approval every claiming barrier is previewed side-effect-free, so a HARD barrier (CBF, `dose_barrier`) denies **before** a human is asked, and a NARROWABLE breach (`FISCAL_LIMIT_EXCEEDED`) still parks the request with the breach shown. Nothing is committed unless the request is about to be sealed.
+- `_preview_mutating` stops only at the first HARD preview finding (previously at any finding), so the reviewer sees every breach.
+- `PipelineResult.barrier_preview` / `preview_violations`; `validate_action()` meta and the DeferToken `opa_input_snapshot` carry `barrier_preview` and `barrier_preview_violations`.
+- **Committing-path NARROW.** `SymbolicGovernor.govern()` re-runs the sealed FULL pipeline on clamped params (`_sealed_narrow`) and writes a single-use `narrow:receipt:<seal>` (`src/gateway/governance/narrow_receipt.py`) inside the `ReservationScope` via the new `run_sealed(..., on_seal=)` hook; an undeliverable receipt rolls the commits back. `cage_finance` `execute_trade_action` reads the key via `narrow_receipt_key()`.
+- `proof/model.py` proves `no_commit_under_pending_findings` and `hard_preview_denies_before_hitl`; `tests/test_formal_profile_parity.py` checks gate and outcome parity against the real `run_pipeline`. Golden corpus regenerated: collaborator lists gain `cbf.verify_action` / `fiscal_guard.would_accept` (barriers now previewed under pending approval); no verdict changed.
+- Not yet: the e2e S10 scenario (fiscal-breach NARROW in the finance domain) stays a strict xfail until `AmountNarrower` receives the fiscal bound hint (Phase 3).
+
 #### fix(governance)! — Structural POST_HITL, FTRA provenance codes, conditional FTRA, claim-by-cost (Phase 1)
 
 - **POST_HITL is structural.** `PROFILE_STAGES` and `PROFILE_RUNS_ALL_DOMAIN_TIERS` are removed from `src/gateway/governance/governor/pipeline.py`. Stage selection is one predicate, `stage_runs_under(profile, name=, mutating=)`: under `POST_HITL` it runs `opa` (`POST_HITL_READ_ONLY_STAGES`) plus **every** claiming phase-2 tier, so plugin barriers (e.g. healthcare `dose_barrier`) are re-checked after approval. `proof/model.py` proves `post_hitl_runs_every_phase2_tier`; `tests/test_formal_profile_parity.py` checks per-tier parity.

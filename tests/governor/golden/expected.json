@@ -414,7 +414,9 @@
         "first_violation_code": "OPA_MANUAL_REVIEW",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -425,7 +427,9 @@
         "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -437,6 +441,8 @@
         "first_violation_code": "[CTRL_OPA_005] ISO 42001 \u00a7A.6.1 Check: Manual Review Required.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
+          "fiscal_guard.would_accept",
           "opa_client.evaluate_policy",
           "publish_refusal"
         ]
@@ -446,7 +452,9 @@
         "first_violation_code": "OPA_MANUAL_REVIEW",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -510,7 +518,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -521,7 +531,9 @@
         "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.60 < threshold 0.95. Violation: agent confidence below required minimum.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -544,7 +556,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -561,7 +575,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -572,7 +588,9 @@
         "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.85 < threshold 0.95. Violation: agent confidence below required minimum.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -595,7 +613,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -902,7 +922,9 @@
         "first_violation_code": "FTRA_REGISTERED_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -913,7 +935,9 @@
         "first_violation_code": "[FTRA_REGISTERED_IRREVERSIBLE] FTRA Boundary Check: Action 'execute_trade' is registered as IRREVERSIBLE_TERMINAL and is outside its autonomous envelope. Human-in-the-loop review required before execution.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -936,7 +960,9 @@
         "first_violation_code": "FTRA_REGISTERED_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -953,7 +979,9 @@
         "first_violation_code": "FTRA_REGISTERED_EXTERNALLY_REVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -964,7 +992,9 @@
         "first_violation_code": "[FTRA_REGISTERED_EXTERNALLY_REVERSIBLE] FTRA Boundary Check: Action 'execute_trade' is registered as EXTERNALLY_REVERSIBLE and is outside its autonomous envelope. Human-in-the-loop review required before execution.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -987,7 +1017,9 @@
         "first_violation_code": "FTRA_REGISTERED_EXTERNALLY_REVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -1435,7 +1467,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -1446,7 +1480,9 @@
         "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -1469,7 +1505,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -1486,7 +1524,9 @@
         "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -1498,7 +1538,9 @@
         "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: score 0.50 < threshold 0.95. Violation: agent confidence below required minimum.",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -1521,7 +1563,9 @@
         "first_violation_code": "CONFIDENCE_BELOW_THRESHOLD",
         "seal_issued": false,
         "collaborators_called": [
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"

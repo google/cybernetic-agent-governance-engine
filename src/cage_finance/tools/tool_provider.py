@@ -179,14 +179,14 @@ async def execute_trade_action(
     # This is a placeholder for future integration
 
     # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
-    # Check for NARROW verdict receipt using seal prefix before seal verification
+    # A narrowed committing run (SymbolicGovernor._sealed_narrow) seals the
+    # clamped params and issues a single-use receipt naming them.
     action_params = params  # Default: use original params
 
+    from src.gateway.governance.narrow_receipt import narrow_receipt_key
     from src.gateway.infrastructure.redis_client import redis_client
 
-    # Generate receipt key from seal (first 32 hex chars = 128 bits)
-    seal_prefix = seal[:32] if len(seal) >= 32 else seal
-    receipt_key = f"narrow:receipt:{seal_prefix}"
+    receipt_key = narrow_receipt_key(seal)
 
     # Attempt to fetch NARROW receipt (fail-silent if not present)
     if redis_client is not None:

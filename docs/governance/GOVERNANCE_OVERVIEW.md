@@ -56,7 +56,7 @@ NeMo Guardrails runs **before** the governor pipeline is invoked. It is integrat
 
 #### The 9-Tier Two-Phase Governance Pipeline (`SymbolicGovernor` / `run_pipeline()`)
 
-The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchestrated by `run_pipeline()` in `src/gateway/governance/governor/pipeline.py`) is the central enforcement engine. Tier labels follow the authoritative `TIER_LABELS` mapping in `proof/model.py` (`Tier 0.5` through `Tier 7`). Execution is split into **Phase 1** (sequential read-only validation stages) and **Phase 2** (sequential mutating commit stages with LIFO rollback via `ReservationScope`), where Phase 2 runs **only** if all Phase 1 stages produce zero violations:
+The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchestrated by `run_pipeline()` in `src/gateway/governance/governor/pipeline.py`) is the central enforcement engine. Tier labels follow the authoritative `TIER_LABELS` mapping in `proof/model.py` (`Tier 0.5` through `Tier 7`). Execution is split into **Phase 1** (sequential read-only validation stages) and **Phase 2** (sequential mutating commit stages with LIFO rollback via `ReservationScope`), where Phase 2 **commits** only if all Phase 1 stages produce zero violations (non-`HARD` findings run it as a side-effect-free preview instead; see [Two-Phase Pipeline Execution](#two-phase-pipeline-execution-phase-1-read-only--phase-2-mutating-commitrollback)):
 
 | Tier | Phase | Name | Implementation | Notes |
 |------|-------|------|---------------|-------|
@@ -148,7 +148,12 @@ This invariant is enforced structurally: `validate_action()` is the single choke
 In `src/gateway/governance/governor/pipeline.py`, `run_pipeline()` separates read-only validation stages from state-mutating reservation stages:
 
 1. **Phase 1 — Sequential Read-Only Validation:** Executes `ftra` (Tier 0.5) → `stpa` (Tier 1) → `opa` (Tier 3b) → `confidence` (Tier 2) → Phase-1 domain tiers (`consensus` Tier 5, `causal` Tier 6, `fria` Tier 7). Running `stpa` and `opa` before `confidence` supplies `stpa_violation_count` and `opa_verdict` on `StageContext` for Tier 2 structural corroboration. Evaluation stops immediately at the first `ViolationKind.HARD` violation.
-2. **Phase 2 — Sequential Mutating Commit with LIFO Rollback:** Runs **only if Phase 1 produced zero violations** (`not has_violations`). Under `Profile.FULL` and `Profile.POST_HITL`, mutating tiers (`cbf` Tier 3a → `fiscal` Tier 4) commit sequentially through a per-request `ReservationScope` (`src/gateway/governance/governor/reservation.py`). If any Phase 2 stage emits a violation or the scope exits without sealing, `ReservationScope.rollback()` undoes all prior commits in reverse (LIFO) order. Under `Profile.DRY_RUN` (`SymbolicGovernor.verify()`), mutating stages run side-effect-free `preview()` instead of `commit()`.
+2. **Phase 2 — Gated by `phase2_mode(profile, phase1_kinds)`:**
+   - **SKIP** if Phase 1 produced any `HARD` finding: the request is refused and no barrier is consulted.
+   - **PREVIEW** if Phase 1 produced any other finding (e.g. an OPA `MANUAL_REVIEW` that parks the trade for a human, or a `NARROWABLE` finding), or under `Profile.DRY_RUN` (`SymbolicGovernor.verify()` / `validate_action()`): `_preview_mutating()` calls each mutating stage's side-effect-free `preview()` and never `commit()`. It continues past non-`HARD` findings and stops at the first `HARD` one. The result is recorded as `PipelineResult.barrier_preview` (`PASS` / `FAIL`) plus `preview_violations`, surfaced in the verdict meta and in the DeferToken `opa_input_snapshot` so the reviewer sees every barrier breach before approving. A `HARD` preview finding (e.g. a CBF or dose barrier) denies before any human is asked.
+   - **COMMIT** only when Phase 1 is clean under `Profile.FULL` or `Profile.POST_HITL`: mutating tiers (`cbf` Tier 3a → `fiscal` Tier 4 → any plugin barrier) commit sequentially through a per-request `ReservationScope` (`src/gateway/governance/governor/reservation.py`). If any Phase 2 stage emits a violation or the scope exits without sealing, `ReservationScope.rollback()` undoes all prior commits in reverse (LIFO) order.
+
+   If a committing `govern()` run fails only on `NARROWABLE` findings and narrowing is enabled, `SymbolicGovernor._sealed_narrow()` re-runs the full sealed pipeline on the clamped parameters and, inside the same `ReservationScope`, writes a single-use `narrow:receipt:<seal>` (`src/gateway/governance/narrow_receipt.py`) that the domain tool consumes. If the clamped parameters still breach, or the receipt cannot be written, the commits roll back and the request is denied.
 
 ### FRIA Zone Decision Semantics (Tier 7)
 
@@ -355,7 +360,7 @@ The gateway-side `validate_action()` / `verify_seal()` pair is the single choke 
 
 1. Validates Pydantic schema (infrastructure boundary — not a pipeline step).
 2. Optionally verifies `policy_version_id` against `ControlRegistry.active_hash` to detect substrate policy drift.
-3. Invokes the full `SymbolicGovernor` two-phase pipeline (`run_pipeline()` in `src/gateway/governance/governor/pipeline.py`): Phase 1 read-only stages — FTRA (Tier 0.5) → STPA (Tier 1) → OPA (Tier 3b) → Confidence (Tier 2) → Consensus (Tier 5) → Causal Gatekeeper (Tier 6) → FRIA (Tier 7) — followed on zero violations by Phase 2 mutating stages — CBF (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4).
+3. Invokes the full `SymbolicGovernor` two-phase pipeline (`run_pipeline()` in `src/gateway/governance/governor/pipeline.py`): Phase 1 read-only stages — FTRA (Tier 0.5) → STPA (Tier 1) → OPA (Tier 3b) → Confidence (Tier 2) → Consensus (Tier 5) → Causal Gatekeeper (Tier 6) → FRIA (Tier 7) — followed by Phase 2 mutating stages — CBF (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4) — committed on zero violations, previewed read-only on non-`HARD` findings, and skipped on a `HARD` finding.
 4. Issues the governor's KMS-signed routing seal (`src/gateway/governance/routing_seal.py`; HMAC fallback in dev/test only) only after all tiers pass.
 5. The downstream actuator calls `verify_seal()` before firing — the wrapped action is never invoked if the seal is missing, expired, or tampered.
 6. Wraps execution in ISO 42001-stamped OpenTelemetry spans.

@@ -5,8 +5,9 @@ narrower returned a proposal, and (c) every stage passes on the clamped
 params; otherwise DENY. ``validate_action`` runs the non-committing DRY_RUN
 profile, so it checks (c) by *previewing* the clamped params: nothing is
 reserved, nothing is committed and no seal is minted. Executing the proposal
-is a separate committing run over it (S10, Phase 2 — see the strict xfail at
-the bottom).
+is a separate committing run over it: ``govern()`` re-runs the sealed FULL
+pipeline on the clamped params and stores a single-use NARROW receipt (S10,
+the last test below).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import fakeredis.aioredis
 import pytest
 
 from proof.model import enumerate_reachable, gated_transitions
@@ -32,6 +34,7 @@ from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.pipeline import StageContext
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.verdicts import handle_narrow
+from src.gateway.governance.narrow_receipt import narrow_receipt_key
 from src.gateway.governance.narrower import NarrowerRegistry, NarrowingResult
 from tests.fixtures.governor import make_governor
 
@@ -398,12 +401,18 @@ async def test_production_matches_model_narrow_outcome(
     seal.assert_not_awaited()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="S10 (Phase 2): the committing run does not yet seal a narrowed proposal",
-)
+@pytest.fixture
+def receipt_store(monkeypatch: pytest.MonkeyPatch) -> fakeredis.aioredis.FakeRedis:
+    """The Redis the NARROW receipt is written to; without one the seal is refused."""
+    store = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr("src.gateway.infrastructure.redis_client.redis_client", store)
+    return store
+
+
 @pytest.mark.asyncio
-async def test_s10_committing_run_seals_the_narrowed_params(seal: AsyncMock) -> None:
+async def test_s10_committing_run_seals_the_narrowed_params(
+    seal: AsyncMock, receipt_store: fakeredis.aioredis.FakeRedis
+) -> None:
     log: list[str] = []
     gov = _governor(
         [_Policy(), *order_stages([_Budget("fiscal", 4, log, limit=1000.0)])], _Clamp(cap=1000.0)
@@ -412,5 +421,10 @@ async def test_s10_committing_run_seals_the_narrowed_params(seal: AsyncMock) -> 
     sealed = await gov.govern(ACTION, _params())
 
     assert sealed == "sealed-narrow"
-    seal.assert_awaited_once_with(ACTION, {"amount": 1000.0, "agent_id": "agent-1"}, path="narrow")
+    receipt = await receipt_store.get(narrow_receipt_key(sealed))
+    assert receipt is not None, "a sealed NARROW must leave its single-use receipt"
+    assert '"amount": 1000.0' in receipt
+    seal.assert_awaited_once_with(
+        ACTION, {"amount": 1000.0, "agent_id": "agent-1"}, path="govern_narrow"
+    )
     assert log[-1] == "commit:fiscal:1000"

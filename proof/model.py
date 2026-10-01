@@ -205,6 +205,78 @@ def post_hitl_runs_every_phase2_tier() -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase-2 gate and the pending-approval outcome
+# ---------------------------------------------------------------------------
+#
+# Mirrored by ``src/gateway/governance/governor/pipeline.py::phase2_mode`` and,
+# for the outcome, by ``run_pipeline`` + ``ClassificationEngine`` (parity in
+# ``tests/test_formal_profile_parity.py``). Kinds mirror ``contracts.ViolationKind``.
+
+VIOLATION_KINDS: tuple[str, ...] = ("HARD", "HITL", "DEFERRABLE", "TRANSIENT", "NARROWABLE")
+
+
+def phase2_mode(profile: str, phase1_kinds: frozenset[str]) -> str:
+    """SKIP after any HARD; PREVIEW after only non-HARD findings or under
+    DRY_RUN; COMMIT only over a clean phase 1 under a committing profile."""
+    if "HARD" in phase1_kinds:
+        return "SKIP"
+    if phase1_kinds or profile == "DRY_RUN":
+        return "PREVIEW"
+    return "COMMIT"
+
+
+def pending_approval_outcome(
+    phase1_kinds: frozenset[str], preview_kinds: frozenset[str]
+) -> tuple[str, str]:
+    """CHECKING → (DENIED | REQUIRE_APPROVAL, barrier_preview ∈ {PASS, FAIL}).
+
+    Defined for an approval-pending phase 1 (HITL present, no HARD): the
+    barriers are previewed, a HARD preview denies outright, and otherwise the
+    request waits for a human with the preview's result recorded.
+    """
+    if "HITL" not in phase1_kinds or "HARD" in phase1_kinds:
+        raise ValueError("pending_approval_outcome needs a HITL, non-HARD phase 1")
+    barrier_preview = "FAIL" if preview_kinds else "PASS"
+    if "HARD" in preview_kinds:
+        return "DENIED", barrier_preview
+    return "REQUIRE_APPROVAL", barrier_preview
+
+
+def _kind_sets() -> Iterator[frozenset[str]]:
+    for mask in range(1 << len(VIOLATION_KINDS)):
+        yield frozenset(k for i, k in enumerate(VIOLATION_KINDS) if mask >> i & 1)
+
+
+def no_commit_under_pending_findings() -> bool:
+    """Claim: phase 2 never commits while phase 1 reported anything — so a
+    request awaiting approval holds no barrier headroom (no seal, no spend)."""
+    return all(
+        phase2_mode(profile, kinds) != "COMMIT"
+        for profile in PROFILES
+        for kinds in _kind_sets()
+        if kinds
+    )
+
+
+def hard_preview_denies_before_hitl() -> bool:
+    """Claim: with approval pending, the barriers are previewed, a HARD
+    preview yields DENIED (no human is asked), and every REQUIRE_APPROVAL
+    records the preview's outcome (FAIL iff a barrier reported anything)."""
+    for phase1 in _kind_sets():
+        if "HITL" not in phase1 or "HARD" in phase1:
+            continue
+        if any(phase2_mode(p, phase1) != "PREVIEW" for p in PROFILES):
+            return False
+        for preview in _kind_sets():
+            outcome, barrier_preview = pending_approval_outcome(phase1, preview)
+            if ("HARD" in preview) != (outcome == "DENIED"):
+                return False
+            if (barrier_preview == "FAIL") != bool(preview):
+                return False
+    return True
+
+
 @dataclass(frozen=True)
 class State:
     """A single point in the CAGE governance state space.
@@ -1057,6 +1129,13 @@ def main() -> None:
     assert post_hitl_runs_every_phase2_tier(), (
         "PROOF FAILED: POST_HITL skips a phase-2 tier!"
     )
+    assert no_commit_under_pending_findings(), (
+        "PROOF FAILED: phase 2 commits while phase 1 reported findings!"
+    )
+    assert hard_preview_denies_before_hitl(), (
+        "PROOF FAILED: a HARD barrier preview reaches a human, or REQUIRE_APPROVAL "
+        "misreports the barrier preview!"
+    )
 
     print("✅ All assertions passed.")
     print()
@@ -1075,6 +1154,11 @@ def main() -> None:
     print("     the seal gate is load-bearing for NARROW decisions as well.")
     print("  7. POST_HITL re-runs every phase-2 tier, kernel or plugin-named")
     print("     (post_hitl_runs_every_phase2_tier).")
+    print("  8. Phase 2 never commits while phase 1 reported findings, so a")
+    print("     pending approval holds no headroom (no_commit_under_pending_findings).")
+    print("  9. With approval pending the barriers are previewed: a HARD preview")
+    print("     denies before any human is asked, and REQUIRE_APPROVAL records")
+    print("     barrier_preview PASS/FAIL (hard_preview_denies_before_hitl).")
     print()
     print("PLAUSIBLE (not proved here):")
     print("  That this model generalises to the full production CAGE stack.")

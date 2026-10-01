@@ -157,7 +157,7 @@ Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](
 
 ### 2.3 Governance Pipeline Tiers
 
-Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 9-tier, two-phase governance pipeline (`run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../src/gateway/governance/governor/pipeline.py), matching `TIER_LABELS` in [`proof/model.py`](../proof/model.py)), where Phase 1 read-only stages execute sequentially first and Phase 2 mutating stages commit sequentially only when Phase 1 produces zero violations:
+Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 9-tier, two-phase governance pipeline (`run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../src/gateway/governance/governor/pipeline.py), matching `TIER_LABELS` in [`proof/model.py`](../proof/model.py)), where Phase 1 read-only stages execute sequentially first and Phase 2 mutating stages are gated by `phase2_mode()`: a `HARD` Phase 1 finding skips Phase 2, any other Phase 1 finding (or `Profile.DRY_RUN`) previews it side-effect-free and reports `barrier_preview`, and only a clean Phase 1 under `FULL` / `POST_HITL` commits:
 
 | Tier | Phase | Name | Implementation |
 |---|---|---|---|

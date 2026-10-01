@@ -770,5 +770,16 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-**Last updated:** 2026-09-30 (Phase 1 clean breaks P1-1–P1-6)
+## Unreleased — Phase-2 Barrier Preview Before Human Approval (Phase 2)
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **P2-1** | Pipeline | [`run_pipeline`](../src/gateway/governance/governor/pipeline.py) gates phase 2 with `phase2_mode(profile, phase1_kinds)`: `SKIP` on any HARD finding, `PREVIEW` (side-effect-free `preview()`) on only non-HARD findings or under `DRY_RUN`, `COMMIT` only over a clean phase 1. Previously phase 2 was skipped on *any* phase-1 finding. | A trade parked for a human was approved blind: a barrier that would refuse it (CBF, `dose_barrier`) was only consulted after the human had spent the review. Proved in [`proof/model.py`](../proof/model.py) (`no_commit_under_pending_findings`, `hard_preview_denies_before_hitl`). | A request with an OPA `MANUAL_REVIEW` and a HARD barrier breach is now `DENY` (`403`) instead of `REQUIRE_APPROVAL`; no DeferToken is parked. A `NARROWABLE` breach (`FISCAL_LIMIT_EXCEEDED`) still parks it, with the breach recorded. |
+| **P2-2** | Pipeline | `_preview_mutating` stops at the first **HARD** preview finding and continues past non-HARD ones; the `DRY_RUN` loop previously stopped at the first violation of any kind. | The reviewer must see every breach the approved request would hit, and a later HARD barrier must still deny before a human is asked. | `validate_action()` may report more than one phase-2 violation. |
+| **P2-3** | Verdict surface | `PipelineResult` gains `barrier_preview` (`BarrierPreview.PASS` / `FAIL` / `None`) and `preview_violations`. `validate_action()` meta and the DeferToken `opa_input_snapshot` carry `barrier_preview` and `barrier_preview_violations`. | Evidence for the reviewer, persisted with the token rather than recomputed. | Additive; strict schema consumers of the meta / snapshot must accept the new keys. |
+| **P2-4** | Committing NARROW | [`SymbolicGovernor.govern()`](../src/gateway/governance/governor/governor.py) no longer denies a committing run that failed only on NARROWABLE findings when narrowing is enabled: `_sealed_narrow()` re-runs the sealed FULL pipeline on the clamped params and, inside the `ReservationScope`, writes `narrow:receipt:<seal>` via [`issue_narrow_receipt`](../src/gateway/governance/narrow_receipt.py) (`run_sealed(..., on_seal=)`). The domain tool consumes it via `narrow_receipt_key(seal)`. | The NARROW verdict had no committing path, so the execution boundary could never act on it. The receipt is written before the scope is marked sealed, so an undeliverable receipt rolls the commits back. | `govern()` may return a seal over narrowed params. A tool that ignores the receipt would execute the original params; [`tool_provider.py`](../src/cage_finance/tools/tool_provider.py) reads and burns it. |
+
+---
+
+**Last updated:** 2026-09-30 (Phase 2 clean breaks P2-1–P2-4)
 
