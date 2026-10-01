@@ -200,6 +200,16 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    `barrier_preview_violations`, so the reviewer sees, for example, a fiscal-cap breach the
    approved trade would hit. A barrier that would refuse outright (`HARD`, e.g. CBF or a dose
    barrier) denies the request before it ever reaches a reviewer.
+   Each breach carries `bound`, how much the tier would still admit (e.g. the fiscal tier's
+   remaining daily headroom, `Violation.bound` in
+   [`src/gateway/governance/contracts.py`](../../src/gateway/governance/contracts.py)). When
+   narrowing is enabled and every finding other than the approval itself is NARROWABLE, the
+   `REQUIRE_APPROVAL` response carries `narrowed_params` and the snapshot a `narrow_hint`: the
+   clamped trade, kept only if a `DRY_RUN` over it leaves nothing but HITL findings
+   (`SymbolicGovernor._reverified_narrow_hint` in
+   [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)).
+   The hint authorises nothing; an approval covers it because an approved trade may shrink,
+   and the committing run re-verifies whatever executes.
 5. **Reviewer decides:**
    - `OVERRIDE` — approve the previously blocked action; override is logged via `hitl_override_audit_span()`
    - `UPHOLD` — confirm the block; decision is logged

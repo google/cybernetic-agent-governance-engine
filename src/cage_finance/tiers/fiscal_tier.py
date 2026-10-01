@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Any
 
 from src.gateway.governance.contracts import (
@@ -19,10 +20,13 @@ from src.gateway.governance.contracts import (
     GovernanceTierPlugin,
     Violation,
     ViolationKind,
+    coerce_bound,
 )
 from src.cage_finance.invariants import finance_cost_resolver
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.tiers.cbf_tier import CostResolver
+
+logger = logging.getLogger(__name__)
 
 
 class FiscalTierPlugin(GovernanceTierPlugin):
@@ -64,7 +68,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
         if await self.guard.would_accept(amount_usd=amount):
             return []
-        return [self._limit_violation(agent_id)]
+        return [await self._limit_violation(agent_id)]
 
     async def commit(
         self, action: str, params: dict[str, Any]
@@ -74,7 +78,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
         if token.rejected:
-            return [self._limit_violation(agent_id)], None
+            return [await self._limit_violation(agent_id)], None
 
         try:
             await self.guard.confirm(token)
@@ -90,10 +94,22 @@ class FiscalTierPlugin(GovernanceTierPlugin):
     ) -> None:
         await self.guard.release(receipt.token)
 
-    def _limit_violation(self, agent_id: str) -> Violation:
+    async def _limit_violation(self, agent_id: str) -> Violation:
+        """NARROWABLE refusal whose ``bound`` is the headroom left in the cap.
+
+        The headroom is read after the refusal, so it is a snapshot (``None``
+        if the window is unreadable); the narrowed re-run re-checks it. A
+        failed or malformed read leaves the refusal NARROWABLE with no bound.
+        """
+        try:
+            bound = coerce_bound(await self.guard.headroom_usd())
+        except Exception as exc:
+            logger.warning("fiscal bound unavailable: %s", exc)
+            bound = None
         return Violation(
             tier=self.tier_name,
             code="FISCAL_LIMIT_EXCEEDED",
             message=f"Daily fiscal limit exceeded for {agent_id}. Fiscal Limit Pre-Reservation REJECTED",
             kind=ViolationKind.NARROWABLE,
+            bound=bound,
         )

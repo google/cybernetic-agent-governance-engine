@@ -590,6 +590,22 @@ class FiscalLimitGuard:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)
             return 0.0
 
+    async def _read_window_cents(self) -> int | None:
+        """Today's reserved + confirmed spend in cents, or ``None`` if unreadable."""
+        try:
+            key = self._window_key()
+            if self._is_async_client():
+                raw = await self._redis.get(key)  # type: ignore[attr-defined]
+            else:
+                loop = asyncio.get_running_loop()
+                raw = await loop.run_in_executor(None, self._redis.get, key)  # type: ignore[attr-defined]
+            return int(raw) if raw else 0
+        except Exception as exc:
+            logger.error(
+                "FiscalLimitGuard: window read failed — failing closed: %s", exc
+            )
+            return None
+
     async def would_accept(self, amount_usd: float) -> bool:
         """Read-only: would ``reserve(amount_usd=...)`` be accepted right now?"""
         if (
@@ -598,22 +614,26 @@ class FiscalLimitGuard:
             or amount_usd <= 0
         ):
             return False
+        current_cents = await self._read_window_cents()
+        if current_cents is None:
+            return False
         amount_cents = int(round(amount_usd * 100))
         cap_cents = int(round(self._daily_cap_usd * 100))
-        try:
-            key = self._window_key()
-            if self._is_async_client():
-                raw = await self._redis.get(key)  # type: ignore[attr-defined]
-            else:
-                loop = asyncio.get_running_loop()
-                raw = await loop.run_in_executor(None, self._redis.get, key)  # type: ignore[attr-defined]
-            current_cents = int(raw) if raw else 0
-        except Exception as exc:
-            logger.error(
-                "FiscalLimitGuard.would_accept: Redis error — failing closed: %s", exc
-            )
-            return False
         return current_cents + amount_cents <= cap_cents
+
+    async def headroom_usd(self) -> float | None:
+        """Read-only: the largest amount ``reserve()`` would accept right now.
+
+        ``None`` when the window cannot be read. Unlike :meth:`remaining_usd`
+        this never reports the full cap on a Redis error, so it is safe to
+        hand to a narrower as a bound. The value is a snapshot: a concurrent
+        reservation can shrink it, which the committing re-run then catches.
+        """
+        current_cents = await self._read_window_cents()
+        if current_cents is None:
+            return None
+        cap_cents = int(round(self._daily_cap_usd * 100))
+        return max(0, cap_cents - current_cents) / 100.0
 
     async def remaining_usd(self) -> float:
         """Return remaining headroom in today's window."""

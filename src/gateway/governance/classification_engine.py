@@ -16,7 +16,8 @@
 
 Implements the five-way decision tree:
   DENY ← ViolationKind.HARD
-  REQUIRE_APPROVAL ← ViolationKind.HITL or OPA MANUAL_REVIEW
+  REQUIRE_APPROVAL ← ViolationKind.HITL or OPA MANUAL_REVIEW (with an advisory
+                     ``narrow_hint`` when every other finding is NARROWABLE)
   DEFER ← ViolationKind.DEFERRABLE + confidence below threshold
   PAUSE ← ViolationKind.TRANSIENT (feature-gated)
   NARROW ← every violation NARROWABLE + a narrower proposal (candidate only:
@@ -28,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.gateway.governance.contracts import Violation, ViolationKind
+from src.gateway.governance.contracts import NarrowingResult, Violation, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.narrower import NarrowerRegistry
 
@@ -112,23 +113,11 @@ class ClassificationEngine:
         
         # Step 2: OPA MANUAL_REVIEW → REQUIRE_APPROVAL
         if context.opa_decision == "MANUAL_REVIEW":
-            return ClassificationResult(
-                decision=GovernanceDecision.REQUIRE_APPROVAL,
-                metadata={
-                    "classification_reason": "opa_manual_review",
-                    "deferrable": False,
-                },
-            )
-        
+            return self._require_approval("opa_manual_review", context, action)
+
         # Step 3: HITL violations → REQUIRE_APPROVAL
         if any(v.kind == ViolationKind.HITL for v in normalized_violations):
-            return ClassificationResult(
-                decision=GovernanceDecision.REQUIRE_APPROVAL,
-                metadata={
-                    "classification_reason": "hitl_required",
-                    "deferrable": False,
-                },
-            )
+            return self._require_approval("hitl_required", context, action)
         
         # Step 4: TRANSIENT violations → PAUSE (if enabled)
         if any(v.kind == ViolationKind.TRANSIENT for v in normalized_violations):
@@ -152,30 +141,24 @@ class ClassificationEngine:
         # Step 5: NARROW only if EVERY violation is NARROWABLE and a narrower
         # proposes clamped params (proof/model.py NARROW conditions (a), (b)).
         # A mixed set falls through (fail closed).  The proposal is NOT an
-        # authorisation: the governor re-runs the FULL profile on it (c).
-        # The narrower is consulted once, for the first violation; any other
-        # violation the proposal leaves unresolved fails that re-run.
+        # authorisation: the governor re-runs the FULL profile on it (c);
+        # any violation the proposal leaves unresolved fails that re-run.
         all_narrowable = all(
             v.kind == ViolationKind.NARROWABLE for v in normalized_violations
         )
         if all_narrowable and self._narrow_enabled:
-            violation = normalized_violations[0]
-            narrower = self._narrower_registry.find_narrower(
-                violation, action, context.params
-            )
-            if narrower:
-                result = narrower.narrow(violation, action, context.params)
-                if result.can_narrow:
-                    return ClassificationResult(
-                        decision=GovernanceDecision.NARROW,
-                        metadata={
-                            "classification_reason": "narrowable_resolved",
-                            "original_params": context.params,
-                            "narrowed_params": result.narrowed_params,
-                            "constraints_applied": result.constraints_applied,
-                            "narrowing_reason": result.narrowing_reason,
-                        },
-                    )
+            result = self.propose_narrowing(normalized_violations, action, context.params)
+            if result is not None:
+                return ClassificationResult(
+                    decision=GovernanceDecision.NARROW,
+                    metadata={
+                        "classification_reason": "narrowable_resolved",
+                        "original_params": context.params,
+                        "narrowed_params": result.narrowed_params,
+                        "constraints_applied": result.constraints_applied,
+                        "narrowing_reason": result.narrowing_reason,
+                    },
+                )
         
         # Step 6: DEFERRABLE violations + low confidence → DEFER
         deferrable_violations = [
@@ -200,4 +183,59 @@ class ClassificationEngine:
                 "classification_reason": "default_deny",
                 "deferrable": False,
             },
+        )
+
+    def propose_narrowing(
+        self,
+        violations: list[Violation],
+        action: str,
+        params: dict[str, Any],
+    ) -> NarrowingResult | None:
+        """Ask the narrowers to resolve the NARROWABLE findings; never authorises.
+
+        Findings are tried tightest ``bound`` first (unbounded ones last), so
+        the proposal satisfies the most restrictive tier that said how much
+        it would admit. The first narrower proposal wins; the caller must
+        still re-run the pipeline on it.
+        """
+        narrowable = sorted(
+            (v for v in violations if v.kind == ViolationKind.NARROWABLE),
+            key=lambda v: (v.bound is None, v.bound or 0.0),
+        )
+        for violation in narrowable:
+            narrower = self._narrower_registry.find_narrower(violation, action, params)
+            if narrower is None:
+                continue
+            result = narrower.narrow(violation, action, params)
+            if result is not None and result.can_narrow:
+                return result
+        return None
+
+    def _require_approval(
+        self, reason: str, context: ClassificationContext, action: str
+    ) -> ClassificationResult:
+        """REQUIRE_APPROVAL, with a ``narrow_hint`` when one can be proposed.
+
+        The hint is offered only when narrowing is enabled and every finding
+        other than the approval itself (HITL) is NARROWABLE: then clamped
+        params might leave the human only the approval to give. It is
+        advisory; ``SymbolicGovernor.validate_action`` keeps it only if a
+        DRY_RUN over the clamped params reports only HITL findings.
+        """
+        metadata: dict[str, Any] = {"classification_reason": reason, "deferrable": False}
+        others = [v for v in context.violations if v.kind != ViolationKind.HITL]
+        if (
+            self._narrow_enabled
+            and others
+            and all(v.kind == ViolationKind.NARROWABLE for v in others)
+        ):
+            hint = self.propose_narrowing(others, action, context.params)
+            if hint is not None:
+                metadata["narrow_hint"] = {
+                    "narrowed_params": hint.narrowed_params,
+                    "constraints_applied": hint.constraints_applied,
+                    "narrowing_reason": hint.narrowing_reason,
+                }
+        return ClassificationResult(
+            decision=GovernanceDecision.REQUIRE_APPROVAL, metadata=metadata
         )

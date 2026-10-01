@@ -52,8 +52,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - **[BREAKING]** `DeferQueue.approve()` now returns `ApprovalStatus.CONTENTION_ABORTED` on CAS retry exhaustion (previously would raise unhandled exception). Callers must map this to HTTP 409.
-- Redis schema for defer tokens now includes a `rev` (revision) field. Existing tokens are migrated transparently (absent `rev` treated as `0`).
 - `cage-client` SDK bumped to v0.2.0 (#313).
+- **Narrowing uses the tier-reported bound (Phase 3, `feat/narrow-bound-hint`).** `Violation` gains an optional, validated `bound` (`src/gateway/governance/contracts.py`): how much the refusing tier would still admit. `FiscalTierPlugin` reports the remaining daily headroom from the new fail-closed `FiscalLimitGuard.headroom_usd()` (`None` when Redis is unreadable, unlike `remaining_usd()`); kernel barrier refusals (`src/gateway/governance/safety/barrier_tier.py`) report `ControlBarrierFunction.admissible_cost()`, exactly `verify_action`'s accept/refuse boundary. `AmountNarrower` clamps to `bound` (floored to the cent; a bound under one cent means no proposal, never a threshold fallback) and uses `domains.finance.consensus.threshold_usd` only when no bound is reported. `ClassificationEngine.propose_narrowing()` tries the tightest bound first. `REQUIRE_APPROVAL` carries `narrowed_params` (and the DeferToken snapshot a `narrow_hint`) when narrowing is enabled and every non-HITL finding is NARROWABLE, kept only if a `DRY_RUN` over the clamped params leaves only HITL findings. E2E S10 is green.
+
+### Breaking Changes
 
 #### feat(governance)! — Preview phase-2 barriers before human approval (Phase 2)
 

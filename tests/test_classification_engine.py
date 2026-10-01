@@ -432,3 +432,107 @@ def test_adversarial_messages_do_not_override_hard_kind():
     result = engine.classify(context, "test_action")
     assert result.decision == GovernanceDecision.DENY
     assert result.metadata["classification_reason"] == "hard_violation"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: bound-aware narrowing and the REQUIRE_APPROVAL narrow hint
+# ---------------------------------------------------------------------------
+
+
+class _ClampToBound:
+    """Records what it was asked; clamps ``amount`` to ``violation.bound``."""
+
+    def __init__(self) -> None:
+        self.asked: list[Violation] = []
+
+    def can_narrow(self, violation, action, params):
+        return violation.narrowable and violation.bound is not None
+
+    def narrow(self, violation, action, params):
+        from src.gateway.governance.contracts import NarrowingResult
+
+        self.asked.append(violation)
+        return NarrowingResult(
+            can_narrow=True,
+            narrowed_params={**params, "amount": violation.bound},
+            constraints_applied=[f"amount <= {violation.bound}"],
+            narrowing_reason=f"clamped to {violation.tier}",
+        )
+
+
+def _v(kind: ViolationKind, tier: str = "fiscal", bound: float | None = None) -> Violation:
+    return Violation(tier=tier, code=f"{tier.upper()}_X", message="", kind=kind, bound=bound)
+
+
+def _ctx(violations, opa_decision=None):
+    return ClassificationContext(
+        violations=violations,
+        confidence=0.99,
+        opa_decision=opa_decision,
+        policy_ambiguous=False,
+        params={"amount": 50_000.0},
+    )
+
+
+def _engine(narrower, *, narrow_enabled=True):
+    return ClassificationEngine(
+        narrower_registry=NarrowerRegistry(narrowers=[narrower]),
+        narrow_enabled=narrow_enabled,
+    )
+
+
+def test_narrow_resolves_the_tightest_bound_first():
+    narrower = _ClampToBound()
+    loose = _v(ViolationKind.NARROWABLE, "cap_a", bound=40_000.0)
+    tight = _v(ViolationKind.NARROWABLE, "cap_b", bound=3_000.0)
+    unbounded = _v(ViolationKind.NARROWABLE, "cap_c")
+
+    result = _engine(narrower).classify(_ctx([unbounded, loose, tight]), "execute_trade")
+
+    assert result.decision == GovernanceDecision.NARROW
+    assert result.metadata["narrowed_params"]["amount"] == 3_000.0
+    assert narrower.asked == [tight]
+
+
+def test_narrower_returning_none_falls_through_to_deny():
+    class _Declines(_ClampToBound):
+        def narrow(self, violation, action, params):
+            return None
+
+    result = _engine(_Declines()).classify(
+        _ctx([_v(ViolationKind.NARROWABLE, bound=1.0)]), "execute_trade"
+    )
+    assert result.decision == GovernanceDecision.DENY
+
+
+@pytest.mark.parametrize("opa_decision", [None, "MANUAL_REVIEW"])
+def test_require_approval_carries_a_hint_when_the_rest_is_narrowable(opa_decision):
+    violations = [_v(ViolationKind.HITL, "ftra"), _v(ViolationKind.NARROWABLE, bound=10_000.0)]
+    result = _engine(_ClampToBound()).classify(_ctx(violations, opa_decision), "execute_trade")
+
+    assert result.decision == GovernanceDecision.REQUIRE_APPROVAL
+    assert result.metadata["narrow_hint"]["narrowed_params"]["amount"] == 10_000.0
+
+
+@pytest.mark.parametrize(
+    "violations",
+    [
+        [_v(ViolationKind.HITL, "ftra")],  # nothing to narrow
+        [_v(ViolationKind.HITL, "ftra"), _v(ViolationKind.NARROWABLE, bound=1.0), _v(ViolationKind.DEFERRABLE, "conf")],
+    ],
+    ids=["hitl-only", "mixed-non-narrowable"],
+)
+def test_require_approval_offers_no_hint_unless_every_other_finding_is_narrowable(violations):
+    narrower = _ClampToBound()
+    result = _engine(narrower).classify(_ctx(violations), "execute_trade")
+    assert result.decision == GovernanceDecision.REQUIRE_APPROVAL
+    assert "narrow_hint" not in result.metadata
+    assert narrower.asked == []
+
+
+def test_require_approval_offers_no_hint_when_narrowing_is_disabled():
+    narrower = _ClampToBound()
+    violations = [_v(ViolationKind.HITL, "ftra"), _v(ViolationKind.NARROWABLE, bound=1.0)]
+    result = _engine(narrower, narrow_enabled=False).classify(_ctx(violations), "execute_trade")
+    assert "narrow_hint" not in result.metadata
+    assert narrower.asked == []
