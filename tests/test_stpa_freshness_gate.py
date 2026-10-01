@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""STPA freshness gate: commit order in committed trees, stamps for local edits."""
+"""STPA freshness gate: sha256 of a fresh compile first; commit order or stamps as fallback."""
 
 from __future__ import annotations
 
@@ -122,3 +122,63 @@ def test_missing_artifact_is_reported(gate) -> None:
     _git(repo, "commit", "-qm", "drop", date="2026-01-02T12:00:00+00:00")
     errors = module.check_freshness()
     assert errors and errors[0].startswith("MISSING artifact")
+
+
+# ---------------------------------------------------------------------------
+# Content first (F-3): sha256 of a fresh compile beats commit order
+# ---------------------------------------------------------------------------
+
+
+def test_touched_source_with_identical_compile_is_fresh(gate) -> None:
+    """Ordering alone calls this stale; the regenerated content says otherwise."""
+    module, repo, source, artifact = gate
+    source.write_text("hazards: []  # comment only\n")
+    _git(repo, "commit", "-qam", "touch source", date="2026-01-02T12:00:00+00:00")
+    assert module.check_freshness(regenerated={artifact: artifact.read_text()}) == []
+
+
+def test_artifact_committed_later_but_differing_is_stale(gate) -> None:
+    """Ordering alone calls this fresh; the content mismatch is caught."""
+    module, repo, source, artifact = gate
+    source.write_text("hazards: [h1]\n")
+    _git(repo, "commit", "-qam", "edit source", date="2026-01-02T12:00:00+00:00")
+    artifact.write_text("# Generated: 2000-01-01T00:00:00+00:00\n# hand edit\n")
+    _git(repo, "commit", "-qam", "unrelated artifact edit", date="2026-01-03T12:00:00+00:00")
+
+    errors = module.check_freshness(
+        regenerated={artifact: "# Generated: 2026-01-03T00:00:00+00:00\n# from h1\n"}
+    )
+
+    assert len(errors) == 1
+    assert "content differs from a fresh compile (sha256)" in errors[0]
+
+
+def test_volatile_stamps_are_masked_before_hashing(gate) -> None:
+    module, *_ = gate
+    a = '# Generated: 2000-01-01T00:00:00+00:00\n{"generated_at": "2000-01-01T00:00:00Z",' \
+        ' "issued_at": "2000-01-01T00:00:00Z", "expires_at": "2001-01-01T00:00:00Z"}\n'
+    b = '# Generated: 2026-10-01T14:00:00.1+00:00\n{"generated_at": "2026-10-01T14:00:00Z",' \
+        ' "issued_at": "2026-10-01T14:00:00Z", "expires_at": "2027-10-01T14:00:00Z"}\n'
+    assert module.content_digest(a) == module.content_digest(b)
+    assert module.content_digest(a) != module.content_digest(a + "rule\n")
+
+
+def test_unregenerable_artifact_falls_back_to_commit_order(gate) -> None:
+    module, repo, source, artifact = gate
+    source.write_text("hazards: [h1]\n")
+    _git(repo, "commit", "-qam", "edit source only", date="2026-01-02T12:00:00+00:00")
+    errors = module.check_freshness(regenerated={artifact: None})
+    assert len(errors) == 1
+    assert "committed before newest STPA source change" in errors[0]
+
+
+@pytest.mark.skipif(
+    _load_gate()._ruff_binary() is None, reason="ruff formats the generated Python targets"
+)
+def test_every_committed_artifact_matches_a_fresh_compile() -> None:
+    """The recipes are right: every real artifact regenerates byte-identically."""
+    module = _load_gate()
+    results = module.check_content()
+    assert {a.name: r.value for a, r in results.items()} == {
+        a.name: "match" for a in module._GENERATED_ARTIFACTS
+    }

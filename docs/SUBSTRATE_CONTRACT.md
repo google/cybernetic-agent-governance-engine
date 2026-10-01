@@ -157,7 +157,7 @@ Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](
 
 ### 2.3 Governance Pipeline Tiers
 
-Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 9-tier, two-phase governance pipeline (`run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../src/gateway/governance/governor/pipeline.py), matching `TIER_LABELS` in [`proof/model.py`](../proof/model.py)), where Phase 1 read-only stages execute sequentially first and Phase 2 mutating stages are gated by `phase2_mode()`: a `HARD` Phase 1 finding skips Phase 2, any other Phase 1 finding (or `Profile.DRY_RUN`) previews it side-effect-free and reports `barrier_preview`, and only a clean Phase 1 under `FULL` / `POST_HITL` commits:
+Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 8-tier, two-phase governance pipeline (`run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../src/gateway/governance/governor/pipeline.py), matching `TIER_LABELS` in [`proof/model.py`](../proof/model.py)), where Phase 1 read-only stages execute sequentially first and Phase 2 mutating stages are gated by `phase2_mode()`: a `HARD` Phase 1 finding skips Phase 2, any other Phase 1 finding (or `Profile.DRY_RUN`) previews it side-effect-free and reports `barrier_preview`, and only a clean Phase 1 under `FULL` / `POST_HITL` commits:
 
 | Tier | Phase | Name | Implementation |
 |---|---|---|---|
@@ -169,15 +169,14 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 | **Tier 2** | Phase 1 (Read-Only) | Agent confidence & structural corroboration | [`src/gateway/governance/governor/stages/confidence.py`](../src/gateway/governance/governor/stages/confidence.py) |
 | **Tier 5** | Phase 1 (Read-Only) | Multi-Agent Consensus (10 s per-critic timeout) | [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) |
 | **Tier 6** | Phase 1 (Read-Only) | DoWhy Causal Gatekeeper | [`src/gateway/governance/causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
-| **Tier 7** | Phase 1 (Read-Only) | Adaptive FRIA Enforcement | [`src/gateway/governance/normative_provider.py`](../src/gateway/governance/normative_provider.py) |
 | **Tier 3a** | Phase 2 (Mutating) | Control Barrier Function (Lua atomic check+commit) | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) |
 | **Tier 4** | Phase 2 (Mutating) | Fiscal Limit Pre-Reservation | [`src/gateway/governance/safety/resource_guard.py`](../src/gateway/governance/safety/resource_guard.py), [`src/cage_finance/safety/fiscal_limit_guard.py`](../src/cage_finance/safety/fiscal_limit_guard.py) |
 
 > PII sanitization (`src/gateway/governance/pii_sanitizer.py`) and confabulation scoring (`src/gateway/governance/confabulation_scorer.py`) are standalone modules invoked outside `run_pipeline()` — PII sanitization runs on audit records inside `src/gateway/governance/uca_logger.py`, and confabulation scoring is a Langfuse observability metric.
 
-> **Tier 0.5 — FTRA formal-model coverage:** FTRA (`ftra`, Tier 0.5) is included in the 9-tier `TIERS` state tuple in [`proof/model.py`](../proof/model.py) for `NoDirectBind` BFS reachability verification.
+> **Tier 0.5 — FTRA formal-model coverage:** FTRA (`ftra`, Tier 0.5) is included in the 8-tier `TIERS` state tuple in [`proof/model.py`](../proof/model.py) for `NoDirectBind` BFS reachability verification.
 
-> **Tier 3a / Tier 4 — CBF effective-balance & Phase 2 reservation note:** The CBF ([`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py)) tracks `_local_debits` intra-window. `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` for all threshold checks; `reset_local_debits()` is called by the reconciliation daemon on each KMS snapshot refresh. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
+> **Tier 3a / Tier 4 — CBF effective-balance & Phase 2 reservation note:** The CBF ([`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py)) previews and commits separately. `verify_action()` is a pure, side-effect-free preview (`admits(balance, cost)`); it never debits anything. Intra-window double-spend protection lives in Redis: the commit path (`atomic_verify_and_commit()`, called by `commit_barrier`) appends each debit to the `cbf:local_debits` list inside its Lua script and subtracts that list from a reconciled snapshot balance; the reconciliation daemon trims it with `trim_local_debits_through_sequence_sync()` once a signed snapshot covers those debits. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
 
 > **Two-Phase Pipeline & Saga Rollback Semantics:** In CAGE v3.0.1, `run_pipeline()` decouples into Phase 1 (read-only validation) and Phase 2 (atomic state mutations via `ReservationScope`). All validation checks run in Phase 1 before balance debits (Tier 3a) or daily limit reservations (Tier 4) occur, eliminating downstream budget leakage. On compensating rollbacks, `FiscalLimitGuard.rollback_state()` and `release()` validate window-key existence to prevent negative counter underflow across TTL boundaries.
 
@@ -236,7 +235,7 @@ The following may change without a major version bump:
 
 - AGP Semantic Policy output format (`config/agp/generated_semantic_policy.txt`)
 - Webhook payload schema (additive changes only; no field removals without notice)
-- Internal tier ordering within the 9-tier pipeline (`Tier 0.5` through `Tier 7`)
+- Internal tier ordering within the 8-tier pipeline (`Tier 0.5` through `Tier 6`)
 
 ### 4.3 Version Pinning
 

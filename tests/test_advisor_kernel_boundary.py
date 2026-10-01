@@ -165,7 +165,7 @@ async def test_evaluator_node_returns_no_signature() -> None:
 
     plan = {"steps": [{"action": "execute_trade", "parameters": {"symbol": "AAPL"}}]}
     with patch.object(
-        mod, "simulate_governance_check", AsyncMock(return_value={"status": "APPROVED"})
+        mod, "simulate_governance_check", AsyncMock(return_value={"verdict": "ALLOW"})
     ):
         result = await mod.evaluator_node({"execution_plan_output": plan})
 

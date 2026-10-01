@@ -14,7 +14,7 @@ This document is a public transparency statement about the security posture of t
 CAGE is an open-source, domain-agnostic AI governance platform. Its kernel enforces governance policies over multi-agent LLM workflows independently of any domain; finance and healthcare ship as equal-standing optional example domain plugins, and jurisdictional compliance is a configurable posture. Enforcement is delivered via:
 
 - **Pre-Pipeline & Tier 0.5 Boundary Gate**: NeMo Guardrails (Layer 0) and FTRA (`ftra`, Tier 0.5 — Forward-Looking Trajectory Reachability Analyzer, operating both on the whole execution graph via `create_ftra_node()` and per-request via `FtraStage`)
-- **Tiers 0.5–7** (two-phase per-tool-call checks in `run_pipeline()`): Phase 1 read-only validation — FTRA (Tier 0.5) → STPA/UCA validation (Tier 1) → OPA Rego policy (Tier 3b) → Agentic confidence & structural corroboration (Tier 2) → Multi-model consensus (Tier 5) → Causal gatekeeper (Tier 6) → Adaptive FRIA gate (Tier 7); followed on zero violations by Phase 2 mutating commits — Control Barrier Function (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4)
+- **Tiers 0.5–6** (two-phase per-tool-call checks in `run_pipeline()`): Phase 1 read-only validation — FTRA (Tier 0.5) → STPA/UCA validation (Tier 1) → OPA Rego policy (Tier 3b) → Agentic confidence & structural corroboration (Tier 2) → Multi-model consensus (Tier 5) → Causal gatekeeper (Tier 6); followed on zero violations by Phase 2 mutating commits — Control Barrier Function (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4)
 
 The system is designed for deployment across three regulatory regions: US Federal (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`).
 

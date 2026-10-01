@@ -21,11 +21,8 @@ only through ``WorkloadIdentityMiddleware`` on the gateway root app
 
 Coverage targets
 ----------------
-A. /governance/check endpoint
-   - Happy path: valid request → 200 with governance decision
-   - Missing tool_name → 400
-   - Invalid JSON body → 400
-   - Governance denial (verify() returns violations) → 200 REJECTED
+A. The removed POST /check route
+   - POST /check → 404 and never reaches the governor (use /validate-action)
 
 B. /governance/validate-action endpoint
    - Happy path: valid action → 200 ALLOW (no seal)
@@ -161,87 +158,24 @@ def gov_client(mock_symbolic_governor, mock_kms_signer):
 
 
 # ===========================================================================
-# A. /check endpoint tests
+# A. /check is removed (refactor/gateway-surface-cleanup)
 # ===========================================================================
 
 
-class TestGovernanceCheckEndpoint:
-    """Tests for POST /check on governance_app."""
+class TestGovernanceCheckRouteRemoved:
+    """POST /check was a dead non-committing duplicate of /validate-action."""
 
-    def test_check_happy_path_approved(self, gov_client, mock_symbolic_governor):
-        """Valid request returns 200 APPROVED when no violations."""
-        body = _json_body("execute_trade", {"amount": 100})
-
+    def test_check_route_is_gone(self, gov_client, mock_symbolic_governor):
+        """The route no longer exists and never reaches the governor."""
         resp = gov_client.post(
             "/check",
-            content=body,
+            content=_json_body("execute_trade", {"amount": 100}),
             headers={"Content-Type": "application/json"},
         )
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "APPROVED"
-        assert data["violations"] == []
-        mock_symbolic_governor.verify.assert_awaited_once_with(
-            "execute_trade", {"amount": 100}
-        )
-
-    def test_check_returns_rejected_when_violations_present(
-        self, gov_client, mock_symbolic_governor
-    ):
-        """When governor.verify() returns violations, status is REJECTED."""
-        from src.gateway.governance.contracts import Violation, ViolationKind
-
-        mock_symbolic_governor.verify = AsyncMock(
-            return_value={
-                "violations": [
-                    Violation(
-                        tier="cbf",
-                        code="drawdown_limit_exceeded",
-                        message="Drawdown barrier breached",
-                        kind=ViolationKind.HARD,
-                    )
-                ],
-                "opa_results": {"allow": False},
-            }
-        )
-        body = _json_body("execute_trade", {"amount": 999999})
-
-        resp = gov_client.post(
-            "/check",
-            content=body,
-            headers={"Content-Type": "application/json"},
-        )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "REJECTED"
-        assert [v["code"] for v in data["violations"]] == ["drawdown_limit_exceeded"]
-
-    def test_check_missing_tool_name_returns_400(self, gov_client):
-        """Body without tool_name returns HTTP 400."""
-        body = json.dumps({"params": {"amount": 100}}).encode()
-
-        resp = gov_client.post(
-            "/check",
-            content=body,
-            headers={"Content-Type": "application/json"},
-        )
-
-        assert resp.status_code == 400
-        assert "tool_name" in resp.text.lower() or resp.status_code == 400
-
-    def test_check_invalid_json_returns_400(self, gov_client):
-        """Malformed JSON body returns HTTP 400."""
-        body = b"not-valid-json"
-
-        resp = gov_client.post(
-            "/check",
-            content=body,
-            headers={"Content-Type": "application/json"},
-        )
-
-        assert resp.status_code == 400
+        assert resp.status_code == 404
+        mock_symbolic_governor.verify.assert_not_awaited()
+        mock_symbolic_governor.validate_action.assert_not_awaited()
 
 
 # ===========================================================================
@@ -464,14 +398,18 @@ class TestEnforceApprovedGovernance:
     async def test_consumed_approval_runs_post_hitl_and_returns_seal(self):
         governor = _mock_governor()
         governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
-        queue, open_queue = self._queue(MagicMock(thread_id="thread-9"))
+        queue, open_queue = self._queue(MagicMock(thread_id="thread-9", barrier_preview="PASS"))
         emit = AsyncMock()
 
         seal = await self._call(governor, open_queue, emit)
 
         assert seal == "SEAL"
+        # D-H: the committing run is bound to the barrier snapshot approved.
         governor.revalidate_post_hitl.assert_awaited_once_with(
-            "execute_trade", {"symbol": "AAPL", "amount": 10.0}, trace_id="thread-9"
+            "execute_trade",
+            {"symbol": "AAPL", "amount": 10.0},
+            approved_barrier_preview="PASS",
+            trace_id="thread-9",
         )
         assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
         emit.assert_not_awaited()
@@ -738,18 +676,11 @@ class TestGovernanceAppRoutes:
 
     @pytest.fixture(scope="class")
     def client(self):
-        # scope="class": governance_app has no mutable state and all three
+        # scope="class": governance_app has no mutable state and both
         # smoke tests in this class share the same (read-only) app config.
         from src.gateway.server.governance_middleware import governance_app
 
         return TestClient(governance_app, raise_server_exceptions=False)
-
-    def test_check_route_exists(self, client):
-        """POST /check route is registered (returns something other than 404)."""
-        resp = client.post(
-            "/check", json={"tool_name": "check_market_status", "params": {}}
-        )
-        assert resp.status_code != 404
 
     def test_validate_action_route_exists(self, client):
         """POST /validate-action route is registered (returns something other than 404)."""

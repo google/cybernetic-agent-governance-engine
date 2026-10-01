@@ -150,7 +150,9 @@ async def enforce_approved_governance(
        larger one. Consumption is a compare-and-swap: a replayed or concurrent
        ``deferred_id`` is refused.
     2. Run ``SymbolicGovernor.revalidate_post_hitl()`` (POST_HITL profile:
-       commit + seal) on the fresh ``params``.
+       commit + seal) on the fresh ``params``, bound to the token's
+       ``barrier_preview``: an approval given against PASS whose barriers now
+       refuse is ``APPROVAL_CONTEXT_DRIFT``.
 
     The approval is spent before re-validation, so a re-validation refusal
     also burns it: the operator must approve a fresh request.
@@ -191,7 +193,10 @@ async def enforce_approved_governance(
 
     try:
         return await governor.revalidate_post_hitl(
-            tool_name, params, trace_id=token.thread_id
+            tool_name,
+            params,
+            approved_barrier_preview=token.barrier_preview,
+            trace_id=token.thread_id,
         )
     except GovernanceError as exc:
         logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
@@ -374,43 +379,6 @@ def _check_validate_action_rate_limit(client_ip: str) -> bool:
 
     bucket.append(now)
     return True
-
-
-class GovernanceCheckRequest(dict):
-    pass  # plain dict accepted via Request
-
-
-@governance_app.post("/check")
-async def governance_check(request: Request) -> JSONResponse:
-    """Internal endpoint: run a governance dry-run check against a proposed tool call.
-
-    Requires a trusted caller workload identity (WorkloadIdentityMiddleware).
-
-    Request body (JSON):
-        {"tool_name": str, "params": dict}
-    """
-    body_bytes = await request.body()
-
-    try:
-        body = json.loads(body_bytes)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON body.")
-
-    tool_name: str = body.get("tool_name", "")
-    params: dict[str, Any] = body.get("params", {})
-
-    if not tool_name:
-        raise HTTPException(status_code=400, detail="'tool_name' is required.")
-
-    result = await governor_of(request.app).verify(tool_name, params)
-    violations = [v.to_dict() for v in result.get("violations", [])]
-    return JSONResponse(
-        content={
-            "status": "APPROVED" if not violations else "REJECTED",
-            "violations": violations,
-            "opa_results": result.get("opa_results"),
-        }
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -662,17 +630,17 @@ async def validate_action_endpoint(
         ``cage.tool_execute`` root span, producing a unified Telemetry trace
         tree across the service boundary.
 
-    Governance tiers executed (full 8-tier pipeline — FTRA pre-gate + 7 in-pipeline tiers via _run_checks()):
+    Governance tiers executed (8-tier pipeline via ``run_pipeline()``, matching
+    ``TIER_LABELS`` in ``proof/model.py``; plugin tiers such as ``bounding`` run
+    alongside):
         - Tier 0.5: FTRA action classification & reachability analysis
         - Tier 1: STPA/STAMP Unsafe Control Action validation
         - Tier 2: Agent confidence threshold pre-check (fast-fail)
-        - Tier 3a: Control Barrier Function (CBF) — mathematical safety bounds
-          (runs concurrently with Tier 3b OPA check via asyncio.gather)
         - Tier 3b: OPA Rego policy evaluation — declarative rule enforcement
-        - Tier 4: Fiscal Limit Pre-Reservation — atomic Redis WATCH/MULTI/EXEC
         - Tier 5: Multi-agent Consensus gate (ISO 42001)
         - Tier 6: DoWhy Causal Gatekeeper — refutation-based safety lock
-        - Tier 7: Adaptive FRIA Enforcement (EU AI Act Art. 29a)
+        - Tier 3a (phase 2): Control Barrier Function (CBF) — barrier headroom
+        - Tier 4 (phase 2): Fiscal Limit Pre-Reservation
 
     This endpoint is a non-committing decision: phase-2 tiers are previewed,
     nothing is reserved, and no routing seal is minted. The caller uses the

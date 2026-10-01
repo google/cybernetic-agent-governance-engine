@@ -23,7 +23,7 @@ The transition to Agentic AI represents a shift from deterministic software to p
 
 ## 3. CAGE Architecture & VSM Mapping
 
-**v3.0.1 System State (GO: 2026-08-28):** CAGE implements an **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers: Tiers 0–6, plus Tier 6b adaptive FRIA gate: STPA → Agentic Confidence → CBF + OPA [concurrent] → Fiscal Limit Pre-Reservation → Consensus → CausalGatekeeper → FRIA) with a 10-node LangGraph StateGraph, 5 first-class decision primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`; the former `PAUSE` was removed 2026-10-01), Lua-atomic CBF, and strict replica verification. OPA Policy Evaluation runs concurrently with the CBF check. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. External CBF ledger reconciliation (POAM-023 / POAM-2026-038) is closed and operational via GCS WORM ledger + Cloud KMS signing with 300s TTL. All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
+**v3.0.1 System State (GO: 2026-08-28):** CAGE implements an **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus in-pipeline tiers run by `run_pipeline()` in two phases — Phase 1 read-only: STPA → OPA → Agentic Confidence → Consensus → CausalGatekeeper; Phase 2 commit: CBF → Fiscal Limit Pre-Reservation) with a 10-node LangGraph StateGraph, 5 first-class decision primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`; the former `PAUSE` was removed 2026-10-01), Lua-atomic CBF, and strict replica verification. OPA Policy Evaluation runs in Phase 1, before the CBF barrier commits in Phase 2 (atomic Lua verify-and-commit). The FRIA three-zone primitive (`enforce_fria_boundary()`) exists but is not a pipeline tier. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. External CBF ledger reconciliation (POAM-023 / POAM-2026-038) is closed and operational via GCS WORM ledger + Cloud KMS signing with 300s TTL. All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
 
 We map the components of our Governance Graph to the **Viable System Model (VSM)**:
 
@@ -66,7 +66,7 @@ The **Explainer** ensures the output is grounded in reality, addressing the "Bla
 
 ### 4.4. 8-Tier Governance Pipeline
 
-The [`SymbolicGovernor`](../../../src/gateway/governance/governor/pipeline.py) implements an 8-tier pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `_run_checks()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
+The [`SymbolicGovernor`](../../../src/gateway/governance/governor/pipeline.py) implements an 8-tier pipeline (FTRA Tier 0.5 plus Tiers 1–6, composed by `run_pipeline()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
 
 | Tier | Name | Mechanism | Formal Property |
 | :--- | :--- | :-------- | :-------------- |
@@ -77,9 +77,8 @@ The [`SymbolicGovernor`](../../../src/gateway/governance/governor/pipeline.py) i
 | **Tier 4** | OPA policy evaluation | `asyncio.gather()`; concurrent with Tier 2 | Fail-closed on OPA unavailability |
 | **Tier 5** | Consensus | ≥$10k trades, 30s timeout | Multi-critic unanimity |
 | **Tier 6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` | World-model consistency |
-| **Tier 6b** | FRIA zones | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | Human oversight gate |
 
-> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
+> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `run_pipeline()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
 
 ## 5. Mathematical Safety Controls
 
@@ -101,7 +100,7 @@ The CBF condition guarantees that the system cannot transition from a safe state
 
 **Source:** [`src/gateway/governance/governor/governor.py`](../../../src/gateway/governance/governor/governor.py)
 
-The Fundamental Rights Impact Assessment (FRIA) zone thresholds determine the disposition of each governance decision at Tier 6b:
+The Fundamental Rights Impact Assessment (FRIA) zone thresholds describe the three-zone disposition model of the `enforce_fria_boundary()` primitive (`src/gateway/governance/normative_provider.py`). It is not a pipeline tier — `run_pipeline()` does not call it:
 
 | Score Range | Zone | Action |
 | :---------- | :--- | :----- |
@@ -121,7 +120,7 @@ The confabulation (hallucination) risk score is computed as the complement of th
 risk_score = 1.0 − confidence
 ```
 
-A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation scoring is a standalone Langfuse observability metric computed independently of the FRIA zone classification (Tier 6b).
+A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation scoring is a standalone Langfuse observability metric computed independently of the FRIA zone classification.
 
 ### 5.4. Causal Marginal Risk Boundary
 

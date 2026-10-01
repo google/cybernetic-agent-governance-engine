@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -504,6 +505,89 @@ async def test_s6_fiscal_drift_after_approval_blocks_in_the_committing_run(gw: G
     gw.actuate.assert_not_awaited()
 
 
+# ---------------------------------------------------------------------------
+# D-H — an approval is bound to the barrier snapshot the human saw
+# ---------------------------------------------------------------------------
+
+
+async def test_s6_barrier_drift_after_approval_is_refused_as_context_drift(gw: Gateway) -> None:
+    params = trade(20_000.0)
+    deferred_id = await _require_approval(gw, params)  # barrier preview: PASS
+    await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
+    await gw.cbf_redis.set(_CASH_KEY, "5000.0")  # the cash barrier now refuses 20k
+
+    result = await gw.execute(params, deferred_id)
+
+    assert result.startswith("BLOCKED"), result
+    assert "APPROVAL_CONTEXT_DRIFT" in result, result
+    assert await gw.cash() == 5000.0
+    assert await gw.fiscal.current_spend_usd() == 0.0  # fiscal commit rolled back
+    assert await gw.seal_redis.dbsize() == 0  # no seal minted
+    gw.actuate.assert_not_awaited()
+    gw.refusals.assert_awaited()
+
+
+async def test_approval_given_against_a_failing_preview_may_run_once_it_passes(gw: Gateway) -> None:
+    # FAIL → PASS is not drift: the human approved knowing the barrier would
+    # breach (e.g. accepting a narrow hint) and the committing run re-checks.
+    params = trade(600_000.0)
+    resp = await gw.validate(params)
+    body = _body(resp)
+    assert body["classification_meta"]["barrier_preview"] == "FAIL"
+    await gw.approve(str(body["deferred_id"]), "urn:op:alice", "urn:op:bob")
+
+    result = await gw.execute({**params, "amount": 15_000.0}, str(body["deferred_id"]))
+
+    assert result.startswith("EXECUTED"), result
+    assert await gw.fiscal.current_spend_usd() == 15_000.0
+
+
+async def test_approve_stamps_the_token_snapshot_over_a_client_supplied_binding(gw: Gateway) -> None:
+    deferred_id = await _require_approval(gw, trade(20_000.0))
+    queue = DeferQueue(gw.defer_redis)
+    await queue.approve(
+        deferred_id,
+        ApprovalRecord(
+            approver_urn="urn:op:mallory",
+            approved_at_utc=datetime.now(timezone.utc).isoformat(),
+            auth_method="OIDC",
+            auth_principal_hash=hashlib.sha256(b"urn:op:mallory").hexdigest(),
+            approved_barrier_preview="FAIL",  # forged: the server decides this
+        ),
+    )
+
+    token = await queue.get(deferred_id)
+
+    assert token is not None
+    assert [a.approved_barrier_preview for a in token.approvals] == ["PASS"]
+
+
+async def test_consume_refuses_an_approval_bound_to_another_snapshot(gw: Gateway) -> None:
+    params = trade(20_000.0)
+    deferred_id = await _require_approval(gw, params)
+    await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
+    key = f"DEFER:{deferred_id}"
+    stored = json.loads(await gw.defer_redis.hget(key, "token"))
+    stored["approvals"][0]["approved_barrier_preview"] = "FAIL"
+    await gw.defer_redis.hset(key, "token", json.dumps(stored))
+
+    result = await gw.execute(params, deferred_id)
+
+    assert result.startswith("BLOCKED"), result
+    await _assert_nothing_committed(gw)
+    assert await gw.defer_redis.hget(key, "status") == "RESOLVED"  # not consumed
+
+
+@pytest.mark.parametrize("snapshot", ["MAYBE", "", 7])
+async def test_unparseable_approved_snapshot_is_refused_before_any_commit(gw: Gateway, snapshot: Any) -> None:
+    with pytest.raises(GovernanceError) as refused:
+        await gw.governor.revalidate_post_hitl(
+            "execute_trade", trade(500.0), approved_barrier_preview=snapshot
+        )
+    assert "APPROVAL_CONTEXT_DRIFT" in str(refused.value)
+    await _assert_nothing_committed(gw)
+
+
 async def test_s7_unsafe_control_action_is_denied(gw: Gateway) -> None:
     # The finance STPA rules act on structured params (UCA-9: compliance check
     # bypassed); free-text prompt screening belongs to the NeMo rails.
@@ -576,7 +660,7 @@ async def test_s13_bounded_trade_is_claimed_by_the_cash_barrier(gw: Gateway) -> 
 async def test_s11_post_hitl_reruns_the_dose_barrier(gw: Gateway) -> None:
     params = {"dose_mg": 600, "trader_role": "senior", "amount": 0.0}
     with pytest.raises(GovernanceError) as refused:
-        await gw.governor.revalidate_post_hitl("administer_medication", params)
+        await gw.governor.revalidate_post_hitl("administer_medication", params, approved_barrier_preview=None)
     assert any("DOSE_BARRIER_VIOLATED" in v for v in refused.value.violations)
 
 

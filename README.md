@@ -560,7 +560,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 
 This guarantees that the cash balance never drops below the minimum threshold in a single step — the decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External reconciliation is implemented via [`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py) (POAM-023 closed 2026-07-27).
 
-### 9-Tier Two-Phase Symbolic Governor Pipeline
+### 8-Tier Two-Phase Symbolic Governor Pipeline
 
 Sources: [`src/gateway/governance/governor/governor.py`](src/gateway/governance/governor/governor.py), [`src/gateway/governance/governor/pipeline.py`](src/gateway/governance/governor/pipeline.py), [`proof/model.py`](proof/model.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
 

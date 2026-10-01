@@ -23,18 +23,6 @@ from locust import HttpUser, between, events, task
 REQUEST_TYPE = "Governance_Workflow"
 
 # --- 2. Data Generators ---
-# Tool names exercised by /governance/check
-TOOL_NAMES = [
-    "execute_trade",
-    "write_db",
-    "send_notification",
-    "fetch_market_data",
-    "update_portfolio",
-    "place_order",
-    "cancel_order",
-    "transfer_funds",
-]
-
 # Action types exercised by /governance/validate-action
 ACTION_TYPES = [
     "execute_trade",
@@ -45,6 +33,10 @@ ACTION_TYPES = [
     "cancel_order",
     "transfer_funds",
 ]
+
+# Verdicts /governance/validate-action returns with HTTP 200
+# (GovernanceDecision vocabulary; DENY is a 403, external DEFER a 202).
+_VERDICTS_200 = frozenset({"ALLOW", "NARROW", "REQUIRE_APPROVAL", "DEFER"})
 
 TICKERS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "JPM", "V", "NVDA", "BRK.B"]
 RISK_LEVELS = ["low", "moderate", "high", "speculative"]
@@ -101,9 +93,9 @@ def _random_params(tool_name: str) -> dict:
 class GovernanceUser(HttpUser):
     """Simulates upstream orchestrators calling the governance enforcement surface.
 
-    Two task weights reflect realistic traffic split:
-      - governance_check (weight=3): dry-run pre-flight checks before tool execution
-      - validate_action  (weight=2): full 7-tier pipeline validation at execution time
+    Task weights reflect realistic traffic split:
+      - validate_action  (weight=5): non-committing governance decision before
+        tool execution (the removed POST /check route folded into this)
       - health_check     (weight=1): basic liveness probe
     """
 
@@ -115,64 +107,13 @@ class GovernanceUser(HttpUser):
         self.client.headers["l5d-client-id"] = _DEFAULT_CLIENT_ID
 
     # ------------------------------------------------------------------ #
-    # Task: POST /governance/check                                         #
-    # Endpoint: governance_middleware.governance_check()                   #
-    # Body: {"tool_name": str, "params": dict}                            #
-    # ------------------------------------------------------------------ #
-    @task(3)
-    def governance_check(self):
-        """Dry-run governance check — mirrors what the GFA does before tool execution."""
-        tool_name = random.choice(TOOL_NAMES)
-        params = _random_params(tool_name)
-
-        payload = {
-            "tool_name": tool_name,
-            "params": params,
-        }
-
-        with self.client.post(
-            "/governance/check",
-            json=payload,
-            name="POST /governance/check",
-            catch_response=True,
-            timeout=30,
-        ) as response:
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    status = data.get("status", "")
-                    if status in ("APPROVED", "REJECTED"):
-                        # Both are valid governance outcomes — not HTTP errors
-                        if status == "REJECTED":
-                            events.request.fire(
-                                request_type="Governance_Block",
-                                name="check_rejected",
-                                response_time=response.elapsed.total_seconds() * 1000,
-                                response_length=len(response.content),
-                                exception=None,
-                            )
-                        response.success()
-                    else:
-                        response.failure(f"Unexpected status field: {status!r}")
-                except json.JSONDecodeError:
-                    response.failure("Response was not valid JSON")
-            elif response.status_code == 400:
-                response.failure(f"Bad request: {response.text[:200]}")
-            elif response.status_code == 403:
-                # /check never denies with 403; this is the ingress identity
-                # check refusing the load generator — a setup failure.
-                response.failure(f"Caller identity refused: {response.text[:200]}")
-            else:
-                response.failure(f"HTTP Error: {response.status_code}")
-
-    # ------------------------------------------------------------------ #
     # Task: POST /governance/validate-action                               #
     # Endpoint: governance_middleware.validate_action_endpoint()           #
     # Body: {"action": str, "params": dict}                               #
     # ------------------------------------------------------------------ #
-    @task(2)
+    @task(5)
     def validate_action(self):
-        """Full 7-tier governance pipeline — mirrors what the GFA calls at execution time."""
+        """Non-committing governance decision — what the GFA asks before tool execution."""
         action = random.choice(ACTION_TYPES)
         params = _random_params(action)
 
@@ -191,12 +132,14 @@ class GovernanceUser(HttpUser):
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    verdict = data.get("verdict", "")
-                    if verdict in ("APPROVED", "DENIED"):
-                        if verdict == "DENIED":
+                    # ALLOW / NARROW arrive wrapped in a signed envelope whose
+                    # payload carries the verdict; other verdicts are bare.
+                    verdict = data.get("verdict") or data.get("payload", {}).get("verdict", "")
+                    if verdict in _VERDICTS_200:
+                        if verdict == "REQUIRE_APPROVAL":
                             events.request.fire(
                                 request_type="Governance_Block",
-                                name="validate_action_denied",
+                                name="validate_action_require_approval",
                                 response_time=response.elapsed.total_seconds() * 1000,
                                 response_length=len(response.content),
                                 exception=None,
@@ -206,6 +149,9 @@ class GovernanceUser(HttpUser):
                         response.failure(f"Unexpected verdict field: {verdict!r}")
                 except json.JSONDecodeError:
                     response.failure("Response was not valid JSON")
+            elif response.status_code == 202:
+                # External DEFER hold — valid business outcome
+                response.success()
             elif response.status_code == 403:
                 # GovernanceError hard-denial — valid business outcome
                 try:

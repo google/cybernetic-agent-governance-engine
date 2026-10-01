@@ -38,7 +38,9 @@ AAIF stage → CAGE pipeline tier mapping
 | ``rate_limiting``       | Tier 3a — CBF / token quota            |
 | ``consensus``           | Tier 5 — Consensus / multi-agent       |
 | ``causal_validation``   | Tier 6 — DoWhy causal gatekeeper       |
-| ``output_validation``   | Tier 7 — FRIA normative boundary       |
+
+Any other stage (including ``output_validation``, which no pipeline tier
+implements) maps to an explicit unknown-stage entry with ``tier: -1``.
 
 Usage::
 
@@ -100,12 +102,6 @@ _AAIF_STAGE_TO_CAGE_TIER: dict[str, dict[str, Any]] = {
         "name": "DoWhy Causal Gatekeeper",
         "enforcement": ["python"],
         "module": "src.gateway.governance.causal_gatekeeper",
-    },
-    "output_validation": {
-        "tier": 7,
-        "name": "FRIA Normative Boundary",
-        "enforcement": ["python"],
-        "module": "src.gateway.governance.governor.governor",
     },
 }
 

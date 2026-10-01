@@ -26,7 +26,7 @@ Produces measurement artefacts used to fill the §6 tables in CAGE_ARXIV.MD:
      by construction — the Table 2 inversion (Total P95 < Tier 2 P95) is
      structurally impossible under this methodology.
 
-     The previous methodology called _run_checks() separately for each tier
+     The previous methodology ran the whole pipeline separately for each tier
      (e.g. _sample_confidence_tier and _sample_cbf_opa_tier were identical),
      producing independent samples of the whole pipeline rather than per-tier
      measurements.  That methodology is replaced here.
@@ -496,7 +496,13 @@ async def measure_governor_latency() -> dict[str, dict[str, float]]:
                 f"latency benchmark: validate_action returned {verdict.get('verdict')!r}, "
                 f"expected REQUIRE_APPROVAL (violations={verdict.get('violations')!r})"
             )
-        seal = await gov.revalidate_post_hitl("execute_trade", dict(params))
+        seal = await gov.revalidate_post_hitl(
+            "execute_trade",
+            dict(params),
+            approved_barrier_preview=(verdict.get("classification_meta") or {}).get(
+                "barrier_preview"
+            ),
+        )
         t2 = time.perf_counter()
         if not seal:
             raise RuntimeError("latency benchmark: revalidate_post_hitl returned no seal")

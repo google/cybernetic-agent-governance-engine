@@ -657,13 +657,14 @@ class SafetyFilter(Protocol):
 
     async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
         """
-        Verifies if the action is safe.
+        Side-effect-free preview: would the action be admitted now?
         Returns "SAFE" or an error message starting with "UNSAFE".
 
-        .. deprecated::
-            Use ``atomic_verify_and_commit()`` instead to eliminate the TOCTOU
-            window between this read-only check and the subsequent balance debit
-            (see CBF Invariance Theorem atomicity premise, Issue #6).
+        Must not mutate any state — neither the backing store nor in-process
+        accumulators — so that ``preview()`` stays pure however often it runs.
+        Never use it to authorise execution: only ``atomic_verify_and_commit()``
+        checks and debits atomically (CBF Invariance Theorem atomicity
+        premise, Issue #6).
         """
         ...
 

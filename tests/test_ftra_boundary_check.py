@@ -216,10 +216,9 @@ async def test_boundary_check_runs_unconditionally(
     ensure irreversible actions are caught regardless of entry point.
     """
     # Run checks for an irreversible action with complete valid payload
-    result = await symbolic_governor._run_checks(
+    result = await symbolic_governor.verify(
         tool_name="execute_trade",
         params={"amount": 100, "symbol": "AAPL", "currency": "USD", "confidence": 0.99},
-        sim_mode=False,
     )
 
     # FTRA boundary result should be present

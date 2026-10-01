@@ -17,6 +17,7 @@ from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.agents.evaluator.agent import (
     simulate_governance_check,
 )
@@ -98,7 +99,9 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
             target_tool, target_params, risk_profile
         )
 
-        is_safe = safety_resp.get("status") == "APPROVED"
+        # Only a clean dry run (ALLOW) is safe; any other verdict, or an
+        # error with no verdict, sends the plan back for revision.
+        is_safe = safety_resp.get("verdict") == GovernanceDecision.ALLOW
         safety_msg = safety_resp.get("message", "Unknown safety status")
         opa_results = safety_resp.get("opa_results")
 

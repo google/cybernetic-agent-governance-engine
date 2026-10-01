@@ -858,28 +858,6 @@ def test_parse_lua_result_unsafe_with_strings(make_cbf):
 
 
 # ---------------------------------------------------------------------------
-# reset_local_debits — accumulator cleared to zero
-# ---------------------------------------------------------------------------
-
-
-def test_reset_local_debits_clears_accumulator():
-    """reset_local_debits() sets _local_debits back to 0.0."""
-    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-
-    cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
-        cost_resolver=finance_cost_resolver,
-        skip_epoch_seed=True,
-    )
-    cbf._local_debits = 5000.0
-
-    cbf.reset_local_debits()
-
-    assert cbf._local_debits == 0.0
-
-
-# ---------------------------------------------------------------------------
 # evaluate_barrier — barrier certificate value
 # ---------------------------------------------------------------------------
 
@@ -924,18 +902,22 @@ async def test_atomic_verify_and_commit_raises_when_redis_none(make_cbf):
 
 
 # ---------------------------------------------------------------------------
-# local_debits accumulation — double-spend prevention within TTL window
+# verify_action is a pure preview (F-8) — see tests/governor/test_cbf_preview_purity.py
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_verify_action_accumulates_local_debits(make_cbf):
-    """Approved trades accumulate in _local_debits for intra-window protection."""
+async def test_verify_action_never_accumulates_debits(make_cbf):
+    """Repeated SAFE previews must not consume headroom for later previews.
+
+    Formerly each SAFE preview added its cost to an in-process accumulator, so
+    the third $10k preview on $30k was refused although nothing was spent.
+    """
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     await _seed_balance(fake_redis, 30_000.0)
 
-    # Use make_cbf fixture factory with gamma=1.0
     cbf, _ = make_cbf(gamma=1.0)
+    before = dict(vars(cbf))
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
@@ -947,13 +929,13 @@ async def test_verify_action_accumulates_local_debits(make_cbf):
             AsyncMock(return_value=None),
         ),
     ):
-        result1 = await cbf.verify_action("execute_trade", {"amount": 10_000.0})
-        assert result1 == "SAFE"
-        assert cbf._local_debits == pytest.approx(10_000.0)
+        verdicts = [
+            await cbf.verify_action("execute_trade", {"amount": 10_000.0}) for _ in range(5)
+        ]
 
-        result2 = await cbf.verify_action("execute_trade", {"amount": 10_000.0})
-        assert result2 == "SAFE"
-        assert cbf._local_debits == pytest.approx(20_000.0)
+    assert verdicts == ["SAFE"] * 5
+    assert dict(vars(cbf)) == before
+    assert not hasattr(cbf, "_local_debits")
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.narrow_receipt import issue_narrow_receipt
 from src.gateway.governance.governor.pipeline import (
+    BarrierPreview,
     PipelineResult,
     Profile,
     Stage,
@@ -349,8 +350,26 @@ class SymbolicGovernor:
         return seal
 
     async def revalidate_post_hitl(
-        self, action: str, params: dict[str, Any], *, trace_id: str | None = None
+        self,
+        action: str,
+        params: dict[str, Any],
+        *,
+        approved_barrier_preview: BarrierPreview | str | None,
+        trace_id: str | None = None,
     ) -> str:
+        """The post-approval committing run: POST_HITL commit + seal, or refuse.
+
+        ``approved_barrier_preview`` is the phase-2 preview the approval was
+        given against (``DeferToken.opa_input_snapshot["barrier_preview"]``,
+        bound into every ``ApprovalRecord`` by ``DeferQueue.approve``). The
+        approval covers only that context: if the reviewer was told the
+        barriers would PASS and the committing run's barriers now refuse, the
+        refusal is ``[APPROVAL_CONTEXT_DRIFT]`` — the operator approved a
+        request that no longer exists. An unrecognised snapshot is refused
+        before anything runs. Either way no seal is minted. An approval given
+        against ``FAIL`` (e.g. of a ``narrow_hint``'s clamped params) is
+        honoured only if the barriers now admit the executed params.
+        """
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
         ) as span:
@@ -362,6 +381,22 @@ class SymbolicGovernor:
             span.set_attribute("toctou.revalidation.scope", "opa+phase2")
             if trace_id is not None:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
+            try:
+                approved = _parse_barrier_snapshot(approved_barrier_preview)
+            except ValueError:
+                await handle_deny(
+                    action,
+                    params,
+                    [_approval_drift(f"unrecognised approval snapshot {approved_barrier_preview!r}")],
+                    [],
+                    {"approved_barrier_preview": str(approved_barrier_preview)},
+                )
+                raise GovernanceError(
+                    f"handle_deny returned without raising; refusing {action}"
+                )  # fail closed
+            span.set_attribute(
+                "toctou.approved_barrier_preview", approved.value if approved else ""
+            )
             if not self._is_governed_action(action, params):
                 # POST_HITL re-runs only claimed barriers; with none there is
                 # nothing to re-verify, so the approval cannot be honoured.
@@ -373,11 +408,24 @@ class SymbolicGovernor:
             result, seal = await run_sealed(
                 self.stages, ctx, params, path="revalidate_post_hitl"
             )
+            if result.barrier_outcome is not None:
+                span.set_attribute("toctou.barrier_outcome", result.barrier_outcome.value)
             if seal is None:
+                if (
+                    approved == BarrierPreview.PASS
+                    and result.barrier_outcome == BarrierPreview.FAIL
+                ):
+                    await _deny_drift(action, params, result, approved)
                 await _deny(action, params, result)
             return seal
 
     async def verify(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Dry-run the pipeline and classify it; commit, park and seal nothing.
+
+        ``decision`` is ``ALLOW`` iff there are no violations, otherwise the
+        classifier's decision over them. Unlike :meth:`validate_action` no
+        NARROW proposal is re-verified and no approval token is parked.
+        """
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")
@@ -390,6 +438,21 @@ class SymbolicGovernor:
             result = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
 
             violations = list(result.violations)
+            decision = GovernanceDecision.ALLOW
+            if violations:
+                decision = self._components.classifier.classify(
+                    ClassificationContext(
+                        violations=violations,
+                        confidence=reported_confidence(params),
+                        opa_decision=result.opa_verdict.value
+                        if result.opa_verdict
+                        else None,
+                        policy_ambiguous=False,
+                        params=params,
+                    ),
+                    tool_name,
+                ).decision
+            span.set_attribute("cage.verdict", decision.value)
             span.set_attribute(
                 OBSERVATION_OUTPUT,
                 json.dumps(
@@ -407,6 +470,7 @@ class SymbolicGovernor:
                 else GovernanceDecision.ALLOW,
             )
             return {
+                "decision": decision,
                 "violations": violations,
                 "tier_failures": list(result.tier_failures),
                 "opa_results": result.opa_verdict,
@@ -415,16 +479,6 @@ class SymbolicGovernor:
                 "ftra_boundary_result": result.ftra,
                 "tier_violations": violations,
             }
-
-    async def _run_checks(
-        self,
-        tool_name: str,
-        params: dict[str, Any],
-        sim_mode: bool = False,
-        policy_version_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Legacy test compat."""
-        return await self.verify(tool_name, params)
 
     def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
         """True if any domain tier claims ``action``.
@@ -447,6 +501,59 @@ _UNGOVERNED_POST_HITL = Violation(
     kind=ViolationKind.HARD,
     message="post-HITL re-validation requested for an action no domain tier claims",
 )
+
+APPROVAL_CONTEXT_DRIFT = "APPROVAL_CONTEXT_DRIFT"
+
+
+def _parse_barrier_snapshot(value: BarrierPreview | str | None) -> BarrierPreview | None:
+    """The approval's barrier snapshot; ``ValueError`` if it is not PASS/FAIL/None."""
+    return None if value is None else BarrierPreview(value)
+
+
+def _approval_drift(detail: str) -> Violation:
+    return Violation(
+        tier="kernel",
+        code=APPROVAL_CONTEXT_DRIFT,
+        kind=ViolationKind.HARD,
+        message=f"[{APPROVAL_CONTEXT_DRIFT}] {detail}",
+    )
+
+
+async def _deny_drift(
+    action: str,
+    params: dict[str, Any],
+    result: PipelineResult,
+    approved: BarrierPreview,
+) -> NoReturn:
+    """Refuse a committing run whose barriers no longer match the approval.
+
+    The drift violation leads (it decided the refusal); the barrier findings
+    follow, so the receipt still names what now refuses.
+    """
+    cause = next(
+        (v.message for v in result.violations if v.kind == ViolationKind.HARD),
+        "phase-2 barriers refused",
+    )
+    drift = _approval_drift(
+        f"approved against barrier preview {approved.value}, but the committing "
+        f"run's barriers now refuse: {cause}"
+    )
+    await handle_deny(
+        action,
+        params,
+        [drift, *result.violations],
+        list(result.tier_failures),
+        {
+            **_ftra_meta(result),
+            "classification_reason": "approval_context_drift",
+            "approved_barrier_preview": approved.value,
+            "barrier_outcome": BarrierPreview.FAIL.value,
+        },
+    )
+    raise GovernanceError(
+        f"handle_deny returned without raising; refusing {action}"
+    )  # fail closed
+
 
 _VERDICT_HANDLERS = {
     GovernanceDecision.DENY: handle_deny,

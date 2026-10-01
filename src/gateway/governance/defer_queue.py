@@ -192,6 +192,14 @@ class ApprovalRecord(BaseModel):
     auth_principal_hash: str
     """SHA-256 of the authenticated principal; never the raw principal."""
 
+    # --- Approval context binding (D-H) ------------------------------------
+    approved_barrier_preview: str | None = None
+    """The token's phase-2 ``barrier_preview`` (``PASS``/``FAIL``/``None``) this
+    approval was given against. Stamped by :meth:`DeferQueue.approve` from the
+    parked token — any client-supplied value is overwritten — and checked by
+    :meth:`DeferQueue.consume_approval`; the committing run refuses
+    ``APPROVAL_CONTEXT_DRIFT`` if the barriers no longer match it."""
+
     # --- Optional until Phase 5 (WebAuthn) -------------------------------
     credential_id: str | None = None
     """base64url-encoded WebAuthn credential ID."""
@@ -332,6 +340,16 @@ class DeferToken(BaseModel):
             True if upstream_permit_id is set, False otherwise.
         """
         return self.upstream_permit_id is not None
+
+    @property
+    def barrier_preview(self) -> str | None:
+        """The phase-2 preview the reviewer was shown when the token was parked.
+
+        ``PASS``/``FAIL``, or ``None`` when no barrier was previewed. Every
+        approval binds to it (``ApprovalRecord.approved_barrier_preview``).
+        """
+        value = self.opa_input_snapshot.get("barrier_preview")
+        return None if value is None else str(value)
 
     def model_post_init(self, __context: Any) -> None:
         """Post-init: derive correlation_id and wire quorum threshold."""
@@ -930,7 +948,9 @@ class DeferQueue:
 
         The token must be a governor-parked approval (``HITL_REQUIRED``) that
         ``approve()`` resolved by reaching quorum (``resolution == "ESCALATED"``),
-        that was parked for ``action``, and whose approved params satisfy
+        that was parked for ``action``, whose approvals were all given against
+        the token's current ``barrier_preview`` (D-H), and whose approved
+        params satisfy
         ``covers`` (checked before consumption, so a mismatched request does
         not burn the approval). Consumption is the ``RESOLVED -> CONSUMED``
         compare-and-swap in :meth:`atomic_resolve`, so of any number of
@@ -957,6 +977,13 @@ class DeferQueue:
             refusal = f"{distinct_approvers}/{token.required_quorum} approvals"
         elif token.opa_input_snapshot.get("action") != action:
             refusal = f"parked for {token.opa_input_snapshot.get('action')!r}, not {action!r}"
+        elif any(a.approved_barrier_preview != token.barrier_preview for a in token.approvals):
+            # Every approval must have been given against the snapshot the
+            # committing run will be checked against (D-H).
+            refusal = (
+                f"approvals bound to {sorted({str(a.approved_barrier_preview) for a in token.approvals})}, "
+                f"token barrier_preview={token.barrier_preview!r}"
+            )
         elif not isinstance(approved_params, dict) or not covers(approved_params):
             refusal = "approved params do not cover the request"
         if refusal is not None:
@@ -986,6 +1013,11 @@ class DeferQueue:
         PRAXIS Phase 2 Zero-Authority Parking:
           - Authority-bound tokens (upstream_permit_id is set) REFUSE all approvals
           - Returns ApprovalStatus.NOT_FOUND to fail-closed for authority-bound tokens
+
+        Approval binding (D-H): the stored record keeps ``approver_urn`` and
+        is stamped with ``approved_barrier_preview`` = the token's
+        ``barrier_preview`` — what the reviewer was told the approved request
+        would hit. ``consume_approval`` and the committing run check it.
 
         Concurrent approval safety: Uses revision-based CAS with bounded retry (3 attempts).
         On CAS conflict, retries with 5ms exponential jitter. On retry exhaustion, returns
@@ -1043,8 +1075,14 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.ALREADY_APPROVED, token)
 
-            # Append approval (in-memory mutation)
-            token.approvals.append(record)
+            # Append approval (in-memory mutation), bound to the barrier
+            # snapshot the reviewer was shown (D-H). Server-stamped: a
+            # client-supplied value is overwritten, never trusted.
+            token.approvals.append(
+                record.model_copy(
+                    update={"approved_barrier_preview": token.barrier_preview}
+                )
+            )
             distinct_approvers = len({a.approver_urn for a in token.approvals})
 
             # Determine new status

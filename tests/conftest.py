@@ -450,7 +450,6 @@ def reset_cbf_epoch_state():
 
         safety_filter._last_seen_epoch = 0
         safety_filter._last_verified_fence_epoch = None
-        safety_filter._local_debits = 0.0
     except (ImportError, AttributeError):
         pass  # Module not loaded or attributes don't exist
 

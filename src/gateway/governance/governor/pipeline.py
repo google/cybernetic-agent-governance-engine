@@ -58,20 +58,46 @@ class StageContext:
     stpa_violation_count: int = 0
 
 
+@dataclass(frozen=True)
+class StageOutput:
+    """What a read-only stage reports for one request.
+
+    Stages are shared across concurrent requests, so anything a stage learns
+    about *this* request (the decoded OPA verdict, the FTRA boundary result)
+    travels back to :func:`run_pipeline` here, never as an attribute on the
+    stage. ``run_pipeline`` threads ``opa_verdict`` into the ``StageContext``
+    of later stages and both fields into the ``PipelineResult``.
+    """
+
+    violations: tuple[Violation, ...] = ()
+    opa_verdict: OpaVerdict | None = None
+    ftra: FtraBoundaryResult | None = None
+
+
+def as_stage_output(result: "list[Violation] | StageOutput") -> StageOutput:
+    """Normalise a ``run()`` result: a bare violation list carries nothing else."""
+    if isinstance(result, StageOutput):
+        return result
+    return StageOutput(violations=tuple(result))
+
+
 class Stage(Protocol):
     """A pipeline stage.  Instances are shared across concurrent requests.
 
-    Read-only stages implement ``run()``.  Mutating stages implement
-    ``preview()`` (side-effect-free: used under DRY_RUN and whenever phase 1
-    left only non-HARD findings, see :func:`phase2_mode`), ``commit()`` and
-    ``rollback()``.  A stage must never keep per-request state such as a
-    ``CommitReceipt`` on itself; the request's ``ReservationScope`` holds them.
+    Read-only stages implement ``run()``, returning their violations, or a
+    :class:`StageOutput` when they also report per-request facts (OPA verdict,
+    FTRA result).  Mutating stages implement ``preview()`` (side-effect-free:
+    used under DRY_RUN and whenever phase 1 left only non-HARD findings, see
+    :func:`phase2_mode`), ``commit()`` and ``rollback()``.  A stage must never
+    keep per-request state on itself — neither a ``CommitReceipt`` (the
+    request's ``ReservationScope`` holds those) nor a decoded result (return
+    a ``StageOutput``).
     """
 
     name: str
     mutating: bool
 
-    async def run(self, ctx: StageContext) -> list[Violation]: ...
+    async def run(self, ctx: StageContext) -> list[Violation] | StageOutput: ...
 
     # Mutating stages only: side-effect-free stand-in for commit() (Phase2Mode.PREVIEW).
     async def preview(self, ctx: StageContext) -> list[Violation]: ...
@@ -92,7 +118,7 @@ class Phase2Mode(StrEnum):
 
 
 class BarrierPreview(StrEnum):
-    """Outcome of previewing the phase-2 barriers (``PipelineResult.barrier_preview``)."""
+    """Outcome of the phase-2 barriers (``PipelineResult.barrier_preview`` / ``barrier_outcome``)."""
 
     PASS = "PASS"
     FAIL = "FAIL"
@@ -113,6 +139,11 @@ class PipelineResult:
     barrier_preview: BarrierPreview | None = None
     # The subset of ``violations`` those previews reported.
     preview_violations: tuple[Violation, ...] = ()
+    # What the claimed phase-2 stages said, previewed *or* committed: PASS iff
+    # none refused.  None when phase 2 was skipped or no mutating stage
+    # claimed the action.  The committing run compares it with the snapshot
+    # an approval was given against (APPROVAL_CONTEXT_DRIFT).
+    barrier_outcome: BarrierPreview | None = None
 
 
 #: Read-only stages re-run after human approval (TOCTOU): policy may have
@@ -250,10 +281,10 @@ async def run_pipeline(
     ftra_result: FtraBoundaryResult | None = None
     opa_verdict: OpaVerdict | None = None
 
-    async def run_stage(stage: Stage, stage_ctx: StageContext) -> list[Violation]:
+    async def run_stage(stage: Stage, stage_ctx: StageContext) -> StageOutput:
         if id(stage) in claim_failures:
-            return [claim_failures[id(stage)]]
-        return await stage.run(stage_ctx)
+            return StageOutput(violations=(claim_failures[id(stage)],))
+        return as_stage_output(await stage.run(stage_ctx))
 
     async def commit_stage(scope: ReservationScope, stage: Stage, stage_ctx: StageContext) -> list[Violation]:
         if id(stage) in claim_failures:
@@ -262,18 +293,18 @@ async def run_pipeline(
     
     # b. Read-only stages
     for stage in read_only:
-        stage_violations = await run_stage(stage, current_ctx)
+        output = await run_stage(stage, current_ctx)
+        stage_violations = list(output.violations)
 
-        # update ctx context
+        # Per-request facts come back in the StageOutput, never off the
+        # (shared) stage instance.
+        if output.opa_verdict is not None:
+            opa_verdict = output.opa_verdict
+            current_ctx = dataclasses.replace(current_ctx, opa_verdict=opa_verdict)
+        if output.ftra is not None:
+            ftra_result = output.ftra
         if stage.name == "stpa":
             current_ctx = dataclasses.replace(current_ctx, stpa_violation_count=len(stage_violations))
-        elif stage.name == "opa":
-            if hasattr(stage, "decoded_verdict"):
-                opa_verdict = getattr(stage, "decoded_verdict")
-                current_ctx = dataclasses.replace(current_ctx, opa_verdict=opa_verdict)
-        elif stage.name == "ftra":
-            if hasattr(stage, "result"):
-                ftra_result = getattr(stage, "result")
         
         if stage_violations:
             violations.extend(stage_violations)
@@ -287,6 +318,7 @@ async def run_pipeline(
     mode = phase2_mode(profile, (v.kind for v in violations))
     span.set_attribute("governance.phase2_mode", mode.value)
     barrier_preview: BarrierPreview | None = None
+    barrier_outcome: BarrierPreview | None = None
     preview_violations: list[Violation] = []
 
     if mode == Phase2Mode.PREVIEW:
@@ -300,6 +332,7 @@ async def run_pipeline(
         tier_failures.extend(preview_failures)
         if mutating:
             barrier_preview = BarrierPreview.FAIL if preview_violations else BarrierPreview.PASS
+            barrier_outcome = barrier_preview
             span.set_attribute("governance.barrier_preview", barrier_preview.value)
     elif mode == Phase2Mode.COMMIT:
         # Commit mutating stages in order.  The scope records every receipt
@@ -307,9 +340,12 @@ async def run_pipeline(
         # is cancelled, undoes them on exit.
         if scope is None:  # unreachable after _check_scope; never commit unowned
             raise ValueError(f"profile {profile} requires a ReservationScope")
+        if mutating:
+            barrier_outcome = BarrierPreview.PASS
         for stage in mutating:
             stage_violations = await commit_stage(scope, stage, current_ctx)
             if stage_violations:
+                barrier_outcome = BarrierPreview.FAIL
                 violations.extend(stage_violations)
                 # e. A CBF/domain commit is a violation whenever it reports not committed
                 tier_failures.append(_tier_failure(stage, stage_violations))
@@ -326,6 +362,7 @@ async def run_pipeline(
         commits=scope.commits if scope is not None else (),
         barrier_preview=barrier_preview,
         preview_violations=tuple(preview_violations),
+        barrier_outcome=barrier_outcome,
     )
 
 

@@ -28,7 +28,7 @@ NoDirectBind ≜ (phase = "EXECUTED") ⇒ (resolvedAllow = TRUE)
 
 ### Scope
 
-Models the 9-tier CAGE governance pipeline (updated for ARCH-1):
+Models the 8-tier CAGE governance pipeline (`TIERS` in `proof/model.py`; ARCH-1 added FTRA, refactor/gateway-surface-cleanup removed the dead `fria` tier):
 
 | Tier | Name | Role |
 |------|------|------|
@@ -40,18 +40,20 @@ Models the 9-tier CAGE governance pipeline (updated for ARCH-1):
 | 4 | Fiscal | Fiscal limit pre-reservation |
 | 5 | Consensus | Multi-agent consensus gate |
 | 6 | Causal | DoWhy causal gatekeeper |
-| 7 | FRIA | FRIA normative boundary enforcement |
 
-**Note**: Tier 3 (CBF/OPA) is split because these checks run concurrently via `asyncio.gather()`. The proof verifies the invariant holds under every interleaving.
+Plugin tiers (finance's `bounding`, healthcare's `dose_barrier`) add no proof states; `PLUGIN_TIER_PHASE` keeps the POST_HITL predicate from skipping a plugin-named phase-2 tier. No pipeline stage named `fria` exists, so the model has none.
 
-### State Counts (post refactor/prune-pause)
+**Note**: Tier 3 is split into `cbf` and `opa` because each can block the action on its own. The model evaluates tiers in a fixed order; it does not enumerate CBF/OPA interleavings (at runtime OPA is a phase-1 read-only stage and CBF a phase-2 mutating stage, so they no longer run concurrently).
+
+### State Counts (post refactor/gateway-surface-cleanup)
 
 | Model Variant | Reachable States | Invariant Holds? |
 |---------------|------------------|------------------|
-| Gated (correct CAGE) | 42 | ✅ TRUE |
-| Ungated (direct-bind) | 21 | ❌ FALSE (counterexample) |
-| Concurrent CBF∥OPA | 49 | ✅ TRUE |
-| Skipped tier (CBF/causal) | 39 | ✅ TRUE (structural) |
+| Gated (correct CAGE) | 38 | ✅ TRUE |
+| Ungated (direct-bind) | 19 | ❌ FALSE (counterexample) |
+| Skipped tier (causal) | 35 | ✅ TRUE (structural) |
+
+The former "Concurrent CBF∥OPA: 49" row is gone: no function in `proof/model.py` enumerates a concurrent state space, and no test pinned that number.
 
 ### Gap Proofs
 
@@ -82,7 +84,7 @@ uv run pytest tests/test_no_direct_bind_proof.py -v
 
 PROVED:
   1. The gated CAGE architecture satisfies No-Direct-Bind over the
-     entire reachable state space (42 states).
+     entire reachable state space (38 states).
   2. The ungated (direct-bind) variant provably violates the invariant.
   ...
 ```
@@ -230,12 +232,12 @@ If an invariant is violated, TLC produces a **counterexample trace** showing the
 
 ### Proof/Implementation Divergence (ARCH-1)
 
-Prior to ARCH-1, the Python BFS model **excluded FTRA** (Tier 0.5) because it runs at the LangGraph graph level, not inside `SymbolicGovernor._run_checks()`. This created a proof/implementation divergence:
+Prior to ARCH-1, the Python BFS model **excluded FTRA** (Tier 0.5) because it then ran at the LangGraph graph level, not inside the governor's per-call checks. This created a proof/implementation divergence:
 
-- **Production**: FTRA blocks irreversible actions before `_run_checks()` executes
+- **Production**: FTRA blocked irreversible actions before the governor's per-call checks ran
 - **Proof**: FTRA was not modeled, so the state-space omitted action classification barriers
 
-**ARCH-1 resolution**: FTRA is now modeled as the first tier in the BFS state machine. While FTRA's implementation remains at the LangGraph level, the proof now covers its fail-closed semantics and routing seal enforcement.
+**ARCH-1 resolution**: FTRA is now modeled as the first tier in the BFS state machine, and at runtime it is the first read-only stage of `run_pipeline()` (`src/gateway/governance/governor/stages/ftra.py`). The proof covers its fail-closed semantics and routing seal enforcement.
 
 ### FTRA-Specific Invariants
 
@@ -289,4 +291,4 @@ All proof artifacts in this directory are released under the Apache 2.0 License.
 
 The Python BFS model (`model.py`) is adapted from the open-source implementation by LalaSkye (Apache 2.0), available at: https://github.com/LalaSkye/no-direct-bind
 
-Modifications: Extended to CAGE's 9-tier architecture, added the NARROW state, seal consumption semantics, and FTRA tier.
+Modifications: Extended to CAGE's 8-tier architecture, added the NARROW state, seal consumption semantics, and FTRA tier.

@@ -546,7 +546,7 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, An
 # Inference proxy handles /v1/chat/completions
 root_app.mount("/inference", inference_app)
 
-# Governance middleware handles /governance/check
+# Governance middleware handles /governance/validate-action
 root_app.mount("/governance", governance_app)
 
 # MCP tool server handles /, /mcp, /tools/execute, /health

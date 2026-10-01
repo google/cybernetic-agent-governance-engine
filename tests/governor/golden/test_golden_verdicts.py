@@ -81,7 +81,10 @@ async def _execute_scenario_entry_point(
         seal_issued: bool = False
 
         try:
-            res = await fn(scenario.action, scenario.params)
+            # The corpus records unbound post-approval runs (no barrier snapshot);
+            # approval binding (D-H) is covered by tests/test_trade_governance_e2e.py.
+            kwargs = {"approved_barrier_preview": None} if entry_point == "revalidate_post_hitl" else {}
+            res = await fn(scenario.action, scenario.params, **kwargs)
             if isinstance(res, dict):
                 if "verdict" in res:
                     v = res["verdict"]

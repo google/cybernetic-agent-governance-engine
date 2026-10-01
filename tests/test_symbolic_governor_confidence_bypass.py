@@ -69,7 +69,7 @@ def _make_governor(
         classification_engine: Optional ClassificationEngine instance.
 
     Returns:
-        A fully wired SymbolicGovernor ready for ``_run_checks()``/``govern()``
+        A fully wired SymbolicGovernor ready for ``verify()``/``govern()``
         without hitting live Redis, OPA, or consensus network endpoints.
     """
     from src.gateway.governance.classification_engine import ClassificationEngine

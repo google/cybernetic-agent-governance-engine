@@ -111,7 +111,8 @@ def _ctx(profile: Profile = Profile.FULL) -> StageContext:
 
 
 async def _call(gov: SymbolicGovernor, entry_point: str) -> Any:
-    return await getattr(gov, entry_point)("act", {})
+    kwargs = {"approved_barrier_preview": None} if entry_point == "revalidate_post_hitl" else {}
+    return await getattr(gov, entry_point)("act", {}, **kwargs)
 
 
 @pytest.fixture

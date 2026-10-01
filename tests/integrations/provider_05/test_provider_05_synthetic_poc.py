@@ -154,7 +154,7 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
         },
         governance_result={
             "verdict": "ALLOW",
-            "tiers_evaluated": ["stpa", "cbf", "opa", "consensus", "fria"],
+            "tiers_evaluated": ["stpa", "cbf", "opa", "consensus", "bounding"],
             "consensus_score": 0.98,
         },
         external_attestations=cached_attestations,

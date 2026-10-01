@@ -262,7 +262,7 @@ async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe, cla
     params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
 
     with pytest.raises(GovernanceError) as excinfo:
-        await governor.revalidate_post_hitl("execute_trade", params)
+        await governor.revalidate_post_hitl("execute_trade", params, approved_barrier_preview=None)
 
     assert "CTRL_OPA_005" in str(excinfo.value)
 
@@ -1112,6 +1112,6 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
     params = {"amount": 10000000, "symbol": "AAPL"}
 
     with pytest.raises(GovernanceError) as excinfo:
-        await governor.revalidate_post_hitl("execute_trade", params)
+        await governor.revalidate_post_hitl("execute_trade", params, approved_barrier_preview=None)
 
     assert "Daily fiscal limit exceeded" in str(excinfo.value)

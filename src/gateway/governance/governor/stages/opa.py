@@ -17,8 +17,7 @@ from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import PolicyClient, Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import StageContext
-from src.gateway.governance.governor.pipeline import OpaVerdict
+from src.gateway.governance.governor.pipeline import OpaVerdict, StageContext, StageOutput
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +70,10 @@ def decode_opa_verdict(raw: object) -> OpaVerdict | None:
 class OpaStage:
     """
     Evaluates the action against the Open Policy Agent (OPA).
+
+    Returns a :class:`StageOutput` carrying the decoded verdict (``None`` when
+    OPA failed or answered something undecodable); the instance is shared
+    across requests and holds nothing about any one of them.
     """
 
     name = "opa"
@@ -79,7 +82,7 @@ class OpaStage:
     def __init__(self, opa_client: PolicyClient):
         self.opa_client = opa_client
 
-    async def run(self, ctx: StageContext) -> list[Violation]:
+    async def run(self, ctx: StageContext) -> StageOutput:
         opa_payload = {**ctx.params, "action": ctx.action, "tool_input": ctx.params}
         
         try:
@@ -88,38 +91,42 @@ class OpaStage:
             verdict = decode_opa_verdict(raw_result)
         except Exception as e:
             logger.error("OPA error: %s", e)
-            self.decoded_verdict = None
-            return [Violation(
+            return StageOutput(violations=(Violation(
                 tier="governance",
                 code="OPA_ERROR",
                 message=f"[{_OPA_CTRL}] OPA policy evaluation failed: {e}",
                 kind=ViolationKind.HARD
-            )]
+            ),))
 
-        self.decoded_verdict = verdict
+        return StageOutput(
+            violations=tuple(_violations_for(verdict, raw_result)),
+            opa_verdict=verdict,
+        )
 
-        if verdict == OpaVerdict.ALLOW:
-            return []
-        
-        if verdict == OpaVerdict.DENY:
-            return [Violation(
-                tier="governance",
-                code="OPA_DENY",
-                message=f"[{_OPA_CTRL}] {_opa_framework()} Violation: OPA Denied Action.",
-                kind=ViolationKind.HARD
-            )]
-        
-        if verdict == OpaVerdict.MANUAL_REVIEW:
-            return [Violation(
-                tier="governance",
-                code="OPA_MANUAL_REVIEW",
-                message=f"[{_OPA_CTRL}] {_opa_framework()} Check: Manual Review Required.",
-                kind=ViolationKind.HITL
-            )]
-        
+
+def _violations_for(verdict: OpaVerdict | None, raw_result: object) -> list[Violation]:
+    if verdict == OpaVerdict.ALLOW:
+        return []
+
+    if verdict == OpaVerdict.DENY:
         return [Violation(
             tier="governance",
-            code="OPA_UNKNOWN_VERDICT",
-            message=f"[{_OPA_CTRL}] OPA Policy Violation: Unexpected verdict '{raw_result}'",
+            code="OPA_DENY",
+            message=f"[{_OPA_CTRL}] {_opa_framework()} Violation: OPA Denied Action.",
             kind=ViolationKind.HARD
         )]
+
+    if verdict == OpaVerdict.MANUAL_REVIEW:
+        return [Violation(
+            tier="governance",
+            code="OPA_MANUAL_REVIEW",
+            message=f"[{_OPA_CTRL}] {_opa_framework()} Check: Manual Review Required.",
+            kind=ViolationKind.HITL
+        )]
+
+    return [Violation(
+        tier="governance",
+        code="OPA_UNKNOWN_VERDICT",
+        message=f"[{_OPA_CTRL}] OPA Policy Violation: Unexpected verdict '{raw_result}'",
+        kind=ViolationKind.HARD
+    )]

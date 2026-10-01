@@ -210,8 +210,8 @@ $$\text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content
 
 Each execution is sealed with a `CHAIN_SEALED` sentinel, satisfying ISO 42001 Annex A.5.3.
 
-### 6.3 External Normative Provider (Tier 6b)
-The External Normative Provider (`src/gateway/governance/normative_provider.py`) implements adaptive FRIA gating based on confidence score:
+### 6.3 External Normative Provider (FRIA primitive, not a pipeline tier)
+The External Normative Provider (`src/gateway/governance/normative_provider.py`) implements adaptive FRIA gating based on confidence score in `enforce_fria_boundary()`. `run_pipeline()` does not call it; adopters must invoke it explicitly:
 - $\ge 0.95$: Async gate, non-blocking external validation.
 - $[0.70, 0.95)$: Synchronous blocking gate; awaits external FRIA response.
 - $< 0.70$: Hard denial.

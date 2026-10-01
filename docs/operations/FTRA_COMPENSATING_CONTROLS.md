@@ -11,7 +11,7 @@
 
 As of 2026-08-16, the `CAGE_FTRA_BOUNDARY_ENABLED` feature flag has been
 **removed** from the codebase. The FTRA boundary check now runs unconditionally
-in [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/governor/pipeline.py)
+in [`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py)
 (lines 970–999) for every governance request — there is no way to disable it.
 
 This document now serves two purposes:
@@ -57,7 +57,7 @@ actions that skip FTRA classification entirely, allowing IRREVERSIBLE_TERMINAL
 actions to execute without HITL review.
 
 **Mitigation Status**: ✅ **FULLY MITIGATED** (2026-08-16). The FTRA boundary
-check now runs unconditionally in `SymbolicGovernor._run_checks()` for every
+check now runs unconditionally in `run_pipeline()` for every
 request. Direct HTTP access to `/validate-action` or ext_authz is now subject
 to the same FTRA classification as in-graph requests. See POAM-2026-030-B.
 
@@ -115,8 +115,9 @@ ftra_node. This catches direct HTTP bypasses of the in-graph node.
 
 **How It Works**:
 
-1. `SymbolicGovernor._ftra_boundary_check()` runs BEFORE all other governance
-   checks in `_run_checks()` (lines 970–999).
+1. `FtraStage` (`src/gateway/governance/governor/stages/ftra.py`) runs BEFORE
+   all other governance stages in `run_pipeline()` (it sorts first among the
+   phase-1 read-only stages).
 2. Uses the same `IrreversibilityClassifier` and `terminal_registry.json` as
    the in-graph `ftra_node`.
 3. If an action is classified as `IRREVERSIBLE_TERMINAL`, the boundary check

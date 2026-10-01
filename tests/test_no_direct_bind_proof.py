@@ -36,7 +36,7 @@ import pytest
 # This module is pure-stdlib (no Redis/OPA/network dependencies) and is safe
 # to run in every CI matrix leg. Without this marker, `pytest tests/ -m local`
 # (the invocation used by the `pytest-logic` CI job) silently excludes this
-# file, leaving the 44/21/49/43 state-count regression tests unexercised by
+# file, leaving the 38/19/35 state-count regression tests unexercised by
 # CI — only the bare `python proof/model.py` script assertions run via the
 # separate `no-direct-bind-proof` job. See REVISION_TRACKER.md.
 pytestmark = pytest.mark.local
@@ -88,25 +88,33 @@ _spec.loader.exec_module(model)
 #   - Gated: 42 (was 52)
 #   - Skipped tier: 39 (was 49)
 # The ungated model remains at 21 (it never explored the PAUSE path).
+#
+# NOTE (refactor/gateway-surface-cleanup, 2026-10-01): the dead ``fria`` tier
+# was removed from TIERS (no pipeline stage of that name exists). One fewer
+# tier removes its PASS/FAIL branch states. The new counts are:
+#   - Gated: 38 (was 42)
+#   - Ungated: 19 (was 21)
+#   - Skipped tier: 35 (was 39)
+# The former EXPECTED_CONCURRENT_STATES constant was removed: no test (and no
+# function in proof/model.py) enumerated a concurrent CBF/OPA state space.
 
-EXPECTED_GATED_STATES = 42
-EXPECTED_UNGATED_STATES = 21
-EXPECTED_CONCURRENT_STATES = 49
-EXPECTED_SKIPPED_TIER_STATES = 39  # Gap 3 and Gap 4 variants
+EXPECTED_GATED_STATES = 38
+EXPECTED_UNGATED_STATES = 19
+EXPECTED_SKIPPED_TIER_STATES = 35  # Gap 3 and Gap 4 variants
 
 
 # ---------------------------------------------------------------------------
-# Tier tuple — C1: the model must cover every tier inside _run_checks()
+# Tier tuple — C1: the model must cover every kernel stage of run_pipeline()
 # ---------------------------------------------------------------------------
 
 
-def test_tier_tuple_matches_run_checks_pipeline() -> None:
-    """The modelled tiers mirror SymbolicGovernor._run_checks() in order.
+def test_tier_tuple_matches_pipeline() -> None:
+    """The modelled tiers mirror the kernel stages of ``run_pipeline()``.
 
-    ARCH-1: FTRA (Tier 0.5) is now included to close proof/implementation
-    divergence. While FTRA runs at the LangGraph graph level in production,
-    modeling it provides complete state-space coverage of all governance
-    barriers including action classification and routing seal requirements.
+    ARCH-1: FTRA (Tier 0.5) is included to close proof/implementation
+    divergence. There is no ``fria`` tier: no pipeline stage of that name
+    exists (refactor/gateway-surface-cleanup). Plugin tiers such as finance's
+    ``bounding`` are covered structurally via ``PLUGIN_TIER_PHASE``.
     """
     assert model.TIERS == (
         "ftra",
@@ -117,21 +125,21 @@ def test_tier_tuple_matches_run_checks_pipeline() -> None:
         "fiscal",
         "consensus",
         "causal",
-        "fria",
     )
     assert "ftra" in model.TIERS
 
 
-def test_tier_count_is_exactly_9() -> None:
-    """Pin the number of modelled governance tiers to exactly 9.
+def test_tier_count_is_exactly_8() -> None:
+    """Pin the number of modelled governance tiers to exactly 8.
 
-    ARCH-1: Updated from 8 to 9 tiers with the addition of FTRA (Tier 0.5).
+    ARCH-1 added FTRA (Tier 0.5); refactor/gateway-surface-cleanup removed the
+    dead ``fria`` tier, which no pipeline stage implemented.
     This figure is cited in CAGE_ARXIV.MD §4.2 and §7.2 Limitations.
     Update this constant AND every location listed in docs/paper/REVISION_TRACKER.md
     if the pipeline adds or removes a tier.
     """
-    assert len(model.TIERS) == 9, (
-        f"Expected exactly 9 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
+    assert len(model.TIERS) == 8, (
+        f"Expected exactly 8 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
     )
 
 
@@ -158,7 +166,8 @@ def test_gated_architecture_satisfies_no_direct_bind() -> None:
 def test_gated_reachable_state_count_is_stable() -> None:
     """Pins the figure quoted in CAGE_ARXIV.MD §4.4 and Appendix A.
 
-    # Issue #4: proof scope is 21 states, no LTL — documented in §7.2 Limitations.
+    # Issue #4: proof scope is EXPECTED_GATED_STATES states, no LTL — documented
+    # in §7.2 Limitations.
     """
     states = model.enumerate_reachable(model.gated_transitions)
     assert len(states) == EXPECTED_GATED_STATES

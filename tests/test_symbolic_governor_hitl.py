@@ -76,7 +76,8 @@ class TestC1PostHITLRevalidationFailClosed:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert: Violation message contains the refusal reason
@@ -101,7 +102,8 @@ class TestC1PostHITLRevalidationFailClosed:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert
@@ -124,7 +126,8 @@ class TestC1PostHITLRevalidationFailClosed:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert
@@ -150,7 +153,8 @@ class TestC1PostHITLRevalidationFailClosed:
             # Execute: should return a routing seal (non-empty string)
             seal = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
             # Assert: Seal issued means approval
@@ -174,7 +178,8 @@ class TestC1PostHITLRevalidationFailClosed:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert
@@ -206,7 +211,8 @@ class TestC2PostHITLSequentialOrdering:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert: OPA violation recorded
@@ -232,7 +238,8 @@ class TestC2PostHITLSequentialOrdering:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert: OPA violation recorded
@@ -260,7 +267,8 @@ class TestC2PostHITLSequentialOrdering:
             # Execute
             seal = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
             # Assert: Seal issued (happy path)
@@ -285,7 +293,8 @@ class TestC2PostHITLSequentialOrdering:
         with pytest.raises(GovernanceError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
         # Assert: Exception recorded as violation
@@ -318,7 +327,8 @@ class TestC2PostHITLSequentialOrdering:
             # Execute
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100}
+                params={"symbol": "AAPL", "amount": 100},
+                approved_barrier_preview=None,
             )
 
             # C2 Critical Assertion: OPA called strictly before CBF

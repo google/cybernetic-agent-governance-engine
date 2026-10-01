@@ -43,7 +43,6 @@ GATED = [
     "/mcp/sse",
     "/mcp/messages/",
     "/tools/execute",
-    "/governance/check",
     "/governance/validate-action",
     "/governance/policy-version",
     "/inference/v1/chat/completions",
@@ -270,7 +269,6 @@ def test_real_gateway_refuses_unidentified_calls_to_governed_routes() -> None:
     for path in (
         "/tools/execute",
         "/governance/validate-action",
-        "/governance/check",
     ):
         assert client.post(path, json={}).status_code == 403, path
     assert client.get("/mcp/sse").status_code == 403

@@ -514,7 +514,7 @@ This trades latency for auditability.
 
 ### Phase 1 Consistency Blast Radius
 
-Any change to the governance decision space or `_run_checks()` outcome domain must be
+Any change to the governance decision space or `run_pipeline()` outcome domain must be
 mirrored in:
 
 - [`proof/model.py`](../../proof/model.py) — state-count verification may need updating
@@ -528,7 +528,7 @@ mirrored in:
 
 | Item | Verification needed |
 |---|---|
-| `_run_checks()` outcome domain | Now includes NARROW; proof model covers these transitions (`phases_closed` asserts no PAUSE phase) |
+| `run_pipeline()` outcome domain | Now includes NARROW; proof model covers these transitions (`phases_closed` asserts no PAUSE phase) |
 | FTRA boundary check mandatory | `gated_transitions()` in proof model should reflect unconditional FTRA |
 | `proof/model.py` state count | Re-enumerated: gated 42 / ungated 21 / DoWhy-absent 39 / ungated-NARROW 40 after the PAUSE removal |
 

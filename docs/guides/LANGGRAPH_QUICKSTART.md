@@ -105,7 +105,6 @@ print(result["result"])
    - **Tier 4:** Fiscal limit pre-reservation
    - **Tier 5:** Multi-model consensus
    - **Tier 6:** Causal gatekeeper
-   - **Tier 6b:** Adaptive FRIA gate
 4. Decision returned:
    - **ALLOW** → Node executes (autonomous execution permitted)
    - **DENY** → Raises `PolicyViolationException` (explicit UCA/CBF/policy violations)

@@ -55,6 +55,7 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.infrastructure.config_manager import config_manager
@@ -309,6 +310,11 @@ async def simulate_governance_check(
     reported here too. Nothing is committed, and this tool does not enforce
     or block execution — enforcement happens when the action is dispatched
     through ``validate_action`` / ``govern()``.
+
+    ``verdict`` is a :class:`GovernanceDecision` value: ``ALLOW`` iff there
+    are no violations, otherwise the classifier's decision over them. A NARROW
+    here is an unverified candidate, and no approval token is parked for a
+    REQUIRE_APPROVAL; ``POST /governance/validate-action`` does both.
     """
     logger.info(
         "🔍 Simulating governance check for: %s (Risk: %s)", target_tool, risk_profile
@@ -316,8 +322,13 @@ async def simulate_governance_check(
     vp = {**target_params, "risk_profile": risk_profile}
     result = await governor_of(app).verify(target_tool, vp)
     violations = [v.to_dict() for v in result.get("violations", [])]
+    if violations:
+        # An unclassified refusal is a DENY (fail closed).
+        verdict = GovernanceDecision(result.get("decision", GovernanceDecision.DENY))
+    else:
+        verdict = GovernanceDecision.ALLOW
     return {
-        "status": "APPROVED" if not violations else "REJECTED",
+        "verdict": verdict.value,
         "violations": violations,
         "opa_results": result.get("opa_results"),
         "message": "No violations detected."
