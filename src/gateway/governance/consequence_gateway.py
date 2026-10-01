@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-consequence_gateway.py — Post-FRIA Consequence Evaluation Gateway
+consequence_gateway.py — Post-Validation Consequence Evaluation Gateway
 
-Vendor-agnostic post-FRIA consequence boundary ported from FlowSignal's
+Vendor-agnostic consequence boundary after a normative provider's validation, ported from FlowSignal's
 production integration candidate. Verifies a ConsequenceToken, re-derives
 the action digest, and atomically consumes the authority record before
 permitting execution.
@@ -57,7 +57,7 @@ logger = logging.getLogger("Gateway.Governance.ConsequenceGateway")
 
 
 class ConsequenceDecision(str, Enum):
-    """Post-FRIA consequence decision (ported from FlowSignal vendor file)."""
+    """Post-validation consequence decision (ported from FlowSignal vendor file)."""
 
     EXECUTE = "EXECUTE"
     HOLD = "HOLD"
@@ -80,7 +80,7 @@ class ConsequenceEvaluation:
 
 
 class ConsequenceGateway:
-    """Vendor-agnostic post-FRIA consequence boundary.
+    """Vendor-agnostic post-validation consequence boundary.
 
     Preserves FlowSignal's 6-step check sequence while applying CAGE-side
     substitutions (ConsequenceToken instead of vendor's AuthorityRecordBinding,

@@ -46,7 +46,7 @@ async def test_confidence_stage_happy_path(mock_threshold):
         (float("inf"), "infinite"),
         (-0.1, "negative"),
         (1.1, "exceeds maximum 1.0"),
-        (0.4, "< threshold"),  # 0.4 < 0.5 (FRIA_ZONE_DEFER) -> DEFERRABLE
+        (0.4, "< threshold"),  # 0.4 < 0.5 (confidence.defer_floor) -> DEFERRABLE
     ],
 )
 async def test_confidence_stage_fail_closed(mock_threshold, invalid_val, expected_msg):

@@ -233,7 +233,7 @@ Profiles dynamically alter operational confidence boundaries, latency budgets, a
 | Region Code | Primary Frameworks | Default Min Confidence | Drawdown Limit | Target Consensus SLA |
 |---|---|---|---|---|
 | `US_FED` | NIST SP 800-53, SR 26-2, ISO 42001 | 0.95 | 5.0% | 200ms |
-| `EU_ECB` | EU AI Act (Art. 29a FRIA), DORA, GDPR | 0.97 | 4.0% | 150ms |
+| `EU_ECB` | EU AI Act (Art. 27 FRIA), DORA, GDPR | 0.97 | 4.0% | 150ms |
 | `APAC_MAS` | MAS FEAT Principles, ISO 42001 | 0.95 | 5.0% | 100ms |
 
 ### Architecture & Design Index

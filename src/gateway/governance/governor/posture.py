@@ -24,8 +24,12 @@ CRITICAL and startup continues.
 
 Checks:
 
-* ``tier_runtime_requirements``: every module a tier declares in
-  ``runtime_requirements`` imports (e.g. ``dowhy`` for a causal tier).
+* ``tier_runtime_requirements``: every module a tier (domain or
+  jurisdiction) declares in ``runtime_requirements`` imports (e.g.
+  ``dowhy`` for a causal tier).
+* ``jurisdiction_requirements``: every ``PostureRequirement`` the region's
+  ``JurisdictionContribution`` declares holds (e.g. the EU AI Act
+  impact-assessment tier is not backed by the stub ``NormativeProvider``).
 * ``kms_signing_mode`` (K3): the governance signer is KMS-backed, not the
   HMAC fallback. HMAC is allowed only in permissive postures.
 * ``kms_ready``: the KMS key version is reachable and ENABLED.
@@ -79,7 +83,7 @@ def _reconciler_verifier() -> Any:
 
 
 def _check_tier_runtime_requirements(components: GovernorComponents) -> None:
-    for tier in components.domain_tiers:
+    for tier in components.plugin_tiers:
         for module in getattr(tier, "runtime_requirements", ()):
             try:
                 importlib.import_module(module)
@@ -87,6 +91,20 @@ def _check_tier_runtime_requirements(components: GovernorComponents) -> None:
                 raise RuntimeError(
                     f"tier {tier.tier_name!r} requires {module!r}, which failed to import: {exc}"
                 ) from exc
+
+
+def _check_jurisdiction_requirements(components: GovernorComponents) -> None:
+    jurisdiction = components.jurisdiction
+    if jurisdiction is None:
+        return
+    unmet: list[str] = []
+    for requirement in jurisdiction.runtime_requirements:
+        try:
+            requirement.check()
+        except Exception as exc:
+            unmet.append(f"{requirement.name}: {exc}")
+    if unmet:
+        raise RuntimeError(f"region {jurisdiction.region!r}: " + "; ".join(unmet))
 
 
 def _check_kms_signing_mode(components: GovernorComponents) -> None:
@@ -163,6 +181,7 @@ def _check_governance_salt(components: GovernorComponents) -> None:
 
 CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("tier_runtime_requirements", _check_tier_runtime_requirements),
+    ("jurisdiction_requirements", _check_jurisdiction_requirements),
     ("kms_signing_mode", _check_kms_signing_mode),
     ("kms_ready", _check_kms_ready),
     ("redis_ready", _check_redis_ready),

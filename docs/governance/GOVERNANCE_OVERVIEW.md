@@ -144,7 +144,7 @@ This invariant is enforced structurally: `validate_action()` is the single choke
 
 In `src/gateway/governance/governor/pipeline.py`, `run_pipeline()` separates read-only validation stages from state-mutating reservation stages:
 
-1. **Phase 1 — Sequential Read-Only Validation:** Executes `ftra` (Tier 0.5) → `stpa` (Tier 1) → `opa` (Tier 3b) → `confidence` (Tier 2) → Phase-1 domain tiers (`consensus` Tier 5, `causal` Tier 6). Running `stpa` and `opa` before `confidence` supplies `stpa_violation_count` and `opa_verdict` on `StageContext` for Tier 2 structural corroboration. Evaluation stops immediately at the first `ViolationKind.HARD` violation.
+1. **Phase 1 — Sequential Read-Only Validation:** Executes `ftra` (Tier 0.5) → `stpa` (Tier 1) → `opa` (Tier 3b) → `confidence` (Tier 2) → Phase-1 domain tiers (`consensus` Tier 5, `causal` Tier 6) → jurisdiction tiers (`fria`, `EU_ECB` only; see [FRIA Tier](#fria-tier--eu_ecb-only-phase-1-after-causal)). Running `stpa` and `opa` before `confidence` supplies `stpa_violation_count` and `opa_verdict` on `StageContext` for Tier 2 structural corroboration. Evaluation stops immediately at the first `ViolationKind.HARD` violation.
 2. **Phase 2 — Gated by `phase2_mode(profile, phase1_kinds)`:**
    - **SKIP** if Phase 1 produced any `HARD` finding: the request is refused and no barrier is consulted.
    - **PREVIEW** if Phase 1 produced any other finding (e.g. an OPA `MANUAL_REVIEW` that parks the trade for a human, or a `NARROWABLE` finding), or under `Profile.DRY_RUN` (`SymbolicGovernor.verify()` / `validate_action()`): `_preview_mutating()` calls each mutating stage's side-effect-free `preview()` and never `commit()`. It continues past non-`HARD` findings and stops at the first `HARD` one. The result is recorded as `PipelineResult.barrier_preview` (`PASS` / `FAIL`) plus `preview_violations`, surfaced in the verdict meta and in the DeferToken `opa_input_snapshot` so the reviewer sees every barrier breach before approving. A `HARD` preview finding (e.g. a CBF or dose barrier) denies before any human is asked.
@@ -152,17 +152,19 @@ In `src/gateway/governance/governor/pipeline.py`, `run_pipeline()` separates rea
 
    If a committing `govern()` run fails only on `NARROWABLE` findings and narrowing is enabled, `SymbolicGovernor._sealed_narrow()` re-runs the full sealed pipeline on the clamped parameters and, inside the same `ReservationScope`, writes a single-use `narrow:receipt:<seal>` (`src/gateway/governance/narrow_receipt.py`) that the domain tool consumes. If the clamped parameters still breach, or the receipt cannot be written, the commits roll back and the request is denied.
 
-### FRIA Zone Classification Primitive (not a pipeline tier)
+### FRIA Tier — EU_ECB only (phase 1, after `causal`)
 
-Fundamental Rights Impact Assessment (FRIA) zone classification is the `enforce_fria_boundary()` primitive in [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py), available to integrations that hold a `NormativeProvider`. It is **not** wired into `run_pipeline()` and is **not** a pipeline tier (`TIER_LABELS` in `proof/model.py` has no FRIA entry). Given a caller-supplied consensus score, it classifies the request into one of three zones:
+The EU AI Act Art. 27 Fundamental Rights Impact Assessment is the `fria` tier ([`FriaTier`](../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py), phase 1, order 7). It is not a domain tier and not part of the universal 8-tier table above: `assemble_governor()` ([`governor/assembly.py`](../../src/gateway/governance/governor/assembly.py)) resolves a `JurisdictionContribution` from `ControlRegistry().active_region` via the `JURISDICTIONS` table ([`jurisdiction/registry.py`](../../src/gateway/governance/jurisdiction/registry.py)). `US_FED` and `APAC_MAS` contribute nothing; `EU_ECB` contributes the `fria` tier, which then runs right after `causal`. Jurisdiction tiers must be phase 1, so `fria` never re-runs under POST_HITL; `proof/model.py` covers it in the `JURISDICTION_TIERS` sub-proof. It claims every action by default. Model confidence plays no part in it.
 
-| Zone | Score Condition | Decision | Mechanism |
-|------|----------------|----------|-----------|
-| **ALLOW** | score ≥ 0.95 | Proceed; async attestation emitted | Detached task calls `provider.validate_fria()` and `provider.submit_evidence()`; a post-hoc rejection is logged, never retroactively blocked |
-| **DEFER** | 0.70 ≤ score < 0.95 | Synchronous blocking gate | `DeferToken` (`EXTERNAL_VALIDATION`, default 4 h TTL) parked in the caller-supplied `DeferQueue`; blocks on `provider.validate_fria()` up to `CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS` (default 5.0 s); timeout fails closed (DENY) |
-| **BLOCK** | score < 0.70 | Hard deny | Local DENY (`LOCAL_HARD_DENY`); no external call |
+| Condition | Violation | Outcome |
+|-----------|-----------|---------|
+| No current FRIA artefact for the action (or system-wide `"*"`) under `CTRL_FRIA_006.assessments` — missing, unparseable, timezone-naive, future-dated, or older than `fria.fria_reassessment_interval_days` (365, `config/thresholds/EU_ECB_BASELINE.json`; Art. 27(2)) | HARD `FRIA_ASSESSMENT_STALE` | DENY; no provider call |
+| `NormativeProvider.validate_fria()` times out (`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`, default 5 s), raises, or returns `error` | HARD `FRIA_PROVIDER_UNAVAILABLE` | DENY |
+| Provider admits | — | pass |
+| Provider refuses with a finding carrying `needs_human_review: true` | HITL `FRIA_EXTERNAL_HOLD` | REQUIRE_APPROVAL `DeferToken` parked |
+| Provider refuses otherwise | HARD `FRIA_REJECTED` | DENY |
 
-Thresholds: `enforce_fria_boundary()` reads the ALLOW boundary from `get_agent_confidence_threshold()` (default 0.95) and the DEFER boundary from `DEFER_CONFIDENCE_THRESHOLD` (0.70, `src/gateway/governance/defer_queue.py`). The separate constants `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (accessed via `get_fria_zone_allow()` / `get_fria_zone_defer()` in [`src/gateway/governance/schemas/thresholds.py`](../../src/gateway/governance/schemas/thresholds.py), overridable via env vars) carry the same defaults.
+`assert_production_posture()` ([`governor/posture.py`](../../src/gateway/governance/governor/posture.py)) runs a `jurisdiction_requirements` check: an enforcing `EU_ECB` posture refuses to start when the `NormativeProvider` is the stub (which admits every assessment).
 
 ---
 
@@ -208,17 +210,19 @@ Additionally, the Placebo Treatment Refuter (50 simulations) must confirm the wo
 
 > **Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)
 
-### FRIA Zone Boundaries — `enforce_fria_boundary()` primitive (not a pipeline tier)
+### Confidence Band — Tier 2 (every region)
 
-These boundaries apply only when an integration calls `enforce_fria_boundary()`; `run_pipeline()` does not evaluate them (see [FRIA Zone Classification Primitive](#fria-zone-classification-primitive-not-a-pipeline-tier)).
+`ConfidenceStage` evaluates the agent's self-reported confidence against `get_agent_confidence_threshold()` (`confidence.agent_threshold`) and `get_confidence_defer_floor()` (`confidence.defer_floor`):
 
 ```
-score ≥ 0.95              →  ALLOW  (async attestation)
-0.70 ≤ score < 0.95       →  DEFER  (synchronous blocking gate)
-score < 0.70              →  BLOCK  (hard deny)
+score ≥ 0.95              →  pass
+0.70 ≤ score < 0.95       →  HITL violation        (REQUIRE_APPROVAL)
+score < 0.70              →  DEFERRABLE violation  (DEFER)
 ```
 
-> **Source:** [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py)
+FTRA applies the same floor: an irreversible terminal with confidence ≥ `defer_floor` is `HITL_REQUIRED`, below it `BLOCKED`. This band is jurisdiction-neutral and is not a Fundamental Rights Impact Assessment (see [FRIA Tier](#fria-tier--eu_ecb-only-phase-1-after-causal)).
+
+> **Source:** [`src/gateway/governance/governor/stages/confidence.py`](../../src/gateway/governance/governor/stages/confidence.py), [`src/gateway/governance/schemas/thresholds.py`](../../src/gateway/governance/schemas/thresholds.py)
 
 ---
 
@@ -253,7 +257,7 @@ The ontology defines three regional control maps activated by `CAGE_DEPLOYMENT_R
 | Region | Activated By | Additive Obligations |
 |--------|-------------|----------------------|
 | **US_FED** | `CAGE_DEPLOYMENT_REGION=US_FED` | NIST SP 800-53, SR 26-2 §IV, NIST AI RMF |
-| **EU_ECB** | `CAGE_DEPLOYMENT_REGION=EU_ECB` | EU AI Act Art. 29a, GDPR Art. 22, DORA Art. 12 |
+| **EU_ECB** | `CAGE_DEPLOYMENT_REGION=EU_ECB` | EU AI Act Art. 27, GDPR Art. 22, DORA Art. 12 |
 | **APAC_MAS** | `CAGE_DEPLOYMENT_REGION=APAC_MAS` | MAS FEAT Principles, MAS Notice 655, MAS TRM §4.2 |
 
 All UCAs above are evaluated in **all regions** as part of the ISO 42001 universal baseline. Regional control maps add jurisdiction-specific thresholds and reporting obligations on top of the universal UCA set.
@@ -279,7 +283,7 @@ All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`
 | `CTRL_TEL_003` | THR-TEL-003 | ISO 42001 §A.9.4 | Agentic | `src/gateway/governance/telemetry_provider.py`, `src/gateway/governance/causal/gatekeeper.py` *(All Regions)* |
 | `CTRL_MRM_004` | THR-MRM-004 | SR 26-2 §IV — Model Risk Management | Traditional ML | `src/gateway/governance/safety/cbf_engine.py` (`ControlBarrierFunction`), `src/gateway/governance/causal/gatekeeper.py` — **US_FED only**; ISO 42001 §A.9.4 is the universal equivalent |
 | `CTRL_OPA_005` | THR-OPA-005 | ISO 42001 §A.6.1 | Agentic | `src/gateway/governance/governor/stages/opa.py` — Tier 3b OPA policy check *(All Regions)* |
-| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `src/gateway/governance/normative_provider.py` — FRIA normative boundary + attestation — **EU_ECB only** |
+| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 27 | Agentic | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` (`FriaTier`), contributed via `src/gateway/governance/jurisdiction/registry.py` — phase-1 `fria` tier after `causal` — **EU_ECB only** |
 | `CTRL_TQP_007` | THR-TQP-007 | ISO 42001 Annex A.4 | Agentic | `src/gateway/governance/token_quota_proxy.py` — per-session token + step-count quota enforcement *(All Regions)* |
 | `CTRL_DFR_008` | THR-DFR-008 | CSA AARM-V7 / ISO 42001 §A.8.4 | AARM Primitive | `src/gateway/governance/defer_queue.py` — DEFER State Machine *(All Regions)* |
 | `CTRL_FTRA_001` | — | ISO 42001 §A.9.4 | Agentic | `src/gateway/governance/ftra/node_factory.py`, `src/gateway/governance/governor/stages/ftra.py` — Tier 0.5 reachability gate *(All Regions)* |

@@ -83,8 +83,9 @@ call made through ``SymbolicGovernor.govern()`` / ``verify()``: Tier 0.5
 and ``opa`` components.  Plugin-contributed tiers (e.g. finance's
 ``bounding`` or healthcare's ``dose_barrier``) add no proof states of their
 own; they are covered structurally by ``PLUGIN_TIER_PHASE`` so the POST_HITL
-predicate cannot skip a plugin-named phase-2 tier.  There is no ``fria``
-tier: no pipeline stage of that name exists.
+predicate cannot skip a plugin-named phase-2 tier.  Jurisdiction tiers
+(``JURISDICTION_TIERS``: ``fria`` under ``EU_ECB`` only) are appended per
+region in a sub-proof; the universal tuple below stays the proved model.
 
 Gaps closed by this proof:
   Gap 1: Proves the ungated (no-seal) architecture violates the invariant,
@@ -186,6 +187,68 @@ def post_hitl_runs_every_phase2_tier() -> bool:
         for tier, phase in phases.items()
         if phase == 2
     )
+
+
+# ---------------------------------------------------------------------------
+# Jurisdiction tiers (D-L)
+# ---------------------------------------------------------------------------
+#
+# A deployment region may add obligations to every domain. They are appended
+# to the universal TIERS for that region only; the 8-tier tuple above stays
+# the proved universal model (38/19/35). Mirrored by
+# ``src/gateway/governance/jurisdiction/registry.py::JURISDICTIONS`` (parity in
+# ``tests/test_formal_profile_parity.py``, once per region).
+
+JURISDICTION_TIERS: dict[str, tuple[str, ...]] = {
+    "US_FED": (),
+    "APAC_MAS": (),
+    "EU_ECB": ("fria",),  # EU AI Act Art. 27 FRIA (CTRL_FRIA_006)
+}
+
+# Jurisdiction tiers are assessments, never barriers: phase 1 (read-only).
+# ``JurisdictionContribution`` refuses any other phase at construction.
+JURISDICTION_TIER_PHASE: dict[str, int] = {"fria": 1}
+
+
+def region_tiers(region: str) -> tuple[str, ...]:
+    """The tiers a governed call runs through in ``region``."""
+    return TIERS + JURISDICTION_TIERS[region]
+
+
+def region_tier_phase(region: str) -> dict[str, int]:
+    return TIER_PHASE | {t: JURISDICTION_TIER_PHASE[t] for t in JURISDICTION_TIERS[region]}
+
+
+def region_profile_stages(region: str) -> dict[str, frozenset[str]]:
+    phases = region_tier_phase(region)
+    return {
+        profile: frozenset(t for t in region_tiers(region) if runs_under_profile(profile, t, phases[t]))
+        for profile in PROFILES
+    }
+
+
+def jurisdiction_tiers_are_read_only() -> bool:
+    """Claim: every jurisdiction tier is phase 1."""
+    return all(
+        JURISDICTION_TIER_PHASE[t] == 1 for tiers in JURISDICTION_TIERS.values() for t in tiers
+    )
+
+
+def jurisdiction_keeps_post_hitl_set() -> bool:
+    """Claim: no region changes what POST_HITL re-runs, and every region's
+    POST_HITL still re-runs every phase-2 tier (a phase-1 tier adds nothing
+    after approval and removes nothing)."""
+    for region in JURISDICTION_TIERS:
+        stages = region_profile_stages(region)
+        if stages["POST_HITL"] != PROFILE_STAGES["POST_HITL"]:
+            return False
+        phases = region_tier_phase(region) | PLUGIN_TIER_PHASE
+        if not all(runs_under_profile("POST_HITL", t, p) for t, p in phases.items() if p == 2):
+            return False
+        # FULL and DRY_RUN run the region's obligations: no seal skips them.
+        if not set(JURISDICTION_TIERS[region]) <= stages["FULL"] & stages["DRY_RUN"]:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +831,35 @@ def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
     return True, None
 
 
+def enumerate_region(region: str, transition_fn=None) -> set[State]:
+    """Enumerate the gated model with ``region``'s jurisdiction tiers appended.
+
+    The transition functions and ``State`` read the module-level ``TIERS`` /
+    ``TIER_PHASE`` / ``PROFILE_STAGES``; they are rebound to the region's
+    model for the enumeration and restored afterwards, so the universal model
+    (and its 38/19/35 counts) is never altered.
+    """
+    global TIERS, TIER_PHASE, PROFILE_STAGES
+    saved = (TIERS, TIER_PHASE, PROFILE_STAGES)
+    try:
+        TIERS = region_tiers(region)
+        TIER_PHASE = region_tier_phase(region)
+        PROFILE_STAGES = region_profile_stages(region)
+        return enumerate_reachable(transition_fn or gated_transitions)
+    finally:
+        TIERS, TIER_PHASE, PROFILE_STAGES = saved
+
+
+def region_seal_requires_obligations(region: str, states: set[State]) -> bool:
+    """Claim: in ``region`` no seal is issued unless every jurisdiction tier passed."""
+    obligations = JURISDICTION_TIERS[region]
+    return all(
+        all(s.tier_result(t) == "PASS" for t in obligations)
+        for s in states
+        if s.phase in ("SEAL_ISSUED", "EXECUTED") and s.seal_present
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main — run both proofs
 # ---------------------------------------------------------------------------
@@ -988,6 +1080,27 @@ def main() -> None:
         )
     print()
 
+    # ── Jurisdiction sub-proof (D-L) ──────────────────────────────────────────
+    print("Jurisdiction sub-proof (JURISDICTION_TIERS, D-L):")
+    region_results: dict[str, tuple[int, bool, bool]] = {}
+    for region, extra in JURISDICTION_TIERS.items():
+        states = enumerate_region(region)
+        holds, _cex = check_no_direct_bind(states)
+        sealed_ok = region_seal_requires_obligations(region, states)
+        region_results[region] = (len(states), holds, sealed_ok)
+        print(
+            f"  {region:<8} tiers=+{list(extra)}  reachable states={len(states)}  "
+            f"No-Direct-Bind={holds}  seal requires obligations={sealed_ok}"
+        )
+    read_only = jurisdiction_tiers_are_read_only()
+    post_hitl_unchanged = jurisdiction_keeps_post_hitl_set()
+    print(f"  Every jurisdiction tier is phase 1: {read_only}")
+    print(f"  POST_HITL set unchanged in every region: {post_hitl_unchanged}")
+    # The universal model is untouched by the regional enumerations.
+    universal_after = len(enumerate_reachable(gated_transitions))
+    print(f"  Universal gated model still {universal_after} states")
+    print()
+
     # ── Final assertions ──────────────────────────────────────────────────────
     print("=" * 70)
     assert gated_holds, "PROOF FAILED: gated architecture violates No-Direct-Bind!"
@@ -1018,6 +1131,15 @@ def main() -> None:
         "PROOF FAILED: a HARD barrier preview reaches a human, or REQUIRE_APPROVAL "
         "misreports the barrier preview!"
     )
+    for region, (_count, holds, sealed_ok) in region_results.items():
+        assert holds, f"PROOF FAILED: {region} jurisdiction model violates No-Direct-Bind!"
+        assert sealed_ok, f"PROOF FAILED: {region} issues a seal without its jurisdiction tiers!"
+    assert region_results["US_FED"][0] == region_results["APAC_MAS"][0] == len(gated_states), (
+        "PROOF FAILED: a region without obligations changed the state space!"
+    )
+    assert read_only, "PROOF FAILED: a jurisdiction tier is not phase 1!"
+    assert post_hitl_unchanged, "PROOF FAILED: a jurisdiction tier changes the POST_HITL set!"
+    assert universal_after == len(gated_states), "PROOF FAILED: regional enumeration leaked!"
 
     print("✅ All assertions passed.")
     print()
@@ -1039,6 +1161,10 @@ def main() -> None:
     print("  9. With approval pending the barriers are previewed: a HARD preview")
     print("     denies before any human is asked, and REQUIRE_APPROVAL records")
     print("     barrier_preview PASS/FAIL (hard_preview_denies_before_hitl).")
+    print(" 10. Per region (JURISDICTION_TIERS), No-Direct-Bind still holds, no seal")
+    print("     is issued unless the region's obligations passed (fria under EU_ECB),")
+    print("     and the phase-1 jurisdiction tiers leave the POST_HITL set unchanged")
+    print(f"     (EU_ECB: {region_results['EU_ECB'][0]} states).")
     print()
     print("PLAUSIBLE (not proved here):")
     print("  That this model generalises to the full production CAGE stack.")

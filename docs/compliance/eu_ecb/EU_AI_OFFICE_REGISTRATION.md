@@ -100,7 +100,7 @@ After registration, the following obligations apply under the EU AI Act:
 | Annual post-market monitoring report | Art. 61 | Annual | AI System Owner |
 | Serious incident reporting | Art. 73 | Within 15 days of incident | Incident commander |
 | Notify EU AI Office of significant changes | Art. 47 | Within 30 days of change | AI System Owner |
-| FRIA update on material system changes | Art. 29a | On each material change | DPO + Compliance |
+| FRIA update on material system changes | Art. 27 | On each material change | DPO + Compliance |
 
 ---
 
@@ -118,7 +118,7 @@ After registration, the following obligations apply under the EU AI Act:
 
 ## Related Documents
 
-- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
+- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 27 FRIA
 - `compliance/eu_ecb/GDPR_DPIA.md` — GDPR Art. 35 DPIA
 - `compliance/eu_ecb/POAM_EU_ECB.md` — EU-003 POAM item
 - `docs/governance/GOVERNANCE_OVERVIEW.md` — Art. 11 general description

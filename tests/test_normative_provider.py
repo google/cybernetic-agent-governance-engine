@@ -16,11 +16,11 @@
 test_normative_provider.py — Tests for §2.5 External Normative Provider Interface
 ==================================================================================
 
-Tests the adaptive gating primitive, provider implementations, and daemon lifecycle.
+Tests the provider implementations and daemon lifecycle. The FRIA gate itself
+is the EU-only ``fria`` tier (tests/governor/test_jurisdiction_wiring.py).
 
 Test Structure:
   - Stub Provider Tests: validate StubNormativeProvider returns local baselines
-  - Adaptive Gating Tests: core enforce_fria_boundary() boundary conditions
   - Daemon Tests: boot_fetch + polling lifecycle
   - Integration Tests: default 'static' provider preserves existing behavior
 """
@@ -38,17 +38,12 @@ import pytest
 
 from src.gateway.governance.defer_queue import DeferReason
 from src.gateway.governance.normative_provider import (
-    FRIAEnforcementResult,
     NormativeProviderDaemon,
     StubNormativeProvider,
-    enforce_fria_boundary,
     get_normative_provider,
 )
 from src.gateway.governance.seams.normative import (
-    EvidenceSeal,
-    ExecutionStatus,
     NormativeBaseline,
-    ValidationResult,
 )
 from src.integrations.provider_01 import FlowSignalNormativeProvider
 
@@ -61,78 +56,6 @@ from src.integrations.provider_01 import FlowSignalNormativeProvider
 def stub_provider() -> StubNormativeProvider:
     """Create a StubNormativeProvider."""
     return StubNormativeProvider()
-
-
-@pytest.fixture
-def mock_provider() -> AsyncMock:
-    """Create a mock NormativeProvider for testing enforce_fria_boundary."""
-    provider = AsyncMock()
-    provider.validate_fria = AsyncMock(return_value=ValidationResult(admitted=True))
-    provider.submit_evidence = AsyncMock(
-        return_value=EvidenceSeal(thread_id="test-thread")
-    )
-    return provider
-
-
-@pytest.fixture
-def rejecting_provider() -> AsyncMock:
-    """Provider that rejects FRIA validation."""
-    provider = AsyncMock()
-    provider.validate_fria = AsyncMock(
-        return_value=ValidationResult(
-            admitted=False,
-            findings=[{"code": "FRIA-001", "message": "Missing fairness assessment"}],
-        )
-    )
-    return provider
-
-
-@pytest.fixture
-def timeout_provider() -> AsyncMock:
-    """Provider that times out on FRIA validation."""
-    provider = AsyncMock()
-
-    async def slow_validate(*args: Any, **kwargs: Any) -> ValidationResult:
-        await asyncio.sleep(60)  # Will be cancelled by timeout
-        return ValidationResult(admitted=True)
-
-    provider.validate_fria = slow_validate
-    return provider
-
-
-@pytest.fixture
-def action_context() -> dict[str, Any]:
-    """Sample governance action context."""
-    return {
-        "action": "execute_trade",
-        "symbol": "AAPL",
-        "amount": 15000.0,
-        "confidence": 0.92,
-        "thread_id": "test-thread-001",
-    }
-
-
-@pytest.fixture
-def mock_defer_queue() -> AsyncMock:
-    """Mock DeferQueue for testing DEFER zone behavior."""
-    from src.gateway.governance.defer_queue import DeferReason, DeferToken
-
-    queue = AsyncMock()
-    queue.park = AsyncMock(return_value="mock-defer-id")
-    queue._resolve = AsyncMock()
-
-    # Return a non-authority-bound token (upstream_permit_id=None)
-    mock_token = DeferToken(
-        thread_id="mock-thread-001",
-        defer_reason=DeferReason.EXTERNAL_VALIDATION,
-        confidence_score=0.85,
-        ttl_seconds=300,
-        opa_input_snapshot={},
-        upstream_permit_id=None,  # Explicitly None to avoid authority-bound behavior
-    )
-    queue.get = AsyncMock(return_value=mock_token)
-
-    return queue
 
 
 # ---------------------------------------------------------------------------
@@ -185,177 +108,6 @@ class TestStubNormativeProvider:
         assert not baseline.is_valid
         assert baseline.error is not None
         assert "not found" in baseline.error.lower()
-
-
-# ---------------------------------------------------------------------------
-# §2 — Adaptive Gating Tests (core)
-# ---------------------------------------------------------------------------
-
-
-class TestEnforceFRIABoundary:
-    """Tests for enforce_fria_boundary() — the adaptive gating primitive."""
-
-    @pytest.mark.asyncio
-    async def test_high_confidence_async_attestation(
-        self, mock_provider: AsyncMock, action_context: dict[str, Any]
-    ) -> None:
-        """Score ≥ 0.95 → ALLOW + ASYNC_ATTESTATION path (non-blocking)."""
-        result = await enforce_fria_boundary(
-            provider=mock_provider,
-            action_context=action_context,
-            consensus_score=0.98,
-            thread_id="test-001",
-        )
-
-        assert result.status == ExecutionStatus.ALLOW
-        assert result.path == "ASYNC_ATTESTATION"
-        assert result.consensus_score == 0.98
-        # The async task was dispatched but we don't block on it
-        # Give it a moment to fire
-        await asyncio.sleep(0.1)
-
-    @pytest.mark.asyncio
-    async def test_ambiguous_zone_sync_gate_admitted(
-        self,
-        mock_provider: AsyncMock,
-        action_context: dict[str, Any],
-        mock_defer_queue: AsyncMock,
-    ) -> None:
-        """Score in [0.70, 0.95) → DEFER → provider admits → ALLOW + SYNC_GATE_ADMITTED."""
-        result = await enforce_fria_boundary(
-            provider=mock_provider,
-            action_context=action_context,
-            consensus_score=0.85,
-            defer_queue=mock_defer_queue,
-            thread_id="test-002",
-        )
-
-        assert result.status == ExecutionStatus.ALLOW
-        assert result.path == "SYNC_GATE_ADMITTED"
-        assert result.consensus_score == 0.85
-        assert result.validation is not None
-        assert result.validation.admitted is True
-
-        # Verify DEFER queue was used
-        mock_defer_queue.park.assert_called_once()
-        mock_defer_queue._resolve.assert_called_once()
-        # Verify resolution was INJECTED (admitted via replay_evaluate)
-        resolve_args = mock_defer_queue._resolve.call_args
-        assert resolve_args[0][1] == "INJECTED"
-
-    @pytest.mark.asyncio
-    async def test_ambiguous_zone_sync_gate_rejected(
-        self,
-        rejecting_provider: AsyncMock,
-        action_context: dict[str, Any],
-        mock_defer_queue: AsyncMock,
-    ) -> None:
-        """Score in [0.70, 0.95) → DEFER → provider rejects → DENY + SYNC_GATE_REJECTED."""
-        result = await enforce_fria_boundary(
-            provider=rejecting_provider,
-            action_context=action_context,
-            consensus_score=0.85,
-            defer_queue=mock_defer_queue,
-            thread_id="test-003",
-        )
-
-        assert result.status == ExecutionStatus.DENY
-        assert result.path == "SYNC_GATE_REJECTED"
-        assert result.validation is not None
-        assert result.validation.admitted is False
-        assert len(result.validation.findings) == 1
-
-        # Verify resolution was ESCALATED (rejected)
-        resolve_args = mock_defer_queue._resolve.call_args
-        assert resolve_args[0][1] == "ESCALATED"
-
-    @pytest.mark.asyncio
-    async def test_ambiguous_zone_timeout_fails_closed(
-        self,
-        timeout_provider: AsyncMock,
-        action_context: dict[str, Any],
-        mock_defer_queue: AsyncMock,
-    ) -> None:
-        """Score in [0.70, 0.95) → provider times out → DENY + SYNC_GATE_TIMEOUT."""
-        with patch.dict(os.environ, {"CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS": "0.1"}):
-            result = await enforce_fria_boundary(
-                provider=timeout_provider,
-                action_context=action_context,
-                consensus_score=0.85,
-                defer_queue=mock_defer_queue,
-                thread_id="test-004",
-            )
-
-        assert result.status == ExecutionStatus.DENY
-        assert result.path == "SYNC_GATE_TIMEOUT"
-
-        # Verify resolution was EXPIRED (timeout)
-        resolve_args = mock_defer_queue._resolve.call_args
-        assert resolve_args[0][1] == "EXPIRED"
-
-    @pytest.mark.asyncio
-    async def test_low_confidence_hard_deny(
-        self, mock_provider: AsyncMock, action_context: dict[str, Any]
-    ) -> None:
-        """Score < 0.70 → DENY + LOCAL_HARD_DENY, no HTTP call made."""
-        result = await enforce_fria_boundary(
-            provider=mock_provider,
-            action_context=action_context,
-            consensus_score=0.55,
-            thread_id="test-005",
-        )
-
-        assert result.status == ExecutionStatus.DENY
-        assert result.path == "LOCAL_HARD_DENY"
-        assert result.consensus_score == 0.55
-        # Provider should NOT have been called
-        mock_provider.validate_fria.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_boundary_095_exact(
-        self, mock_provider: AsyncMock, action_context: dict[str, Any]
-    ) -> None:
-        """Score = 0.95 exactly → ALLOW (async path)."""
-        result = await enforce_fria_boundary(
-            provider=mock_provider,
-            action_context=action_context,
-            consensus_score=0.95,
-            thread_id="test-006",
-        )
-
-        assert result.status == ExecutionStatus.ALLOW
-        assert result.path == "ASYNC_ATTESTATION"
-
-    @pytest.mark.asyncio
-    async def test_boundary_070_exact(
-        self, mock_provider: AsyncMock, action_context: dict[str, Any]
-    ) -> None:
-        """Score = 0.70 exactly → DEFER (sync gate)."""
-        result = await enforce_fria_boundary(
-            provider=mock_provider,
-            action_context=action_context,
-            consensus_score=0.70,
-            thread_id="test-007",
-        )
-
-        assert result.status == ExecutionStatus.ALLOW
-        assert result.path == "SYNC_GATE_ADMITTED"
-
-    @pytest.mark.asyncio
-    async def test_boundary_069_deny(
-        self, mock_provider: AsyncMock, action_context: dict[str, Any]
-    ) -> None:
-        """Score = 0.69 → DENY (hard deny)."""
-        result = await enforce_fria_boundary(
-            provider=mock_provider,
-            action_context=action_context,
-            consensus_score=0.69,
-            thread_id="test-008",
-        )
-
-        assert result.status == ExecutionStatus.DENY
-        assert result.path == "LOCAL_HARD_DENY"
-        mock_provider.validate_fria.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -661,63 +413,9 @@ class TestDataContracts:
         b2 = NormativeBaseline(region=region, profile={"b": 2, "a": 1})
         assert b1.profile_hash == b2.profile_hash
 
-    def test_fria_enforcement_result_fields(self) -> None:
-        """FRIAEnforcementResult stores all fields."""
-        result = FRIAEnforcementResult(
-            status=ExecutionStatus.ALLOW,
-            path="ASYNC_ATTESTATION",
-            consensus_score=0.98,
-        )
-        assert result.status == ExecutionStatus.ALLOW
-        assert result.path == "ASYNC_ATTESTATION"
-        assert result.consensus_score == 0.98
-        assert result.validation is None
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
-
-
-@pytest.mark.asyncio
-@pytest.mark.unit
-async def test_async_attestation_uses_jcs_canonicalization():
-    """Verify _async_attestation() evidence hash uses RFC 8785 JCS, not json.dumps.
-
-    FlowSignal Phase 2 §5.3: Evidence hash migrated from json.dumps(sort_keys=True)
-    to jcs_canonicalize_plan() for deterministic cross-language canonicalization.
-    """
-    import hashlib
-    from unittest.mock import AsyncMock
-
-    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-    from src.gateway.governance.normative_provider import _async_attestation
-
-    # Mock provider that captures the evidence hash submitted
-    mock_provider = AsyncMock()
-    mock_provider.validate_fria = AsyncMock(
-        return_value=ValidationResult(admitted=True, findings=[])
-    )
-    mock_provider.submit_evidence = AsyncMock(
-        return_value=EvidenceSeal(
-            thread_id="test-thread-123", seal_hash="test-seal", error=None
-        )
-    )
-
-    action_context = {"action": "test", "amount": 100.5, "score": 1.0}
-    thread_id = "test-thread-123"
-
-    # Call _async_attestation
-    await _async_attestation(mock_provider, action_context, thread_id)
-
-    # Verify submit_evidence was called
-    assert mock_provider.submit_evidence.call_count == 1
-    call_args = mock_provider.submit_evidence.call_args
-    submitted_hash = call_args[0][1]  # Second positional arg is the evidence hash
-
-    # Compute expected hash using JCS
-    expected_hash = hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest()
-
-    # Assert the evidence hash matches the JCS-based digest
-    assert submitted_hash == expected_hash
 
 
 @pytest.mark.asyncio

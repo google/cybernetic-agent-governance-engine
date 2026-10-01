@@ -696,7 +696,8 @@ async def validate_action_endpoint(
         # When the verdict is DEFER and it's an external provider escalation, return
         # HTTP 202 with an async receipt body so clients know to poll for resolution.
         # Detection: defer_reason == "EXTERNAL_HOLD" OR
-        #            is_external_hold == True (explicit marker from FRIA tier)
+        #            is_external_hold == True (explicit marker). The EU fria tier
+        #            reports a provider hold as HITL → REQUIRE_APPROVAL instead.
         verdict = result.get("verdict")
         defer_reason = result.get("defer_reason", "")
         is_external_hold = result.get("is_external_hold", False)

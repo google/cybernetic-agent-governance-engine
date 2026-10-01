@@ -206,6 +206,33 @@ system-security-plan:
       - href: ../../compliance/lula/lula-validation-dora-art10.yaml
         rel: lula
         text: 'Lula validation: DORA Art. 10 ICT Audit Logging'
+    - uuid: eu-ecb-comp-0004-4000-8000-000000000004
+      type: software
+      title: CAGE EU AI Act Art. 27 FRIA Jurisdiction Tier
+      description: 'The fria tier (src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)
+        contributed by the EU_ECB entry of the jurisdiction table
+        (src/gateway/governance/jurisdiction/registry.py). A phase-1 read-only
+        pipeline tier, ordered after causal, that denies an action whose
+        deployer FRIA artefact is missing or older than the 365-day
+        reassessment interval, denies when the normative provider is
+        unavailable, times out or refuses, and parks an approval when the
+        provider escalates to human review.'
+      purpose: 'Satisfies EU AI Act Art. 27 (Fundamental Rights Impact
+        Assessment) and Art. 27(2) reassessment currency for deployers of
+        High-Risk AI systems (control CTRL_FRIA_006).'
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: dpo
+      props:
+      - name: eu-ai-act-article
+        value: Art. 27 — Fundamental Rights Impact Assessment
+      - name: applicable-regions
+        value: EU_ECB
+      links:
+      - href: ../../compliance/lula/lula-validation-eu-fria.yaml
+        rel: lula
+        text: 'Lula validation: EU AI Act Art. 27 FRIA'
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -280,6 +307,38 @@ system-security-plan:
         - href: ../../compliance/lula/lula-validation-dora-art10.yaml
           rel: reference
           text: Lula automated validation for DORA Art. 10
+    - uuid: eu-ecb-req-0004-4000-8000-000000000004
+      control-id: eu-ai-act-art27
+      description: 'EU AI Act Art. 27 FRIA (CTRL_FRIA_006) is enforced by the
+        fria jurisdiction tier in every EU_ECB governor pipeline. Not applicable
+        in US_FED or APAC_MAS: their jurisdiction entries contribute no tier, so
+        no fria stage is assembled (tests/governor/test_jurisdiction_wiring.py;
+        proof/model.py JURISDICTION_TIERS). An enforcing EU_ECB posture refuses
+        to start on the stub normative provider (assert_production_posture,
+        jurisdiction_requirements check). Independent external validation
+        depends on provider credential provisioning (EU-001).'
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: regulatory-citation
+        value: EU AI Act Art. 27 (Regulation (EU) 2024/1689)
+      - name: applicable-regions
+        value: EU_ECB
+      responsible-roles:
+      - role-id: dpo
+      by-components:
+      - component-uuid: eu-ecb-comp-0004-4000-8000-000000000004
+        uuid: eu-ecb-bycomp-0004-4000-8000-000000000004
+        description: 'Fail-closed FRIA tier: stale or missing artefact, provider
+          unavailability, timeout and refusal each deny; a needs_human_review
+          finding requires approval. Each path is observed failing in
+          tests/governor/test_jurisdiction_wiring.py.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../compliance/lula/lula-validation-eu-fria.yaml
+          rel: reference
+          text: Lula automated validation for EU AI Act Art. 27
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001
@@ -312,6 +371,11 @@ system-security-plan:
       title: CAGE DORA Lula Validation — Art. 10
       rlinks:
       - href: compliance/lula/lula-validation-dora-art10.yaml
+        media-type: application/yaml
+    - uuid: eu-ecb-res-0010-4000-8000-000000000010
+      title: CAGE EU AI Act Lula Validation — Art. 27 FRIA
+      rlinks:
+      - href: compliance/lula/lula-validation-eu-fria.yaml
         media-type: application/yaml
     - uuid: eu-ecb-res-0008-4000-8000-000000000008
       title: EU_ECB Governance Thresholds Baseline

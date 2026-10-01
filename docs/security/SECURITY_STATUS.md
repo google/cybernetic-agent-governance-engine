@@ -37,7 +37,7 @@ CAGE v3.0.1 provides a **production-grade AI governance enforcement runtime**. T
 | Recursion guard                  | `loop_count >= 3 → explainer` escape hatch                                | ✅ Implemented & tested |
 | DEFER state machine (AARM-V7)    | Redis db=1 noeviction; SSE events; OTel metrics; closes AARM-V7 threat vector | ✅ Implemented |
 | SHA-256 hash-chained context     | Context accumulator with hash-chain integrity; closes AARM-V1 threat vector | ✅ Implemented |
-| External Normative Provider      | Adaptive FRIA gating (EU AI Act); stub mode until external provider credentials provisioned (POAM-022) | ✅ Implemented |
+| External Normative Provider      | Backs the `EU_ECB`-only `fria` tier (EU AI Act Art. 27); stub mode until external provider credentials provisioned (POAM-022) — an enforcing `EU_ECB` posture refuses to start on the stub | ✅ Implemented |
 | Linkerd mTLS (SC-8 / IA-3)       | SPIFFE/SVID identity; gateway↔OPA, gateway↔NeMo; closes POAM-007          | ✅ Implemented (v1.1.0) |
 | Cilium L7 egress lockdown (SC-7) | FQDN allowlist (gateway); internal-only (agent pods)                      | ✅ Implemented (v1.1.0) |
 | Cryptographic evidence chain     | SHA-256 hash-chained NDJSON; MiFID II / GDPR view-access log; KMS batch signing for OSCAL artifacts | ✅ Implemented (v1.1.0) |
@@ -141,7 +141,7 @@ The following weaknesses are documented in [`compliance/us_fed/POAM_US_FED.md`](
 | **EU AI Act Art. 12** — Record-keeping | 🟡 Partial | OTel + Langfuse audit trail active; GDPR-compliant retention schedule pending |
 | **EU AI Act Art. 14** — Human oversight | ✅ Implemented | HITL gate (`interrupt_before=["governed_trader"]`); TOCTOU remediation active |
 | **EU AI Act Art. 17** — Quality management | 🟡 Partial | ISO 42001 Clause 9 evidence loop active; formal QMS documentation pending |
-| **EU AI Act Art. 29a** — FRIA (Step 8) | 🟡 Partial | FRIA attestation logging active (`CTRL_FRIA_006`); EU AI Office registration pending |
+| **EU AI Act Art. 27** — FRIA (Step 8) | 🟡 Partial | `fria` tier enforces FRIA currency + provider validation (`CTRL_FRIA_006`, `EU_ECB` only); EU AI Office registration pending |
 | **EU AI Act Art. 61** — Post-market monitoring | 🟡 Partial | Lula CronJob + OSCAL Assessment Results active; formal post-market plan pending |
 | **DORA Art. 10** — ICT risk management | 🟡 Partial | Architecture mapped; full DORA compliance testing pending |
 | **DORA Art. 11** — ICT-related incident management | 🟡 Partial | `GovernanceEventBus` + Slack/PagerDuty alerts active; formal DORA incident plan pending |

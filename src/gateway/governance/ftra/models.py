@@ -111,12 +111,12 @@ class FTRAVerdict(str, Enum):
 
     HITL_REQUIRED = "HITL_REQUIRED"
     """An IRREVERSIBLE_TERMINAL node is reachable AND the Evaluator confidence
-    score is >= FRIA_ZONE_DEFER (0.70).  The thread is parked in DeferQueue
+    score is >= confidence.defer_floor (0.70).  The thread is parked in DeferQueue
     db=1 pending synchronous human-in-the-loop clearance."""
 
     BLOCKED = "BLOCKED"
     """An IRREVERSIBLE_TERMINAL node is reachable AND the Evaluator confidence
-    score is < FRIA_ZONE_DEFER (0.70).  The plan is blocked outright — the
+    score is < confidence.defer_floor (0.70).  The plan is blocked outright — the
     confidence is too low to even warrant human review."""
 
 

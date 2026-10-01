@@ -17,7 +17,7 @@ provider_07 Wire Protocol Schema Models (Bayesian Causal Suitability Oracle)
 
 Defines strict Pydantic v2 models mapping to the canonical JSON wire contract for
 Bayesian belief network inference over financial suitability constraints (SEC Reg BI,
-FINRA Rule 2111, EU AI Act Art. 29a).
+FINRA Rule 2111, EU AI Act Art. 27).
 
 Key Invariants:
 - Tri-state decision mapping: ALLOW/REFUSE/ESCALATE → admitted bool

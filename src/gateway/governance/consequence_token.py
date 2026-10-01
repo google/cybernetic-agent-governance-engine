@@ -40,7 +40,7 @@ Dependencies:
   - KMSGovernanceSigner (sign_raw, verify_raw, key_id, jose_alg)
   - jcs_canonicalizer (for action digest recomputation by callers)
 
-Usage (Phase 2 integration point, from provider_01 validate_fria):
+Usage (Phase 2 integration point, from provider_01's normative validation):
   from src.gateway.governance.consequence_token import ConsequenceToken, ConsequenceTokenError
   from src.gateway.governance.kms_signer import get_signer
   from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan

@@ -30,7 +30,7 @@
 #   - UCA-6 max order volume: 0.5% daily vol (vs 1% US) — MiFID II MAR Art. 12
 #   - Max sell fraction: 8% portfolio (vs 10% US) — ESMA best execution
 #   - Max latency: 150ms (vs 200ms US) — DORA Art. 10 operational resilience
-#   - FRIA attestation: ENABLED — EU AI Act Art. 29a (EU-only control)
+#   - FRIA attestation: ENABLED — EU AI Act Art. 27 (EU-only control)
 #   - SR 26-2 on OTel spans: SUPPRESSED — "no legal force" sentinel active
 #   - OSCAL framework: EU_AI_ACT (vs NIST_SP800_53 US)
 #   - Prompt injection keywords: +GDPR OVERRIDE, +BYPASS FRIA
@@ -42,7 +42,7 @@
 #
 # External legal requirements (not automated — must be completed separately):
 #   1. GDPR Art. 35 Data Protection Impact Assessment (DPIA)
-#   2. EU AI Act Art. 29a Fundamental Rights Impact Assessment (FRIA)
+#   2. EU AI Act Art. 27 Fundamental Rights Impact Assessment (FRIA)
 #   3. EU AI Office registration (High-Risk AI — Annex III §5(b))
 #   4. DORA Art. 11 ICT Business Continuity Plan
 #   5. EBA/GL/2023/02 independent model validation report

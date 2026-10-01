@@ -74,9 +74,9 @@ stateDiagram-v2
 - **Priority Precedence** ([`ClassificationEngine.classify()`](../../src/gateway/governance/classification_engine.py)):
   1. `Hard Violation (STPA / CBF / OPA DENY)` → `DENY`
   2. `OPA Manual Review` → `REQUIRE_APPROVAL`
-  3. `HITL Violation (FTRA hit, confidence in [FRIA_ZONE_DEFER, AGENT_CONFIDENCE_THRESHOLD))` → `REQUIRE_APPROVAL`
+  3. `HITL Violation (FTRA hit, confidence in [confidence.defer_floor, AGENT_CONFIDENCE_THRESHOLD))` → `REQUIRE_APPROVAL`
   4. `Every violation NARROWABLE + narrower proposal` → `NARROW` (after re-verification)
-  5. `Confidence-Starved (< FRIA_ZONE_DEFER)` → `DEFER`
+  5. `Confidence-Starved (< confidence.defer_floor)` → `DEFER`
   6. Anything else with violations → `DENY`; `Zero Violations` → `ALLOW`
 - **Canonical Decision Vocabulary**: The Gateway strictly enforces a five-state decision vocabulary ([`src/gateway/governance/decisions.py`](../../src/gateway/governance/decisions.py)): `ALLOW`, `DENY`, `DEFER`, `NARROW`, and `REQUIRE_APPROVAL`. Transient operational failures (rate limits, circuit breakers, Redis timeouts) are `HARD` violations and resolve to `DENY`; there is no separate "pause" verdict (the former one was removed on 2026-10-01 because no tier ever produced a `TRANSIENT` violation).
 - **Structural Subtyping**: Decoupled from concrete implementations via `Protocol` interfaces in [`src/gateway/governance/contracts.py`](../../src/gateway/governance/contracts.py) (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, `CausalGatekeeper`, `GovernanceTierPlugin`, `InvariantModel`). Consensus critics (`CriticSpec` / `ConsensusContribution`), causal specs (`CausalSpec`) and narrowing results (`NarrowingResult`) are domain-injected; the kernel carries no finance defaults.
@@ -90,14 +90,14 @@ The symbolic governance pipeline is executed for every governed action by [`run_
 |---|---|---|
 | **Boundary Gate** | **FTRA Commencement Gate** (`CTRL_FTRA_001`) | First pipeline stage (`FtraStage`, [`governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py)) classifies the action against the active domain's FTRA registry and emits a `HITL` violation for irreversible or unregistered actions. Plan-level reachability over multi-step plans runs in the in-graph `ftra_node` ([`src/gateway/governance/ftra/`](../../src/gateway/governance/ftra/)). |
 | **Tier 1** | **STPA/STAMP UCA Validation** | `StpaStage` runs the kernel [`STPAValidator`](../../src/gateway/governance/stpa_validator.py) over the domain-contributed `PluginContribution.uca_rules` (finance: `src/cage_finance/stpa/`). |
-| **Tier 2** | **Agent Confidence Check** | `ConfidenceStage` checks the self-reported score against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95): missing/invalid → `HARD`; below threshold but ≥ `FRIA_ZONE_DEFER` → `HITL`; below `FRIA_ZONE_DEFER` → `DEFERRABLE`. |
+| **Tier 2** | **Agent Confidence Check** | `ConfidenceStage` checks the self-reported score against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95): missing/invalid → `HARD`; below threshold but ≥ `confidence.defer_floor` → `HITL`; below `confidence.defer_floor` → `DEFERRABLE`. |
 | **Tier 3a** | **Control Barrier Function (CBF)** | Phase-2 invariant-parametric barrier ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) driven by the domain's `InvariantModel` and `cost_resolver` ($h(x) \ge 0$, per-invariant $\gamma$). Debits commit atomically in one Lua script with fence-epoch CAS against a shared high-water mark (`safety:fence_epoch_hwm`). Ground truth comes from `GroundTruthReconciler` snapshots ([`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py), POAM-023) verified against the reconciler's `kid` ([`reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py)). |
 | **Tier 4** | **Fiscal Limit Pre-Reservation** | Finance phase-2 tier: `FiscalLimitGuard` (`src/cage_finance/safety/fiscal_limit_guard.py`) atomically reserves capacity against the daily fiscal cap in Redis and returns the `ReservationToken` in its `CommitReceipt`; the reservation is released if a later commit or the seal fails. Emits `NARROWABLE` violations. |
 | **Tier 3b** | **OPA Rego Policy Evaluation** | `OpaStage` queries `/v1/data/<DomainConfig.opa_package>`; startup aborts unless OPA serves that package and its required rules. Circuit breaker: 5 failures $\to$ OPEN, 30s recovery. Redis decision cache: 10s TTL, SHA-256 keyed. |
 | *(inference path)* | **Token Quota Proxy (TQP)** | Not a governor stage: enforced on the inference proxy path ([`inference_proxy.py`](../../src/gateway/server/inference_proxy.py)). Per-session step-count ($\le 12$) and token ($\le 100\text{k}$) quota enforcement via atomic Redis Lua scripts (`token_quota_proxy.py`). Two-phase commit (reserve $\to$ reconcile) with fail-closed HTTP 429 semantics. |
 | **Tier 5** | **Multi-Model Consensus Engine** | `ConsensusGate.from_contribution()` over domain-contributed `CriticSpec`s, with `ConsensusModelRegistry` (`src/gateway/governance/consensus/engine.py`) resolving critic models; each critic call is bounded by `CONSENSUS_CRITIC_TIMEOUT_S` (10 s). Heterogeneous critic models from the Reasoning and Governance Model Pools evaluate high-impact actions. Unanimous `APPROVE` passes; unanimous `REJECT` blocks; split vote escalates to human review. |
 | **Tier 6** | **DoWhy Causal Gatekeeper** | Domain-injected `CausalSpec` over the domain's causal graph (`DomainConfig.causal_graph_path`); causal backdoor linear regression plus placebo refutation against live telemetry. Redis-cached by `(action_type, regime)` with 60s TTL. Fails closed if telemetry is stale or causal packages are absent. |
-| **Tier 7** | **Adaptive FRIA Zones** | There is no dedicated `fria` pipeline stage at HEAD (the label is reserved in `proof/model.py`). The three FRIA confidence zones are realised by `ConfidenceStage`: $\ge 0.95 \to$ pass; $0.70\text{--}0.95 \to$ `REQUIRE_APPROVAL`; $< 0.70 \to$ `DEFER`. `enforce_fria_boundary()` in [`normative_provider.py`](../../src/gateway/governance/normative_provider.py) is not called by the pipeline. |
+| **`fria`** (`EU_ECB` only) | **EU AI Act Art. 27 FRIA** (`CTRL_FRIA_006`) | Phase-1 jurisdiction tier ([`FriaTier`](../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)) added by `assemble_governor()` from the `JURISDICTIONS` registry only under `CAGE_DEPLOYMENT_REGION=EU_ECB`; runs right after `causal`. HARD-denies a missing/stale FRIA artefact or an unavailable `NormativeProvider`; a `needs_human_review` refusal is HITL. |
 
 #### Violation Classification & Precedence
 
@@ -107,7 +107,7 @@ After all tiers execute, violations are aggregated and classified by [`Classific
 1. **`HARD`** → `DENY` — Non-negotiable safety gates (STPA violations, CBF barrier breaches, explicit OPA DENY). Cannot be narrowed or deferred.
 2. **`HITL`** → `REQUIRE_APPROVAL` — Requires explicit human sign-off (OPA `MANUAL_REVIEW`, FTRA boundary hits).
 3. **`NARROWABLE`** → `NARROW` — Threshold violations that can be clamped to allowed values (e.g., `amount: 15000 → 10000`). Requires every violation to be `NARROWABLE`, a registered [`Narrower`](../../src/gateway/governance/narrower.py) proposal, and a clean FULL re-run on the clamped params (see *NARROW re-run requirement* below). Otherwise falls back to `DENY`.
-4. **`DEFERRABLE`** → `DEFER` — Soft violations indicating data starvation or ambiguity (low confidence `< FRIA_ZONE_DEFER`). The gateway parks the context in its `DeferQueue` (see [`DEFERRAL_QUEUE.md`](DEFERRAL_QUEUE.md)). Feature flag: `CAGE_DEFER_ENABLED` (default: `true`).
+4. **`DEFERRABLE`** → `DEFER` — Soft violations indicating data starvation or ambiguity (low confidence `< confidence.defer_floor`). The gateway parks the context in its `DeferQueue` (see [`DEFERRAL_QUEUE.md`](DEFERRAL_QUEUE.md)). Feature flag: `CAGE_DEFER_ENABLED` (default: `true`).
 
 **Classification Invariants:**
 - **Fail-closed by construction**: Every `Violation` requires an explicit `kind` field (no default). Construction without `kind` raises `TypeError`.
@@ -340,7 +340,7 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 | **AARM-V4** | Cross-Agent Propagation | Automated SBOM generation (`scripts/generate_sbom.py`); strict package dependency auditing |
 | **AARM-V5** | Prompt Injection | Aho-Corasick Tier-1 keyword scan (`text_filter.py`) + structural injection patterns (`prompt_injection_detector.py`) |
 | **AARM-V6** | Reward Hacking | OPA declarative RBAC policy (Tier 4) + Linkerd mTLS workload identity |
-| **AARM-V7** | Context Window Overflow | DEFER queue ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py), Redis `db=1`, noeviction, 4h TTL); three-zone confidence gating |
+| **AARM-V7** | Context Window Overflow | DEFER queue ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py), Redis `db=1`, noeviction, 4h TTL); confidence band (`ConfidenceStage`: below `confidence.defer_floor` → DEFER) |
 | **AARM-V8** | Temporal Deception | LangGraph Saga WAL + LIFO rollback; idempotency keys and TTL staleness checks |
 | **AARM-V9** | Privilege Escalation | `ConsensusModelRegistry` heterogeneous multi-model consensus across independent model pools |
 | **AARM-V10** | Data Exfiltration | NeMo output rail + pre-ledger PII regex sanitizer (`pii_sanitizer.py`, 8 compiled patterns) |
@@ -483,7 +483,7 @@ The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)**
   - **NIST SP 800-53 Rev 5 HIGH**: FedRAMP readiness controls.
   - **NIST AI RMF (SP 800-37)**: Continuous world-model validation.
 - **EU_ECB** (`CAGE_DEPLOYMENT_REGION=EU_ECB`):
-  - **EU AI Act (Reg. 2024/1689)**: Art. 29a Fundamental Rights Impact Assessment (FRIA) controls in the regional profile (no FRIA pipeline stage or per-span FRIA stamp is wired at HEAD).
+  - **EU AI Act (Reg. 2024/1689)**: Art. 27 Fundamental Rights Impact Assessment (FRIA), enforced by the phase-1 `fria` tier (`src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`) — current FRIA artefact plus `NormativeProvider.validate_fria()` admission, fail-closed.
   - **GDPR**: Art. 22 automated decision-making controls; 24-hour PII retention limit.
   - **DORA (Reg. 2022/2554)**: Art. 10 audit logging obligations.
 - **APAC_MAS** (`CAGE_DEPLOYMENT_REGION=APAC_MAS`):

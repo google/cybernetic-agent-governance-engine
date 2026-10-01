@@ -16,7 +16,7 @@
 provider_07 — Bayesian Causal Suitability Adapter
 
 Layer 3 integration adapter for Bayesian belief network inference over financial
-suitability constraints (SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 29a).
+suitability constraints (SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27).
 
 Public Exports:
 - Phase 1: Wire protocol schema models (Pydantic v2)

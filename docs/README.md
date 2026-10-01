@@ -122,7 +122,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [architecture/FORMAL_VERIFICATION.md](architecture/FORMAL_VERIFICATION.md) | CBF safe-set definition, routing seal asymmetric proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 | [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/causal/gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) |
 | [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 8-tier symbolic governor pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/governor/stages/stpa.py`](../src/gateway/governance/governor/stages/stpa.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
-| [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`get_fria_zone_allow()=0.95`, `get_fria_zone_defer()=0.70`), regional compliance invariants | [`src/gateway/governance/governor/governor.py`](../src/gateway/governance/governor/governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
+| [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, confidence band thresholds (`get_agent_confidence_threshold()=0.95`, `get_confidence_defer_floor()=0.70`), regional compliance invariants | [`src/gateway/governance/governor/governor.py`](../src/gateway/governance/governor/governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
 | [architecture/GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | Layer 1 kernel: CBF layer integration, routing seal enforcement, governance pipeline data-flow | [`src/gateway/governance/safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 | [examples/governed-financial-advisor/ARCHITECTURE.md](examples/governed-financial-advisor/ARCHITECTURE.md) | Layer 4 reference application: multi-agent wealth advisory workflow architecture | [`src/governed_financial_advisor/`](../src/governed_financial_advisor/) |
 
@@ -133,9 +133,8 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | `get_causal_lock_p_value_threshold()` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 6) |
 | `get_causal_lock_placebo_effect_magnitude()` | `0.2` | Maximum tolerated placebo effect magnitude |
 | `get_causal_lock_risk_boundary()` | `0.95` | Risk boundary above which causal lock is enforced |
-| `get_fria_zone_allow()` | `0.95` | Confidence floor for autonomous approval (FRIA zone getter; not wired into `run_pipeline()`) |
-| `get_fria_zone_defer()` | `0.70` | Confidence floor for deferred human review (FRIA zone getter; not wired into `run_pipeline()`) |
-| `get_agent_confidence_threshold()` | `0.95` | Fast-fail confidence threshold (Tier 2) |
+| `get_agent_confidence_threshold()` | `0.95` | ALLOW floor of the universal confidence band (`confidence.agent_threshold`, env `AGENT_CONFIDENCE_THRESHOLD`); read by `ConfidenceStage` (Tier 2) and FTRA in every region |
+| `get_confidence_defer_floor()` | `0.70` | Lower edge of the HITL zone (`confidence.defer_floor`, env `CONFIDENCE_DEFER_FLOOR`); below it `ConfidenceStage` defers and FTRA blocks, in every region. Not an EU AI Act FRIA (that is the `EU_ECB`-only `fria` tier) |
 
 ---
 
@@ -147,7 +146,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [AGENTIC_SCOPE_STATEMENT.md](governance/AGENTIC_SCOPE_STATEMENT.md) | Agentic system scope statement |
 | [HUMAN_OVERSIGHT_SCOPE.md](governance/HUMAN_OVERSIGHT_SCOPE.md) | Human oversight scope definition |
 | [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance — **CBF condition, causal SCM, confabulation, consensus** |
-| [NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Neuro-symbolic governance layer — **formal safety properties, FRIA zones, regional compliance** |
+| [NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Neuro-symbolic governance layer — **formal safety properties, confidence band, regional compliance** |
 | [OPA_MIGRATION_PROCESS.md](governance/OPA_MIGRATION_PROCESS.md) | OPA policy migration process |
 
 > **Note:** Organizational process templates (change management, incident response,

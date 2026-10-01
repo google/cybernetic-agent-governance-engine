@@ -1,16 +1,12 @@
 {
   "_comment": "CAGE Governance Thresholds — single source of truth. Loaded and Pydantic-validated at gateway startup. All modules MUST reference the loaded singleton; never inline literals.",
   "_schema_version": "3.0.0",
-  "_env_override_comment": "All thresholds support env var overrides for runtime tuning. Env var names follow the pattern: uppercase path with underscores (e.g., fria.zone_allow -> FRIA_ZONE_ALLOW).",
-  "fria": {
-    "zone_allow": 0.95,
-    "_comment": "FRIA (Frontier Risk Impact Assessment) confidence threshold for automatic approval.",
-    "zone_defer": 0.70,
-    "_comment_defer": "FRIA confidence threshold below which action is deferred to HITL."
-  },
+  "_env_override_comment": "All thresholds support env var overrides for runtime tuning; the map lives in src/gateway/governance/schemas/thresholds.py (_ENV_OVERRIDES), e.g. confidence.defer_floor -> CONFIDENCE_DEFER_FLOOR.",
   "confidence": {
     "agent_threshold": 0.95,
-    "_comment_agent": "[EV-2] Agent confidence threshold — consolidated from AGENT_CONFIDENCE_THRESHOLD env var.",
+    "_comment_agent": "[EV-2] ALLOW floor of the universal confidence band (every region): at or above it the confidence check clears. Env override: AGENT_CONFIDENCE_THRESHOLD.",
+    "defer_floor": 0.70,
+    "_comment_defer_floor": "[EV-1] Lower edge of the HITL zone: confidence in [defer_floor, agent_threshold) needs human approval, below defer_floor the request defers. Not a Fundamental Rights Impact Assessment (that is the EU_ECB-only fria tier). Env override: CONFIDENCE_DEFER_FLOOR.",
     "min_score": 0.95,
     "_comment_min_score": "[EV-5] Minimum confidence threshold for confabulation scorer — below this value, requests are blocked due to confabulation risk. Consolidated from CONFIDENCE_MIN_SCORE env var. Production deployments may override via secretKeyRef."
   },

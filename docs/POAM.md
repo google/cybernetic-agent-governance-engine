@@ -86,7 +86,8 @@ The following findings are tracked as open items with target remediation dates. 
 | EU-DORA-001 | DORA Art. 10 | Compliance bridge endpoint for DORA ICT operational resilience evidence not yet implemented | High | 2026-12-31 |
 | EU-AI-ACT-001 | EU AI Act Art. 9 | Compliance bridge endpoint for EU AI Act risk management system evidence not yet implemented | High | 2026-12-31 |
 | EU-GDPR-001 | GDPR Art. 22 | Compliance bridge endpoint for GDPR human oversight of automated decisions not yet implemented | High | 2026-12-31 |
-| EU-001 | EU AI Act Art. 29a | FRIA gating normative provider is in stub mode; external compliance validation provider not yet configured for EU_ECB | High | 2026-12-31 |
+| EU-001 | EU AI Act Art. 27 | FRIA gating normative provider is in stub mode; external compliance validation provider not yet configured for EU_ECB | High | 2026-12-31 |
+| POAM-2026-084 | EU AI Act Art. 27 / SI-10 | FRIA (`CTRL_FRIA_006`) was never enforced: from v2.0.0-dev.1 (2026-06-01) `enforce_fria_boundary()` had no pipeline caller, so no EU_ECB decision consulted an impact assessment. Remediated in `refactor/fria-jurisdiction` by the EU_ECB-only `fria` jurisdiction tier; closes at merge | High | 2026-10-15 |
 
 ### APAC MAS Region (APAC_MAS)
 
@@ -236,7 +237,7 @@ CAGE uses [Lula](https://github.com/defenseunicorns/lula) for compliance-as-code
 | `lula-validation-ai600-prompt-injection.yaml` | NIST AI 600-1 | §2.3 Prompt Injection | US_FED |
 | `lula-validation-dora-art10.yaml` | DORA | Art. 10 ICT Resilience | EU_ECB |
 | `lula-validation-eu-ai-act-art9.yaml` | EU AI Act | Art. 9 Risk Management | EU_ECB |
-| `lula-validation-eu-fria.yaml` | EU AI Act | Art. 29a FRIA Gating | EU_ECB |
+| `lula-validation-eu-fria.yaml` | EU AI Act | Art. 27 FRIA Gating | EU_ECB |
 | `lula-validation-gdpr-art22.yaml` | GDPR | Art. 22 Automated Decisions | EU_ECB |
 | `lula-validation-mas-feat.yaml` | MAS FEAT | Fairness/Ethics/Accountability/Transparency | APAC_MAS |
 | `lula-validation-mas-notice655.yaml` | MAS Notice 655 | Technology Risk Management | APAC_MAS |
@@ -413,3 +414,24 @@ While `POAM-2026-013` pinned third-party image tags in `deployment/k8s/`, the so
 1. Execute [`scripts/mirror_and_attest_images.sh`](../scripts/mirror_and_attest_images.sh) and [`scripts/build_images.sh`](../scripts/build_images.sh) in the staging GCP project and apply `infra/targets/gcp-gke` with `enable_binary_authorization = true`.
 2. Confirm all pods in `governance-stack` pass Binary Authorization admission and record live `lula validate -f compliance/lula/lula-validation-si2.yaml` evidence.
 
+### POAM-2026-084: FRIA Declared but Never Enforced (EU_ECB)
+
+**Control:** EU AI Act Art. 27 (`CTRL_FRIA_006`), NIST SI-10
+**Risk Level:** High
+**Status:** Open (remediated in `refactor/fria-jurisdiction`, pending merge)
+**Date Opened:** 2026-10-01
+**Target Closure:** 2026-10-15
+
+**Description:**
+From `v2.0.0-dev.1` (commit `1902c92`, 2026-06-01) until `refactor/fria-jurisdiction`, the Fundamental Rights Impact Assessment existed only as the `enforce_fria_boundary()` primitive in `normative_provider.py`. `run_pipeline()` never called it, and no other in-tree caller did. No EU_ECB decision therefore consulted an impact assessment or the normative provider's `validate_fria()`, even though `CTRL_FRIA_006` was listed as an EU_ECB control. The primitive also let an action through on model confidence ≥ 0.95 without any assessment. The universal confidence band was misnamed "FRIA" (`fria.zone_allow` / `fria.zone_defer`) in every region.
+
+**Remediation Implemented in Code:**
+1. The `fria` tier ([`FriaTier`](../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)) is contributed only by the EU_ECB entry of [`JURISDICTIONS`](../src/gateway/governance/jurisdiction/registry.py) and assembled by [`assemble_governor()`](../src/gateway/governance/governor/assembly.py) as a phase-1 tier after `causal`. It denies when the deployer's FRIA artefact is stale or missing (Art. 27(2), 365-day interval), and when the provider is unavailable, times out or refuses. It requires approval on a `needs_human_review` finding. There is no confidence fast path.
+2. `assert_production_posture()` ([`posture.py`](../src/gateway/governance/governor/posture.py)) refuses an enforcing EU_ECB posture backed by the stub `NormativeProvider` (`jurisdiction_requirements` check).
+3. `enforce_fria_boundary()` and `FRIAEnforcementResult` are deleted. The universal band is renamed `confidence.agent_threshold` / `confidence.defer_floor` ([`BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md) P6-1).
+4. `ControlRegistry.reconfigure()` no longer resets `active_region` to the default after loading a region. Without this fix, a reconfigured EU_ECB registry would have assembled without the `fria` tier.
+5. Verified by [`tests/governor/test_jurisdiction_wiring.py`](../tests/governor/test_jurisdiction_wiring.py), which observes each fail-closed path failing, and by the `JURISDICTION_TIERS` sub-proof in [`proof/model.py`](../proof/model.py), with parity in [`tests/test_formal_profile_parity.py`](../tests/test_formal_profile_parity.py). [`compliance/lula/lula-validation-eu-fria.yaml`](../compliance/lula/lula-validation-eu-fria.yaml) now also asserts `CAGE_DEPLOYMENT_REGION=EU_ECB`.
+
+**Remaining Closure Criteria:**
+1. Merge `refactor/fria-jurisdiction`; record the merge commit SHA and the actual merge date here.
+2. Independent external FRIA validation remains tracked by EU-001 (provider credentials).

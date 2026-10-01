@@ -132,7 +132,7 @@ def test_consequence_token_finding_dict_scrubbed(sanitizer):
         "severity": "info",
         "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhY3RvcjoxMjMiLCJ0aWQiOiJ0aHJlYWQ6NDU2In0.c2lnbmF0dXJlX3BsYWNlaG9sZGVyX2Zha2VfZGF0YV9mb3JfdGVzdGluZ19vbmx5",
         "authority_record_id": "rec:flowsignal-abc123",
-        "message": "ConsequenceToken minted for post-FRIA consequence enforcement",
+        "message": "ConsequenceToken minted for post-validation consequence enforcement",
     }
     result = sanitizer.sanitize_dict(finding)
 
@@ -146,7 +146,7 @@ def test_consequence_token_finding_dict_scrubbed(sanitizer):
     assert result["authority_record_id"] == "rec:flowsignal-abc123"
     assert (
         result["message"]
-        == "ConsequenceToken minted for post-FRIA consequence enforcement"
+        == "ConsequenceToken minted for post-validation consequence enforcement"
     )
 
 
@@ -317,7 +317,7 @@ def test_realistic_validation_result_with_consequence_token(sanitizer):
                 "severity": "info",
                 "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImRldi1rZXktMDEifQ.eyJzdWIiOiJhY3RvcjoxMjMiLCJ0aWQiOiJ0aHJlYWQ6NDU2IiwicmVjIjoicmVjOmFiYzEyMyIsImFjdCI6InNoYTI1NjphYmNkZWYxMjM0NTYiLCJ2ZXIiOm51bGwsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMDYwLCJqdGkiOiJyZWM6YWJjMTIzIn0.cGFkZGVkX2Zha2Vfc2lnbmF0dXJlX2Jhc2U2NHVybF9lbmNvZGVkX3BsYWNlaG9sZGVyX25vdF9yZWFsX2NyeXB0b19kYXRhX2p1c3RfYV90ZXN0X2ZpeHR1cmVfZm9yX3JlZ2V4X21hdGNoaW5n",
                 "authority_record_id": "rec:flowsignal-abc123",
-                "message": "ConsequenceToken minted for post-FRIA consequence enforcement",
+                "message": "ConsequenceToken minted for post-validation consequence enforcement",
             },
             {
                 "code": "COMPLIANCE_SATISFIED",

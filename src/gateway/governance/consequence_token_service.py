@@ -130,7 +130,7 @@ def mint_consequence_token_finding(
             "severity": "info",
             "token": token,
             "authority_record_id": authority_record_id,
-            "message": "ConsequenceToken minted for post-FRIA consequence enforcement",
+            "message": "ConsequenceToken minted for post-validation consequence enforcement",
         }
 
     except Exception as exc:

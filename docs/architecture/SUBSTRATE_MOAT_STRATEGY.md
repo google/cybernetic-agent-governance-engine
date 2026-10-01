@@ -85,11 +85,16 @@ The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic 
 
 The matrix claims CAGE uses a **4-state asymmetric router** where high-confidence paths (c ≥ 0.95) bypass blocking gates via async routines, while lower confidence tiers freeze and park.
 
-**4-state routing:**  
-The confidence stage ([`confidence.py`](../../src/gateway/governance/governor/stages/confidence.py)) emits no violation when the agent's confidence meets the threshold, so high-confidence actions proceed without any blocking external call. Below the threshold it emits `CONFIDENCE_BELOW_THRESHOLD`, typed `DEFERRABLE` or `HITL` depending on the `fria.zone_defer` boundary (default 0.70); invalid scores are `HARD`. The [`ClassificationEngine`](../../src/gateway/governance/classification_engine.py) maps violation kinds onto decisions (HARD → DENY, HITL → REQUIRE_APPROVAL, DEFERRABLE → DEFER, plus feature-gated PAUSE and NARROW). The normative-provider gate `enforce_fria_boundary()` in [`normative_provider.py`](../../src/gateway/governance/normative_provider.py) is not invoked by `run_pipeline()`; "fria" survives only as a stage label in `PROFILE_STAGES`.
+> **Status at HEAD:** the async high-confidence path that skipped the normative provider was deleted with `enforce_fria_boundary()`; there is no fire-and-forget attestation. What remains is the universal confidence band below, plus the synchronous `EU_ECB`-only `fria` tier.
+
+**Confidence band:**  
+[`ConfidenceStage`](../../src/gateway/governance/governor/stages/confidence.py) applies three zones in every region (`get_agent_confidence_threshold()` / `get_confidence_defer_floor()`):
+- `confidence.agent_threshold` (≥ 0.95): confidence check clears — no human, no external call
+- `confidence.defer_floor` (0.70–0.95): `HITL` violation → `REQUIRE_APPROVAL`
+- `< 0.70`: `DEFERRABLE` violation → `DEFER` (parked in the `DeferQueue`)
 
 **Two-phase read/mutate ordering:**  
-[`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (FTRA, STPA, OPA, confidence & structural corroboration, then domain-contributed read-only tiers such as consensus and the causal gatekeeper) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after Phase 1.
+[`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (FTRA, STPA, OPA, confidence & structural corroboration, consensus, causal gatekeeper, and — under `EU_ECB` only — the `fria` tier) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after Phase 1.
 
 **DeferQueue parking:**  
 [`DeferQueue`](../../src/gateway/governance/defer_queue.py:416) parks tokens in Redis `db=1` (isolated, `noeviction` policy) with a 4-hour TTL. The three-phase replay flow (PARK → HYDRATE → REPLAY) allows automated data-hydration to re-admit parked tokens without human intervention.
@@ -262,8 +267,8 @@ The following claims from the competitive analysis are now technically substanti
 | Claim | Substantiation | File |
 |---|---|---|
 | "Immune to Prompt Breakouts" | The CBF tier has no fail-open flag; missing `dowhy` or stub ground truth refuses startup in production | [`posture.py`](../../src/gateway/governance/governor/posture.py) |
-| "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf_engine.py:1414`](../../src/gateway/governance/safety/cbf_engine.py:1414) |
-| "Telco-Grade Velocity" | Asymmetric hot path — confidence at or above the threshold raises no confidence violation and makes no blocking external call; only sub-threshold scores route to DEFER / REQUIRE_APPROVAL | [`confidence.py`](../../src/gateway/governance/governor/stages/confidence.py) |
+| "Zero-TOCTOU Guarantee" | Lua atomic check+commit in single Redis hop | [`cbf_engine.py:1632`](../../src/gateway/governance/safety/cbf_engine.py:1632) |
+| "Telco-Grade Velocity" | Confidence ≥ `confidence.agent_threshold` (0.95) clears Tier 2 locally with no external call; no normative-provider round-trip happens outside `EU_ECB` (where the synchronous `fria` tier calls it under `CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`) | [`confidence.py`](../../src/gateway/governance/governor/stages/confidence.py) |
 | "Compiled AST Invariants" | STPA UCAs compiled to OPA Rego at build time | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | "Math-Backed CBF" | Discrete-time CBF from Ames et al. IEEE TAC 2017 | [`cbf_engine.py:18`](../../src/gateway/governance/safety/cbf_engine.py:18) |
 | "Multi-Jurisdiction" | US_FED / EU_ECB / APAC_MAS regional profiles | [`constants.py:162`](../../src/gateway/governance/constants.py:162) |

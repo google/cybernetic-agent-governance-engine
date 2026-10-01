@@ -54,8 +54,8 @@
    TLC Configuration:
    ---------------------------------------------------------------------------
    CONSTANTS
-       FRIA_ZONE_DEFER = 70
-       FRIA_ZONE_ALLOW = 95
+       CONFIDENCE_DEFER_FLOOR = 70
+       CONFIDENCE_ALLOW_FLOOR = 95
    INIT Init
    NEXT Next
    INVARIANT TypeOK
@@ -72,8 +72,8 @@ EXTENDS Naturals, FiniteSets
 -----------------------------------------------------------------------------
 
 CONSTANTS
-    FRIA_ZONE_DEFER,   \* Confidence threshold for HITL (default: 70 = 0.70)
-    FRIA_ZONE_ALLOW    \* Confidence threshold for clear passage (default: 95 = 0.95)
+    CONFIDENCE_DEFER_FLOOR,   \* Confidence threshold for HITL (default: 70 = 0.70)
+    CONFIDENCE_ALLOW_FLOOR    \* Confidence threshold for clear passage (default: 95 = 0.95)
 
 \* Confidence values are integers 0-100 representing percentages
 \* to avoid floating-point complexity in TLA+
@@ -96,8 +96,8 @@ TerminalClassifications == {
 \* Commencement-time routing verdicts
 FTRAVerdicts == {
     "CLEAR",          \* No IRREVERSIBLE_TERMINAL reachable, proceed to safety_check
-    "HITL_REQUIRED",  \* IRREVERSIBLE_TERMINAL reachable, confidence >= FRIA_ZONE_DEFER
-    "BLOCKED"         \* IRREVERSIBLE_TERMINAL reachable, confidence < FRIA_ZONE_DEFER
+    "HITL_REQUIRED",  \* IRREVERSIBLE_TERMINAL reachable, confidence >= CONFIDENCE_DEFER_FLOOR
+    "BLOCKED"         \* IRREVERSIBLE_TERMINAL reachable, confidence < CONFIDENCE_DEFER_FLOOR
 }
 
 -----------------------------------------------------------------------------
@@ -199,7 +199,7 @@ TypeOK ==
 ComputeVerdict(classification, conf) ==
     IF classification # "IRREVERSIBLE_TERMINAL"
     THEN "CLEAR"
-    ELSE IF conf >= FRIA_ZONE_DEFER
+    ELSE IF conf >= CONFIDENCE_DEFER_FLOOR
          THEN "HITL_REQUIRED"
          ELSE "BLOCKED"
 
@@ -391,7 +391,7 @@ ParseTruncated ==
    Python cross-reference: ftra/node_factory.py lines 419-458 *)
 ParseEmptySteps ==
     /\ parse_failure_class' = "EMPTY_STEPS"
-    /\ in_graph_verdict' = IF confidence >= FRIA_ZONE_ALLOW
+    /\ in_graph_verdict' = IF confidence >= CONFIDENCE_ALLOW_FLOOR
                            THEN "CLEAR"         \* High confidence: empty plan is OK
                            ELSE "HITL_REQUIRED" \* Low confidence: defer for review
     /\ in_graph_executed' = TRUE

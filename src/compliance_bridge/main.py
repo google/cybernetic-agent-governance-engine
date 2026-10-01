@@ -1649,7 +1649,7 @@ async def defer_inject(
     - Status-gate: Rejects injection if token is PARTIALLY_APPROVED (incomplete quorum)
 
     Phase-3 confidence recheck: This endpoint now invokes replay_evaluate()
-    to enforce DEFER_CONFIDENCE_THRESHOLD (0.70) before resolution. If the
+    to enforce confidence.defer_floor (0.70) before resolution. If the
     injected context does not raise confidence above threshold, the token
     remains parked and a 409 Conflict is returned.
     """
@@ -1727,7 +1727,7 @@ async def defer_inject(
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
             )
         elif result == ReplayResult.PARKED:
-            # Injected context did not raise confidence above DEFER_CONFIDENCE_THRESHOLD (0.70)
+            # Injected context did not raise confidence above confidence.defer_floor (0.70)
             # Publish DEFER_PARKED event (not DEFER_RESOLVED) for accurate audit trail
             await client.aclose()
             try:

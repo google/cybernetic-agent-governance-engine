@@ -2,7 +2,7 @@
 
 **Adapter Type**: Normative Gating Oracle  
 **Inference Model**: Junction Tree / Belief Propagation  
-**Regulatory Scope**: SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 29a  
+**Regulatory Scope**: SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27  
 **Architecture Layer**: Layer 3 (Integrations & Rails)  
 **Phase**: Phase 1 — Schema Definition & Documentation  
 

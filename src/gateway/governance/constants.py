@@ -192,7 +192,7 @@ class GovernanceControl(Enum):
     """OPA policy must ALLOW before any agentic action is executed."""
 
     FRIA_ASSESSMENT = "CTRL_FRIA_006"
-    """Pre-market Fundamental Rights Impact Assessment (EU AI Act Art. 29a).
+    """Pre-market Fundamental Rights Impact Assessment (EU AI Act Art. 27).
     Only present in EU_ECB regional profile; raises KeyError in other regions."""
 
     TOKEN_QUOTA_ENFORCEMENT = "CTRL_TQP_007"
@@ -479,16 +479,20 @@ class ControlRegistry:
         # file I/O and JSON parsing which should not block other threads.
         new_instance = object.__new__(cls)
         new_instance._load_registry(region=normalized_region)
+        # _load_registry records the region it actually loaded (an unknown
+        # region falls back to the default); the swap must keep it, or
+        # active_region would name a different profile than _mappings holds.
+        loaded_region = cls._active_region
 
         # Atomically swap: clear the old singleton and install the new one
         # in a single lock acquisition, eliminating the TOCTOU window.
         with cls._lock:
             cls._instance = None
             cls._mappings = {}
-            cls._active_region = _DEFAULT_REGION
+            cls._active_region = loaded_region
             cls._instance = new_instance
 
-        logger.info("ControlRegistry reconfigured to region: %s", normalized_region)
+        logger.info("ControlRegistry reconfigured to region: %s", loaded_region)
 
     @classmethod
     def _drop_loaded_instance(cls) -> None:

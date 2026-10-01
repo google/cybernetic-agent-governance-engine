@@ -81,7 +81,8 @@ def conditional_clear_reason(
     * its classification is a terminal one (``ENVELOPE_CLASSIFICATIONS``);
     * the registry grants it an envelope;
     * its magnitude is known and ``0 < magnitude <= max_magnitude``;
-    * the agent's confidence is at least ``confidence_floor`` (FRIA zone_allow).
+    * the agent's confidence is at least ``confidence_floor`` (the confidence band's ALLOW floor,
+      ``confidence.agent_threshold``).
     """
     if registry_state is not RegistryState.REGISTERED:
         return None

@@ -33,7 +33,7 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 logger = logging.getLogger("Gateway.Governance.Schemas")
 
@@ -86,14 +86,32 @@ def _resolve_pii_retention() -> tuple[int, str]:
 
 
 class ConfidenceThresholds(BaseModel):
+    """The universal confidence band, identical in every deployment region.
+
+    ``score >= agent_threshold`` clears the confidence check;
+    ``defer_floor <= score < agent_threshold`` needs human approval (HITL);
+    ``score < defer_floor`` defers (data starvation). The band is a statement
+    about the agent's output, not a jurisdiction's legal assessment.
+    """
+
     # EV-2: Consolidated from AGENT_CONFIDENCE_THRESHOLD env var
     agent_threshold: float = Field(
         default=0.95,
         ge=0.0,
         le=1.0,
         description=(
-            "[EV-2] Agent confidence threshold for Tier-2 corroboration. "
-            "Env override: AGENT_CONFIDENCE_THRESHOLD"
+            "[EV-2] ALLOW floor of the confidence band: below it a request "
+            "needs approval or defers. Env override: AGENT_CONFIDENCE_THRESHOLD"
+        ),
+    )
+    # EV-1: lower edge of the HITL zone
+    defer_floor: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "[EV-1] Confidence below this floor defers (DEFERRABLE) instead of "
+            "asking for approval (HITL). Env override: CONFIDENCE_DEFER_FLOOR"
         ),
     )
     # EV-5: Consolidated from CONFIDENCE_MIN_SCORE env var
@@ -107,38 +125,15 @@ class ConfidenceThresholds(BaseModel):
         ),
     )
 
-
-# ---------------------------------------------------------------------------
-# EV-1: FRIA (Frontier Risk Impact Assessment) Thresholds
-# ---------------------------------------------------------------------------
-
-
-class FriaThresholds(BaseModel):
-    """FRIA zone thresholds for automatic approval vs. deferral to HITL.
-
-    Env overrides: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER
-    """
-
-    zone_allow: float = Field(
-        default=0.95,
-        ge=0.0,
-        le=1.0,
-        description="Confidence >= this threshold => automatic approval.",
-    )
-    zone_defer: float = Field(
-        default=0.70,
-        ge=0.0,
-        le=1.0,
-        description="Confidence < this threshold => defer to HITL.",
-    )
-
-    @field_validator("zone_defer")
-    @classmethod
-    def defer_less_than_allow(cls, v: float, info: Any) -> float:
-        """Ensure zone_defer < zone_allow for coherent zone semantics."""
-        # Note: zone_allow may not be in info.data yet during construction
-        # so we validate at model level in GovernanceThresholds instead
-        return v
+    @model_validator(mode="after")
+    def _band_is_ordered(self) -> ConfidenceThresholds:
+        """An inverted band would send every sub-threshold score to DEFER."""
+        if self.defer_floor > self.agent_threshold:
+            raise ValueError(
+                f"confidence.defer_floor ({self.defer_floor}) must not exceed "
+                f"confidence.agent_threshold ({self.agent_threshold})"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -267,10 +262,8 @@ class GovernanceThresholds(BaseModel):
     governor assembly.
     """
 
+    # EV-1, EV-2, EV-5: the universal confidence band (+ confabulation floor)
     confidence: ConfidenceThresholds = Field(default_factory=ConfidenceThresholds)
-
-    # EV-1: FRIA thresholds (zone_allow, zone_defer)
-    fria: FriaThresholds = Field(default_factory=FriaThresholds)
 
     # EV-3, EV-4: Causal gatekeeper thresholds
     causal: CausalThresholds = Field(default_factory=CausalThresholds)
@@ -324,7 +317,7 @@ class GovernanceThresholds(BaseModel):
 
         Walks nested ``BaseModel`` attributes and ``Mapping`` keys by ``.``-separated
         segments (e.g. ``"domains.example.min_resource_floor"`` or
-        ``"fria.zone_allow"``), raising ``KeyError`` if any segment does not exist.
+        ``"confidence.defer_floor"``), raising ``KeyError`` if any segment does not exist.
         """
         if not dot_path or not isinstance(dot_path, str):
             raise KeyError(f"Invalid threshold dot_path: {dot_path!r}")
@@ -367,10 +360,9 @@ def _parse_bool(value: str) -> bool:
 
 
 _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
-    # EV-1: FRIA thresholds
-    "FRIA_ZONE_ALLOW": ("fria.zone_allow", float),
-    "FRIA_ZONE_DEFER": ("fria.zone_defer", float),
-    # EV-2: Agent confidence threshold
+    # EV-1: Lower edge of the HITL zone of the confidence band
+    "CONFIDENCE_DEFER_FLOOR": ("confidence.defer_floor", float),
+    # EV-2: Agent confidence threshold (ALLOW floor of the band)
     "AGENT_CONFIDENCE_THRESHOLD": ("confidence.agent_threshold", float),
     # EV-3: Causal lock thresholds
     "CAUSAL_LOCK_P_VALUE_THRESHOLD": ("causal.p_value_threshold", float),
@@ -410,7 +402,7 @@ def _apply_env_overrides(raw: dict) -> dict:
         if env_value is not None:
             try:
                 parsed_value = type_fn(env_value)
-                # Navigate the nested dict path (e.g., "fria.zone_allow")
+                # Navigate the nested dict path (e.g., "confidence.defer_floor")
                 parts = path.split(".")
                 target = raw
                 for part in parts[:-1]:
@@ -485,9 +477,9 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
 
     logger.info(
         "✅ Governance thresholds validated: confidence=%.2f, "
-        "fria_allow=%.2f, causal_min_samples=%d, domains=%s",
+        "defer_floor=%.2f, causal_min_samples=%d, domains=%s",
         thresholds.confidence.agent_threshold,
-        thresholds.fria.zone_allow,
+        thresholds.confidence.defer_floor,
         thresholds.causal.min_samples,
         sorted(thresholds.domains.keys()),
     )
@@ -503,31 +495,23 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
 # ---------------------------------------------------------------------------
 
 
-def get_fria_zone_allow() -> float:
-    """Get FRIA zone_allow threshold (config default with env override).
-
-    Returns:
-        The zone_allow threshold (>= this value => automatic approval).
-    """
-    return THRESHOLDS.fria.zone_allow
-
-
-def get_fria_zone_defer() -> float:
-    """Get FRIA zone_defer threshold (config default with env override).
-
-    Returns:
-        The zone_defer threshold (< this value => defer to HITL).
-    """
-    return THRESHOLDS.fria.zone_defer
-
-
 def get_agent_confidence_threshold() -> float:
-    """Get agent confidence threshold (config default with env override).
+    """ALLOW floor of the confidence band (config default with env override).
 
     Returns:
-        The agent confidence threshold for Tier-2 corroboration.
+        Confidence at or above this value clears the confidence check.
     """
     return THRESHOLDS.confidence.agent_threshold
+
+
+def get_confidence_defer_floor() -> float:
+    """Lower edge of the HITL zone of the confidence band.
+
+    Returns:
+        Confidence below this value defers (DEFERRABLE) rather than asking
+        for approval (HITL).
+    """
+    return THRESHOLDS.confidence.defer_floor
 
 
 def get_confidence_min_score() -> float:

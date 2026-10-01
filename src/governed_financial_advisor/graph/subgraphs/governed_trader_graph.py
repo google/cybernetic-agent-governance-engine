@@ -150,8 +150,8 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     triggers real financial transactions. ``gateway_tool_guard`` (applied in the
     graph builder below) submits every pending tool call to the gateway's
     ``POST /governance/validate-action`` (full 8-tier pipeline: FTRA, STPA,
-    Confidence, CBF, OPA, Fiscal, Consensus, Causal, FRIA) before ANY tool
-    executes.
+    Confidence, CBF, OPA, Fiscal, Consensus, Causal — plus the ``fria`` tier
+    under ``CAGE_DEPLOYMENT_REGION=EU_ECB``) before ANY tool executes.
 
     Governance Contract:
         - Every tool call must be routed ALLOW or NARROW, or carry the

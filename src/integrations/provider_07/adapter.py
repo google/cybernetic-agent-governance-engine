@@ -17,7 +17,7 @@ Provider 07 NormativeProvider Adapter — Bayesian Causal Suitability Oracle.
 
 Layer 3 integration adapter implementing the 3-endpoint NormativeProvider seam
 for Bayesian belief network inference over financial suitability constraints
-(SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 29a).
+(SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27).
 
 Key Features:
 - Out-of-band JWKS key resolution (never trust embedded keys)

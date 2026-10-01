@@ -284,9 +284,11 @@ class Provider03NormativeProvider:
                     findings=findings,
                 )
             elif verdict == "ESCALATE":
-                # Provider 03's ESCALATE maps to CAGE's REVIEW/DEFER
-                # Inject the needs_human_review marker so enforce_fria_boundary
-                # routes to DeferQueue instead of hard deny
+                # Provider 03's ESCALATE maps to CAGE's REQUIRE_APPROVAL.
+                # Inject the needs_human_review marker so the ``fria`` tier
+                # (FriaTier, src/gateway/governance/jurisdiction/eu_ai_act/
+                # fria_tier.py) raises HITL FRIA_EXTERNAL_HOLD instead of a
+                # HARD FRIA_REJECTED.
                 review_findings = [
                     {
                         "code": "provider_03.escalate",

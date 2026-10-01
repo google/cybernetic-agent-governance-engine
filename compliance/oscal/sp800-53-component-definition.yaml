@@ -628,7 +628,7 @@ component-definition:
                 human only inside the autonomous_envelope its domain registry grants it
                 (src/gateway/governance/ftra/autonomy.py, conditional_clear_reason): a known
                 magnitude with 0 < magnitude <= max_magnitude (finance: 10,000 for execute_trade
-                and execute_trade_bounded) and agent confidence >= FRIA zone_allow. Unregistered
+                and execute_trade_bounded) and agent confidence >= confidence.agent_threshold. Unregistered
                 actions, unreadable registries, missing or raising magnitude extractors and
                 unknown magnitudes never clear. The same predicate governs plan reachability
                 (src/gateway/governance/ftra/graph_analyzer.py).

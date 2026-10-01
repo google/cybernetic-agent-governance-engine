@@ -285,7 +285,7 @@ def test_hitl_precedence_over_deferrable():
     deferrable_v = Violation(
         tier="confidence",
         code="CONFIDENCE_BELOW_THRESHOLD",
-        message="Confidence below FRIA_ZONE_DEFER (0.65 < 0.70)",
+        message="Confidence below confidence.defer_floor (0.65 < 0.70)",
         kind=ViolationKind.DEFERRABLE,
     )
     

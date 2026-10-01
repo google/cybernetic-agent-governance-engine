@@ -26,7 +26,7 @@ OBSERVATION_NAME = "observation.name"
 
 from src.gateway.governance.schemas.thresholds import (
     get_agent_confidence_threshold,
-    get_fria_zone_defer,
+    get_confidence_defer_floor,
 )
 
 
@@ -126,7 +126,7 @@ class ConfidenceStage(Stage):
                         code="CONFIDENCE_BELOW_THRESHOLD",
                         message=f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] {_conf_meta['primary_framework']} Confidence Violation: score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. Violation: agent confidence below required minimum.",
                         kind=ViolationKind.DEFERRABLE
-                        if _confidence < get_fria_zone_defer()
+                        if _confidence < get_confidence_defer_floor()
                         else ViolationKind.HITL,
                     )
                 )

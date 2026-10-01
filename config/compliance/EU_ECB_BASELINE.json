@@ -8,7 +8,7 @@
   "_jurisdiction": "European Union",
   "_primary_prudential_authority": "European Central Bank (SSM) / EBA / EU AI Office",
   "_references": [
-    "EU AI Act (Regulation (EU) 2024/1689) — Arts. 6, 9, 10, 12, 17, 29a, 61 and Annex III",
+    "EU AI Act (Regulation (EU) 2024/1689) — Arts. 6, 9, 10, 12, 17, 27, 61 and Annex III",
     "DORA (Regulation (EU) 2022/2554) — Arts. 5, 10, 11, 12",
     "GDPR (Regulation (EU) 2016/679) — Arts. 5, 22, 35",
     "EBA/GL/2023/02 — Guidelines on Internal Models (ECB SSM TRIM successor)",
@@ -70,7 +70,7 @@
   },
   "CTRL_FRIA_006": {
     "internal_id": "THR-FRIA-006",
-    "primary_framework": "EU AI Act Art. 29a – Fundamental Rights Impact Assessment",
+    "primary_framework": "EU AI Act Art. 27 – Fundamental Rights Impact Assessment",
     "co_frameworks": [
       "GDPR Art. 35 – Data Protection Impact Assessment (DPIA)",
       "EU AI Act Art. 10(2)(f) – Bias Examination",
@@ -79,7 +79,7 @@
     ],
     "legacy_citation": "N/A — no US equivalent exists for FRIA",
     "scope": "agentic",
-    "description": "Pre-market Fundamental Rights Impact Assessment (FRIA) required before CAGE executes any autonomous workflow in the EU. Under Art. 29a, deployers of High-Risk AI systems must perform a FRIA demonstrating the system does not exhibit bias limiting access based on protected characteristics under GDPR Art. 22. The SHA-256 hash-chained decision ledger (cage-intent/1.0) is a statutory requirement for non-repudiation under Art. 12, and must be preserved for post-market monitoring under Art. 61. This control has no US counterpart and must be enabled exclusively in EU deployment profiles."
+    "description": "Pre-market Fundamental Rights Impact Assessment (FRIA) required before CAGE executes any autonomous workflow in the EU. Under Art. 27, deployers of High-Risk AI systems must perform a FRIA demonstrating the system does not exhibit bias limiting access based on protected characteristics under GDPR Art. 22. The SHA-256 hash-chained decision ledger (cage-intent/1.0) is a statutory requirement for non-repudiation under Art. 12, and must be preserved for post-market monitoring under Art. 61. This control has no US counterpart and must be enabled exclusively in EU deployment profiles."
   },
   "CTRL_TQP_007": {
     "internal_id": "THR-TQP-007",

@@ -33,7 +33,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 ### Clause 8: Operation
 
 - **8.1 Operational planning and control:**
-  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **8-tier governance pipeline** (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via [`src/gateway/governance/governor/stages/opa.py`](../../../src/gateway/governance/governor/stages/opa.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → FRIA zones.
+  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **8-tier governance pipeline** (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via [`src/gateway/governance/governor/stages/opa.py`](../../../src/gateway/governance/governor/stages/opa.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → Confidence band (plus the phase-1 `fria` tier under `EU_ECB` only).
   - **Code:** [`src/gateway/server/governance_middleware.py`](../../../src/gateway/server/governance_middleware.py)
 - **8.2 AI Risk Assessment:**
   - **Implementation:** The **8-tier governance pipeline** (FTRA + 7 in-pipeline tiers) performs real-time risk assessment (STPA, CBF, causal SCM) on every tool call. OPA Rego policies enforce fiscal limits and RBAC. The Control Barrier Function provides a formal mathematical safety guarantee via `h(S(t+1)) ≥ (1−γ)·h(S(t))`.
@@ -107,17 +107,19 @@ The 8-tier pipeline (FTRA + 7 in-pipeline tiers via [`src/gateway/governance/gov
 | 4 — Causal gatekeeper | SCM + PlaceboTreatmentRefuter | A.6.1 (risk assessment) |
 | 5 — Confabulation scoring | `risk_score = 1.0 − confidence` | A.5.2 (social impact assessment) |
 | 6 — Consensus | ≥$10k trades, 30s timeout, multi-model quorum | A.8.4 (operation controls) |
-| 7 — FRIA zones | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | A.6.1 (risk assessment) |
+| 7 — Confidence band | `confidence.agent_threshold=0.95`, `confidence.defer_floor=0.70` (`ConfidenceStage`, every region) | A.6.1 (risk assessment) |
 
-### FRIA Zone Thresholds (A.6.1)
+> Under `CAGE_DEPLOYMENT_REGION=EU_ECB` only, an additional phase-1 `fria` tier ([`FriaTier`](../../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py), EU AI Act Art. 27, `CTRL_FRIA_006`) runs right after the causal gatekeeper. It is a jurisdiction obligation, not part of the ISO 42001 core, and does not read model confidence.
 
-The FRIA zone thresholds define three access-control tiers for AI-generated recommendations:
+### Confidence Band Thresholds (A.6.1)
 
-| Score Range | Zone | Action |
+The universal confidence band ([`src/gateway/governance/governor/stages/confidence.py`](../../../src/gateway/governance/governor/stages/confidence.py); getters `get_agent_confidence_threshold()` / `get_confidence_defer_floor()`) disposes of AI-generated recommendations as follows:
+
+| Score Range | Threshold | Action |
 |-------------|------|--------|
-| ≥ 0.95 | `FRIA_ZONE_ALLOW` | Async attestation — no blocking |
-| 0.70 – 0.95 | `FRIA_ZONE_DEFER` | Synchronous blocking gate — HITL required |
-| < 0.70 | BLOCK | Hard deny — no override path |
+| ≥ 0.95 | `confidence.agent_threshold` | Confidence check clears — no blocking |
+| 0.70 – 0.95 | `confidence.defer_floor` | `HITL` violation — REQUIRE_APPROVAL (human approval required) |
+| < 0.70 | — | `DEFERRABLE` violation — DEFER (parked in the `DeferQueue` for data hydration) |
 
 ### Confabulation Risk Formula (A.5.2)
 

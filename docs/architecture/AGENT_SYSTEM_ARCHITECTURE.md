@@ -195,13 +195,13 @@ Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph
 ## 6. DEFER Queue & Context Accumulator
 
 ### 6.1 DEFER State Machine (AARM-V7)
-Extends the decision envelope to **four states** (`ALLOW`, `DENY`, `MANUAL_REVIEW`, `DEFER`) via a three-zone confidence model:
+Extends the decision envelope with `DEFER` via the universal confidence band (`ConfidenceStage`, `get_agent_confidence_threshold()` / `get_confidence_defer_floor()`, every region):
 
 | Confidence Score | Decision | Routing & Behavior |
 | ---------------- | -------- | ------------------ |
-| $\ge 0.95$       | `ALLOW` / `DENY` | Autonomous clearance |
-| $0.70 - 0.95$    | **`DEFER`** | Context parked by the gateway's DeferQueue (`src/gateway/governance/defer_queue.py`) in Redis `db=1` (`noeviction`) with 4-hour TTL; resolved via the compliance bridge's `/v1/defer/{id}/inject` or `/v1/defer/{id}/escalate` |
-| $< 0.70$         | `DENY` | Confidence-Starvation Boundary; request blocked |
+| $\ge 0.95$       | (no confidence violation) | Confidence check clears; other tiers decide |
+| $0.70 - 0.95$    | `REQUIRE_APPROVAL` | `HITL` violation; human approval |
+| $< 0.70$         | **`DEFER`** | Confidence-Starvation Boundary (`DEFERRABLE`): context parked in Redis `db=1` (`noeviction`) with 4-hour TTL; resolved via `/v1/defer/{id}/inject` or `/v1/defer/{id}/escalate` |
 
 ### 6.2 Context Accumulator (AARM-V1)
 The SHA-256 hash-chained Context Accumulator (`src/compliance_bridge/context_accumulator.py`) seals audit evidence against Memory Poisoning:
@@ -210,13 +210,11 @@ $$\text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content
 
 Each execution is sealed with a `CHAIN_SEALED` sentinel, satisfying ISO 42001 Annex A.5.3.
 
-### 6.3 External Normative Provider (FRIA primitive, not a pipeline tier)
-The External Normative Provider (`src/gateway/governance/normative_provider.py`) implements adaptive FRIA gating based on confidence score in `enforce_fria_boundary()`. `run_pipeline()` does not call it; adopters must invoke it explicitly:
-- $\ge 0.95$: Async gate, non-blocking external validation.
-- $[0.70, 0.95)$: Synchronous blocking gate; awaits external FRIA response.
-- $< 0.70$: Hard denial.
-
-> **Not on the live path:** `enforce_fria_boundary()` is not invoked by `run_pipeline()` (`src/gateway/governance/governor/pipeline.py`); "fria" appears only as a stage label in `PROFILE_STAGES`. The only live FRIA-adjacent behaviour is the confidence stage (`src/gateway/governance/governor/stages/confidence.py`), which types a below-threshold score as `DEFERRABLE` or `HITL` using the `fria.zone_defer` boundary.
+### 6.3 External Normative Provider and the `fria` tier (EU_ECB only)
+The External Normative Provider (`src/gateway/governance/normative_provider.py`) backs the EU AI Act Art. 27 `fria` tier (`src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`), a phase-1 tier that `assemble_governor()` adds only under `CAGE_DEPLOYMENT_REGION=EU_ECB`, right after `causal`. It does not read model confidence:
+- Missing / stale FRIA artefact, or provider timeout / error: HARD deny (`FRIA_ASSESSMENT_STALE`, `FRIA_PROVIDER_UNAVAILABLE`).
+- Provider refusal with `needs_human_review`: HITL (`FRIA_EXTERNAL_HOLD`) → `REQUIRE_APPROVAL`.
+- Any other refusal: HARD deny (`FRIA_REJECTED`).
 
 ### 6.4 Heterogeneous Consensus (AARM-V9)
 For trades $\ge \$10,000\text{ USD}$, `ConsensusModelRegistry` queries two heterogeneous models concurrently via `asyncio.gather()`:

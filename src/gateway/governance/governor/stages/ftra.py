@@ -33,7 +33,7 @@ from src.gateway.governance.ftra.models import (
 from src.gateway.governance.ftra.semantic_validator import validate_tool_input
 from src.gateway.governance.governor.metrics import GovernorMetrics, governor_metrics
 from src.gateway.governance.governor.pipeline import Stage, StageContext, StageOutput
-from src.gateway.governance.schemas.thresholds import get_fria_zone_allow
+from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -145,7 +145,7 @@ class FtraStage(Stage):
                         envelope=provenance.envelope,
                         magnitude=safe_magnitude(self._magnitude_extractor, tool_input),
                         confidence=reported_confidence(tool_input),
-                        confidence_floor=get_fria_zone_allow(),
+                        confidence_floor=get_agent_confidence_threshold(),
                     )
                     result = FtraBoundaryResult.from_classification(
                         classification=classification,

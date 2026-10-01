@@ -51,6 +51,7 @@ This discrete-time CBF condition ([`src/gateway/governance/safety/cbf_engine.py`
 | **Phase 1** | **Tier 2** | Agent confidence & corroboration (`confidence`) | `ConfidenceStage.run()` — checks `get_agent_confidence_threshold()` (default 0.95) and POAM-TIER2-001 structural corroboration |
 | **Phase 1** | **Tier 5** | Consensus (`consensus`) | High-stakes actions (≥$10k trades in the financial deployment), 10s per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`), heterogeneous multi-model unanimity |
 | **Phase 1** | **Tier 6** | Causal gatekeeper (`causal`) | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2); bounded risk score $\le 0.95$ |
+| **Phase 1** | — (`EU_ECB` only) | FRIA (`fria`, jurisdiction tier) | `FriaTier.evaluate()` — EU AI Act Art. 27: current FRIA artefact + `NormativeProvider.validate_fria()` admission; fails closed |
 | **Phase 2** | **Tier 3a** | Control Barrier Function (`cbf`) | Redis-backed cash balance invariant; Lua atomic check+commit; `WAIT` replication barrier |
 | **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation (`fiscal`) | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC against daily cap with `ReservationScope` LIFO rollback |
 
@@ -58,15 +59,17 @@ This discrete-time CBF condition ([`src/gateway/governance/safety/cbf_engine.py`
 
 Source: [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py), [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)
 
-### FRIA Zone Thresholds (EU AI Act Art. 29a)
+### Confidence Band (every region) and FRIA (EU_ECB only)
 
-FRIA zone classification is the `enforce_fria_boundary()` primitive in [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py), available to integrations. It is **not** wired into `run_pipeline()` and is **not** a pipeline tier.
+`ConfidenceStage` applies the universal, jurisdiction-neutral confidence band (`get_agent_confidence_threshold()` / `get_confidence_defer_floor()`); FTRA uses the same floor.
 
-| Score | Zone | Action |
+| Score | Violation | Action |
 |-------|------|--------|
-| ≥ 0.95 | ALLOW | Async attestation |
-| 0.70 – 0.95 | DEFER | Synchronous blocking gate (external provider validation) |
-| < 0.70 | BLOCK | Hard deny |
+| ≥ 0.95 | — | Confidence check clears |
+| 0.70 – 0.95 | `HITL` | REQUIRE_APPROVAL (human approval) |
+| < 0.70 | `DEFERRABLE` | DEFER (parked for data hydration) |
+
+The EU AI Act Art. 27 Fundamental Rights Impact Assessment is a separate phase-1 `fria` tier ([`src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`](../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)), added only under `CAGE_DEPLOYMENT_REGION=EU_ECB` and run right after `causal`. It does not read model confidence.
 
 ### Key Invariants
 

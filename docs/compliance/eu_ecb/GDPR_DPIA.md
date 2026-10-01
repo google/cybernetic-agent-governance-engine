@@ -151,7 +151,7 @@ No high-residual-risk items were identified that require prior consultation with
 
 ## Related Documents
 
-- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 29a FRIA
+- `compliance/eu_ecb/FRIA_ATTESTATION.md` — EU AI Act Art. 27 FRIA
 - `compliance/universal/PII_SCRUBBING_POLICY.md` — Presidio PII scrubbing configuration
 - `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — GDPR Art. 5(1)(e) retention periods
 - `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL gate and Art. 22 safeguards
