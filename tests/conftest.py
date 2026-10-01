@@ -370,6 +370,26 @@ def reset_kms_signer_for_tests():
     reset_governance_signer()
 
 
+# ── ControlRegistry region isolation ───────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def restore_control_registry_region():
+    """Undo a test's ``ControlRegistry.reconfigure(region)``.
+
+    The active region selects the jurisdiction contribution at governor
+    assembly (``resolve_jurisdiction``): a registry left on ``EU_ECB`` would
+    give every later governor on this worker the ``fria`` tier.
+    """
+    from src.gateway.governance.constants import ControlRegistry
+
+    # Class attribute: reading it never instantiates (loads) the singleton.
+    region = ControlRegistry._active_region
+    yield
+    if ControlRegistry._instance is not None and ControlRegistry._active_region != region:
+        ControlRegistry.reconfigure(region)
+
+
 # ── Redis WAIT command mock (fakeredis compatibility) ──────────────────────────
 
 

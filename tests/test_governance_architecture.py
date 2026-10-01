@@ -47,7 +47,7 @@ _COMPLIANCE_DIR = _REPO_ROOT / "config" / "compliance"
 # Region-specific controls: only present in specific regional profiles.
 # Key = CTRL_* value, Value = region code where it is defined.
 _REGION_SPECIFIC_CONTROLS = {
-    "CTRL_FRIA_006": "EU_ECB",  # EU AI Act Art. 29a FRIA — EU-only statutory requirement
+    "CTRL_FRIA_006": "EU_ECB",  # EU AI Act Art. 27 FRIA — EU-only statutory requirement
 }
 
 # ---------------------------------------------------------------------------

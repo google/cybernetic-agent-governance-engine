@@ -58,7 +58,7 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 **HITL TOCTOU remediation**: v2.0.0 adds `post_hitl_rehydrate` and `post_hitl_revalidate` LangGraph nodes to prevent time-of-check/time-of-use race conditions in human-in-the-loop approval flows.
 
-**External Normative Provider** (`normative_provider.py`): Adaptive FRIA (Fundamental Rights Impact Assessment) gating for EU AI Act compliance. Tri-state enforcement: Score ≥ 0.95 → async attestation; 0.70, 0.95) → synchronous blocking via DEFER queue; < 0.70 → local hard deny. Provided as the `enforce_fria_boundary()` primitive for integrations; it is not wired into `run_pipeline()` and is not a pipeline tier.
+**External Normative Provider** (`normative_provider.py`): `NormativeProvider` factory and stub for EU AI Act compliance. Under `CAGE_DEPLOYMENT_REGION=EU_ECB` only, the phase-1 `fria` tier (`FriaTier`, `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`) requires a current Fundamental Rights Impact Assessment artefact and calls `validate_fria()` under `CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`; an unavailable provider is a HARD deny, a `needs_human_review` refusal parks a REQUIRE_APPROVAL token. In `US_FED` (this baseline) no FRIA tier is assembled. Model confidence is handled separately by the universal confidence band (`get_agent_confidence_threshold()` / `get_confidence_defer_floor()`) in `ConfidenceStage`.
 
 **SHA-256 hash-chained context accumulator** (`context_accumulator.py`): AARM-V1 implementation. Maintains a tamper-evident chain of governance context across the LangGraph execution, providing cryptographic evidence of decision lineage.
 
@@ -91,7 +91,7 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 ### 1.3 Coverage Assessment: **Strong**
 
-> The governance enforcement stack is multi-layered, fail-closed, and deeply instrumented. All threshold literals are centralized in a Pydantic-validated singleton. STPA UCAs map directly to Colang flows. OPA operates with a circuit breaker and latency budget. v2.0.0 adds: Cloud KMS HSM-backed asymmetric signing (primary), DEFER queue (AARM-V7) for confidence-starved contexts, SHA-256 hash-chained context accumulator (AARM-V1), HITL TOCTOU remediation, External Normative Provider with adaptive FRIA gating, and heterogeneous multi-model consensus via ConsensusModelRegistry.
+> The governance enforcement stack is multi-layered, fail-closed, and deeply instrumented. All threshold literals are centralized in a Pydantic-validated singleton. STPA UCAs map directly to Colang flows. OPA operates with a circuit breaker and latency budget. v2.0.0 adds: Cloud KMS HSM-backed asymmetric signing (primary), DEFER queue (AARM-V7) for confidence-starved contexts, SHA-256 hash-chained context accumulator (AARM-V1), HITL TOCTOU remediation, External Normative Provider (which now backs the `EU_ECB`-only `fria` tier), and heterogeneous multi-model consensus via ConsensusModelRegistry.
 
 ---
 

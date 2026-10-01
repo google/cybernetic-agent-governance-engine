@@ -392,7 +392,7 @@ class TestSymbolicGovernorDefer:
     """Tests for DEFER decision paths in validate_action().
 
     DEFER is returned when violations are soft (deferrable) and the agent's
-    confidence score is below the FRIA_ZONE_DEFER threshold, indicating
+    confidence score is below confidence.defer_floor, indicating
     context starvation that should be resolved via automated data-hydration.
     """
 
@@ -406,7 +406,7 @@ class TestSymbolicGovernorDefer:
         that returns a result dict with verdict=DEFER.
         """
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
-        monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
+        monkeypatch.setenv("CONFIDENCE_DEFER_FLOOR", "0.70")
 
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
@@ -429,10 +429,10 @@ class TestSymbolicGovernorDefer:
             ),
         )
 
-        # Low confidence (below FRIA_ZONE_DEFER=0.70) with soft violation
+        # Low confidence (below confidence.defer_floor=0.70) with soft violation
         # This should trigger DEFER, not DENY
         params = {
-            "confidence": 0.50,  # Below FRIA_ZONE_DEFER
+            "confidence": 0.50,  # Below confidence.defer_floor
             "amount": 100,
             "symbol": "AAPL",
         }
@@ -448,7 +448,7 @@ class TestSymbolicGovernorDefer:
     async def test_defer_includes_defer_token(self, monkeypatch, mock_ftra_safe, classification_engine):
         """DEFER verdict includes a defer_token UUID for tracking."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
-        monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
+        monkeypatch.setenv("CONFIDENCE_DEFER_FLOOR", "0.70")
 
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"

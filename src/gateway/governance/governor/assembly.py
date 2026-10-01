@@ -26,6 +26,11 @@ contribution together and fails at startup, never at the first request, if:
 * two contributions fill the same engine slot (safety filter, consensus);
 * a contributed invariant fails V1-V4 (``invariants.validate_invariant``).
 
+The deployment region's :class:`JurisdictionContribution` (e.g. the EU AI
+Act Art. 27 impact-assessment tier) is merged after the domain tiers. Its
+tiers take part in the slot-collision check but never count as governing an
+irreversible action: a jurisdiction assessment is not a barrier.
+
 Engine slots no plugin fills get the deny-by-default null objects, so a
 governor assembled with no plugins denies by construction.
 """
@@ -65,6 +70,10 @@ from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.ftra import FtraStage
 from src.gateway.governance.governor.stages.opa import OpaStage
 from src.gateway.governance.governor.stages.stpa import StpaStage
+from src.gateway.governance.jurisdiction import (
+    JurisdictionContribution,
+    resolve_jurisdiction,
+)
 from src.gateway.governance.narrower import NarrowerRegistry
 from src.gateway.governance.null_components import (
     NullConsensusProvider,
@@ -96,6 +105,9 @@ class GovernorComponents:
     execution_verbs: frozenset[str] = field(default_factory=frozenset)
     contributions: tuple[PluginContribution, ...] = ()
     posture: DeploymentPosture = DeploymentPosture.PRODUCTION
+    # The region's obligations; None when components are composed by hand
+    # (tests). assemble_governor always sets it.
+    jurisdiction: JurisdictionContribution | None = None
 
     def __post_init__(self) -> None:
         if self.classifier is None:
@@ -112,6 +124,15 @@ class GovernorComponents:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(self, "ground_truth_providers", dict(self.ground_truth_providers))
         object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
+
+    @property
+    def jurisdiction_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+        return self.jurisdiction.tiers if self.jurisdiction is not None else ()
+
+    @property
+    def plugin_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+        """Every non-kernel tier: the domain's, then the jurisdiction's."""
+        return (*self.domain_tiers, *self.jurisdiction_tiers)
 
     @property
     def unfilled_slots(self) -> tuple[str, ...]:
@@ -161,10 +182,13 @@ def assemble_governor(
     stpa_validator: object | None = None,
     flags: DecisionFlags | None = None,
     metrics: GovernorMetrics | None = None,
+    jurisdiction: JurisdictionContribution | None = None,
 ) -> SymbolicGovernor:
     """Collect every plugin's contribution, validate them together, build the governor.
 
-    ``opa`` and ``stpa_validator`` default to the production clients.
+    ``opa`` and ``stpa_validator`` default to the production clients;
+    ``jurisdiction`` defaults to the active region's contribution
+    (:func:`~src.gateway.governance.jurisdiction.resolve_jurisdiction`).
 
     Raises:
         GovernorAssemblyError: The contributions collide or leave an
@@ -177,8 +201,9 @@ def assemble_governor(
     _reject_duplicates("threshold section", (s for c in contributions for s in c.threshold_sections))
     _validate_threshold_sections(contributions)
     tiers = tuple(t for c in contributions for t in c.tiers)
-    _reject_slot_collisions(tiers, _known_actions(plugins, contributions))
-    _reject_ungoverned_irreversible(plugins, tiers)
+    jurisdiction = jurisdiction if jurisdiction is not None else resolve_jurisdiction()
+    _reject_slot_collisions((*tiers, *jurisdiction.tiers), _known_actions(plugins, contributions))
+    _reject_ungoverned_irreversible(plugins, tiers)  # domain tiers only
 
     invariants: list[InvariantModel] = []
     for invariant in (i for c in contributions for i in c.invariants):
@@ -251,12 +276,13 @@ def assemble_governor(
         execution_verbs=execution_verbs,
         contributions=contributions,
         posture=posture,
+        jurisdiction=jurisdiction,
     )
     governor = SymbolicGovernor(components)
     logger.info(
-        "governor assembled: domains=%s tiers=%s posture=%s unfilled=%s",
-        [c.domain for c in contributions], governor.registered_tier_names(),
-        posture.value, components.unfilled_slots,
+        "governor assembled: domains=%s region=%s tiers=%s posture=%s unfilled=%s",
+        [c.domain for c in contributions], jurisdiction.region,
+        governor.registered_tier_names(), posture.value, components.unfilled_slots,
     )
     return governor
 

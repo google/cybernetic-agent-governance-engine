@@ -79,8 +79,9 @@ class SymbolicGovernor:
     __slots__ = ("_components", "_stages")
 
     def __init__(self, components: GovernorComponents) -> None:
-        # order_stages rejects duplicate tier names and sorts by (phase, order).
-        stages = (*components.core_stages, *order_stages(components.domain_tiers))
+        # order_stages rejects duplicate tier names and sorts by (phase, order);
+        # jurisdiction tiers sort in with the domain's.
+        stages = (*components.core_stages, *order_stages(components.plugin_tiers))
         object.__setattr__(self, "_components", components)
         object.__setattr__(self, "_stages", stages)
 
@@ -107,8 +108,18 @@ class SymbolicGovernor:
             )
         )
 
+    @property
+    def tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+        """Domain and jurisdiction tiers in pipeline order."""
+        return tuple(
+            sorted(
+                self._components.plugin_tiers,
+                key=lambda t: (t.phase, t.order, t.tier_name),
+            )
+        )
+
     def registered_tier_names(self) -> list[str]:
-        return [t.tier_name for t in self.domain_tiers]
+        return [t.tier_name for t in self.tiers]
 
     async def validate_action(
         self,
@@ -481,12 +492,12 @@ class SymbolicGovernor:
             }
 
     def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
-        """True if any domain tier claims ``action``.
+        """True if any domain or jurisdiction tier claims ``action``.
 
         A tier whose ``claims_action`` raises counts as claiming it (fail
         closed): the pipeline then records the raise as a HARD TIER_EXCEPTION.
         """
-        for tier in self.domain_tiers:
+        for tier in self.tiers:
             try:
                 if tier.claims_action(action, params):
                     return True

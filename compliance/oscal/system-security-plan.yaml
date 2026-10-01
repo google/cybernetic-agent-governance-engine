@@ -3,8 +3,8 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-09-29T20:08:29Z'
-    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
+    last-modified: '2026-10-01T15:21:58Z'
+    version: 1.0.1-draft+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
       for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
@@ -46,6 +46,19 @@ system-security-plan:
       value: nist-sp800-53-rev5-high
     - name: cage-posture-scope
       value: us-federal-only
+    - name: customer_responsibility_tier3_wire_transfer
+      ns: https://cage.laah.cybernetics.dev/ns/oscal
+      value: 'Customer Responsibility (Tier-3 Commercial Deployment Interface — Wire
+        Transfer / Payment Release): The reference finance domain does not expose
+        a wire-release action. release_wire was removed from the finance FTRA terminal
+        registry (config/ftra/terminal_registry.json), REGISTERED_ACTIONS and STPA
+        UCA-11 on 2026-09-30 because no posture-completing control depends on it.
+        Any action absent from the registry fails closed as FTRA_UNREGISTERED_ACTION
+        (HITL) and is never auto-cleared. Organizations adding payment release in
+        commercial production are responsible for registering it in their domain registry
+        (re-signed with manifest_sha256), modelling its UCAs, and governing it with
+        a cost-claiming phase-2 barrier so it is re-checked under POST_HITL.'
+      class: customer-responsibility
     - name: customer_responsibility_tier3_ledger_apis
       ns: https://cage.laah.cybernetics.dev/ns/oscal
       value: 'Customer Responsibility (Tier-3 Commercial Deployment Interface — Retail-Banking,
@@ -57,18 +70,6 @@ system-security-plan:
         repository; organizations deploying CAGE in commercial production are responsible
         for supplying and accrediting their own external retail-banking ledger integration
         behind the EstateProvider seam.'
-      class: customer-responsibility
-    - name: customer_responsibility_tier3_wire_transfer
-      ns: https://cage.laah.cybernetics.dev/ns/oscal
-      value: 'Customer Responsibility (Tier-3 Commercial Deployment Interface — Wire Transfer
-        / Payment Release): The reference finance domain does not expose a wire-release
-        action. release_wire was removed from the finance FTRA terminal registry (config/ftra/terminal_registry.json),
-        REGISTERED_ACTIONS and STPA UCA-11 on 2026-09-30 because no posture-completing
-        control depends on it. Any action absent from the registry fails closed as FTRA_UNREGISTERED_ACTION
-        (HITL) and is never auto-cleared. Organizations adding payment release in commercial
-        production are responsible for registering it in their domain registry (re-signed
-        with manifest_sha256), modelling its UCAs, and governing it with a cost-claiming
-        phase-2 barrier so it is re-checked under POST_HITL.'
       class: customer-responsibility
     roles:
     - id: system-owner
@@ -786,11 +787,9 @@ system-security-plan:
       remarks: AU-2 auditable event types — extended for AI governance events
     - param-id: au-9_prm_1
       values:
-      - Governance evidence hash-chained by the gateway into a Redis Stream; re-verified,
-        KMS-attested per batch (EVIDENCE_KMS_KEY) and written with put_if_absent to
-        the retention-locked CMEK GCS WORM bucket by the compliance-bridge EvidenceCustodian;
-        OTel spans → Langfuse for telemetry
-      remarks: AU-9 audit log protection mechanism (POAM-2026-084)
+      - OTel spans → Langfuse → GCS WORM-equivalent (object versioning + retention
+        policy)
+      remarks: AU-9 audit log protection mechanism
     - param-id: sc-8_prm_1
       values:
       - TLS 1.3 for all external communications; Linkerd mTLS + NetworkPolicy for
@@ -1258,27 +1257,24 @@ system-security-plan:
         \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
         \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
         \    (OPA Rego — 6 UCAs)\n            - config/rails/generated_stpa_rails.co\
-        \     (NeMo Colang — 5 UCAs)\n            - src/gateway/governance/stpa_validator.py\
+        \     (NeMo Colang — 4 UCAs)\n            - src/gateway/governance/stpa_validator.py\
         \ (Python — 7 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
-        \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-09-29T20:08:29Z\n\n          UCA-to-Control mapping\
+        \ 11\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
+        \       Last compiled: 2026-10-01T15:21:58Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
         \ / Fiscal Limits)\nUCA-10 (wrong_timing): Agent reads account balance with\
         \ stale connection data.\n  → NIST: cm-6 (Configuration Settings), si-4 (System\
-        \ Monitoring)\nUCA-11 (unsafe_action): Agent initiates wire transfer that\
-        \ is reversible only within settlement window.\n  → NIST: ac-3 (Access Enforcement),\
-        \ sc-4 (Information in Shared System Resources / Fiscal Limits)\nUCA-12 (unsafe_action):\
-        \ Agent executes bounded trade when bounding contracts B1-B10 fail validation.\
-        \ Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback\
-        \ window validation passes, enabling HITL review without confidence hard-gate\
-        \ per VEC-004. When B10 fails, classification override to IRREVERSIBLE_TERMINAL\
-        \ prevents execution.\n  → NIST: ac-3 (Access Enforcement), sa-11 (Developer\
-        \ Testing and Evaluation)\nUCA-2 (wrong_timing): Agent executes trade with\
-        \ stale market data (latency > threshold).\n  → NIST: cm-6 (Configuration\
+        \ Monitoring)\nUCA-12 (unsafe_action): Agent executes bounded trade when bounding\
+        \ contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE\
+        \ when B10 rollback window validation passes, enabling HITL review without\
+        \ confidence hard-gate per VEC-004. When B10 fails, classification override\
+        \ to IRREVERSIBLE_TERMINAL prevents execution.\n  → NIST: ac-3 (Access Enforcement),\
+        \ sa-11 (Developer Testing and Evaluation)\nUCA-2 (wrong_timing): Agent executes\
+        \ trade with stale market data (latency > threshold).\n  → NIST: cm-6 (Configuration\
         \ Settings), sa-11 (Developer Testing and Evaluation)\nUCA-3 (unsafe_action):\
         \ Agent outputs PII to user interface.\n  → NIST: ac-3 (Access Enforcement),\
         \ sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon): Agent\
@@ -1302,11 +1298,11 @@ system-security-plan:
       - name: stpa-compiler-version
         value: 1.1.0
       - name: uca-count
-        value: '12'
+        value: '11'
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-09-29T20:08:29Z'
+        value: '2026-10-01T15:21:58Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
@@ -1325,7 +1321,7 @@ system-security-plan:
         description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
           artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
           (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-          validator). UCAs covered: UCA-1, UCA-11, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
+          validator). UCAs covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
         implementation-status:
           state: implemented
         links:
@@ -1340,7 +1336,7 @@ system-security-plan:
         description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
           / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
           (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-          (Python validator). UCAs covered: UCA-1, UCA-11, UCA-5, UCA-6, UCA-7.'
+          (Python validator). UCAs covered: UCA-1, UCA-5, UCA-6, UCA-7.'
         implementation-status:
           state: implemented
         links:

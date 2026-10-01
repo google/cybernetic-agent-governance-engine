@@ -249,7 +249,7 @@ corresponding module is migrated; use the config file instead.
 
 | Variable | Replacement | Migration |
 |----------|-------------|-----------|
-| `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | `config/thresholds/*.json` (per-region FTRA boundary thresholds) | Move the values you previously set via env var into the appropriate region file under [`config/thresholds/`](../config/thresholds/). This migration also fixes a latent drift bug where [`src/gateway/governance/ftra/graph_analyzer.py:73-74`](../src/gateway/governance/ftra/graph_analyzer.py:73) hardcoded `0.70` independent of the env var — after migration, both `src/gateway/governance/governor/governor.py` and `graph_analyzer.py` read the same config value via `get_fria_zone_defer()`. |
+| `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | *(renamed in P6-1)* `AGENT_CONFIDENCE_THRESHOLD`, `CONFIDENCE_DEFER_FLOOR` → `confidence.agent_threshold` / `confidence.defer_floor` in [`config/governance_thresholds.json`](../config/governance_thresholds.json) | See P6-1 below. |
 | `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`src/gateway/governance/governor/stages/confidence.py`](../src/gateway/governance/governor/stages/confidence.py) are consolidated into a single read via `get_agent_confidence_threshold()`. |
 | `CAUSAL_LOCK_P_VALUE_THRESHOLD`, `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE`, `CAUSAL_LOCK_RISK_BOUNDARY` | `config/thresholds/*.json` | Move MRM/ISO 42001 §A.9.4-governed threshold values from env vars ([`src/gateway/governance/causal/gatekeeper.py:80-110`](../src/gateway/governance/causal/gatekeeper.py:80)) into the versioned config file. This also gives an audit trail for threshold changes. |
 | `NEMO_AUTO_APPLY_ENABLED` | *(deleted, not migrated)* | This variable is removed entirely as part of CR-2 (the legacy auto-apply code path is deleted). Setting it in v3.0.1 has no effect regardless of value. |
@@ -260,7 +260,7 @@ corresponding module is migrated; use the config file instead.
 
 | Config | Purpose | Default |
 |--------|---------|---------|
-| `config/thresholds/<REGION>_BASELINE.json` — FTRA zone keys (`fria_zone_allow`, `fria_zone_defer`) | Replaces `FRIA_ZONE_ALLOW`/`FRIA_ZONE_DEFER` env vars | `0.95` / `0.70` (matches current env var defaults) |
+| `config/governance_thresholds.json` — `confidence.agent_threshold`, `confidence.defer_floor` | Replaced `FRIA_ZONE_ALLOW`/`FRIA_ZONE_DEFER` (renamed again in P6-1) | `0.95` / `0.70` |
 | `config/thresholds/<REGION>_BASELINE.json` — `agent_confidence_threshold` key | Replaces `AGENT_CONFIDENCE_THRESHOLD` | Matches current env var default (confirm exact value in [`src/gateway/governance/governor/stages/confidence.py`](../src/gateway/governance/governor/stages/confidence.py) before upgrading) |
 | `config/thresholds/<REGION>_BASELINE.json` — `causal_lock_*` keys | Replaces the three `CAUSAL_LOCK_*` env vars | Matches current env var defaults; confirm with MRM/ISO 42001 owner before upgrading |
 | `config/thresholds/<REGION>_BASELINE.json` — `kms_batch_*` keys | Replaces `KMS_BATCH_MAX_SIZE`/`KMS_BATCH_ENABLED` | `32` / `false` (standardized across modules) |
@@ -372,7 +372,7 @@ verification step`.
 
 | Function/Method | Old Algorithm | New Algorithm | Impact |
 |---|---|---|---|
-| [`_async_attestation()`](../src/gateway/governance/normative_provider.py:410) | `hashlib.sha256(json.dumps(action_context, sort_keys=True).encode()).hexdigest()` | `hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest()` | Evidence hash values will differ for payloads containing floats (e.g., `1.0` → `"1"` in JCS vs `"1.0"` in json.dumps) |
+| async FRIA attestation (removed in P6-2) | `hashlib.sha256(json.dumps(action_context, sort_keys=True).encode()).hexdigest()` | `hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest()` | Evidence hash values will differ for payloads containing floats (e.g., `1.0` → `"1"` in JCS vs `"1.0"` in json.dumps) |
 | [`NormativeProviderDaemon.boot_fetch()`](../src/gateway/governance/normative_provider.py:756) cached profile hash | `hashlib.sha256(json.dumps(cached, sort_keys=True, separators=(",", ":")).encode()).hexdigest()` | `hashlib.sha256(jcs_canonicalize_plan(cached)).hexdigest()` | Cached baseline change-detection hash now matches [`NormativeBaseline.profile_hash`](../src/gateway/governance/normative_provider.py:209) property (already using JCS) |
 
 **Who is affected:** External systems that independently recompute evidence hashes for verification, or stored evidence records that reference pre-migration digest values. No such external integrations are currently known in this reference architecture.
@@ -810,5 +810,18 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-**Last updated:** 2026-10-01 (Phase 5 clean breaks P5-1–P5-8)
+## Unreleased — FRIA Wired Only Under EU_ECB; Confidence Band Renamed (Phase 6)
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **P6-1** | Thresholds / env vars | The `fria` block of [`config/governance_thresholds.json`](../config/governance_thresholds.json) is removed. The universal band is `confidence.agent_threshold` (0.95) and `confidence.defer_floor` (0.70, new, validated `<= agent_threshold`). Removed: `FriaThresholds`, `get_fria_zone_allow()`, `get_fria_zone_defer()` (use [`get_agent_confidence_threshold()` / `get_confidence_defer_floor()`](../src/gateway/governance/schemas/thresholds.py)), and `defer_queue.DEFER_CONFIDENCE_THRESHOLD`. Env-var mapping: `FRIA_ZONE_ALLOW` → `AGENT_CONFIDENCE_THRESHOLD`; `FRIA_ZONE_DEFER` → `CONFIDENCE_DEFER_FLOOR`. TLA+ constants in [`FtraBoundary.tla`](../proof/FtraBoundary.tla): `FRIA_ZONE_DEFER/ALLOW` → `CONFIDENCE_DEFER_FLOOR/ALLOW_FLOOR`. | The band runs in every region (`ConfidenceStage`, FTRA). Calling it "FRIA" implied an impact assessment that never ran. | `ImportError` / `AttributeError` on the removed names. A stale `FRIA_ZONE_*` env var is silently ignored, so set the new name. |
+| **P6-2** | Normative provider | `enforce_fria_boundary()`, `FRIAEnforcementResult` and `_async_attestation()` are removed from [`normative_provider.py`](../src/gateway/governance/normative_provider.py). `is_stub_provider()` is added. | The primitive had no pipeline caller (POAM-2026-084), and it let an action through on confidence ≥ 0.95 without any assessment. | `ImportError`. Integrations get FRIA from the `fria` tier instead. |
+| **P6-3** | Governor assembly | New [`jurisdiction/`](../src/gateway/governance/jurisdiction/) package (`JurisdictionContribution`, `JURISDICTIONS`, `resolve_jurisdiction`). `assemble_governor(..., jurisdiction=None)` resolves the active region's contribution, and `GovernorComponents.jurisdiction` carries it. `SymbolicGovernor.tiers` lists domain and jurisdiction tiers, while `domain_tiers` stays domain-only. Under `CAGE_DEPLOYMENT_REGION=EU_ECB` every governor gains the phase-1 `fria` tier after `causal`. It claims every action by default, so every EU_ECB action now runs the confidence stage too and needs a confidence ≥ the agent threshold. | FRIA is a jurisdiction obligation, not a kernel or domain concept (D-L). | An EU_ECB action without a current FRIA artefact in `CTRL_FRIA_006.assessments` is denied (`FRIA_ASSESSMENT_STALE`). An unknown region passed to `resolve_jurisdiction` raises `ValueError`. A domain tier named `fria` collides at construction. |
+| **P6-4** | Startup posture | `assert_production_posture()` adds the `jurisdiction_requirements` check: an enforcing EU_ECB posture refuses to start on the stub `NormativeProvider`. | The stub admits every assessment (Completeness Principle). | `PostureViolation` at startup. Set `CAGE_NORMATIVE_PROVIDER` to a real provider. |
+| **P6-5** | Control registry | `ControlRegistry.reconfigure(region)` keeps `active_region` equal to the loaded region; it used to reset it to the default. | `active_region` selects the jurisdiction, so the reset silently dropped the `fria` tier after a reconfigure. | Code that relied on `active_region` reading `US_FED` after `reconfigure("EU_ECB")` now sees `EU_ECB`. |
+| **P6-6** | Citation | EU AI Act FRIA is cited as **Art. 27** (Regulation (EU) 2024/1689); "Art. 29a" was the draft numbering. The Lula control id `EU_AI_ACT_ART29A` → `EU_AI_ACT_ART27`. | Correct legal citation. | Historical `compliance/lula/assessment-results.yaml` entries keep the old id. |
+
+---
+
+**Last updated:** 2026-10-01 (Phase 6 clean breaks P6-1–P6-6)
 

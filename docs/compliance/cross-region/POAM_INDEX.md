@@ -25,7 +25,7 @@ This index provides a single-page view across all four POAM files. It is the aut
 | [`compliance/apac_mas/POAM_APAC_MAS.md`](../apac_mas/POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 4 | 0 | 0 |
 | **Total** | | | **47** | **24** | **10** | **13** |
 
-> **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 29a aspect). `POAM_US_FED.md` v2.2 (2026-06-15) added 7 NIST AI 600-1 items (AI600-001 through AI600-007), raising the US_FED entry count from 23 to 30.
+> **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 27 aspect). `POAM_US_FED.md` v2.2 (2026-06-15) added 7 NIST AI 600-1 items (AI600-001 through AI600-007), raising the US_FED entry count from 23 to 30.
 
 ---
 
@@ -37,8 +37,8 @@ Entries that appear in multiple files or have explicit `see-also` relationships:
 |---|---|---|---|
 | POAM-018 | `POAM_US_FED.md` | `POAM_ISO42001.md#POAM-018` | Same weakness; NIST AU-9 aspect (US_FED) + ISO 42001 §A.9.4 aspect (ALL) |
 | POAM-019 | `POAM_US_FED.md` | `POAM_ISO42001.md#POAM-019` | Same weakness; NIST AU-9/SC-7 aspect (US_FED) + ISO 42001 §A.9.4 aspect (ALL) |
-| POAM-022 | `POAM_US_FED.md` | `POAM_EU_ECB.md#EU-001` | Split entry; NIST SA-9/CA-7 aspect (US_FED) + EU AI Act Art. 29a aspect (EU_ECB) |
-| EU-001 | `POAM_EU_ECB.md` | `POAM_US_FED.md#POAM-022` | Split entry; EU AI Act Art. 29a aspect (EU_ECB) + NIST SA-9/CA-7 aspect (US_FED) |
+| POAM-022 | `POAM_US_FED.md` | `POAM_EU_ECB.md#EU-001` | Split entry; NIST SA-9/CA-7 aspect (US_FED) + EU AI Act Art. 27 aspect (EU_ECB) |
+| EU-001 | `POAM_EU_ECB.md` | `POAM_US_FED.md#POAM-022` | Split entry; EU AI Act Art. 27 aspect (EU_ECB) + NIST SA-9/CA-7 aspect (US_FED) |
 
 ---
 

@@ -292,10 +292,10 @@ All external provider interactions fall into three categories, each with a disti
 | Category                  | Hot-Path Impact                           | Data Flow Direction       | Latency Contract                                    |
 | ------------------------- | ----------------------------------------- | ------------------------- | --------------------------------------------------- |
 | **Normative Data Supply** | None (boot-time + periodic)               | Provider → CAGE cache     | Boot-time only; no inline calls                     |
-| **Attestation Logging**   | None (async fire-and-forget)              | CAGE → Provider           | Background; no acknowledgment wait                  |
-| **External Validation**   | **Adaptive** (confidence-dependent)       | CAGE ↔ Provider           | Async at ≥0.95; sync gate at [0.70, 0.95); deny <0.70 |
+| **Attestation Logging**   | None (`submit_evidence()` has no kernel caller at HEAD) | CAGE → Provider           | Adopter-wired; not on the request path              |
+| **External Validation**   | **Synchronous, `EU_ECB` only** (`fria` tier) | CAGE ↔ Provider           | `validate_fria()` awaited ≤ `CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS` (default 5 s); timeout/error → HARD deny |
 
-**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) executes in sub-microseconds. The full two-phase governance pipeline (kernel stages plus the domain's tiers, §1.4) includes the OPA query (~10-50ms). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
+**Critical constraint:** Outside the `EU_ECB` `fria` tier, no external provider call appears on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) executes in sub-microseconds. The full two-phase governance pipeline (kernel stages plus the domain's tiers, §1.4) includes the OPA query (~10-50ms). The `fria` tier is the deliberate exception: under EU AI Act Art. 27 an EU deployment must not act on an unassessed action, so it trades bounded network latency (hard timeout, fail-closed) for that obligation.
 
 #### 2.5.2 Reference Handshake: 3-Endpoint External Provider
 
@@ -359,52 +359,35 @@ This four-level fallback extends the existing `ControlRegistry` two-level chain 
 
 **Purpose:** Submit a Fundamental Rights Impact Assessment (or equivalent domain-specific attestation) for external validation against the provider's normative database.
 
-**Integration pattern:** Async out-of-band validation with revocation on failure.
+**Integration pattern:** Synchronous, fail-closed phase-1 tier — `EU_ECB` only.
 
 ```
-Transaction enters SymbolicGovernor
+Transaction enters SymbolicGovernor (CAGE_DEPLOYMENT_REGION=EU_ECB)
         │
-        ├──► CBF enforces h(x) ≥ 0 locally (sub-μs)        ← HOT PATH
+        ├──► Phase 1: ftra → stpa → opa → confidence → consensus → causal
         │
-        ├──► OPA evaluates ALLOW/DENY locally (~10-50ms)    ← HOT PATH
+        ├──► fria tier (FriaTier)
+        │       ├── FRIA artefact missing / stale (Art. 27(2))   → HARD FRIA_ASSESSMENT_STALE (no call)
+        │       └── await validate_fria() ≤ CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS
+        │               ├── timeout / exception / error           → HARD FRIA_PROVIDER_UNAVAILABLE
+        │               ├── admitted                              → pass
+        │               ├── refused + needs_human_review          → HITL FRIA_EXTERNAL_HOLD
+        │               └── refused                               → HARD FRIA_REJECTED
         │
-        └──► Response returned to caller                    ← HOT PATH ENDS
-                 │
-                 └──► [async] POST /validate/fria payload
-                             │
-                             ├── ✅ Provider confirms → no action
-                             │
-                             └── ❌ Provider flags legal gap
-                                      │
-                                      └──► Revoke agent session token
-                                           Emit SIEM alert
-                                           Log to compliance Langfuse project
+        └──► Phase 2 (CBF, fiscal) only over a clean Phase 1
 ```
 
-**Design decision: RESOLVED — Adaptive Gating Primitive (v2.1.0)**
+**Design decision: RESOLVED — `fria` jurisdiction tier (supersedes the v2.1.0 adaptive gating primitive)**
 
-The binary async-vs-sync choice has been rejected. Instead, [`enforce_fria_boundary()`](../../src/gateway/governance/normative_provider.py) implements an **Asymmetric, Adaptive Runtime Policy** that maps the blocking semantic directly to the model's confidence boundary:
+The earlier `enforce_fria_boundary()` primitive mapped the blocking semantic to model confidence (async attestation at ≥ 0.95). It was deleted: a confident model is not an impact assessment. FRIA is now the phase-1 `fria` tier ([`FriaTier`](../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py), order 7, right after `causal`), contributed by the `JURISDICTIONS` registry ([`jurisdiction/registry.py`](../../src/gateway/governance/jurisdiction/registry.py)) as a `JurisdictionContribution` only for `EU_ECB`; `US_FED` and `APAC_MAS` contribute nothing. `assemble_governor()` resolves the contribution from `ControlRegistry().active_region`. The tier claims every action by default and never runs under POST_HITL. An enforcing `EU_ECB` posture refuses to start on the stub `NormativeProvider` (`jurisdiction_requirements` check in [`governor/posture.py`](../../src/gateway/governance/governor/posture.py)).
 
-| Confidence Zone | Score Range | Execution Path | Hot-Path Impact |
-| --- | --- | --- | --- |
-| **HIGH** | ≥ 0.95 (`THRESHOLDS.confidence.agent_threshold`) | `ASYNC_ATTESTATION` — fire-and-forget | 0ms |
-| **AMBIGUOUS** | [0.70, 0.95) (`DEFER_CONFIDENCE_THRESHOLD`) | `SYNC_GATE` — transaction frozen in DEFER queue until provider responds | Up to 5s (configurable) |
-| **LOW** | < 0.70 | `LOCAL_HARD_DENY` — no external call | 0ms |
-
-This anchors to the existing `DEFER` state machine ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)) via the `DeferReason.EXTERNAL_VALIDATION` enum member. The adaptive gate is designed to run after all local tiers — if local governance already DENY'd, the external provider is never contacted.
-
-**Wiring status at HEAD:** `enforce_fria_boundary()` is implemented and tested, but the governor pipeline does not call it. The FULL profile in [`pipeline.py`](../../src/gateway/governance/governor/pipeline.py) reserves a Tier 7 `fria` slot, yet no stage or tier fills it. The only FRIA-related behaviour in the live pipeline is the FRIA-zone defer threshold applied by the confidence stage ([`confidence.py`](../../src/gateway/governance/governor/stages/confidence.py)).
+The 0.95 / 0.70 confidence band survives as a jurisdiction-neutral check in `ConfidenceStage` and FTRA (`get_agent_confidence_threshold()` / `get_confidence_defer_floor()`), independent of FRIA.
 
 ##### Endpoint 3: `GET /evidence-chain/{thread_id}` — Attestation Logging
 
 **Purpose:** Submit the local governance evidence hash and retrieve an externally sealed attestation for the audit trail.
 
-**Integration pattern:** Async background append.
-
-- After the SymbolicGovernor pipeline completes, the governance evidence (KMS-signed, hash-chained) is emitted to the compliance Langfuse project.
-- Simultaneously, an async task submits the evidence hash to the external provider.
-- When the provider returns the external seal, it is appended to the audit record.
-- **Zero blocking on the transaction path.** If the provider is unreachable, the local evidence chain remains intact and the external seal is retried on a backoff schedule.
+**Integration pattern:** `NormativeProvider.submit_evidence()` is part of the seam, but **no kernel code calls it at HEAD** (the asynchronous attestation task that used it was deleted with `enforce_fria_boundary()`). The local evidence chain (KMS-signed, hash-chained) is unaffected; an adopter wanting external seals must wire `submit_evidence()` explicitly.
 
 #### 2.5.3 Architectural Precedent: the Ground-Truth Reconciler
 
@@ -868,4 +851,4 @@ For any private partner integration:
 
 - **Compliance Baselines**: Profiles (`US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) dictate the active normative overlay.
 - **Threshold Toggles**: `governance_thresholds.json` holds kernel sections at the top level and domain sections under `domains.<domain>` (e.g. `domains.finance.cbf.min_cash_balance` and `gamma`), so limits change without code recompilation.
-- **External Normative Constraints**: When `CAGE_NORMATIVE_PROVIDER` is set, the configured provider supplies jurisdiction-specific baselines at runtime without modifying the universal ISO 42001 core. (The Adaptive FRIA gate, §2.5.2, is implemented but not yet wired into the pipeline.)
+- **External Normative Constraints**: Jurisdiction-specific obligations are contributed per region by the `JURISDICTIONS` registry (`src/gateway/governance/jurisdiction/registry.py`) without modifying the universal ISO 42001 core — e.g. under `CAGE_DEPLOYMENT_REGION=EU_ECB` the phase-1 `fria` tier (EU AI Act Art. 27), backed by the `NormativeProvider` selected by `CAGE_NORMATIVE_PROVIDER`.

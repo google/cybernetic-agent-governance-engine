@@ -52,10 +52,10 @@ stateDiagram-v2
 
 The classification sequence maps violations into explicit states, satisfying CSA AARM specifications:
 
-- **REQUIRE_APPROVAL**: Triggered by `HITL` violations (FTRA boundary hits, confidence between `FRIA_ZONE_DEFER` and `AGENT_CONFIDENCE_THRESHOLD`) or an OPA `MANUAL_REVIEW`. Escalates to human-in-the-loop (HITL) workflows; after approval, `revalidate_post_hitl()` re-runs the `POST_HITL` profile (OPA plus the claimed CBF and fiscal tiers) and refuses actions no domain tier claims.
+- **REQUIRE_APPROVAL**: Triggered by `HITL` violations (FTRA boundary hits, confidence between `confidence.defer_floor` and `AGENT_CONFIDENCE_THRESHOLD`) or an OPA `MANUAL_REVIEW`. Escalates to human-in-the-loop (HITL) workflows; after approval, `revalidate_post_hitl()` re-runs the `POST_HITL` profile (OPA plus the claimed CBF and fiscal tiers) and refuses actions no domain tier claims.
 - **DENY**: Hard safety constraints (STPA unsafe control actions, CBF barrier violations, explicit OPA denials) and transient infrastructure faults (rate limits, circuit breakers, unreachable dependencies). Causes immediate workflow termination (Saga LIFO rollback) with a refusal receipt. There is no suspended/`PAUSE` state: the caller retries a fresh request. Any phase-2 commits are rolled back LIFO from their receipts, and a `RefusalReceipt` is published to the evidence chain.
 - **NARROW**: Clamps threshold violations (e.g., amount) to allowed values. Returned only if every violation is `NARROWABLE`, a registered narrower proposes clamped params, and a FULL re-run on those params (in a new `ReservationScope`) has zero violations; the seal covers exactly the re-verified params, otherwise `DENY`. (Opt-in via `CAGE_NARROW_ENABLED`).
-- **DEFER**: Resolves confidence starvation (confidence `< FRIA_ZONE_DEFER`) by parking the context in the gateway's Redis `db=1` [DeferQueue](DEFERRAL_QUEUE.md) for automated hydration or dual-control escalation (AARM-V7 Context Window Overflow mitigation).
+- **DEFER**: Resolves confidence starvation (confidence `< confidence.defer_floor`) by parking the context in the gateway's Redis `db=1` [DeferQueue](DEFERRAL_QUEUE.md) for automated hydration or dual-control escalation (AARM-V7 Context Window Overflow mitigation).
 
 ## 4. Operational Guarantees & Edge Cases
 
@@ -70,7 +70,7 @@ The classification sequence maps violations into explicit states, satisfying CSA
 The Governor's execution paths are manipulated via the following environment and configuration contracts:
 
 - **Domain Selection**: `CAGE_DOMAIN` (required, single value) names the one `cage.plugins` entry point the process runs; unset, multi-valued or `DomainConfig`-less domains abort startup.
-- **Threshold Configuration**: `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) and `FRIA_ZONE_DEFER` (default 0.70) are loaded from `config/governance_thresholds.json` and set the boundaries between autonomous allowance, human approval and deferral. Domain thresholds live under `domains.<domain>` and are validated at assembly.
+- **Threshold Configuration**: The confidence band (`confidence.agent_threshold` = 0.95, `confidence.defer_floor` = 0.70; getters `get_agent_confidence_threshold()` / `get_confidence_defer_floor()`, env `AGENT_CONFIDENCE_THRESHOLD` / `CONFIDENCE_DEFER_FLOOR`) is loaded from `config/governance_thresholds.json` and dictates the boundary between autonomous allowance, human approval, and deferral in every region. Domain thresholds live under `domains.<domain>` and are validated at assembly.
 - **Feature Flags (Environment Variables)**, read once at assembly via [`env_posture.py`](../../src/gateway/governance/env_posture.py):
   - `CAGE_DEFER_ENABLED` (default: `true`): If `false`, confidence starvation falls back directly to `DENY`.
   - `CAGE_NARROW_ENABLED` (default: `false`): If `false`, clampable threshold limits fall back to `DENY`.

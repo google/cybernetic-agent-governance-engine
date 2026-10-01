@@ -41,7 +41,7 @@ response to the reviewer is grounded in code rather than in the analysis:
 | A2 | Gap 1 was "intended to be" `ungated_transitions()` | `proof/model.py` docstring line 46 defines Gap 1 as "machine-checked exhaustive proof (not just test coverage)". Code and paper must be reconciled explicitly, not assumed. |
 | A3 | `γ = 0.1` is the code default, overridden in config | No literal `0.1` gamma exists anywhere in `src/`. `cbf.py` reads `THRESHOLDS.cbf.gamma`; the only source is `config/governance_thresholds.json` (`0.5`). The paper's "default" is unsupported. |
 | A4 | Evidence chain is at schema `cage-context-accumulator/1.1` | `context_accumulator.py` line 71: `_SCHEMA = "cage-context-accumulator/1.0"`. The 1.1 bump described in §5.5 never landed. **Resolution: withdraw the claim** (the metadata binding the paper attributes to 1.1 is already present in the 1.0 `_link_hash` header). |
-| A5 | FRIA (Tier 7) always runs as a governance step | `src/gateway/governance/governor/governor.py` gates `enforce_fria_boundary()` on `CAGE_NORMATIVE_PROVIDER != "static"`; that variable is set in no deployment manifest. The unconditional portion only stamps OTel attributes. Adding `fria` to the proof tuple without this caveat would over-claim. |
+| A5 | FRIA (Tier 7) always runs as a governance step | `src/gateway/governance/governor/governor.py` gates `enforce_fria_boundary()` on `CAGE_NORMATIVE_PROVIDER != "static"`; that variable is set in no deployment manifest. The unconditional portion only stamps OTel attributes. Adding `fria` to the proof tuple without this caveat would over-claim. **Status 2026-10-01 (`refactor/fria-jurisdiction`):** superseded — `enforce_fria_boundary()` was deleted; FRIA is now the phase-1 `fria` tier (`src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`) assembled only under `CAGE_DEPLOYMENT_REGION=EU_ECB`, and `proof/model.py` covers it per region via `JURISDICTION_TIERS`, not in the universal 8-tuple. The "always runs" claim remains false outside `EU_ECB`. |
 
 ---
 
@@ -49,7 +49,7 @@ response to the reviewer is grounded in code rather than in the analysis:
 
 | ID | Finding | Phase | Status | Evidence / commit |
 |---|---|---|---|---|
-| C1 | Formal state space omits FTRA (Tier 0.5) and FRIA (Tier 7) | 1, 3 | **FIXED** | `proof/model.py` 8-tuple; paper §4.4 8-tuple + FTRA scope note; Appendix A updated |
+| C1 | Formal state space omits FTRA (Tier 0.5) and FRIA (Tier 7) | 1, 3 | **FIXED** | `proof/model.py` 8-tuple; paper §4.4 8-tuple + FTRA scope note; Appendix A updated. *2026-10-01:* FRIA is now the `EU_ECB`-only `fria` jurisdiction tier (phase 1, after `causal`), covered by the `JURISDICTION_TIERS` sub-proof rather than a "Tier 7" tuple position |
 | C2 | Sequential formal model vs. parallel runtime; CBF TOCTOU | 1, 3 | **FIXED** | `proof/model.py` `concurrent_tier_transitions()` (24 states); §4.4 parallelism note; §5.1 TOCTOU note |
 | C3 | Theorem 5.3 claims non-repudiation for an HMAC routing seal | 3 | **FIXED** | §5.3 rewritten: HMAC = authenticity; KMS ECDSA-P256 = non-repudiation for reconciliation only |
 | C4 | CBF Invariance proof lacks base case, rejection branch, premises | 3 | **FIXED** | §5.1 full proof with base case, inductive step, rejection branch, TOCTOU note; γ=0.1 phantom removed |

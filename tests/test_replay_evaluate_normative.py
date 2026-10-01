@@ -30,13 +30,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.defer_queue import (
-    DEFER_CONFIDENCE_THRESHOLD,
     DeferQueue,
     DeferReason,
     DeferToken,
     ReplayResult,
     replay_evaluate,
 )
+from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
+
+# The Confidence-Starvation Boundary: confidence.defer_floor (single source of truth).
+DEFER_FLOOR = get_confidence_defer_floor()
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -309,13 +312,13 @@ def test_defer_queue_resolve_is_private():
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Boundary condition at exactly DEFER_CONFIDENCE_THRESHOLD
+# Test 4: Boundary condition at exactly DEFER_FLOOR
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_replay_evaluate_at_exact_threshold(fake_redis):
-    """Test that confidence exactly at DEFER_CONFIDENCE_THRESHOLD (0.70) is admitted."""
+    """Test that confidence exactly at DEFER_FLOOR (0.70) is admitted."""
     queue = DeferQueue(fake_redis)
 
     # Park a token with low initial confidence
@@ -329,7 +332,7 @@ async def test_replay_evaluate_at_exact_threshold(fake_redis):
 
     # Replay with enriched context (confidence raised to exactly 0.70)
     enriched_context = {
-        "confidence_score": DEFER_CONFIDENCE_THRESHOLD,
+        "confidence_score": DEFER_FLOOR,
         "external_validation": "ADMITTED",
         "provider_findings": [],
     }

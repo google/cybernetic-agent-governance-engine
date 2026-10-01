@@ -52,7 +52,11 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
+<<<<<<< HEAD
 | **Autonomous Engine** | Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/normative_provider.py` *(not wired into the pipeline; see §2.4)* |
+=======
+| **Autonomous Engine** | `fria` tier — Fundamental Rights Impact Assessment (FRIA) currency + provider validation (phase 1, after `causal`) | **EU AI Act Art. 27** | `CTRL_FRIA_006` | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` |
+>>>>>>> 5e5a3aa (refactor(governance)!: wire FRIA only under the EU_ECB posture)
 | **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` |
 | **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 
@@ -74,7 +78,11 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` | *All Regions* |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` | *All Regions* |
 | **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** <br> **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` | *All Regions* |
+<<<<<<< HEAD
 | **Autonomous Engine** | Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/normative_provider.py` *(not wired into the pipeline; see §2.4)* | `EU_ECB` only |
+=======
+| **Autonomous Engine** | `fria` tier — Fundamental Rights Impact Assessment (FRIA) currency + provider validation | **EU AI Act Art. 27** | `CTRL_FRIA_006` | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` | `EU_ECB` only |
+>>>>>>> 5e5a3aa (refactor(governance)!: wire FRIA only under the EU_ECB posture)
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** <br> **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` | *All Regions* |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** <br> **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` | *All Regions* |
 | **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `src/compliance_bridge/aarm_mapper.py` | *All Regions* |
@@ -120,14 +128,13 @@ This guarantees the cash balance never drops below the minimum threshold in a si
 risk_score = 1.0 − confidence
 ```
 
-`score_confabulation()` builds a telemetry score payload from this value; it does not gate actions. The live confidence gate is the Tier 2 confidence stage ([`src/gateway/governance/governor/stages/confidence.py`](src/gateway/governance/governor/stages/confidence.py)), which compares the agent's self-reported confidence with `confidence.agent_threshold` and `fria.zone_defer` from [`config/governance_thresholds.json`](config/governance_thresholds.json):
+`is_confabulation_blocked()` blocks below `confidence.min_score` (0.95). Separately, the universal confidence band enforced by `ConfidenceStage` ([`src/gateway/governance/governor/stages/confidence.py`](src/gateway/governance/governor/stages/confidence.py), every region) disposes of the agent's confidence as follows:
 
-| Agent confidence | Tier 2 violation | Classification outcome |
-|------------------|------------------|------------------------|
-| ≥ 0.95 (`confidence.agent_threshold`) | None | Stage passes |
-| [0.70, 0.95) | `CONFIDENCE_BELOW_THRESHOLD`, kind `HITL` | `REQUIRE_APPROVAL` |
-| < 0.70 (`fria.zone_defer`) | `CONFIDENCE_BELOW_THRESHOLD`, kind `DEFERRABLE` | `DEFER` when `CAGE_DEFER_ENABLED` (default on), otherwise `DENY` |
-| Missing, non-numeric, NaN, infinite, < 0, or > 1.0 | `CONFIDENCE_INVALID`, kind `HARD` | `DENY` |
+| Confidence Range | Action |
+|-------------|--------|
+| ≥ 0.95 (`confidence.agent_threshold`, `get_agent_confidence_threshold()`) | Confidence check clears |
+| [0.70, 0.95) (`confidence.defer_floor`, `get_confidence_defer_floor()`) | `HITL` violation — human approval required |
+| < 0.70 | `DEFERRABLE` violation — routed to the DEFER queue |
 
 ### 2.3 Causal Marginal Risk Boundary
 
@@ -141,16 +148,21 @@ estimated_risk = min(1.0, max(0.0, 0.5 + estimate.value × treatment_value / nor
 
 `treatment_value` and `normalization_scale` come from the active domain's `CausalSpec`. DoWhy's `placebo_treatment_refuter` runs **50 simulations**; the world model is treated as untrustworthy (action blocked) when the placebo **p-value < 0.05** (`causal.p_value_threshold`) or **|placebo effect| > 0.2** (`causal.placebo_effect_magnitude`).
 
-### 2.4 FRIA Zone Thresholds
+### 2.4 FRIA Tier (EU_ECB only)
 
-**Source:** [`src/gateway/governance/schemas/thresholds.py`](src/gateway/governance/schemas/thresholds.py) (`FriaThresholds`) · **Control:** `CTRL_FRIA_006`
+**Source:** [`src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`](src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py) · **Control:** `CTRL_FRIA_006`
 
-| Threshold key | Env override | Default | Semantic |
-|---------------|--------------|---------|----------|
-| `fria.zone_allow` | `FRIA_ZONE_ALLOW` | `0.95` | Confidence at or above which an action is auto-approved |
-| `fria.zone_defer` | `FRIA_ZONE_DEFER` | `0.70` | Confidence below which an action is deferred |
+The `fria` tier (`FriaTier`) is contributed by the jurisdiction registry ([`jurisdiction/registry.py`](src/gateway/governance/jurisdiction/registry.py)) only when `CAGE_DEPLOYMENT_REGION=EU_ECB`; it runs in phase 1 right after `causal` and never in POST_HITL. Model confidence plays no part in it (the universal band in §2.2 is a separate, jurisdiction-neutral check).
 
-There is no live FRIA tier in the governance pipeline at HEAD: `"fria"` appears only as a label in `PROFILE_STAGES` ([`pipeline.py`](src/gateway/governance/governor/pipeline.py)). The three-zone FRIA boundary (≥ 0.95 async attestation, [0.70, 0.95) blocking normative-provider check, < 0.70 deny) is implemented by `enforce_fria_boundary()` in [`normative_provider.py`](src/gateway/governance/normative_provider.py), but no pipeline stage calls it. The only live use of these thresholds is `fria.zone_defer` in the Tier 2 confidence stage (§2.2) and the FTRA graph analyzer.
+| Condition | Outcome |
+|----------|---------|
+| FRIA artefact for the action (or system-wide `"*"`) under `CTRL_FRIA_006.assessments` missing, unparseable, timezone-naive, future-dated, or older than `fria.fria_reassessment_interval_days` (365, `config/thresholds/EU_ECB_BASELINE.json`) | HARD `FRIA_ASSESSMENT_STALE` (Art. 27(2)) |
+| `NormativeProvider.validate_fria()` times out (`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`, default 5 s), raises, or returns `error` | HARD `FRIA_PROVIDER_UNAVAILABLE` |
+| Provider admits | Pass |
+| Provider refuses with a `needs_human_review: true` finding | HITL `FRIA_EXTERNAL_HOLD` (REQUIRE_APPROVAL token parked) |
+| Provider refuses otherwise | HARD `FRIA_REJECTED` |
+
+An enforcing `EU_ECB` posture refuses to start when the `NormativeProvider` is the stub (`jurisdiction_requirements` check in [`governor/posture.py`](src/gateway/governance/governor/posture.py)).
 
 ### 2.5 Fiscal Limit Guard Parameters
 
@@ -236,7 +248,7 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
 ### C. European Union AI Act, GDPR, and EBA Hard Law Baseline (EU_ECB Profile)
 *   **Status:** Technical Controls Mapped & Telemetry Attested.
 *   **Mechanism:**
-    *   **Fundamental Rights Impact Assessment (EU AI Act Art. 29a):** `CTRL_FRIA_006` is mapped in the `EU_ECB` profile, and `enforce_fria_boundary()` ([`normative_provider.py`](src/gateway/governance/normative_provider.py)) implements a FRIA attestation boundary. It is **not** invoked by the `SymbolicGovernor` pipeline at HEAD (see §2.4), so live traces do not yet carry FRIA attestation evidence.
+    *   **Fundamental Rights Impact Assessment (EU AI Act Art. 27):** In `EU_ECB` region, `assemble_governor()` adds the phase-1 `fria` tier (`FriaTier`, `CTRL_FRIA_006`, [`fria_tier.py`](src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)) right after `causal`. Every claimed action is refused unless the deployer's FRIA artefact is current (Art. 27(2), `fria.fria_reassessment_interval_days`) and the `NormativeProvider` admits it via `validate_fria()`; an unreachable provider fails closed. See §2.4.
     *   **Prohibition on Fully Automated Decisions (GDPR Art. 22):** The `EU_ECB` profile automatically scales down maximum trade and confidence thresholds and forces human-in-the-loop validation for any decision carrying legal or significant effect, preventing illegal automated processing.
     *   **SR 26-2 Telemetry Suppression:** CAGE dynamically suppresses US Fed SR 26-2 telemetry when executing under the `EU_ECB` profile using a data-driven sentinel mechanism. The `EU_ECB_BASELINE.json` encodes `CTRL_MRM_004`'s `legacy_citation` as `"SR 26-2 §IV (US Federal Reserve — no legal force in EU jurisdiction)"`. The `causal_gatekeeper` reads this marker at runtime and emits `primary_framework` (the EBA citation) on OTel spans instead. Adding a new region requires only a JSON profile update — no Python changes.
     *   **EBA Guidelines Mapping:** Integrates governance metrics directly with internal audit processes per EBA/GL/2023/02 guidelines.

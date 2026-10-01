@@ -36,7 +36,7 @@
 #
 # External legal requirements (not automated — must be completed separately):
 #   1. GDPR Art. 35 Data Protection Impact Assessment (DPIA)
-#   2. EU AI Act Art. 29a Fundamental Rights Impact Assessment (FRIA)
+#   2. EU AI Act Art. 27 Fundamental Rights Impact Assessment (FRIA)
 #   3. EU AI Office registration (High-Risk AI — Annex III §5(b))
 #   4. DORA Art. 11 ICT Business Continuity Plan
 #   5. EBA/GL/2023/02 independent model validation report

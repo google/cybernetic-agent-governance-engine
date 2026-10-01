@@ -268,7 +268,7 @@ async def test_defer_token_resolution_traverses_replay_evaluate():
     Architectural Invariant:
         No direct resolution path may bypass confidence threshold checks.
         All resolutions must flow through replay_evaluate() which enforces
-        the DEFER_CONFIDENCE_THRESHOLD gate.
+        the confidence.defer_floor gate.
 
     Enforcement:
         Mock DeferQueue with a parked token. Patch replay_evaluate with a spy.

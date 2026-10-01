@@ -30,7 +30,7 @@
 #   - UCA-6 max order volume: 1% daily vol — SR 26-2 market impact limit
 #   - Max sell fraction: 10% portfolio — SR 26-2 concentration risk
 #   - Max latency: 200ms — NIST SP 800-53 SI-17 operational resilience
-#   - FRIA attestation: DISABLED — EU-only control (EU AI Act Art. 29a)
+#   - FRIA attestation: DISABLED — EU-only control (EU AI Act Art. 27)
 #   - SR 26-2 on OTel spans: ACTIVE — primary US prudential framework
 #   - OSCAL framework: NIST_SP800_53 (vs EU_AI_ACT / MAS_FEAT)
 #   - Prompt injection keywords: BYPASS GOVERNANCE, IGNORE POLICY

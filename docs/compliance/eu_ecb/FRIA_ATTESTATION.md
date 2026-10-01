@@ -1,6 +1,6 @@
 # Fundamental Rights Impact Assessment (FRIA) — CAGE Governed Financial Advisor
 
-**Document:** EU-001 / EU AI Act Art. 29a / ISO 42001 §A.6.1
+**Document:** EU-001 / EU AI Act Art. 27 / ISO 42001 §A.6.1
 **Date:** 2026-06-24
 **Status:** Draft — pending external normative provider credential provisioning and DPO sign-off
 **POAM:** EU-001 (POAM_EU_ECB.md)
@@ -20,7 +20,7 @@
 
 ## 1. Purpose and Legal Basis
 
-Under EU AI Act Art. 29a, deployers of High-Risk AI systems must perform a Fundamental Rights Impact Assessment (FRIA) before deploying the system. CAGE's Governed Financial Advisor pipeline meets the High-Risk AI definition under Art. 6 + Annex III §5(b) (AI used in financial services to evaluate creditworthiness or gate access to financial resources).
+Under EU AI Act Art. 27, deployers of High-Risk AI systems must perform a Fundamental Rights Impact Assessment (FRIA) before deploying the system. CAGE's Governed Financial Advisor pipeline meets the High-Risk AI definition under Art. 6 + Annex III §5(b) (AI used in financial services to evaluate creditworthiness or gate access to financial resources).
 
 This document records the FRIA for the EU_ECB deployment profile.
 
@@ -100,61 +100,61 @@ This document records the FRIA for the EU_ECB deployment profile.
 
 ---
 
-## 5. FRIA Zone Mathematical Definition
+## 5. Runtime Enforcement — the `fria` Jurisdiction Tier (EU_ECB only)
 
-The CAGE governance kernel implements a three-zone FRIA scoring model as the `enforce_fria_boundary()` primitive in [`src/gateway/governance/normative_provider.py`](../../../src/gateway/governance/normative_provider.py). It is not a tier of the Symbolic Governor pipeline: `run_pipeline()` does not call it, so adopters must invoke it explicitly. This model operationalises the EU AI Act Art. 29a requirement for proportionate human oversight of High-Risk AI decisions.
+`CTRL_FRIA_006` is enforced by the `fria` tier, [`FriaTier`](../../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py). It is contributed by the EU jurisdiction entry in [`jurisdiction/registry.py`](../../../src/gateway/governance/jurisdiction/registry.py) and is assembled into the Symbolic Governor pipeline **only** when the loaded regional profile is `EU_ECB` (`CAGE_DEPLOYMENT_REGION=EU_ECB`). `US_FED` and `APAC_MAS` contribute no jurisdiction tier, so no `fria` stage exists there.
 
-### 5.1 Zone Thresholds
+The tier is phase 1 (read-only) and runs right after `causal` in every committing and DRY_RUN profile. It never runs after a human approval (POST_HITL), so it cannot hold barrier headroom. It claims every action by default. An adopter narrows it to the Annex III high-risk actions through the `claims` classifier of [`contribution()`](../../../src/gateway/governance/jurisdiction/eu_ai_act/__init__.py), never through model confidence.
 
-| Constant | Value | Zone | Enforcement Action |
-|----------|-------|------|--------------------|
-| `FRIA_ZONE_ALLOW` | `0.95` | Allow zone | Async attestation — decision proceeds without blocking; FRIA record written asynchronously |
-| `FRIA_ZONE_DEFER` | `0.70` | Defer zone lower bound | Synchronous blocking gate — decision is held pending HITL review |
-| *(implicit)* | `< 0.70` | Block zone | Hard BLOCK — decision denied; no override path available |
+### 5.1 Decision table
 
-### 5.2 FRIA Score Computation
+`FriaTier.evaluate()` runs these checks in order:
 
-The FRIA score is a composite of the confabulation risk score and the causal gatekeeper estimate, normalised to `[0, 1]`:
+| Step | Condition | Violation | Verdict |
+|---|---|---|---|
+| 1. Currency (Art. 27(2)) | No FRIA artefact for the action or system-wide (`"*"`); `assessed_at` missing, not ISO-8601, without a timezone, future-dated, or older than `fria.fria_reassessment_interval_days` (365, [`config/thresholds/EU_ECB_BASELINE.json`](../../../config/thresholds/EU_ECB_BASELINE.json)) | HARD `FRIA_ASSESSMENT_STALE` | DENY. The provider is not called. |
+| 2. Provider | `validate_fria()` times out (`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`, default 5 s), raises, or returns `error` | HARD `FRIA_PROVIDER_UNAVAILABLE` | DENY |
+| 3. Admitted | Provider admits | — | Pass |
+| 4. Escalated | Provider refuses with a `needs_human_review: true` finding | HITL `FRIA_EXTERNAL_HOLD` | REQUIRE_APPROVAL. A `HITL_REQUIRED` DeferToken is parked. |
+| 5. Refused | Any other refusal | HARD `FRIA_REJECTED` | DENY |
 
+Every violation message is prefixed `[CTRL_FRIA_006]`, so the refusal receipt resolves this control's citation. Model confidence plays no part: a confident model is not an impact assessment. The universal confidence band (`confidence.agent_threshold` 0.95 / `confidence.defer_floor` 0.70) is a separate, jurisdiction-neutral tier (`ConfidenceStage`) that runs in every region.
+
+### 5.2 FRIA artefact schema
+
+The deployer's assessments are read from the loaded regional baseline (`ControlRegistry`), under `CTRL_FRIA_006.assessments`. The `NormativeProviderDaemon` boot fetch (`fetch_baseline()`) writes this baseline, so the request path never touches the network:
+
+```json
+"CTRL_FRIA_006": {
+  "assessments": {
+    "execute_trade": {"assessed_at": "2026-09-15T00:00:00+00:00"},
+    "*":             {"assessed_at": "2026-06-01T00:00:00+00:00"}
+  }
+}
 ```
-fria_score = 1.0 − risk_score
-           = confidence          (when risk_score = 1.0 − confidence)
-```
 
-A higher `fria_score` indicates higher confidence and lower fundamental-rights risk. The three zones map to EU AI Act Art. 29a as follows:
+The committed reference baseline ([`config/compliance/EU_ECB_BASELINE.json`](../../../config/compliance/EU_ECB_BASELINE.json)) deliberately carries **no** assessment. CAGE does not fabricate a deployer's FRIA. A reference EU_ECB run therefore denies every claimed action with `FRIA_ASSESSMENT_STALE` until the deployer's assessment is loaded.
 
-| Score Range | FRIA Zone | EU AI Act Art. 29a Mapping |
-|-------------|-----------|---------------------------|
-| `fria_score ≥ 0.95` | ALLOW | Deployer has verified the system operates within intended purpose; async attestation sufficient |
-| `0.70 ≤ fria_score < 0.95` | DEFER | Human oversight required before action; deployer must ensure meaningful human review (Art. 29a §2) |
-| `fria_score < 0.70` | BLOCK | System output is inadmissible; fundamental rights risk too high for any action |
+### 5.3 Startup posture
 
-### 5.3 Relationship to Existing FRIA Controls
+`assert_production_posture()` ([`governor/posture.py`](../../../src/gateway/governance/governor/posture.py)) runs the `jurisdiction_requirements` check. An enforcing EU_ECB posture **refuses to start** when the resolved `NormativeProvider` is the stub, because the stub admits every assessment. Development, test and CI postures log the failure at CRITICAL and continue.
 
-The mathematical thresholds complement the qualitative FRIA controls documented in §4:
+### 5.4 Relationship to the qualitative controls in §4
 
-- **§4.1 Non-discrimination (Art. 21):** The DEFER zone (`0.70 ≤ score < 0.95`) ensures that recommendations with moderate uncertainty are always reviewed by a human before affecting a client — directly mitigating demographic bias risk.
-- **§4.3 Effective remedy (Art. 47):** The BLOCK zone (`score < 0.70`) provides an absolute safety net: no AI recommendation with high fundamental-rights risk can be autonomously executed, preserving the client's right to challenge decisions made by a human reviewer rather than an opaque algorithm.
-- **§4.2 Data protection (Art. 8):** The FRIA score is computed after PII sanitization (a pre-pipeline / audit-log stage, not a numbered `run_pipeline()` tier) — the score never incorporates raw PII, satisfying GDPR Art. 25 data minimisation.
-
-### 5.4 External Normative Provider Integration
-
-When `CAGE_NORMATIVE_PROVIDER=provider_01`, every decision with `fria_score < 0.95` (i.e., in the DEFER or BLOCK zone) is submitted to the external normative provider for independent FRIA validation before the zone decision is finalised. The external provider may upgrade a DEFER to ALLOW or downgrade an ALLOW to DEFER based on its own assessment. The Langfuse trace records `fria.path` as one of:
-- `ASYNC_ATTESTED` — score ≥ 0.95, async path
-- `SYNC_GATE_ADMITTED` — 0.70 ≤ score < 0.95, external provider admitted
-- `SYNC_GATE_DEFERRED` — 0.70 ≤ score < 0.95, HITL required
-- `BLOCKED` — score < 0.70, hard deny
+- **§4.1 Non-discrimination (Art. 21):** a provider escalation (`needs_human_review`) is always decided by a human before it affects a client.
+- **§4.3 Effective remedy (Art. 47):** every refusal (HARD) produces a refusal receipt in the tamper-evident evidence chain, which preserves the client's ability to challenge the decision.
+- **§4.2 Data protection (Art. 8):** the provider receives the action, its parameters, the thread id, the region and the control id. PII sanitisation of parameters is the integrating deployment's responsibility before they reach the governor.
 
 ---
 
-## 6. External Normative Provider FRIA Validation (EU AI Act Art. 29a — External Validation)
+## 6. External Normative Provider FRIA Validation (EU AI Act Art. 27 — External Validation)
 
-The `normative_provider.py` module implements adaptive FRIA enforcement gating:
-- When `CAGE_NORMATIVE_PROVIDER=provider_01` and external provider credentials are configured, every execute_trade decision with confidence < 0.95 is submitted to the external normative provider for independent FRIA validation before action
-- The external provider returns an admissibility determination and a set of findings
-- Non-admitted decisions are blocked (DENY) or escalated to HITL (DEFER)
+The `fria` tier calls the deployment's `NormativeProvider` (`CAGE_NORMATIVE_PROVIDER`; see [`normative_provider.py`](../../../src/gateway/governance/normative_provider.py)) for every claimed action whose artefact is current:
+- The external provider returns an admissibility determination and a set of findings.
+- Non-admitted decisions are denied, or escalated to a human when a finding sets `needs_human_review`.
+- Async FRIA attestation via `submit_evidence()` is **not** currently wired into the evidence-seal path. It is tracked as a follow-up.
 
-**Current status:** `CAGE_NORMATIVE_PROVIDER=static` (stub mode) — external normative provider credentials not yet provisioned. All FRIA checks are stub-admitted. **EU-001 is In Progress pending credential provisioning.**
+**Current status:** the reference configuration resolves `CAGE_NORMATIVE_PROVIDER=static` (the stub). External provider credentials are not yet provisioned. An enforcing EU_ECB posture refuses to start on the stub (§5.3). Development postures run it, and without a loaded FRIA artefact every claimed action is denied as stale (§5.2). **EU-001 is In Progress pending credential provisioning.**
 
 ### External Normative Provider Provisioning Runbook
 
@@ -174,7 +174,7 @@ The `normative_provider.py` module implements adaptive FRIA enforcement gating:
      value: "https://api.example.com/normative/v1"
    ```
 5. Verify boot-time baseline fetch: `kubectl logs -n governance-stack deploy/cage-gateway | grep NormativeDaemon`
-6. Verify adaptive gating: Submit a test trade with confidence 0.80 and confirm Langfuse trace shows `fria.path=SYNC_GATE_ADMITTED`
+6. Load the deployer's FRIA artefact into `CTRL_FRIA_006.assessments` (§5.2). Submit a test trade, then confirm that the governor runs the `fria` stage and that the provider's decision appears in the verdict: no `FRIA_*` violation when admitted, `FRIA_EXTERNAL_HOLD` when escalated.
 7. Run Lula validation: `lula validate -f compliance/lula/lula-validation-eu-fria.yaml`
 
 ---
@@ -188,7 +188,7 @@ The `normative_provider.py` module implements adaptive FRIA enforcement gating:
 | Effective remedy (Art. 47) | Low | Explainability chain + HITL override implemented |
 | Equal treatment (Art. 20) | Moderate | Same as non-discrimination |
 
-**Overall residual risk:** **Moderate** — acceptable for controlled deployment with mandatory HITL for high-value transactions. The FRIA zone thresholds (§5) provide a mathematical enforcement layer that ensures no high-risk decision (score < 0.70) can be autonomously executed.
+**Overall residual risk:** **Moderate** — acceptable for controlled deployment with mandatory HITL for high-value transactions. The `fria` tier (§5) fails closed: in an EU_ECB deployment no claimed action executes without a current FRIA artefact and an admitting (or human-approved) normative-provider assessment.
 
 ---
 

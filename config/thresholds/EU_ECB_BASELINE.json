@@ -34,7 +34,7 @@
   },
   "confidence": {
     "min_trade_confidence": 0.97,
-    "_comment": "[CTRL_AGT_001] Minimum agentic model confidence for EU High-Risk AI classification under EU AI Act Art. 6 + Annex III \u00a75(b). Threshold elevated to 0.97 from US baseline of 0.95 to reflect the mandatory Art. 9 risk management requirements for High-Risk AI systems. Pre-market FRIA (Art. 29a) must document this threshold and its calibration basis. Any change requires re-registration with the EU AI Office."
+    "_comment": "[CTRL_AGT_001] Minimum agentic model confidence for EU High-Risk AI classification under EU AI Act Art. 6 + Annex III \u00a75(b). Threshold elevated to 0.97 from US baseline of 0.95 to reflect the mandatory Art. 9 risk management requirements for High-Risk AI systems. Pre-market FRIA (Art. 27) must document this threshold and its calibration basis. Any change requires re-registration with the EU AI Office."
   },
   "consensus": {
     "threshold_usd": 7500.0,
@@ -56,7 +56,7 @@
     "bias_threshold_equalized_odds": 0.05,
     "_comment": "Maximum allowable equalized odds gap (EU AI Act Art. 10(2)(f) bias examination requirement).",
     "fria_reassessment_interval_days": 365,
-    "_comment": "EU AI Act Art. 29a requires periodic FRIA reassessment. Annual minimum; more frequent if model drift detected via CTRL_TEL_003."
+    "_comment": "EU AI Act Art. 27 requires periodic FRIA reassessment. Annual minimum; more frequent if model drift detected via CTRL_TEL_003."
   },
   "tier1_keywords": [
     "SYSTEM OVERRIDE",

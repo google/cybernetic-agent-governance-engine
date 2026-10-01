@@ -58,5 +58,5 @@ flowchart TD
 
 - **Jurisdictional Overlay**: 
   - *US_FED / APAC_MAS*: Causal Gatekeeper is active to satisfy Model Risk Management (MRM) causal validation obligations.
-  - *EU_ECB*: Causal Gatekeeper is suppressed per GDPR telemetry restrictions; Adaptive FRIA is activated instead.
+  - *EU_ECB*: Causal Gatekeeper is suppressed per GDPR telemetry restrictions; the phase-1 `fria` tier (EU AI Act Art. 27, `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py`) is added after `causal`.
 - **KMS Fallback**: In dev/CI environments where `KMS_GOVERNANCE_KEY` is not provided, the Cryptographic Signer Engine degrades to an HMAC-SHA256 signature using `GOVERNANCE_SALT`. The compliance bridge will flag this as a critical gap if deployed to production.

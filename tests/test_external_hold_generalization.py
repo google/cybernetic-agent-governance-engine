@@ -45,8 +45,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 def test_external_hold_token_shape_is_vendor_agnostic():
     """provider_01 ESCALATE and provider_06 REVIEW produce structurally identical DeferTokens.
 
-    This proves I1 (vendor-shaped asymmetry) is fixed: both providers now
-    take the same code path in enforce_fria_boundary().
+    This proves I1 (vendor-shaped asymmetry) is fixed: both providers' hold
+    findings produce the same token shape.
     """
     # Simulate provider_01 ESCALATE finding (FlowSignal-shaped)
     provider_01_finding = {

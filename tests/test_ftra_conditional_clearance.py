@@ -60,14 +60,14 @@ from src.gateway.governance.ftra.models import (
 )
 from src.gateway.governance.governor.pipeline import Profile, StageContext, StageOutput
 from src.gateway.governance.governor.stages.ftra import FtraStage
-from src.gateway.governance.schemas.thresholds import get_fria_zone_allow
+from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _IRR = TerminalClassification.IRREVERSIBLE_TERMINAL
 _EXT = TerminalClassification.EXTERNALLY_REVERSIBLE
 _CEILING = 100.0
-_HIGH = 0.99  # above FRIA zone_allow
+_HIGH = 0.99  # above the agent confidence threshold
 _magnitude = extract_field_magnitude("amount")
 
 
@@ -423,6 +423,6 @@ def test_analyzer_without_extractor_is_unchanged(registry: Path) -> None:
     assert result.auto_cleared_terminals == []
 
 
-def test_fria_floor_is_the_clearance_floor() -> None:
-    """The predicate's floor in production is FRIA zone_allow."""
-    assert _HIGH >= get_fria_zone_allow()
+def test_confidence_allow_floor_is_the_clearance_floor() -> None:
+    """The predicate's floor in production is the band's ALLOW floor."""
+    assert _HIGH >= get_agent_confidence_threshold()

@@ -372,7 +372,7 @@ def test_vec_004_release_wire_externally_reversible(
         ],
     )
 
-    # Test at low confidence (below FRIA_ZONE_DEFER = 0.70)
+    # Test at low confidence (below confidence.defer_floor = 0.70)
     result_low = analyzer.analyze(plan, confidence=0.45)
     assert result_low.verdict == FTRAVerdict.HITL_REQUIRED, (
         "EXTERNALLY_REVERSIBLE → HITL_REQUIRED even at low confidence"

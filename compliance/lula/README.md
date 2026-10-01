@@ -51,7 +51,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 
 | Validation File                                                          | Control         | Standard             | Region Scope | Status    | Description                                                        |
 | ------------------------------------------------------------------------ | --------------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
-| [`lula-validation-eu-fria.yaml`](lula-validation-eu-fria.yaml)           | Art. 29a        | EU AI Act            | EU_ECB       | ✅ Active | FRIA Gating (EU-001) — asserts gateway_running, normative_provider_not_static, normative_endpoint_set |
+| [`lula-validation-eu-fria.yaml`](lula-validation-eu-fria.yaml)           | Art. 27        | EU AI Act            | EU_ECB       | ✅ Active | FRIA Gating (EU-001) — asserts gateway_running, normative_provider_not_static, normative_endpoint_set, region_is_eu_ecb (the region that assembles the `fria` tier) |
 | [`lula-validation-eu-ai-act-art9.yaml`](lula-validation-eu-ai-act-art9.yaml) | Art. 9     | EU AI Act            | EU_ECB       | 🔶 Stub   | Risk Management System — compliance-bridge endpoint check          |
 | [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml)     | Art. 22         | GDPR                 | EU_ECB       | 🔶 Stub   | Automated Decision-Making — human oversight endpoint check         |
 | [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml)     | Art. 10         | DORA                 | EU_ECB       | 🔶 Stub   | ICT Resilience Testing — audit logging endpoint check              |

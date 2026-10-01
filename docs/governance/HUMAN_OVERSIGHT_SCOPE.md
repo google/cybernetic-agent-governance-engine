@@ -128,32 +128,39 @@ on the OTel span at override time.
 
 ## Automated Governance Thresholds
 
-**Source:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
+**Source:** [`src/gateway/governance/governor/stages/confidence.py`](../../src/gateway/governance/governor/stages/confidence.py)
 
-FRIA zone classification is the `enforce_fria_boundary()` primitive in
-[`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py),
-available to integrations that hold a `NormativeProvider`. It is **not** wired
-into `run_pipeline()` and is **not** a `SymbolicGovernor` pipeline tier. When an
-integration calls it, it determines whether a governance decision is handled
-automatically or escalated. The function reads its boundaries from
-`get_agent_confidence_threshold()` (default 0.95) and `DEFER_CONFIDENCE_THRESHOLD`
-(0.70); the env-overridable constants (`FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER`)
-carry the same defaults:
+The universal confidence band decides whether a governance decision is handled
+automatically or escalated. `ConfidenceStage` (Tier 2) applies it in every
+region, reading `get_agent_confidence_threshold()` (`confidence.agent_threshold`,
+default 0.95, env `AGENT_CONFIDENCE_THRESHOLD`) and `get_confidence_defer_floor()`
+(`confidence.defer_floor`, default 0.70, env `CONFIDENCE_DEFER_FLOOR`) from
+[`schemas/thresholds.py`](../../src/gateway/governance/schemas/thresholds.py).
+FTRA uses the same floor to choose between `HITL_REQUIRED` and `BLOCKED`.
 
-### FRIA Zone Classification
+### Confidence Band
 
-| Score | Zone | Disposition | Human Required? |
+| Score | Violation | Disposition | Human Required? |
 |---|---|---|---|
-| score ≥ `FRIA_ZONE_ALLOW` (0.95) | ALLOW | Async attestation — automated pass | No |
-| `FRIA_ZONE_DEFER` (0.70) ≤ score < 0.95 | DEFER | Synchronous blocking gate — external provider validation | Only on provider escalation (`EXTERNAL_HOLD`) |
-| score < `FRIA_ZONE_DEFER` (0.70) | BLOCK | Hard block | **Yes** |
+| score ≥ `confidence.agent_threshold` (0.95) | none | Confidence check clears | No |
+| `confidence.defer_floor` (0.70) ≤ score < 0.95 | `HITL` | REQUIRE_APPROVAL — human approval | **Yes** |
+| score < `confidence.defer_floor` (0.70) | `DEFERRABLE` | DEFER — parked in the `DeferQueue` for data hydration | No (automated hydration; token stays parked until it clears the floor or expires) |
 
-The DEFER zone maps directly to the DeferQueue escalation path. A DEFER decision
-parks a `DeferToken` (`EXTERNAL_VALIDATION`) in the caller-supplied queue and
-blocks until the external provider responds or
-`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS` (default 5.0 s) expires; a timeout fails
-closed (DENY). If the provider flags `needs_human_review`, an `EXTERNAL_HOLD`
-token is parked for a human reviewer to resolve within the applicable SLA (see
+On replay, `replay_evaluate()` in `defer_queue.py` re-checks the hydrated
+confidence against `get_confidence_defer_floor()`: at or above it the token is
+admitted, otherwise it remains parked.
+
+### FRIA Tier (EU_ECB only)
+
+The EU AI Act Art. 27 Fundamental Rights Impact Assessment is **not** part of the
+confidence band. It is the phase-1 `fria` tier
+([`FriaTier`](../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)),
+contributed only when `CAGE_DEPLOYMENT_REGION=EU_ECB` and run right after
+`causal`. A stale or missing FRIA artefact, or an unreachable / erroring
+`NormativeProvider`, is a HARD refusal. If the provider refuses with a
+`needs_human_review` finding, the tier raises HITL `FRIA_EXTERNAL_HOLD` and the
+governor parks a REQUIRE_APPROVAL `DeferToken` for a human reviewer to resolve
+within the applicable SLA (see
 [SLA Requirements by Region](#sla-requirements-by-region)).
 
 ### Consensus Requirement

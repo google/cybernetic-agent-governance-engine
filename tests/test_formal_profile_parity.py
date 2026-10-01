@@ -78,6 +78,48 @@ def test_post_hitl_skips_read_only_plugin_tiers() -> None:
     assert not stage_runs_under(Profile.POST_HITL, name="clinical_consensus", mutating=False)
 
 
+# ── Jurisdiction tiers, once per region (D-L, proof claim 10) ──────────────────
+
+from proof.model import (  # noqa: E402
+    JURISDICTION_TIERS,
+    jurisdiction_keeps_post_hitl_set,
+    region_profile_stages,
+    region_tier_phase,
+)
+from src.gateway.governance.jurisdiction import JURISDICTIONS, resolve_jurisdiction  # noqa: E402
+
+
+def test_proof_and_production_know_the_same_regions() -> None:
+    assert set(JURISDICTION_TIERS) == set(JURISDICTIONS)
+
+
+@pytest.mark.parametrize("region", sorted(JURISDICTION_TIERS))
+def test_region_tiers_match_proof(region: str) -> None:
+    """The production contribution adds exactly the proof's tiers, in the proof's phase."""
+    contribution = resolve_jurisdiction(region)
+    phases = region_tier_phase(region)
+    assert tuple(t.tier_name for t in contribution.tiers) == JURISDICTION_TIERS[region]
+    assert {t.tier_name: t.phase for t in contribution.tiers} == {
+        t: phases[t] for t in JURISDICTION_TIERS[region]
+    }
+
+
+@pytest.mark.parametrize("profile", list(Profile))
+@pytest.mark.parametrize("region", sorted(JURISDICTION_TIERS))
+def test_region_stage_selection_matches_proof(region: str, profile: Profile) -> None:
+    """Per region, the pipeline predicate selects the proof's profile set."""
+    phases = region_tier_phase(region)
+    selected = frozenset(
+        tier for tier, phase in phases.items()
+        if stage_runs_under(profile, name=tier, mutating=phase == 2)
+    )
+    assert selected == region_profile_stages(region)[profile.value]
+
+
+def test_jurisdiction_claim_holds() -> None:
+    assert jurisdiction_keeps_post_hitl_set()
+
+
 # ── Phase-2 gate and the pending-approval outcome (proof claims 8 and 9) ───────
 
 from proof.model import (  # noqa: E402

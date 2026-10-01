@@ -174,7 +174,8 @@ async def execute_trade_action(
     seal = governance_result
 
     # Step 2: ConsequenceGateway evaluation (ADR-008 Phase 2)
-    # Check if governance_result contains a consequence_token (from FRIA tier)
+    # Check if governance_result contains a consequence_token (minted by a
+    # normative provider's validation)
     # For now, consequence_token would be passed separately if present
     # This is a placeholder for future integration
 

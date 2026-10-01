@@ -260,7 +260,7 @@ proprietary "how" that should not be disclosed in external positioning:
 | Implementation detail | Why it is proprietary |
 |---|---|
 | Redis Lua script for atomic CBF check+commit | The specific Lua implementation of `h(S(t+1)) >= (1-γ)*h(S(t))` at the database commit tier is the core substrate moat — it is not replicable without understanding the CBF formulation and the Redis WATCH/MULTI/EXEC interaction |
-| 4-state DEFER router thresholds (0.95 / 0.70) | The specific FRIA zone thresholds and the PARK → HYDRATE → REPLAY state machine are implementation IP |
+| 4-state DEFER router thresholds (0.95 / 0.70) | The specific confidence band thresholds and the PARK → HYDRATE → REPLAY state machine are implementation IP |
 | DoWhy causal gatekeeper (placebo refutation, 50 sims, p < 0.05) | The causal world-model validation is a unique capability with no competitor equivalent |
 | Production startup assertions | The specific fail-closed posture checks run by `bootstrap_governor()` before the gateway serves are an implementation detail that should not be disclosed to adversaries |
 | `ControlRegistry.active_hash` policy version pinning | The version pinning mechanism that detects runtime policy drift is implementation IP |

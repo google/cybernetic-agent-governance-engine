@@ -279,22 +279,22 @@ class TestPlanGraphAnalyzer:
         assert result.verdict == FTRAVerdict.BLOCKED
 
     def test_confidence_exactly_at_threshold_is_hitl_not_blocked(self, tmp_path):
-        """FRIA_ZONE_DEFER boundary is inclusive: confidence == threshold -> HITL_REQUIRED."""
+        """The defer floor is inclusive: confidence == floor -> HITL_REQUIRED."""
         from src.gateway.governance.ftra.models import FTRAVerdict
-        from src.gateway.governance.schemas.thresholds import get_fria_zone_defer
+        from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
 
-        fria_zone_defer = get_fria_zone_defer()
+        defer_floor = get_confidence_defer_floor()
         analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
         plan = _make_plan([("s1", "execute_trade")])
-        result = analyzer.analyze(plan, confidence=fria_zone_defer)
+        result = analyzer.analyze(plan, confidence=defer_floor)
 
         assert result.verdict == FTRAVerdict.HITL_REQUIRED
 
-    def test_graph_analyzer_uses_config_based_fria_zone_defer(self, tmp_path):
-        """EV-1 regression: graph_analyzer must use get_fria_zone_defer() from config.
+    def test_graph_analyzer_uses_config_based_defer_floor(self, tmp_path):
+        """EV-1 regression: graph_analyzer must use get_confidence_defer_floor().
 
         This test verifies that PlanGraphAnalyzer uses the centralized config
-        accessor instead of a hardcoded FRIA_ZONE_DEFER constant. By mocking
+        accessor instead of a hardcoded constant. By mocking
         the accessor to return a custom threshold, we confirm the analyzer
         respects the config-based value.
         """
@@ -305,7 +305,7 @@ class TestPlanGraphAnalyzer:
 
         # Test case 1: Mock threshold at 0.50 — confidence 0.55 should be HITL_REQUIRED
         with patch(
-            "src.gateway.governance.ftra.graph_analyzer.get_fria_zone_defer",
+            "src.gateway.governance.ftra.graph_analyzer.get_confidence_defer_floor",
             return_value=0.50,
         ):
             result = analyzer.analyze(plan, confidence=0.55)
@@ -315,7 +315,7 @@ class TestPlanGraphAnalyzer:
 
         # Test case 2: Mock threshold at 0.90 — confidence 0.55 should be BLOCKED
         with patch(
-            "src.gateway.governance.ftra.graph_analyzer.get_fria_zone_defer",
+            "src.gateway.governance.ftra.graph_analyzer.get_confidence_defer_floor",
             return_value=0.90,
         ):
             result = analyzer.analyze(plan, confidence=0.55)
@@ -325,7 +325,7 @@ class TestPlanGraphAnalyzer:
 
         # Test case 3: Verify boundary behavior — confidence == threshold should be HITL_REQUIRED
         with patch(
-            "src.gateway.governance.ftra.graph_analyzer.get_fria_zone_defer",
+            "src.gateway.governance.ftra.graph_analyzer.get_confidence_defer_floor",
             return_value=0.75,
         ):
             result = analyzer.analyze(plan, confidence=0.75)

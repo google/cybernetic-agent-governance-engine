@@ -316,7 +316,7 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `governance/test_automated_loop.py`   | `integration`              | End-to-end cybernetic governance feedback loop                     |
 | `governance/test_nemo_refinements.py` | `integration`              | NeMo Guardrails refinement trigger via compliance bridge           |
 | `test_context_accumulator.py`         | `unit`                     | 15 tests: SHA-256 hash chain construction, tamper detection (node mutation → `verify_integrity()` returns `(False, 0)`), CHAIN_SEALED sentinel, NDJSON export, `chain_root()` genesis seed |
-| `test_defer_queue.py`                 | `unit`                     | Hermetic `fakeredis` DeferQueue tests: park/resolve/get/list/expire, `DEFER_CONFIDENCE_THRESHOLD == 0.70`, `db=1` isolation, 4-hour TTL default |
+| `test_defer_queue.py`                 | `unit`                     | Hermetic `fakeredis` DeferQueue tests: park/resolve/get/list/expire, `get_confidence_defer_floor() == 0.70`, `db=1` isolation, 4-hour TTL default |
 | `test_aarm_mapper.py`                 | `unit`                     | 11-vector ledger completeness, NEUTRALIZED/PARTIAL/EXPOSED scoring, SECURE/DEGRADED/CRITICAL posture classification |
 | `test_compliance_bridge_integration.py` | `integration`            | **104-test live GKE suite** (Groups 1–17): audit ingest, controls API, OSCAL export, SSE stream, Langfuse eval dataset, AARM conformance report, Context Accumulator chain integrity, DEFER queue endpoints |
 | `test_refusal_receipt_ingestion.py`   | `unit` / `local`           | Serialization of complete RefusalReceipt v3 into evidence stream; preserves 5-part proof chain and proof_hash |

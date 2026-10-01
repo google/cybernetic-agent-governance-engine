@@ -34,13 +34,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.defer_queue import (
-    DEFER_CONFIDENCE_THRESHOLD,
     DeferQueue,
     DeferReason,
     DeferToken,
     ReplayResult,
     replay_evaluate,
 )
+from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
+
+# The Confidence-Starvation Boundary: confidence.defer_floor (single source of truth).
+DEFER_FLOOR = get_confidence_defer_floor()
 
 # ---------------------------------------------------------------------------
 # In-memory fake Redis — mirrors the pattern from test_defer_queue.py
@@ -244,7 +247,7 @@ async def deferred_token_below_threshold(redis_db1_client: MagicMock) -> dict:
     Phase 1 of the three-phase confidence-score replay flow.
 
     Creates a DeferToken with:
-      - confidence_score = 0.65  (below DEFER_CONFIDENCE_THRESHOLD = 0.70)
+      - confidence_score = 0.65  (below DEFER_FLOOR = 0.70)
       - defer_reason = DeferReason.CONFIDENCE_BELOW_THRESHOLD
       - thread_id = "replay-proof-thread-001"
 
@@ -305,7 +308,7 @@ def mock_context_hydrator() -> Callable[[str], dict]:
     Returns:
         A callable ``(defer_id: str) -> dict`` that returns an enriched
         context dict with the following fields:
-          - confidence_score (float): 0.85 — above DEFER_CONFIDENCE_THRESHOLD
+          - confidence_score (float): 0.85 — above DEFER_FLOOR
           - enrichment_source (str):  "mock_market_data_hydrator_v1"
           - market_data (dict):       synthetic market snapshot
           - hydration_timestamp (str): ISO-8601 UTC timestamp placeholder
@@ -341,7 +344,7 @@ async def test_low_confidence_token_is_parked(
     Asserts:
       - The DEFER:{defer_id} hash key exists in the fake Redis store.
       - The stored status field is "PARKED" (not "RESOLVED" or "ADMITTED").
-      - The token's confidence_score is below DEFER_CONFIDENCE_THRESHOLD (0.70).
+      - The token's confidence_score is below DEFER_FLOOR (0.70).
       - The token is retrievable via DeferQueue.get() and has the expected fields.
     """
     defer_id = deferred_token_below_threshold["defer_id"]
@@ -361,9 +364,9 @@ async def test_low_confidence_token_is_parked(
     retrieved = await queue.get(defer_id)
     assert retrieved is not None, "DeferQueue.get() returned None for a parked token."
     assert retrieved.confidence_score == 0.65
-    assert retrieved.confidence_score < DEFER_CONFIDENCE_THRESHOLD, (
+    assert retrieved.confidence_score < DEFER_FLOOR, (
         f"confidence_score={retrieved.confidence_score} must be below "
-        f"DEFER_CONFIDENCE_THRESHOLD={DEFER_CONFIDENCE_THRESHOLD}."
+        f"DEFER_FLOOR={DEFER_FLOOR}."
     )
     assert retrieved.defer_reason == DeferReason.CONFIDENCE_BELOW_THRESHOLD
     assert retrieved.resolution is None, (
@@ -395,9 +398,9 @@ async def test_hydration_raises_confidence_above_threshold(
     enriched = mock_context_hydrator(defer_id)
 
     # Assert: effective confidence is above the threshold.
-    assert enriched["confidence_score"] >= DEFER_CONFIDENCE_THRESHOLD, (
+    assert enriched["confidence_score"] >= DEFER_FLOOR, (
         f"Hydrated confidence_score={enriched['confidence_score']} must be >= "
-        f"DEFER_CONFIDENCE_THRESHOLD={DEFER_CONFIDENCE_THRESHOLD}."
+        f"DEFER_FLOOR={DEFER_FLOOR}."
     )
 
     # Assert: hydrated confidence is strictly above the original parked value.
@@ -453,7 +456,7 @@ async def test_confidence_replay_full_flow(
 
     # Phase 2 — HYDRATE: obtain enriched context from the mock hydrator.
     enriched_context = mock_context_hydrator(defer_id)
-    assert enriched_context["confidence_score"] >= DEFER_CONFIDENCE_THRESHOLD
+    assert enriched_context["confidence_score"] >= DEFER_FLOOR
 
     # Phase 3 — REPLAY: call the real replay_evaluate() from defer_queue.py.
     result = await replay_evaluate(queue, defer_id, enriched_context)
@@ -462,7 +465,7 @@ async def test_confidence_replay_full_flow(
     assert result == ReplayResult.ADMITTED, (
         f"Expected ReplayResult.ADMITTED, got {result!r}. "
         f"Effective confidence={enriched_context['confidence_score']:.2f} "
-        f"should be >= threshold={DEFER_CONFIDENCE_THRESHOLD}."
+        f"should be >= threshold={DEFER_FLOOR}."
     )
 
     # Assert: Redis hash status is now "RESOLVED".
@@ -504,7 +507,7 @@ async def test_token_remains_parked_if_hydration_insufficient(
     """Verify that a token stays parked when hydration only raises confidence to 0.68.
 
     If the enriched context's confidence_score is still below
-    DEFER_CONFIDENCE_THRESHOLD (0.70), replay_evaluate() must return
+    DEFER_FLOOR (0.70), replay_evaluate() must return
     ReplayResult.PARKED and leave the token in Redis db=1 unchanged.
 
     Asserts:
@@ -528,7 +531,7 @@ async def test_token_remains_parked_if_hydration_insufficient(
         "note": "Partial enrichment — confidence still below threshold.",
     }
 
-    assert insufficient_context["confidence_score"] < DEFER_CONFIDENCE_THRESHOLD, (
+    assert insufficient_context["confidence_score"] < DEFER_FLOOR, (
         "Test pre-condition: insufficient_context confidence must be below threshold."
     )
 
@@ -538,7 +541,7 @@ async def test_token_remains_parked_if_hydration_insufficient(
     # Assert: token remains parked.
     assert result == ReplayResult.PARKED, (
         f"Expected ReplayResult.PARKED when confidence={insufficient_context['confidence_score']:.2f} "
-        f"< threshold={DEFER_CONFIDENCE_THRESHOLD}, got {result!r}."
+        f"< threshold={DEFER_FLOOR}, got {result!r}."
     )
 
     # Assert: Redis hash key still exists.

@@ -23,7 +23,7 @@ The transition to Agentic AI represents a shift from deterministic software to p
 
 ## 3. CAGE Architecture & VSM Mapping
 
-**v3.0.1 System State (GO: 2026-08-28):** CAGE implements an **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus in-pipeline tiers run by `run_pipeline()` in two phases — Phase 1 read-only: STPA → OPA → Agentic Confidence → Consensus → CausalGatekeeper; Phase 2 commit: CBF → Fiscal Limit Pre-Reservation) with a 10-node LangGraph StateGraph, 5 first-class decision primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`; the former `PAUSE` was removed 2026-10-01), Lua-atomic CBF, and strict replica verification. OPA Policy Evaluation runs in Phase 1, before the CBF barrier commits in Phase 2 (atomic Lua verify-and-commit). The FRIA three-zone primitive (`enforce_fria_boundary()`) exists but is not a pipeline tier. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. External CBF ledger reconciliation (POAM-023 / POAM-2026-038) is closed and operational via GCS WORM ledger + Cloud KMS signing with 300s TTL. All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
+**v3.0.1 System State (GO: 2026-08-28):** CAGE implements an **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus in-pipeline tiers run by `run_pipeline()` in two phases — Phase 1 read-only: STPA → OPA → Agentic Confidence → Consensus → CausalGatekeeper; Phase 2 commit: CBF → Fiscal Limit Pre-Reservation) with a 10-node LangGraph StateGraph, 5 first-class decision primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`; the former `PAUSE` was removed 2026-10-01), Lua-atomic CBF, and strict replica verification. OPA Policy Evaluation runs in Phase 1, before the CBF barrier commits in Phase 2 (atomic Lua verify-and-commit). Under `CAGE_DEPLOYMENT_REGION=EU_ECB` only, a phase-1 `fria` jurisdiction tier (EU AI Act Art. 27, `FriaTier`) runs right after CausalGatekeeper. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. External CBF ledger reconciliation (POAM-023 / POAM-2026-038) is closed and operational via GCS WORM ledger + Cloud KMS signing with 300s TTL. All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
 
 We map the components of our Governance Graph to the **Viable System Model (VSM)**:
 
@@ -78,6 +78,8 @@ The [`SymbolicGovernor`](../../../src/gateway/governance/governor/pipeline.py) i
 | **Tier 5** | Consensus | ≥$10k trades, 30s timeout | Multi-critic unanimity |
 | **Tier 6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` | World-model consistency |
 
+> Under `CAGE_DEPLOYMENT_REGION=EU_ECB` only, the jurisdiction registry adds a phase-1 `fria` tier (EU AI Act Art. 27, `CTRL_FRIA_006`) that runs right after the causal gatekeeper; see §5.2.
+
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `run_pipeline()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
 
 ## 5. Mathematical Safety Controls
@@ -96,19 +98,21 @@ The CBF enforces fiscal safety as a forward-invariance condition on the system s
 
 The CBF condition guarantees that the system cannot transition from a safe state to an unsafe state in a single step. The decay parameter `γ` controls the rate at which the safety margin is permitted to shrink. CBF state is read atomically via a Redis pipeline (fail-closed on unavailability).
 
-### 5.2. FRIA Zone Thresholds
+### 5.2. Confidence Band Thresholds
 
-**Source:** [`src/gateway/governance/governor/governor.py`](../../../src/gateway/governance/governor/governor.py)
+**Source:** [`src/gateway/governance/governor/stages/confidence.py`](../../../src/gateway/governance/governor/stages/confidence.py), [`src/gateway/governance/schemas/thresholds.py`](../../../src/gateway/governance/schemas/thresholds.py)
 
-The Fundamental Rights Impact Assessment (FRIA) zone thresholds describe the three-zone disposition model of the `enforce_fria_boundary()` primitive (`src/gateway/governance/normative_provider.py`). It is not a pipeline tier — `run_pipeline()` does not call it:
+The universal confidence band is applied by `ConfidenceStage` in every region (FTRA uses the same floor to choose `HITL_REQUIRED` vs `BLOCKED`):
 
-| Score Range | Zone | Action |
-| :---------- | :--- | :----- |
-| score ≥ `FRIA_ZONE_ALLOW` (0.95) | ALLOW | Async attestation — automated |
-| `FRIA_ZONE_DEFER` (0.70) ≤ score < 0.95 | DEFER | Synchronous blocking gate — human review required |
-| score < `FRIA_ZONE_DEFER` (0.70) | BLOCK | Hard block — human required |
+| Score Range | Violation | Action |
+| :---------- | :-------- | :----- |
+| score ≥ `confidence.agent_threshold` (0.95) | none | Confidence check clears — automated |
+| `confidence.defer_floor` (0.70) ≤ score < 0.95 | `HITL` | REQUIRE_APPROVAL — human review required |
+| score < `confidence.defer_floor` (0.70) | `DEFERRABLE` | DEFER — parked in the `DeferQueue` for data hydration |
 
-Named constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`
+Getters: `get_agent_confidence_threshold()` (env `AGENT_CONFIDENCE_THRESHOLD`), `get_confidence_defer_floor()` (env `CONFIDENCE_DEFER_FLOOR`).
+
+This band is **not** a Fundamental Rights Impact Assessment. The EU AI Act Art. 27 FRIA is a separate phase-1 `fria` tier ([`FriaTier`](../../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)) that exists only under `CAGE_DEPLOYMENT_REGION=EU_ECB`; it checks the currency of the deployer's FRIA artefact and the `NormativeProvider`'s `validate_fria()` verdict, and does not read model confidence.
 
 ### 5.3. Confabulation Risk Score
 
@@ -120,7 +124,7 @@ The confabulation (hallucination) risk score is computed as the complement of th
 risk_score = 1.0 − confidence
 ```
 
-A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation scoring is a standalone Langfuse observability metric computed independently of the FRIA zone classification.
+A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation scoring is a standalone Langfuse observability metric computed independently of the confidence band in §5.2.
 
 ### 5.4. Causal Marginal Risk Boundary
 

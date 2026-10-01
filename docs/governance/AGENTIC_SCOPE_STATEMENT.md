@@ -64,8 +64,9 @@ Per `config/governance_thresholds.json` → `confidence.min_trade_confidence`:
 
 - **Threshold**: 0.95 (95%) — note: `min_trade_confidence` is deprecated in the schema;
   OPA `system_authz.rego` is the authoritative enforcer via `CTRL_AGT_001`.
-- **Enforcement**: Local pre-check in `src/gateway/governance/governor/stages/confidence.py` (Tier 2 fast-fail) +
-  OPA `system_authz.rego` for the three-zone model (ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70).
+- **Enforcement**: `src/gateway/governance/governor/stages/confidence.py` (Tier 2) applies the confidence
+  band (`confidence.agent_threshold` 0.95 / `confidence.defer_floor` 0.70: pass ≥ 0.95, REQUIRE_APPROVAL
+  0.70–0.95, DEFER < 0.70) + OPA `system_authz.rego` (`confidence_sufficient`, ≥ 0.95 for `execute_trade`).
 - **Behavior**: Any LLM response with `confidence < 0.95` is blocked and the
   confabulation risk score (`1.0 - confidence`) is recorded via `confabulation_scorer.py`.
 

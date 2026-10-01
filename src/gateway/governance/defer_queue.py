@@ -134,14 +134,14 @@ class DeferReason(str, Enum):
     """Remote telemetry evidence window is empty or below minimum sample threshold."""
 
     CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"
-    """model confidence_score < DEFER_CONFIDENCE_THRESHOLD (default 0.70)."""
+    """model confidence_score < confidence.defer_floor (default 0.70)."""
 
     EXTERNAL_VALIDATION = "EXTERNAL_VALIDATION"
-    """Consensus score in ambiguous zone (0.70-0.95); awaiting external FRIA gate."""
+    """Awaiting an external normative provider's synchronous validation."""
 
     FTRA_IRREVERSIBLE_TERMINAL = "FTRA_IRREVERSIBLE_TERMINAL"
     """FTRA Tier 0.5 gate: an IRREVERSIBLE_TERMINAL node is reachable from step[0]
-    of the ExecutionPlan and the Evaluator confidence score is >= FRIA_ZONE_DEFER
+    of the ExecutionPlan and the Evaluator confidence score is >= confidence.defer_floor
     (0.70).  The plan is parked pending synchronous human-in-the-loop clearance.
     Control ID: CTRL_FTRA_001."""
 
@@ -1286,15 +1286,11 @@ class DeferQueue:
         return count
 
 
-# ---------------------------------------------------------------------------
-# DEFER_CONFIDENCE_THRESHOLD — module-level constant
-# ---------------------------------------------------------------------------
-
-#: The "Confidence-Starvation Boundary" (CAGE v0.1.0 architectural decision).
-#: Execution context with confidence below this threshold routes to DEFER rather
-#: than MANUAL_REVIEW, preventing operational fatigue from fundamentally incomplete
-#: context windows. See UCA-7 in src/gateway/governance/ontology.py.
-DEFER_CONFIDENCE_THRESHOLD: float = 0.70
+# The "Confidence-Starvation Boundary" (CAGE v0.1.0 architectural decision) is
+# ``confidence.defer_floor`` in config/governance_thresholds.json, read through
+# ``schemas.thresholds.get_confidence_defer_floor()`` (single source of truth).
+# Execution context with confidence below it routes to DEFER rather than
+# MANUAL_REVIEW. See UCA-7 in src/gateway/governance/ontology.py.
 
 
 @asynccontextmanager
@@ -1376,8 +1372,7 @@ def is_external_hold_finding(finding: dict[str, Any]) -> bool:
       - ``code`` == "EXTERNAL_HOLD"
       - ``needs_human_review`` == True
 
-    This helper is used by ``enforce_fria_boundary()`` to detect when to use
-    the external hold escalation path.
+    Provider adapters use it to mark an escalation that needs a human.
 
     Args:
         finding: A single finding dict from ``ValidationResult.findings``.
@@ -1400,7 +1395,7 @@ class ReplayResult(str, Enum):
     """Outcome of a replay_evaluate() call.
 
     ADMITTED:  The enriched context raised effective confidence above
-               DEFER_CONFIDENCE_THRESHOLD; the token has been resolved
+               confidence.defer_floor; the token has been resolved
                with resolution="INJECTED" and removed from the DEFER queue.
     PARKED:    Effective confidence is still below the threshold; the token
                remains in Redis db=1 awaiting further hydration or escalation.
@@ -1422,16 +1417,16 @@ async def replay_evaluate(
     This is the canonical re-evaluation entry point for the three-phase
     confidence-score replay flow (CAGE v0.1.0):
 
-      Phase 1 — PARK:    Token with confidence < DEFER_CONFIDENCE_THRESHOLD
+      Phase 1 — PARK:    Token with confidence < confidence.defer_floor
                          is parked in Redis db=1 via DeferQueue.park().
       Phase 2 — HYDRATE: Out-of-band context enrichment raises effective
                          confidence (caller responsibility).
       Phase 3 — REPLAY:  This function.  Reads the effective confidence from
                          ``enriched_context["confidence_score"]`` and compares
-                         it against DEFER_CONFIDENCE_THRESHOLD (0.70).
+                         it against confidence.defer_floor (0.70).
 
     Decision logic:
-      - If ``enriched_context["confidence_score"] >= DEFER_CONFIDENCE_THRESHOLD``:
+      - If ``enriched_context["confidence_score"] >= confidence.defer_floor``:
           Calls ``queue._resolve(defer_id, "INJECTED", injection_data=enriched_context)``
           to remove the token from the DEFER queue and returns ``ReplayResult.ADMITTED``.
       - If the effective confidence is still below the threshold:
@@ -1481,14 +1476,17 @@ async def replay_evaluate(
         enriched_context.get("confidence_score", token.confidence_score or 0.0)
     )
 
-    if effective_confidence >= DEFER_CONFIDENCE_THRESHOLD:
+    from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
+
+    defer_floor = get_confidence_defer_floor()
+    if effective_confidence >= defer_floor:
         await queue._resolve(defer_id, "INJECTED", injection_data=enriched_context)
         logger.info(
             "[replay_evaluate] Token ADMITTED: defer_id=%s effective_confidence=%.3f "
             "threshold=%.2f",
             defer_id,
             effective_confidence,
-            DEFER_CONFIDENCE_THRESHOLD,
+            defer_floor,
         )
         return ReplayResult.ADMITTED
 
@@ -1497,6 +1495,6 @@ async def replay_evaluate(
         "threshold=%.2f",
         defer_id,
         effective_confidence,
-        DEFER_CONFIDENCE_THRESHOLD,
+        defer_floor,
     )
     return ReplayResult.PARKED

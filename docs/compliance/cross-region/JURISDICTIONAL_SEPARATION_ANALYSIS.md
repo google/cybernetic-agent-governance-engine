@@ -226,7 +226,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-6 |
 
-**Issue:** `TradingKnowledgeGraph.ISO_CONTROL_MAP` embeds `GDPR Art. 22`, `EU AI Act Art. 10`, and `EU AI Act Art. 29a` as class attributes alongside universal ISO controls. A comment notes EU-only scope but no runtime guard enforces it. Also contains `FISCAL_CONTROLS → SC-4` (NIST) as a universal entry.
+**Issue:** `TradingKnowledgeGraph.ISO_CONTROL_MAP` embeds `GDPR Art. 22`, `EU AI Act Art. 10`, and `EU AI Act Art. 27` as class attributes alongside universal ISO controls. A comment notes EU-only scope but no runtime guard enforces it. Also contains `FISCAL_CONTROLS → SC-4` (NIST) as a universal entry.
 
 **Remediation:** Move EU-specific entries to a `_EU_ECB_CONTROL_MAP` class attribute. Move NIST entries to `_US_FED_CONTROL_MAP`. Expose a `get_control_map(region: str)` classmethod that merges universal + jurisdictional maps.
 

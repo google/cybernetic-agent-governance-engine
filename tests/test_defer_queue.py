@@ -30,13 +30,16 @@ import pytest
 
 from src.gateway.governance.defer_queue import (
     _DEFAULT_HOLD_TTL,
-    DEFER_CONFIDENCE_THRESHOLD,
     DeferQueue,
     DeferReason,
     DeferToken,
     create_external_hold_token,
     is_external_hold_finding,
 )
+from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
+
+# The Confidence-Starvation Boundary: confidence.defer_floor (single source of truth).
+DEFER_FLOOR = get_confidence_defer_floor()
 
 # ---------------------------------------------------------------------------
 # fakeredis fixture — Real Redis simulation with Lua support
@@ -76,13 +79,13 @@ def _token(
 
 
 # ---------------------------------------------------------------------------
-# Test: DEFER_CONFIDENCE_THRESHOLD constant
+# Test: the Confidence-Starvation Boundary (confidence.defer_floor)
 # ---------------------------------------------------------------------------
 
 
-def test_defer_confidence_threshold_is_070():
+def test_defer_floor_is_070():
     """The Confidence-Starvation Boundary must be exactly 0.70 (v0.1.0 decision)."""
-    assert DEFER_CONFIDENCE_THRESHOLD == 0.70
+    assert get_confidence_defer_floor() == 0.70
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +480,7 @@ async def test_expire_stale_dlq_publisher_error_does_not_crash_sweep(
 
 @pytest.mark.asyncio
 async def test_replay_evaluate_above_threshold_admits(fake_redis):
-    """replay_evaluate returns ADMITTED when confidence >= DEFER_CONFIDENCE_THRESHOLD (0.70)."""
+    """replay_evaluate returns ADMITTED when confidence >= DEFER_FLOOR (0.70)."""
     from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
 
     queue = DeferQueue(fake_redis)
@@ -500,7 +503,7 @@ async def test_replay_evaluate_above_threshold_admits(fake_redis):
 
 @pytest.mark.asyncio
 async def test_replay_evaluate_below_threshold_parks(fake_redis):
-    """replay_evaluate returns PARKED when confidence < DEFER_CONFIDENCE_THRESHOLD (0.70)."""
+    """replay_evaluate returns PARKED when confidence < DEFER_FLOOR (0.70)."""
     from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
 
     queue = DeferQueue(fake_redis)
@@ -535,7 +538,7 @@ async def test_replay_evaluate_not_found(fake_redis):
 
 @pytest.mark.asyncio
 async def test_replay_evaluate_at_exact_threshold_admits(fake_redis):
-    """replay_evaluate admits when confidence == DEFER_CONFIDENCE_THRESHOLD (0.70)."""
+    """replay_evaluate admits when confidence == DEFER_FLOOR (0.70)."""
     from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
 
     queue = DeferQueue(fake_redis)
@@ -602,7 +605,7 @@ def test_inject_rejects_nan_confidence():
 
 @pytest.mark.asyncio
 async def test_replay_evaluate_enforces_confidence_threshold(fake_redis):
-    """replay_evaluate() must enforce DEFER_CONFIDENCE_THRESHOLD (0.70) before admitting token."""
+    """replay_evaluate() must enforce DEFER_FLOOR (0.70) before admitting token."""
     from src.gateway.governance.defer_queue import ReplayResult, replay_evaluate
 
     queue = DeferQueue(fake_redis)

@@ -17,9 +17,7 @@ normative_provider.py — External Normative Provider Interface (CAGE v0.1.0)
 ===========================================================================
 
 Implements §2.5 of EXTENSIBILITY_ARCHITECTURE.md: the 3-endpoint integration
-surface for external normative providers (e.g. FlowSignal), combined with an
-**Adaptive Gating Primitive** that maps the blocking semantic directly to
-CAGE's existing confidence boundary thresholds.
+surface for external normative providers (e.g. FlowSignal).
 
 Architecture
 ------------
@@ -31,14 +29,14 @@ All external provider interactions fall into three categories:
      ControlRegistry singleton.
 
   2. **External Validation** — ``POST /validate/fria``
-     Adaptive gating based on consensus confidence score:
-       * Score ≥ 0.95 → ALLOW  → async attestation (fire-and-forget)
-       * 0.70 ≤ Score < 0.95 → DEFER → synchronous blocking gate
-       * Score < 0.70 → DENY  → hard abort, no external call
+     A jurisdiction obligation, not a universal gate: it is consulted only
+     by the EU AI Act ``fria`` tier, which exists only when
+     ``CAGE_DEPLOYMENT_REGION`` selects that jurisdiction (see
+     ``src/gateway/governance/jurisdiction/``).  Model confidence never
+     waives it.
 
   3. **Attestation Logging** — ``GET /evidence-chain/{thread_id}``
-     Async background append of governance evidence hashes for external
-     sealing.  Zero blocking on the transaction path.
+     Seam method for external sealing of governance evidence hashes.
 
 Architectural precedent
 -----------------------
@@ -73,7 +71,6 @@ from typing import Any
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
-    ExecutionStatus,
     NormativeBaseline,
     NormativeProvider,
     ValidationResult,
@@ -164,27 +161,6 @@ def _verify_policy_integrity(policy_path: Path, raw_bytes: bytes) -> None:
 # Seam contracts are imported from src.gateway.governance.seams.normative
 # to eliminate circular dependencies with vendor adapters.
 
-from dataclasses import dataclass
-
-
-@dataclass
-class FRIAEnforcementResult:
-    """Result of the adaptive FRIA enforcement primitive.
-
-    Attributes:
-        status:           Tri-state execution decision (ALLOW/DENY/DEFER).
-        path:             The enforcement path taken (for OTel span tagging).
-        consensus_score:  The consensus confidence score that drove the decision.
-        validation:       ValidationResult from the provider (if sync gate was used).
-        defer_id:         DeferToken.defer_id when status=DEFER (for HTTP 202 receipt).
-    """
-
-    status: ExecutionStatus
-    path: str
-    consensus_score: float
-    validation: ValidationResult | None = None
-    defer_id: str | None = None
-
 
 # ---------------------------------------------------------------------------
 # §2 — Provider Protocol (now imported from seams.normative)
@@ -214,8 +190,9 @@ class StubNormativeProvider:
 
         # C-16 fix: raise at construction time if the stub is instantiated in
         # production.  The stub always returns admitted=True for validate_fria(),
-        # which means all FRIA boundary checks pass unconditionally — defeating
-        # the adaptive gating mechanism entirely.
+        # which would make every jurisdiction assessment pass unconditionally.
+        # The posture check of a jurisdiction that relies on validate_fria()
+        # refuses an enforcing posture on the stub as well (is_stub_provider).
         if _is_production:
             raise RuntimeError(
                 "StubNormativeProvider cannot be used in production "
@@ -268,291 +245,9 @@ class StubNormativeProvider:
         return EvidenceSeal(thread_id=thread_id)
 
 
-# ---------------------------------------------------------------------------
-# §3 — Adaptive Gating Primitive
-# ---------------------------------------------------------------------------
-
-
-async def _async_attestation(
-    provider: NormativeProvider,
-    action_context: dict[str, Any],
-    thread_id: str,
-) -> None:
-    """Fire-and-forget async attestation for high-confidence transactions.
-
-    Runs as a detached asyncio task.  Errors are logged but never propagate
-    to the caller — the transaction has already been approved locally.
-    """
-    try:
-        result = await provider.validate_fria(action_context)
-        if not result.admitted:
-            # External provider flagged a legal gap AFTER local approval.
-            # This is the "attestation finds a problem" case — emit SIEM alert
-            # but do NOT retroactively block (the action has already committed).
-            logger.warning(
-                "⚠️ [FRIA Async Attestation] External provider flagged legal gap "
-                "for thread=%s after local ALLOW. Findings: %s. "
-                "Emitting SIEM alert for post-hoc review.",
-                thread_id,
-                result.findings,
-            )
-        else:
-            logger.debug("[FRIA Async Attestation] Confirmed for thread=%s", thread_id)
-
-        # Also submit evidence seal (non-blocking)
-        # BREAKING CHANGE (FlowSignal Phase 2 §5.3): Evidence hash migrated from
-        # json.dumps(sort_keys=True) to RFC 8785 JCS canonicalization. Hash values
-        # will differ for payloads containing floats. Pre-migration evidence hashes
-        # are not backward-compatible with this digest algorithm.
-        seal = await provider.submit_evidence(
-            thread_id,
-            hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest(),
-        )
-        if seal.error:
-            logger.warning(
-                "[FRIA Evidence Seal] Failed for thread=%s: %s",
-                thread_id,
-                seal.error,
-            )
-
-    except Exception as exc:
-        logger.error(
-            "[FRIA Async Attestation] Unhandled error for thread=%s: %s",
-            thread_id,
-            exc,
-        )
-
-
-async def enforce_fria_boundary(
-    provider: NormativeProvider,
-    action_context: dict[str, Any],
-    consensus_score: float,
-    defer_queue: Any = None,
-    thread_id: str = "",
-) -> FRIAEnforcementResult:
-    """Adaptive FRIA enforcement anchored to the confidence boundary.
-
-    Control: GovernanceControl.FRIA_ASSESSMENT (EU_ECB only)
-
-    Maps the blocking semantic directly to CAGE's existing 4-State DEFER
-    Router Engine thresholds:
-
-      Score ≥ 0.95 (THRESHOLDS.confidence.agent_threshold)
-        → ALLOW → async attestation (fire-and-forget)
-        Hot-path latency: 0ms (task dispatched off-thread)
-
-      0.70 ≤ Score < 0.95 (DEFER_CONFIDENCE_THRESHOLD)
-        → DEFER → synchronous blocking gate
-        The thread is frozen until the external provider explicitly returns an
-        admissibility decision (pass/fail) or the gate timeout expires.
-        This provides deterministic synchronous gating without requiring
-        a separate checkpointer or worker pool.
-
-      Score < 0.70
-        → DENY → hard abort, no external call
-        Preserves cluster bandwidth.  The transaction never hits the wire.
-
-    Args:
-        provider:         NormativeProvider implementation.
-        action_context:   The governance decision payload (OPA input snapshot).
-        consensus_score:  Model confidence score [0, 1] from the consensus engine.
-        defer_queue:      Optional DeferQueue instance for DEFER-zone parking.
-        thread_id:        LangGraph thread ID for audit trail correlation.
-
-    Returns:
-        FRIAEnforcementResult with the execution status, enforcement path,
-        and optional validation result.
-    """
-    from src.gateway.governance.defer_queue import (
-        DEFER_CONFIDENCE_THRESHOLD,
-        DeferReason,
-        DeferToken,
-    )
-    from src.gateway.governance.schemas.thresholds import (
-        get_agent_confidence_threshold,
-    )
-
-    allow_threshold = get_agent_confidence_threshold()  # 0.95
-    defer_threshold = DEFER_CONFIDENCE_THRESHOLD  # 0.70
-
-    # --- HIGH CONFIDENCE: Non-blocking attestation path ---
-    if consensus_score >= allow_threshold:
-        asyncio.create_task(_async_attestation(provider, action_context, thread_id))
-        logger.info(
-            "[FRIA] Score=%.3f ≥ %.2f → ALLOW (async attestation) thread=%s",
-            consensus_score,
-            allow_threshold,
-            thread_id,
-        )
-        return FRIAEnforcementResult(
-            status=ExecutionStatus.ALLOW,
-            path="ASYNC_ATTESTATION",
-            consensus_score=consensus_score,
-        )
-
-    # --- AMBIGUOUS ZONE: Synchronous blocking gate ---
-    if consensus_score >= defer_threshold:
-        # Park the transaction in the DEFER queue
-        token = DeferToken(
-            thread_id=thread_id or "unknown",
-            defer_reason=DeferReason.EXTERNAL_VALIDATION,
-            confidence_score=consensus_score,
-            opa_input_snapshot=action_context,
-        )
-        if defer_queue is not None:
-            await defer_queue.park(token)
-
-        logger.info(
-            "[FRIA] Score=%.3f in [%.2f, %.2f) → DEFER (sync gate) thread=%s defer_id=%s",
-            consensus_score,
-            defer_threshold,
-            allow_threshold,
-            thread_id,
-            token.defer_id,
-        )
-
-        # BLOCK until external provider responds or timeout
-        gate_timeout = float(
-            os.environ.get("CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS", "5.0")
-        )
-        try:
-            result = await asyncio.wait_for(
-                provider.validate_fria(action_context),
-                timeout=gate_timeout,
-            )
-
-            if result.admitted:
-                # Invoke replay_evaluate() instead of raw resolve() to enforce
-                # DEFER_CONFIDENCE_THRESHOLD (0.70) and boundary checks
-                if defer_queue is not None:
-                    from src.gateway.governance.defer_queue import (
-                        ReplayResult,
-                        replay_evaluate,
-                    )
-
-                    # Build enriched context with external validation signal
-                    enriched_context = {
-                        "confidence_score": getattr(result, "confidence_score", None)
-                        or consensus_score,
-                        "external_validation": "ADMITTED",
-                        "provider_findings": getattr(result, "findings", []),
-                    }
-                    replay_result = await replay_evaluate(
-                        defer_queue, token.defer_id, enriched_context
-                    )
-                    if replay_result == ReplayResult.PARKED:
-                        logger.warning(
-                            "[FRIA] External provider ADMITTED but confidence=%.3f below threshold — token remains PARKED: defer_id=%s",
-                            consensus_score,
-                            token.defer_id,
-                        )
-                        return FRIAEnforcementResult(
-                            status=ExecutionStatus.DEFER,
-                            path="SYNC_GATE_BELOW_THRESHOLD",
-                            consensus_score=consensus_score,
-                            validation=result,
-                            defer_id=token.defer_id,
-                        )
-                logger.info(
-                    "[FRIA] Sync gate ADMITTED for defer_id=%s thread=%s",
-                    token.defer_id,
-                    thread_id,
-                )
-                return FRIAEnforcementResult(
-                    status=ExecutionStatus.ALLOW,
-                    path="SYNC_GATE_ADMITTED",
-                    consensus_score=consensus_score,
-                    validation=result,
-                )
-            else:
-                # Check if any finding requires human review
-                finding = next(
-                    (f for f in result.findings if f.get("needs_human_review")),
-                    None,
-                )
-                if finding is not None:
-                    # External provider escalation — resolve the original
-                    # EXTERNAL_VALIDATION token and park a new EXTERNAL_HOLD token
-                    from src.gateway.governance.defer_queue import (
-                        create_external_hold_token,
-                    )
-
-                    if defer_queue is not None:
-                        await defer_queue._resolve(token.defer_id, "ESCALATED")
-
-                    # Drive TTL from finding fields; use default if not specified
-                    ttl = finding.get("hold_ttl_seconds")
-
-                    hold_token = create_external_hold_token(
-                        thread_id=thread_id or "unknown",
-                        confidence_score=consensus_score,
-                        opa_input_snapshot=action_context,
-                        finding_message=finding.get("message"),
-                        ttl_seconds=ttl,
-                    )
-                    if defer_queue is not None:
-                        await defer_queue.park(hold_token)
-
-                    logger.warning(
-                        "[FRIA] External provider ESCALATE → EXTERNAL_HOLD for "
-                        "defer_id=%s thread=%s (original_defer_id=%s, ttl=%ds)",
-                        hold_token.defer_id,
-                        thread_id,
-                        token.defer_id,
-                        hold_token.ttl_seconds,
-                    )
-                    return FRIAEnforcementResult(
-                        status=ExecutionStatus.DEFER,
-                        path="SYNC_GATE_REVIEW",
-                        consensus_score=consensus_score,
-                        validation=result,
-                        defer_id=hold_token.defer_id,
-                    )
-
-                if defer_queue is not None:
-                    await defer_queue._resolve(token.defer_id, "ESCALATED")
-                logger.warning(
-                    "[FRIA] Sync gate REJECTED for defer_id=%s thread=%s findings=%s",
-                    token.defer_id,
-                    thread_id,
-                    result.findings,
-                )
-                return FRIAEnforcementResult(
-                    status=ExecutionStatus.DENY,
-                    path="SYNC_GATE_REJECTED",
-                    consensus_score=consensus_score,
-                    validation=result,
-                )
-
-        except asyncio.TimeoutError:
-            # Provider unreachable in ambiguous zone → fail-closed
-            if defer_queue is not None:
-                await defer_queue._resolve(token.defer_id, "EXPIRED")
-            logger.error(
-                "[FRIA] Sync gate TIMEOUT (%.1fs) for defer_id=%s thread=%s — "
-                "fail-closed: blocking action.",
-                gate_timeout,
-                token.defer_id,
-                thread_id,
-            )
-            return FRIAEnforcementResult(
-                status=ExecutionStatus.DENY,
-                path="SYNC_GATE_TIMEOUT",
-                consensus_score=consensus_score,
-            )
-
-    # --- LOW CONFIDENCE: Hard deny — never touch the wire ---
-    logger.info(
-        "[FRIA] Score=%.3f < %.2f → DENY (local hard deny) thread=%s",
-        consensus_score,
-        defer_threshold,
-        thread_id,
-    )
-    return FRIAEnforcementResult(
-        status=ExecutionStatus.DENY,
-        path="LOCAL_HARD_DENY",
-        consensus_score=consensus_score,
-    )
+def is_stub_provider(provider: object) -> bool:
+    """True if ``provider`` is the development stub (no independent ground truth)."""
+    return isinstance(provider, StubNormativeProvider)
 
 
 # ---------------------------------------------------------------------------

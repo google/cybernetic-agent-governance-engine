@@ -174,7 +174,7 @@ Contexts that are not outright denied but fall below the ALLOW threshold are rou
 - **Redis storage:** `db=1` with `noeviction` maxmemory policy (isolated from LangGraph checkpointer at `db=0`)
 - **TTL:** 4 hours (`_DEFAULT_TTL = 14400s`) — auto-escalates to MANUAL_REVIEW on expiry
 - **Key:** `defer:{id}` (Redis Hash)
-- **Threshold:** `DEFER_CONFIDENCE_THRESHOLD = 0.70` (lower bound of DEFER zone)
+- **Threshold:** `confidence.defer_floor = 0.70` (`get_confidence_defer_floor()`; lower bound of the HITL zone, below it DEFER)
 
 ### DEFER Resolution Endpoints
 

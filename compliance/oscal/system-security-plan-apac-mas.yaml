@@ -143,8 +143,9 @@ system-security-plan:
     - uuid: apac-mas-comp-0001-4000-8000-000000000001
       type: software
       title: CAGE MAS FEAT Fairness Assessment Engine
-      description: 'MAS FEAT Principles implementation via the FRIA module and
-        Compliance Bridge. Performs regular Fairness Impact Assessments across
+      description: 'MAS FEAT Principles implementation via the Compliance
+        Bridge fairness workflow (the EU AI Act FRIA tier is not assembled under
+        APAC_MAS). Performs regular Fairness Impact Assessments across
         protected characteristics (gender, race, ethnicity, age, disability,
         nationality, religion, marital_status per APAC_MAS_BASELINE.json).
         Demographic parity gap threshold: 8% (FEAT F2).'
@@ -222,7 +223,8 @@ system-security-plan:
     implemented-requirements:
     - uuid: apac-mas-req-0001-4000-8000-000000000001
       control-id: mas-feat
-      description: 'MAS FEAT Principles implemented via FRIA module. Annual
+      description: 'MAS FEAT Principles implemented via the Compliance Bridge
+        fairness workflow. Annual
         Fairness Impact Assessment with 8% demographic parity gap threshold.
         Transparency reporting every 180 days per APAC_MAS_BASELINE.json.'
       props:

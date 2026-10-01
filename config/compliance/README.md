@@ -65,7 +65,7 @@ env:
 | `CTRL_TEL_003` | **DORA Art. 10** — ICT Incident Detection + EU AI Act Art. 12 Logging |
 | `CTRL_MRM_004` | **EBA/GL/2023/02** — Guidelines on Internal Models (replaces SR 26-2) |
 | `CTRL_OPA_005` | **EU AI Act Art. 9(5)** + GDPR Art. 22 |
-| `CTRL_FRIA_006` | **EU AI Act Art. 29a** — Fundamental Rights Impact Assessment *(EU only)* |
+| `CTRL_FRIA_006` | **EU AI Act Art. 27** — Fundamental Rights Impact Assessment *(EU only)* |
 
 > **Note:** `CTRL_FRIA_006` only exists in the EU_ECB profile. Use
 > `registry.get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT)` to handle

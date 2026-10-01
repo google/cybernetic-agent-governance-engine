@@ -36,7 +36,7 @@ flowchart TD
     RO --> Clear[FTRAVerdict.CLEAR]
     RV --> Clear
     ER --> HITL2[FTRAVerdict.HITL_REQUIRED]
-    IT --> ConfidenceCheck{Confidence >= FRIA_ZONE_DEFER?}
+    IT --> ConfidenceCheck{Confidence >= confidence.defer_floor?}
     
     ConfidenceCheck -->|Yes| HITL[FTRAVerdict.HITL_REQUIRED]
     ConfidenceCheck -->|No| Blocked[FTRAVerdict.BLOCKED]
@@ -71,6 +71,6 @@ flowchart TD
 ## 5. Configuration Contracts & Runtime Matrix
 
 - **NetworkX Dependency**: The analyzer imports `networkx` lazily inside the guarded analysis path. If the package is absent, the fail-closed fallback above applies.
-- **FRIA Thresholds**: The routing between `HITL_REQUIRED` and `BLOCKED` reads `get_fria_zone_defer()` (`fria.zone_defer` in `config/governance_thresholds.json`, env override `FRIA_ZONE_DEFER`).
+- **Confidence Thresholds**: The routing logic between `HITL_REQUIRED` and `BLOCKED` reads `get_confidence_defer_floor()` (`confidence.defer_floor` in `config/governance_thresholds.json`, default 0.70) — the same jurisdiction-neutral floor `ConfidenceStage` uses in every region.
 - **Registry**: The active domain's `DomainConfig.ftra_registry_path`; `FtraNodeConfig.registry_path` defaults to `None` (active domain registry). The registry is cached and can be reloaded with `FTRA_REGISTRY_RELOAD=true` or `SIGUSR1`.
 - **Metrics**: Boundary-check outcomes (`passed`, `hitl_required`, `error`) are counted by `cage_ftra_boundary_checks_total` in [`governor/metrics.py`](../../src/gateway/governance/governor/metrics.py). `GovernorMetrics` is created once per Prometheus registry (never at import) and is a no-op without `prometheus_client`.

@@ -63,8 +63,8 @@ from src.gateway.governance.ftra.models import (
     TerminalClassification,
 )
 from src.gateway.governance.schemas.thresholds import (
-    get_fria_zone_allow,
-    get_fria_zone_defer,
+    get_agent_confidence_threshold,
+    get_confidence_defer_floor,
 )
 
 if TYPE_CHECKING:
@@ -131,10 +131,10 @@ class PlanGraphAnalyzer:
                 getattr(plan, "plan_id", "<unknown>"),
                 exc,
             )
-            fria_zone_defer = get_fria_zone_defer()
+            defer_floor = get_confidence_defer_floor()
             verdict = (
                 FTRAVerdict.HITL_REQUIRED
-                if confidence >= fria_zone_defer
+                if confidence >= defer_floor
                 else FTRAVerdict.BLOCKED
             )
             return ReachabilityResult(
@@ -272,9 +272,9 @@ class PlanGraphAnalyzer:
         # ----------------------------------------------------------------
         # Determine verdict (from the worst classification still needing a human)
         # ----------------------------------------------------------------
-        fria_zone_defer = get_fria_zone_defer()
+        defer_floor = get_confidence_defer_floor()
         if gating == TerminalClassification.IRREVERSIBLE_TERMINAL:
-            if confidence >= fria_zone_defer:
+            if confidence >= defer_floor:
                 verdict = FTRAVerdict.HITL_REQUIRED
             else:
                 verdict = FTRAVerdict.BLOCKED
@@ -331,7 +331,7 @@ class PlanGraphAnalyzer:
             envelope=provenance.envelope,
             magnitude=safe_magnitude(self._magnitude_extractor, parameters),
             confidence=confidence,
-            confidence_floor=get_fria_zone_allow(),
+            confidence_floor=get_agent_confidence_threshold(),
         )
         return provenance.classification, reason is not None
 
