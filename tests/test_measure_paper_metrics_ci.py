@@ -498,15 +498,15 @@ class TestMeasureGovernorLatency:
         """measure_governor_latency records validate_action (FULL), revalidate_post_hitl, and totals."""
         import fakeredis.aioredis  # noqa: PLC0415
         import measure_paper_metrics as _mod  # noqa: PLC0415
-        import redis.asyncio as aioredis  # noqa: PLC0415
+        import src.gateway.infrastructure.redis_client as _redis_client_mod  # noqa: PLC0415
 
         import src.gateway.governance.evidence.stream as _stream_mod  # noqa: PLC0415
 
         server = fakeredis.FakeServer()
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(
-            aioredis,
-            "from_url",
+            _redis_client_mod,
+            "build_async_redis",
             lambda *a, **kw: fakeredis.aioredis.FakeRedis(
                 server=server, decode_responses=True
             ),
@@ -532,7 +532,7 @@ class TestMeasureGovernorLatency:
         """measure_governor_latency raises GovernanceError when FULL phase denies (no silent swallow)."""
         import fakeredis.aioredis  # noqa: PLC0415
         import measure_paper_metrics as _mod  # noqa: PLC0415
-        import redis.asyncio as aioredis  # noqa: PLC0415
+        import src.gateway.infrastructure.redis_client as _redis_client_mod  # noqa: PLC0415
 
         import src.gateway.governance.evidence.stream as _stream_mod  # noqa: PLC0415
         from src.gateway.governance.governor.errors import (  # noqa: PLC0415
@@ -542,8 +542,8 @@ class TestMeasureGovernorLatency:
         server = fakeredis.FakeServer()
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(
-            aioredis,
-            "from_url",
+            _redis_client_mod,
+            "build_async_redis",
             lambda *a, **kw: fakeredis.aioredis.FakeRedis(
                 server=server, decode_responses=True
             ),
@@ -564,7 +564,7 @@ class TestMeasureGovernorLatency:
         """measure_governor_latency raises GovernanceError when POST_HITL commit fails (no silent swallow)."""
         import fakeredis.aioredis  # noqa: PLC0415
         import measure_paper_metrics as _mod  # noqa: PLC0415
-        import redis.asyncio as aioredis  # noqa: PLC0415
+        import src.gateway.infrastructure.redis_client as _redis_client_mod  # noqa: PLC0415
 
         import src.gateway.governance.evidence.stream as _stream_mod  # noqa: PLC0415
         from src.gateway.governance.governor.errors import (
@@ -574,8 +574,8 @@ class TestMeasureGovernorLatency:
         server = fakeredis.FakeServer()
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(
-            aioredis,
-            "from_url",
+            _redis_client_mod,
+            "build_async_redis",
             lambda *a, **kw: fakeredis.aioredis.FakeRedis(
                 server=server, decode_responses=True
             ),

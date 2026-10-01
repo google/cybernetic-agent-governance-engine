@@ -43,6 +43,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Strict critic vote parsing** (#314) with pinned prompt fields.
 - **vLLM** (#315, #317): the HF token is no longer baked into images, weights load from GCS, and defaults fit `g2-standard-8` without Spot affinity. Undeployed vLLM manifests and dead scripts are retired (#316).
 - **Gate G9** (#321) validates line anchors; critic confidence rejects `bool` values.
+- **[CRITICAL] Evidence pipeline integrity** (POAM-2026-084): the gateway lifespan now starts the `EvidenceStreamSink` (`start_evidence_sink()`, fail closed when enforcing); appends use a Lua compare-and-append so HA replicas share one linear chain; custody (re-verification, KMS-signed `cage-evidence-batch/1` attestations, WORM `put_if_absent`, durable retry-safe cursor) moves to the compliance-bridge `EvidenceCustodian`; `build_async_redis()` honours TLS and IAM auth. See `docs/architecture/EVIDENCE_CHAIN.md`.
 
 ### Changed
 - **[BREAKING]** `DeferQueue.approve()` now returns `ApprovalStatus.CONTENTION_ABORTED` on CAS retry exhaustion (previously would raise unhandled exception). Callers must map this to HTTP 409.
@@ -50,6 +51,13 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `cage-client` SDK bumped to v0.2.0 (#313).
 
 ### Breaking Changes
+
+#### Evidence custody moves to the compliance bridge
+
+- `EvidenceStreamSink` no longer accepts `kms_sign` / `cold_store`; the gateway holds no evidence signer or cold store. `src/gateway/governance/evidence/signer.py` and `null_signer.py` are deleted, and the evidence factory's signer helpers are removed.
+- `EVIDENCE_STREAM_KMS_SIGN` and `EVIDENCE_COLD_STORE_FLUSH_SECONDS` are removed. The bridge reads `EVIDENCE_CUSTODY_INTERVAL_S`, `EVIDENCE_CUSTODY_BATCH_SIZE`, `EVIDENCE_COLD_STORE*`, and `EVIDENCE_KMS_KEY`.
+- Evidence preconditions are posture-based: under an enforcing posture a disabled stream is fatal, and non-blocking commit requires `CAGE_ALLOW_NONBLOCKING_PROD=true`.
+- Cold-store object layout is now `evidence-stream/YYYY/MM/DD/<chain_id>/<first>-<last>.ndjson` plus `.attestation.json`.
 
 #### Governor refactor — composition root, single domain, receipts (#277–#294)
 

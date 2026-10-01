@@ -430,6 +430,11 @@ async def test_lifespan_aborts_when_governor_posture_is_refused(monkeypatch, env
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
     for key, value in env.items():
         monkeypatch.setenv(key, value)
+    # The evidence sink's own enforcing-posture guard is covered in
+    # tests/test_evidence_stream.py; stub it so this test reaches the governor.
+    import src.gateway.governance.evidence.stream as _stream_mod
+
+    monkeypatch.setattr(_stream_mod, "start_evidence_sink", AsyncMock(return_value=None))
 
     stubs = _make_hybrid_stubs()
     activate = AsyncMock(

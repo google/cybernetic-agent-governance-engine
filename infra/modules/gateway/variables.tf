@@ -240,4 +240,35 @@ variable "cage_domain" {
   default     = "finance"
 }
 
+# ─── Evidence stream producer (custody lives in the compliance bridge) ───────
+# The gateway only appends unsigned, hash-chained records to a Redis Stream on
+# the governance Memorystore instance. The compliance bridge's EvidenceCustodian
+# reads the same stream, so URL, db and key are passed explicitly to BOTH
+# modules from one set of locals in the target and can never drift.
+
+variable "evidence_stream_redis_url" {
+  description = "Redis URL of the governance Memorystore instance that holds the evidence stream (EVIDENCE_STREAM_REDIS_URL). Must be the same value passed to the compliance_bridge module."
+  type        = string
+
+  validation {
+    condition     = can(regex("^rediss?://", var.evidence_stream_redis_url))
+    error_message = "evidence_stream_redis_url must be a redis:// or rediss:// URL."
+  }
+}
+
+variable "evidence_stream_redis_db" {
+  description = "Redis logical database for the evidence stream (EVIDENCE_STREAM_REDIS_DB). Must match the compliance_bridge module."
+  type        = number
+}
+
+variable "evidence_stream_key" {
+  description = "Redis Stream key for the evidence chain (EVIDENCE_STREAM_KEY). Must match the compliance_bridge module."
+  type        = string
+
+  validation {
+    condition     = var.evidence_stream_key != ""
+    error_message = "evidence_stream_key must not be empty."
+  }
+}
+
 

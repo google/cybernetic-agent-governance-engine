@@ -33,14 +33,11 @@ import os
 
 from .cold_store import EvidenceColdStore
 from .null_cold_store import NullColdStore
-from .null_signer import NullSigner
 from .residency import resolve_cold_store_bucket
-from .signer import EvidenceSigner
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_COLD_STORE: EvidenceColdStore | None = None
-_DEFAULT_SIGNER: EvidenceSigner | None = None
 
 
 def get_cold_store(
@@ -130,43 +127,3 @@ def reset_default_cold_store() -> None:
     """Reset the singleton instance (used for test isolation)."""
     global _DEFAULT_COLD_STORE
     _DEFAULT_COLD_STORE = None
-
-
-def get_evidence_signer(backend: str | None = None) -> EvidenceSigner:
-    """Construct an EvidenceSigner instance based on environment or parameters."""
-    # Convert 'true' to 'gcp_kms' for backward compatibility
-    env_signer = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower().strip()
-    if env_signer == "true":
-        env_signer = "gcp_kms"
-    elif env_signer == "false":
-        env_signer = "null"
-
-    selected_backend = (backend or env_signer).lower().strip()
-
-    if selected_backend == "null":
-        return NullSigner()
-
-    if selected_backend == "gcp_kms":
-        # Lazy import of compliance bridge signer
-        from src.compliance_bridge.kms_batch_signer import get_batch_signer
-
-        return get_batch_signer()
-
-    raise ValueError(
-        f"Unsupported signer backend: '{selected_backend}'. "
-        "Must be one of: 'gcp_kms', 'null'."
-    )
-
-
-def get_default_signer() -> EvidenceSigner:
-    """Return or initialize the singleton default EvidenceSigner instance."""
-    global _DEFAULT_SIGNER
-    if _DEFAULT_SIGNER is None:
-        _DEFAULT_SIGNER = get_evidence_signer()
-    return _DEFAULT_SIGNER
-
-
-def reset_default_signer() -> None:
-    """Reset the singleton instance (used for test isolation)."""
-    global _DEFAULT_SIGNER
-    _DEFAULT_SIGNER = None

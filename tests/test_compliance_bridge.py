@@ -362,6 +362,22 @@ class TestAuditIngestAuth:
         "CAGE_ENV": "staging",
     }
 
+    @pytest.fixture(autouse=True)
+    def _stub_evidence_custody(self):
+        """Staging enforces evidence custody (real WORM store + KMS signer).
+
+        Custody fail-closed paths are covered in tests/test_evidence_custodian.py;
+        here a stub custodian lets the lifespan reach the auth layer.
+        """
+        custodian = MagicMock()
+        custodian.run_forever = AsyncMock(return_value=None)
+        custodian.aclose = AsyncMock(return_value=None)
+        with patch(
+            "src.compliance_bridge.evidence_custodian.EvidenceCustodian.from_env",
+            return_value=custodian,
+        ):
+            yield
+
     def test_missing_token_returns_401_when_token_configured(self):
         """Without a bearer token the endpoint must return 401."""
         with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:

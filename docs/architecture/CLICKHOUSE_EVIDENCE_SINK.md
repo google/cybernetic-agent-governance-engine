@@ -41,8 +41,9 @@ the **source of truth** for the hash-chained governance evidence chain. It is a
 `100000`). The cold tier is pluggable through `EVIDENCE_COLD_STORE`
 (`gcs` | `s3` | `null`, default `null`; see
 [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py:43)); the
-GCS backend provides immutable, CMEK-encrypted object storage flushed every
-`EVIDENCE_COLD_STORE_FLUSH_SECONDS` (default 60).
+GCS backend provides immutable, CMEK-encrypted object storage written by the
+compliance-bridge `EvidenceCustodian` every `EVIDENCE_CUSTODY_INTERVAL_S`
+(default 60) as verified, attested batches (see [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md)).
 
 Neither tier is queryable. Compliance questions such as *"show every
 `request_denied` for tier `tier1_reversible_trades` correlated to W3C trace
@@ -112,8 +113,9 @@ uses `_SCHEMA = "cage-audit/3.0"`
 writes `schema`, `chain_id`, `sequence`, `timestamp_utc`, `event_type`,
 `control_id`, `trace_id`, `hash_algorithm`, `canonicalization`,
 `evidence_class`, `prev_hash`, `record_hash`, `payload_json`, the sparse header
-members when set, and `kms_signature` / `kms_signature_algorithm` only when
-`EVIDENCE_STREAM_KMS_SIGN=true`. (Before the realignment recorded in the
+members when set. The producer never writes `kms_signature` /
+`kms_signature_algorithm`; signing moved to per-batch custody attestations in
+the compliance bridge. (Before the realignment recorded in the
 comment above `_SCHEMA_VERSION`, the kernel emitted `cage-evidence-stream/2.0`
 without `chain_id` or `trace_id`.)
 
@@ -261,7 +263,7 @@ pruning is unusually effective here.
 | `payload` | `String` | **Opaque canonical bytes.** Must be byte-identical to the hashed `payload_json`. Never `JSON`/`Object('json')`, which would reorder keys and destroy verifiability. Query with `JSONExtract*()` at read time. |
 | `record_hash` | `FixedString(64)` | SHA-256 lowercase hex, always exactly 64 bytes. Fixed width removes the per-value length prefix and enables constant-time comparison. |
 | `prev_hash` | `Nullable(FixedString(64))` | `NULL` **only** for the genesis record of a chain; a `CONSTRAINT` enforces that `sequence = 0 ⇔ prev_hash IS NULL`. |
-| `kms_signature` | `Nullable(String)` | Variable-length base64, populated asynchronously by `AsyncBatchSigner`. `NULL` when `EVIDENCE_STREAM_KMS_SIGN=false`. |
+| `kms_signature` | `Nullable(String)` | Variable-length base64. Always `NULL` for stream-sourced rows: the gateway no longer signs records, and provenance lives in the per-batch custody attestation in the cold store. Retained for schema compatibility. |
 | `hash_algorithm`, `canonicalization` | `LowCardinality(String)` | Inside the hash; required for verification and future algorithm agility. |
 | `evidence_class` | `Enum8('GOVERNANCE' = 1, 'INFRA' = 2)` `DEFAULT 'GOVERNANCE'` | **Not** part of the hash. Separates chained governance evidence from unchained infrastructure telemetry ingested via `POST /v1/infra/events`; drives the `infra_events_mv` projection (§6.4). `Enum8` rather than `LowCardinality(String)` so an unknown class is rejected at `INSERT`. |
 | `classification_reason`, `narrowing_applied`, `pause_token` | `Nullable(String)` | Sparse header members; presence changes the canonical header bytes, so they must round-trip verbatim. |
@@ -1257,8 +1259,8 @@ class ClickHouseSink:
 > adopter enables it.
 
 Whichever of size-or-time triggers first wins. The 5-second interval is
-deliberately 12× tighter than the 60-second cold-store flush
-(`EVIDENCE_COLD_STORE_FLUSH_SECONDS`): the cold tier optimises for object size
+deliberately 12× tighter than the 60-second custody cycle
+(`EVIDENCE_CUSTODY_INTERVAL_S`): the cold tier optimises for object size
 and cost, ClickHouse for query freshness during incident response.
 
 Inserts use `clickhouse-connect` with `async_insert=1, wait_for_async_insert=1`.
@@ -1487,8 +1489,8 @@ additive evolution is compatible with WORM while `MODIFY COLUMN` is not.
 |---|---|---|---|
 | **AU-9** Protection of Audit Information | Protect audit records from unauthorised access, modification, deletion | RBAC with no `ALTER UPDATE`/`DELETE` grant to any role (§7.2); `readonly=1 CONST` reader profile; plain `MergeTree` cannot silently drop rows (§3.1); `max_table_size_to_drop=0` (§7.4) | A cluster admin can still mutate — mitigated, not eliminated, by §7.6 auditing and §10.4 cross-tier proof |
 | **AU-9(2)** Store on Separate System | Back up audit records to a physically different system | ClickHouse is a third independent tier alongside Redis and GCS, on separate storage with independent credentials | — |
-| **AU-9(3)** Cryptographic Protection | Cryptographic mechanisms to protect integrity | SHA-256 hash chain persisted and continuously recomputed (§5); optional asymmetric KMS signatures carried in `kms_signature` | Chain verification is only *fully* conclusive with KMS signing enabled (`EVIDENCE_STREAM_KMS_SIGN=true`) |
-| **AU-10** Non-repudiation | Irrefutable evidence of who performed an action | `trace_id` + `payload.request_id` + KMS signature bind a decision to an actor and a trace | Requires KMS signing enabled |
+| **AU-9(3)** Cryptographic Protection | Cryptographic mechanisms to protect integrity | SHA-256 hash chain persisted and continuously recomputed (§5); per-batch asymmetric KMS attestations (`EVIDENCE_KMS_KEY`) written by the compliance-bridge custodian to the WORM cold store | Attestations are unsigned in permissive postures; required when enforcing |
+| **AU-10** Non-repudiation | Irrefutable evidence of who performed an action | `trace_id` + `payload.request_id` + the KMS-signed batch attestation covering the record bind a decision to an actor and a trace | Requires `EVIDENCE_KMS_KEY` (mandatory under an enforcing posture) |
 | **AU-11** Audit Record Retention | Retain records for the defined period | 7-year TTL executed as whole-partition drops (§3.6); `ttl_only_drop_parts=1` | — |
 | **AU-12** Audit Generation | System generates audit records for defined events | `system.query_log` records every access to the evidence store, including reads (§7.6) | — |
 | **AU-6** Audit Review, Analysis, Reporting | Review audit records for indications of inappropriate activity | `v_worm_violations` + Prometheus alerting (§6.3, §7.6) | Requires an operator to act on the page |

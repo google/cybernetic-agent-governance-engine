@@ -28,6 +28,11 @@
 #                    cluster + 3-node ClickHouse Keeper quorum, local SSD for
 #                    hot parts, and GCS disk (`cold_gcs`) for the cold tier.
 #
+# Cold-tier invariant (§2.6):
+#   ClickHouse deletes S3-disk objects on merge and TTL. `cold_gcs` therefore
+#   points at a dedicated, non-retention-locked, CMEK-encrypted tiering bucket
+#   (never the WORM bucket) that only the ClickHouse service account can use.
+#
 # Node Isolation Invariant (§3, §7):
 #   All ClickHouse and Keeper pods tolerate `workload=clickhouse:NoSchedule`
 #   and enforce `nodeAffinity` requiring `workload=clickhouse` and
@@ -66,6 +71,7 @@ locals {
   keeper_replicas = local.is_ha ? 3 : 0
   table_engine    = local.is_ha ? "ReplicatedMergeTree('/clickhouse/tables/{shard}/evidence_stream', '{replica}')" : "MergeTree()"
   storage_policy  = local.is_ha && var.cold_tier_bucket != "" ? "hot_to_cold" : "default"
+  cold_tier_on    = local.is_ha && var.cold_tier_bucket != ""
 }
 
 
@@ -408,7 +414,7 @@ resource "kubernetes_config_map" "clickhouse_config" {
         </macros>
       </clickhouse>
     EOT
-    ) : (<<-EOT
+      ) : (<<-EOT
       <clickhouse>
         <!-- Single-node dev/staging query plane on local SSD (no Keeper required) -->
       </clickhouse>
@@ -458,6 +464,13 @@ resource "kubernetes_service" "clickhouse" {
 # ─── ClickHouse Query-Plane StatefulSet ───────────────────────────────────────
 
 resource "kubernetes_stateful_set" "clickhouse" {
+  lifecycle {
+    precondition {
+      condition     = !local.cold_tier_on || var.cold_tier_credentials_secret_name != ""
+      error_message = "cold_tier_credentials_secret_name is required when the GCS cold tier (cold_tier_bucket) is active."
+    }
+  }
+
   metadata {
     name      = "clickhouse"
     namespace = var.namespace
@@ -491,6 +504,8 @@ resource "kubernetes_stateful_set" "clickhouse" {
       }
 
       spec {
+        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+
         # §3, §7: Taint toleration and node affinity for dedicated clickhouse
         # local-SSD node pool; strictly prohibit scheduling onto Spot or general nodes.
         toleration {
@@ -550,6 +565,22 @@ resource "kubernetes_stateful_set" "clickhouse" {
               secret_key_ref {
                 name = var.password_secret_name
                 key  = var.password_secret_key
+              }
+            }
+          }
+
+          # cold_gcs S3 disk credentials (use_environment_credentials): the HMAC
+          # key of the ClickHouse service account, the only identity with IAM
+          # on the dedicated tiering bucket.
+          dynamic "env" {
+            for_each = local.cold_tier_on ? ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] : []
+            content {
+              name = env.value
+              value_from {
+                secret_key_ref {
+                  name = var.cold_tier_credentials_secret_name
+                  key  = env.value
+                }
               }
             }
           }

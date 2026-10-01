@@ -228,7 +228,63 @@ resource "kubernetes_deployment" "compliance_bridge" {
             value = var.cmek_key_resource_name
           }
 
+          # ─── Evidence custody (EvidenceCustodian) ─────────────────────────
+          # Reads the gateway's evidence stream on the governance Memorystore
+          # instance (same URL/db/key as the gateway, same TLS + IAM auth mode),
+          # re-verifies the chain, signs per-batch attestations with
+          # EVIDENCE_KMS_KEY and writes batches to EVIDENCE_COLD_STORE_BUCKET.
+          env {
+            name  = "EVIDENCE_STREAM_ENABLED"
+            value = "true"
+          }
+
+          env {
+            name  = "EVIDENCE_STREAM_REDIS_URL"
+            value = var.evidence_stream_redis_url
+          }
+
+          env {
+            name  = "EVIDENCE_STREAM_REDIS_DB"
+            value = tostring(var.evidence_stream_redis_db)
+          }
+
+          env {
+            name  = "EVIDENCE_STREAM_KEY"
+            value = var.evidence_stream_key
+          }
+
+          env {
+            name  = "EVIDENCE_CUSTODY_INTERVAL_S"
+            value = tostring(var.evidence_custody_interval_s)
+          }
+
+          env {
+            name  = "REDIS_TLS"
+            value = tostring(var.enable_redis_tls)
+          }
+
+          dynamic "env" {
+            for_each = var.redis_ca_cert_path != "" ? [1] : []
+            content {
+              name  = "REDIS_CA_CERT_PATH"
+              value = var.redis_ca_cert_path
+            }
+          }
+
+          dynamic "env" {
+            for_each = var.redis_auth_mode != "" ? [1] : []
+            content {
+              name  = "REDIS_AUTH_MODE"
+              value = var.redis_auth_mode
+            }
+          }
+
           # §2.6: ClickHouse is the analytical query plane fed by clickhouse_sink.py
+          env {
+            name  = "CLICKHOUSE_ENABLED"
+            value = tostring(var.clickhouse_enabled)
+          }
+
           env {
             name  = "CLICKHOUSE_HOST"
             value = var.clickhouse_host
@@ -245,12 +301,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "CLICKHOUSE_USERNAME"
+            value = var.clickhouse_username
+          }
+
+          env {
             name = "CLICKHOUSE_PASSWORD"
             value_from {
               secret_key_ref {
-                name     = "advisor-secrets"
-                key      = "CLICKHOUSE_PASSWORD"
-                optional = true
+                name = var.clickhouse_password_secret_name
+                key  = var.clickhouse_password_secret_key
               }
             }
           }

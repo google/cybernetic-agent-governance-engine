@@ -77,7 +77,7 @@ variable "keeper_storage_size" {
 }
 
 variable "cold_tier_bucket" {
-  description = "GCS bucket name for the ClickHouse cold storage tier in prod (§1.1, §2.6)"
+  description = "Dedicated GCS bucket for the ClickHouse cold storage tier in prod (§1.1, §2.6). ClickHouse deletes S3-disk objects on merge/TTL, so this must NEVER be the retention-locked evidence WORM bucket; it must have no retention policy."
   type        = string
   default     = ""
 }
@@ -86,6 +86,18 @@ variable "cold_tier_endpoint" {
   description = "GCS XML API endpoint for ClickHouse cold storage disk in prod"
   type        = string
   default     = "https://storage.googleapis.com"
+}
+
+variable "cold_tier_credentials_secret_name" {
+  description = "Kubernetes Secret holding the GCS HMAC key (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) of the ClickHouse service account, read by the cold_gcs S3 disk via use_environment_credentials. Required whenever the cold tier is active."
+  type        = string
+  default     = ""
+}
+
+variable "service_account_name" {
+  description = "Kubernetes ServiceAccount the ClickHouse pods run as (own KSA bound 1:1 to its own GSA, the only identity with access to cold_tier_bucket). Empty leaves the namespace default KSA."
+  type        = string
+  default     = ""
 }
 
 variable "hot_to_cold_move_factor" {

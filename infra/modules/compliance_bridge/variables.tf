@@ -118,11 +118,12 @@ variable "cage_env" {
   default     = "development"
 }
 
-# K-3 / Track 6d (§5.2): EVIDENCE_KMS_KEY for compliance-bridge KMSBatchSigner.
+# K-3 / Track 6d (§5.2): EVIDENCE_KMS_KEY for the compliance-bridge KMSBatchSigner.
 # Separate from the gateway's KMS_GOVERNANCE_KEY and the reconciler's RECONCILER_KMS_KEY.
-# Empty string falls back to HMAC-SHA256 signing — acceptable only in dev/CI postures.
+# There is no HMAC fallback: empty is allowed only in dev/test/ci postures, where
+# evidence batches are written unsigned; enforcing postures refuse to start.
 variable "evidence_kms_key" {
-  description = "Full Cloud KMS key version resource name for compliance evidence batch signing (EVIDENCE_KMS_KEY). Empty string falls back to legacy HMAC-SHA256 signing — acceptable only in dev/CI."
+  description = "Full Cloud KMS key version resource name the EvidenceCustodian uses to sign per-batch evidence attestations (EVIDENCE_KMS_KEY). There is no HMAC fallback: an empty value is allowed only in dev/test/ci postures, where evidence batches are written unsigned; enforcing postures (staging/prod) refuse to start without it."
   type        = string
   default     = ""
   sensitive   = true
@@ -188,8 +189,87 @@ variable "clickhouse_port" {
 }
 
 variable "clickhouse_database" {
-  description = "ClickHouse query-plane database name."
+  description = "ClickHouse query-plane database name (CLICKHOUSE_DATABASE). Must match deployment/clickhouse/evidence_stream_schema.sql."
+  type        = string
+  default     = "cage_evidence"
+}
+
+variable "clickhouse_enabled" {
+  description = "Enable the ClickHouse query-plane sink (CLICKHOUSE_ENABLED, read by src/compliance_bridge/clickhouse_sink.py)."
+  type        = bool
+  default     = true
+}
+
+variable "clickhouse_username" {
+  description = "ClickHouse user for the query-plane sink (CLICKHOUSE_USERNAME). The password is always taken from a Secret via secretKeyRef."
   type        = string
   default     = "default"
+}
+
+variable "clickhouse_password_secret_name" {
+  description = "Kubernetes Secret holding the ClickHouse password for clickhouse_username."
+  type        = string
+  default     = "advisor-secrets"
+}
+
+variable "clickhouse_password_secret_key" {
+  description = "Key within clickhouse_password_secret_name for the ClickHouse password."
+  type        = string
+  default     = "CLICKHOUSE_PASSWORD"
+}
+
+# ─── Evidence custody (EvidenceCustodian) ─────────────────────────────────────
+# The bridge reads the gateway's evidence stream on the governance Memorystore
+# instance, re-verifies the hash chain, signs a per-batch attestation with
+# EVIDENCE_KMS_KEY and writes the batch to the WORM bucket. Its durable cursor
+# lives in the Redis hash "<evidence_stream_key>:custody" on the same instance.
+
+variable "evidence_stream_redis_url" {
+  description = "Redis URL of the governance Memorystore instance holding the gateway's evidence stream (EVIDENCE_STREAM_REDIS_URL). Must equal the value passed to the gateway module."
+  type        = string
+
+  validation {
+    condition     = can(regex("^rediss?://", var.evidence_stream_redis_url))
+    error_message = "evidence_stream_redis_url must be a redis:// or rediss:// URL."
+  }
+}
+
+variable "evidence_stream_redis_db" {
+  description = "Redis logical database of the evidence stream (EVIDENCE_STREAM_REDIS_DB). Must equal the gateway module's value."
+  type        = number
+}
+
+variable "evidence_stream_key" {
+  description = "Redis Stream key of the evidence chain (EVIDENCE_STREAM_KEY). Must equal the gateway module's value."
+  type        = string
+
+  validation {
+    condition     = var.evidence_stream_key != ""
+    error_message = "evidence_stream_key must not be empty."
+  }
+}
+
+variable "evidence_custody_interval_s" {
+  description = "Seconds between EvidenceCustodian flush cycles (EVIDENCE_CUSTODY_INTERVAL_S)."
+  type        = number
+  default     = 60
+}
+
+variable "enable_redis_tls" {
+  description = "Enable TLS for the governance Memorystore connection (REDIS_TLS). Must match the gateway module."
+  type        = bool
+  default     = false
+}
+
+variable "redis_ca_cert_path" {
+  description = "CA certificate path for Redis TLS server certificate pinning (REDIS_CA_CERT_PATH)."
+  type        = string
+  default     = ""
+}
+
+variable "redis_auth_mode" {
+  description = "Redis authentication mode for the governance Memorystore instance ('iam', 'password', 'none'; REDIS_AUTH_MODE). Must match the gateway module."
+  type        = string
+  default     = ""
 }
 

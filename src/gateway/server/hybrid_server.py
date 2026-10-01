@@ -89,6 +89,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # This invalid configuration would cause all seal issuances to fail at runtime.
     from src.gateway.governance.evidence.stream import (
         ConfigurationError,
+        start_evidence_sink,
         validate_evidence_stream_preconditions,
     )
 
@@ -100,6 +101,13 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             cfg_err,
         )
         raise
+
+    # ── Evidence Stream Sink ───────────────────────────────────────────────
+    # Refusal receipts, pause receipts and blocking seals all write through
+    # the get_evidence_sink() singleton, so it must be connected before the
+    # first request. Fails startup under an enforcing posture if Redis is
+    # unreachable.
+    evidence_sink = await start_evidence_sink()
 
     # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
     from src.integrations.nemo.manager import initialize_rails
@@ -248,6 +256,9 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         except asyncio.CancelledError:
             pass
         logger.info("Attestation aggregator polling task cancelled cleanly.")
+
+    if evidence_sink is not None:
+        await evidence_sink.stop()
 
     # No shutdown work required for tracing (BatchSpanProcessor flushes on GC).
 

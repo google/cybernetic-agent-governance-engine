@@ -397,13 +397,13 @@ header = {
 
 ## 9. Open Questions & Future Work
 
-### 9.1 Per-Record KMS Signing
-**Status:** Implemented via `AsyncBatchSigner` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)) but **disabled by default** (`EVIDENCE_STREAM_KMS_SIGN=false`). When enabled it signs with the dedicated compliance-evidence key `EVIDENCE_KMS_KEY`; `build_evidence_signer()` refuses a key that matches the gateway (`KMS_GOVERNANCE_KEY`) or reconciler (`RECONCILER_KMS_KEY`) key.
+### 9.1 Per-Batch KMS Attestation (replaces per-record signing)
+**Status:** Implemented. The gateway no longer signs evidence records. The compliance-bridge [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) re-verifies each batch of the chain and signs a `cage-evidence-batch/1` attestation with the dedicated compliance-evidence key `EVIDENCE_KMS_KEY`, stored next to the NDJSON batch in the WORM cold store. `build_evidence_signer()` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)) refuses a key that matches the gateway (`KMS_GOVERNANCE_KEY`) or reconciler (`RECONCILER_KMS_KEY`) key. See [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md).
 
 **Current Limitation:**
-- By default, evidence stream records are hash-chained (integrity) but not individually KMS-signed (provenance)
+- Individual stream records carry no signature; provenance is established per batch (attestation over the batch's first/last record hashes and NDJSON digest)
 - Governance plan signatures use KMS asymmetric signing ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py))
-- The signing callback sets `kms_signature` on the in-process entry dict after `XADD`; the signature is not written back to the Redis Stream entry
+- In permissive postures without `EVIDENCE_KMS_KEY`, attestations are written unsigned
 
 **Impact on Migration:**
 - If per-record signing is enabled post-migration, legacy records will lack signatures

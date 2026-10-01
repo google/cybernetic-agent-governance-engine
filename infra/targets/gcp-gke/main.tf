@@ -436,9 +436,115 @@ module "memorystore_app" {
   depends_on = [module.gke]
 }
 
+# ─── Evidence Stream Contract (gateway producer ↔ compliance-bridge custodian) ─
+# The gateway appends unsigned hash-chained records to a Redis Stream on the
+# GOVERNANCE Memorystore instance; the compliance bridge's EvidenceCustodian
+# reads the same stream and keeps its cursor in "<key>:custody" on the same
+# instance. Both modules take these exact values so they cannot drift.
+#
+# The URL is built exactly like the gateway's REDIS_URL (redis://<psc-ip>:<port>);
+# TLS and IAM auth ride on REDIS_TLS / REDIS_AUTH_MODE, passed to both modules.
+# The governance instance runs mode = CLUSTER_DISABLED, which supports logical
+# databases, so the evidence stream stays isolated in db 1 (the code default)
+# away from governance state in db 0.
+locals {
+  evidence_stream_redis_url = "redis://${module.memorystore_governance.primary_endpoint_ip}:${module.memorystore_governance.primary_endpoint_port}"
+  evidence_stream_redis_db  = 1
+  evidence_stream_key       = "cage:evidence:stream"
+  governance_redis_auth     = var.enable_memorystore_iam_auth ? "iam" : "none"
+}
+
+# ─── ClickHouse Cold-Tier Bucket (dedicated, NOT retention-locked) ─────────────
+# ClickHouse deletes S3-disk objects on part merges and TTL, which a
+# retention-locked bucket forbids. The cold tier therefore gets its own
+# CMEK-encrypted bucket with no retention policy, separate from the WORM system
+# of record, and only the ClickHouse GSA holds IAM on it. It exists only where
+# the cold tier is used (prod / HA posture).
+locals {
+  clickhouse_cold_tier_enabled = var.environment == "prod" || var.enable_high_availability
+}
+
+resource "google_storage_bucket" "clickhouse_tiering" {
+  count = local.clickhouse_cold_tier_enabled ? 1 : 0
+
+  name          = "${var.project_id}-clickhouse-tiering-${var.environment}"
+  location      = var.region
+  project       = var.project_id
+  force_destroy = var.environment == "dev"
+
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  dynamic "encryption" {
+    for_each = var.enable_cmek && local.cmek_key_id != "" ? [1] : []
+    content {
+      default_kms_key_name = local.cmek_key_id
+    }
+  }
+
+  # Deliberately no retention_policy and no versioning: ClickHouse owns the
+  # object lifecycle and must be able to delete parts it has merged away.
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  labels = {
+    environment            = var.environment
+    component              = "clickhouse-cold-tier"
+    managed-by             = "terraform"
+    cage-deployment-region = lower(var.cage_deployment_region)
+  }
+
+  lifecycle {
+    precondition {
+      condition = (
+        (var.cage_deployment_region == "EU_ECB" && startswith(var.region, "europe-")) ||
+        (var.cage_deployment_region == "APAC_MAS" && startswith(var.region, "asia-")) ||
+        (var.cage_deployment_region == "US_FED" && startswith(var.region, "us-"))
+      )
+      error_message = "ClickHouse tiering bucket region '${var.region}' violates data residency for cage_deployment_region='${var.cage_deployment_region}'."
+    }
+    precondition {
+      condition     = "${var.project_id}-clickhouse-tiering-${var.environment}" != module.worm_bucket.bucket_name
+      error_message = "The ClickHouse cold tier must never share the retention-locked evidence WORM bucket."
+    }
+  }
+}
+
+# Only the ClickHouse GSA may read, write and delete tiering objects.
+resource "google_storage_bucket_iam_member" "clickhouse_tiering_object_admin" {
+  count  = local.clickhouse_cold_tier_enabled ? 1 : 0
+  bucket = google_storage_bucket.clickhouse_tiering[0].name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.clickhouse.email}"
+}
+
+# The cold_gcs disk speaks the S3 XML API (SigV4), so it authenticates with an
+# HMAC key minted for the ClickHouse GSA; the key inherits only that GSA's IAM.
+resource "google_storage_hmac_key" "clickhouse_tiering" {
+  count                 = local.clickhouse_cold_tier_enabled ? 1 : 0
+  service_account_email = google_service_account.clickhouse.email
+  project               = var.project_id
+}
+
+resource "kubernetes_secret" "clickhouse_tiering_hmac" {
+  count = local.clickhouse_cold_tier_enabled ? 1 : 0
+
+  metadata {
+    name      = "clickhouse-tiering-hmac"
+    namespace = module.namespace.name
+  }
+
+  data = {
+    "AWS_ACCESS_KEY_ID"     = google_storage_hmac_key.clickhouse_tiering[0].access_id
+    "AWS_SECRET_ACCESS_KEY" = google_storage_hmac_key.clickhouse_tiering[0].secret
+  }
+}
+
 # ─── Deploy ClickHouse Operator & Query Plane (§1.1, §2.6, §3, §7) ───────────
 # ClickHouse is strictly the analytical query plane fed by clickhouse_sink.py.
-# The retention-locked GCS WORM bucket (module.worm_bucket) is the system of record.
+# The retention-locked GCS WORM bucket (module.worm_bucket) is the system of record;
+# the cold tier uses the dedicated google_storage_bucket.clickhouse_tiering.
 #
 # Posture matrix (§1.1, §2.6):
 #   - dev / staging: 1 node on local SSD (MergeTree)
@@ -447,21 +553,23 @@ module "memorystore_app" {
 module "clickhouse_operator" {
   source = "../../modules/clickhouse_operator"
 
-  namespace                = module.namespace.name
-  environment              = var.environment
-  enable_high_availability = var.environment == "prod" || var.enable_high_availability
-  image                    = var.image_digests["clickhouse-server"]
-  keeper_image             = var.image_digests["clickhouse-keeper"]
-  storage_size             = var.clickhouse_storage_size
-  storage_class            = var.storage_class
-  cold_tier_bucket         = module.worm_bucket.bucket_name
+  namespace                         = module.namespace.name
+  environment                       = var.environment
+  enable_high_availability          = local.clickhouse_cold_tier_enabled
+  image                             = var.image_digests["clickhouse-server"]
+  keeper_image                      = var.image_digests["clickhouse-keeper"]
+  storage_size                      = var.clickhouse_storage_size
+  storage_class                     = var.storage_class
+  service_account_name              = kubernetes_service_account.workload["clickhouse"].metadata[0].name
+  cold_tier_bucket                  = local.clickhouse_cold_tier_enabled ? google_storage_bucket.clickhouse_tiering[0].name : ""
+  cold_tier_credentials_secret_name = local.clickhouse_cold_tier_enabled ? kubernetes_secret.clickhouse_tiering_hmac[0].metadata[0].name : ""
 
   cpu_request    = "1000m"
   memory_request = "2Gi"
   cpu_limit      = var.enable_high_availability ? "3000m" : "2000m"
   memory_limit   = var.enable_high_availability ? "6Gi" : "4Gi"
 
-  depends_on = [module.gke, module.worm_bucket]
+  depends_on = [module.gke, google_storage_bucket_iam_member.clickhouse_tiering_object_admin]
 }
 
 
@@ -711,15 +819,27 @@ module "compliance_bridge" {
   cmek_key_resource_name     = var.enable_cmek ? local.cmek_key_id : ""
   clickhouse_host            = module.clickhouse_operator.service_name
   clickhouse_port            = tostring(module.clickhouse_operator.http_port)
+  clickhouse_database        = "cage_evidence"
+  clickhouse_enabled         = true
+  clickhouse_username        = "default"
   cage_env                   = var.environment
   cage_deployment_region     = var.cage_deployment_region
+
+  # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
+  # IAM auth mode as the gateway producer (see local.evidence_stream_*).
+  evidence_stream_redis_url   = local.evidence_stream_redis_url
+  evidence_stream_redis_db    = local.evidence_stream_redis_db
+  evidence_stream_key         = local.evidence_stream_key
+  evidence_custody_interval_s = 60
+  enable_redis_tls            = var.enable_memorystore_tls
+  redis_auth_mode             = local.governance_redis_auth
 
   # POAM-2026-079 / §5.2: own identity and own signing key. KMSBatchSigner reads
   # the key from EVIDENCE_KMS_KEY (never KMS_GOVERNANCE_KEY).
   service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
   evidence_kms_key     = local.compliance_evidence_key_version
 
-  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.clickhouse_operator]
+  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.clickhouse_operator, module.memorystore_governance]
 }
 
 
@@ -745,26 +865,31 @@ module "opa" {
 module "gateway" {
   source = "../../modules/gateway"
 
-  namespace               = module.namespace.name
-  image                   = var.image_digests["gateway"]
-  replicas                = var.enable_high_availability ? 2 : 1
-  project_id              = var.project_id
-  region                  = var.region
-  enable_logging          = "true"
-  cage_domain             = var.cage_domain
-  cage_env                = var.environment
-  redis_host              = module.memorystore_governance.primary_endpoint_ip
-  redis_port              = tostring(module.memorystore_governance.primary_endpoint_port)
-  redis_password          = ""
+  namespace                      = module.namespace.name
+  image                          = var.image_digests["gateway"]
+  replicas                       = var.enable_high_availability ? 2 : 1
+  project_id                     = var.project_id
+  region                         = var.region
+  enable_logging                 = "true"
+  cage_domain                    = var.cage_domain
+  cage_env                       = var.environment
+  redis_host                     = module.memorystore_governance.primary_endpoint_ip
+  redis_port                     = tostring(module.memorystore_governance.primary_endpoint_port)
+  redis_password                 = ""
   governance_redis_replica_count = module.memorystore_governance.replica_count
-  enable_redis_tls        = var.enable_memorystore_tls
-  redis_auth_mode         = var.enable_memorystore_iam_auth ? "iam" : "none"
-  vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  guardrails_model_name   = var.served_model_fast
-  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
-  governance_salt         = var.governance_salt
+  enable_redis_tls               = var.enable_memorystore_tls
+  redis_auth_mode                = local.governance_redis_auth
+
+  # Evidence stream producer — identical contract to the compliance bridge.
+  evidence_stream_redis_url = local.evidence_stream_redis_url
+  evidence_stream_redis_db  = local.evidence_stream_redis_db
+  evidence_stream_key       = local.evidence_stream_key
+  vllm_base_url             = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_reasoning_api_base   = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_fast_api_base        = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  guardrails_model_name     = var.served_model_fast
+  opa_url                   = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
+  governance_salt           = var.governance_salt
 
   # POAM-2026-080: only the advisor's mesh identity may call gated routes.
   # The gateway does not call itself, so its own identity is not listed.
