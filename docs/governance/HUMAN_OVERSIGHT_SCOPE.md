@@ -192,7 +192,14 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
 1. **Alert received:** DeferQueue Pub/Sub message triggers reviewer notification (email/Slack/PagerDuty)
 2. **Review window starts:** SLA timer starts from `escalated_at` timestamp
 3. **Reviewer accesses:** DeferQueue UI or API endpoint `GET /v1/hitl/queue/{trace_id}`
-4. **Reviewer evaluates:** Langfuse trace, governance decision rationale, amount/confidence
+4. **Reviewer evaluates:** Langfuse trace, governance decision rationale, amount/confidence,
+   and the **barrier preview**. Before the trade is parked, `run_pipeline()` previews every
+   phase-2 barrier side-effect-free (`phase2_mode()` → `PREVIEW` in
+   [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py)).
+   The DeferToken `opa_input_snapshot` records `barrier_preview` (`PASS` / `FAIL`) and
+   `barrier_preview_violations`, so the reviewer sees, for example, a fiscal-cap breach the
+   approved trade would hit. A barrier that would refuse outright (`HARD`, e.g. CBF or a dose
+   barrier) denies the request before it ever reaches a reviewer.
 5. **Reviewer decides:**
    - `OVERRIDE` — approve the previously blocked action; override is logged via `hitl_override_audit_span()`
    - `UPHOLD` — confirm the block; decision is logged
@@ -201,10 +208,11 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    consumes the quorum-approved `HITL_REQUIRED` token exactly once
    (`DeferQueue.consume_approval`) and runs `revalidate_post_hitl()` in
    [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
-   inside the gateway. Under the `POST_HITL` profile it re-runs **only OPA, CBF
-   and Fiscal** — the tiers most likely to drift during a HITL review window
-   (cash balance, spend and policy state may have changed). STPA, consensus,
-   causal, and FRIA tiers are **not** re-run (widening this is Phase 1).
+   inside the gateway. Under the `POST_HITL` profile it re-runs **OPA plus every
+   claiming phase-2 tier** (`cbf`, `fiscal` and any plugin barrier such as
+   healthcare `dose_barrier`) and commits them — the state most likely to drift
+   during a HITL review window (cash balance, spend and policy state may have
+   changed). STPA, consensus, causal, and FRIA tiers are **not** re-run.
 7. **Audit record persisted:** Override decision stored in Langfuse compliance project
 
 ---

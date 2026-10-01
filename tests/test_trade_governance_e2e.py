@@ -66,11 +66,13 @@ from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.consensus import extract_field_magnitude
+from src.gateway.governance.contracts import NarrowingResult
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.defer_queue import ApprovalRecord, DeferQueue
 from src.gateway.governance.evidence import stream as evidence_stream
 from src.gateway.governance.governance_envelope import unwrap_governance_envelope
 from src.gateway.governance.governor import governor as governor_mod
+from src.gateway.governance.governor import pipeline as pipeline_mod
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.narrower import NarrowerRegistry
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
@@ -220,13 +222,34 @@ def trade(amount: float, role: str = "senior", **extra: Any) -> dict[str, Any]:
     }
 
 
-def _classifier(*, narrow: bool = False) -> ClassificationEngine:
+def _classifier(*, narrow: bool = False, narrowers: list[Any] | None = None) -> ClassificationEngine:
     return ClassificationEngine(
-        narrower_registry=NarrowerRegistry(narrowers=[AmountNarrower()]),
+        narrower_registry=NarrowerRegistry(narrowers=narrowers or [AmountNarrower()]),
         confidence_threshold=0.95,
         defer_enabled=True,
         narrow_enabled=narrow,
         pause_enabled=False,
+    )
+
+
+def _build_governor(
+    policy: RegoMirrorPolicy,
+    cbf: ControlBarrierFunction,
+    fiscal_tier: FiscalTierPlugin,
+    classifier: ClassificationEngine,
+) -> SymbolicGovernor:
+    return make_governor(
+        opa=policy,
+        stpa_validator=STPAValidator(rules=UCA_RULES),
+        classifier=classifier,
+        domain_tiers=(
+            CBFTierPlugin(cbf),
+            fiscal_tier,
+            CausalTierPlugin(RiskGatekeeper()),
+            DoseBarrierTier(DoseLimitEngine()),
+        ),
+        safety_filter=cbf,
+        magnitude_extractor=extract_field_magnitude("amount"),
     )
 
 
@@ -273,19 +296,7 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
     fiscal = FiscalLimitGuard(fiscal_redis, daily_cap_usd=DAILY_CAP_USD)
     fiscal_tier = FiscalTierPlugin(fiscal)
     policy = RegoMirrorPolicy()
-    governor = make_governor(
-        opa=policy,
-        stpa_validator=STPAValidator(rules=UCA_RULES),
-        classifier=_classifier(),
-        domain_tiers=(
-            CBFTierPlugin(cbf),
-            fiscal_tier,
-            CausalTierPlugin(RiskGatekeeper()),
-            DoseBarrierTier(DoseLimitEngine()),
-        ),
-        safety_filter=cbf,
-        magnitude_extractor=extract_field_magnitude("amount"),
-    )
+    governor = _build_governor(policy, cbf, fiscal_tier, _classifier())
     governance_app.state.governor = governor
 
     actuate = AsyncMock(
@@ -570,24 +581,135 @@ async def test_s11_post_hitl_reruns_the_dose_barrier(gw: Gateway) -> None:
     assert any("DOSE_BARRIER_VIOLATED" in v for v in refused.value.violations)
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 2: phase-2 barriers previewed before HITL")
+# ---------------------------------------------------------------------------
+# Phase 2: phase-2 barriers previewed (never committed) before human approval
+# ---------------------------------------------------------------------------
+
+
+async def test_s1_clean_barrier_preview_is_recorded_for_the_reviewer(gw: Gateway) -> None:
+    body = _body(await gw.validate(trade(20_000.0)))
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert body["classification_meta"]["barrier_preview"] == "PASS"
+    assert body["classification_meta"]["barrier_preview_violations"] == []
+    token = await DeferQueue(gw.defer_redis).get(body["deferred_id"])
+    assert token is not None and token.opa_input_snapshot["barrier_preview"] == "PASS"
+    await _assert_nothing_committed(gw)
+
+
 async def test_s11_preview_surfaces_the_dose_barrier(gw: Gateway) -> None:
-    resp = await gw.validate({"dose_mg": 600, "confidence": 0.99}, action="administer_medication")
-    assert any("DOSE_BARRIER_VIOLATED" in str(v) for v in _body(resp).get("violations", []))
+    # FTRA: unregistered here → HITL; OPA allows the senior role. The HARD
+    # dose-barrier preview then denies before any token is parked.
+    params = {"dose_mg": 600, "confidence": 0.99, "trader_role": "senior", "amount": 0.0}
+    resp = await gw.validate(params, action="administer_medication")
+    assert resp.status_code == 403, resp.text
+    assert any("DOSE_BARRIER_VIOLATED" in str(v) for v in resp.json()["violations"])
+    assert await gw.parked_tokens() == []
+    await _assert_nothing_committed(gw)
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 2: phase-2 barriers previewed before HITL")
 async def test_s5_fiscal_breach_surfaces_before_human_review(gw: Gateway) -> None:
+    # OPA MANUAL_REVIEW + FTRA out of envelope: approval is pending, so the
+    # fiscal barrier is previewed. Its breach is NARROWABLE, not HARD (D-A):
+    # the request still goes to a human, who is told it would breach the cap.
     resp = await gw.validate(trade(600_000.0))
-    assert resp.status_code == 403
-    assert any("FISCAL_LIMIT_EXCEEDED" in str(v) for v in _body(resp).get("violations", []))
+    assert resp.status_code == 200, resp.text
+    body = _body(resp)
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert body["deferred_id"]
+    assert any("FISCAL_LIMIT_EXCEEDED" in str(v) for v in body["violations"])
+    meta = body["classification_meta"]
+    assert meta["barrier_preview"] == "FAIL"
+    assert [v["code"] for v in meta["barrier_preview_violations"]] == ["FISCAL_LIMIT_EXCEEDED"]
+    await _assert_nothing_committed(gw)
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 2: sealed NARROW re-run in the committing path")
+@pytest.mark.xfail(strict=True, reason="Phase 3: AmountNarrower needs the fiscal bound hint")
 async def test_s10_autonomous_trade_is_narrowed_to_the_remaining_cap(gw: Gateway) -> None:
+    gw.governor = _build_governor(gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True))
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
     result = await gw.execute(trade(4_000.0))
     assert result.startswith("EXECUTED: AAPL x 3000.0"), result
+
+
+# ---------------------------------------------------------------------------
+# Committing-path NARROW (govern): re-run sealed on clamped params + receipt.
+# A headroom-aware stub narrower stands in for Phase 3's bound hint.
+# ---------------------------------------------------------------------------
+
+
+class HeadroomNarrower:
+    """Clamps a fiscal breach to a fixed amount the test knows fits (or not)."""
+
+    def __init__(self, clamp_to: float) -> None:
+        self.clamp_to = clamp_to
+
+    def can_narrow(self, violation: Any, action: str, params: dict[str, Any]) -> bool:
+        return violation.code == "FISCAL_LIMIT_EXCEEDED" and float(params["amount"]) > self.clamp_to
+
+    def narrow(self, violation: Any, action: str, params: dict[str, Any]) -> NarrowingResult:
+        return NarrowingResult(
+            can_narrow=True,
+            narrowed_params={**params, "amount": self.clamp_to},
+            constraints_applied=[f"amount <= {self.clamp_to}"],
+            narrowing_reason="clamped to the remaining daily cap",
+        )
+
+
+def _narrowing(gw: Gateway, clamp_to: float) -> None:
+    gw.governor = _build_governor(
+        gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True, narrowers=[HeadroomNarrower(clamp_to)])
+    )
+
+
+async def _receipts(gw: Gateway) -> list[Any]:
+    return await gw.seal_redis.keys("narrow:receipt:*")
+
+
+async def test_committing_run_seals_and_executes_the_narrowed_trade(gw: Gateway) -> None:
+    _narrowing(gw, 3_000.0)
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
+
+    result = await gw.execute(trade(4_000.0))
+
+    assert result.startswith("EXECUTED: AAPL x 3000.0"), result
+    assert await gw.fiscal.current_spend_usd() == DAILY_CAP_USD
+    assert await gw.cash() == OPENING_CASH - 3_000.0
+    assert gw.actuate.await_args.args[0].params["amount"] == 3_000.0
+    assert await _receipts(gw) == []  # fetched and burned
+
+
+async def test_narrowed_params_that_still_breach_are_denied_and_commit_nothing(gw: Gateway) -> None:
+    _narrowing(gw, 3_500.0)  # still over the $3,000 headroom: the re-run refuses
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
+
+    assert (await gw.execute(trade(4_000.0))).startswith("BLOCKED")
+    assert await gw.fiscal.current_spend_usd() == 497_000.0
+    assert await gw.cash() == OPENING_CASH
+    assert await _receipts(gw) == []
+    gw.actuate.assert_not_awaited()
+
+
+async def test_undeliverable_narrow_receipt_rolls_the_commits_back(
+    gw: Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _narrowing(gw, 3_000.0)
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
+
+    async def _down(*_: Any, **__: Any) -> None:
+        raise ConnectionError("redis unreachable")
+
+    monkeypatch.setattr(gw.seal_redis, "setex", _down)
+    assert (await gw.execute(trade(4_000.0))).startswith("BLOCKED")
+    assert await gw.fiscal.current_spend_usd() == 497_000.0
+    assert await gw.cash() == OPENING_CASH
+    gw.actuate.assert_not_awaited()
+
+
+async def test_committing_run_without_narrowing_enabled_denies(gw: Gateway) -> None:
+    await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
+    assert (await gw.execute(trade(4_000.0))).startswith("BLOCKED")
+    assert await gw.fiscal.current_spend_usd() == 497_000.0
+    assert await _receipts(gw) == []
 
 
 # ---------------------------------------------------------------------------
@@ -653,3 +775,14 @@ async def test_mutation_without_the_consumption_cas_replay_executes_twice(
     results = await _replay_concurrently(gw)
     with pytest.raises(AssertionError):
         _assert_single_execution(results, await gw.fiscal.current_spend_usd())
+
+
+async def test_mutation_skipping_the_pending_approval_preview_hides_the_breach(
+    gw: Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _no_preview(*_: Any, **__: Any) -> tuple[list[Any], list[Any]]:
+        return [], []
+
+    monkeypatch.setattr(pipeline_mod, "_preview_mutating", _no_preview)
+    with pytest.raises(AssertionError):
+        await test_s5_fiscal_breach_surfaces_before_human_review(gw)

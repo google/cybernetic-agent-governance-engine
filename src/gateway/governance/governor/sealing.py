@@ -21,7 +21,7 @@ force only once the seal is issued; any other exit rolls them all back.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from src.gateway.governance.governor.errors import GovernanceError
@@ -36,13 +36,21 @@ from src.gateway.governance.governor.verdicts import issue_seal
 
 
 async def run_sealed(
-    stages: Sequence[Stage], ctx: StageContext, params: dict[str, Any], *, path: str
+    stages: Sequence[Stage],
+    ctx: StageContext,
+    params: dict[str, Any],
+    *,
+    path: str,
+    on_seal: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[PipelineResult, str | None]:
     """Run ``ctx.profile`` and seal ``params`` if the run is clean.
 
     Returns ``(result, None)`` when the run has violations (nothing stays
     committed).  A failing seal or a cancellation propagates after the scope
-    has rolled every commit back.
+    has rolled every commit back.  ``on_seal(seal)`` runs inside the scope
+    before the commits are kept: if it raises, they are rolled back and the
+    error propagates, so a seal whose companion artefact (e.g. a NARROW
+    receipt) could not be delivered never holds reserved headroom.
     """
     async with ReservationScope() as scope:
         result = await run_pipeline(stages, ctx, profile=ctx.profile, scope=scope)
@@ -50,6 +58,8 @@ async def run_sealed(
             assert_nothing_committed(result)
             return result, None
         seal = await issue_seal(ctx.action, params, path=path)
+        if on_seal is not None:
+            await on_seal(seal)
         scope.seal_issued(seal)
         return result, seal
 

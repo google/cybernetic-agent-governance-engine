@@ -152,6 +152,9 @@ async def _park_defer_context(
         "metadata": metadata or {},
         "violations": [str(v) for v in violations],
         "classification_reason": classification_meta.get("classification_reason", ""),
+        # What the reviewer was told the approved request would hit (Phase-2 preview).
+        "barrier_preview": classification_meta.get("barrier_preview"),
+        "barrier_preview_violations": classification_meta.get("barrier_preview_violations", []),
     }
 
     token = DeferToken(
@@ -188,6 +191,12 @@ async def handle_require_approval(
     approve (``DeferQueue.approve``) and the committing run consumes. It is
     ``None`` when the token could not be persisted: such a request can never
     be approved, so the caller must treat it as refused.
+
+    ``violations`` include what the phase-2 barriers reported when previewed
+    (never committed) before approval, and ``classification_meta`` carries
+    ``barrier_preview`` (``PASS``/``FAIL``) with ``barrier_preview_violations``
+    so the reviewer sees, e.g., that the trade would breach the daily cap. A
+    HARD preview never reaches here: it is classified DENY first.
     """
     from src.gateway.governance.defer_queue import DeferReason
 

@@ -16,7 +16,7 @@ import dataclasses
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from src.gateway.governance.contracts import (
@@ -62,7 +62,8 @@ class Stage(Protocol):
     """A pipeline stage.  Instances are shared across concurrent requests.
 
     Read-only stages implement ``run()``.  Mutating stages implement
-    ``preview()`` (side-effect-free, used under DRY_RUN), ``commit()`` and
+    ``preview()`` (side-effect-free: used under DRY_RUN and whenever phase 1
+    left only non-HARD findings, see :func:`phase2_mode`), ``commit()`` and
     ``rollback()``.  A stage must never keep per-request state such as a
     ``CommitReceipt`` on itself; the request's ``ReservationScope`` holds them.
     """
@@ -72,7 +73,7 @@ class Stage(Protocol):
 
     async def run(self, ctx: StageContext) -> list[Violation]: ...
 
-    # Mutating stages only: side-effect-free stand-in for commit() under DRY_RUN.
+    # Mutating stages only: side-effect-free stand-in for commit() (Phase2Mode.PREVIEW).
     async def preview(self, ctx: StageContext) -> list[Violation]: ...
 
     # Mutating stages only.  The receipt is not None iff state was mutated.
@@ -80,6 +81,21 @@ class Stage(Protocol):
 
     # Mutating stages only: undo exactly what ``receipt`` records.
     async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None: ...
+
+
+class Phase2Mode(StrEnum):
+    """How the mutating (phase-2) stages are driven once phase 1 has run."""
+
+    SKIP = "SKIP"  # phase 1 refused (HARD): nothing a barrier says can change that
+    PREVIEW = "PREVIEW"  # side-effect-free preview(): DRY_RUN, or approval pending
+    COMMIT = "COMMIT"  # phase 1 clean under a committing profile
+
+
+class BarrierPreview(StrEnum):
+    """Outcome of previewing the phase-2 barriers (``PipelineResult.barrier_preview``)."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
 
 
 @dataclass(frozen=True)
@@ -92,6 +108,11 @@ class PipelineResult:
     # Receipts still outstanding when the pipeline returns (empty after a
     # rollback).  The caller's ReservationScope undoes them unless it is sealed.
     commits: tuple[tuple[Stage, CommitReceipt], ...] = ()
+    # Set iff claimed phase-2 stages answered through preview(); None when they
+    # committed, were skipped, or none claimed the action.
+    barrier_preview: BarrierPreview | None = None
+    # The subset of ``violations`` those previews reported.
+    preview_violations: tuple[Violation, ...] = ()
 
 
 #: Read-only stages re-run after human approval (TOCTOU): policy may have
@@ -111,6 +132,27 @@ def stage_runs_under(profile: Profile, *, name: str, mutating: bool) -> bool:
     if profile == Profile.POST_HITL:
         return mutating or name in POST_HITL_READ_ONLY_STAGES
     return True
+
+
+def phase2_mode(profile: Profile, phase1_kinds: Iterable[ViolationKind]) -> Phase2Mode:
+    """The phase-2 gate: decided by the *kinds* phase 1 reported, never by tier.
+
+    * any HARD → SKIP: the request is refused whatever the barriers say;
+    * no violations → COMMIT (DRY_RUN: PREVIEW, it never commits);
+    * only non-HARD (HITL, NARROWABLE, DEFERRABLE …) → PREVIEW. The request
+      will not be sealed now (``run_sealed`` refuses any violation), so
+      committing would reserve headroom for nothing; previewing lets a barrier
+      that would refuse anyway deny it *before* a human is asked (a HARD
+      preview) or tell the reviewer what it would breach.
+
+    Mirrors ``proof/model.py::phase2_mode`` (``tests/test_formal_profile_parity.py``).
+    """
+    kinds = set(phase1_kinds)
+    if ViolationKind.HARD in kinds:
+        return Phase2Mode.SKIP
+    if kinds or profile == Profile.DRY_RUN:
+        return Phase2Mode.PREVIEW
+    return Phase2Mode.COMMIT
 
 
 def _claims_failure(stage: Stage, exc: Exception) -> Violation:
@@ -140,9 +182,12 @@ async def run_pipeline(
 ) -> PipelineResult:
     """Run ``profile``'s stages over ``ctx``.
 
-    Mutating commits go through ``scope``, which the caller owns: the commits
-    stay in force only if the caller issues a seal inside the scope.  On the
-    first mutating violation the scope is rolled back here.
+    Phase 2 is gated by :func:`phase2_mode`: skipped after a HARD finding,
+    previewed (never committed) after only non-HARD findings or under
+    DRY_RUN, and committed only over a clean phase 1.  Mutating commits go
+    through ``scope``, which the caller owns: the commits stay in force only
+    if the caller issues a seal inside the scope.  On the first mutating
+    violation the scope is rolled back here.
     """
     _check_scope(profile, scope)
     span = trace.get_current_span()
@@ -238,56 +283,39 @@ async def run_pipeline(
             # Stop at the first HARD violation
             break
             
-    # Check if there are ANY violations from read-only stages
-    has_violations = len(violations) > 0
-    
-    # c. Mutating stages run ONLY if (b) produced zero violations
-    if not has_violations:
-        if profile == Profile.DRY_RUN:
-            # DRY_RUN never calls a mutating stage's commit(); it calls the
-            # side-effect-free preview() so verify() reports the refusal a live
-            # commit would produce.  Nothing is committed, so nothing to roll back.
-            for stage in mutating:
-                preview = getattr(stage, "preview", None)
-                if id(stage) in claim_failures:
-                    stage_violations = [claim_failures[id(stage)]]
-                elif preview is None:
-                    # Can't predict this commit: say so rather than report ALLOW.
-                    stage_violations = [Violation(
-                        tier=stage.name,
-                        code="PREVIEW_UNAVAILABLE",
-                        message=f"{stage.name} cannot be previewed; dry run cannot vouch for it",
-                        kind=ViolationKind.HARD,
-                    )]
-                else:
-                    stage_violations = await preview(current_ctx)
-                if stage_violations:
-                    violations.extend(stage_violations)
-                    tier_failures.append(GovernanceTierFailure(
-                        tier=stage.name,
-                        control_id=stage_violations[0].code,
-                        rule_description=stage_violations[0].message,
-                    ))
-                    break
-        else:
-            # Commit mutating stages in order.  The scope records every receipt
-            # (even one returned alongside violations) and, if this coroutine
-            # is cancelled, undoes them on exit.
-            if scope is None:  # unreachable after _check_scope; never commit unowned
-                raise ValueError(f"profile {profile} requires a ReservationScope")
-            for stage in mutating:
-                stage_violations = await commit_stage(scope, stage, current_ctx)
-                if stage_violations:
-                    violations.extend(stage_violations)
-                    # e. A CBF/domain commit is a violation whenever it reports not committed
-                    tier_failures.append(GovernanceTierFailure(
-                        tier=stage.name,
-                        control_id=stage_violations[0].code,
-                        rule_description=stage_violations[0].message
-                    ))
-                    violations.extend(await scope.rollback())
-                    break
-                committed_stages.append(stage.name)
+    # c. Phase 2, gated on the kinds phase 1 reported (phase2_mode).
+    mode = phase2_mode(profile, (v.kind for v in violations))
+    span.set_attribute("governance.phase2_mode", mode.value)
+    barrier_preview: BarrierPreview | None = None
+    preview_violations: list[Violation] = []
+
+    if mode == Phase2Mode.PREVIEW:
+        # Nothing is committed (DRY_RUN, or a request that cannot be sealed
+        # now), so nothing to roll back.  ``scope`` stays untouched: a run_sealed
+        # caller sees no commits and refuses the seal on the violations.
+        preview_violations, preview_failures = await _preview_mutating(
+            mutating, current_ctx, claim_failures
+        )
+        violations.extend(preview_violations)
+        tier_failures.extend(preview_failures)
+        if mutating:
+            barrier_preview = BarrierPreview.FAIL if preview_violations else BarrierPreview.PASS
+            span.set_attribute("governance.barrier_preview", barrier_preview.value)
+    elif mode == Phase2Mode.COMMIT:
+        # Commit mutating stages in order.  The scope records every receipt
+        # (even one returned alongside violations) and, if this coroutine
+        # is cancelled, undoes them on exit.
+        if scope is None:  # unreachable after _check_scope; never commit unowned
+            raise ValueError(f"profile {profile} requires a ReservationScope")
+        for stage in mutating:
+            stage_violations = await commit_stage(scope, stage, current_ctx)
+            if stage_violations:
+                violations.extend(stage_violations)
+                # e. A CBF/domain commit is a violation whenever it reports not committed
+                tier_failures.append(_tier_failure(stage, stage_violations))
+                violations.extend(await scope.rollback())
+                break
+            committed_stages.append(stage.name)
 
     return PipelineResult(
         violations=tuple(violations),
@@ -296,4 +324,52 @@ async def run_pipeline(
         ftra=ftra_result,
         committed_stages=tuple(committed_stages),
         commits=scope.commits if scope is not None else (),
+        barrier_preview=barrier_preview,
+        preview_violations=tuple(preview_violations),
     )
+
+
+def _tier_failure(stage: Stage, stage_violations: list[Violation]) -> GovernanceTierFailure:
+    return GovernanceTierFailure(
+        tier=stage.name,
+        control_id=stage_violations[0].code,
+        rule_description=stage_violations[0].message,
+    )
+
+
+async def _preview_mutating(
+    mutating: Sequence[Stage],
+    ctx: StageContext,
+    claim_failures: Mapping[int, Violation],
+) -> tuple[list[Violation], list[GovernanceTierFailure]]:
+    """Ask every mutating stage what its ``commit()`` would say; change nothing.
+
+    Never calls ``commit()``.  A stage that cannot be previewed is a HARD
+    ``PREVIEW_UNAVAILABLE``: an unpredictable commit is not vouched for.
+    Previewing stops at the first HARD finding (the request is refused) but
+    continues past non-HARD ones, so a later barrier that would refuse
+    outright still denies before a human is asked, and the reviewer sees
+    every breach the approved request would hit.
+    """
+    violations: list[Violation] = []
+    failures: list[GovernanceTierFailure] = []
+    for stage in mutating:
+        preview = getattr(stage, "preview", None)
+        if id(stage) in claim_failures:
+            stage_violations = [claim_failures[id(stage)]]
+        elif preview is None:
+            stage_violations = [Violation(
+                tier=stage.name,
+                code="PREVIEW_UNAVAILABLE",
+                message=f"{stage.name} cannot be previewed; dry run cannot vouch for it",
+                kind=ViolationKind.HARD,
+            )]
+        else:
+            stage_violations = await preview(ctx)
+        if not stage_violations:
+            continue
+        violations.extend(stage_violations)
+        failures.append(_tier_failure(stage, stage_violations))
+        if any(v.kind == ViolationKind.HARD for v in stage_violations):
+            break
+    return violations, failures

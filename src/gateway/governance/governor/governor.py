@@ -41,6 +41,7 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.narrow_receipt import issue_narrow_receipt
 from src.gateway.governance.governor.pipeline import (
     PipelineResult,
     Profile,
@@ -163,7 +164,7 @@ class SymbolicGovernor:
                 ),
                 action,
             )
-            meta = {**_ftra_meta(result), **classification.metadata}
+            meta = {**_ftra_meta(result), **_barrier_meta(result), **classification.metadata}
             span.set_attribute(
                 "cage.governance.classification_decision", classification.decision.value
             )
@@ -248,6 +249,13 @@ class SymbolicGovernor:
         )
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
+        """The committing run: commit phase 2 and seal, or refuse.
+
+        Returns the seal. When the run refuses with only NARROWABLE findings
+        and a narrower proposes clamped params, the seal covers *those*
+        params instead (see :meth:`_sealed_narrow`) and a NARROW receipt
+        names them. Any other refusal raises ``GovernanceError``.
+        """
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
@@ -258,10 +266,65 @@ class SymbolicGovernor:
             ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
             result, seal = await run_sealed(self.stages, ctx, params, path="govern")
             if seal is None:
-                await _deny(tool_name, params, result)
+                seal = await self._sealed_narrow(tool_name, params, result)
             span.set_attribute("cage.seal_issued", True)
             span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
             return seal
+
+    async def _sealed_narrow(
+        self, action: str, params: dict[str, Any], result: PipelineResult
+    ) -> str:
+        """Seal a narrower's proposal in the committing path, or deny.
+
+        proof/model.py NARROW: (a) every violation NARROWABLE and (b) a
+        narrower proposal — both decided by the classifier — and (c) the
+        clamped params pass a fresh FULL run, which commits and seals them.
+        The re-run is never classified, so the narrower runs once. The NARROW
+        receipt is stored inside that run's ``ReservationScope``: if it
+        cannot be stored, the commits are rolled back and the request denied.
+        """
+        classification = self._components.classifier.classify(
+            ClassificationContext(
+                violations=list(result.violations),
+                confidence=reported_confidence(params),
+                opa_decision=result.opa_verdict.value if result.opa_verdict else None,
+                policy_ambiguous=False,
+                params=params,
+            ),
+            action,
+        )
+        proposal = classification.metadata.get("narrowed_params")
+        if classification.decision != GovernanceDecision.NARROW or not isinstance(proposal, dict):
+            await _deny(action, params, result)
+        narrowed = copy.deepcopy(proposal)  # the exact params the seal and receipt name
+
+        async def _deliver(seal: str) -> None:
+            await issue_narrow_receipt(
+                seal,
+                narrowed,
+                constraints_applied=classification.metadata.get("constraints_applied", []),
+                narrowing_reason=str(classification.metadata.get("narrowing_reason", "")),
+            )
+
+        ctx = StageContext(action=action, params=copy.deepcopy(narrowed), profile=Profile.FULL)
+        rerun, seal = await run_sealed(
+            self.stages, ctx, narrowed, path="govern_narrow", on_seal=_deliver
+        )
+        span = trace.get_current_span()
+        span.set_attribute("cage.governance.narrow_reverified", seal is not None)
+        if seal is None:
+            await handle_deny(
+                action,
+                narrowed,
+                list(rerun.violations),
+                list(rerun.tier_failures),
+                {**_ftra_meta(rerun), "classification_reason": "narrow_reverification_failed"},
+            )
+            raise GovernanceError(
+                f"handle_deny returned without raising; refusing {action}"
+            )  # fail closed
+        span.set_attribute("cage.verdict", GovernanceDecision.NARROW)
+        return seal
 
     async def revalidate_post_hitl(
         self, action: str, params: dict[str, Any], *, trace_id: str | None = None
@@ -411,4 +474,21 @@ def _ftra_meta(result: Any) -> dict[str, Any]:
             result.ftra.registry_state.value if result.ftra.registry_state else None
         ),
         "ftra_auto_cleared": result.ftra.auto_cleared,
+    }
+
+
+def _barrier_meta(result: PipelineResult) -> dict[str, Any]:
+    """What the phase-2 preview said, for the reviewer (absent if none ran).
+
+    ``barrier_preview`` is ``PASS`` or ``FAIL``; on ``FAIL`` the breaches an
+    approved request would hit are listed (e.g. "would breach daily cap").
+    """
+    if result.barrier_preview is None:
+        return {}
+    return {
+        "barrier_preview": result.barrier_preview.value,
+        "barrier_preview_violations": [
+            {"tier": v.tier, "code": v.code, "kind": v.kind.value, "message": v.message}
+            for v in result.preview_violations
+        ],
     }
