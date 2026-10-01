@@ -111,6 +111,22 @@ component-definition:
                 given against PASS meets barriers that now refuse; no routing seal is minted and
                 phase-2 commits are rolled back. Verified by tests/test_trade_governance_e2e.py
                 (D-H scenarios) against real DeferQueue, CBF and fiscal state in fakeredis.
+
+                Single-commit execution and advisory narrowing (Phases 2–3, 2026-10-01):
+                Pre-flight validation (SymbolicGovernor.validate_action in
+                src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
+                mutates no state, and mints no GovernanceSeal. When an action requires human
+                approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken
+                (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
+                execute_trade_action(..., deferred_id=...) (src/governed_financial_advisor/tools/trades.py)
+                is the sole committing path, consuming the approved token atomically via
+                DeferQueue.consume_approval() and running SymbolicGovernor.revalidate_post_hitl()
+                inside src/gateway/server/governance_middleware.py (enforce_approved_governance).
+                When narrowing is enabled, any narrow_hint / narrowed_params attached to a
+                REQUIRE_APPROVAL verdict is purely advisory: it is dry-run re-verified before
+                surfacing (_reverified_narrow_hint) and re-verified in full by the single
+                committing run (_sealed_narrow with tamper-evident issue_narrow_receipt in
+                src/gateway/governance/narrow_receipt.py inside ReservationScope).
               props:
                 - name: implementation-status
                   value: implemented
@@ -575,17 +591,25 @@ component-definition:
                 domain OPA policy (src/cage_finance/opa/trade_governance.rego); injection is
                 mitigated by NeMo/AGP rails generated from UCA-7
                 (config/rails/generated_stpa_rails.co, config/agp/generated_semantic_policy.txt).
-                Multi-critic consensus evaluation in src/gateway/governance/consensus/engine.py
-                enforces strict critic vote parsing (_parse_critic_vote), per-critic context_keys
-                parameter allowlisting, RFC 8785 canonical JSON parameter delimiting
-                (<params_json>...</params_json>), and pinned gateway prompt fields (role, action,
-                action_type, magnitude) so untrusted agent parameters cannot override critic
-                instructions or induce fail-open vote misinterpretation (POAM-2026-081).
-                The FTRA terminal registry's manifest_sha256 (registry_digest in
-                src/gateway/governance/ftra/classifier.py) covers the autonomous_envelope together
-                with the terminals, so a tampered ceiling fails the load-time integrity check; an
-                envelope without a digest, or with a non-finite, non-positive or malformed
-                max_magnitude, refuses to load.
+                Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews
+                every claiming phase-2 mutating barrier side-effect-free (Phase2Mode.PREVIEW /
+                _preview_mutating in src/gateway/governance/governor/pipeline.py): a HARD barrier
+                breach (such as CBF_BARRIER_VIOLATED) denies the request before a human reviewer
+                is paged (hard_preview_denies_before_hitl in proof/model.py), while a NARROWABLE
+                barrier breach (such as FISCAL_LIMIT_EXCEEDED) records barrier_preview=FAIL and
+                barrier_preview_violations with Violation.bound (src/gateway/governance/contracts.py)
+                on the DeferToken snapshot without holding a Redis reservation across human review
+                time (PREVIEW_IS_PURE). Multi-critic consensus evaluation in
+                src/gateway/governance/consensus/engine.py enforces strict critic vote parsing
+                (_parse_critic_vote), per-critic context_keys parameter allowlisting, RFC 8785
+                canonical JSON parameter delimiting (<params_json>...</params_json>), and pinned
+                gateway prompt fields (role, action, action_type, magnitude) so untrusted agent
+                parameters cannot override critic instructions or induce fail-open vote
+                misinterpretation (POAM-2026-081). The FTRA terminal registry's manifest_sha256
+                (registry_digest in src/gateway/governance/ftra/classifier.py) covers the
+                autonomous_envelope together with the terminals, so a tampered ceiling fails the
+                load-time integrity check; an envelope without a digest, or with a non-finite,
+                non-positive or malformed max_magnitude, refuses to load.
               props:
                 - name: implementation-status
                   value: implemented
@@ -604,9 +628,18 @@ component-definition:
                 src/gateway/governance/ftra/models.py): FTRA_REGISTERED_IRREVERSIBLE,
                 FTRA_REGISTERED_EXTERNALLY_REVERSIBLE, FTRA_UNREGISTERED_ACTION and
                 FTRA_REGISTRY_ENTRY_INVALID require human approval; FTRA_REGISTRY_UNAVAILABLE
-                (unreadable registry) is a HARD deny. Post-approval re-validation runs OPA plus
-                every claiming phase-2 barrier (stage_runs_under in
-                src/gateway/governance/governor/pipeline.py; proved in proof/model.py).
+                (unreadable registry) is a HARD deny. Pre-flight validation
+                (SymbolicGovernor.validate_action in src/gateway/governance/governor/governor.py)
+                runs under Profile.DRY_RUN, mints no seal, and parks REQUIRE_APPROVAL verdicts as
+                DeferReason.HITL_REQUIRED tokens in DeferQueue returning deferred_id. A single
+                committing run executes per trade: execute_trade_action(..., deferred_id=...)
+                consumes the approval atomically via DeferQueue.consume_approval() and invokes
+                SymbolicGovernor.revalidate_post_hitl() under Profile.POST_HITL (stage_runs_under
+                in src/gateway/governance/governor/pipeline.py; proved in proof/model.py). Any
+                narrow_hint / narrowed_params attached to REQUIRE_APPROVAL is advisory, dry-run
+                re-verified before surfacing (_reverified_narrow_hint) and re-verified in full by
+                the committing run (_sealed_narrow with issue_narrow_receipt inside
+                ReservationScope).
               props:
                 - name: implementation-status
                   value: implemented
