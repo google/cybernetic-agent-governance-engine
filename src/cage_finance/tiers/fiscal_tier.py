@@ -20,7 +20,9 @@ from src.gateway.governance.contracts import (
     Violation,
     ViolationKind,
 )
+from src.cage_finance.invariants import finance_cost_resolver
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.cage_finance.tiers.cbf_tier import CostResolver
 
 
 class FiscalTierPlugin(GovernanceTierPlugin):
@@ -28,10 +30,18 @@ class FiscalTierPlugin(GovernanceTierPlugin):
 
     Stateless across requests: the ``ReservationToken`` from ``commit()`` is
     returned in the ``CommitReceipt`` and handed back to ``rollback()``.
+
+    Claims by cost (any action with a positive cash cost counts against the
+    daily cap) and reserves that same cost.
     """
 
-    def __init__(self, guard: FiscalLimitGuard):
+    def __init__(
+        self,
+        guard: FiscalLimitGuard,
+        cost_resolver: CostResolver = finance_cost_resolver,
+    ):
         self.guard = guard
+        self._cost = cost_resolver
 
     @property
     def tier_name(self) -> str:
@@ -46,11 +56,11 @@ class FiscalTierPlugin(GovernanceTierPlugin):
         return 4
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action == "execute_trade"
+        return self._cost(action, params) > 0
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); reserves nothing."""
-        amount = float(params.get("amount", 0.0))
+        amount = self._cost(action, params)
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
         if await self.guard.would_accept(amount_usd=amount):
             return []
@@ -59,7 +69,7 @@ class FiscalTierPlugin(GovernanceTierPlugin):
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        amount = float(params.get("amount", 0.0))
+        amount = self._cost(action, params)
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)

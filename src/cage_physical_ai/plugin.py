@@ -44,6 +44,7 @@ from src.cage_physical_ai.tiers.physical_consensus_tier import (
     build_physical_consensus_contribution,
 )
 from src.cage_physical_ai.tools.tool_provider import PhysicalAIToolProvider
+from src.gateway.governance.consensus.engine import extract_field_magnitude
 from src.gateway.governance.contracts import (
     CagePlugin,
     DomainConfig,
@@ -96,6 +97,7 @@ class PhysicalAICagePlugin(CagePlugin):
                 cbf=(spatial_cbf, velocity_cbf, torque_cbf),
             ),
             invariants=(spatial_barrier, velocity_barrier, torque_barrier),
+            magnitude_extractor=extract_field_magnitude("velocity_m_s"),
             safety_filter=spatial_cbf,
             ground_truth_providers={
                 spatial_barrier.invariant_id: spatial_provider,

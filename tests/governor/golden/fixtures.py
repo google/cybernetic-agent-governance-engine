@@ -35,7 +35,11 @@ from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter, Violation, ViolationKind
-from src.gateway.governance.ftra.models import FtraBoundaryResult, TerminalClassification
+from src.gateway.governance.ftra.models import (
+    FtraBoundaryResult,
+    RegistryState,
+    TerminalClassification,
+)
 from src.gateway.governance.stpa_validator import STPAValidator
 from src.gateway.governance.narrower import Narrower, NarrowerRegistry, NarrowingResult
 from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -221,17 +225,11 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
             bypassed_ftra_node=False,
         )
     else:
-        req_hitl = scenario.ftra_classification in (
-            TerminalClassification.IRREVERSIBLE_TERMINAL,
-            TerminalClassification.EXTERNALLY_REVERSIBLE,
-        )
-        ftra_res = FtraBoundaryResult(
-            requires_hitl=req_hitl,
-            irreversibility_score=1.0 if req_hitl else 0.0,
-            classification=scenario.ftra_classification.value,
-            terminal_match=scenario.action if req_hitl else None,
-            violations=[Violation(tier="ftra", code="FTRA_IRREVERSIBLE", message=f"FTRA Boundary Check: Action '{scenario.action}' is classified as {scenario.ftra_classification.value}", kind=ViolationKind.HITL)] if req_hitl else [],
-            bypassed_ftra_node=False,
+        # Golden scenarios model registered actions outside any autonomous envelope.
+        ftra_res = FtraBoundaryResult.from_classification(
+            scenario.ftra_classification,
+            scenario.action,
+            registry_state=RegistryState.REGISTERED,
         )
     mock_ftra_check = AsyncMock(return_value=ftra_res)
     from src.gateway.governance.governor.stages.ftra import FtraStage

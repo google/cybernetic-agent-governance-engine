@@ -18,11 +18,22 @@ from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.agent_confidence import reported_confidence
 from src.gateway.governance.contracts import Violation, ViolationKind
-from src.gateway.governance.ftra.models import FtraBoundaryResult, TerminalClassification
+from src.gateway.governance.ftra.autonomy import (
+    MagnitudeExtractor,
+    conditional_clear_reason,
+    safe_magnitude,
+)
+from src.gateway.governance.ftra.models import (
+    FtraBoundaryResult,
+    RegistryState,
+    TerminalClassification,
+)
 from src.gateway.governance.ftra.semantic_validator import validate_tool_input
 from src.gateway.governance.governor.metrics import GovernorMetrics, governor_metrics
 from src.gateway.governance.governor.pipeline import Stage, StageContext
+from src.gateway.governance.schemas.thresholds import get_fria_zone_allow
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -30,15 +41,28 @@ OBSERVATION_NAME = "observation.name"
 
 
 class FtraStage(Stage):
+    """Stage for FTRA boundary check.
+
+    Classifies the action against the active domain's terminal registry and,
+    for a registered terminal with an autonomous envelope, applies the
+    conditional-FTRA predicate (``autonomy.conditional_clear_reason``) using
+    the domain's ``magnitude_extractor`` and the agent's reported confidence.
+    Without an extractor no magnitude is known, so nothing clears.
+    """
+
     result: FtraBoundaryResult | None = None
-    """Stage for FTRA boundary check."""
 
     name: str = "ftra"
     mutating: bool = False
 
-    def __init__(self, metrics: GovernorMetrics | None = None) -> None:
+    def __init__(
+        self,
+        metrics: GovernorMetrics | None = None,
+        magnitude_extractor: MagnitudeExtractor | None = None,
+    ) -> None:
         self._ftra_classifier = None
         self._metrics = metrics if metrics is not None else governor_metrics()
+        self._magnitude_extractor = magnitude_extractor
 
     def _get_ftra_classifier(self) -> Any:
         if self._ftra_classifier is None:
@@ -89,23 +113,14 @@ class FtraStage(Stage):
                     )
 
                 classifier = self._get_ftra_classifier()
-                classification = classifier.classify(tool_name)
-
-                in_registry = tool_name in classifier.known_actions()
+                provenance = classifier.classify_with_provenance(tool_name)
+                classification = provenance.classification
+                registry_state = provenance.registry_state
 
                 bypassed_ftra_node = (
                     detect_bypass
                     and classification == TerminalClassification.IRREVERSIBLE_TERMINAL
                 )
-
-                if bypassed_ftra_node:
-                    logger.warning(
-                        "⚠️ FTRA Boundary Check: Action '%s' classified as "
-                        "IRREVERSIBLE_TERMINAL at controller boundary. "
-                        "This may indicate direct HTTP bypass of in-graph ftra_node. "
-                        "Routing to HITL for human review.",
-                        tool_name,
-                    )
 
                 if not semantic_result.is_valid:
                     logger.warning(
@@ -119,14 +134,32 @@ class FtraStage(Stage):
                         semantic_result=semantic_result,
                         action_name=tool_name,
                         classification=classification,
-                        in_registry=in_registry,
+                        registry_state=registry_state,
                     )
                 else:
+                    clear_reason = conditional_clear_reason(
+                        classification=classification,
+                        registry_state=registry_state,
+                        envelope=provenance.envelope,
+                        magnitude=safe_magnitude(self._magnitude_extractor, tool_input),
+                        confidence=reported_confidence(tool_input),
+                        confidence_floor=get_fria_zone_allow(),
+                    )
                     result = FtraBoundaryResult.from_classification(
                         classification=classification,
                         action_name=tool_name,
-                        in_registry=in_registry,
+                        registry_state=registry_state,
                         bypassed_ftra_node=bypassed_ftra_node,
+                        clear_reason=clear_reason,
+                    )
+
+                if result.bypassed_ftra_node:
+                    logger.warning(
+                        "⚠️ FTRA Boundary Check: Action '%s' classified as "
+                        "IRREVERSIBLE_TERMINAL at controller boundary. "
+                        "This may indicate direct HTTP bypass of in-graph ftra_node. "
+                        "Routing to HITL for human review.",
+                        tool_name,
                     )
 
                 span.set_attribute("cage.ftra.classification", result.classification)
@@ -134,7 +167,10 @@ class FtraStage(Stage):
                     "cage.ftra.irreversibility_score", result.irreversibility_score
                 )
                 span.set_attribute("cage.ftra.requires_hitl", result.requires_hitl)
-                span.set_attribute("cage.ftra.in_registry", in_registry)
+                span.set_attribute("cage.ftra.registry_state", registry_state.value)
+                span.set_attribute("cage.ftra.auto_cleared", result.auto_cleared)
+                if result.clear_reason is not None:
+                    span.set_attribute("cage.ftra.clear_reason", result.clear_reason)
                 span.set_attribute(
                     "cage.ftra.bypassed_ftra_node", result.bypassed_ftra_node
                 )
@@ -143,7 +179,7 @@ class FtraStage(Stage):
                     round((time.perf_counter() - _t0) * 1000, 2),
                 )
 
-                self._metrics.ftra_boundary_check("hitl_required" if result.requires_hitl else "passed")
+                self._metrics.ftra_boundary_check(_metric_outcome(result))
 
                 return result
 
@@ -178,3 +214,12 @@ class FtraStage(Stage):
                     ],
                     bypassed_ftra_node=True,
                 )
+
+
+def _metric_outcome(result: FtraBoundaryResult) -> str:
+    """``ftra_boundary_checks`` label: an unreadable registry counts as an error."""
+    if result.registry_state is RegistryState.UNAVAILABLE:
+        return "error"
+    if result.auto_cleared:
+        return "conditional_clear"
+    return "hitl_required" if result.requires_hitl else "passed"

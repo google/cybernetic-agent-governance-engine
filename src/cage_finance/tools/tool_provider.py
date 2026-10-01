@@ -18,7 +18,7 @@ import json
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -76,6 +76,8 @@ async def execute_trade_action(
     trader_role: str = "junior",
     dry_run: bool = False,
     deferred_id: str | None = None,
+    latency_ms: float | None = None,
+    drawdown: float | None = None,
     *,
     governor: "SymbolicGovernor",
     safety_filter: SafetyFilter,
@@ -106,6 +108,10 @@ async def execute_trade_action(
             once operators have approved it. With it, the gateway consumes
             that approval exactly once and re-validates the fresh params under
             the POST_HITL profile; without it, the trade is governed in full.
+        latency_ms: Market-data latency, an STPA input (UCA-2). Omitted, the
+            full run fails closed on the missing parameter.
+        drawdown: Daily drawdown, an STPA input (UCA-5). Omitted, the full
+            run fails closed on the missing parameter.
         governor: The assembled governor that must seal the trade.
         safety_filter: The CBF whose state is restored if actuation fails.
     """
@@ -124,7 +130,7 @@ async def execute_trade_action(
     if not transaction_id:
         transaction_id = str(uuid.uuid4())
 
-    params = {
+    params: dict[str, Any] = {
         "symbol": symbol,
         "amount": amount,
         "currency": currency,
@@ -134,6 +140,10 @@ async def execute_trade_action(
         "trader_role": trader_role,
         "dry_run": dry_run,
     }
+    if latency_ms is not None:
+        params["latency_ms"] = latency_ms
+    if drawdown is not None:
+        params["drawdown"] = drawdown
 
     # Step 1: Enforce governance (commit + seal) and obtain the seal
     try:
@@ -339,10 +349,12 @@ class FinancialToolProvider(DomainToolProvider):
             trader_role: str = "junior",
             dry_run: bool = False,
             deferred_id: str | None = None,
+            latency_ms: float | None = None,
+            drawdown: float | None = None,
         ) -> str:
             return await execute_trade_action(
                 symbol, amount, currency, confidence, transaction_id, trader_id, trader_role, dry_run,
-                deferred_id,
+                deferred_id, latency_ms, drawdown,
                 governor=governor, safety_filter=safety_filter,
             )
 

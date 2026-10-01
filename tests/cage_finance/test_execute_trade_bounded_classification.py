@@ -140,8 +140,8 @@ class TestTerminalRegistryIntegrity:
             "execute_trade",
             "execute_trade_bounded",
             "check_balance",
-            "release_wire",
         ]
+        assert "release_wire" not in known_actions
 
         for action in expected_finance_actions:
             assert action in known_actions, (

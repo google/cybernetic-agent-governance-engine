@@ -17,16 +17,13 @@
 from pathlib import Path
 from typing import Any
 
-from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
+from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS, HIGH_STAKES_CLINICAL_ACTIONS
 from src.gateway.governance.consensus import ConsensusGate, extract_field_magnitude, load_critic_specs
 from src.gateway.governance.contracts import (
     CommitReceipt, ConsensusContribution, CriticSpec, GovernanceTierPlugin, Violation, ViolationKind,
 )
 
 _CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
-HIGH_STAKES_CLINICAL_ACTIONS: frozenset[str] = frozenset(
-    {"administer_medication", "override_contraindication", "order_controlled_substance"}
-)
 
 
 def load_healthcare_critics(path: Path = _CRITICS_PATH) -> tuple[CriticSpec, ...]:

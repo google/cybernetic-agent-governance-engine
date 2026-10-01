@@ -217,7 +217,19 @@ def test_finance_opa_package_matches_its_shipped_rego():
         assert f"\n{rule} " in source or f"\ndefault {rule} " in source
 
 
-@pytest.mark.parametrize("domain", ["healthcare", "physical_ai"])
+def test_healthcare_is_runnable_and_declares_existing_config():
+    """POAM-2026-077: healthcare ships its own FTRA registry, OPA package and causal graph."""
+    config = domain_config_of(load_domain_plugin("healthcare"))
+    assert config.ftra_registry_path.is_file()
+    assert config.causal_graph_path is not None and config.causal_graph_path.is_file()
+    rego = Path(__file__).resolve().parents[1] / "src" / "cage_healthcare" / "opa" / "dosing_governance.rego"
+    source = rego.read_text()
+    assert f"package {config.opa_package}\n" in source
+    for rule in config.opa_required_rules:
+        assert f"\n{rule} " in source or f"\ndefault {rule} " in source
+
+
+@pytest.mark.parametrize("domain", ["physical_ai"])
 def test_domains_without_config_refuse_to_start(domain):
     with pytest.raises(RuntimeError, match="declares no DomainConfig"):
         domain_config_of(load_domain_plugin(domain))
@@ -225,7 +237,7 @@ def test_domains_without_config_refuse_to_start(domain):
 
 def test_active_domain_config_follows_cage_domain(monkeypatch):
     active_domain_config.cache_clear()
-    monkeypatch.setenv("CAGE_DOMAIN", "healthcare")
+    monkeypatch.setenv("CAGE_DOMAIN", "physical_ai")
     try:
         with pytest.raises(RuntimeError, match="declares no DomainConfig"):
             active_domain_config()

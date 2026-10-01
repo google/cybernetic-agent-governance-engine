@@ -94,6 +94,7 @@ async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe, classifi
         "symbol": "AAPL",
         "quantity": 10,
         "price": 150.0,
+        "amount": 1500.0,  # CBF claims by cost (> 0)
         "confidence": 0.95,
     }
 

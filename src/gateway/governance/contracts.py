@@ -485,6 +485,10 @@ class PluginContribution:
         ground_truth_providers: External ground-truth readers keyed by
             ``invariant_id`` (4b.2).
         registered_actions: Every action this domain exposes.
+        magnitude_extractor: Reads an action's magnitude (trade amount,
+            dose, velocity) from its params. Feeds conditional FTRA (a
+            registered terminal clears inside its autonomous envelope) and,
+            when the consensus contribution declares none, consensus.
         safety_filter: Safety filter (CBF) backing this domain's barriers.
         consensus: Consensus provider backing this domain's consensus tier.
         tool_provider: Registers this domain's MCP tools.
@@ -504,6 +508,7 @@ class PluginContribution:
     standing_projector: Any | None = None
     ground_truth_providers: Mapping[str, Any] = field(default_factory=dict)
     registered_actions: frozenset[str] = frozenset()
+    magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None
     safety_filter: "SafetyFilter | None" = None
     consensus: "ConsensusProvider | ConsensusContribution | None" = None
     tool_provider: "DomainToolProvider | None" = None
@@ -730,13 +735,15 @@ class CriticSpec:
 
 @dataclass(frozen=True)
 class ConsensusContribution:
-    """Domain-contributed configuration for the multi-agent consensus engine."""
+    """Domain-contributed configuration for the multi-agent consensus engine.
+
+    ``magnitude_extractor=None`` inherits ``PluginContribution.magnitude_extractor``
+    at assembly; with neither, consensus sees magnitude 0.0.
+    """
 
     critics: tuple[CriticSpec, ...]
     threshold: float
-    magnitude_extractor: Callable[[Mapping[str, Any]], float] = field(
-        default=lambda _: 0.0
-    )
+    magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None
     high_stakes_actions: frozenset[str] = frozenset()
 
 

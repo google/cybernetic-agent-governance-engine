@@ -23,7 +23,7 @@ Reachability Analyzer (CTRL_FTRA_001).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 from src.gateway.governance.contracts import Violation, ViolationKind
 
@@ -64,6 +64,36 @@ CLASSIFICATION_SEVERITY: dict[TerminalClassification, int] = {
     TerminalClassification.EXTERNALLY_REVERSIBLE: 2,
     TerminalClassification.IRREVERSIBLE_TERMINAL: 3,
 }
+
+
+class RegistryState(StrEnum):
+    """Where a classification came from.
+
+    Only ``REGISTERED`` is a classification the domain authored. Every other
+    state is a fail-closed fallback to IRREVERSIBLE_TERMINAL, and the FTRA
+    violation code names which fallback fired so a reviewer can tell
+    "the registry says this is irreversible" from "the registry is silent".
+    """
+
+    REGISTERED = "registered"
+    """The action has a valid entry in the active domain's registry."""
+
+    UNREGISTERED = "unregistered"
+    """The registry loaded but has no entry for the action."""
+
+    INVALID_ENTRY = "invalid_entry"
+    """The registry has an entry whose classification string is unrecognised."""
+
+    UNAVAILABLE = "unavailable"
+    """The registry could not be loaded (missing, malformed, digest mismatch)."""
+
+
+#: FTRA violation code per (registry state, classification) that needs a human.
+FTRA_REGISTERED_IRREVERSIBLE = "FTRA_REGISTERED_IRREVERSIBLE"
+FTRA_REGISTERED_EXTERNALLY_REVERSIBLE = "FTRA_REGISTERED_EXTERNALLY_REVERSIBLE"
+FTRA_UNREGISTERED_ACTION = "FTRA_UNREGISTERED_ACTION"
+FTRA_REGISTRY_ENTRY_INVALID = "FTRA_REGISTRY_ENTRY_INVALID"
+FTRA_REGISTRY_UNAVAILABLE = "FTRA_REGISTRY_UNAVAILABLE"
 
 
 class FTRAVerdict(str, Enum):
@@ -143,6 +173,15 @@ class ReachabilityResult(BaseModel):
 
     reachable_step_count: int = Field(
         description="Number of steps reachable from step[0] via DFS."
+    )
+
+    auto_cleared_terminals: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Step IDs of reachable registered terminals that cleared inside "
+            "their autonomous envelope (conditional FTRA). They stay in "
+            "reachable_terminals but do not drive the verdict."
+        ),
     )
 
 
@@ -319,12 +358,23 @@ class FtraBoundaryResult:
     """True if this boundary check detected an action that would have bypassed
     the in-graph ftra_node. Used for WARN-level logging and telemetry."""
 
+    registry_state: RegistryState | None = None
+    """Provenance of ``classification`` (see :class:`RegistryState`)."""
+
+    auto_cleared: bool = False
+    """True if a registered terminal cleared inside its autonomous envelope
+    (conditional FTRA); ``requires_hitl`` is then False."""
+
+    clear_reason: str | None = None
+    """Why the terminal cleared autonomously; ``None`` unless ``auto_cleared``."""
+
     @property
     def is_safe(self) -> bool:
         """Return True if the action is safe to proceed without HITL review.
 
-        An action is safe if it does not require human review, meaning it is
-        classified as READ_ONLY or REVERSIBLE.
+        An action is safe if it does not require human review: it is
+        classified READ_ONLY or REVERSIBLE, or it is a registered terminal
+        inside its autonomous envelope.
         """
         return not self.requires_hitl
 
@@ -334,21 +384,44 @@ class FtraBoundaryResult:
         classification: TerminalClassification,
         action_name: str,
         *,
-        in_registry: bool = True,
+        registry_state: RegistryState,
         bypassed_ftra_node: bool = False,
+        clear_reason: str | None = None,
     ) -> FtraBoundaryResult:
-        """Factory method to create FtraBoundaryResult from a TerminalClassification.
+        """Build the boundary result for a classification and its provenance.
 
-        Args:
-            classification: The TerminalClassification from IrreversibilityClassifier.
-            action_name: The action name being classified.
-            in_registry: Whether the action was found in the terminal registry.
-            bypassed_ftra_node: Whether this check caught a bypass of ftra_node.
+        Violation per provenance:
 
-        Returns:
-            FtraBoundaryResult with appropriate field values.
+        ==========================  =========================================  ======
+        registry_state              code                                       kind
+        ==========================  =========================================  ======
+        REGISTERED, irreversible    ``FTRA_REGISTERED_IRREVERSIBLE``           HITL
+        REGISTERED, ext-reversible  ``FTRA_REGISTERED_EXTERNALLY_REVERSIBLE``  HITL
+        UNREGISTERED                ``FTRA_UNREGISTERED_ACTION``               HITL
+        INVALID_ENTRY               ``FTRA_REGISTRY_ENTRY_INVALID``            HITL
+        UNAVAILABLE                 ``FTRA_REGISTRY_UNAVAILABLE``              HARD
+        ==========================  =========================================  ======
+
+        A REGISTERED terminal with a ``clear_reason`` (computed by
+        ``autonomy.conditional_clear_reason``) is auto-cleared: no violation.
+
+        Raises:
+            ValueError: ``clear_reason`` given for anything but a REGISTERED
+                terminal. Only the domain's own classification can be cleared
+                autonomously (UNREGISTERED_NEVER_AUTO_CLEARS).
         """
-        # Map classification to irreversibility score
+        terminal = classification in (
+            TerminalClassification.IRREVERSIBLE_TERMINAL,
+            TerminalClassification.EXTERNALLY_REVERSIBLE,
+        )
+        if clear_reason is not None and not (
+            registry_state is RegistryState.REGISTERED and terminal
+        ):
+            raise ValueError(
+                f"only a registered terminal can clear autonomously; "
+                f"{action_name!r} is {registry_state.value}/{classification.value}"
+            )
+
         score_map = {
             TerminalClassification.IRREVERSIBLE_TERMINAL: 1.0,
             TerminalClassification.EXTERNALLY_REVERSIBLE: 0.8,
@@ -356,40 +429,21 @@ class FtraBoundaryResult:
             TerminalClassification.READ_ONLY: 0.0,
         }
         score = score_map.get(classification, 1.0)  # Fail-closed: unknown = 1.0
-
-        requires_hitl = classification in (
-            TerminalClassification.IRREVERSIBLE_TERMINAL,
-            TerminalClassification.EXTERNALLY_REVERSIBLE,
+        auto_cleared = clear_reason is not None
+        violation = None if auto_cleared else _provenance_violation(
+            classification, action_name, registry_state
         )
-        violations: list[Violation] = []
-
-        if requires_hitl:
-            if in_registry:
-                violations.append(
-                    Violation(
-                        tier="ftra",
-                        code="FTRA_IRREVERSIBLE",
-                        message=f"FTRA Boundary Check: Action '{action_name}' is classified as {classification.value} in terminal_registry.json. Human-in-the-loop review required before execution.",
-                        kind=ViolationKind.HITL
-                    )
-                )
-            else:
-                violations.append(
-                    Violation(
-                        tier="ftra",
-                        code="FTRA_IRREVERSIBLE",
-                        message=f"FTRA Boundary Check: Action '{action_name}' not found in terminal_registry.json — failing closed to IRREVERSIBLE_TERMINAL. Human-in-the-loop review required before execution.",
-                        kind=ViolationKind.HITL
-                    )
-                )
 
         return cls(
-            requires_hitl=requires_hitl,
+            requires_hitl=violation is not None,
             irreversibility_score=score,
             classification=classification.value,
-            terminal_match=action_name if in_registry else None,
-            violations=violations,
-            bypassed_ftra_node=bypassed_ftra_node,
+            terminal_match=action_name if registry_state is RegistryState.REGISTERED else None,
+            violations=[violation] if violation is not None else [],
+            bypassed_ftra_node=bypassed_ftra_node and not auto_cleared,
+            registry_state=registry_state,
+            auto_cleared=auto_cleared,
+            clear_reason=clear_reason,
         )
 
     @classmethod
@@ -399,19 +453,20 @@ class FtraBoundaryResult:
         action_name: str,
         classification: TerminalClassification,
         *,
-        in_registry: bool = True,
+        registry_state: RegistryState,
     ) -> FtraBoundaryResult:
         """Factory method to create FtraBoundaryResult for a semantic validation breach.
 
         Version 2.1: Semantic validation failures always trigger HITL requirement,
         regardless of the name-based classification. This ensures that malformed
-        or out-of-bound inputs are blocked at the boundary.
+        or out-of-bound inputs are blocked at the boundary. A breach is never
+        auto-cleared, whatever the autonomous envelope says.
 
         Args:
             semantic_result: The SemanticValidationResult from semantic validator.
             action_name: The action name being validated.
             classification: The name-based TerminalClassification (for reference).
-            in_registry: Whether the action was found in the terminal registry.
+            registry_state: Provenance of ``classification``.
 
         Returns:
             FtraBoundaryResult with HITL required and semantic violations.
@@ -442,10 +497,67 @@ class FtraBoundaryResult:
             requires_hitl=True,  # Always require HITL on semantic breach
             irreversibility_score=1.0,  # Maximum score (fail-closed)
             classification=f"{classification.value}_SEMANTIC_BREACH",
-            terminal_match=action_name if in_registry else None,
+            terminal_match=action_name if registry_state is RegistryState.REGISTERED else None,
             violations=violations,
             bypassed_ftra_node=False,  # Not a bypass, but a validation failure
+            registry_state=registry_state,
         )
+
+
+def _provenance_violation(
+    classification: TerminalClassification,
+    action_name: str,
+    registry_state: RegistryState,
+) -> Violation | None:
+    """The FTRA violation for an uncleared classification, or None if it needs no human."""
+    if registry_state is RegistryState.UNAVAILABLE:
+        return Violation(
+            tier="ftra",
+            code=FTRA_REGISTRY_UNAVAILABLE,
+            message=(
+                f"FTRA Boundary Check: the terminal registry could not be loaded; "
+                f"refusing '{action_name}' (fail-closed)."
+            ),
+            kind=ViolationKind.HARD,
+        )
+    if registry_state is RegistryState.UNREGISTERED:
+        return Violation(
+            tier="ftra",
+            code=FTRA_UNREGISTERED_ACTION,
+            message=(
+                f"FTRA Boundary Check: Action '{action_name}' is not in the domain's "
+                "terminal registry — failing closed to IRREVERSIBLE_TERMINAL. "
+                "Human-in-the-loop review required before execution."
+            ),
+            kind=ViolationKind.HITL,
+        )
+    if registry_state is RegistryState.INVALID_ENTRY:
+        return Violation(
+            tier="ftra",
+            code=FTRA_REGISTRY_ENTRY_INVALID,
+            message=(
+                f"FTRA Boundary Check: the registry entry for '{action_name}' has an "
+                "unrecognised classification — failing closed to IRREVERSIBLE_TERMINAL. "
+                "Human-in-the-loop review required before execution."
+            ),
+            kind=ViolationKind.HITL,
+        )
+    code = {
+        TerminalClassification.IRREVERSIBLE_TERMINAL: FTRA_REGISTERED_IRREVERSIBLE,
+        TerminalClassification.EXTERNALLY_REVERSIBLE: FTRA_REGISTERED_EXTERNALLY_REVERSIBLE,
+    }.get(classification)
+    if code is None:
+        return None  # READ_ONLY / REVERSIBLE: no human needed
+    return Violation(
+        tier="ftra",
+        code=code,
+        message=(
+            f"FTRA Boundary Check: Action '{action_name}' is registered as "
+            f"{classification.value} and is outside its autonomous envelope. "
+            "Human-in-the-loop review required before execution."
+        ),
+        kind=ViolationKind.HITL,
+    )
 
 
 class PlanStep(BaseModel):

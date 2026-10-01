@@ -24,6 +24,7 @@ T-D5: The complete healthcare plugin — a list of declarations.
 
 from pathlib import Path
 
+from src.cage_healthcare.constants import REGISTERED_ACTIONS
 from src.cage_healthcare.ground_truth import (
     SimulatedSerumAssayProvider,
     healthcare_cost_resolver,
@@ -37,12 +38,15 @@ from src.cage_healthcare.tiers.clinical_consensus_tier import (
 )
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
+from src.gateway.governance.consensus import extract_field_magnitude
 from src.gateway.governance.contracts import (
     CagePlugin,
     DomainConfig,
     PluginContribution,
 )
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
+
+_CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
 class HealthcareCagePlugin(CagePlugin):
@@ -54,8 +58,12 @@ class HealthcareCagePlugin(CagePlugin):
 
     name = "healthcare"
     api_version = "1.0"
-    # No healthcare FTRA registry yet: the domain refuses to start (POAM-2026-077).
-    domain_config: DomainConfig | None = None
+    domain_config = DomainConfig(
+        ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
+        opa_package="dosing.governance",
+        opa_required_rules=("allow",),
+        causal_graph_path=_CONFIG_DIR / "causal_graph.yaml",
+    )
 
     def contribute(self) -> PluginContribution:
         barrier = SerumConcentrationBarrier()
@@ -76,6 +84,8 @@ class HealthcareCagePlugin(CagePlugin):
             ),
             invariants=(barrier,),  # declarative, no logic
             ground_truth_providers={barrier.invariant_id: assay_provider},
+            registered_actions=REGISTERED_ACTIONS,
+            magnitude_extractor=extract_field_magnitude("dose_mg"),
             safety_filter=cbf,
             consensus=build_healthcare_consensus_contribution(),
             tool_provider=ClinicalToolProvider(),

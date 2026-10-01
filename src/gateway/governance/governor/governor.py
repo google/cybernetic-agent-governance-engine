@@ -274,7 +274,7 @@ class SymbolicGovernor:
             span.set_attribute(
                 OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
             )
-            span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
+            span.set_attribute("toctou.revalidation.scope", "opa+phase2")
             if trace_id is not None:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
             if not self._is_governed_action(action, params):
@@ -342,8 +342,18 @@ class SymbolicGovernor:
         return await self.verify(tool_name, params)
 
     def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
-        """True if any domain tier claims ``action``."""
-        return any(t.claims_action(action, params) for t in self.domain_tiers)
+        """True if any domain tier claims ``action``.
+
+        A tier whose ``claims_action`` raises counts as claiming it (fail
+        closed): the pipeline then records the raise as a HARD TIER_EXCEPTION.
+        """
+        for tier in self.domain_tiers:
+            try:
+                if tier.claims_action(action, params):
+                    return True
+            except Exception:
+                return True
+        return False
 
 
 _UNGOVERNED_POST_HITL = Violation(
@@ -397,4 +407,8 @@ def _ftra_meta(result: Any) -> dict[str, Any]:
         "requires_hitl": result.ftra.requires_hitl,
         "bypassed_ftra_node": result.ftra.bypassed_ftra_node,
         "in_registry": result.ftra.terminal_match is not None,
+        "ftra_registry_state": (
+            result.ftra.registry_state.value if result.ftra.registry_state else None
+        ),
+        "ftra_auto_cleared": result.ftra.auto_cleared,
     }

@@ -1,0 +1,21 @@
+{
+  "version": "3.0",
+  "domain": "healthcare",
+  "serial": 1,
+  "generated_at": "2026-09-30T00:00:00+00:00",
+  "issued_at": "2026-09-30T00:00:00+00:00",
+  "expires_at": "2027-09-30T00:00:00+00:00",
+  "system": "CAGE Clinical Dosing Reference",
+  "system_version": "1.0.0",
+  "fail_closed_note": "Any action absent from this registry is treated as IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime. No healthcare action has an autonomous envelope: every dose is human-approved.",
+  "terminals": {
+    "administer_dose": "IRREVERSIBLE_TERMINAL",
+    "administer_medication": "IRREVERSIBLE_TERMINAL",
+    "adjust_dosage": "IRREVERSIBLE_TERMINAL",
+    "dose_order": "IRREVERSIBLE_TERMINAL",
+    "order_controlled_substance": "IRREVERSIBLE_TERMINAL",
+    "override_contraindication": "IRREVERSIBLE_TERMINAL",
+    "prescribe_medication": "IRREVERSIBLE_TERMINAL"
+  },
+  "manifest_sha256": "4f1ce453ae861730424b706b2cc51d68ef8e720b08d3957d519ec87da10900ce"
+}

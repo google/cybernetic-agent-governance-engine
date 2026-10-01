@@ -73,11 +73,13 @@ def make_governor(
     standing_projector: Any = None,
     invariants: Sequence[Any] = (),
     posture: DeploymentPosture = DeploymentPosture.DEV,
+    magnitude_extractor: Any = None,
 ) -> SymbolicGovernor:
     """Build a governor from explicit parts; unspecified parts are permissive mocks.
 
     ``core_stages`` replaces the kernel stages outright (for tests that swap a
-    stage); otherwise they are built from ``opa`` and ``stpa_validator``.
+    stage); otherwise they are built from ``opa``, ``stpa_validator`` and
+    ``magnitude_extractor`` (conditional FTRA; ``None`` clears nothing).
     Unset ``safety_filter`` / ``consensus`` keep the deny-by-default nulls.
     """
     opa = opa if opa is not None else allow_opa()
@@ -91,7 +93,11 @@ def make_governor(
         extra["standing_projector"] = standing_projector
     components = GovernorComponents(
         opa=opa,
-        core_stages=tuple(core_stages) if core_stages is not None else kernel_stages(opa, stpa_validator),
+        core_stages=(
+            tuple(core_stages)
+            if core_stages is not None
+            else kernel_stages(opa, stpa_validator, magnitude_extractor=magnitude_extractor)
+        ),
         classifier=classifier if classifier is not None else default_classifier(),
         domain_tiers=tuple(domain_tiers),
         invariants=tuple(invariants),

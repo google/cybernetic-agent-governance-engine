@@ -58,6 +58,18 @@ system-security-plan:
         for supplying and accrediting their own external retail-banking ledger integration
         behind the EstateProvider seam.'
       class: customer-responsibility
+    - name: customer_responsibility_tier3_wire_transfer
+      ns: https://cage.laah.cybernetics.dev/ns/oscal
+      value: 'Customer Responsibility (Tier-3 Commercial Deployment Interface — Wire Transfer
+        / Payment Release): The reference finance domain does not expose a wire-release
+        action. release_wire was removed from the finance FTRA terminal registry (config/ftra/terminal_registry.json),
+        REGISTERED_ACTIONS and STPA UCA-11 on 2026-09-30 because no posture-completing
+        control depends on it. Any action absent from the registry fails closed as FTRA_UNREGISTERED_ACTION
+        (HITL) and is never auto-cleared. Organizations adding payment release in commercial
+        production are responsible for registering it in their domain registry (re-signed
+        with manifest_sha256), modelling its UCAs, and governing it with a cost-claiming
+        phase-2 barrier so it is re-checked under POST_HITL.'
+      class: customer-responsibility
     roles:
     - id: system-owner
       title: System Owner

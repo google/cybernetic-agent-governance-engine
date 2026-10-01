@@ -267,22 +267,6 @@ unsafe_control_actions:
       flow_name: log_stale_balance_warning
       message: "Balance data may be stale. Please refresh."
 
-  - id: UCA-11
-    action: release_wire
-    uca_type: unsafe_action
-    hazard_refs: [H-1]
-    description: "Agent initiates wire transfer that is reversible only within settlement window."
-    # FTRA: release_wire is EXTERNALLY_REVERSIBLE — can be reversed via counterparty
-    # or clearinghouse action within a settlement window, but requires external
-    # coordination. Triggers HITL_REQUIRED unconditionally (not subject to confidence gate).
-    terminal_classification: EXTERNALLY_REVERSIBLE
-    condition:
-      semantic_pattern: "wire_release_without_dual_approval"
-    enforcement: [nemo]
-    nemo_rail:
-      flow_name: require_dual_approval_wire
-      message: "Wire transfer requires dual approval before release."
-
   - id: UCA-12
     action: execute_trade_bounded
     uca_type: unsafe_action

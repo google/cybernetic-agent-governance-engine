@@ -554,6 +554,11 @@ component-definition:
                 (<params_json>...</params_json>), and pinned gateway prompt fields (role, action,
                 action_type, magnitude) so untrusted agent parameters cannot override critic
                 instructions or induce fail-open vote misinterpretation (POAM-2026-081).
+                The FTRA terminal registry's manifest_sha256 (registry_digest in
+                src/gateway/governance/ftra/classifier.py) covers the autonomous_envelope together
+                with the terminals, so a tampered ceiling fails the load-time integrity check; an
+                envelope without a digest, or with a non-finite, non-positive or malformed
+                max_magnitude, refuses to load.
               props:
                 - name: implementation-status
                   value: implemented
@@ -575,6 +580,47 @@ component-definition:
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4"
+                  rel: reference
+
+            - uuid: "ac030001-ftra-8000-envelope000001"
+              control-id: ac-3
+              description: |
+                FTRA boundary enforcement (src/gateway/governance/governor/stages/ftra.py) classifies
+                every action against the active domain's signed terminal registry and names the
+                provenance of the decision (FtraBoundaryResult.from_classification in
+                src/gateway/governance/ftra/models.py): FTRA_REGISTERED_IRREVERSIBLE,
+                FTRA_REGISTERED_EXTERNALLY_REVERSIBLE, FTRA_UNREGISTERED_ACTION and
+                FTRA_REGISTRY_ENTRY_INVALID require human approval; FTRA_REGISTRY_UNAVAILABLE
+                (unreadable registry) is a HARD deny. Post-approval re-validation runs OPA plus
+                every claiming phase-2 barrier (stage_runs_under in
+                src/gateway/governance/governor/pipeline.py; proved in proof/model.py).
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
+                  rel: reference
+
+            - uuid: "ac060001-ftra-8000-envelope000001"
+              control-id: ac-6
+              description: |
+                Least privilege for autonomous action: a registered terminal may proceed without a
+                human only inside the autonomous_envelope its domain registry grants it
+                (src/gateway/governance/ftra/autonomy.py, conditional_clear_reason): a known
+                magnitude with 0 < magnitude <= max_magnitude (finance: 10,000 for execute_trade
+                and execute_trade_bounded) and agent confidence >= FRIA zone_allow. Unregistered
+                actions, unreadable registries, missing or raising magnitude extractors and
+                unknown magnitudes never clear. The same predicate governs plan reachability
+                (src/gateway/governance/ftra/graph_analyzer.py).
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-6"
                   rel: reference
 
     # -----------------------------------------------------------------------
