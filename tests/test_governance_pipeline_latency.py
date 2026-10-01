@@ -40,6 +40,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.langgraph_harness import (
     NemoNodeConfig,
     OpaNodeConfig,
@@ -260,7 +261,7 @@ def _opa_patches():
     """Return a list of patch context managers for the OPA safety node."""
     mock_client = MagicMock()
     mock_client.validate_action = AsyncMock(
-        return_value={"verdict": "APPROVED", "signature": "mock_sig"}
+        return_value={"verdict": GovernanceDecision.ALLOW.value, "signature": "mock_sig"}
     )
     mock_gateway_client_cls = MagicMock(return_value=mock_client)
 

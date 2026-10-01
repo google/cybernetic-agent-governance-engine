@@ -257,6 +257,7 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
     evidence_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     sink = evidence_stream.EvidenceStreamSink()
     with monkeypatch.context() as m:
+        m.setattr("src.gateway.infrastructure.redis_client.build_async_redis", lambda *a, **k: evidence_redis)
         m.setattr("redis.asyncio.from_url", lambda *a, **k: evidence_redis)
         await sink.start()
     monkeypatch.setattr(evidence_stream, "_evidence_sink", sink)

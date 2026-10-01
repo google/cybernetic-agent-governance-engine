@@ -258,7 +258,10 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
     return _blocked(
         state,
         policy_rule="NOT_APPROVED",
-        evidence=f"Gateway returned verdict {verdict!r}, not APPROVED",
+        evidence=(
+            f"Gateway returned verdict {verdict!r}, not one of "
+            f"{sorted(v.value for v in _PROCEED_VERDICTS)}"
+        ),
         reason_code="NOT_APPROVED",
         recoverable=False,
     )
